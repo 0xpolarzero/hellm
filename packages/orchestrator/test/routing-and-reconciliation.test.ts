@@ -1458,6 +1458,9 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     expect(second.threadSnapshot.thread.createdAt).toBe(
       first.threadSnapshot.thread.createdAt,
     );
+    expect(second.threadSnapshot.thread.inputEpisodeIds).toEqual([
+      firstEpisodeId!,
+    ]);
     expect(second.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
       firstEpisodeId!,
     ]);
@@ -1563,5 +1566,60 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
         .slice(1)
         .every((entry, index) => entry.parentId === result.sessionEntries[index]?.id),
     ).toBe(true);
+  });
+
+  it("refreshes existing thread input episode IDs from reconstructed prior episodes", async () => {
+    const priorEpisodeOne = createEpisodeFixture({
+      id: "episode-prior-1",
+      threadId: "thread-refresh-inputs",
+    });
+    const priorEpisodeTwo = createEpisodeFixture({
+      id: "episode-prior-2",
+      threadId: "thread-refresh-inputs",
+      inputEpisodeIds: ["episode-prior-1"],
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      contextLoader: {
+        async load(request) {
+          const staleThread = createThreadFixture({
+            id: request.threadId,
+            kind: "direct",
+            objective: request.prompt,
+            status: "running",
+            inputEpisodeIds: ["episode-stale"],
+          });
+          return {
+            ...baseLoadedContext(request),
+            priorEpisodes: [priorEpisodeOne, priorEpisodeTwo],
+            state: {
+              ...baseLoadedContext(request).state,
+              threads: [staleThread],
+              episodes: [priorEpisodeOne, priorEpisodeTwo],
+            },
+          };
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-refresh-inputs",
+      prompt: "Continue from reconstructed episodes.",
+      cwd: "/repo",
+      routeHint: "direct",
+    });
+
+    expect(result.threadSnapshot.thread.inputEpisodeIds).toEqual([
+      "episode-prior-1",
+      "episode-prior-2",
+    ]);
+    expect(result.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
+      "episode-prior-1",
+      "episode-prior-2",
+    ]);
+    expect(result.threadSnapshot.thread.inputEpisodeIds).not.toContain(
+      "episode-stale",
+    );
   });
 });

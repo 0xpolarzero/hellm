@@ -245,6 +245,7 @@ export function createOrchestrator(
       const updatedThread: ThreadRef = {
         ...initialThread,
         kind: executionPathToThreadKind(classification.path),
+        inputEpisodeIds,
         status: statusFromEpisode(execution.episode.status),
         ...(execution.workflowRun
           ? { smithersRunId: execution.workflowRun.runId }
