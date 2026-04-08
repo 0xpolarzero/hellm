@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createOrchestrator } from "@hellm/orchestrator";
-import { createEmptySessionState } from "@hellm/session-model";
+import { createArtifact, createEmptySessionState } from "@hellm/session-model";
 import {
   FakePiRuntimeBridge,
   FakeSmithersWorkflowBridge,
@@ -359,6 +359,123 @@ describe("golden path headless specs", () => {
         "golden-reenter-episode-2",
       ]);
       expect(second.result.events.at(-1)?.type).toBe("run.completed");
+    });
+  });
+
+  it("re-enters verification runs with file-backed JSONL sessions and preserves verification state", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-verify-reenter";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-verify-reenter.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const reportPath = await workspace.write(
+        "reports/build.log",
+        "build passed\n",
+      );
+      const verificationRunner = new FakeVerificationRunner();
+      verificationRunner.enqueueResult({
+        status: "passed",
+        records: [
+          createVerificationFixture({
+            id: "golden-verify-build",
+            kind: "build",
+            status: "passed",
+            artifactIds: ["artifact-build-log"],
+          }),
+        ],
+        artifacts: [
+          createArtifact({
+            id: "artifact-build-log",
+            kind: "log",
+            description: "Build output",
+            path: reportPath,
+            createdAt: "2026-04-08T09:00:00.000Z",
+          }),
+        ],
+      });
+      verificationRunner.enqueueResult({
+        status: "failed",
+        records: [
+          createVerificationFixture({
+            id: "golden-verify-test",
+            kind: "test",
+            status: "failed",
+            summary: "Verification tests failed",
+          }),
+        ],
+        artifacts: [],
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        verificationRunner,
+        contextLoader: {
+          async load(request) {
+            const state = harness.reconstruct();
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run build verification first.",
+          cwd: workspace.root,
+          routeHint: "verification",
+          workflowSeedInput: {
+            verificationKinds: ["build"],
+            manualChecks: ["Inspect build report"],
+          },
+        },
+        orchestrator,
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run default verification next.",
+          cwd: workspace.root,
+          routeHint: "verification",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+      const reconstructed = harness.reconstruct();
+
+      expect(verificationRunner.calls[0]?.kinds).toEqual(["build"]);
+      expect(verificationRunner.calls[0]?.manualChecks).toEqual([
+        "Inspect build report",
+      ]);
+      expect(verificationRunner.calls[1]?.kinds).toEqual([
+        "build",
+        "test",
+        "lint",
+      ]);
+      expect(verificationRunner.calls[1]?.manualChecks).toBeUndefined();
+      expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        "golden-verify-reenter:verification:2026-04-08T09:00:00.000Z",
+      ]);
+      expect(second.result.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
+        "golden-verify-reenter:verification:2026-04-08T09:00:00.000Z",
+      ]);
+      expect(reconstructed.verification.byKind.build?.status).toBe("passed");
+      expect(reconstructed.verification.byKind.test?.status).toBe("failed");
+      expect(reconstructed.verification.overallStatus).toBe("failed");
+      expect(reconstructed.artifacts.find((artifact) => artifact.id === "artifact-build-log")?.path).toBe(
+        reportPath,
+      );
     });
   });
 
