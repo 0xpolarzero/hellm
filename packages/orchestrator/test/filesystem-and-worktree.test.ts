@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "bun:test";
 import {
   createOrchestrator,
@@ -13,6 +13,7 @@ import {
   createVerificationRecord,
   reconstructSessionState,
   type SessionJsonlEntry,
+  type StructuredSessionEntry,
 } from "@hellm/session-model";
 import {
   FakePiRuntimeBridge,
@@ -86,7 +87,121 @@ function readSessionFile(filePath: string): SessionJsonlEntry[] {
     .map((line) => JSON.parse(line) as SessionJsonlEntry);
 }
 
+function isStructuredSessionEntry(
+  entry: SessionJsonlEntry,
+): entry is StructuredSessionEntry {
+  return (
+    typeof entry === "object" &&
+    entry !== null &&
+    "type" in entry &&
+    entry.type === "message" &&
+    "id" in entry &&
+    typeof entry.id === "string"
+  );
+}
+
 describe("@hellm/orchestrator filesystem and worktree integration", () => {
+  it("loads AGENTS instructions from disk by trimming lines and dropping blanks", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const loader = createFilesystemContextLoader({
+        sessionFile: workspace.path(".pi/sessions/thread-agents-parse.jsonl"),
+        agentsFile: workspace.path("AGENTS.md"),
+      });
+      await workspace.write(
+        "AGENTS.md",
+        "  Read docs/prd.md before doing any work.  \n\n  Use Smithers for delegated work. \n   \n",
+      );
+
+      const context = await loader.load({
+        threadId: "thread-agents-parse",
+        prompt: "Load AGENTS instructions from disk.",
+        cwd: workspace.root,
+      });
+
+      expect(context.agentsInstructions).toEqual([
+        "Read docs/prd.md before doing any work.",
+        "Use Smithers for delegated work.",
+      ]);
+    });
+  });
+
+  it("falls back to empty AGENTS instructions when the file is absent and forwards that empty context to the pi worker", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const piBridge = new FakePiRuntimeBridge();
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: createEpisodeFixture({
+          id: "episode-pi-no-agents",
+          threadId: "thread-pi-no-agents",
+          source: "pi-worker",
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        piBridge,
+        contextLoader: createFilesystemContextLoader({
+          sessionFile: workspace.path(".pi/sessions/thread-pi-no-agents.jsonl"),
+          agentsFile: workspace.path("AGENTS.md"),
+        }),
+      });
+
+      const result = await orchestrator.run({
+        threadId: "thread-pi-no-agents",
+        prompt: "Run the bounded worker path.",
+        cwd: workspace.root,
+        routeHint: "pi-worker",
+      });
+
+      expect(result.context.agentsInstructions).toEqual([]);
+      expect(piBridge.workerRequests[0]?.scopedContext.agentsInstructions).toEqual(
+        [],
+      );
+    });
+  });
+
+  it("loads only valid skill directories that include SKILL.md from the filesystem", async () => {
+    await withTempWorkspace(async (workspace) => {
+      await workspace.write("skills/frontend-design/SKILL.md", "# frontend-design\n");
+      await workspace.write("skills/audit/SKILL.md", "# audit\n");
+      await workspace.write("skills/not-a-skill/README.md", "# readme\n");
+      await workspace.write("skills/NOTES.txt", "ignore me\n");
+
+      const loader = createFilesystemContextLoader({
+        sessionFile: workspace.path(".pi/sessions/thread-skills.jsonl"),
+        skillsRoot: workspace.path("skills"),
+      });
+
+      const context = await loader.load({
+        threadId: "thread-skills",
+        prompt: "Load skills context",
+        cwd: workspace.root,
+      });
+
+      expect([...context.relevantSkills].sort()).toEqual([
+        "audit",
+        "frontend-design",
+      ]);
+    });
+  });
+
+  it("returns an empty relevant skills list when the configured skills root does not exist", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const loader = createFilesystemContextLoader({
+        sessionFile: workspace.path(".pi/sessions/thread-missing-skills.jsonl"),
+        skillsRoot: workspace.path("missing-skills"),
+      });
+
+      const context = await loader.load({
+        threadId: "thread-missing-skills",
+        prompt: "Load missing skills",
+        cwd: workspace.root,
+      });
+
+      expect(context.relevantSkills).toEqual([]);
+    });
+  });
+
   it("reconciles a smithers workflow run into a file-backed session inside a real git worktree", async () => {
     if (!hasGit()) {
       return;
@@ -130,6 +245,9 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
         completedAt: "2026-04-08T09:00:01.000Z",
       });
       harness.append({ kind: "episode", data: priorEpisode });
+      const priorEntryId = readSessionFile(sessionFile)
+        .filter(isStructuredSessionEntry)
+        .at(-1)?.id;
 
       const smithersBridge = new FakeSmithersWorkflowBridge();
       smithersBridge.enqueueRunResult({
@@ -227,6 +345,10 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
       });
       expect(result.state.waiting).toBe(true);
       expect(result.state.visibleSummary).toContain("smithers-workflow");
+      expect(result.sessionState.workflowRuns[0]?.runId).toBe("run-smithers");
+      expect(result.sessionState.smithersIsolations[0]?.runId).toBe(
+        "run-smithers",
+      );
       expect(
         result.sessionEntries.map((entry) => entry.message.customType),
       ).toEqual([
@@ -237,6 +359,12 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
         "hellm/workflow-run",
         "hellm/smithers-isolation",
       ]);
+      expect(result.sessionEntries[0]?.parentId).toBe(priorEntryId ?? null);
+      expect(
+        result.sessionEntries
+          .slice(1)
+          .every((entry, index) => entry.parentId === result.sessionEntries[index]?.id),
+      ).toBe(true);
       expect(snapshot.thread.worktreePath).toBe(worktreePath);
       expect(snapshot.thread.smithersRunId).toBe("run-smithers");
       expect(snapshot.workflowRuns[0]?.status).toBe("waiting_approval");
@@ -246,6 +374,12 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
       expect(snapshot.alignment.activeWorktreePath).toBe(worktreePath);
       expect(snapshot.alignment.aligned).toBe(false);
       expect(snapshot.episodes.at(-1)?.inputEpisodeIds).toEqual(["episode-prior"]);
+      const persistedEntries = readSessionFile(sessionFile)
+        .filter(isStructuredSessionEntry)
+        .slice(-result.sessionEntries.length);
+      expect(persistedEntries.map((entry) => entry.id)).toEqual(
+        result.sessionEntries.map((entry) => entry.id),
+      );
     } finally {
       await workspace.cleanup();
     }
@@ -283,6 +417,9 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
         completedAt: "2026-04-08T09:00:01.000Z",
       });
       harness.append({ kind: "episode", data: priorEpisode });
+      const expectedSessionHistory = readSessionFile(sessionFile).map((entry) =>
+        JSON.stringify(entry),
+      );
 
       const piBridge = new FakePiRuntimeBridge();
       piBridge.enqueueResult({
@@ -327,6 +464,9 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
       expect(piBridge.workerRequests[0]?.scopedContext.sessionHistory).not.toHaveLength(
         0,
       );
+      expect(piBridge.workerRequests[0]?.scopedContext.sessionHistory).toEqual(
+        expectedSessionHistory,
+      );
       expect(piBridge.workerRequests[0]?.scopedContext.relevantPaths).toEqual([
         workspace.root,
         worktreePath,
@@ -353,8 +493,190 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
     }
   });
 
-  it("propagates verification kinds, manual checks, and disk-backed artifacts through reconciliation", async () => {
+  it("prefers reconstructed structured prior episodes for input episode IDs over decoy raw transcript entries", async () => {
     await withTempWorkspace(async (workspace) => {
+      const sessionFile = workspace.path(".pi/sessions/thread-structured-state.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "thread-structured-state",
+        cwd: workspace.root,
+      });
+      const priorEpisodeOne = createEpisode({
+        id: "episode-structured-1",
+        threadId: "thread-structured-state",
+        source: "orchestrator",
+        objective: "First structured episode",
+        status: "completed",
+        conclusions: ["Structured prior one"],
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+        startedAt: "2026-04-08T09:00:00.000Z",
+        completedAt: "2026-04-08T09:00:01.000Z",
+      });
+      const priorEpisodeTwo = createEpisode({
+        id: "episode-structured-2",
+        threadId: "thread-structured-state",
+        source: "orchestrator",
+        objective: "Second structured episode",
+        status: "completed",
+        conclusions: ["Structured prior two"],
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+        startedAt: "2026-04-08T09:00:02.000Z",
+        completedAt: "2026-04-08T09:00:03.000Z",
+        inputEpisodeIds: ["episode-structured-1"],
+      });
+      harness.append({ kind: "episode", data: priorEpisodeOne });
+      harness.append({ kind: "episode", data: priorEpisodeTwo });
+
+      const decoyEntries: SessionJsonlEntry[] = [
+        {
+          type: "message",
+          id: "entry-decoy-user",
+          parentId: null,
+          timestamp: "2026-04-08T09:00:04.000Z",
+          message: {
+            role: "user",
+            content: "Decoy transcript references episode-decoy.",
+            timestamp: Date.parse("2026-04-08T09:00:04.000Z"),
+          },
+        },
+        {
+          type: "message",
+          id: "entry-decoy-assistant",
+          parentId: "entry-decoy-user",
+          timestamp: "2026-04-08T09:00:05.000Z",
+          message: {
+            role: "assistant",
+            content: '{"inputEpisodeIds":["episode-decoy"]}',
+            timestamp: Date.parse("2026-04-08T09:00:05.000Z"),
+          },
+        },
+      ];
+      appendFileSync(
+        sessionFile,
+        `${decoyEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+        "utf8",
+      );
+
+      const piBridge = new FakePiRuntimeBridge();
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: createEpisodeFixture({
+          id: "episode-pi-structured-state",
+          threadId: "thread-structured-state",
+          source: "pi-worker",
+          inputEpisodeIds: ["episode-structured-1", "episode-structured-2"],
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        piBridge,
+        contextLoader: createFilesystemContextLoader({
+          sessionFile,
+        }),
+      });
+
+      const result = await orchestrator.run({
+        threadId: "thread-structured-state",
+        prompt: "Execute bounded worker with reconstructed state.",
+        cwd: workspace.root,
+        routeHint: "pi-worker",
+      });
+
+      harness.appendEntries(result.sessionEntries);
+      const snapshot = createThreadSnapshot(
+        harness.reconstruct(),
+        "thread-structured-state",
+      );
+
+      expect(result.context.sessionHistory).toHaveLength(5);
+      expect(result.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        "episode-structured-1",
+        "episode-structured-2",
+      ]);
+      expect(
+        piBridge.workerRequests[0]?.scopedContext.sessionHistory.some((entry) =>
+          entry.includes("\"entry-decoy-user\""),
+        ),
+      ).toBe(true);
+      expect(piBridge.workerRequests[0]?.inputEpisodeIds).toEqual([
+        "episode-structured-1",
+        "episode-structured-2",
+      ]);
+      expect(piBridge.workerRequests[0]?.inputEpisodeIds).not.toContain(
+        "episode-decoy",
+      );
+      expect(piBridge.workerRequests[0]?.scopedContext.priorEpisodeIds).toEqual([
+        "episode-structured-1",
+        "episode-structured-2",
+      ]);
+      expect(snapshot.episodes.at(-1)?.id).toBe("episode-pi-structured-state");
+      expect(snapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
+        "episode-structured-1",
+        "episode-structured-2",
+      ]);
+    });
+  });
+
+  it("persists thread worktree binding through direct-path reconciliation in a file-backed worktree session", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const worktreePath = await workspace.createLinkedWorktree("feature-direct");
+      const sessionFile = workspace.path(".pi/sessions/thread-direct.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "thread-direct",
+        cwd: workspace.root,
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        contextLoader: createFilesystemContextLoader({
+          sessionFile,
+        }),
+      });
+
+      const result = await orchestrator.run({
+        threadId: "thread-direct",
+        prompt: "Summarize the requested change.",
+        cwd: workspace.root,
+        worktreePath,
+        routeHint: "direct",
+      });
+
+      harness.appendEntries(result.sessionEntries);
+      const reconstructed = harness.reconstruct();
+      const snapshot = createThreadSnapshot(reconstructed, "thread-direct");
+
+      expect(result.threadSnapshot.thread.worktreePath).toBe(worktreePath);
+      expect(result.threadSnapshot.episodes.at(-1)?.worktreePath).toBe(worktreePath);
+      expect(result.threadSnapshot.alignment.activeWorktreePath).toBe(worktreePath);
+      expect(snapshot.thread.worktreePath).toBe(worktreePath);
+      expect(snapshot.episodes.at(-1)?.worktreePath).toBe(worktreePath);
+      expect(snapshot.alignment.activeWorktreePath).toBe(worktreePath);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("propagates verification kinds, manual checks, and disk-backed artifacts through reconciliation", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const worktreePath = await workspace.createLinkedWorktree("feature-verify");
       const sessionFile = workspace.path(".pi/sessions/thread-verify.jsonl");
       const harness = new FileBackedSessionJsonlHarness({
         filePath: sessionFile,
@@ -407,6 +729,7 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
         threadId: "thread-verify",
         prompt: "Verify the repository state.",
         cwd: workspace.root,
+        worktreePath,
         routeHint: "verification",
         workflowSeedInput: {
           verificationKinds: ["build", "manual", "integration"],
@@ -416,6 +739,7 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
 
       harness.appendEntries(result.sessionEntries);
       const reconstructed = harness.reconstruct();
+      const snapshot = createThreadSnapshot(reconstructed, "thread-verify");
 
       expect(verificationRunner.calls[0]?.kinds).toEqual([
         "build",
@@ -425,11 +749,18 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
       expect(verificationRunner.calls[0]?.manualChecks).toEqual([
         "Open the app and verify the change.",
       ]);
+      expect(result.context.relevantSkills).toEqual([]);
       expect(result.threadSnapshot.episodes.at(-1)?.artifacts[0]?.path).toBe(reportPath);
+      expect(result.threadSnapshot.thread.worktreePath).toBe(worktreePath);
+      expect(result.threadSnapshot.alignment.activeWorktreePath).toBe(worktreePath);
       expect(reconstructed.verification.overallStatus).toBe("unknown");
       expect(reconstructed.verification.byKind.build?.status).toBe("passed");
       expect(reconstructed.verification.byKind.manual?.status).toBe("skipped");
       expect(result.threadSnapshot.thread.status).toBe("completed");
-    });
+      expect(snapshot.thread.worktreePath).toBe(worktreePath);
+      expect(snapshot.alignment.activeWorktreePath).toBe(worktreePath);
+    } finally {
+      await workspace.cleanup();
+    }
   });
 });
