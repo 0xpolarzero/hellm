@@ -5,10 +5,6 @@ test.todo(
   () => {},
 );
 test.todo(
-  "adaptive task decomposition fans out bounded workers without turning them into persistent role agents",
-  () => {},
-);
-test.todo(
   "safe parallel independent work only proceeds when write scopes and worktrees are provably non-conflicting",
   () => {},
 );
