@@ -15,9 +15,11 @@ import {
 import {
   FakeSmithersWorkflowBridge,
   FakeVerificationRunner,
+  createTempGitWorkspace,
   createEpisodeFixture,
   createVerificationFixture,
   fixedClock,
+  hasGit,
 } from "@hellm/test-support";
 
 describe("@hellm/cli headless execution", () => {
@@ -66,6 +68,70 @@ describe("@hellm/cli headless execution", () => {
       "run.episode",
       "run.completed",
     ]);
+  });
+
+  it("creates isolated one-shot runs when no orchestrator is injected", async () => {
+    const first = await executeHeadlessRun({
+      threadId: "thread-default-one-shot",
+      prompt: "first one-shot prompt",
+      cwd: "/repo",
+      routeHint: "direct",
+    });
+    const second = await executeHeadlessRun({
+      threadId: "thread-default-one-shot",
+      prompt: "second one-shot prompt",
+      cwd: "/repo",
+      routeHint: "direct",
+    });
+
+    expect(first.orchestratorId).toBe("main");
+    expect(second.orchestratorId).toBe("main");
+    expect(first.threadSnapshot.episodes).toHaveLength(1);
+    expect(second.threadSnapshot.episodes).toHaveLength(1);
+    expect(first.output.summary).toBe("first one-shot prompt");
+    expect(second.output.summary).toBe("second one-shot prompt");
+    expect(first.events.map((event) => event.type)).toEqual([
+      "run.started",
+      "run.classified",
+      "run.episode",
+      "run.completed",
+    ]);
+    expect(second.events.map((event) => event.type)).toEqual([
+      "run.started",
+      "run.classified",
+      "run.episode",
+      "run.completed",
+    ]);
+  });
+
+  it("supports one-shot execution against a real linked git worktree", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace("hellm-headless-one-shot-");
+    try {
+      const worktreePath = await workspace.createLinkedWorktree(
+        "feature-headless-one-shot",
+      );
+      const result = await executeHeadlessRun({
+        threadId: "thread-real-worktree",
+        prompt: "Summarize this worktree.",
+        cwd: worktreePath,
+        worktreePath,
+        routeHint: "direct",
+      });
+
+      expect(result.output.status).toBe("completed");
+      expect(result.threadSnapshot.episodes).toHaveLength(1);
+      expect(result.events.at(-1)?.type).toBe("run.completed");
+      expect(result.events[0]).toMatchObject({
+        type: "run.started",
+        threadId: "thread-real-worktree",
+      });
+    } finally {
+      await workspace.cleanup();
+    }
   });
 
   it("treats structured workflow seed input as the authoritative hint for headless routing semantics", async () => {
