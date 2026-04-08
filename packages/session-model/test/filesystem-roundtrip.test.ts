@@ -7,6 +7,8 @@ import {
   createThread,
   createThreadSnapshot,
   createVerificationRecord,
+  parseStructuredSessionEntry,
+  transitionThreadStatus,
 } from "@hellm/session-model";
 import {
   FileBackedSessionJsonlHarness,
@@ -524,6 +526,108 @@ describe("@hellm/session-model filesystem roundtrip", () => {
       expect(snapshot.thread.id).toBe(thread.id);
       expect(snapshot.episodes).toEqual([episode]);
       expect(snapshot.artifacts).toEqual([]);
+    });
+  });
+
+  it("persists a full thread lifecycle timeline in JSONL and reconstructs the latest status", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const sessionFile = workspace.path(".pi/sessions/thread-lifecycle.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "session-thread-lifecycle",
+        cwd: workspace.root,
+      });
+
+      let thread = createThread({
+        id: "thread-lifecycle-fs",
+        kind: "direct",
+        objective: "Execute lifecycle transitions",
+        parentThreadId: "thread-parent",
+        inputEpisodeIds: ["episode-1", "episode-2"],
+        worktreePath: workspace.path("worktrees/lifecycle"),
+        createdAt: "2026-04-08T11:00:00.000Z",
+        updatedAt: "2026-04-08T11:00:00.000Z",
+      });
+
+      harness.append(
+        { kind: "thread", data: thread },
+        "2026-04-08T11:00:00.000Z",
+      );
+      thread = transitionThreadStatus(
+        thread,
+        "running",
+        "2026-04-08T11:00:01.000Z",
+      );
+      harness.append(
+        { kind: "thread", data: thread },
+        "2026-04-08T11:00:01.000Z",
+      );
+      thread = transitionThreadStatus(
+        thread,
+        "waiting_input",
+        "2026-04-08T11:00:02.000Z",
+      );
+      harness.append(
+        { kind: "thread", data: thread },
+        "2026-04-08T11:00:02.000Z",
+      );
+      thread = transitionThreadStatus(
+        thread,
+        "running",
+        "2026-04-08T11:00:03.000Z",
+      );
+      harness.append(
+        { kind: "thread", data: thread },
+        "2026-04-08T11:00:03.000Z",
+      );
+      thread = transitionThreadStatus(
+        thread,
+        "completed",
+        "2026-04-08T11:00:04.000Z",
+      );
+      harness.append(
+        { kind: "thread", data: thread },
+        "2026-04-08T11:00:04.000Z",
+      );
+
+      expect(() =>
+        transitionThreadStatus(
+          thread,
+          "running",
+          "2026-04-08T11:00:05.000Z",
+        ),
+      ).toThrow(
+        "Cannot transition thread thread-lifecycle-fs from completed to running.",
+      );
+
+      const lifecycleStatuses = harness
+        .lines()
+        .flatMap((entry) => {
+          const payload = parseStructuredSessionEntry(entry);
+          return payload?.kind === "thread" ? [payload.data.status] : [];
+        });
+
+      const state = harness.reconstruct();
+      const snapshot = createThreadSnapshot(state, thread.id);
+
+      expect(lifecycleStatuses).toEqual([
+        "pending",
+        "running",
+        "waiting_input",
+        "running",
+        "completed",
+      ]);
+      expect(state.threads).toHaveLength(1);
+      expect(snapshot.thread.status).toBe("completed");
+      expect(snapshot.thread.updatedAt).toBe("2026-04-08T11:00:04.000Z");
+      expect(snapshot.thread.createdAt).toBe("2026-04-08T11:00:00.000Z");
+      expect(snapshot.thread.parentThreadId).toBe("thread-parent");
+      expect(snapshot.thread.inputEpisodeIds).toEqual(["episode-1", "episode-2"]);
+      expect(snapshot.thread.worktreePath).toBe(
+        workspace.path("worktrees/lifecycle"),
+      );
+      expect(snapshot.episodes).toEqual([]);
+      expect(harness.jsonl()).toContain("\"status\":\"waiting_input\"");
     });
   });
 
