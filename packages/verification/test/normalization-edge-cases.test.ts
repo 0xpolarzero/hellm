@@ -103,6 +103,50 @@ describe("@hellm/verification normalization edge cases", () => {
     ]);
   });
 
+  it("records unresolved issues from only failed verification records when normalizing failures", () => {
+    const episode = normalizeVerificationRunToEpisode({
+      threadId: "thread-mixed-failure",
+      objective: "Normalize mixed verification outcomes",
+      result: {
+        status: "failed",
+        records: [
+          createVerificationFixture({
+            id: "verification-build-passed",
+            kind: "build",
+            status: "passed",
+            summary: "Build passed",
+          }),
+          createVerificationFixture({
+            id: "verification-test-failed",
+            kind: "test",
+            status: "failed",
+            summary: "Unit tests failed",
+          }),
+          createVerificationFixture({
+            id: "verification-lint-failed",
+            kind: "lint",
+            status: "failed",
+            summary: "Lint failed",
+          }),
+        ],
+        artifacts: [],
+      },
+      startedAt: "2026-04-08T09:00:00.000Z",
+      completedAt: "2026-04-08T09:05:00.000Z",
+    });
+
+    expect(episode.status).toBe("completed_with_issues");
+    expect(episode.unresolvedIssues).toEqual(["Unit tests failed", "Lint failed"]);
+    expect(episode.followUpSuggestions).toEqual([
+      "Resolve the failing verification steps before closing the thread.",
+    ]);
+    expect(episode.provenance).toEqual({
+      executionPath: "verification",
+      actor: "verification",
+      notes: "Normalized verification execution path.",
+    });
+  });
+
   it("normalizes deterministic metadata and preserves real filesystem artifact paths", async () => {
     await withTempWorkspace(async (workspace) => {
       const reportPath = await workspace.write(
