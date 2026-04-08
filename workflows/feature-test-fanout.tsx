@@ -481,7 +481,7 @@ async function verifyFeature(
   for (const command of feature.verificationCommands) {
     const result = runShellCommand(worktreePath, command);
     executedCommands.push(command);
-    if (result.code !== 0) {
+    if (result.status !== 0) {
       failedCommands.push(command);
       summaries.push(
         `${command}: failed (${truncateOutput(commandFailureOutput(result))})`,
@@ -565,7 +565,7 @@ async function commitFeature(input: {
       worktreePath,
       status: "committed",
       summary: "Worker already committed the feature branch.",
-      ...(head.code === 0
+      ...(head.status === 0
         ? { commitSha: input.feature.commitSha ?? stdoutText(head).trim() }
         : input.feature.commitSha
           ? { commitSha: input.feature.commitSha }
@@ -584,7 +584,7 @@ async function commitFeature(input: {
   }
 
   const addAll = runGit(worktreePath, ["add", "-A"]);
-  if (addAll.code !== 0) {
+  if (addAll.status !== 0) {
     return {
       featureId: input.feature.featureId,
       branch: input.task.branch,
@@ -599,7 +599,7 @@ async function commitFeature(input: {
     "-m",
     `test(feature-fanout): cover ${input.task.slug}`,
   ]);
-  if (commit.code !== 0) {
+  if (commit.status !== 0) {
     return {
       featureId: input.feature.featureId,
       branch: input.task.branch,
@@ -616,7 +616,7 @@ async function commitFeature(input: {
     worktreePath,
     status: "committed",
     summary: "Committed verified feature changes on the feature branch.",
-    ...(head.code === 0 ? { commitSha: stdoutText(head).trim() } : {}),
+    ...(head.status === 0 ? { commitSha: stdoutText(head).trim() } : {}),
   };
 }
 
@@ -641,7 +641,7 @@ async function mergeFeature(input: {
   }
 
   const cleanliness = runGit(repoRoot, ["status", "--porcelain"]);
-  if (cleanliness.code !== 0) {
+  if (cleanliness.status !== 0) {
     return {
       featureId: input.commit.featureId,
       branch: input.task.branch,
@@ -661,7 +661,7 @@ async function mergeFeature(input: {
   }
 
   const merge = runGit(repoRoot, ["merge", "--no-ff", "--no-edit", input.task.branch]);
-  if (merge.code !== 0) {
+  if (merge.status !== 0) {
     runGit(repoRoot, ["merge", "--abort"]);
     return {
       featureId: input.commit.featureId,
@@ -679,7 +679,7 @@ async function mergeFeature(input: {
     worktreePath: input.task.worktreePath,
     status: "merged",
     summary: `Merged ${input.task.branch} into the main checkout.`,
-    ...(head.code === 0 ? { mergeCommitSha: stdoutText(head).trim() } : {}),
+    ...(head.status === 0 ? { mergeCommitSha: stdoutText(head).trim() } : {}),
   };
 }
 
@@ -735,7 +735,7 @@ async function cleanupFeature(input: {
   }
 
   const remove = runGit(repoRoot, ["worktree", "remove", worktreePath]);
-  if (remove.code !== 0) {
+  if (remove.status !== 0) {
     return {
       featureId: input.merge.featureId,
       branch: input.task.branch,
@@ -750,7 +750,7 @@ async function cleanupFeature(input: {
   let deletedBranch = false;
   if (input.deleteMergedBranches) {
     const deleteBranch = runGit(repoRoot, ["branch", "-d", input.task.branch]);
-    deletedBranch = deleteBranch.code === 0;
+    deletedBranch = deleteBranch.status === 0;
   }
 
   return {
@@ -818,7 +818,7 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
 
 function inspectWorktree(worktreePath: string) {
   const status = runGit(worktreePath, ["status", "--porcelain"]);
-  if (status.code !== 0) {
+  if (status.status !== 0) {
     return {
       ok: false as const,
       error: `Unable to inspect feature worktree state: ${truncateOutput(commandFailureOutput(status))}`,
