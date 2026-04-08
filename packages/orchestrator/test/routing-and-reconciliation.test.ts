@@ -694,6 +694,56 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     ).toBe(true);
   });
 
+  it("preserves existing workflow run references on non-smithers paths without writing new workflow-run entries", async () => {
+    const existingWorkflowRuns = [
+      {
+        runId: "run-direct-existing",
+        threadId: "thread-direct-existing",
+        workflowId: "workflow:thread-direct-existing",
+        status: "completed" as const,
+        updatedAt: "2026-04-08T08:59:00.000Z",
+      },
+      {
+        runId: "run-other-thread",
+        threadId: "thread-other",
+        workflowId: "workflow:thread-other",
+        status: "waiting_resume" as const,
+        updatedAt: "2026-04-08T08:58:00.000Z",
+      },
+    ];
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      contextLoader: {
+        async load(request) {
+          return {
+            ...baseLoadedContext(request),
+            state: {
+              ...baseLoadedContext(request).state,
+              workflowRuns: existingWorkflowRuns,
+            },
+          };
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-direct-existing",
+      prompt: "Run a direct request that should not mutate workflow references.",
+      cwd: "/repo",
+      routeHint: "direct",
+    });
+
+    expect(result.classification.path).toBe("direct");
+    expect(result.sessionState.workflowRuns).toEqual(existingWorkflowRuns);
+    expect(result.threadSnapshot.workflowRuns).toEqual([existingWorkflowRuns[0]]);
+    expect(result.sessionEntries.map((entry) => entry.message.customType)).toEqual([
+      "hellm/thread",
+      "hellm/episode",
+      "hellm/verification",
+      "hellm/alignment",
+    ]);
+  });
+
   it("re-enters after a waiting smithers episode and resumes from the persisted thread context", async () => {
     const threadId = "thread-smithers-reenter";
     const smithersBridge = new FakeSmithersWorkflowBridge();

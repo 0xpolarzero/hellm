@@ -385,6 +385,156 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
     }
   });
 
+  it("upserts persisted workflow run references by run id across a file-backed smithers resume", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const threadId = "thread-smithers-resume";
+      const worktreePath = await workspace.createLinkedWorktree("feature-smithers-resume");
+      const sessionFile = workspace.path(".pi/sessions/thread-smithers-resume.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      harness.append({
+        kind: "workflow-run",
+        data: {
+          runId: "run-legacy",
+          threadId,
+          workflowId: "workflow:legacy",
+          status: "completed",
+          updatedAt: "2026-04-08T08:58:00.000Z",
+        },
+      });
+      harness.append({
+        kind: "workflow-run",
+        data: {
+          runId: "run-resume",
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "waiting_approval",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+          worktreePath: "/repo/.worktrees/stale",
+        },
+      });
+      harness.append({
+        kind: "smithers-isolation",
+        data: {
+          runId: "run-resume",
+          runStateStore: workspace.path(".smithers/run-resume-old.sqlite"),
+          sessionEntryIds: ["entry-old"],
+        },
+      });
+
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueResumeResult({
+        run: {
+          runId: "run-resume",
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+          worktreePath,
+        },
+        status: "completed",
+        outputs: [],
+        episode: createEpisodeFixture({
+          id: "episode-smithers-resume",
+          threadId,
+          source: "smithers",
+          status: "completed",
+          smithersRunId: "run-resume",
+          worktreePath,
+        }),
+        isolation: {
+          runId: "run-resume",
+          runStateStore: workspace.path(".smithers/run-resume-new.sqlite"),
+          sessionEntryIds: ["entry-new"],
+        },
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        smithersBridge,
+        contextLoader: createFilesystemContextLoader({
+          sessionFile,
+        }),
+      });
+
+      const resumed = await orchestrator.run({
+        threadId,
+        prompt: "Resume workflow reference state from disk.",
+        cwd: workspace.root,
+        worktreePath,
+        routeHint: "smithers-workflow",
+        resumeRunId: "run-resume",
+      });
+
+      harness.appendEntries(resumed.sessionEntries);
+      const reconstructed = harness.reconstruct();
+      const snapshot = createThreadSnapshot(reconstructed, threadId);
+      const workflowRunEntries = readSessionFile(sessionFile)
+        .filter(isStructuredSessionEntry)
+        .map((entry) => entry.message.details)
+        .filter((details) => details.kind === "workflow-run");
+
+      expect(resumed.sessionState.workflowRuns).toEqual([
+        {
+          runId: "run-legacy",
+          threadId,
+          workflowId: "workflow:legacy",
+          status: "completed",
+          updatedAt: "2026-04-08T08:58:00.000Z",
+        },
+        {
+          runId: "run-resume",
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+          worktreePath,
+        },
+      ]);
+      expect(
+        resumed.sessionEntries.map((entry) => entry.message.customType),
+      ).toContain("hellm/workflow-run");
+      expect(snapshot.workflowRuns.map((run) => run.runId)).toEqual([
+        "run-legacy",
+        "run-resume",
+      ]);
+      expect(reconstructed.workflowRuns).toHaveLength(2);
+      expect(reconstructed.workflowRuns.find((run) => run.runId === "run-resume")).toEqual(
+        {
+          runId: "run-resume",
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+          worktreePath,
+        },
+      );
+      expect(
+        reconstructed.smithersIsolations.find((isolation) => isolation.runId === "run-resume"),
+      ).toEqual({
+        runId: "run-resume",
+        runStateStore: workspace.path(".smithers/run-resume-new.sqlite"),
+        sessionEntryIds: ["entry-new"],
+      });
+      expect(
+        workflowRunEntries
+          .map((details) => details.data)
+          .filter((run) => run.runId === "run-resume")
+          .map((run) => run.status),
+      ).toEqual(["waiting_approval", "completed"]);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   it("forwards scoped pi worker context and runtime transitions from a file-backed worktree session", async () => {
     if (!hasGit()) {
       return;
