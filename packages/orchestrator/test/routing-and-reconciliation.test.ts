@@ -1266,4 +1266,105 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     ]);
     expect(second.sessionEntries[0]?.parentId).toBe(first.sessionEntries.at(-1)?.id);
   });
+
+  it("preserves the reconstructed top-level session id while adding a new thread run", async () => {
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      contextLoader: {
+        async load(request) {
+          return {
+            ...baseLoadedContext(request),
+            state: createEmptySessionState({
+              sessionId: "session-root",
+              sessionCwd: request.cwd,
+            }),
+          };
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-session-child",
+      prompt: "Summarize using the main orchestrator.",
+      cwd: "/repo",
+      routeHint: "direct",
+    });
+
+    expect(result.sessionState.sessionId).toBe("session-root");
+    expect(result.threadSnapshot.thread.id).toBe("thread-session-child");
+    expect(result.sessionState.threads).toHaveLength(1);
+    expect(result.sessionState.threads[0]?.id).toBe("thread-session-child");
+  });
+
+  it("chains new structured entries from the latest structured parent instead of transcript-only messages", async () => {
+    const priorStructured = createStructuredSessionEntry({
+      id: "entry-structured-last",
+      parentId: null,
+      timestamp: "2026-04-08T09:00:00.000Z",
+      payload: {
+        kind: "thread",
+        data: createThreadFixture({
+          id: "thread-structured-parent",
+          kind: "direct",
+          objective: "Prior structured thread",
+        }),
+      },
+    });
+    const transcriptOnlyEntries: SessionJsonlEntry[] = [
+      {
+        type: "message",
+        id: "entry-transcript-user",
+        parentId: "entry-structured-last",
+        timestamp: "2026-04-08T09:00:01.000Z",
+        message: {
+          role: "user",
+          content: "Raw transcript payload",
+          timestamp: Date.parse("2026-04-08T09:00:01.000Z"),
+        },
+      },
+      {
+        type: "message",
+        id: "entry-transcript-assistant",
+        parentId: "entry-transcript-user",
+        timestamp: "2026-04-08T09:00:02.000Z",
+        message: {
+          role: "assistant",
+          content: "Assistant transcript response",
+          timestamp: Date.parse("2026-04-08T09:00:02.000Z"),
+        },
+      },
+    ];
+    const sessionHistory: SessionJsonlEntry[] = [
+      priorStructured,
+      ...transcriptOnlyEntries,
+    ];
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      contextLoader: {
+        async load(request) {
+          return {
+            ...baseLoadedContext(request),
+            sessionHistory,
+          };
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-structured-parent",
+      prompt: "Continue from structured state.",
+      cwd: "/repo",
+      routeHint: "direct",
+    });
+
+    expect(result.sessionEntries[0]?.parentId).toBe("entry-structured-last");
+    expect(result.sessionEntries[0]?.parentId).not.toBe(
+      "entry-transcript-assistant",
+    );
+    expect(
+      result.sessionEntries
+        .slice(1)
+        .every((entry, index) => entry.parentId === result.sessionEntries[index]?.id),
+    ).toBe(true);
+  });
 });

@@ -6,6 +6,7 @@ import {
   createStructuredSessionEntry,
   createThread,
   createThreadSnapshot,
+  parseStructuredEntry,
   type ArtifactRecord,
   type Episode,
   type GlobalVerificationState,
@@ -666,15 +667,8 @@ function buildStructuredEntries(input: {
 }): StructuredSessionEntry[] {
   const lastStructuredEntry = input.existingEntries
     .toReversed()
-    .find(
-      (entry): entry is StructuredSessionEntry =>
-        typeof entry === "object" &&
-        entry !== null &&
-        "type" in entry &&
-        entry.type === "message" &&
-        "id" in entry &&
-        typeof entry.id === "string",
-    );
+    .map((entry) => parseStructuredEntry(entry))
+    .find((entry): entry is StructuredSessionEntry => entry !== null);
 
   let parentId = lastStructuredEntry?.id ?? null;
   const entries: StructuredSessionEntry[] = [];
