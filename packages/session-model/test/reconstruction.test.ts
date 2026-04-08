@@ -1,4 +1,4 @@
-import { describe, expect, it, test } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import {
   createSessionWorktreeAlignment,
   createStructuredSessionEntry,
@@ -434,11 +434,6 @@ describe("@hellm/session-model reconstruction", () => {
     expect(snapshot.thread).toEqual(updated);
     expect(snapshot.episodes).toEqual([]);
   });
-
-  test.todo(
-    "secondary storage backends can reconstruct the same state contract without changing the pi-session schema",
-    () => {},
-  );
 
   it("reconstructs standalone artifact entries before any episode reference exists", () => {
     const harness = new InMemorySessionJsonlHarness({
