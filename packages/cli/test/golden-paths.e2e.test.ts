@@ -149,11 +149,43 @@ describe("golden path headless specs", () => {
       orchestrator,
     );
 
+    const episode = result.threadSnapshot.episodes.at(-1);
     expect(result.output.status).toBe("completed");
+    expect(result.output.latestEpisodeId).toBe(
+      "golden-direct:direct:2026-04-08T09:00:00.000Z",
+    );
+    expect(result.output.summary).toBe("Explain the direct path.");
     expect(result.raw.state.visibleSummary).toBe("direct:completed:completed");
     expect(result.raw.state.waiting).toBe(false);
     expect(result.raw.state.blocked).toBe(false);
     expect(result.raw.classification.path).toBe("direct");
+    expect(episode).toEqual({
+      id: "golden-direct:direct:2026-04-08T09:00:00.000Z",
+      threadId: "golden-direct",
+      source: "orchestrator",
+      objective: "Explain the direct path.",
+      status: "completed",
+      conclusions: ["Explain the direct path."],
+      changedFiles: [],
+      artifacts: [],
+      verification: [],
+      unresolvedIssues: [],
+      followUpSuggestions: [],
+      provenance: {
+        executionPath: "direct",
+        actor: "orchestrator",
+        notes: "Direct path normalized into an episode.",
+      },
+      startedAt: "2026-04-08T09:00:00.000Z",
+      completedAt: "2026-04-08T09:00:00.000Z",
+      inputEpisodeIds: [],
+    });
+    expect(result.events.find((event) => event.type === "run.episode")).toEqual({
+      type: "run.episode",
+      episodeId: "golden-direct:direct:2026-04-08T09:00:00.000Z",
+      status: "completed",
+      source: "orchestrator",
+    });
     expect(jsonl.at(-1)).toContain("\"run.completed\"");
   });
 
@@ -182,6 +214,85 @@ describe("golden path headless specs", () => {
     expect(result.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
       "golden-direct-prior",
     ]);
+  });
+
+  it("re-enters direct execution from a file-backed JSONL session and keeps normalized episodes reusable", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-direct-reenter";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-direct-reenter.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        contextLoader: {
+          async load(request) {
+            const state = harness.reconstruct();
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run first direct normalization pass.",
+          cwd: workspace.root,
+          routeHint: "direct",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run second direct normalization pass.",
+          cwd: workspace.root,
+          routeHint: "direct",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+      const reconstructed = harness.reconstruct();
+
+      const firstEpisodeId = first.result.threadSnapshot.episodes.at(-1)?.id;
+      expect(firstEpisodeId).toBe(
+        "golden-direct-reenter:direct:2026-04-08T09:00:00.000Z",
+      );
+      if (!firstEpisodeId) {
+        throw new Error("Expected first direct episode id to be present.");
+      }
+      expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual(
+        [firstEpisodeId],
+      );
+      expect(second.result.threadSnapshot.episodes.at(-1)).toMatchObject({
+        id: "golden-direct-reenter:direct:2026-04-08T09:00:01.000Z",
+        source: "orchestrator",
+        status: "completed",
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+        inputEpisodeIds: [firstEpisodeId],
+      });
+      expect(reconstructed.episodes.map((episode) => episode.id)).toEqual([
+        firstEpisodeId,
+        "golden-direct-reenter:direct:2026-04-08T09:00:01.000Z",
+      ]);
+      expect(reconstructed.episodes.every((episode) => episode.source === "orchestrator")).toBe(
+        true,
+      );
+    });
   });
 
   it("covers a pi worker path request", async () => {
