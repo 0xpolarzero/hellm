@@ -1126,6 +1126,78 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     expect(approval.completion.isComplete).toBe(false);
   });
 
+  it("dispatches explicit route hints at runtime even when workflow seed, approval, and verify signals conflict", async () => {
+    const piBridge = new FakePiRuntimeBridge();
+    const smithersBridge = new FakeSmithersWorkflowBridge();
+    const verificationRunner = new FakeVerificationRunner();
+    piBridge.enqueueResult({
+      status: "completed",
+      episode: createEpisodeFixture({
+        id: "episode-explicit-hint",
+        threadId: "thread-explicit-hint",
+        source: "pi-worker",
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      piBridge,
+      smithersBridge,
+      verificationRunner,
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext(request);
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-explicit-hint",
+      prompt: "Please verify this and wait for approval.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+      requireApproval: true,
+      workflowSeedInput: {
+        preferredPath: "smithers-workflow",
+      },
+    });
+
+    expect(result.classification).toEqual({
+      path: "pi-worker",
+      confidence: "hint",
+      reason: "Explicit route hint supplied by caller.",
+    });
+    expect(piBridge.workerRequests).toHaveLength(1);
+    expect(smithersBridge.runRequests).toHaveLength(0);
+    expect(verificationRunner.calls).toHaveLength(0);
+    expect(result.threadSnapshot.thread.kind).toBe("pi-worker");
+  });
+
+  it("treats routeHint auto as unset and still prioritizes approval over verification heuristics", async () => {
+    const verificationRunner = new FakeVerificationRunner();
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      verificationRunner,
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext(request);
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-auto-approve-over-verify",
+      prompt: "Please verify this change before approval.",
+      cwd: "/repo",
+      routeHint: "auto",
+      requireApproval: true,
+    });
+
+    expect(result.classification.path).toBe("approval");
+    expect(result.threadSnapshot.thread.status).toBe("waiting_approval");
+    expect(verificationRunner.calls).toEqual([]);
+  });
+
   it("auto-routes verify prompts into the verification path and runs verification", async () => {
     const verificationRunner = new FakeVerificationRunner();
     verificationRunner.enqueueResult({
