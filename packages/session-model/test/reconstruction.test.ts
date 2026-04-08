@@ -194,6 +194,75 @@ describe("@hellm/session-model reconstruction", () => {
     expect(state.verification.byKind.build?.status).toBe("failed");
   });
 
+  it("treats an explicit unknown/empty global verification snapshot as absent and derives from records", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-verification-fallback",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const buildFailed = createVerificationFixture({
+      id: "verification-build-failed",
+      kind: "build",
+      status: "failed",
+    });
+    const manualPassed = createVerificationFixture({
+      id: "verification-manual-passed",
+      kind: "manual",
+      status: "passed",
+    });
+
+    harness.append({ kind: "verification", data: buildFailed });
+    harness.append({
+      kind: "verification",
+      data: {
+        overallStatus: "unknown",
+        byKind: {},
+      },
+    });
+    harness.append({ kind: "verification", data: manualPassed });
+
+    const state = harness.reconstruct();
+
+    expect(state.verification.byKind.build?.id).toBe("verification-build-failed");
+    expect(state.verification.byKind.manual?.id).toBe(
+      "verification-manual-passed",
+    );
+    expect(state.verification.overallStatus).toBe("failed");
+  });
+
+  it("keeps an explicit non-empty global verification snapshot authoritative even when later records conflict", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-verification-authoritative",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const buildPassed = createVerificationFixture({
+      id: "verification-build-passed",
+      kind: "build",
+      status: "passed",
+    });
+    const testFailed = createVerificationFixture({
+      id: "verification-test-failed",
+      kind: "test",
+      status: "failed",
+    });
+
+    harness.append({
+      kind: "verification",
+      data: {
+        overallStatus: "passed",
+        byKind: { build: buildPassed },
+      },
+    });
+    harness.append({ kind: "verification", data: testFailed });
+
+    const state = harness.reconstruct();
+
+    expect(state.verification.overallStatus).toBe("passed");
+    expect(state.verification.byKind.build?.id).toBe("verification-build-passed");
+    expect(state.verification.byKind.test).toBeUndefined();
+  });
+
   it("upserts workflow and smithers isolation entries by run id during reconstruction", () => {
     const harness = new InMemorySessionJsonlHarness({
       sessionId: "session-run-upsert",

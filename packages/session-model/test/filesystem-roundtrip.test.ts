@@ -334,6 +334,57 @@ describe("@hellm/session-model filesystem roundtrip", () => {
     });
   });
 
+  it("prefers explicit global verification snapshot from real JSONL over later conflicting records", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const sessionFile = workspace.path(".pi/sessions/verification-snapshot.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "session-verification-snapshot-fs",
+        cwd: workspace.root,
+      });
+      const thread = createThread({
+        id: "thread-verification-snapshot-fs",
+        kind: "verification",
+        objective: "Preserve explicit global verification snapshot",
+        status: "completed",
+        createdAt: "2026-04-08T11:00:00.000Z",
+        updatedAt: "2026-04-08T11:05:00.000Z",
+      });
+      const buildPassed = createVerificationRecord({
+        id: "verification-build-passed-fs",
+        kind: "build",
+        status: "passed",
+        summary: "Build passed",
+        createdAt: "2026-04-08T11:00:01.000Z",
+      });
+      const testFailed = createVerificationRecord({
+        id: "verification-test-failed-fs",
+        kind: "test",
+        status: "failed",
+        summary: "Tests failed",
+        createdAt: "2026-04-08T11:05:00.000Z",
+      });
+
+      harness.append({ kind: "thread", data: thread });
+      harness.append({
+        kind: "verification",
+        data: {
+          overallStatus: "passed",
+          byKind: { build: buildPassed },
+        },
+      });
+      harness.append({ kind: "verification", data: testFailed });
+
+      const reconstructed = harness.reconstruct();
+
+      expect(reconstructed.verification.overallStatus).toBe("passed");
+      expect(reconstructed.verification.byKind.build?.id).toBe(
+        "verification-build-passed-fs",
+      );
+      expect(reconstructed.verification.byKind.test).toBeUndefined();
+    });
+  });
+
   it("filters snapshots by thread and raises when the requested thread does not exist", async () => {
     const threadA = createThread({
       id: "thread-a",
