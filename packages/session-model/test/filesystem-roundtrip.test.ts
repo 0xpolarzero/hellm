@@ -324,6 +324,96 @@ describe("@hellm/session-model filesystem roundtrip", () => {
     ).toThrow(/Thread missing-thread was not found/);
   });
 
+  it("keeps historical artifacts in session state but prunes stale artifact references from a thread snapshot after an episode upsert", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const stalePath = await workspace.write("reports/stale.log", "stale\n");
+      const freshPath = await workspace.write("reports/fresh.log", "fresh\n");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/artifact-pruning.jsonl"),
+        sessionId: "session-artifact-pruning",
+        cwd: workspace.root,
+      });
+      const thread = createThread({
+        id: "thread-artifact-pruning",
+        kind: "direct",
+        objective: "Track latest artifact references",
+        status: "running",
+        createdAt: "2026-04-08T09:00:00.000Z",
+        updatedAt: "2026-04-08T09:01:00.000Z",
+      });
+      const staleArtifact = createArtifact({
+        id: "artifact-stale",
+        kind: "log",
+        description: "Stale artifact from the first episode write",
+        path: stalePath,
+        createdAt: "2026-04-08T09:00:00.000Z",
+      });
+      const freshArtifactInitial = createArtifact({
+        id: "artifact-fresh",
+        kind: "log",
+        description: "Initial fresh artifact metadata",
+        path: freshPath,
+        createdAt: "2026-04-08T09:00:00.000Z",
+      });
+      const freshArtifactUpdated = createArtifact({
+        id: "artifact-fresh",
+        kind: "log",
+        description: "Updated fresh artifact metadata",
+        path: freshPath,
+        createdAt: "2026-04-08T09:00:02.000Z",
+      });
+
+      harness.append({ kind: "thread", data: thread });
+      harness.append({
+        kind: "episode",
+        data: createEpisode({
+          id: "episode-artifact-pruning",
+          threadId: thread.id,
+          source: "orchestrator",
+          objective: thread.objective,
+          status: "running",
+          artifacts: [staleArtifact, freshArtifactInitial],
+          provenance: {
+            executionPath: "direct",
+            actor: "orchestrator",
+          },
+          startedAt: "2026-04-08T09:00:00.000Z",
+        }),
+      });
+      harness.append({
+        kind: "episode",
+        data: createEpisode({
+          id: "episode-artifact-pruning",
+          threadId: thread.id,
+          source: "orchestrator",
+          objective: thread.objective,
+          status: "completed",
+          artifacts: [freshArtifactUpdated],
+          provenance: {
+            executionPath: "direct",
+            actor: "orchestrator",
+          },
+          startedAt: "2026-04-08T09:00:00.000Z",
+          completedAt: "2026-04-08T09:00:03.000Z",
+        }),
+      });
+
+      const state = harness.reconstruct();
+      const snapshot = createThreadSnapshot(state, thread.id);
+
+      expect(state.artifacts.map((artifact) => artifact.id).sort()).toEqual([
+        "artifact-fresh",
+        "artifact-stale",
+      ]);
+      expect(snapshot.artifacts.map((artifact) => artifact.id)).toEqual([
+        "artifact-fresh",
+      ]);
+      expect(snapshot.artifacts[0]?.description).toBe(
+        "Updated fresh artifact metadata",
+      );
+    });
+  });
+
   it("deduplicates episode artifact references per thread and excludes artifacts from other threads", async () => {
     await withTempWorkspace(async (workspace) => {
       const sharedDiffPath = await workspace.write(

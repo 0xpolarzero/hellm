@@ -356,6 +356,49 @@ describe("@hellm/session-model reconstruction", () => {
     expect(snapshot.artifacts[0]?.description).toBe("Updated build log");
   });
 
+  it("applies cross-entry last-write-wins when a standalone artifact is superseded by an episode artifact with the same id", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-artifact-cross-entry-upsert",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const thread = createThreadFixture({
+      id: "thread-artifact-cross-entry-upsert",
+      objective: "Prefer the latest artifact entry across payload kinds",
+    });
+    const standaloneArtifact = createArtifactFixture({
+      id: "artifact-shared",
+      kind: "note",
+      description: "Standalone artifact version",
+      createdAt: "2026-04-08T09:00:01.000Z",
+    });
+    const artifactFromEpisode = createArtifactFixture({
+      id: standaloneArtifact.id,
+      kind: "note",
+      description: "Episode artifact version",
+      createdAt: "2026-04-08T09:00:02.000Z",
+    });
+
+    harness.append({ kind: "thread", data: thread });
+    harness.append({ kind: "artifact", data: standaloneArtifact });
+    harness.append({
+      kind: "episode",
+      data: createEpisodeFixture({
+        id: "episode-artifact-cross-entry-upsert",
+        threadId: thread.id,
+        artifacts: [artifactFromEpisode],
+      }),
+    });
+
+    const state = harness.reconstruct();
+    const snapshot = createThreadSnapshot(state, thread.id);
+
+    expect(state.artifacts).toHaveLength(1);
+    expect(state.artifacts[0]?.id).toBe(standaloneArtifact.id);
+    expect(state.artifacts[0]?.description).toBe("Episode artifact version");
+    expect(snapshot.artifacts).toEqual([artifactFromEpisode]);
+  });
+
   it("derives global verification from episode and standalone records when no global snapshot is stored", () => {
     const harness = new InMemorySessionJsonlHarness({
       sessionId: "session-2",
