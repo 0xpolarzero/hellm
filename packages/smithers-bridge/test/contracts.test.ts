@@ -159,10 +159,6 @@ describe("@hellm/smithers-bridge contract surface", () => {
     () => {},
   );
   it.todo(
-    "pi-agent tasks inside smithers carry explicit tool scoping for bounded execution",
-    () => {},
-  );
-  it.todo(
     "pi-agent tasks inside smithers carry explicit completion conditions for episode handoff",
     () => {},
   );
