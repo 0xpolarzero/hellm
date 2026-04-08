@@ -385,6 +385,172 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
     }
   });
 
+  it("resumes a smithers workflow from persisted file-backed session state and replaces run records by run id", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const worktreePath = await workspace.createLinkedWorktree(
+        "feature-smithers-resume",
+      );
+      const sessionFile = workspace.path(".pi/sessions/thread-smithers-resume.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "thread-smithers-resume",
+        cwd: workspace.root,
+      });
+
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueRunResult({
+        run: {
+          runId: "run-smithers-resume",
+          threadId: "thread-smithers-resume",
+          workflowId: "workflow:thread-smithers-resume",
+          status: "waiting_approval",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+          worktreePath,
+        },
+        status: "waiting_approval",
+        outputs: [],
+        approval: {
+          nodeId: "approve",
+          title: "Approve workflow",
+          summary: "Waiting for approval",
+          mode: "needsApproval",
+        },
+        episode: createEpisodeFixture({
+          id: "episode-smithers-resume-wait",
+          threadId: "thread-smithers-resume",
+          source: "smithers",
+          status: "waiting_approval",
+          smithersRunId: "run-smithers-resume",
+          worktreePath,
+        }),
+        isolation: {
+          runId: "run-smithers-resume",
+          runStateStore: workspace.path(".smithers/run-smithers-resume-old.sqlite"),
+          sessionEntryIds: ["entry-old"],
+        },
+      });
+      smithersBridge.enqueueResumeResult({
+        run: {
+          runId: "run-smithers-resume",
+          threadId: "thread-smithers-resume",
+          workflowId: "workflow:thread-smithers-resume",
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+          worktreePath,
+        },
+        status: "completed",
+        outputs: [
+          {
+            nodeId: "pi-task",
+            schema: "result",
+            value: { approved: true },
+          },
+        ],
+        episode: createEpisodeFixture({
+          id: "episode-smithers-resume-done",
+          threadId: "thread-smithers-resume",
+          source: "smithers",
+          status: "completed",
+          smithersRunId: "run-smithers-resume",
+          worktreePath,
+          inputEpisodeIds: ["episode-smithers-resume-wait"],
+        }),
+        isolation: {
+          runId: "run-smithers-resume",
+          runStateStore: workspace.path(".smithers/run-smithers-resume-new.sqlite"),
+          sessionEntryIds: ["entry-new"],
+        },
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        smithersBridge,
+        contextLoader: createFilesystemContextLoader({
+          sessionFile,
+        }),
+      });
+
+      const waiting = await orchestrator.run({
+        threadId: "thread-smithers-resume",
+        prompt: "Run smithers workflow and wait for approval.",
+        cwd: workspace.root,
+        worktreePath,
+        routeHint: "smithers-workflow",
+        requireApproval: true,
+      });
+      harness.appendEntries(waiting.sessionEntries);
+
+      const resumed = await orchestrator.run({
+        threadId: "thread-smithers-resume",
+        prompt: "Resume smithers workflow.",
+        cwd: workspace.root,
+        worktreePath,
+        routeHint: "smithers-workflow",
+        resumeRunId: "run-smithers-resume",
+      });
+      harness.appendEntries(resumed.sessionEntries);
+
+      const reconstructed = harness.reconstruct();
+      const snapshot = createThreadSnapshot(reconstructed, "thread-smithers-resume");
+      const appendedEntries = [...waiting.sessionEntries, ...resumed.sessionEntries];
+      const persistedEntries = readSessionFile(sessionFile)
+        .filter(isStructuredSessionEntry)
+        .slice(-appendedEntries.length);
+
+      expect(waiting.completion).toEqual({
+        isComplete: false,
+        reason: "waiting_approval",
+      });
+      expect(resumed.completion).toEqual({
+        isComplete: true,
+        reason: "completed",
+      });
+      expect(smithersBridge.runRequests[0]?.path).toBe("smithers-workflow");
+      expect(smithersBridge.resumeRequests[0]?.runId).toBe("run-smithers-resume");
+      expect(resumed.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        "episode-smithers-resume-wait",
+      ]);
+      expect(snapshot.thread.status).toBe("completed");
+      expect(snapshot.thread.worktreePath).toBe(worktreePath);
+      expect(snapshot.thread.smithersRunId).toBe("run-smithers-resume");
+      expect(snapshot.workflowRuns).toEqual([
+        {
+          runId: "run-smithers-resume",
+          threadId: "thread-smithers-resume",
+          workflowId: "workflow:thread-smithers-resume",
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+          worktreePath,
+        },
+      ]);
+      expect(reconstructed.smithersIsolations).toEqual([
+        {
+          runId: "run-smithers-resume",
+          runStateStore: workspace.path(".smithers/run-smithers-resume-new.sqlite"),
+          sessionEntryIds: ["entry-new"],
+        },
+      ]);
+      expect(snapshot.episodes.map((episode) => episode.id)).toEqual([
+        "episode-smithers-resume-wait",
+        "episode-smithers-resume-done",
+      ]);
+      expect(snapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
+        "episode-smithers-resume-wait",
+      ]);
+      expect(snapshot.alignment.activeWorktreePath).toBe(worktreePath);
+      expect(persistedEntries.map((entry) => entry.id)).toEqual(
+        appendedEntries.map((entry) => entry.id),
+      );
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   it("forwards scoped pi worker context and runtime transitions from a file-backed worktree session", async () => {
     if (!hasGit()) {
       return;
