@@ -291,7 +291,7 @@ export function createThread(input: CreateThreadInput): ThreadRef {
     status: input.status ?? "pending",
     objective: input.objective,
     ...(input.parentThreadId ? { parentThreadId: input.parentThreadId } : {}),
-    inputEpisodeIds: input.inputEpisodeIds ?? [],
+    inputEpisodeIds: [...(input.inputEpisodeIds ?? [])],
     ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
     ...(input.smithersRunId ? { smithersRunId: input.smithersRunId } : {}),
     createdAt: input.createdAt,

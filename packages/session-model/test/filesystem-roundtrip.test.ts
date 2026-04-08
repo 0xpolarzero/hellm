@@ -448,4 +448,80 @@ describe("@hellm/session-model filesystem roundtrip", () => {
       ]);
     });
   });
+
+  it("round-trips every thread kind and preserves optional thread metadata in file-backed JSONL", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/thread-kinds.jsonl"),
+        sessionId: "session-thread-kinds",
+        cwd: workspace.root,
+      });
+      const timestamps = [
+        "2026-04-08T09:00:00.000Z",
+        "2026-04-08T09:01:00.000Z",
+        "2026-04-08T09:02:00.000Z",
+        "2026-04-08T09:03:00.000Z",
+        "2026-04-08T09:04:00.000Z",
+      ] as const;
+      const threads = [
+        createThread({
+          id: "thread-kind-direct",
+          kind: "direct",
+          objective: "Direct path thread",
+          inputEpisodeIds: ["episode-direct"],
+          createdAt: timestamps[0],
+        }),
+        createThread({
+          id: "thread-kind-pi",
+          kind: "pi-worker",
+          objective: "Pi worker thread",
+          status: "running",
+          worktreePath: workspace.path("worktrees/pi"),
+          createdAt: timestamps[1],
+          updatedAt: timestamps[2],
+        }),
+        createThread({
+          id: "thread-kind-smithers",
+          kind: "smithers-workflow",
+          objective: "Smithers workflow thread",
+          status: "waiting_approval",
+          parentThreadId: "thread-kind-direct",
+          inputEpisodeIds: ["episode-shared"],
+          worktreePath: workspace.path("worktrees/smithers"),
+          smithersRunId: "run-thread-kind-smithers",
+          createdAt: timestamps[2],
+          updatedAt: timestamps[3],
+        }),
+        createThread({
+          id: "thread-kind-verify",
+          kind: "verification",
+          objective: "Verification thread",
+          status: "completed",
+          createdAt: timestamps[3],
+          updatedAt: timestamps[4],
+        }),
+        createThread({
+          id: "thread-kind-approval",
+          kind: "approval",
+          objective: "Approval thread",
+          status: "waiting_input",
+          parentThreadId: "thread-kind-smithers",
+          createdAt: timestamps[4],
+        }),
+      ];
+
+      for (const thread of threads) {
+        harness.append({ kind: "thread", data: thread });
+      }
+
+      const state = harness.reconstruct();
+
+      expect(state.threads).toHaveLength(threads.length);
+      expect(state.threads).toEqual(threads);
+      for (const thread of threads) {
+        expect(createThreadSnapshot(state, thread.id).thread).toEqual(thread);
+      }
+      expect(harness.jsonl()).toContain("\"customType\":\"hellm/thread\"");
+    });
+  });
 });
