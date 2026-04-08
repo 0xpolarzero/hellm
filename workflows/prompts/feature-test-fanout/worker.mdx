@@ -10,8 +10,10 @@ Mission:
 
 - Build the fullest maintainable test surface for this feature only.
 - Prefer real filesystem, temp repos/worktrees, real process boundaries, real JSONL/session flows, and real TUI rendering harnesses where practical.
-- Use mocks or fakes only for external, nondeterministic, paid, networked, or not-yet-implemented boundaries.
-- If the current repo cannot support executable coverage for this feature without inventing product behavior, add or refine pending/todo contract coverage instead of fabricating implementation.
+- Use mocks, fakes, or stubs only for truly external boundaries: networked services, paid APIs, nondeterministic integrations, or other dependencies outside this repo.
+- Do not use mocks, fakes, or stubs to make passing tests for product behavior in this repo that is not implemented yet.
+- If this feature depends on an unimplemented in-repo boundary, adapter, or execution path, add or refine pending/todo contract coverage instead of fabricating executable coverage.
+- Prefer an explicit `todo`/pending contract over a green test that only passes because an internal fake or stub was invented for missing product behavior.
 
 Scope constraints:
 
@@ -29,6 +31,7 @@ Branch and worktree:
 Required execution behavior:
 
 - Write or deepen tests for this feature.
+- Keep executable tests honest: if the real in-repo behavior does not exist yet, leave the feature pending/todo rather than simulating that missing behavior behind a new internal fake or stub.
 - Do not create git commits yourself. Leave any repo changes in the feature worktree; the workflow will verify and commit them after your task completes.
 - Run the most focused verification you reasonably can for this feature before you finish.
 - Return the verification commands that should be re-run by the workflow verifier.
