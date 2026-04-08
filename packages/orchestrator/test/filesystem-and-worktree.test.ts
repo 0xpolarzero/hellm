@@ -669,6 +669,76 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
     }
   });
 
+  it("re-enters direct-path reconciliation from persisted file-backed state and preserves worktree plus prior episode inputs", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const threadId = "thread-direct-reenter";
+      const worktreePath = await workspace.createLinkedWorktree("feature-direct-reenter");
+      const sessionFile = workspace.path(".pi/sessions/thread-direct-reenter.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        contextLoader: createFilesystemContextLoader({
+          sessionFile,
+        }),
+      });
+
+      const first = await orchestrator.run({
+        threadId,
+        prompt: "Summarize the first direct request.",
+        cwd: workspace.root,
+        worktreePath,
+        routeHint: "direct",
+      });
+      harness.appendEntries(first.sessionEntries);
+
+      const lastFirstStructuredEntryId = readSessionFile(sessionFile)
+        .filter(isStructuredSessionEntry)
+        .at(-1)?.id;
+      const firstEpisodeId = first.threadSnapshot.episodes.at(-1)?.id;
+      if (!firstEpisodeId) {
+        throw new Error("Expected first direct-path run to produce an episode.");
+      }
+
+      const second = await orchestrator.run({
+        threadId,
+        prompt: "Continue from persisted direct-path state.",
+        cwd: workspace.root,
+        routeHint: "direct",
+      });
+      harness.appendEntries(second.sessionEntries);
+      const snapshot = createThreadSnapshot(harness.reconstruct(), threadId);
+
+      expect(second.context.repoAndWorktree.worktreePath).toBeUndefined();
+      expect(second.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        firstEpisodeId,
+      ]);
+      expect(second.threadSnapshot.thread.worktreePath).toBe(worktreePath);
+      expect(second.threadSnapshot.episodes.at(-1)?.worktreePath).toBe(worktreePath);
+      expect(second.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
+        firstEpisodeId,
+      ]);
+      expect(second.sessionEntries[0]?.parentId).toBe(
+        lastFirstStructuredEntryId ?? null,
+      );
+      expect(snapshot.thread.worktreePath).toBe(worktreePath);
+      expect(snapshot.episodes).toHaveLength(2);
+      expect(snapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([firstEpisodeId]);
+      expect(snapshot.alignment.activeWorktreePath).toBe(worktreePath);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   it("propagates verification kinds, manual checks, and disk-backed artifacts through reconciliation", async () => {
     if (!hasGit()) {
       return;
