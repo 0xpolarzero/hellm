@@ -5,6 +5,7 @@ import { renderTuiFrame, type TuiProjection } from "@hellm/tui";
 import { runBunModule } from "@hellm/test-support";
 
 const TUI_ENTRY = fileURLToPath(new URL("../src/main.ts", import.meta.url));
+const TUI_INDEX_ENTRY = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const REPO_ROOT = resolve(import.meta.dir, "../../../");
 
 describe("@hellm/tui frame and process rendering", () => {
@@ -42,5 +43,21 @@ describe("@hellm/tui frame and process rendering", () => {
     expect(result.stdout).toContain("[hellm/tui] [verification]");
     expect(result.stdout).toContain(`[hellm/tui] session ${REPO_ROOT}`);
     expect(result.stdout).toContain("[hellm/tui] aligned");
+  });
+
+  it("executes the index demo module via import.meta.main as a real process", async () => {
+    const result = runBunModule({
+      entryPath: TUI_INDEX_ENTRY,
+      cwd: REPO_ROOT,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.trim()).toBe("");
+    expect(result.stdout).toContain("[threads]");
+    expect(result.stdout).toContain("[episode]");
+    expect(result.stdout).toContain("[verification]");
+    expect(result.stdout).toContain("[workflow]");
+    expect(result.stdout).toContain("[footer]");
+    expect(result.stdout).toContain(`session ${REPO_ROOT}`);
   });
 });
