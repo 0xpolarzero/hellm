@@ -169,6 +169,65 @@ describe("@hellm/session-model reconstruction", () => {
     expect(state.alignment.reason).toBe("session and worktree are aligned");
   });
 
+  it("ignores malformed and unknown hellm custom payload entries while reconstructing valid state", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-malformed",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const thread = createThreadFixture({
+      id: "thread-valid",
+      objective: "Keep only valid structured entries",
+    });
+    const validEntry = createStructuredSessionEntry({
+      id: "entry-valid",
+      parentId: null,
+      timestamp: "2026-04-08T09:00:01.000Z",
+      payload: { kind: "thread", data: thread },
+    });
+    const [header] = harness.lines();
+
+    const state = reconstructSessionState([
+      header,
+      {
+        ...validEntry,
+        id: "entry-missing-details",
+        message: {
+          ...validEntry.message,
+          details: undefined as unknown as typeof validEntry.message.details,
+        },
+      },
+      {
+        ...validEntry,
+        id: "entry-missing-data",
+        message: {
+          ...validEntry.message,
+          details: { kind: "thread" } as unknown as typeof validEntry.message.details,
+        },
+      },
+      {
+        ...validEntry,
+        id: "entry-unknown-kind",
+        message: {
+          ...validEntry.message,
+          customType: "hellm/future",
+          details: {
+            kind: "future",
+            data: { id: "future-1", note: "ignored until supported" },
+          } as unknown as typeof validEntry.message.details,
+        },
+      },
+      validEntry,
+    ]);
+
+    expect(state.sessionId).toBe("session-malformed");
+    expect(state.threads).toEqual([thread]);
+    expect(state.episodes).toEqual([]);
+    expect(state.artifacts).toEqual([]);
+    expect(state.workflowRuns).toEqual([]);
+    expect(state.smithersIsolations).toEqual([]);
+  });
+
   it("preserves explicit global verification payloads over derived verification records", () => {
     const harness = new InMemorySessionJsonlHarness({
       sessionId: "session-verification-override",
