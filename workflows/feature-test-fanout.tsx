@@ -12,7 +12,7 @@ import {
   Worktree,
   createSmithers,
 } from "smithers-orchestrator";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -398,12 +398,13 @@ function createTaskSpec(
   input: z.infer<typeof inputSchema>,
 ) {
   const slug = featureSlug(featureId);
+  const repoRoot = resolve(input.repoRoot);
   return {
     featureId,
     slug,
     taskId: `feature-${slug}`,
     branch: `${input.branchPrefix}/${slug}`,
-    worktreePath: `${input.worktreeRoot}/${slug}`,
+    worktreePath: resolve(repoRoot, input.worktreeRoot, slug),
   };
 }
 
@@ -435,7 +436,7 @@ async function verifyFeature(
   task: ReturnType<typeof createTaskSpec>,
   feature: FeatureCoverageResult,
 ): Promise<VerificationResult> {
-  const worktreePath = resolve(task.worktreePath);
+  const worktreePath = task.worktreePath;
   const worktreeState = inspectWorktree(worktreePath);
   if (!worktreeState.ok) {
     return {
@@ -476,7 +477,7 @@ async function verifyFeature(
     if (result.code !== 0) {
       failedCommands.push(command);
       summaries.push(
-        `${command}: failed (${truncateOutput(result.stderr || result.stdout)})`,
+        `${command}: failed (${truncateOutput(commandFailureOutput(result))})`,
       );
       return {
         featureId: feature.featureId,
@@ -513,7 +514,7 @@ async function commitFeature(input: {
   feature: FeatureCoverageResult;
   verification: VerificationResult;
 }): Promise<CommitResult> {
-  const worktreePath = resolve(input.task.worktreePath);
+  const worktreePath = input.task.worktreePath;
 
   if (!input.verification.shouldMerge) {
     return {
@@ -558,7 +559,7 @@ async function commitFeature(input: {
       status: "committed",
       summary: "Worker already committed the feature branch.",
       ...(head.code === 0
-        ? { commitSha: input.feature.commitSha ?? head.stdout.trim() }
+        ? { commitSha: input.feature.commitSha ?? stdoutText(head).trim() }
         : input.feature.commitSha
           ? { commitSha: input.feature.commitSha }
           : {}),
@@ -582,7 +583,7 @@ async function commitFeature(input: {
       branch: input.task.branch,
       worktreePath,
       status: "blocked",
-      summary: `Failed to stage feature changes: ${truncateOutput(addAll.stderr || addAll.stdout)}`,
+      summary: `Failed to stage feature changes: ${truncateOutput(commandFailureOutput(addAll))}`,
     };
   }
 
@@ -597,7 +598,7 @@ async function commitFeature(input: {
       branch: input.task.branch,
       worktreePath,
       status: "blocked",
-      summary: `Failed to commit feature changes: ${truncateOutput(commit.stderr || commit.stdout)}`,
+      summary: `Failed to commit feature changes: ${truncateOutput(commandFailureOutput(commit))}`,
     };
   }
 
@@ -608,7 +609,7 @@ async function commitFeature(input: {
     worktreePath,
     status: "committed",
     summary: "Committed verified feature changes on the feature branch.",
-    ...(head.code === 0 ? { commitSha: head.stdout.trim() } : {}),
+    ...(head.code === 0 ? { commitSha: stdoutText(head).trim() } : {}),
   };
 }
 
@@ -623,7 +624,7 @@ async function mergeFeature(input: {
     return {
       featureId: input.commit.featureId,
       branch: input.task.branch,
-      worktreePath: resolve(input.task.worktreePath),
+      worktreePath: input.task.worktreePath,
       status: input.commit.status === "blocked" ? "blocked" : "skipped",
       summary:
         input.commit.status === "blocked"
@@ -637,16 +638,16 @@ async function mergeFeature(input: {
     return {
       featureId: input.commit.featureId,
       branch: input.task.branch,
-      worktreePath: resolve(input.task.worktreePath),
+      worktreePath: input.task.worktreePath,
       status: "blocked",
-      summary: `Unable to inspect root worktree state: ${truncateOutput(cleanliness.stderr || cleanliness.stdout)}`,
+      summary: `Unable to inspect root worktree state: ${truncateOutput(commandFailureOutput(cleanliness))}`,
     };
   }
-  if (cleanliness.stdout.trim().length > 0) {
+  if (stdoutText(cleanliness).trim().length > 0) {
     return {
       featureId: input.commit.featureId,
       branch: input.task.branch,
-      worktreePath: resolve(input.task.worktreePath),
+      worktreePath: input.task.worktreePath,
       status: "blocked",
       summary: "Root repository is dirty; merge was skipped.",
     };
@@ -658,9 +659,9 @@ async function mergeFeature(input: {
     return {
       featureId: input.commit.featureId,
       branch: input.task.branch,
-      worktreePath: resolve(input.task.worktreePath),
+      worktreePath: input.task.worktreePath,
       status: "conflicted",
-      summary: `Merge failed for ${input.task.branch}: ${truncateOutput(merge.stderr || merge.stdout)}`,
+      summary: `Merge failed for ${input.task.branch}: ${truncateOutput(commandFailureOutput(merge))}`,
     };
   }
 
@@ -668,10 +669,10 @@ async function mergeFeature(input: {
   return {
     featureId: input.commit.featureId,
     branch: input.task.branch,
-    worktreePath: resolve(input.task.worktreePath),
+    worktreePath: input.task.worktreePath,
     status: "merged",
     summary: `Merged ${input.task.branch} into the main checkout.`,
-    ...(head.code === 0 ? { mergeCommitSha: head.stdout.trim() } : {}),
+    ...(head.code === 0 ? { mergeCommitSha: stdoutText(head).trim() } : {}),
   };
 }
 
@@ -683,7 +684,7 @@ async function cleanupFeature(input: {
   cleanupBlockedWorktrees: boolean;
 }): Promise<CleanupResult> {
   const repoRoot = resolve(input.repoRoot);
-  const worktreePath = resolve(input.task.worktreePath);
+  const worktreePath = input.task.worktreePath;
   const worktreeState = inspectWorktree(worktreePath);
 
   if (!worktreeState.ok) {
@@ -735,7 +736,7 @@ async function cleanupFeature(input: {
       status: "blocked",
       removedWorktree: false,
       deletedBranch: false,
-      summary: `Failed to remove worktree: ${truncateOutput(remove.stderr || remove.stdout)}`,
+      summary: `Failed to remove worktree: ${truncateOutput(commandFailureOutput(remove))}`,
     };
   }
 
@@ -813,13 +814,13 @@ function inspectWorktree(worktreePath: string) {
   if (status.code !== 0) {
     return {
       ok: false as const,
-      error: `Unable to inspect feature worktree state: ${truncateOutput(status.stderr || status.stdout)}`,
+      error: `Unable to inspect feature worktree state: ${truncateOutput(commandFailureOutput(status))}`,
     };
   }
 
   return {
     ok: true as const,
-    dirty: status.stdout.trim().length > 0,
+    dirty: stdoutText(status).trim().length > 0,
   };
 }
 
@@ -838,8 +839,25 @@ function runShellCommand(cwd: string, command: string) {
   });
 }
 
-function truncateOutput(value: string, maxLength = 240): string {
-  const trimmed = value.trim();
+function stdoutText(result: SpawnSyncReturns<string>): string {
+  return typeof result.stdout === "string" ? result.stdout : "";
+}
+
+function commandFailureOutput(result: SpawnSyncReturns<string>): string {
+  if (typeof result.stderr === "string" && result.stderr.trim().length > 0) {
+    return result.stderr;
+  }
+  if (typeof result.stdout === "string" && result.stdout.trim().length > 0) {
+    return result.stdout;
+  }
+  if (result.error?.message) {
+    return result.error.message;
+  }
+  return "command produced no output";
+}
+
+function truncateOutput(value: string | null | undefined, maxLength = 240): string {
+  const trimmed = typeof value === "string" ? value.trim() : "";
   if (trimmed.length <= maxLength) {
     return trimmed;
   }

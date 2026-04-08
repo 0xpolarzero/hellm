@@ -323,4 +323,129 @@ describe("@hellm/session-model filesystem roundtrip", () => {
       ),
     ).toThrow(/Thread missing-thread was not found/);
   });
+
+  it("deduplicates episode artifact references per thread and excludes artifacts from other threads", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const sharedDiffPath = await workspace.write(
+        "reports/shared.patch",
+        "diff --git a/a.ts b/a.ts\n",
+      );
+      const otherThreadPath = await workspace.write("reports/other.txt", "thread b\n");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/artifacts.jsonl"),
+        sessionId: "session-artifact-refs",
+        cwd: workspace.root,
+      });
+      const threadA = createThread({
+        id: "thread-artifact-a",
+        kind: "direct",
+        objective: "Thread A objective",
+        status: "running",
+        createdAt: "2026-04-08T09:00:00.000Z",
+        updatedAt: "2026-04-08T09:01:00.000Z",
+      });
+      const threadB = createThread({
+        id: "thread-artifact-b",
+        kind: "direct",
+        objective: "Thread B objective",
+        status: "running",
+        createdAt: "2026-04-08T09:00:00.000Z",
+        updatedAt: "2026-04-08T09:01:00.000Z",
+      });
+      const sharedArtifactInitial = createArtifact({
+        id: "artifact-shared",
+        kind: "diff",
+        description: "Initial shared diff",
+        path: sharedDiffPath,
+        createdAt: "2026-04-08T09:00:00.000Z",
+      });
+      const sharedArtifactUpdated = createArtifact({
+        id: "artifact-shared",
+        kind: "diff",
+        description: "Updated shared diff",
+        path: sharedDiffPath,
+        createdAt: "2026-04-08T09:02:00.000Z",
+      });
+      const otherThreadArtifact = createArtifact({
+        id: "artifact-other-thread",
+        kind: "file",
+        description: "Thread B file",
+        path: otherThreadPath,
+        createdAt: "2026-04-08T09:00:00.000Z",
+      });
+
+      harness.append({ kind: "thread", data: threadA });
+      harness.append({ kind: "thread", data: threadB });
+      harness.append({
+        kind: "episode",
+        data: createEpisode({
+          id: "episode-a-1",
+          threadId: threadA.id,
+          source: "orchestrator",
+          objective: threadA.objective,
+          status: "completed",
+          artifacts: [sharedArtifactInitial],
+          provenance: {
+            executionPath: "direct",
+            actor: "orchestrator",
+          },
+          startedAt: "2026-04-08T09:00:00.000Z",
+          completedAt: "2026-04-08T09:00:01.000Z",
+        }),
+      });
+      harness.append({
+        kind: "episode",
+        data: createEpisode({
+          id: "episode-a-2",
+          threadId: threadA.id,
+          source: "orchestrator",
+          objective: threadA.objective,
+          status: "completed",
+          artifacts: [sharedArtifactUpdated],
+          provenance: {
+            executionPath: "direct",
+            actor: "orchestrator",
+          },
+          startedAt: "2026-04-08T09:02:00.000Z",
+          completedAt: "2026-04-08T09:02:01.000Z",
+        }),
+      });
+      harness.append({
+        kind: "episode",
+        data: createEpisode({
+          id: "episode-b-1",
+          threadId: threadB.id,
+          source: "orchestrator",
+          objective: threadB.objective,
+          status: "completed",
+          artifacts: [otherThreadArtifact],
+          provenance: {
+            executionPath: "direct",
+            actor: "orchestrator",
+          },
+          startedAt: "2026-04-08T09:00:00.000Z",
+          completedAt: "2026-04-08T09:00:01.000Z",
+        }),
+      });
+
+      const state = harness.reconstruct();
+      const threadASnapshot = createThreadSnapshot(state, threadA.id);
+      const threadBSnapshot = createThreadSnapshot(state, threadB.id);
+
+      expect(state.artifacts.map((artifact) => artifact.id).sort()).toEqual([
+        "artifact-other-thread",
+        "artifact-shared",
+      ]);
+      expect(threadASnapshot.episodes.map((episode) => episode.id)).toEqual([
+        "episode-a-1",
+        "episode-a-2",
+      ]);
+      expect(threadASnapshot.artifacts).toHaveLength(1);
+      expect(threadASnapshot.artifacts[0]?.id).toBe("artifact-shared");
+      expect(threadASnapshot.artifacts[0]?.description).toBe("Updated shared diff");
+      expect(threadBSnapshot.artifacts.map((artifact) => artifact.id)).toEqual([
+        "artifact-other-thread",
+      ]);
+    });
+  });
 });
