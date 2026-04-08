@@ -7,6 +7,7 @@ import {
   createStructuredSessionEntry,
   createThread,
   createThreadSnapshot,
+  parseStructuredEntry,
   type ArtifactRecord,
   type Episode,
   type GlobalVerificationState,
@@ -245,6 +246,7 @@ export function createOrchestrator(
       const updatedThread: ThreadRef = {
         ...initialThread,
         kind: executionPathToThreadKind(classification.path),
+        inputEpisodeIds,
         status: statusFromEpisode(execution.episode.status),
         ...(execution.workflowRun
           ? { smithersRunId: execution.workflowRun.runId }
@@ -667,23 +669,24 @@ function buildStructuredEntries(input: {
 }): StructuredSessionEntry[] {
   const lastStructuredEntry = input.existingEntries
     .toReversed()
-    .find(
-      (entry): entry is StructuredSessionEntry =>
-        parseStructuredSessionEntry(entry) !== null &&
-        typeof entry === "object" &&
-        entry !== null &&
-        "type" in entry &&
-        entry.type === "message" &&
-        "id" in entry &&
-        typeof entry.id === "string",
-    );
+    .find(isStructuredSessionEntryWithId);
+  const existingIds = new Set(
+    input.existingEntries
+      .filter(isStructuredSessionEntryWithId)
+      .map((entry) => entry.id),
+  );
+  const generatedIds = new Set<string>();
 
   let parentId = lastStructuredEntry?.id ?? null;
   const entries: StructuredSessionEntry[] = [];
 
   const push = (payload: StructuredSessionEntry["message"]["details"]): void => {
     const entry = createStructuredSessionEntry({
-      id: input.idGenerator(),
+      id: nextUniqueStructuredEntryId({
+        idGenerator: input.idGenerator,
+        existingIds,
+        generatedIds,
+      }),
       parentId,
       timestamp: input.timestamp,
       payload,
@@ -706,6 +709,45 @@ function buildStructuredEntries(input: {
   }
 
   return entries;
+}
+
+function isStructuredSessionEntryWithId(
+  entry: SessionJsonlEntry,
+): entry is StructuredSessionEntry {
+  return (
+    typeof entry === "object" &&
+    entry !== null &&
+    "type" in entry &&
+    entry.type === "message" &&
+    "id" in entry &&
+    typeof entry.id === "string"
+  );
+}
+
+function nextUniqueStructuredEntryId(input: {
+  idGenerator: () => string;
+  existingIds: Set<string>;
+  generatedIds: Set<string>;
+}): string {
+  const maxAttempts = Math.max(
+    64,
+    input.existingIds.size + input.generatedIds.size + 1,
+  );
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidateId = input.idGenerator();
+    if (
+      input.existingIds.has(candidateId) ||
+      input.generatedIds.has(candidateId)
+    ) {
+      continue;
+    }
+
+    input.generatedIds.add(candidateId);
+    return candidateId;
+  }
+
+  throw new Error("Unable to generate a unique structured session entry id.");
 }
 
 function createCompletionDecision(status: Episode["status"]): CompletionDecision {

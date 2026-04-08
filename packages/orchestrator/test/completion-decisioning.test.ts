@@ -3,6 +3,7 @@ import { createOrchestrator } from "@hellm/orchestrator";
 import { createEmptySessionState } from "@hellm/session-model";
 import {
   FakePiRuntimeBridge,
+  FakeSmithersWorkflowBridge,
   FakeVerificationRunner,
   createEpisodeFixture,
   createVerificationFixture,
@@ -110,8 +111,19 @@ describe("@hellm/orchestrator completion decisioning", () => {
     });
   });
 
-  it("maps blocked, failed, and cancelled episodes from worker execution", async () => {
+  it("maps waiting, blocked, failed, and cancelled episodes from worker execution", async () => {
     const cases = [
+      {
+        name: "waiting-input",
+        workerStatus: "waiting_input" as const,
+        episodeStatus: "waiting_input" as const,
+        expected: {
+          threadStatus: "waiting_input",
+          completion: { isComplete: false, reason: "waiting_input" as const },
+          waiting: true,
+          blocked: false,
+        },
+      },
       {
         name: "blocked",
         workerStatus: "blocked" as const,
@@ -165,6 +177,68 @@ describe("@hellm/orchestrator completion decisioning", () => {
         prompt: `Run worker case ${entry.name}.`,
         cwd: "/repo",
         routeHint: "pi-worker",
+      });
+
+      expect(result.threadSnapshot.thread.status).toBe(entry.expected.threadStatus);
+      expect(result.completion).toEqual(entry.expected.completion);
+      expect(result.state.waiting).toBe(entry.expected.waiting);
+      expect(result.state.blocked).toBe(entry.expected.blocked);
+    }
+  });
+
+  it("maps waiting_approval and cancelled episodes from smithers workflows", async () => {
+    const cases = [
+      {
+        name: "waiting-approval",
+        runStatus: "waiting_approval" as const,
+        episodeStatus: "waiting_approval" as const,
+        expected: {
+          threadStatus: "waiting_approval",
+          completion: { isComplete: false, reason: "waiting_approval" as const },
+          waiting: true,
+          blocked: false,
+        },
+      },
+      {
+        name: "cancelled",
+        runStatus: "failed" as const,
+        episodeStatus: "cancelled" as const,
+        expected: {
+          threadStatus: "cancelled",
+          completion: { isComplete: true, reason: "cancelled" as const },
+          waiting: false,
+          blocked: false,
+        },
+      },
+    ];
+
+    for (const entry of cases) {
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueRunResult({
+        run: {
+          runId: `run-${entry.name}`,
+          threadId: `thread-${entry.name}`,
+          workflowId: `workflow:thread-${entry.name}`,
+          status: entry.runStatus,
+          updatedAt: "2026-04-08T09:00:00.000Z",
+        },
+        status: entry.runStatus,
+        outputs: [],
+        episode: createEpisodeFixture({
+          id: `episode-${entry.name}`,
+          threadId: `thread-${entry.name}`,
+          source: "smithers",
+          status: entry.episodeStatus,
+          smithersRunId: `run-${entry.name}`,
+        }),
+      });
+      const orchestrator = createBaseOrchestrator({ smithersBridge });
+
+      const result = await orchestrator.run({
+        threadId: `thread-${entry.name}`,
+        prompt: `Run smithers case ${entry.name}.`,
+        cwd: "/repo",
+        routeHint: "smithers-workflow",
       });
 
       expect(result.threadSnapshot.thread.status).toBe(entry.expected.threadStatus);

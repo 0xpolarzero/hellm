@@ -4,7 +4,9 @@ import { createEmptySessionState } from "@hellm/session-model";
 import {
   FakePiRuntimeBridge,
   FakeSmithersWorkflowBridge,
+  FakeVerificationRunner,
   createEpisodeFixture,
+  createVerificationFixture,
   fixedClock,
   runHeadlessHarness,
 } from "@hellm/test-support";
@@ -35,9 +37,9 @@ function createBaseOrchestrator(
 }
 
 describe("@hellm/cli completion decisioning JSONL semantics", () => {
-  it("emits run.waiting when completion decisioning marks a blocked worker result as incomplete", async () => {
-    const piBridge = new FakePiRuntimeBridge();
-    piBridge.enqueueResult({
+  it("emits run.waiting for blocked, waiting_input, and waiting_approval completion states", async () => {
+    const blockedBridge = new FakePiRuntimeBridge();
+    blockedBridge.enqueueResult({
       status: "blocked",
       episode: createEpisodeFixture({
         id: "episode-blocked",
@@ -46,29 +48,110 @@ describe("@hellm/cli completion decisioning JSONL semantics", () => {
         status: "blocked",
       }),
     });
-    const orchestrator = createBaseOrchestrator({ piBridge });
-    const { result } = await runHeadlessHarness(
+    const waitingInputBridge = new FakePiRuntimeBridge();
+    waitingInputBridge.enqueueResult({
+      status: "waiting_input",
+      episode: createEpisodeFixture({
+        id: "episode-waiting-input",
+        threadId: "thread-waiting-input",
+        source: "pi-worker",
+        status: "waiting_input",
+      }),
+    });
+    const cases = [
       {
-        threadId: "thread-blocked",
-        prompt: "Run blocked worker case.",
-        cwd: "/repo",
-        routeHint: "pi-worker",
+        name: "blocked",
+        request: {
+          threadId: "thread-blocked",
+          prompt: "Run blocked worker case.",
+          cwd: "/repo",
+          routeHint: "pi-worker" as const,
+        },
+        orchestrator: createBaseOrchestrator({ piBridge: blockedBridge }),
+        expectedStatus: "blocked",
+        expectedReason: "blocked" as const,
       },
-      orchestrator,
-    );
+      {
+        name: "waiting-input",
+        request: {
+          threadId: "thread-waiting-input",
+          prompt: "Need additional details.",
+          cwd: "/repo",
+          routeHint: "pi-worker" as const,
+        },
+        orchestrator: createBaseOrchestrator({ piBridge: waitingInputBridge }),
+        expectedStatus: "waiting_input",
+        expectedReason: "waiting_input" as const,
+      },
+      {
+        name: "waiting-approval",
+        request: {
+          threadId: "thread-waiting-approval",
+          prompt: "Need explicit approval before continuing.",
+          cwd: "/repo",
+          routeHint: "approval" as const,
+          requireApproval: true,
+        },
+        orchestrator: createBaseOrchestrator({}),
+        expectedStatus: "waiting_approval",
+        expectedReason: "waiting_approval" as const,
+      },
+    ];
 
-    expect(result.output.status).toBe("blocked");
-    expect(result.raw.completion).toEqual({
-      isComplete: false,
-      reason: "blocked",
-    });
-    expect(result.events.at(-1)).toMatchObject({
-      type: "run.waiting",
-      status: "blocked",
-    });
+    for (const entry of cases) {
+      const { result, jsonl } = await runHeadlessHarness(
+        entry.request,
+        entry.orchestrator,
+      );
+
+      expect(result.output.status).toBe(entry.expectedStatus);
+      expect(result.raw.completion).toEqual({
+        isComplete: false,
+        reason: entry.expectedReason,
+      });
+      expect(result.events.at(-1)).toMatchObject({
+        type: "run.waiting",
+        status: entry.expectedStatus,
+      });
+      expect(jsonl.at(-1)).toContain("\"type\":\"run.waiting\"");
+      expect(jsonl.at(-1)).toContain(`\"status\":\"${entry.expectedStatus}\"`);
+    }
   });
 
-  it("emits run.completed for failed and cancelled terminal outcomes", async () => {
+  it("emits run.completed for completed_with_issues, failed, and cancelled terminal outcomes", async () => {
+    const verificationRunner = new FakeVerificationRunner();
+    verificationRunner.enqueueResult({
+      status: "failed",
+      records: [
+        createVerificationFixture({
+          id: "verification-failed-completed-with-issues",
+          kind: "test",
+          status: "failed",
+        }),
+      ],
+      artifacts: [],
+    });
+    const verificationOrchestrator = createBaseOrchestrator({ verificationRunner });
+    const verificationResult = await runHeadlessHarness(
+      {
+        threadId: "thread-completed-with-issues",
+        prompt: "Verify this branch.",
+        cwd: "/repo",
+        routeHint: "verification",
+      },
+      verificationOrchestrator,
+    );
+
+    expect(verificationResult.result.output.status).toBe("completed");
+    expect(verificationResult.result.raw.completion).toEqual({
+      isComplete: true,
+      reason: "completed",
+    });
+    expect(verificationResult.result.events.at(-1)).toMatchObject({
+      type: "run.completed",
+      status: "completed",
+    });
+
     const cases = [
       {
         status: "failed" as const,
@@ -102,7 +185,7 @@ describe("@hellm/cli completion decisioning JSONL semantics", () => {
       });
       const orchestrator = createBaseOrchestrator({ smithersBridge });
 
-      const { result } = await runHeadlessHarness(
+      const { result, jsonl } = await runHeadlessHarness(
         {
           threadId: `thread-${entry.status}`,
           prompt: `Run ${entry.status} workflow case.`,
@@ -121,6 +204,7 @@ describe("@hellm/cli completion decisioning JSONL semantics", () => {
         type: "run.completed",
         status: entry.status,
       });
+      expect(jsonl.at(-1)).toContain("\"type\":\"run.completed\"");
     }
   });
 });

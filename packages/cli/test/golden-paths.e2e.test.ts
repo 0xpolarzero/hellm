@@ -1,7 +1,8 @@
+import { appendFileSync } from "node:fs";
 import { describe, expect, it } from "bun:test";
 import { executeHeadlessRun } from "@hellm/cli";
 import { createOrchestrator } from "@hellm/orchestrator";
-import { createEmptySessionState } from "@hellm/session-model";
+import { createEmptySessionState, reconstructSessionState } from "@hellm/session-model";
 import {
   createTempGitWorkspace,
   FakePiRuntimeBridge,
@@ -188,6 +189,115 @@ describe("golden path headless specs", () => {
     ]);
   });
 
+  it("prefers reconstructed structured state over decoy transcript lines for headless pi-worker inputs", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-structured-state-first";
+      const sessionFile = workspace.path(
+        ".pi/sessions/golden-structured-state-first.jsonl",
+      );
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const priorEpisode = createEpisodeFixture({
+        id: "golden-structured-prior",
+        threadId,
+        source: "orchestrator",
+      });
+      harness.append({ kind: "episode", data: priorEpisode });
+
+      const decoyEntries = [
+        {
+          type: "message",
+          id: "entry-decoy-user",
+          parentId: "entry-prior-episode",
+          timestamp: "2026-04-08T09:00:02.000Z",
+          message: {
+            role: "user",
+            content: "Decoy transcript says input episode is golden-decoy.",
+            timestamp: Date.parse("2026-04-08T09:00:02.000Z"),
+          },
+        },
+        {
+          type: "message",
+          id: "entry-decoy-assistant",
+          parentId: "entry-decoy-user",
+          timestamp: "2026-04-08T09:00:03.000Z",
+          message: {
+            role: "assistant",
+            content: "{\"inputEpisodeIds\":[\"golden-decoy\"]}",
+            timestamp: Date.parse("2026-04-08T09:00:03.000Z"),
+          },
+        },
+      ];
+      appendFileSync(
+        sessionFile,
+        `${decoyEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+        "utf8",
+      );
+
+      const piBridge = new FakePiRuntimeBridge();
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: createEpisodeFixture({
+          id: "golden-structured-state-first-episode",
+          threadId,
+          source: "pi-worker",
+          inputEpisodeIds: ["golden-structured-prior"],
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        piBridge,
+        contextLoader: {
+          async load(request) {
+            const sessionHistory = harness.lines();
+            const state = reconstructSessionState(sessionHistory);
+            return {
+              sessionHistory,
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const { result } = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run worker using structured state, not transcript replay.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        orchestrator,
+      );
+
+      expect(result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        "golden-structured-prior",
+      ]);
+      expect(
+        piBridge.workerRequests[0]?.scopedContext.sessionHistory.some((entry) =>
+          entry.includes("\"entry-decoy-user\""),
+        ),
+      ).toBe(true);
+      expect(piBridge.workerRequests[0]?.inputEpisodeIds).toEqual([
+        "golden-structured-prior",
+      ]);
+      expect(piBridge.workerRequests[0]?.inputEpisodeIds).not.toContain(
+        "golden-decoy",
+      );
+      expect(result.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
+        "golden-structured-prior",
+      ]);
+    });
+  });
+
   it("covers a pi worker path request", async () => {
     const piBridge = new FakePiRuntimeBridge();
     piBridge.enqueueResult({
@@ -360,7 +470,133 @@ describe("golden path headless specs", () => {
     expect(jsonl.at(-1)).toContain("\"run.waiting\"");
   });
 
-  it("re-enters across mixed headless entry surfaces using file-backed JSONL session state", async () => {
+  it("persists waiting and blocked worker states through file-backed JSONL re-entry", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-waiting-blocked-jsonl";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-waiting-blocked.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const piBridge = new FakePiRuntimeBridge();
+      piBridge.enqueueResult({
+        status: "waiting_input",
+        episode: createEpisodeFixture({
+          id: "golden-waiting-jsonl-episode",
+          threadId,
+          source: "pi-worker",
+          status: "waiting_input",
+        }),
+      });
+      piBridge.enqueueResult({
+        status: "blocked",
+        episode: createEpisodeFixture({
+          id: "golden-blocked-jsonl-episode",
+          threadId,
+          source: "pi-worker",
+          status: "blocked",
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        piBridge,
+        contextLoader: {
+          async load(request) {
+            const state = harness.reconstruct();
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run worker episode that needs user input.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Retry worker episode that remains blocked.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+
+      const reconstructed = harness.reconstruct();
+
+      expect(first.result.output.status).toBe("waiting_input");
+      expect(first.result.events.at(-1)?.type).toBe("run.waiting");
+      expect(second.result.output.status).toBe("blocked");
+      expect(second.result.events.at(-1)?.type).toBe("run.waiting");
+      expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        "golden-waiting-jsonl-episode",
+      ]);
+      expect(reconstructed.threads).toHaveLength(1);
+      expect(reconstructed.threads[0]?.status).toBe("blocked");
+      expect(reconstructed.episodes.map((episode) => episode.id)).toEqual([
+        "golden-waiting-jsonl-episode",
+        "golden-blocked-jsonl-episode",
+      ]);
+      expect(reconstructed.episodes.map((episode) => episode.status)).toEqual([
+        "waiting_input",
+        "blocked",
+      ]);
+      expect(harness.jsonl()).toContain("\"status\":\"waiting_input\"");
+      expect(harness.jsonl()).toContain("\"status\":\"blocked\"");
+    });
+  });
+
+  it("covers a blocked pi worker path request and keeps blocked state in headless output/events", async () => {
+    const piBridge = new FakePiRuntimeBridge();
+    piBridge.enqueueResult({
+      status: "blocked",
+      episode: createEpisodeFixture({
+        id: "golden-pi-blocked-episode",
+        threadId: "golden-pi-blocked",
+        source: "pi-worker",
+        status: "blocked",
+      }),
+    });
+    const orchestrator = createBaseOrchestrator({ piBridge });
+    const { result, jsonl } = await runHeadlessHarness(
+      {
+        threadId: "golden-pi-blocked",
+        prompt: "Run bounded worker and stop on blocked state.",
+        cwd: "/repo",
+        routeHint: "pi-worker",
+      },
+      orchestrator,
+    );
+
+    expect(result.output.status).toBe("blocked");
+    expect(result.raw.state.visibleSummary).toBe("pi-worker:blocked:blocked");
+    expect(result.raw.state.waiting).toBe(false);
+    expect(result.raw.state.blocked).toBe(true);
+    expect(result.events.at(-1)).toMatchObject({
+      type: "run.waiting",
+      status: "blocked",
+    });
+    expect(jsonl.at(-1)).toContain("\"run.waiting\"");
+  });
+
+  it("re-enters after each headless episode using file-backed JSONL session state", async () => {
     await withTempWorkspace(async (workspace) => {
       const threadId = "golden-reenter";
       const harness = new FileBackedSessionJsonlHarness({
@@ -437,6 +673,9 @@ describe("golden path headless specs", () => {
         first.raw.sessionEntries.at(-1)?.id,
       );
       expect(piBridge.workerRequests[1]?.inputEpisodeIds).toEqual([
+        "golden-reenter-episode-1",
+      ]);
+      expect(second.result.threadSnapshot.thread.inputEpisodeIds).toEqual([
         "golden-reenter-episode-1",
       ]);
       expect(reconstructed.episodes.map((episode) => episode.id)).toEqual([
@@ -558,6 +797,204 @@ describe("golden path headless specs", () => {
       expect(reconstructed.verification.byKind.lint?.status).toBe("passed");
       expect(reconstructed.verification.overallStatus).toBe("passed");
       expect(reconstructed.episodes.at(-1)?.verification[0]?.kind).toBe("lint");
+    });
+  });
+
+  it("re-enters from persisted JSONL using a fresh orchestrator instance for each headless run", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-reenter-fresh-orchestrator";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-reenter-fresh.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const piBridge = new FakePiRuntimeBridge();
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: createEpisodeFixture({
+          id: "golden-fresh-episode-1",
+          threadId,
+          source: "pi-worker",
+        }),
+      });
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: createEpisodeFixture({
+          id: "golden-fresh-episode-2",
+          threadId,
+          source: "pi-worker",
+        }),
+      });
+
+      const createReentryOrchestrator = () =>
+        createOrchestrator({
+          clock: fixedClock(),
+          piBridge,
+          contextLoader: {
+            async load(request) {
+              const state = harness.reconstruct();
+              return {
+                sessionHistory: harness.lines(),
+                repoAndWorktree: { cwd: request.cwd },
+                agentsInstructions: ["Read docs/prd.md"],
+                relevantSkills: ["tests"],
+                priorEpisodes: state.episodes,
+                priorArtifacts: state.artifacts,
+                state,
+              };
+            },
+          },
+        });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run first worker episode.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        createReentryOrchestrator(),
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run second worker episode.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        createReentryOrchestrator(),
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+
+      const firstEntryIds = first.result.raw.sessionEntries.map((entry) => entry.id);
+      const secondEntryIds = second.result.raw.sessionEntries.map((entry) => entry.id);
+      const allEntryIds = [...firstEntryIds, ...secondEntryIds];
+
+      expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual(
+        ["golden-fresh-episode-1"],
+      );
+      expect(piBridge.workerRequests[1]?.inputEpisodeIds).toEqual([
+        "golden-fresh-episode-1",
+      ]);
+      expect(secondEntryIds.some((id) => firstEntryIds.includes(id))).toBe(false);
+      expect(new Set(allEntryIds).size).toBe(allEntryIds.length);
+      expect(second.result.raw.sessionEntries[0]?.parentId).toBe(
+        first.result.raw.sessionEntries.at(-1)?.id,
+      );
+      expect(second.result.events.at(-1)?.type).toBe("run.completed");
+    });
+  });
+
+  it("re-enters a smithers approval flow from file-backed JSONL state and resumes with prior waiting episode context", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-reenter-smithers";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-reenter-smithers.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueRunResult({
+        run: {
+          runId: "golden-reenter-smithers-run",
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "waiting_approval",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+        },
+        status: "waiting_approval",
+        outputs: [],
+        approval: {
+          nodeId: "approve",
+          title: "Approve workflow",
+          summary: "Need approval before resuming.",
+          mode: "needsApproval",
+        },
+        episode: createEpisodeFixture({
+          id: "golden-reenter-smithers-wait",
+          threadId,
+          source: "smithers",
+          status: "waiting_approval",
+          smithersRunId: "golden-reenter-smithers-run",
+        }),
+      });
+      smithersBridge.enqueueResumeResult({
+        run: {
+          runId: "golden-reenter-smithers-run",
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+        },
+        status: "completed",
+        outputs: [],
+        episode: createEpisodeFixture({
+          id: "golden-reenter-smithers-done",
+          threadId,
+          source: "smithers",
+          status: "completed",
+          smithersRunId: "golden-reenter-smithers-run",
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        smithersBridge,
+        contextLoader: {
+          async load(request) {
+            const state = harness.reconstruct();
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const waiting = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run smithers episode that requires approval.",
+          cwd: workspace.root,
+          routeHint: "smithers-workflow",
+          requireApproval: true,
+        },
+        orchestrator,
+      );
+      harness.appendEntries(waiting.result.raw.sessionEntries);
+
+      const resumed = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Resume smithers workflow after approval.",
+          cwd: workspace.root,
+          routeHint: "smithers-workflow",
+          resumeRunId: "golden-reenter-smithers-run",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(resumed.result.raw.sessionEntries);
+      const reconstructed = harness.reconstruct();
+
+      expect(waiting.result.output.status).toBe("waiting_approval");
+      expect(resumed.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual(
+        ["golden-reenter-smithers-wait"],
+      );
+      expect(smithersBridge.resumeRequests[0]?.runId).toBe(
+        "golden-reenter-smithers-run",
+      );
+      expect(reconstructed.episodes.map((episode) => episode.id)).toEqual([
+        "golden-reenter-smithers-wait",
+        "golden-reenter-smithers-done",
+      ]);
+      expect(resumed.result.events.at(-1)?.type).toBe("run.completed");
     });
   });
 

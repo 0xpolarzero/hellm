@@ -19,6 +19,12 @@ const TEST_SUPPORT_ENTRY = fileURLToPath(
 const WORKFLOW_SEED_ENTRY = fileURLToPath(
   new URL("./fixtures/workflow-seed-process.ts", import.meta.url),
 );
+const PATH_ROUTING_PROCESS_FIXTURE = fileURLToPath(
+  new URL("./fixtures/path-routing-process-runner.ts", import.meta.url),
+);
+const HEADLESS_REQUEST_RUNNER = fileURLToPath(
+  new URL("./fixtures/run-headless-request.ts", import.meta.url),
+);
 const REPO_ROOT = resolve(import.meta.dir, "../../../");
 
 interface ProcessJsonlEvent {
@@ -31,6 +37,8 @@ interface ProcessJsonlEvent {
   episodeId?: string;
   latestEpisodeId?: string;
 }
+
+function parseJsonlEvents(output: string): Array<{
 
 describe("@hellm/cli process boundary", () => {
   it("executes the headless entrypoint as a real process and emits JSONL events", async () => {
@@ -300,6 +308,194 @@ describe("@hellm/cli process boundary", () => {
       classificationReason: "Structured workflow seed requested a preferred path.",
       runObjective: "Seeded objective from process fixture",
       workflowObjective: "Seeded objective from process fixture",
+    });
+  });
+
+  it("routes auto verification requests in a subprocess and emits classified verification JSONL events", async () => {
+    const result = runBunModule({
+      entryPath: PATH_ROUTING_PROCESS_FIXTURE,
+      cwd: REPO_ROOT,
+      env: {
+        HELLM_REQUEST_JSON: JSON.stringify({
+          threadId: "process-auto-verify",
+          prompt: "Please VERIFY the branch before merge.",
+          cwd: REPO_ROOT,
+          routeHint: "auto",
+        }),
+        HELLM_FAKE_VERIFICATION: "1",
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.trim()).toBe("");
+
+    const events = parseJsonlEvents(result.stdout);
+    expect(events[1]).toMatchObject({
+      type: "run.classified",
+      path: "verification",
+      reason: "Prompt emphasizes verification work.",
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "run.completed",
+      status: "completed",
+      threadId: "process-auto-verify",
+    });
+  });
+
+  it("routes auto approval requests in a subprocess and emits waiting approval JSONL events", async () => {
+    const result = runBunModule({
+      entryPath: PATH_ROUTING_PROCESS_FIXTURE,
+      cwd: REPO_ROOT,
+      env: {
+        HELLM_REQUEST_JSON: JSON.stringify({
+          threadId: "process-auto-approval",
+          prompt: "Ship this after approval.",
+          cwd: REPO_ROOT,
+          routeHint: "auto",
+          requireApproval: true,
+        }),
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.trim()).toBe("");
+
+    const events = parseJsonlEvents(result.stdout);
+    expect(events[1]).toMatchObject({
+      type: "run.classified",
+      path: "approval",
+      reason: "Request requires approval or clarification.",
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "run.waiting",
+      status: "waiting_approval",
+      threadId: "process-auto-approval",
+    });
+  });
+
+  it("preserves request-classification precedence and reasons across a real process boundary", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const scenarios = [
+        {
+          name: "explicit-route-hint",
+          request: {
+            threadId: "proc-explicit-route-hint",
+            prompt: "VERIFY and request approval",
+            cwd: workspace.root,
+            routeHint: "pi-worker" as const,
+            requireApproval: true,
+            workflowSeedInput: {
+              preferredPath: "smithers-workflow" as const,
+            },
+          },
+          expectedClassification: {
+            path: "pi-worker",
+            reason: "Explicit route hint supplied by caller.",
+          },
+          expectedCompletion: {
+            type: "run.completed",
+            status: "completed",
+          },
+        },
+        {
+          name: "seed-preferred-path",
+          request: {
+            threadId: "proc-seed-hint",
+            prompt: "verify this and wait for approval",
+            cwd: workspace.root,
+            routeHint: "auto" as const,
+            requireApproval: true,
+            workflowSeedInput: {
+              preferredPath: "smithers-workflow" as const,
+            },
+          },
+          expectedClassification: {
+            path: "smithers-workflow",
+            reason: "Structured workflow seed requested a preferred path.",
+          },
+          expectedCompletion: {
+            type: "run.completed",
+            status: "completed",
+          },
+        },
+        {
+          name: "approval-over-verification",
+          request: {
+            threadId: "proc-approval-over-verification",
+            prompt: "please verify this change",
+            cwd: workspace.root,
+            requireApproval: true,
+          },
+          expectedClassification: {
+            path: "approval",
+            reason: "Request requires approval or clarification.",
+          },
+          expectedCompletion: {
+            type: "run.waiting",
+            status: "waiting_approval",
+          },
+        },
+        {
+          name: "verification-heuristic",
+          request: {
+            threadId: "proc-verification-heuristic",
+            prompt: "PLEASE VERIFY THE WORKSPACE",
+            cwd: workspace.root,
+          },
+          expectedClassification: {
+            path: "verification",
+            reason: "Prompt emphasizes verification work.",
+          },
+          expectedCompletion: {
+            type: "run.completed",
+            status: "completed",
+          },
+        },
+        {
+          name: "direct-default",
+          request: {
+            threadId: "proc-direct-default",
+            prompt: "summarize the architecture",
+            cwd: workspace.root,
+          },
+          expectedClassification: {
+            path: "direct",
+            reason: "Defaulted to direct execution for a small local request.",
+          },
+          expectedCompletion: {
+            type: "run.completed",
+            status: "completed",
+          },
+        },
+      ] as const;
+
+      for (const scenario of scenarios) {
+        const result = runBunModule({
+          entryPath: HEADLESS_REQUEST_RUNNER,
+          cwd: REPO_ROOT,
+          args: [JSON.stringify(scenario.request)],
+        });
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr.trim()).toBe("");
+
+        const events = parseJsonlEvents(result.stdout);
+        expect(events.map((event) => event.type)).toEqual([
+          "run.started",
+          "run.classified",
+          "run.episode",
+          scenario.expectedCompletion.type,
+        ]);
+        expect(events[1]).toMatchObject({
+          type: "run.classified",
+          path: scenario.expectedClassification.path,
+          reason: scenario.expectedClassification.reason,
+        });
+        expect(events.at(-1)).toMatchObject({
+          type: scenario.expectedCompletion.type,
+          status: scenario.expectedCompletion.status,
+        });
+      }
     });
   });
 });
