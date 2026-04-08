@@ -37,6 +37,8 @@ describe("@hellm/tui frame and process rendering", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr.trim()).toBe("");
     expect(result.stdout).toContain("[hellm/tui] [threads]");
+    expect(result.stdout).toContain("[hellm/tui] [episode]");
+    expect(result.stdout).toContain("[hellm/tui] episode none");
     expect(result.stdout).toContain("[hellm/tui] [verification]");
     expect(result.stdout).toContain(`[hellm/tui] session ${REPO_ROOT}`);
     expect(result.stdout).toContain("[hellm/tui] aligned");
