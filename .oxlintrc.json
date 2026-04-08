@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error"
+  },
+  "rules": {
+    "func-style": "off",
+    "import/group-exports": "off",
+    "import/no-named-export": "off",
+    "sort-keys": "off"
+  },
+  "env": {
+    "builtin": true
+  }
+}

@@ -7,8 +7,8 @@ Build a pi-derived coding agent and TUI that reproduces Slate's public architect
 ## Status
 
 - Date: 2026-04-08
-- Status: Architecture direction clarified for implementation planning
-- Repository purpose: docs-first planning repo for `hellm`, a pi-first, Slate-like coding agent
+- Status: Architecture direction clarified and initial Bun monorepo scaffold created
+- Repository purpose: Bun monorepo scaffold for `hellm`, a pi-first, Slate-like coding agent
 
 ## Document Purpose
 

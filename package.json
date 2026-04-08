@@ -1,0 +1,27 @@
+{
+  "name": "hellm",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.10",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "bun run --filter '@hellm/*' --if-present build",
+    "dev": "bun run --filter @hellm/tui dev",
+    "start": "bun run --filter @hellm/tui start",
+    "typecheck": "bun run --filter '@hellm/*' typecheck",
+    "lint": "oxlint packages --import-plugin --node-plugin --deny-warnings",
+    "lint:fix": "oxlint packages --import-plugin --node-plugin --deny-warnings --fix --fix-suggestions",
+    "format": "bun run lint:fix",
+    "check": "bun run lint && bun run typecheck"
+  },
+  "engines": {
+    "bun": ">=1.3.10"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.11",
+    "oxlint": "1.59.0",
+    "typescript": "6.0.2"
+  }
+}

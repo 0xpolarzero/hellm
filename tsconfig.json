@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@hellm/cli": ["./packages/cli/src/index.ts"],
+      "@hellm/cli/*": ["./packages/cli/src/*"],
+      "@hellm/orchestrator": ["./packages/orchestrator/src/index.ts"],
+      "@hellm/orchestrator/*": ["./packages/orchestrator/src/*"],
+      "@hellm/pi-bridge": ["./packages/pi-bridge/src/index.ts"],
+      "@hellm/pi-bridge/*": ["./packages/pi-bridge/src/*"],
+      "@hellm/session-model": ["./packages/session-model/src/index.ts"],
+      "@hellm/session-model/*": ["./packages/session-model/src/*"],
+      "@hellm/smithers-bridge": ["./packages/smithers-bridge/src/index.ts"],
+      "@hellm/smithers-bridge/*": ["./packages/smithers-bridge/src/*"],
+      "@hellm/tui": ["./packages/tui/src/index.ts"],
+      "@hellm/tui/*": ["./packages/tui/src/*"],
+      "@hellm/verification": ["./packages/verification/src/index.ts"],
+      "@hellm/verification/*": ["./packages/verification/src/*"]
+    }
+  },
+  "include": ["packages/*/src/**/*"],
+  "exclude": ["node_modules", "dist", "build"]
+}
