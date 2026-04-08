@@ -446,6 +446,134 @@ describe("golden path headless specs", () => {
     expect(second.result.events.at(-1)?.type).toBe("run.completed");
   });
 
+  it("persists smithers waiting_resume workflow state in file-backed JSONL and resumes cleanly", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-smithers-waiting-resume";
+      const runId = "golden-waiting-resume-run";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-smithers-waiting-resume.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueRunResult({
+        run: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "waiting_resume",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+        },
+        status: "waiting_resume",
+        outputs: [],
+        waitReason: "Awaiting durable external resume signal.",
+        episode: createEpisodeFixture({
+          id: "golden-smithers-waiting-resume-episode",
+          threadId,
+          source: "smithers",
+          status: "waiting_input",
+          smithersRunId: runId,
+        }),
+      });
+      smithersBridge.enqueueResumeResult({
+        run: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+        },
+        status: "completed",
+        outputs: [
+          {
+            nodeId: "pi-task",
+            schema: "result",
+            value: { resumed: true },
+          },
+        ],
+        episode: createEpisodeFixture({
+          id: "golden-smithers-waiting-resume-done",
+          threadId,
+          source: "smithers",
+          status: "completed",
+          smithersRunId: runId,
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        smithersBridge,
+        contextLoader: {
+          async load(request) {
+            const state = harness.reconstruct();
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run workflow that pauses for external resume.",
+          cwd: workspace.root,
+          routeHint: "smithers-workflow",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Resume paused workflow.",
+          cwd: workspace.root,
+          routeHint: "smithers-workflow",
+          resumeRunId: runId,
+        },
+        orchestrator,
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+      const reconstructed = harness.reconstruct();
+
+      expect(first.result.output.status).toBe("waiting_input");
+      expect(first.result.events.at(-1)).toMatchObject({
+        type: "run.waiting",
+        status: "waiting_input",
+      });
+      expect(first.result.threadSnapshot.workflowRuns[0]).toMatchObject({
+        runId,
+        status: "waiting_resume",
+      });
+      expect(second.result.events.at(-1)?.type).toBe("run.completed");
+      expect(second.result.output.status).toBe("completed");
+      expect(second.result.threadSnapshot.workflowRuns[0]).toMatchObject({
+        runId,
+        status: "completed",
+      });
+      expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        "golden-smithers-waiting-resume-episode",
+      ]);
+      expect(smithersBridge.resumeRequests[0]?.runId).toBe(runId);
+      expect(reconstructed.workflowRuns).toEqual([
+        {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+        },
+      ]);
+    });
+  });
+
   it("covers a blocked smithers workflow request and preserves blocked visible state in headless output", async () => {
     const smithersBridge = new FakeSmithersWorkflowBridge();
     smithersBridge.enqueueRunResult({
