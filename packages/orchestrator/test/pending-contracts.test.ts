@@ -5,10 +5,6 @@ test.todo(
   () => {},
 );
 test.todo(
-  "safe parallel independent work only proceeds when write scopes and worktrees are provably non-conflicting",
-  () => {},
-);
-test.todo(
   "stale results are ignored during reconciliation once a newer episode supersedes the same objective",
   () => {},
 );
