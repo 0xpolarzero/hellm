@@ -660,10 +660,6 @@ describe("@hellm/cli headless execution", () => {
   });
 
   test.todo(
-    "whole product server mode reuses the same structured contract without requiring a separate orchestration model",
-    () => {},
-  );
-  test.todo(
     "richer remote attachment patterns extend headless input without weakening offline determinism",
     () => {},
   );
