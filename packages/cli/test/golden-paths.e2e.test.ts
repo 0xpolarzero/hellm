@@ -6,6 +6,7 @@ import {
   FakeSmithersWorkflowBridge,
   FakeVerificationRunner,
   FileBackedSessionJsonlHarness,
+  createArtifactFixture,
   createEpisodeFixture,
   createVerificationFixture,
   fixedClock,
@@ -459,6 +460,106 @@ describe("golden path headless specs", () => {
     expect(second.result.raw.state.waiting).toBe(false);
     expect(second.result.raw.state.blocked).toBe(false);
     expect(second.result.events.at(-1)?.type).toBe("run.completed");
+  });
+
+  it("preserves rich smithers episode payloads when translated into headless output", async () => {
+    const smithersBridge = new FakeSmithersWorkflowBridge();
+    const artifact = createArtifactFixture({
+      id: "golden-smithers-translation-artifact",
+      kind: "log",
+      path: "/repo/.smithers/runs/golden-rich.log",
+      description: "Smithers execution log",
+    });
+    const verification = createVerificationFixture({
+      id: "golden-smithers-translation-verification",
+      kind: "integration",
+      status: "failed",
+      summary: "Integration verification failed.",
+      artifactIds: [artifact.id],
+    });
+    smithersBridge.enqueueRunResult({
+      run: {
+        runId: "golden-rich-run",
+        threadId: "golden-smithers-rich",
+        workflowId: "workflow:golden-smithers-rich",
+        status: "completed",
+        updatedAt: "2026-04-08T09:00:00.000Z",
+        worktreePath: "/repo/.worktrees/feature-rich",
+      },
+      status: "completed",
+      outputs: [
+        {
+          nodeId: "task-verify",
+          schema: "verification",
+          value: { failedKinds: ["integration"] },
+        },
+      ],
+      episode: createEpisodeFixture({
+        id: "golden-smithers-rich-episode",
+        threadId: "golden-smithers-rich",
+        source: "smithers",
+        objective: "Produce a rich smithers episode payload.",
+        status: "completed_with_issues",
+        conclusions: ["Smithers workflow completed with integration issues."],
+        changedFiles: ["packages/smithers-bridge/src/index.ts"],
+        artifacts: [artifact],
+        verification: [verification],
+        unresolvedIssues: ["Integration checks failed in the workflow sandbox."],
+        followUpSuggestions: ["Re-run integration verification in CI."],
+        inputEpisodeIds: ["episode-prior-rich"],
+        smithersRunId: "golden-rich-run",
+        worktreePath: "/repo/.worktrees/feature-rich",
+        provenance: {
+          executionPath: "smithers-workflow",
+          actor: "smithers",
+          sourceRef: "workflow:golden-smithers-rich/task-verify",
+          notes: "Rich smithers episode payload",
+        },
+      }),
+    });
+    const orchestrator = createBaseOrchestrator({ smithersBridge });
+    const { result, jsonl } = await runHeadlessHarness(
+      {
+        threadId: "golden-smithers-rich",
+        prompt: "Run rich smithers workflow path.",
+        cwd: "/repo",
+        routeHint: "smithers-workflow",
+      },
+      orchestrator,
+    );
+
+    const translatedEpisode = result.threadSnapshot.episodes.at(-1);
+    expect(result.output.status).toBe("completed");
+    expect(result.output.summary).toBe(
+      "Smithers workflow completed with integration issues.",
+    );
+    expect(result.output.workflowRunIds).toEqual(["golden-rich-run"]);
+    expect(translatedEpisode).toMatchObject({
+      id: "golden-smithers-rich-episode",
+      source: "smithers",
+      status: "completed_with_issues",
+      changedFiles: ["packages/smithers-bridge/src/index.ts"],
+      inputEpisodeIds: ["episode-prior-rich"],
+      smithersRunId: "golden-rich-run",
+      worktreePath: "/repo/.worktrees/feature-rich",
+      unresolvedIssues: ["Integration checks failed in the workflow sandbox."],
+      followUpSuggestions: ["Re-run integration verification in CI."],
+    });
+    expect(translatedEpisode?.artifacts).toEqual([artifact]);
+    expect(translatedEpisode?.verification).toEqual([verification]);
+    expect(translatedEpisode?.provenance).toEqual({
+      executionPath: "smithers-workflow",
+      actor: "smithers",
+      sourceRef: "workflow:golden-smithers-rich/task-verify",
+      notes: "Rich smithers episode payload",
+    });
+    expect(result.events.find((event) => event.type === "run.episode")).toMatchObject({
+      source: "smithers",
+      status: "completed_with_issues",
+    });
+    expect(jsonl.some((line) => line.includes("\"completed_with_issues\""))).toBe(
+      true,
+    );
   });
 
   it("covers a blocked smithers workflow request and preserves blocked visible state in headless output", async () => {

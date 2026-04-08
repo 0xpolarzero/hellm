@@ -7,9 +7,11 @@ import {
 } from "@hellm/smithers-bridge";
 import {
   FakeSmithersWorkflowBridge,
+  createArtifactFixture,
   createEpisodeFixture,
   createThreadFixture,
   withTempWorkspace,
+  createVerificationFixture,
 } from "@hellm/test-support";
 
 const SCOPED_CONTEXT_MARKER = "[[SCOPED_CONTEXT_JSON]]";
@@ -505,6 +507,85 @@ describe("@hellm/smithers-bridge contract surface", () => {
 
     const task = workflow.tasks[0] as Record<string, unknown>;
     expect(task).not.toHaveProperty("scopedContext");
+  });
+
+  it("translates smithers run results into episodes without dropping rich episode fields", () => {
+    const artifact = createArtifactFixture({
+      id: "artifact-smithers-translation",
+      kind: "log",
+      path: "/repo/.smithers/logs/run-translation.log",
+      description: "Smithers workflow execution log",
+    });
+    const verification = createVerificationFixture({
+      id: "verification-smithers-translation",
+      kind: "integration",
+      status: "failed",
+      summary: "Integration checks failed in workflow sandbox.",
+      artifactIds: [artifact.id],
+    });
+    const translatedEpisode = createEpisodeFixture({
+      id: "episode-smithers-translation",
+      threadId: "thread-smithers-translation",
+      source: "smithers",
+      status: "completed_with_issues",
+      objective: "Translate smithers run output to a reusable episode.",
+      conclusions: ["Workflow completed with known integration failures."],
+      changedFiles: ["packages/orchestrator/src/index.ts"],
+      artifacts: [artifact],
+      verification: [verification],
+      unresolvedIssues: ["Integration test flakes in linux-arm64 container."],
+      followUpSuggestions: ["Re-run integration verification after dependency bump."],
+      provenance: {
+        executionPath: "smithers-workflow",
+        actor: "smithers",
+        sourceRef: "workflow:thread-smithers-translation/task-verify",
+        notes: "Translated from smithers workflow run output.",
+      },
+      smithersRunId: "run-translation",
+      worktreePath: "/repo/.worktrees/feature-translation",
+      startedAt: "2026-04-08T09:00:00.000Z",
+      completedAt: "2026-04-08T09:05:00.000Z",
+      inputEpisodeIds: ["episode-prior-a", "episode-prior-b"],
+    });
+    const runResult: SmithersRunResult = {
+      run: {
+        runId: "run-translation",
+        threadId: "thread-smithers-translation",
+        workflowId: "workflow:thread-smithers-translation",
+        status: "failed",
+        updatedAt: "2026-04-08T09:06:00.000Z",
+        worktreePath: "/repo/.worktrees/feature-translation",
+      },
+      status: "failed",
+      outputs: [
+        {
+          nodeId: "task-verify",
+          schema: "verification",
+          value: {
+            failedKinds: ["integration"],
+            artifactId: artifact.id,
+          },
+        },
+      ],
+      waitReason: "manual-inspection-required",
+      retryCount: 3,
+      episode: translatedEpisode,
+    };
+
+    const episode = translateSmithersRunToEpisode(runResult);
+
+    expect(episode).toEqual(translatedEpisode);
+    expect(episode.status).toBe("completed_with_issues");
+    expect(episode.artifacts).toEqual([artifact]);
+    expect(episode.verification).toEqual([verification]);
+    expect(episode.smithersRunId).toBe("run-translation");
+    expect(episode.inputEpisodeIds).toEqual([
+      "episode-prior-a",
+      "episode-prior-b",
+    ]);
+    expect(episode.followUpSuggestions).toEqual([
+      "Re-run integration verification after dependency bump.",
+    ]);
   });
 
   it.todo(
