@@ -666,6 +666,60 @@ describe("golden path headless specs", () => {
     );
   });
 
+  it("covers a manual-only verification request and forwards manual checks", async () => {
+    const verificationRunner = new FakeVerificationRunner();
+    verificationRunner.enqueueResult({
+      status: "failed",
+      records: [
+        createVerificationFixture({
+          kind: "manual",
+          status: "failed",
+          summary: "Manual verification failed on acceptance checks",
+        }),
+      ],
+      artifacts: [],
+    });
+    const orchestrator = createBaseOrchestrator({ verificationRunner });
+    const { result, jsonl } = await runHeadlessHarness(
+      {
+        threadId: "golden-verify-manual",
+        prompt: "Run only manual verification checks.",
+        cwd: "/repo",
+        routeHint: "verification",
+        workflowSeedInput: {
+          verificationKinds: ["manual"],
+          manualChecks: [
+            "Open the app and validate the acceptance flow.",
+            "Capture outcomes for manual QA sign-off.",
+          ],
+        },
+      },
+      orchestrator,
+    );
+
+    expect(verificationRunner.calls[0]).toMatchObject({
+      kinds: ["manual"],
+      manualChecks: [
+        "Open the app and validate the acceptance flow.",
+        "Capture outcomes for manual QA sign-off.",
+      ],
+    });
+    expect(result.raw.classification.path).toBe("verification");
+    expect(result.raw.state.visibleSummary).toBe(
+      "verification:completed:completed_with_issues",
+    );
+    expect(result.raw.state.verification.byKind.manual?.status).toBe("failed");
+    expect(result.output.status).toBe("completed");
+    expect(result.output.summary).toBe("Verification failed.");
+    expect(result.events[2]).toMatchObject({
+      type: "run.episode",
+      source: "verification",
+      status: "completed_with_issues",
+    });
+    expect(result.events.at(-1)?.type).toBe("run.completed");
+    expect(jsonl.at(-1)).toContain("\"run.completed\"");
+  });
+
   it("covers a clarification or waiting request", async () => {
     const orchestrator = createBaseOrchestrator({});
     const { result } = await runHeadlessHarness(
