@@ -354,6 +354,9 @@ describe("golden path headless specs", () => {
       expect(piBridge.workerRequests[1]?.inputEpisodeIds).toEqual([
         "golden-reenter-episode-1",
       ]);
+      expect(second.result.threadSnapshot.thread.inputEpisodeIds).toEqual([
+        "golden-reenter-episode-1",
+      ]);
       expect(reconstructed.episodes.map((episode) => episode.id)).toEqual([
         "golden-reenter-episode-1",
         "golden-reenter-episode-2",
