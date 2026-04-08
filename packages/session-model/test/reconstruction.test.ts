@@ -260,6 +260,42 @@ describe("@hellm/session-model reconstruction", () => {
     ]);
   });
 
+  it("defaults unresolved issues when reconstructing legacy episode entries that omit the field", () => {
+    const thread = createThreadFixture({
+      id: "thread-legacy-unresolved",
+      objective: "Load legacy episode payloads",
+    });
+    const episode = createEpisodeFixture({
+      id: "episode-legacy-unresolved",
+      threadId: thread.id,
+      unresolvedIssues: ["Legacy issue that should no longer be present."],
+    });
+    const threadEntry = createStructuredSessionEntry({
+      id: "entry-thread-legacy-unresolved",
+      parentId: null,
+      timestamp: "2026-04-08T09:00:00.000Z",
+      payload: { kind: "thread", data: thread },
+    });
+    const episodeEntry = createStructuredSessionEntry({
+      id: "entry-episode-legacy-unresolved",
+      parentId: threadEntry.id,
+      timestamp: "2026-04-08T09:00:01.000Z",
+      payload: { kind: "episode", data: episode },
+    });
+    const legacyEpisodeEntry = JSON.parse(JSON.stringify(episodeEntry)) as {
+      message: { details: { data: Record<string, unknown> } };
+    };
+    delete legacyEpisodeEntry.message.details.data.unresolvedIssues;
+
+    const state = reconstructSessionState([
+      threadEntry,
+      legacyEpisodeEntry as unknown as ReturnType<typeof createStructuredSessionEntry>,
+    ]);
+
+    expect(state.episodes[0]?.id).toBe("episode-legacy-unresolved");
+    expect(state.episodes[0]?.unresolvedIssues).toEqual([]);
+  });
+
   it("applies last-write-wins upsert semantics for duplicate episode identifiers", () => {
     const harness = new InMemorySessionJsonlHarness({
       sessionId: "session-upsert",

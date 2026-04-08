@@ -561,15 +561,17 @@ export function reconstructSessionState(
       case "thread":
         upsertById(threads, payload.data);
         break;
-      case "episode":
-        upsertById(episodes, payload.data);
-        for (const artifact of payload.data.artifacts) {
+      case "episode": {
+        const normalizedEpisode = createEpisode(payload.data);
+        upsertById(episodes, normalizedEpisode);
+        for (const artifact of normalizedEpisode.artifacts) {
           upsertById(artifacts, artifact);
         }
-        for (const record of payload.data.verification) {
+        for (const record of normalizedEpisode.verification) {
           upsertById(verificationRecords, record);
         }
         break;
+      }
       case "artifact":
         upsertById(artifacts, payload.data);
         break;
