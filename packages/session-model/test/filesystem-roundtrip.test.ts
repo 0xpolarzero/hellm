@@ -215,6 +215,67 @@ describe("@hellm/session-model filesystem roundtrip", () => {
     });
   });
 
+  it("keeps episode verification records stable when later standalone records reuse the same id", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const sessionFile = workspace.path(".pi/sessions/verification-divergence.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "session-verification-divergence",
+        cwd: workspace.root,
+      });
+      const thread = createThread({
+        id: "thread-verification-divergence",
+        kind: "verification",
+        objective: "Track episode verification immutability",
+        status: "completed",
+        createdAt: "2026-04-08T10:00:00.000Z",
+        updatedAt: "2026-04-08T10:05:00.000Z",
+      });
+      const episodeRecord = createVerificationRecord({
+        id: "verification-shared-id",
+        kind: "test",
+        status: "failed",
+        summary: "Episode-local test result failed",
+        createdAt: "2026-04-08T10:00:01.000Z",
+      });
+      const episode = createEpisode({
+        id: "episode-verification-divergence",
+        threadId: thread.id,
+        source: "verification",
+        objective: "Verification run",
+        status: "completed_with_issues",
+        verification: [episodeRecord],
+        provenance: {
+          executionPath: "verification",
+          actor: "verification",
+        },
+        startedAt: "2026-04-08T10:00:00.000Z",
+        completedAt: "2026-04-08T10:05:00.000Z",
+      });
+      const laterStandaloneRecord = createVerificationRecord({
+        id: "verification-shared-id",
+        kind: "test",
+        status: "passed",
+        summary: "Standalone correction marked tests as passed",
+        createdAt: "2026-04-08T10:06:00.000Z",
+      });
+
+      harness.append({ kind: "thread", data: thread });
+      harness.append({ kind: "episode", data: episode });
+      harness.append({ kind: "verification", data: laterStandaloneRecord });
+
+      const reconstructed = harness.reconstruct();
+      const reconstructedEpisode = reconstructed.episodes.find(
+        (candidate) => candidate.id === episode.id,
+      );
+
+      expect(reconstructedEpisode?.verification).toEqual([episodeRecord]);
+      expect(reconstructed.verification.byKind.test?.id).toBe("verification-shared-id");
+      expect(reconstructed.verification.byKind.test?.status).toBe("passed");
+      expect(reconstructed.verification.overallStatus).toBe("passed");
+    });
+  });
+
   it("filters snapshots by thread and raises when the requested thread does not exist", async () => {
     const threadA = createThread({
       id: "thread-a",
