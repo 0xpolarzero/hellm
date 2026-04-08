@@ -12,7 +12,3 @@ test.todo(
   "stale results are ignored during reconciliation once a newer episode supersedes the same objective",
   () => {},
 );
-test.todo(
-  "broad multi-slot model routing chooses models per task type without changing the visible orchestrator contract",
-  () => {},
-);
