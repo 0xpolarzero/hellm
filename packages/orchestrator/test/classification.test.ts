@@ -108,4 +108,43 @@ describe("@hellm/orchestrator classification", () => {
       reason: "Defaulted to direct execution for a small local request.",
     });
   });
+
+  it("uses workflow seed preferredPath when routeHint is omitted, including approval and verification signals", () => {
+    const orchestrator = createOrchestrator();
+    const scenarios = [
+      {
+        threadId: "seed-vs-verify",
+        prompt: "Verify the implementation details",
+      },
+      {
+        threadId: "seed-vs-approval",
+        prompt: "Ship this change",
+        requireApproval: true,
+      },
+      {
+        threadId: "seed-vs-approval-and-verify",
+        prompt: "Verify this and wait for approval",
+        requireApproval: true,
+      },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      expect(
+        orchestrator.classifyRequest(
+          {
+            ...scenario,
+            cwd: "/repo",
+            workflowSeedInput: {
+              preferredPath: "pi-worker",
+            },
+          },
+          EMPTY_CONTEXT,
+        ),
+      ).toEqual({
+        path: "pi-worker",
+        confidence: "hint",
+        reason: "Structured workflow seed requested a preferred path.",
+      });
+    }
+  });
 });

@@ -30,6 +30,11 @@ describe("@hellm/cli process boundary", () => {
       "run.episode",
       "run.completed",
     ]);
+    expect(events[1]).toMatchObject({
+      type: "run.classified",
+      path: "direct",
+      reason: "Explicit route hint supplied by caller.",
+    });
     expect(events[0]?.threadId).toBe("cli");
     expect(events.at(-1)?.status).toBe("completed");
   });

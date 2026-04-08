@@ -4,7 +4,9 @@ import { createOrchestrator } from "@hellm/orchestrator";
 import { createEmptySessionState } from "@hellm/session-model";
 import {
   FakeSmithersWorkflowBridge,
+  FakeVerificationRunner,
   createEpisodeFixture,
+  createVerificationFixture,
   fixedClock,
 } from "@hellm/test-support";
 
@@ -115,6 +117,60 @@ describe("@hellm/cli headless execution", () => {
 
     expect(result.raw.classification.path).toBe("smithers-workflow");
     expect(result.output.workflowRunIds).toEqual(["run-seed"]);
+  });
+
+  it("uses prompt-driven verification classification when routeHint is omitted or auto and emits run.classified", async () => {
+    const scenarios = [
+      {id: "omitted-route-hint"},
+      {id: "auto-route-hint", routeHint: "auto" as const},
+    ];
+
+    for (const scenario of scenarios) {
+      const verificationRunner = new FakeVerificationRunner();
+      verificationRunner.enqueueResult({
+        status: "passed",
+        records: [createVerificationFixture({ kind: "build", status: "passed" })],
+        artifacts: [],
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        verificationRunner,
+        contextLoader: {
+          async load(request) {
+            return {
+              sessionHistory: [],
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: [],
+              relevantSkills: [],
+              priorEpisodes: [],
+              priorArtifacts: [],
+              state: createEmptySessionState({
+                sessionId: request.threadId,
+                sessionCwd: request.cwd,
+              }),
+            };
+          },
+        },
+      });
+
+      const result = await executeHeadlessRun(
+        {
+          threadId: `thread-verify-${scenario.id}`,
+          prompt: "Please verify the current workspace state.",
+          cwd: "/repo",
+          ...(scenario.routeHint ? { routeHint: scenario.routeHint } : {}),
+        },
+        { orchestrator },
+      );
+
+      expect(result.raw.classification.path).toBe("verification");
+      expect(result.events).toContainEqual({
+        type: "run.classified",
+        path: "verification",
+        reason: "Prompt emphasizes verification work.",
+      });
+    }
   });
 
   it("reuses the same orchestrator instance across repeated entry-surface calls when one is provided", async () => {
