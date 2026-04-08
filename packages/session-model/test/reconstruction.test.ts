@@ -148,6 +148,52 @@ describe("@hellm/session-model reconstruction", () => {
     expect(state.verification.byKind.build?.id).toBe("verification-build-failed");
   });
 
+  it("keeps episode verification records intact when an explicit global snapshot diverges", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-episode-verification-vs-global",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const thread = createThreadFixture({
+      id: "thread-episode-verification-vs-global",
+      objective: "Persist episode-level verification records",
+    });
+    const episodeBuildRecord = createVerificationFixture({
+      id: "verification-build-episode",
+      kind: "build",
+      status: "passed",
+      summary: "Episode-local build passed",
+    });
+    const globalBuildRecord = createVerificationFixture({
+      id: "verification-build-global",
+      kind: "build",
+      status: "failed",
+      summary: "Global snapshot build failed",
+    });
+    const episode = createEpisodeFixture({
+      id: "episode-episode-verification-vs-global",
+      threadId: thread.id,
+      verification: [episodeBuildRecord],
+    });
+
+    harness.append({ kind: "thread", data: thread });
+    harness.append({ kind: "episode", data: episode });
+    harness.append({
+      kind: "verification",
+      data: {
+        overallStatus: "failed",
+        byKind: { build: globalBuildRecord },
+      },
+    });
+
+    const state = harness.reconstruct();
+
+    expect(state.episodes[0]?.verification).toEqual([episodeBuildRecord]);
+    expect(state.verification.overallStatus).toBe("failed");
+    expect(state.verification.byKind.build?.id).toBe("verification-build-global");
+    expect(state.verification.byKind.build?.status).toBe("failed");
+  });
+
   it("upserts workflow and smithers isolation entries by run id during reconstruction", () => {
     const harness = new InMemorySessionJsonlHarness({
       sessionId: "session-run-upsert",
@@ -294,6 +340,57 @@ describe("@hellm/session-model reconstruction", () => {
 
     expect(state.episodes[0]?.id).toBe("episode-legacy-unresolved");
     expect(state.episodes[0]?.unresolvedIssues).toEqual([]);
+  });
+
+  it("keeps the latest verification records when an episode is re-written with the same id", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-episode-verification-upsert",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const thread = createThreadFixture({
+      id: "thread-episode-verification-upsert",
+      objective: "Persist rewritten verification records",
+    });
+    const buildPassed = createVerificationFixture({
+      id: "verification-build-upsert",
+      kind: "build",
+      status: "passed",
+      summary: "Initial build passed",
+    });
+    const buildFailed = createVerificationFixture({
+      id: "verification-build-upsert",
+      kind: "build",
+      status: "failed",
+      summary: "Updated build failed",
+    });
+    const manualSkipped = createVerificationFixture({
+      id: "verification-manual-upsert",
+      kind: "manual",
+      status: "skipped",
+      summary: "Manual checks skipped",
+    });
+    const firstEpisode = createEpisodeFixture({
+      id: "episode-verification-upsert",
+      threadId: thread.id,
+      verification: [buildPassed],
+    });
+    const updatedEpisode = createEpisodeFixture({
+      ...firstEpisode,
+      verification: [buildFailed, manualSkipped],
+    });
+
+    harness.append({ kind: "thread", data: thread });
+    harness.append({ kind: "episode", data: firstEpisode });
+    harness.append({ kind: "episode", data: updatedEpisode });
+
+    const state = harness.reconstruct();
+
+    expect(state.episodes).toHaveLength(1);
+    expect(state.episodes[0]?.verification).toEqual([buildFailed, manualSkipped]);
+    expect(state.verification.byKind.build?.status).toBe("failed");
+    expect(state.verification.byKind.manual?.status).toBe("skipped");
+    expect(state.verification.overallStatus).toBe("failed");
   });
 
   it("applies last-write-wins upsert semantics for duplicate episode identifiers", () => {
