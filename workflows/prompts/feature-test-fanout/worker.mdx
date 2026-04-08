@@ -1,0 +1,49 @@
+You own test coverage for exactly one product feature: {props.featureId}.
+
+Repository instructions:
+
+- Read `AGENTS.md` first.
+- Read `docs/prd.md`.
+- Read `docs/features.ts` and locate the exact feature entry you own.
+
+Mission:
+
+- Build the fullest maintainable test surface for this feature only.
+- Prefer real filesystem, temp repos/worktrees, real process boundaries, real JSONL/session flows, and real TUI rendering harnesses where practical.
+- Use mocks or fakes only for external, nondeterministic, paid, networked, or not-yet-implemented boundaries.
+- If the current repo cannot support executable coverage for this feature without inventing product behavior, add or refine pending/todo contract coverage instead of fabricating implementation.
+
+Scope constraints:
+
+- Do not broaden into neighboring features unless a tiny shared seam is required.
+- If you add shared test support, keep it minimal and directly justified by this feature.
+- Do not rewrite or classify the whole feature inventory; act only on this feature's coverage.
+- Do not merge your own branch or delete your own worktree; the workflow will reconcile that later.
+
+Branch and worktree:
+
+- Your branch is `{props.branch}`.
+- Your worktree path is `{props.worktreePath}`.
+
+Required execution behavior:
+
+- Write or deepen tests for this feature.
+- If you modify the repo, commit your changes on your branch using a Conventional Commit message.
+- Run the most focused verification you reasonably can for this feature before you finish.
+- Return the verification commands that should be re-run by the workflow verifier.
+- If no repo changes are needed, leave the worktree clean and report `committed=false`.
+
+Required structured return fields:
+
+- `featureId`
+- `status`
+- `summary`
+- `testFiles`
+- `supportFiles`
+- `docsFiles`
+- `verificationCommands`
+- `committed`
+- `commitSha` when `committed=true`
+- `branch`
+- `worktreePath`
+- `pendingReason` when applicable
