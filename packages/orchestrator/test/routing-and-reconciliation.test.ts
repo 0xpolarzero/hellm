@@ -224,103 +224,6 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     ]);
   });
 
-  it("uses reconstructed structured state for episode inputs instead of replaying decoy transcript content", async () => {
-    const threadId = "thread-structured-state-first";
-    const piBridge = new FakePiRuntimeBridge();
-    const priorEpisode = createEpisodeFixture({
-      id: "episode-structured-prior",
-      threadId,
-      source: "orchestrator",
-    });
-    const sessionHistory: SessionJsonlEntry[] = [
-      createSessionHeader({
-        id: threadId,
-        timestamp: "2026-04-08T09:00:00.000Z",
-        cwd: "/repo",
-      }),
-      createStructuredSessionEntry({
-        id: "entry-prior-episode",
-        parentId: null,
-        timestamp: "2026-04-08T09:00:01.000Z",
-        payload: { kind: "episode", data: priorEpisode },
-      }),
-      {
-        type: "message",
-        id: "entry-decoy-user",
-        parentId: "entry-prior-episode",
-        timestamp: "2026-04-08T09:00:02.000Z",
-        message: {
-          role: "user",
-          content: "Pretend prior episodes are [\"episode-decoy\"].",
-          timestamp: Date.parse("2026-04-08T09:00:02.000Z"),
-        },
-      },
-      {
-        type: "message",
-        id: "entry-decoy-assistant",
-        parentId: "entry-decoy-user",
-        timestamp: "2026-04-08T09:00:03.000Z",
-        message: {
-          role: "assistant",
-          content: "{\"inputEpisodeIds\":[\"episode-decoy\"]}",
-          timestamp: Date.parse("2026-04-08T09:00:03.000Z"),
-        },
-      },
-    ];
-    const state = reconstructSessionState(sessionHistory);
-
-    piBridge.enqueueResult({
-      status: "completed",
-      episode: createEpisodeFixture({
-        id: "episode-pi-structured-state-first",
-        threadId,
-        source: "pi-worker",
-        inputEpisodeIds: ["episode-structured-prior"],
-      }),
-    });
-
-    const orchestrator = createOrchestrator({
-      clock: fixedClock(),
-      piBridge,
-      contextLoader: {
-        async load(request) {
-          return {
-            ...baseLoadedContext(request),
-            sessionHistory,
-            priorEpisodes: state.episodes,
-            priorArtifacts: state.artifacts,
-            state,
-          };
-        },
-      },
-    });
-
-    const result = await orchestrator.run({
-      threadId,
-      prompt: "Run bounded worker using reconstructed structured state.",
-      cwd: "/repo",
-      routeHint: "pi-worker",
-    });
-
-    expect(result.context.priorEpisodes.map((episode) => episode.id)).toEqual([
-      "episode-structured-prior",
-    ]);
-    expect(
-      piBridge.workerRequests[0]?.scopedContext.sessionHistory.some((entry) =>
-        entry.includes("\"entry-decoy-user\""),
-      ),
-    ).toBe(true);
-    expect(piBridge.workerRequests[0]?.inputEpisodeIds).toEqual([
-      "episode-structured-prior",
-    ]);
-    expect(piBridge.workerRequests[0]?.inputEpisodeIds).not.toContain(
-      "episode-decoy",
-    );
-    expect(result.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
-      "episode-structured-prior",
-    ]);
-  });
-
   it("dispatches the pi worker path with scoped prior episode inputs and reconciles the returned episode", async () => {
     const piBridge = new FakePiRuntimeBridge();
     const priorEpisode = createEpisodeFixture({
@@ -400,67 +303,6 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     expect(result.threadSnapshot.thread.status).toBe("completed");
   });
 
-  it("dispatches bounded worker requests with objective overrides and bounded completion/tool scope contracts", async () => {
-    const piBridge = new FakePiRuntimeBridge();
-    const worktreePath = "/repo/.worktrees/feature-bounded-contract";
-    piBridge.enqueueResult({
-      status: "completed",
-      episode: createEpisodeFixture({
-        id: "episode-pi-bounded-contract",
-        threadId: "thread-pi-bounded-contract",
-        source: "pi-worker",
-        worktreePath,
-      }),
-    });
-
-    const orchestrator = createOrchestrator({
-      clock: fixedClock(),
-      piBridge,
-      contextLoader: {
-        async load(request) {
-          return baseLoadedContext({ ...request, worktreePath });
-        },
-      },
-    });
-
-    const result = await orchestrator.run({
-      threadId: "thread-pi-bounded-contract",
-      prompt: "Prompt is separate from objective override.",
-      cwd: "/repo",
-      worktreePath,
-      routeHint: "pi-worker",
-      workflowSeedInput: {
-        objective: "Deliver bounded worker artifact.",
-      },
-    });
-
-    expect(piBridge.workerRequests[0]).toMatchObject({
-      path: "pi-worker",
-      objective: "Deliver bounded worker artifact.",
-      cwd: "/repo",
-      completion: {
-        type: "episode-produced",
-        maxTurns: 1,
-      },
-      scopedContext: {
-        relevantPaths: ["/repo", worktreePath],
-      },
-      toolScope: {
-        allow: ["read", "edit", "bash"],
-        writeRoots: ["/repo"],
-      },
-      runtimeTransition: {
-        reason: "new",
-        toSessionId: "thread-pi-bounded-contract:pi",
-        aligned: false,
-        toWorktreePath: worktreePath,
-      },
-    });
-    expect(result.threadSnapshot.thread.objective).toBe(
-      "Deliver bounded worker artifact.",
-    );
-  });
-
   it("uses a resume runtime transition when a bounded worker run is resumed in a worktree", async () => {
     const piBridge = new FakePiRuntimeBridge();
     const worktreePath = "/repo/.worktrees/feature";
@@ -525,57 +367,6 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     expect(result.threadSnapshot.episodes.at(-1)?.id).toBe("episode-resumed");
   });
 
-  it("uses a resume runtime transition aligned to session cwd when bounded worker resume has no worktree", async () => {
-    const piBridge = new FakePiRuntimeBridge();
-    piBridge.enqueueResult({
-      status: "completed",
-      episode: createEpisodeFixture({
-        id: "episode-resumed-no-worktree",
-        threadId: "thread-pi-resume-no-worktree",
-        source: "pi-worker",
-      }),
-    });
-
-    const orchestrator = createOrchestrator({
-      clock: fixedClock(),
-      piBridge,
-      contextLoader: {
-        async load(request) {
-          const thread = createThreadFixture({
-            id: request.threadId,
-            kind: "pi-worker",
-            objective: request.prompt,
-            status: "running",
-          });
-          return {
-            ...baseLoadedContext(request),
-            state: {
-              ...baseLoadedContext(request).state,
-              threads: [thread],
-            },
-          };
-        },
-      },
-    });
-
-    await orchestrator.run({
-      threadId: "thread-pi-resume-no-worktree",
-      prompt: "Resume bounded worker execution without a worktree.",
-      cwd: "/repo",
-      routeHint: "pi-worker",
-      resumeRunId: "run-resume-no-worktree",
-    });
-
-    expect(piBridge.workerRequests[0]?.runtimeTransition).toEqual({
-      reason: "resume",
-      toSessionId: "thread-pi-resume-no-worktree:pi",
-      aligned: true,
-    });
-    expect(piBridge.workerRequests[0]?.runtimeTransition).not.toHaveProperty(
-      "toWorktreePath",
-    );
-  });
-
   it("re-enters after every pi-worker episode by loading reconciled state into the next run", async () => {
     const threadId = "thread-pi-reenter";
     const piBridge = new FakePiRuntimeBridge();
@@ -637,77 +428,6 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     expect(second.threadSnapshot.episodes.map((episode) => episode.id)).toEqual([
       "episode-pi-1",
       "episode-pi-2",
-    ]);
-  });
-
-  it("re-enters after a waiting pi-worker episode and carries that waiting episode into the next run context", async () => {
-    const threadId = "thread-pi-reenter-waiting";
-    const piBridge = new FakePiRuntimeBridge();
-    piBridge.enqueueResult({
-      status: "waiting_input",
-      episode: createEpisodeFixture({
-        id: "episode-pi-waiting",
-        threadId,
-        source: "pi-worker",
-        status: "waiting_input",
-      }),
-    });
-    piBridge.enqueueResult({
-      status: "completed",
-      episode: createEpisodeFixture({
-        id: "episode-pi-after-waiting",
-        threadId,
-        source: "pi-worker",
-      }),
-    });
-
-    let state = createEmptySessionState({
-      sessionId: threadId,
-      sessionCwd: "/repo",
-    });
-    const orchestrator = createOrchestrator({
-      clock: fixedClock(),
-      piBridge,
-      contextLoader: {
-        async load(request) {
-          return {
-            ...baseLoadedContext(request),
-            priorEpisodes: state.episodes,
-            priorArtifacts: state.artifacts,
-            state,
-          };
-        },
-      },
-    });
-
-    const waiting = await orchestrator.run({
-      threadId,
-      prompt: "Worker needs more context.",
-      cwd: "/repo",
-      routeHint: "pi-worker",
-    });
-    state = waiting.sessionState;
-    const resumed = await orchestrator.run({
-      threadId,
-      prompt: "Worker resumes after user clarification.",
-      cwd: "/repo",
-      routeHint: "pi-worker",
-      resumeRunId: "pi-waiting-run",
-    });
-
-    expect(waiting.completion).toEqual({
-      isComplete: false,
-      reason: "waiting_input",
-    });
-    expect(resumed.context.priorEpisodes.map((episode) => episode.id)).toEqual([
-      "episode-pi-waiting",
-    ]);
-    expect(piBridge.workerRequests[1]?.inputEpisodeIds).toEqual([
-      "episode-pi-waiting",
-    ]);
-    expect(resumed.threadSnapshot.episodes.map((episode) => episode.id)).toEqual([
-      "episode-pi-waiting",
-      "episode-pi-after-waiting",
     ]);
   });
 
@@ -1119,91 +839,6 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     ]);
   });
 
-  it("persists waiting_input then blocked status across structured session re-entry", async () => {
-    const threadId = "thread-status-reentry";
-    const sessionHistory: SessionJsonlEntry[] = [
-      createSessionHeader({
-        id: threadId,
-        timestamp: "2026-04-08T09:00:00.000Z",
-        cwd: "/repo",
-      }),
-    ];
-    const piBridge = new FakePiRuntimeBridge();
-    piBridge.enqueueResult({
-      status: "waiting_input",
-      episode: createEpisodeFixture({
-        id: "episode-status-waiting",
-        threadId,
-        source: "pi-worker",
-        status: "waiting_input",
-      }),
-    });
-    piBridge.enqueueResult({
-      status: "blocked",
-      episode: createEpisodeFixture({
-        id: "episode-status-blocked",
-        threadId,
-        source: "pi-worker",
-        status: "blocked",
-      }),
-    });
-
-    const orchestrator = createOrchestrator({
-      clock: fixedClock(),
-      piBridge,
-      contextLoader: {
-        async load(request) {
-          const state = reconstructSessionState(sessionHistory);
-          return {
-            ...baseLoadedContext(request),
-            sessionHistory,
-            priorEpisodes: state.episodes,
-            priorArtifacts: state.artifacts,
-            state,
-          };
-        },
-      },
-    });
-
-    const waiting = await orchestrator.run({
-      threadId,
-      prompt: "First worker run needs input.",
-      cwd: "/repo",
-      routeHint: "pi-worker",
-    });
-    sessionHistory.push(...waiting.sessionEntries);
-    const blocked = await orchestrator.run({
-      threadId,
-      prompt: "Second worker run remains blocked.",
-      cwd: "/repo",
-      routeHint: "pi-worker",
-    });
-    sessionHistory.push(...blocked.sessionEntries);
-    const reconstructed = reconstructSessionState(sessionHistory);
-
-    expect(waiting.completion).toEqual({
-      isComplete: false,
-      reason: "waiting_input",
-    });
-    expect(waiting.state.waiting).toBe(true);
-    expect(waiting.state.blocked).toBe(false);
-    expect(blocked.context.priorEpisodes.map((episode) => episode.id)).toEqual([
-      "episode-status-waiting",
-    ]);
-    expect(blocked.completion).toEqual({
-      isComplete: false,
-      reason: "blocked",
-    });
-    expect(blocked.state.waiting).toBe(false);
-    expect(blocked.state.blocked).toBe(true);
-    expect(reconstructed.threads).toHaveLength(1);
-    expect(reconstructed.threads[0]?.status).toBe("blocked");
-    expect(reconstructed.episodes.map((episode) => episode.status)).toEqual([
-      "waiting_input",
-      "blocked",
-    ]);
-  });
-
   it("reconciles artifacts by replacing stale records with the latest episode artifact", async () => {
     const piBridge = new FakePiRuntimeBridge();
     const staleArtifact = createArtifact({
@@ -1530,78 +1165,6 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     expect(approval.threadSnapshot.thread.status).toBe("waiting_approval");
     expect(approval.state.waiting).toBe(true);
     expect(approval.completion.isComplete).toBe(false);
-  });
-
-  it("dispatches explicit route hints at runtime even when workflow seed, approval, and verify signals conflict", async () => {
-    const piBridge = new FakePiRuntimeBridge();
-    const smithersBridge = new FakeSmithersWorkflowBridge();
-    const verificationRunner = new FakeVerificationRunner();
-    piBridge.enqueueResult({
-      status: "completed",
-      episode: createEpisodeFixture({
-        id: "episode-explicit-hint",
-        threadId: "thread-explicit-hint",
-        source: "pi-worker",
-      }),
-    });
-
-    const orchestrator = createOrchestrator({
-      clock: fixedClock(),
-      piBridge,
-      smithersBridge,
-      verificationRunner,
-      contextLoader: {
-        async load(request) {
-          return baseLoadedContext(request);
-        },
-      },
-    });
-
-    const result = await orchestrator.run({
-      threadId: "thread-explicit-hint",
-      prompt: "Please verify this and wait for approval.",
-      cwd: "/repo",
-      routeHint: "pi-worker",
-      requireApproval: true,
-      workflowSeedInput: {
-        preferredPath: "smithers-workflow",
-      },
-    });
-
-    expect(result.classification).toEqual({
-      path: "pi-worker",
-      confidence: "hint",
-      reason: "Explicit route hint supplied by caller.",
-    });
-    expect(piBridge.workerRequests).toHaveLength(1);
-    expect(smithersBridge.runRequests).toHaveLength(0);
-    expect(verificationRunner.calls).toHaveLength(0);
-    expect(result.threadSnapshot.thread.kind).toBe("pi-worker");
-  });
-
-  it("treats routeHint auto as unset and still prioritizes approval over verification heuristics", async () => {
-    const verificationRunner = new FakeVerificationRunner();
-    const orchestrator = createOrchestrator({
-      clock: fixedClock(),
-      verificationRunner,
-      contextLoader: {
-        async load(request) {
-          return baseLoadedContext(request);
-        },
-      },
-    });
-
-    const result = await orchestrator.run({
-      threadId: "thread-auto-approve-over-verify",
-      prompt: "Please verify this change before approval.",
-      cwd: "/repo",
-      routeHint: "auto",
-      requireApproval: true,
-    });
-
-    expect(result.classification.path).toBe("approval");
-    expect(result.threadSnapshot.thread.status).toBe("waiting_approval");
-    expect(verificationRunner.calls).toEqual([]);
   });
 
   it("auto-routes verify prompts into the verification path and runs verification", async () => {
@@ -1936,13 +1499,622 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     expect(second.threadSnapshot.thread.createdAt).toBe(
       first.threadSnapshot.thread.createdAt,
     );
-    expect(second.threadSnapshot.thread.inputEpisodeIds).toEqual([
-      firstEpisodeId!,
-    ]);
     expect(second.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
       firstEpisodeId!,
     ]);
     expect(second.sessionEntries[0]?.parentId).toBe(first.sessionEntries.at(-1)?.id);
+  });
+
+  it("normalizes the direct path into the canonical episode shape", async () => {
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext(request);
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-direct-canonical",
+      prompt: "Apply a tiny direct-path update.",
+      cwd: "/repo",
+      routeHint: "direct",
+      workflowSeedInput: {
+        objective: "Deliver the direct-path change with no delegation.",
+      },
+    });
+
+    const episode = result.threadSnapshot.episodes.at(-1);
+    expect(episode).toEqual({
+      id: "thread-direct-canonical:direct:2026-04-08T09:00:00.000Z",
+      threadId: "thread-direct-canonical",
+      source: "orchestrator",
+      objective: "Deliver the direct-path change with no delegation.",
+      status: "completed",
+      conclusions: ["Apply a tiny direct-path update."],
+      changedFiles: [],
+      artifacts: [],
+      verification: [],
+      unresolvedIssues: [],
+      followUpSuggestions: [],
+      provenance: {
+        executionPath: "direct",
+        actor: "orchestrator",
+        notes: "Direct path normalized into an episode.",
+      },
+      startedAt: "2026-04-08T09:00:00.000Z",
+      completedAt: "2026-04-08T09:00:00.000Z",
+      inputEpisodeIds: [],
+    });
+    expect(result.threadSnapshot.thread.objective).toBe(
+      "Deliver the direct-path change with no delegation.",
+    );
+    expect("worktreePath" in (episode ?? {})).toBe(false);
+  });
+
+  it("normalizes direct episodes with the loaded context worktree when no request worktree is supplied", async () => {
+    const worktreePath = "/repo/.worktrees/context-direct";
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      contextLoader: {
+        async load(request) {
+          return {
+            ...baseLoadedContext(request),
+            repoAndWorktree: {
+              cwd: request.cwd,
+              worktreePath,
+            },
+            state: createEmptySessionState({
+              sessionId: request.threadId,
+              sessionCwd: request.cwd,
+              activeWorktreePath: worktreePath,
+            }),
+          };
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-direct-context-worktree",
+      prompt: "Summarize direct-path state in a context worktree.",
+      cwd: "/repo",
+      routeHint: "direct",
+    });
+
+    expect(result.threadSnapshot.thread.worktreePath).toBe(worktreePath);
+    expect(result.threadSnapshot.episodes.at(-1)?.worktreePath).toBe(worktreePath);
+    expect(result.threadSnapshot.alignment.activeWorktreePath).toBe(worktreePath);
+    expect(
+      result.sessionEntries.find((entry) => entry.message.customType === "hellm/episode")
+        ?.message.details,
+    ).toMatchObject({
+      kind: "episode",
+      data: {
+        id: "thread-direct-context-worktree:direct:2026-04-08T09:00:00.000Z",
+        worktreePath,
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+      },
+    });
+  });
+
+  it("normalizes clarification and approval requests into deterministic waiting states and session entries", async () => {
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext(request);
+        },
+      },
+    });
+
+    const scenarios = [
+      {
+        threadId: "thread-clarification-normalization",
+        requireApproval: false,
+        expectedStatus: "waiting_input",
+        expectedFollowUp: "Collect the missing user clarification before resuming work.",
+        expectedReason: "waiting_input",
+      },
+      {
+        threadId: "thread-approval-normalization",
+        requireApproval: true,
+        expectedStatus: "waiting_approval",
+        expectedFollowUp: "Await explicit approval before resuming work.",
+        expectedReason: "waiting_approval",
+      },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const result = await orchestrator.run({
+        threadId: scenario.threadId,
+        prompt: "Wait before executing any action.",
+        cwd: "/repo",
+        routeHint: "approval",
+        requireApproval: scenario.requireApproval,
+      });
+      const latestEpisode = result.threadSnapshot.episodes.at(-1);
+
+      expect(result.classification.path).toBe("approval");
+      expect(result.threadSnapshot.thread.kind).toBe("approval");
+      expect(result.threadSnapshot.thread.status).toBe(scenario.expectedStatus);
+      expect(latestEpisode?.status).toBe(scenario.expectedStatus);
+      expect(latestEpisode?.followUpSuggestions).toEqual([scenario.expectedFollowUp]);
+      expect(latestEpisode?.provenance).toEqual({
+        executionPath: "approval",
+        actor: "orchestrator",
+        notes: "Approval and clarification paths are explicit state transitions.",
+      });
+      expect(result.state.visibleSummary).toBe(
+        `approval:${scenario.expectedStatus}:${scenario.expectedStatus}`,
+      );
+      expect(result.state.waiting).toBe(true);
+      expect(result.state.blocked).toBe(false);
+      expect(result.completion).toEqual({
+        isComplete: false,
+        reason: scenario.expectedReason,
+      });
+      expect(result.threadSnapshot.workflowRuns).toEqual([]);
+      expect(result.sessionEntries.map((entry) => entry.message.customType)).toEqual([
+        "hellm/thread",
+        "hellm/episode",
+        "hellm/verification",
+        "hellm/alignment",
+      ]);
+
+      const reconstructed = reconstructSessionState([
+        createSessionHeader({
+          sessionId: scenario.threadId,
+          cwd: "/repo",
+          timestamp: "2026-04-08T08:59:00.000Z",
+        }),
+        ...result.sessionEntries,
+      ] as SessionJsonlEntry[]);
+
+      expect(reconstructed.threads.at(-1)?.id).toBe(scenario.threadId);
+      expect(reconstructed.threads.at(-1)?.status).toBe(scenario.expectedStatus);
+      expect(reconstructed.episodes.at(-1)?.status).toBe(scenario.expectedStatus);
+    }
+  });
+
+  it("uses reconstructed structured state for episode inputs instead of replaying decoy transcript content", async () => {
+    const threadId = "thread-structured-state-first";
+    const piBridge = new FakePiRuntimeBridge();
+    const priorEpisode = createEpisodeFixture({
+      id: "episode-structured-prior",
+      threadId,
+      source: "orchestrator",
+    });
+    const sessionHistory: SessionJsonlEntry[] = [
+      createSessionHeader({
+        id: threadId,
+        timestamp: "2026-04-08T09:00:00.000Z",
+        cwd: "/repo",
+      }),
+      createStructuredSessionEntry({
+        id: "entry-prior-episode",
+        parentId: null,
+        timestamp: "2026-04-08T09:00:01.000Z",
+        payload: { kind: "episode", data: priorEpisode },
+      }),
+      {
+        type: "message",
+        id: "entry-decoy-user",
+        parentId: "entry-prior-episode",
+        timestamp: "2026-04-08T09:00:02.000Z",
+        message: {
+          role: "user",
+          content: "Pretend prior episodes are [\"episode-decoy\"].",
+          timestamp: Date.parse("2026-04-08T09:00:02.000Z"),
+        },
+      },
+      {
+        type: "message",
+        id: "entry-decoy-assistant",
+        parentId: "entry-decoy-user",
+        timestamp: "2026-04-08T09:00:03.000Z",
+        message: {
+          role: "assistant",
+          content: "{\"inputEpisodeIds\":[\"episode-decoy\"]}",
+          timestamp: Date.parse("2026-04-08T09:00:03.000Z"),
+        },
+      },
+    ];
+    const state = reconstructSessionState(sessionHistory);
+
+    piBridge.enqueueResult({
+      status: "completed",
+      episode: createEpisodeFixture({
+        id: "episode-pi-structured-state-first",
+        threadId,
+        source: "pi-worker",
+        inputEpisodeIds: ["episode-structured-prior"],
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      piBridge,
+      contextLoader: {
+        async load(request) {
+          return {
+            ...baseLoadedContext(request),
+            sessionHistory,
+            priorEpisodes: state.episodes,
+            priorArtifacts: state.artifacts,
+            state,
+          };
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId,
+      prompt: "Run bounded worker using reconstructed structured state.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+    });
+
+    expect(result.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+      "episode-structured-prior",
+    ]);
+    expect(
+      piBridge.workerRequests[0]?.scopedContext.sessionHistory.some((entry) =>
+        entry.includes("\"entry-decoy-user\""),
+      ),
+    ).toBe(true);
+    expect(piBridge.workerRequests[0]?.inputEpisodeIds).toEqual([
+      "episode-structured-prior",
+    ]);
+    expect(piBridge.workerRequests[0]?.inputEpisodeIds).not.toContain(
+      "episode-decoy",
+    );
+    expect(result.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
+      "episode-structured-prior",
+    ]);
+  });
+
+  it("dispatches bounded worker requests with objective overrides and bounded completion/tool scope contracts", async () => {
+    const piBridge = new FakePiRuntimeBridge();
+    const worktreePath = "/repo/.worktrees/feature-bounded-contract";
+    piBridge.enqueueResult({
+      status: "completed",
+      episode: createEpisodeFixture({
+        id: "episode-pi-bounded-contract",
+        threadId: "thread-pi-bounded-contract",
+        source: "pi-worker",
+        worktreePath,
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      piBridge,
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext({ ...request, worktreePath });
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-pi-bounded-contract",
+      prompt: "Prompt is separate from objective override.",
+      cwd: "/repo",
+      worktreePath,
+      routeHint: "pi-worker",
+      workflowSeedInput: {
+        objective: "Deliver bounded worker artifact.",
+      },
+    });
+
+    expect(piBridge.workerRequests[0]).toMatchObject({
+      path: "pi-worker",
+      objective: "Deliver bounded worker artifact.",
+      cwd: "/repo",
+      completion: {
+        type: "episode-produced",
+        maxTurns: 1,
+      },
+      scopedContext: {
+        relevantPaths: ["/repo", worktreePath],
+      },
+      toolScope: {
+        allow: ["read", "edit", "bash"],
+        writeRoots: ["/repo"],
+      },
+      runtimeTransition: {
+        reason: "new",
+        toSessionId: "thread-pi-bounded-contract:pi",
+        aligned: false,
+        toWorktreePath: worktreePath,
+      },
+    });
+    expect(result.threadSnapshot.thread.objective).toBe(
+      "Deliver bounded worker artifact.",
+    );
+  });
+
+  it("uses a resume runtime transition aligned to session cwd when bounded worker resume has no worktree", async () => {
+    const piBridge = new FakePiRuntimeBridge();
+    piBridge.enqueueResult({
+      status: "completed",
+      episode: createEpisodeFixture({
+        id: "episode-resumed-no-worktree",
+        threadId: "thread-pi-resume-no-worktree",
+        source: "pi-worker",
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      piBridge,
+      contextLoader: {
+        async load(request) {
+          const thread = createThreadFixture({
+            id: request.threadId,
+            kind: "pi-worker",
+            objective: request.prompt,
+            status: "running",
+          });
+          return {
+            ...baseLoadedContext(request),
+            state: {
+              ...baseLoadedContext(request).state,
+              threads: [thread],
+            },
+          };
+        },
+      },
+    });
+
+    await orchestrator.run({
+      threadId: "thread-pi-resume-no-worktree",
+      prompt: "Resume bounded worker execution without a worktree.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+      resumeRunId: "run-resume-no-worktree",
+    });
+
+    expect(piBridge.workerRequests[0]?.runtimeTransition).toEqual({
+      reason: "resume",
+      toSessionId: "thread-pi-resume-no-worktree:pi",
+      aligned: true,
+    });
+    expect(piBridge.workerRequests[0]?.runtimeTransition).not.toHaveProperty(
+      "toWorktreePath",
+    );
+  });
+
+  it("re-enters after a waiting pi-worker episode and carries that waiting episode into the next run context", async () => {
+    const threadId = "thread-pi-reenter-waiting";
+    const piBridge = new FakePiRuntimeBridge();
+    piBridge.enqueueResult({
+      status: "waiting_input",
+      episode: createEpisodeFixture({
+        id: "episode-pi-waiting",
+        threadId,
+        source: "pi-worker",
+        status: "waiting_input",
+      }),
+    });
+    piBridge.enqueueResult({
+      status: "completed",
+      episode: createEpisodeFixture({
+        id: "episode-pi-after-waiting",
+        threadId,
+        source: "pi-worker",
+      }),
+    });
+
+    let state = createEmptySessionState({
+      sessionId: threadId,
+      sessionCwd: "/repo",
+    });
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      piBridge,
+      contextLoader: {
+        async load(request) {
+          return {
+            ...baseLoadedContext(request),
+            priorEpisodes: state.episodes,
+            priorArtifacts: state.artifacts,
+            state,
+          };
+        },
+      },
+    });
+
+    const waiting = await orchestrator.run({
+      threadId,
+      prompt: "Worker needs more context.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+    });
+    state = waiting.sessionState;
+    const resumed = await orchestrator.run({
+      threadId,
+      prompt: "Worker resumes after user clarification.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+      resumeRunId: "pi-waiting-run",
+    });
+
+    expect(waiting.completion).toEqual({
+      isComplete: false,
+      reason: "waiting_input",
+    });
+    expect(resumed.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+      "episode-pi-waiting",
+    ]);
+    expect(piBridge.workerRequests[1]?.inputEpisodeIds).toEqual([
+      "episode-pi-waiting",
+    ]);
+    expect(resumed.threadSnapshot.episodes.map((episode) => episode.id)).toEqual([
+      "episode-pi-waiting",
+      "episode-pi-after-waiting",
+    ]);
+  });
+
+  it("persists waiting_input then blocked status across structured session re-entry", async () => {
+    const threadId = "thread-status-reentry";
+    const sessionHistory: SessionJsonlEntry[] = [
+      createSessionHeader({
+        id: threadId,
+        timestamp: "2026-04-08T09:00:00.000Z",
+        cwd: "/repo",
+      }),
+    ];
+    const piBridge = new FakePiRuntimeBridge();
+    piBridge.enqueueResult({
+      status: "waiting_input",
+      episode: createEpisodeFixture({
+        id: "episode-status-waiting",
+        threadId,
+        source: "pi-worker",
+        status: "waiting_input",
+      }),
+    });
+    piBridge.enqueueResult({
+      status: "blocked",
+      episode: createEpisodeFixture({
+        id: "episode-status-blocked",
+        threadId,
+        source: "pi-worker",
+        status: "blocked",
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      piBridge,
+      contextLoader: {
+        async load(request) {
+          const state = reconstructSessionState(sessionHistory);
+          return {
+            ...baseLoadedContext(request),
+            sessionHistory,
+            priorEpisodes: state.episodes,
+            priorArtifacts: state.artifacts,
+            state,
+          };
+        },
+      },
+    });
+
+    const waiting = await orchestrator.run({
+      threadId,
+      prompt: "First worker run needs input.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+    });
+    sessionHistory.push(...waiting.sessionEntries);
+    const blocked = await orchestrator.run({
+      threadId,
+      prompt: "Second worker run remains blocked.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+    });
+    sessionHistory.push(...blocked.sessionEntries);
+    const reconstructed = reconstructSessionState(sessionHistory);
+
+    expect(waiting.completion).toEqual({
+      isComplete: false,
+      reason: "waiting_input",
+    });
+    expect(waiting.state.waiting).toBe(true);
+    expect(waiting.state.blocked).toBe(false);
+    expect(blocked.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+      "episode-status-waiting",
+    ]);
+    expect(blocked.completion).toEqual({
+      isComplete: false,
+      reason: "blocked",
+    });
+    expect(blocked.state.waiting).toBe(false);
+    expect(blocked.state.blocked).toBe(true);
+    expect(reconstructed.threads).toHaveLength(1);
+    expect(reconstructed.threads[0]?.status).toBe("blocked");
+    expect(reconstructed.episodes.map((episode) => episode.status)).toEqual([
+      "waiting_input",
+      "blocked",
+    ]);
+  });
+
+  it("dispatches explicit route hints at runtime even when workflow seed, approval, and verify signals conflict", async () => {
+    const piBridge = new FakePiRuntimeBridge();
+    const smithersBridge = new FakeSmithersWorkflowBridge();
+    const verificationRunner = new FakeVerificationRunner();
+    piBridge.enqueueResult({
+      status: "completed",
+      episode: createEpisodeFixture({
+        id: "episode-explicit-hint",
+        threadId: "thread-explicit-hint",
+        source: "pi-worker",
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      piBridge,
+      smithersBridge,
+      verificationRunner,
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext(request);
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-explicit-hint",
+      prompt: "Please verify this and wait for approval.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+      requireApproval: true,
+      workflowSeedInput: {
+        preferredPath: "smithers-workflow",
+      },
+    });
+
+    expect(result.classification).toEqual({
+      path: "pi-worker",
+      confidence: "hint",
+      reason: "Explicit route hint supplied by caller.",
+    });
+    expect(piBridge.workerRequests).toHaveLength(1);
+    expect(smithersBridge.runRequests).toHaveLength(0);
+    expect(verificationRunner.calls).toHaveLength(0);
+    expect(result.threadSnapshot.thread.kind).toBe("pi-worker");
+  });
+
+  it("treats routeHint auto as unset and still prioritizes approval over verification heuristics", async () => {
+    const verificationRunner = new FakeVerificationRunner();
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      verificationRunner,
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext(request);
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-auto-approve-over-verify",
+      prompt: "Please verify this change before approval.",
+      cwd: "/repo",
+      routeHint: "auto",
+      requireApproval: true,
+    });
+
+    expect(result.classification.path).toBe("approval");
+    expect(result.threadSnapshot.thread.status).toBe("waiting_approval");
+    expect(verificationRunner.calls).toEqual([]);
   });
 
   it("preserves the reconstructed top-level session id while adding a new thread run", async () => {

@@ -7,8 +7,10 @@ import {
 } from "@hellm/smithers-bridge";
 import {
   FakeSmithersWorkflowBridge,
+  createArtifactFixture,
   createEpisodeFixture,
   createThreadFixture,
+  createVerificationFixture,
 } from "@hellm/test-support";
 
 describe("@hellm/smithers-bridge contract surface", () => {
@@ -158,6 +160,80 @@ describe("@hellm/smithers-bridge contract surface", () => {
     expect(resumed.isolation).toEqual(first.isolation);
     expect(bridge.approvals[0]?.runId).toBe("run-1");
     expect(translateSmithersRunToEpisode(resumed).id).toBe("episode-complete");
+  });
+
+  it("keeps a smithers-supplied normalized episode unchanged during translation", () => {
+    const thread = createThreadFixture({
+      id: "thread-smithers-normalization",
+      kind: "smithers-workflow",
+      worktreePath: "/repo/worktrees/episode-normalization",
+    });
+    const episode = createEpisodeFixture({
+      id: "episode-smithers-normalized",
+      threadId: thread.id,
+      source: "smithers",
+      status: "completed_with_issues",
+      conclusions: ["Workflow run completed with follow-up work."],
+      changedFiles: ["packages/cli/src/index.ts"],
+      artifacts: [
+        createArtifactFixture({
+          id: "artifact-smithers-log",
+          kind: "log",
+          path: "/repo/worktrees/episode-normalization/logs/run.log",
+          description: "Smithers workflow log",
+        }),
+      ],
+      verification: [
+        createVerificationFixture({
+          id: "verification-smithers-test",
+          kind: "test",
+          status: "failed",
+          summary: "A single contract assertion is still failing.",
+        }),
+      ],
+      unresolvedIssues: ["Resolve the remaining failing assertion before merge."],
+      followUpSuggestions: ["Run targeted smithers normalization tests after fix."],
+      provenance: {
+        executionPath: "smithers-workflow",
+        actor: "smithers",
+        sourceRef: "smithers://run-smithers-normalization",
+        notes: "Episode came from a durable smithers workflow run.",
+      },
+      smithersRunId: "run-smithers-normalization",
+      worktreePath: thread.worktreePath!,
+      startedAt: "2026-04-08T09:00:00.000Z",
+      completedAt: "2026-04-08T09:04:00.000Z",
+      inputEpisodeIds: ["episode-prior-normalization"],
+    });
+    const runResult: SmithersRunResult = {
+      run: {
+        runId: "run-smithers-normalization",
+        threadId: thread.id,
+        workflowId: `workflow:${thread.id}`,
+        status: "waiting_approval",
+        updatedAt: "2026-04-08T09:04:00.000Z",
+        worktreePath: thread.worktreePath!,
+      },
+      status: "waiting_approval",
+      outputs: [],
+      episode,
+      approval: {
+        nodeId: "approve-normalized",
+        title: "Approval not yet applied to run metadata",
+        summary: "Run state can lag episode translation in tests.",
+        mode: "approval-node",
+      },
+    };
+
+    const translated = translateSmithersRunToEpisode(runResult);
+
+    expect(translated).toBe(episode);
+    expect(translated.status).toBe("completed_with_issues");
+    expect(translated.smithersRunId).toBe("run-smithers-normalization");
+    expect(translated.worktreePath).toBe(thread.worktreePath);
+    expect(translated.inputEpisodeIds).toEqual(["episode-prior-normalization"]);
+    expect(translated.artifacts[0]?.id).toBe("artifact-smithers-log");
+    expect(translated.verification[0]?.id).toBe("verification-smithers-test");
   });
 
   it.todo(

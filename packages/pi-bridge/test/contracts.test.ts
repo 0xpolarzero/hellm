@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   createPiRuntimeBridge,
   createPiWorkerRequest,
+  normalizePiWorkerResult,
   type PiRuntimeTransition,
   type PiWorkerResult,
 } from "@hellm/pi-bridge";
@@ -48,6 +49,9 @@ function createWorkerRequest(input: {
 describe("@hellm/pi-bridge contract surface", () => {
   it("ships a default bridge that is explicit about missing implementation", async () => {
     const bridge = createPiRuntimeBridge();
+    expect(bridge.runtime).toBe("pi");
+    expect(bridge.connected).toBe(false);
+
     const transition: PiRuntimeTransition = {
       reason: "new",
       toSessionId: "session-a",
@@ -175,5 +179,50 @@ describe("@hellm/pi-bridge contract surface", () => {
         expect(switched).toEqual(transition);
       }
     });
+  });
+
+  it("keeps raw pi-worker requests and results unwrapped for orchestrator integration", () => {
+    const thread = createThreadFixture({ id: "thread-raw-pi", kind: "pi-worker" });
+    const request = createPiWorkerRequest({
+      path: "pi-worker",
+      thread,
+      objective: "Execute the bounded pi worker primitive",
+      cwd: "/repo",
+      inputEpisodeIds: ["episode-prior"],
+      scopedContext: {
+        sessionHistory: ["prior line"],
+        relevantPaths: ["/repo"],
+        agentsInstructions: ["Read AGENTS.md"],
+        relevantSkills: ["tests"],
+        priorEpisodeIds: ["episode-prior"],
+      },
+      toolScope: {
+        allow: ["read", "edit", "bash"],
+      },
+      completion: {
+        type: "episode-produced",
+        maxTurns: 1,
+      },
+      runtimeTransition: {
+        reason: "resume",
+        toSessionId: "thread-raw-pi:pi",
+        aligned: true,
+      },
+    });
+    const episode = createEpisodeFixture({
+      id: "episode-raw-pi",
+      threadId: thread.id,
+      source: "pi-worker",
+    });
+
+    expect(request.path).toBe("pi-worker");
+    expect(request.thread.id).toBe("thread-raw-pi");
+    expect(request.runtimeTransition?.toSessionId).toBe("thread-raw-pi:pi");
+    expect(
+      normalizePiWorkerResult({
+        status: "completed",
+        episode,
+      }),
+    ).toBe(episode);
   });
 });

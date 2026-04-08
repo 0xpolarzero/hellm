@@ -2,7 +2,8 @@ import { appendFileSync } from "node:fs";
 import { describe, expect, it } from "bun:test";
 import { executeHeadlessRun } from "@hellm/cli";
 import { createOrchestrator } from "@hellm/orchestrator";
-import { createEmptySessionState, reconstructSessionState } from "@hellm/session-model";
+import { createEmptySessionState, createArtifact,
+  reconstructSessionState } from "@hellm/session-model";
 import {
   createTempGitWorkspace,
   FakePiRuntimeBridge,
@@ -188,6 +189,86 @@ describe("golden path headless specs", () => {
       "golden-direct-prior",
     ]);
   });
+
+  it("re-enters direct execution from a file-backed JSONL session and keeps normalized episodes reusable", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-direct-reenter";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-direct-reenter.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        contextLoader: {
+          async load(request) {
+            const state = harness.reconstruct();
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run first direct normalization pass.",
+          cwd: workspace.root,
+          routeHint: "direct",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run second direct normalization pass.",
+          cwd: workspace.root,
+          routeHint: "direct",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+      const reconstructed = harness.reconstruct();
+
+      const firstEpisodeId = first.result.threadSnapshot.episodes.at(-1)?.id;
+      expect(firstEpisodeId).toBe(
+        "golden-direct-reenter:direct:2026-04-08T09:00:00.000Z",
+      );
+      if (!firstEpisodeId) {
+        throw new Error("Expected first direct episode id to be present.");
+      }
+      expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual(
+        [firstEpisodeId],
+      );
+      expect(second.result.threadSnapshot.episodes.at(-1)).toMatchObject({
+        id: "golden-direct-reenter:direct:2026-04-08T09:00:01.000Z",
+        source: "orchestrator",
+        status: "completed",
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+        inputEpisodeIds: [firstEpisodeId],
+      });
+      expect(reconstructed.episodes.map((episode) => episode.id)).toEqual([
+        firstEpisodeId,
+        "golden-direct-reenter:direct:2026-04-08T09:00:01.000Z",
+      ]);
+      expect(reconstructed.episodes.every((episode) => episode.source === "orchestrator")).toBe(
+        true,
+      );
+    });
+  });
+
 
   it("prefers reconstructed structured state over decoy transcript lines for headless pi-worker inputs", async () => {
     await withTempWorkspace(async (workspace) => {
@@ -686,6 +767,124 @@ describe("golden path headless specs", () => {
     });
   });
 
+  it("re-enters verification runs with file-backed JSONL sessions and preserves verification state", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-verify-reenter";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-verify-reenter.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const reportPath = await workspace.write(
+        "reports/build.log",
+        "build passed\n",
+      );
+      const verificationRunner = new FakeVerificationRunner();
+      verificationRunner.enqueueResult({
+        status: "passed",
+        records: [
+          createVerificationFixture({
+            id: "golden-verify-build",
+            kind: "build",
+            status: "passed",
+            artifactIds: ["artifact-build-log"],
+          }),
+        ],
+        artifacts: [
+          createArtifact({
+            id: "artifact-build-log",
+            kind: "log",
+            description: "Build output",
+            path: reportPath,
+            createdAt: "2026-04-08T09:00:00.000Z",
+          }),
+        ],
+      });
+      verificationRunner.enqueueResult({
+        status: "failed",
+        records: [
+          createVerificationFixture({
+            id: "golden-verify-test",
+            kind: "test",
+            status: "failed",
+            summary: "Verification tests failed",
+          }),
+        ],
+        artifacts: [],
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        verificationRunner,
+        contextLoader: {
+          async load(request) {
+            const state = harness.reconstruct();
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run build verification first.",
+          cwd: workspace.root,
+          routeHint: "verification",
+          workflowSeedInput: {
+            verificationKinds: ["build"],
+            manualChecks: ["Inspect build report"],
+          },
+        },
+        orchestrator,
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run default verification next.",
+          cwd: workspace.root,
+          routeHint: "verification",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+      const reconstructed = harness.reconstruct();
+
+      expect(verificationRunner.calls[0]?.kinds).toEqual(["build"]);
+      expect(verificationRunner.calls[0]?.manualChecks).toEqual([
+        "Inspect build report",
+      ]);
+      expect(verificationRunner.calls[1]?.kinds).toEqual([
+        "build",
+        "test",
+        "lint",
+      ]);
+      expect(verificationRunner.calls[1]?.manualChecks).toBeUndefined();
+      expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        "golden-verify-reenter:verification:2026-04-08T09:00:00.000Z",
+      ]);
+      expect(second.result.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
+        "golden-verify-reenter:verification:2026-04-08T09:00:00.000Z",
+      ]);
+      expect(reconstructed.verification.byKind.build?.status).toBe("passed");
+      expect(reconstructed.verification.byKind.test?.status).toBe("failed");
+      expect(reconstructed.verification.overallStatus).toBe("failed");
+      expect(reconstructed.artifacts.find((artifact) => artifact.id === "artifact-build-log")?.path).toBe(
+        reportPath,
+      );
+    });
+  });
+
+
   it("re-enters lint verification using file-backed JSONL session state", async () => {
     await withTempWorkspace(async (workspace) => {
       const threadId = "golden-lint-reenter";
@@ -1081,6 +1280,184 @@ describe("golden path headless specs", () => {
     expect(second.result.raw.state.blocked).toBe(false);
     expect(second.result.events.at(-1)?.type).toBe("run.completed");
   });
+
+  it("re-enters from file-backed JSONL for smithers episodes and preserves normalized episode details", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-smithers-jsonl";
+      const runId = "golden-smithers-jsonl-run";
+      const worktreePath = await workspace.createWorktree("smithers-jsonl");
+      const artifactPath = await workspace.write(
+        "artifacts/smithers-summary.md",
+        "# workflow summary\n",
+      );
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-smithers-jsonl.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueRunResult({
+        run: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "waiting_approval",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+          worktreePath,
+        },
+        status: "waiting_approval",
+        outputs: [],
+        approval: {
+          nodeId: "approve-smithers-jsonl",
+          title: "Approve smithers continuation",
+          summary: "Waiting for reviewer approval before resume.",
+          mode: "needsApproval",
+        },
+        episode: createEpisodeFixture({
+          id: "golden-smithers-jsonl-wait",
+          threadId,
+          source: "smithers",
+          status: "waiting_approval",
+          followUpSuggestions: ["Approve the run to continue execution."],
+          smithersRunId: runId,
+          worktreePath,
+        }),
+      });
+      smithersBridge.enqueueResumeResult({
+        run: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+          worktreePath,
+        },
+        status: "completed",
+        outputs: [],
+        episode: createEpisodeFixture({
+          id: "golden-smithers-jsonl-complete",
+          threadId,
+          source: "smithers",
+          status: "completed_with_issues",
+          conclusions: ["Workflow completed with a known lint follow-up."],
+          changedFiles: ["packages/orchestrator/src/index.ts"],
+          artifacts: [
+            createArtifactFixture({
+              id: "artifact-smithers-summary",
+              kind: "file",
+              path: artifactPath,
+              description: "Smithers output summary",
+            }),
+          ],
+          verification: [
+            createVerificationFixture({
+              id: "verification-smithers-jsonl",
+              kind: "test",
+              status: "failed",
+              summary: "One focused smithers test still fails.",
+            }),
+          ],
+          unresolvedIssues: ["Fix smithers normalization regression test failure."],
+          followUpSuggestions: ["Run smithers-focused tests after patching."],
+          smithersRunId: runId,
+          worktreePath,
+          inputEpisodeIds: ["golden-smithers-jsonl-wait"],
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        smithersBridge,
+        contextLoader: {
+          async load(request) {
+            const state = harness.reconstruct();
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: {
+                cwd: request.cwd,
+                ...(request.worktreePath
+                  ? { worktreePath: request.worktreePath }
+                  : {}),
+              },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run a smithers workflow that pauses for approval.",
+          cwd: workspace.root,
+          worktreePath,
+          routeHint: "smithers-workflow",
+          requireApproval: true,
+        },
+        orchestrator,
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Resume smithers workflow after approval.",
+          cwd: workspace.root,
+          worktreePath,
+          routeHint: "smithers-workflow",
+          resumeRunId: runId,
+        },
+        orchestrator,
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+      const reconstructed = harness.reconstruct();
+      const resumedEpisode = reconstructed.episodes.at(-1);
+
+      expect(first.result.output.status).toBe("waiting_approval");
+      expect(first.result.events.at(-1)?.type).toBe("run.waiting");
+      expect(second.result.output.status).toBe("completed");
+      expect(second.result.output.workflowRunIds).toEqual([runId]);
+      expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual(
+        ["golden-smithers-jsonl-wait"],
+      );
+      expect(
+        second.result.events.find((event) => event.type === "run.episode"),
+      ).toMatchObject({
+        source: "smithers",
+        status: "completed_with_issues",
+      });
+      expect(reconstructed.episodes.map((episode) => episode.id)).toEqual([
+        "golden-smithers-jsonl-wait",
+        "golden-smithers-jsonl-complete",
+      ]);
+      expect(resumedEpisode).toMatchObject({
+        id: "golden-smithers-jsonl-complete",
+        source: "smithers",
+        status: "completed_with_issues",
+        smithersRunId: runId,
+        worktreePath,
+        inputEpisodeIds: ["golden-smithers-jsonl-wait"],
+        conclusions: ["Workflow completed with a known lint follow-up."],
+        unresolvedIssues: ["Fix smithers normalization regression test failure."],
+      });
+      expect(resumedEpisode?.artifacts[0]?.path).toBe(artifactPath);
+      expect(reconstructed.workflowRuns).toEqual([
+        {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+          worktreePath,
+        },
+      ]);
+    });
+  });
+
 
   it("persists smithers isolation references across file-backed headless runs and upserts by run id", async () => {
     await withTempWorkspace(async (workspace) => {
