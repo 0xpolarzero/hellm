@@ -8,9 +8,14 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json --noEmit",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@hellm/session-model": "workspace:*"
+    "@hellm/pi-bridge": "workspace:*",
+    "@hellm/session-model": "workspace:*",
+    "@hellm/smithers-bridge": "workspace:*",
+    "@hellm/verification": "workspace:*"
   }
 }

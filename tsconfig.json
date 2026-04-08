@@ -2,6 +2,8 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "paths": {
+      "@hellm/test-support": ["./test-support/index.ts"],
+      "@hellm/test-support/*": ["./test-support/*"],
       "@hellm/cli": ["./packages/cli/src/index.ts"],
       "@hellm/cli/*": ["./packages/cli/src/*"],
       "@hellm/orchestrator": ["./packages/orchestrator/src/index.ts"],
@@ -18,6 +20,11 @@
       "@hellm/verification/*": ["./packages/verification/src/*"]
     }
   },
-  "include": ["packages/*/src/**/*"],
+  "include": [
+    "docs/features.ts",
+    "packages/*/src/**/*",
+    "packages/*/test/**/*",
+    "test-support/**/*"
+  ],
   "exclude": ["node_modules", "dist", "build"]
 }

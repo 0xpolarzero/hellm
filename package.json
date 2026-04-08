@@ -10,6 +10,8 @@
     "build": "bun run --filter '@hellm/*' --if-present build",
     "dev": "bun run --filter @hellm/tui dev",
     "start": "bun run --filter @hellm/tui start",
+    "test": "bun test ./packages/session-model/test ./packages/orchestrator/test ./packages/pi-bridge/test ./packages/smithers-bridge/test ./packages/verification/test ./packages/tui/test ./packages/cli/test",
+    "test:watch": "bun test ./packages/session-model/test ./packages/orchestrator/test ./packages/pi-bridge/test ./packages/smithers-bridge/test ./packages/verification/test ./packages/tui/test ./packages/cli/test --watch",
     "typecheck": "bun run --filter '@hellm/*' typecheck",
     "lint": "oxlint packages --import-plugin --node-plugin --deny-warnings",
     "lint:fix": "oxlint packages --import-plugin --node-plugin --deny-warnings --fix --fix-suggestions",

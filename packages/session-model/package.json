@@ -8,6 +8,8 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json --noEmit",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   }
 }
