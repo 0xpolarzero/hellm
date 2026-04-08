@@ -3,7 +3,7 @@
  *
  * This file is meant to drive test planning. It includes:
  * - product features built on top of `pi`
- * - Smithers-backed complex workflow features
+ * - Smithers-backed delegated workflow features
  * - deferred-but-positive features explicitly called out in the PRD
  *
  * It intentionally excludes:
@@ -53,21 +53,20 @@ export enum HellmFeature {
 
   // Execution paths
   DirectExecutionPath = "path.direct",
-  PiWorkerExecutionPath = "path.piWorker",
   SmithersWorkflowExecutionPath = "path.smithersWorkflow",
+  SmithersDefaultDelegatedPath = "path.smithersWorkflow.defaultDelegatedPath",
+  SingleSubagentWorkflowPath = "path.smithersWorkflow.singleSubagentPath",
   VerificationExecutionPath = "path.verification",
   ApprovalClarificationExecutionPath = "path.approvalClarification",
-  BoundedWorkerScopedContext = "path.piWorker.scopedContext",
-  BoundedWorkerToolScoping = "path.piWorker.toolScoping",
-  BoundedWorkerCompletionConditions = "path.piWorker.completionConditions",
   DirectPathEpisodeNormalization = "path.direct.episodeNormalization",
-  PiWorkerEpisodeNormalization = "path.piWorker.episodeNormalization",
   SmithersWorkflowEpisodeNormalization = "path.smithersWorkflow.episodeNormalization",
   VerificationEpisodeNormalization = "path.verification.episodeNormalization",
+  RawPiExecutionPrimitive = "path.internal.rawPiExecutionPrimitive",
 
-  // Smithers-backed complex workflow features
+  // Smithers-backed delegated workflow features
   ProgrammaticSmithersRunAdapter = "smithers.programmaticRunAdapter",
   DynamicWorkflowAuthoring = "smithers.dynamicWorkflowAuthoring",
+  SubagentToWorkflowMapping = "smithers.subagentToWorkflowMapping",
   DurableWorkflowResume = "smithers.durableWorkflowResume",
   WorkflowApprovalGates = "smithers.workflowApprovalGates",
   WorkflowWaitingStateIntegration = "smithers.workflowWaitingStateIntegration",
@@ -75,6 +74,9 @@ export enum HellmFeature {
   WorktreeIsolatedWorkflowExecution = "smithers.worktreeIsolatedWorkflowExecution",
   TypedWorkflowOutputs = "smithers.typedWorkflowOutputs",
   PiAgentTasksInsideSmithers = "smithers.piAgentTasksInsideSmithers",
+  PiAgentTaskScopedContext = "smithers.piAgentTaskScopedContext",
+  PiAgentTaskToolScoping = "smithers.piAgentTaskToolScoping",
+  PiAgentTaskCompletionConditions = "smithers.piAgentTaskCompletionConditions",
   SmithersToEpisodeTranslation = "smithers.toEpisodeTranslation",
 
   // Verification subsystem

@@ -60,7 +60,7 @@ The product is the combination:
 
 - pi substrate and interactive shell
 - our orchestrator and data model
-- Smithers-backed complex workflow execution paths when needed
+- Smithers-backed delegated execution paths whenever work needs explicit subagent boundaries
 
 ## Simple Product Picture
 
@@ -74,8 +74,30 @@ In practice that means:
 
 - we keep the `pi` TUI and extend it
 - we do not build a separate top-level Smithers UI
-- for simple work, the orchestrator answers directly or runs one bounded `pi` worker
-- for complex work, the orchestrator can write a short-lived Smithers workflow, run it, show its progress in the `pi`-based TUI, then take control back when it finishes
+- for simple work, the orchestrator answers directly or does a tiny action itself
+- for delegated work, even if it only needs one subagent, the orchestrator should usually author a short-lived Smithers workflow
+- those workflows can be as small as one `PiAgent` task or as large as a multi-step graph
+- the `pi`-based TUI shows workflow state while that delegated work runs
+- when the workflow finishes, pauses, or fails, the orchestrator takes control back
+
+## How Slate-Like Subagents Map Here
+
+The product-level meaning of "subagent" should be explicit.
+
+- the main orchestrator is not a subagent; it is the strategic controller
+- when the orchestrator decides work should be delegated, that delegated work should usually be represented as a Smithers workflow
+- that workflow may contain one bounded agent task or many bounded agent tasks
+- each bounded task inside the workflow is the implementation of a Slate-like short-lived subagent action
+- the workflow produces one or more durable episodes and returns control to the orchestrator
+
+This means we should not optimize for a separate top-level "raw pi worker path" as the main delegated model.
+
+Instead:
+
+- direct path for simple local work
+- Smithers workflow path for delegated or subagent work
+- verification path when the next useful step is to check reality rather than modify it
+- approval / clarification path when the system should pause instead of guess
 
 ## Simple Build Order
 
@@ -85,7 +107,7 @@ The build order should be easy to explain:
 2. Add one orchestrator above `pi` so requests stop behaving like one long transcript-only chat loop.
 3. Add threads, episodes, artifacts, and reconciliation as structured product state stored through `pi` sessions.
 4. Add verification as a first-class path so builds, tests, and lint results shape the next decision.
-5. Add the Smithers bridge early for the complex path so the orchestrator can author and run short-lived workflows instead of reinventing durable workflow machinery.
+5. Add the Smithers bridge early as the default delegated-work path so the orchestrator can author and run short-lived workflows instead of inventing separate subagent machinery.
 6. Upgrade the `pi` TUI to show orchestrator state, including active Smithers-backed workflow progress, instead of only raw chat and tool output.
 
 ## Mission
@@ -93,7 +115,7 @@ The build order should be easy to explain:
 Build a coding agent and TUI that feels much closer to Slate than to stock pi by adding:
 
 - one visible orchestrator
-- bounded workers instead of persistent role agents
+- bounded delegated work instead of persistent role agents
 - reusable structured outputs
 - explicit reconciliation
 - visible thread state
@@ -106,8 +128,8 @@ Build a coding agent and TUI that feels much closer to Slate than to stock pi by
 The product should feel like one coherent agent system with these properties:
 
 - the user can see what workstreams exist and what each one produced
-- the system can choose between direct action, bounded pi workers, Smithers workflows, and verification-only runs
-- for complex work, the system can author a short-lived Smithers workflow instead of hand-rolling custom orchestration logic each time
+- the system can choose between direct action, Smithers-backed delegated workflows, verification-only runs, and explicit pause states
+- when work needs even one bounded subagent, the system should usually author a short-lived Smithers workflow instead of inventing a separate delegated path
 - every meaningful unit of work produces a reusable structured episode
 - long tasks can resume safely
 - worktree context and session context stay aligned
@@ -407,15 +429,17 @@ Trying to make pi do all durable workflow orchestration inside ad hoc extensions
 
 Trying to make Smithers the top-level chat, session, and TUI runtime would discard the strongest parts of pi and create two competing user models.
 
-### Complex Workflow Policy
+### Delegated Work Policy
 
-We should be explicit about how complex jobs work.
+We should be explicit about how delegated jobs work.
 
-- normal work should use direct execution or one bounded `pi` worker
-- complex work should use Smithers as soon as the orchestrator can describe that work as a short-lived workflow with real value from durability, approvals, loops, or worktrees
+- simple local work should use the direct path
+- if the orchestrator decides work needs even one bounded subagent, it should usually express that work as a Smithers workflow
+- a Smithers workflow may be as small as one `PiAgent` task or as large as a multi-step graph with approvals, loops, and worktrees
 - the orchestrator may author that workflow dynamically from the current request and state
 - while the workflow runs, the user should see workflow state through the product TUI
 - when the workflow finishes, fails, or pauses, control returns to the orchestrator for reconciliation and next-step decisions
+- raw top-level chaining of `pi` workers should not be the main product model; if we need subagent boundaries, Smithers should usually be the thing that represents them
 
 ## Core Product Principles
 
@@ -509,16 +533,14 @@ flowchart TD
     B --> C["Main orchestrator classifies request"]
 
     C --> D1["Path A: answer directly"]
-    C --> D2["Path B: run one bounded pi worker"]
-    C --> D3["Path C: author and run a Smithers workflow"]
-    C --> D4["Path D: run verification only"]
-    C --> D5["Path E: ask for approval or clarification"]
+    C --> D2["Path B: author and run a Smithers workflow"]
+    C --> D3["Path C: run verification only"]
+    C --> D4["Path D: ask for approval or clarification"]
 
     D1 --> E["Episode created"]
     D2 --> E
     D3 --> E
-    D4 --> E
-    D5 --> W["Pause and wait"]
+    D4 --> W["Pause and wait"]
     W --> C
 
     E --> F["Reconcile into thread, session, artifact, and verification state"]
@@ -538,38 +560,30 @@ flowchart TD
 
     C --> Q1{"Small and local?"}
     Q1 -->|"Yes"| P1["Direct path"]
-    Q1 -->|"No"| Q2{"Single bounded coding task?"}
+    Q1 -->|"No"| Q2{"Verification only?"}
 
-    Q2 -->|"Yes"| P2["pi worker path"]
-    Q2 -->|"No"| Q3{"Structured multi-step durable task?"}
+    Q2 -->|"Yes"| P3["Verification path"]
+    Q2 -->|"No"| Q3{"Need approval or clarification before acting?"}
 
-    Q3 -->|"Yes"| P3["Smithers workflow path"]
-    Q3 -->|"No"| Q4{"Verification only?"}
-
-    Q4 -->|"Yes"| P4["Verification path"]
-    Q4 -->|"No"| P5["Approval / clarification path"]
+    Q3 -->|"Yes"| P4["Approval / clarification path"]
+    Q3 -->|"No"| P2["Smithers workflow path"]
 
     P1 --> P1A["Answer directly or do tiny tool action"]
     P1A --> E["Normalize to episode"]
 
-    P2 --> P2A["Spawn bounded pi worker"]
-    P2A --> P2B["Worker uses tools"]
-    P2B --> P2C["Worker completes"]
-    P2C --> E
+    P2 --> P2A["Author short-lived Smithers workflow"]
+    P2A --> P2B["Run workflow steps / agent tasks / loops / worktrees / approvals"]
+    P2B --> P2C{"Workflow state"}
+    P2C -->|"Finished"| E
+    P2C -->|"Waiting approval"| W1["Wait for approval"] --> P2B
+    P2C -->|"Needs resume"| W2["Resume persisted run"] --> P2B
+    P2C -->|"Failed or blocked"| E
 
-    P3 --> P3A["Author short-lived Smithers workflow"]
-    P3A --> P3B["Run workflow steps / loops / worktrees / approvals"]
-    P3B --> P3C{"Workflow state"}
-    P3C -->|"Finished"| E
-    P3C -->|"Waiting approval"| W1["Wait for approval"] --> P3B
-    P3C -->|"Needs resume"| W2["Resume persisted run"] --> P3B
-    P3C -->|"Failed or blocked"| E
+    P3 --> P3A["Run build / test / lint / manual checks"]
+    P3A --> E
 
-    P4 --> P4A["Run build / test / lint / manual checks"]
-    P4A --> E
-
-    P5 --> P5A["Pause and wait for user input"]
-    P5A --> C
+    P4 --> P4A["Pause and wait for user input"]
+    P4A --> C
 ```
 
 ## Path Selection Table
@@ -577,8 +591,7 @@ flowchart TD
 | Path | Use when | Executor | Typical output |
 | --- | --- | --- | --- |
 | Direct | explanation, tiny reads, tiny tool actions, simple synthesis | orchestrator itself | small episode |
-| pi worker | one bounded coding task with normal coding-agent behavior | pi runtime under bounded context | coding episode |
-| Smithers workflow | structured, resumable, multi-step, approval-heavy, loop-heavy, or worktree-heavy job | Smithers workflow engine via an orchestrator-authored workflow | workflow episode or set of episodes |
+| Smithers workflow | any delegated or subagent work, especially when explicit boundaries, durability, approvals, loops, retries, or worktrees help | Smithers workflow engine via an orchestrator-authored workflow, often using `PiAgent`-backed tasks | workflow episode or set of episodes |
 | Verification | build / test / lint / integration / manual checks are the main next step | verification subsystem | verification episode |
 | Approval / clarification | ambiguity or risk is too high to guess | orchestrator wait state | waiting episode or paused thread |
 
@@ -600,7 +613,7 @@ The main orchestrator is responsible for:
 
 - loading current context
 - deciding execution path
-- authoring short-lived Smithers workflows when warranted
+- authoring short-lived Smithers workflows for delegated work by default
 - spawning bounded work
 - reconciling outputs
 - deciding whether to continue
@@ -628,37 +641,15 @@ Examples:
 
 The direct path still emits an episode so the orchestrator loop stays uniform.
 
-### Native pi Worker Path
-
-This is the default path for most bounded coding tasks.
-
-The worker is a bounded pi-based session or runtime invocation with:
-
-- a precise objective
-- scoped context
-- relevant files
-- relevant skills
-- allowed tools
-- a completion condition
-- expected outputs
-
-Preferred implementation order:
-
-1. in-process pi SDK / runtime usage
-2. optional out-of-process pi CLI / RPC worker mode for stronger isolation later
-
-Important:
-
-- the worker is not a user-facing second TUI
-- the worker is not a long-running subordinate agent
-- the worker returns a bounded result that is converted into an episode
-
 ### Smithers Workflow Path
 
-This path is the specialized path for complex jobs when durable structured execution is worth the extra machinery.
+This path is the default path for delegated work.
+
+If the orchestrator thinks the task needs a bounded subagent, even only one, it should usually express that work as a Smithers workflow.
 
 Use Smithers when the task needs one or more of:
 
+- one explicit bounded subagent with visible workflow state
 - explicit multi-step workflow structure
 - durable resume across crashes or pauses
 - human approvals
@@ -666,16 +657,17 @@ Use Smithers when the task needs one or more of:
 - worktree-isolated execution
 - explicit typed outputs
 
-Do not use Smithers for:
+A workflow may be as small as:
 
-- every normal coding request
-- trivial explanations
-- tiny local actions
-- ordinary single-pass bug fixes unless resume / approvals / worktrees matter
+- one `PiAgent` task with explicit objective, scope, tools, and completion boundary
+
+or as large as:
+
+- a multi-step graph with approvals, loops, retries, and worktrees
 
 Typical lifecycle:
 
-1. the orchestrator decides the task is complex enough to justify workflow execution
+1. the orchestrator decides the task needs delegated work or explicit workflow structure
 2. the orchestrator authors a short-lived Smithers workflow from the current request, constraints, and prior episodes
 3. Smithers runs that workflow and persists its internal state
 4. the TUI shows workflow progress as part of the thread state, not as a separate top-level app
@@ -685,6 +677,18 @@ Typical lifecycle:
 Smithers runs are invoked programmatically and translated back into our product's episode model.
 
 Smithers run state is internal workflow state, not the top-level user session model.
+
+### Raw pi Execution Primitive
+
+We still keep direct access to `pi` runtime APIs.
+
+That is useful for:
+
+- direct-path actions performed by the orchestrator itself
+- `PiAgent`-backed tasks inside Smithers workflows
+- rare implementation or fallback cases where a standalone runtime invocation is useful internally
+
+But this is an implementation primitive, not the primary user-facing delegated-work model.
 
 ### Verification Path
 
@@ -718,7 +722,6 @@ All execution paths must end by producing the same product-level episode model.
 That means we normalize:
 
 - direct actions
-- pi worker results
 - Smithers workflow outcomes
 - verification runs
 
@@ -799,7 +802,6 @@ Recommended shape:
 ```ts
 type ThreadKind =
   | "direct"
-  | "pi-worker"
   | "smithers-workflow"
   | "verification"
   | "approval";
@@ -837,7 +839,6 @@ Recommended shape:
 ```ts
 type EpisodeSource =
   | "orchestrator"
-  | "pi-worker"
   | "smithers"
   | "verification";
 
@@ -931,7 +932,7 @@ At minimum:
 | pi capability | Decision | Notes |
 | --- | --- | --- |
 | `pi-agent-core` runtime | keep and build on | core tool loop substrate |
-| coding-agent SDK | keep and use directly | preferred path for bounded worker execution |
+| coding-agent SDK | keep and use directly | execution primitive for orchestrator actions and `PiAgent`-backed Smithers tasks |
 | `AgentSessionRuntime` | keep and use directly | required for session replacement and worktree-aware runtime transitions |
 | JSONL sessions and tree model | keep as top-level session substrate | we extend with structured entries |
 | `/tree` and branching semantics | keep | useful for user-facing branch navigation |
@@ -944,12 +945,12 @@ At minimum:
 
 | Smithers capability | Decision | Notes |
 | --- | --- | --- |
-| `runWorkflow()` engine | use selectively but early for the complex path | durable structured workflow execution path once the orchestrator and episode model exist |
-| JSX workflow primitives | use selectively | used to author short-lived workflows for complex jobs when explicit workflow structure is justified |
+| `runWorkflow()` engine | use early as the default delegated-work substrate | delegated and subagent execution path once the orchestrator and episode model exist |
+| JSX workflow primitives | use by default for delegated work | used to author short-lived workflows for subagent work, including single-subagent workflows |
 | approval support | use | strong fit for gated workflows |
 | worktree support | use | strong fit for isolated multi-branch work |
-| loop / parallel primitives | use selectively inside Smithers workflows | valuable for complex jobs, but not the default path for all work |
-| `PiAgent` adapter | may use inside Smithers workflows | useful when a workflow task needs pi-driven coding behavior |
+| loop / parallel primitives | use selectively inside Smithers workflows | valuable when the delegated workflow actually needs them |
+| `PiAgent` adapter | use heavily inside Smithers workflows | primary way to execute bounded coding-agent tasks inside the workflow model |
 | CLI and server surfaces | use as integration references, not as top-level product shell | our product orchestrator remains primary |
 | web app / voice / RAG / scorers / devtools | out of scope | not core to the product we are building |
 
@@ -964,22 +965,22 @@ Product session truth remains:
 - pi session
 - our thread / episode / artifact entries
 
-### Smithers Is Not the Default Path
+### Smithers Is The Default Delegated Path
 
-The default path for normal coding work is:
+The default path for trivial local work is still:
 
-- direct orchestrator action, or
-- one bounded pi worker
+- direct orchestrator action
 
-Smithers is chosen when its durability and explicit graph model are actually needed.
+But the default path for delegated or subagent work should usually be:
 
-This does not mean Smithers is a late afterthought.
+- a Smithers workflow, even when that workflow is small
 
-It means:
+That means:
 
-- Smithers is an early specialized executor for complex paths
-- Smithers should be used instead of reinventing workflow machinery when the task clearly benefits from it
-- Smithers should not become the top-level shell for every request
+- Smithers is not a late afterthought
+- Smithers should usually represent explicit delegated work because we want explicit boundaries, durable workflow state, and workflow-aware UI
+- raw top-level chaining of `pi` workers should not be the main architecture
+- Smithers still should not become the top-level shell for every request
 
 ### pi Extensions Are Not the Product Architecture
 
@@ -1049,7 +1050,7 @@ Recommended initial shape:
 - pi substrate: runtime, sessions, TUI base, SDK / RPC, extensions, skills
 - main orchestrator
 - direct execution path
-- bounded native pi worker path
+- Smithers-backed delegated workflow path
 - episode model
 - thread model
 - verification subsystem
@@ -1058,9 +1059,9 @@ Recommended initial shape:
 
 ### Build Early Right After the Core Loop and Session Model
 
-- Smithers bridge for durable workflow execution
+- Smithers bridge for delegated workflow execution
 - Smithers-to-episode normalization
-- short-lived orchestrator-authored workflow generation for complex paths
+- short-lived orchestrator-authored workflow generation for delegated paths
 - worktree-aware threads and session bindings
 
 ### Defer
@@ -1104,7 +1105,7 @@ Deliverables:
 
 - request classification
 - direct path
-- bounded pi worker path
+- basic Smithers-backed delegated path
 - episode normalization
 - reconciliation loop
 
@@ -1137,7 +1138,7 @@ Success condition:
 
 - tests and builds shape next-step decisions programmatically
 
-### Phase 4: Smithers Bridge For Complex Paths
+### Phase 4: Advanced Smithers Workflow Capabilities
 
 Deliverables:
 
@@ -1260,8 +1261,8 @@ The project is on the right track when all of the following are true:
 - it no longer feels like a single chat transcript with tools
 - the user can see active workstreams clearly
 - every meaningful work unit produces a reusable episode
-- direct action, pi workers, Smithers workflows, and verification all normalize into the same product model
-- when a task is complex, the orchestrator can author a short-lived Smithers workflow, show its progress, and resume normal orchestration when it ends
+- direct action, Smithers workflows, and verification all normalize into the same product model
+- when work needs delegated or subagent execution, the orchestrator can author a short-lived Smithers workflow, show its progress, and resume normal orchestration when it ends
 - session and worktree state stay aligned
 - verification is structured and visible
 - the product remains adaptive rather than becoming a rigid workflow engine
