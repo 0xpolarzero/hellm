@@ -461,6 +461,190 @@ describe("@hellm/orchestrator context loading", () => {
     });
   });
 
+  it("honors JSONL last-write-wins semantics when loading prior episodes and artifacts", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const sessionFile = workspace.path(".pi/sessions/thread-context-upserts.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "thread-context-upserts",
+        cwd: workspace.root,
+      });
+      const initialArtifactPath = await workspace.write(
+        "reports/context-initial.log",
+        "initial artifact\n",
+      );
+      const updatedArtifactPath = await workspace.write(
+        "reports/context-updated.log",
+        "updated artifact\n",
+      );
+      const initialArtifact = createArtifact({
+        id: "artifact-context-shared",
+        kind: "log",
+        description: "Initial context artifact",
+        path: initialArtifactPath,
+        createdAt: "2026-04-08T09:00:00.000Z",
+      });
+      const updatedArtifact = createArtifact({
+        ...initialArtifact,
+        description: "Updated context artifact",
+        path: updatedArtifactPath,
+        createdAt: "2026-04-08T09:00:02.000Z",
+      });
+      const initialEpisode = createEpisode({
+        id: "episode-context-shared",
+        threadId: "thread-context-upserts",
+        source: "orchestrator",
+        objective: "Initial context objective",
+        status: "completed_with_issues",
+        conclusions: ["Initial context conclusions"],
+        artifacts: [initialArtifact],
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+        startedAt: "2026-04-08T09:00:00.000Z",
+        completedAt: "2026-04-08T09:00:01.000Z",
+      });
+      const updatedEpisode = createEpisode({
+        ...initialEpisode,
+        status: "completed",
+        conclusions: ["Updated context conclusions"],
+        artifacts: [updatedArtifact],
+        completedAt: "2026-04-08T09:00:03.000Z",
+        inputEpisodeIds: ["episode-bootstrap"],
+      });
+
+      harness.append({ kind: "episode", data: initialEpisode });
+      harness.append({ kind: "artifact", data: initialArtifact });
+      harness.append({ kind: "episode", data: updatedEpisode });
+      harness.append({ kind: "artifact", data: updatedArtifact });
+
+      const loader = createContextLoader({
+        async loadState() {
+          return reconstructSessionState(readSessionFile(sessionFile));
+        },
+      });
+
+      const context = await loader.load({
+        threadId: "thread-context-upserts",
+        prompt: "Load upserted context",
+        cwd: workspace.root,
+      });
+
+      expect(context.priorEpisodes).toBe(context.state.episodes);
+      expect(context.priorArtifacts).toBe(context.state.artifacts);
+      expect(context.priorEpisodes).toHaveLength(1);
+      expect(context.priorArtifacts).toHaveLength(1);
+      expect(context.priorEpisodes[0]?.id).toBe("episode-context-shared");
+      expect(context.priorEpisodes[0]?.status).toBe("completed");
+      expect(context.priorEpisodes[0]?.conclusions).toEqual([
+        "Updated context conclusions",
+      ]);
+      expect(context.priorEpisodes[0]?.inputEpisodeIds).toEqual([
+        "episode-bootstrap",
+      ]);
+      expect(context.priorEpisodes[0]?.artifacts[0]?.path).toBe(updatedArtifactPath);
+      expect(context.priorArtifacts[0]?.id).toBe("artifact-context-shared");
+      expect(context.priorArtifacts[0]?.description).toBe(
+        "Updated context artifact",
+      );
+      expect(context.priorArtifacts[0]?.path).toBe(updatedArtifactPath);
+    });
+  });
+
+  it("loads prior episodes from multiple threads and retains unattached prior artifacts", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const sessionFile = workspace.path(".pi/sessions/thread-context-multi.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "thread-context-multi",
+        cwd: workspace.root,
+      });
+      const sharedArtifactPath = await workspace.write(
+        "reports/thread-a.log",
+        "thread a artifact\n",
+      );
+      const unattachedArtifactPath = await workspace.write(
+        "notes/unattached-context.txt",
+        "orphaned artifact still in context\n",
+      );
+      const sharedArtifact = createArtifact({
+        id: "artifact-thread-a",
+        kind: "log",
+        description: "Artifact produced by thread A",
+        path: sharedArtifactPath,
+        createdAt: "2026-04-08T09:00:00.000Z",
+      });
+      const unattachedArtifact = createArtifact({
+        id: "artifact-unattached-context",
+        kind: "file",
+        description: "Unattached context artifact",
+        path: unattachedArtifactPath,
+        createdAt: "2026-04-08T09:00:01.000Z",
+      });
+      const threadAEpisode = createEpisode({
+        id: "episode-thread-a",
+        threadId: "thread-a",
+        source: "orchestrator",
+        objective: "Thread A context",
+        status: "completed",
+        conclusions: ["Thread A result"],
+        artifacts: [sharedArtifact],
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+        startedAt: "2026-04-08T09:00:00.000Z",
+        completedAt: "2026-04-08T09:00:01.000Z",
+      });
+      const threadBEpisode = createEpisode({
+        id: "episode-thread-b",
+        threadId: "thread-b",
+        source: "orchestrator",
+        objective: "Thread B context",
+        status: "completed",
+        conclusions: ["Thread B result"],
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+        startedAt: "2026-04-08T09:00:02.000Z",
+        completedAt: "2026-04-08T09:00:03.000Z",
+      });
+
+      harness.append({ kind: "episode", data: threadAEpisode });
+      harness.append({ kind: "episode", data: threadBEpisode });
+      harness.append({ kind: "artifact", data: unattachedArtifact });
+
+      const loader = createContextLoader({
+        async loadState() {
+          return reconstructSessionState(readSessionFile(sessionFile));
+        },
+      });
+
+      const context = await loader.load({
+        threadId: "thread-current",
+        prompt: "Load broad context",
+        cwd: workspace.root,
+      });
+
+      expect(context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        "episode-thread-a",
+        "episode-thread-b",
+      ]);
+      expect(context.priorEpisodes.map((episode) => episode.threadId)).toEqual([
+        "thread-a",
+        "thread-b",
+      ]);
+      expect(context.priorArtifacts.map((artifact) => artifact.id)).toEqual([
+        "artifact-thread-a",
+        "artifact-unattached-context",
+      ]);
+      expect(context.priorArtifacts[0]?.path).toBe(sharedArtifactPath);
+      expect(context.priorArtifacts[1]?.path).toBe(unattachedArtifactPath);
+    });
+  });
+
   it("falls back to request cwd/worktree and initializes prior state from empty structured state when no sources are provided", async () => {
     const loader = createContextLoader();
     const request = {
