@@ -489,10 +489,14 @@ describe("golden path headless specs", () => {
   it("covers a verification-only request", async () => {
     const verificationRunner = new FakeVerificationRunner();
     verificationRunner.enqueueResult({
-      status: "passed",
+      status: "failed",
       records: [
         createVerificationFixture({ kind: "build", status: "passed" }),
-        createVerificationFixture({ kind: "test", status: "passed" }),
+        createVerificationFixture({
+          kind: "integration",
+          status: "failed",
+          summary: "Integration smoke test failed",
+        }),
       ],
       artifacts: [],
     });
@@ -509,11 +513,18 @@ describe("golden path headless specs", () => {
 
     expect(result.raw.classification.path).toBe("verification");
     expect(result.raw.state.visibleSummary).toBe(
-      "verification:completed:completed",
+      "verification:completed:completed_with_issues",
     );
     expect(result.raw.state.waiting).toBe(false);
     expect(result.raw.state.blocked).toBe(false);
     expect(result.output.status).toBe("completed");
+    expect(result.threadSnapshot.episodes.at(-1)?.status).toBe(
+      "completed_with_issues",
+    );
+    expect(result.raw.state.verification.byKind.integration?.status).toBe(
+      "failed",
+    );
+    expect(result.raw.state.verification.overallStatus).toBe("failed");
   });
 
   it("covers a clarification or waiting request", async () => {
