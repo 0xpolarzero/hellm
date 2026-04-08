@@ -78,7 +78,7 @@ It is intentionally the auditable checklist for product coverage. Completeness a
 | `ui.threadsPane` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
 | `ui.episodeInspector` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
 | `ui.verificationPanel` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
-| `ui.sessionWorktreeIndicator` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
+| `ui.sessionWorktreeIndicator` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts; packages/tui/test/session-worktree-indicator.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
 | `ui.workflowActivityView` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
 | `ui.workstreamStatusVisibility` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
 | `ui.latestEpisodesView` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
