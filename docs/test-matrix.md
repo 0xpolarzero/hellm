@@ -1,8 +1,10 @@
 # Hellm Test Matrix
 
-This matrix maps every `HellmFeature` member from `docs/features.ts` to an owning package, planned test layer, initial test cluster, and evidence source.
+This matrix maps every `HellmFeature` member from `docs/features.ts` to an owning package, test layer, anchor test files, and evidence source.
 
-| feature id | owning package | test layer | planned test file(s) | status | notes on evidence source |
+It is intentionally the auditable checklist for product coverage. Completeness against `docs/features.ts` is enforced by `packages/orchestrator/test/feature-matrix.test.ts`.
+
+| feature id | owning package | test layer | anchor test file(s) | status | notes on evidence source |
 | --- | --- | --- | --- | --- | --- |
 | `orchestrator.main` | `@hellm/orchestrator` | package integration | `packages/orchestrator/test/routing-and-reconciliation.test.ts; packages/cli/test/golden-paths.e2e.test.ts` | executable | PRD core loop/runtime architecture; public Slate facts only where explicitly listed in the PRD. |
 | `orchestrator.structuredStateFirstDecisioning` | `@hellm/orchestrator` | package integration | `packages/orchestrator/test/routing-and-reconciliation.test.ts; packages/cli/test/golden-paths.e2e.test.ts` | executable | PRD core loop/runtime architecture; public Slate facts only where explicitly listed in the PRD. |

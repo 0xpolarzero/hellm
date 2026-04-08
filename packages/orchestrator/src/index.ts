@@ -664,8 +664,8 @@ function buildStructuredEntries(input: {
   idGenerator: () => string;
   timestamp: string;
 }): StructuredSessionEntry[] {
-  const lastStructuredEntry = [...input.existingEntries]
-    .reverse()
+  const lastStructuredEntry = input.existingEntries
+    .toReversed()
     .find(
       (entry): entry is StructuredSessionEntry =>
         typeof entry === "object" &&

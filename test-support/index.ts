@@ -3,6 +3,8 @@ export * from "./fake-pi-runtime";
 export * from "./fake-smithers-bridge";
 export * from "./fake-verification-runner";
 export * from "./fixtures";
+export * from "./git-workspace";
+export * from "./process-harness";
 export * from "./session-jsonl";
 export * from "./temp-workspace";
 export * from "./tui-harness";
