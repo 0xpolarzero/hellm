@@ -1,6 +1,7 @@
+import { appendFileSync } from "node:fs";
 import { describe, expect, it } from "bun:test";
 import { createOrchestrator } from "@hellm/orchestrator";
-import { createEmptySessionState } from "@hellm/session-model";
+import { createEmptySessionState, reconstructSessionState } from "@hellm/session-model";
 import {
   FakePiRuntimeBridge,
   FakeSmithersWorkflowBridge,
@@ -182,6 +183,115 @@ describe("golden path headless specs", () => {
     expect(result.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
       "golden-direct-prior",
     ]);
+  });
+
+  it("prefers reconstructed structured state over decoy transcript lines for headless pi-worker inputs", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-structured-state-first";
+      const sessionFile = workspace.path(
+        ".pi/sessions/golden-structured-state-first.jsonl",
+      );
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const priorEpisode = createEpisodeFixture({
+        id: "golden-structured-prior",
+        threadId,
+        source: "orchestrator",
+      });
+      harness.append({ kind: "episode", data: priorEpisode });
+
+      const decoyEntries = [
+        {
+          type: "message",
+          id: "entry-decoy-user",
+          parentId: "entry-prior-episode",
+          timestamp: "2026-04-08T09:00:02.000Z",
+          message: {
+            role: "user",
+            content: "Decoy transcript says input episode is golden-decoy.",
+            timestamp: Date.parse("2026-04-08T09:00:02.000Z"),
+          },
+        },
+        {
+          type: "message",
+          id: "entry-decoy-assistant",
+          parentId: "entry-decoy-user",
+          timestamp: "2026-04-08T09:00:03.000Z",
+          message: {
+            role: "assistant",
+            content: "{\"inputEpisodeIds\":[\"golden-decoy\"]}",
+            timestamp: Date.parse("2026-04-08T09:00:03.000Z"),
+          },
+        },
+      ];
+      appendFileSync(
+        sessionFile,
+        `${decoyEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+        "utf8",
+      );
+
+      const piBridge = new FakePiRuntimeBridge();
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: createEpisodeFixture({
+          id: "golden-structured-state-first-episode",
+          threadId,
+          source: "pi-worker",
+          inputEpisodeIds: ["golden-structured-prior"],
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        piBridge,
+        contextLoader: {
+          async load(request) {
+            const sessionHistory = harness.lines();
+            const state = reconstructSessionState(sessionHistory);
+            return {
+              sessionHistory,
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const { result } = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run worker using structured state, not transcript replay.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        orchestrator,
+      );
+
+      expect(result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        "golden-structured-prior",
+      ]);
+      expect(
+        piBridge.workerRequests[0]?.scopedContext.sessionHistory.some((entry) =>
+          entry.includes("\"entry-decoy-user\""),
+        ),
+      ).toBe(true);
+      expect(piBridge.workerRequests[0]?.inputEpisodeIds).toEqual([
+        "golden-structured-prior",
+      ]);
+      expect(piBridge.workerRequests[0]?.inputEpisodeIds).not.toContain(
+        "golden-decoy",
+      );
+      expect(result.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
+        "golden-structured-prior",
+      ]);
+    });
   });
 
   it("covers a pi worker path request", async () => {

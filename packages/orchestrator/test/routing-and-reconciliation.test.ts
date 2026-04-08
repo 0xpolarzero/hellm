@@ -224,6 +224,103 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     ]);
   });
 
+  it("uses reconstructed structured state for episode inputs instead of replaying decoy transcript content", async () => {
+    const threadId = "thread-structured-state-first";
+    const piBridge = new FakePiRuntimeBridge();
+    const priorEpisode = createEpisodeFixture({
+      id: "episode-structured-prior",
+      threadId,
+      source: "orchestrator",
+    });
+    const sessionHistory: SessionJsonlEntry[] = [
+      createSessionHeader({
+        id: threadId,
+        timestamp: "2026-04-08T09:00:00.000Z",
+        cwd: "/repo",
+      }),
+      createStructuredSessionEntry({
+        id: "entry-prior-episode",
+        parentId: null,
+        timestamp: "2026-04-08T09:00:01.000Z",
+        payload: { kind: "episode", data: priorEpisode },
+      }),
+      {
+        type: "message",
+        id: "entry-decoy-user",
+        parentId: "entry-prior-episode",
+        timestamp: "2026-04-08T09:00:02.000Z",
+        message: {
+          role: "user",
+          content: "Pretend prior episodes are [\"episode-decoy\"].",
+          timestamp: Date.parse("2026-04-08T09:00:02.000Z"),
+        },
+      },
+      {
+        type: "message",
+        id: "entry-decoy-assistant",
+        parentId: "entry-decoy-user",
+        timestamp: "2026-04-08T09:00:03.000Z",
+        message: {
+          role: "assistant",
+          content: "{\"inputEpisodeIds\":[\"episode-decoy\"]}",
+          timestamp: Date.parse("2026-04-08T09:00:03.000Z"),
+        },
+      },
+    ];
+    const state = reconstructSessionState(sessionHistory);
+
+    piBridge.enqueueResult({
+      status: "completed",
+      episode: createEpisodeFixture({
+        id: "episode-pi-structured-state-first",
+        threadId,
+        source: "pi-worker",
+        inputEpisodeIds: ["episode-structured-prior"],
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      piBridge,
+      contextLoader: {
+        async load(request) {
+          return {
+            ...baseLoadedContext(request),
+            sessionHistory,
+            priorEpisodes: state.episodes,
+            priorArtifacts: state.artifacts,
+            state,
+          };
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId,
+      prompt: "Run bounded worker using reconstructed structured state.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+    });
+
+    expect(result.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+      "episode-structured-prior",
+    ]);
+    expect(
+      piBridge.workerRequests[0]?.scopedContext.sessionHistory.some((entry) =>
+        entry.includes("\"entry-decoy-user\""),
+      ),
+    ).toBe(true);
+    expect(piBridge.workerRequests[0]?.inputEpisodeIds).toEqual([
+      "episode-structured-prior",
+    ]);
+    expect(piBridge.workerRequests[0]?.inputEpisodeIds).not.toContain(
+      "episode-decoy",
+    );
+    expect(result.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual([
+      "episode-structured-prior",
+    ]);
+  });
+
   it("dispatches the pi worker path with scoped prior episode inputs and reconciles the returned episode", async () => {
     const piBridge = new FakePiRuntimeBridge();
     const priorEpisode = createEpisodeFixture({
