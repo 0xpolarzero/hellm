@@ -116,6 +116,118 @@ describe("@hellm/session-model reconstruction", () => {
     expect(state.verification.overallStatus).toBe("passed");
   });
 
+  it("derives aligned session/worktree metadata from the JSONL header when no alignment payload exists", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-header-alignment",
+      cwd: "/repo/worktrees/feature",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+
+    harness.append({
+      kind: "thread",
+      data: createThreadFixture({
+        id: "thread-header-alignment",
+        objective: "Derive alignment from header metadata",
+      }),
+    });
+
+    const state = harness.reconstruct();
+
+    expect(state.alignment.sessionCwd).toBe("/repo/worktrees/feature");
+    expect(state.alignment.activeWorktreePath).toBeUndefined();
+    expect(state.alignment.aligned).toBe(true);
+    expect(state.alignment.reason).toBe("session and worktree are aligned");
+  });
+
+  it("applies last-write-wins semantics for repeated alignment entries", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-alignment-upsert",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+
+    harness.append({
+      kind: "alignment",
+      data: createSessionWorktreeAlignment({
+        sessionCwd: "/repo",
+        activeWorktreePath: "/repo/worktrees/feature-a",
+      }),
+    });
+    harness.append({
+      kind: "alignment",
+      data: createSessionWorktreeAlignment({
+        sessionCwd: "/repo/worktrees/feature-a",
+        activeWorktreePath: "/repo/worktrees/feature-a",
+      }),
+    });
+
+    const state = harness.reconstruct();
+
+    expect(state.alignment.sessionCwd).toBe("/repo/worktrees/feature-a");
+    expect(state.alignment.activeWorktreePath).toBe("/repo/worktrees/feature-a");
+    expect(state.alignment.aligned).toBe(true);
+    expect(state.alignment.reason).toBe("session and worktree are aligned");
+  });
+
+  it("ignores malformed and unknown hellm custom payload entries while reconstructing valid state", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-malformed",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const thread = createThreadFixture({
+      id: "thread-valid",
+      objective: "Keep only valid structured entries",
+    });
+    const validEntry = createStructuredSessionEntry({
+      id: "entry-valid",
+      parentId: null,
+      timestamp: "2026-04-08T09:00:01.000Z",
+      payload: { kind: "thread", data: thread },
+    });
+    const [header] = harness.lines();
+
+    const state = reconstructSessionState([
+      header,
+      {
+        ...validEntry,
+        id: "entry-missing-details",
+        message: {
+          ...validEntry.message,
+          details: undefined as unknown as typeof validEntry.message.details,
+        },
+      },
+      {
+        ...validEntry,
+        id: "entry-missing-data",
+        message: {
+          ...validEntry.message,
+          details: { kind: "thread" } as unknown as typeof validEntry.message.details,
+        },
+      },
+      {
+        ...validEntry,
+        id: "entry-unknown-kind",
+        message: {
+          ...validEntry.message,
+          customType: "hellm/future",
+          details: {
+            kind: "future",
+            data: { id: "future-1", note: "ignored until supported" },
+          } as unknown as typeof validEntry.message.details,
+        },
+      },
+      validEntry,
+    ]);
+
+    expect(state.sessionId).toBe("session-malformed");
+    expect(state.threads).toEqual([thread]);
+    expect(state.episodes).toEqual([]);
+    expect(state.artifacts).toEqual([]);
+    expect(state.workflowRuns).toEqual([]);
+    expect(state.smithersIsolations).toEqual([]);
+  });
+
   it("preserves explicit global verification payloads over derived verification records", () => {
     const harness = new InMemorySessionJsonlHarness({
       sessionId: "session-verification-override",
@@ -146,6 +258,121 @@ describe("@hellm/session-model reconstruction", () => {
 
     expect(state.verification.overallStatus).toBe("failed");
     expect(state.verification.byKind.build?.id).toBe("verification-build-failed");
+  });
+
+  it("keeps episode verification records intact when an explicit global snapshot diverges", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-episode-verification-vs-global",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const thread = createThreadFixture({
+      id: "thread-episode-verification-vs-global",
+      objective: "Persist episode-level verification records",
+    });
+    const episodeBuildRecord = createVerificationFixture({
+      id: "verification-build-episode",
+      kind: "build",
+      status: "passed",
+      summary: "Episode-local build passed",
+    });
+    const globalBuildRecord = createVerificationFixture({
+      id: "verification-build-global",
+      kind: "build",
+      status: "failed",
+      summary: "Global snapshot build failed",
+    });
+    const episode = createEpisodeFixture({
+      id: "episode-episode-verification-vs-global",
+      threadId: thread.id,
+      verification: [episodeBuildRecord],
+    });
+
+    harness.append({ kind: "thread", data: thread });
+    harness.append({ kind: "episode", data: episode });
+    harness.append({
+      kind: "verification",
+      data: {
+        overallStatus: "failed",
+        byKind: { build: globalBuildRecord },
+      },
+    });
+
+    const state = harness.reconstruct();
+
+    expect(state.episodes[0]?.verification).toEqual([episodeBuildRecord]);
+    expect(state.verification.overallStatus).toBe("failed");
+    expect(state.verification.byKind.build?.id).toBe("verification-build-global");
+    expect(state.verification.byKind.build?.status).toBe("failed");
+  });
+
+  it("treats an explicit unknown/empty global verification snapshot as absent and derives from records", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-verification-fallback",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const buildFailed = createVerificationFixture({
+      id: "verification-build-failed",
+      kind: "build",
+      status: "failed",
+    });
+    const manualPassed = createVerificationFixture({
+      id: "verification-manual-passed",
+      kind: "manual",
+      status: "passed",
+    });
+
+    harness.append({ kind: "verification", data: buildFailed });
+    harness.append({
+      kind: "verification",
+      data: {
+        overallStatus: "unknown",
+        byKind: {},
+      },
+    });
+    harness.append({ kind: "verification", data: manualPassed });
+
+    const state = harness.reconstruct();
+
+    expect(state.verification.byKind.build?.id).toBe("verification-build-failed");
+    expect(state.verification.byKind.manual?.id).toBe(
+      "verification-manual-passed",
+    );
+    expect(state.verification.overallStatus).toBe("failed");
+  });
+
+  it("keeps an explicit non-empty global verification snapshot authoritative even when later records conflict", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-verification-authoritative",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const buildPassed = createVerificationFixture({
+      id: "verification-build-passed",
+      kind: "build",
+      status: "passed",
+    });
+    const testFailed = createVerificationFixture({
+      id: "verification-test-failed",
+      kind: "test",
+      status: "failed",
+    });
+
+    harness.append({
+      kind: "verification",
+      data: {
+        overallStatus: "passed",
+        byKind: { build: buildPassed },
+      },
+    });
+    harness.append({ kind: "verification", data: testFailed });
+
+    const state = harness.reconstruct();
+
+    expect(state.verification.overallStatus).toBe("passed");
+    expect(state.verification.byKind.build?.id).toBe("verification-build-passed");
+    expect(state.verification.byKind.test).toBeUndefined();
   });
 
   it("upserts workflow and smithers isolation entries by run id during reconstruction", () => {
@@ -260,6 +487,93 @@ describe("@hellm/session-model reconstruction", () => {
     ]);
   });
 
+  it("defaults unresolved issues when reconstructing legacy episode entries that omit the field", () => {
+    const thread = createThreadFixture({
+      id: "thread-legacy-unresolved",
+      objective: "Load legacy episode payloads",
+    });
+    const episode = createEpisodeFixture({
+      id: "episode-legacy-unresolved",
+      threadId: thread.id,
+      unresolvedIssues: ["Legacy issue that should no longer be present."],
+    });
+    const threadEntry = createStructuredSessionEntry({
+      id: "entry-thread-legacy-unresolved",
+      parentId: null,
+      timestamp: "2026-04-08T09:00:00.000Z",
+      payload: { kind: "thread", data: thread },
+    });
+    const episodeEntry = createStructuredSessionEntry({
+      id: "entry-episode-legacy-unresolved",
+      parentId: threadEntry.id,
+      timestamp: "2026-04-08T09:00:01.000Z",
+      payload: { kind: "episode", data: episode },
+    });
+    const legacyEpisodeEntry = JSON.parse(JSON.stringify(episodeEntry)) as {
+      message: { details: { data: Record<string, unknown> } };
+    };
+    delete legacyEpisodeEntry.message.details.data.unresolvedIssues;
+
+    const state = reconstructSessionState([
+      threadEntry,
+      legacyEpisodeEntry as unknown as ReturnType<typeof createStructuredSessionEntry>,
+    ]);
+
+    expect(state.episodes[0]?.id).toBe("episode-legacy-unresolved");
+    expect(state.episodes[0]?.unresolvedIssues).toEqual([]);
+  });
+
+  it("keeps the latest verification records when an episode is re-written with the same id", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-episode-verification-upsert",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const thread = createThreadFixture({
+      id: "thread-episode-verification-upsert",
+      objective: "Persist rewritten verification records",
+    });
+    const buildPassed = createVerificationFixture({
+      id: "verification-build-upsert",
+      kind: "build",
+      status: "passed",
+      summary: "Initial build passed",
+    });
+    const buildFailed = createVerificationFixture({
+      id: "verification-build-upsert",
+      kind: "build",
+      status: "failed",
+      summary: "Updated build failed",
+    });
+    const manualSkipped = createVerificationFixture({
+      id: "verification-manual-upsert",
+      kind: "manual",
+      status: "skipped",
+      summary: "Manual checks skipped",
+    });
+    const firstEpisode = createEpisodeFixture({
+      id: "episode-verification-upsert",
+      threadId: thread.id,
+      verification: [buildPassed],
+    });
+    const updatedEpisode = createEpisodeFixture({
+      ...firstEpisode,
+      verification: [buildFailed, manualSkipped],
+    });
+
+    harness.append({ kind: "thread", data: thread });
+    harness.append({ kind: "episode", data: firstEpisode });
+    harness.append({ kind: "episode", data: updatedEpisode });
+
+    const state = harness.reconstruct();
+
+    expect(state.episodes).toHaveLength(1);
+    expect(state.episodes[0]?.verification).toEqual([buildFailed, manualSkipped]);
+    expect(state.verification.byKind.build?.status).toBe("failed");
+    expect(state.verification.byKind.manual?.status).toBe("skipped");
+    expect(state.verification.overallStatus).toBe("failed");
+  });
+
   it("applies last-write-wins upsert semantics for duplicate episode identifiers", () => {
     const harness = new InMemorySessionJsonlHarness({
       sessionId: "session-upsert",
@@ -356,6 +670,94 @@ describe("@hellm/session-model reconstruction", () => {
     expect(snapshot.artifacts[0]?.description).toBe("Updated build log");
   });
 
+  it("applies cross-entry last-write-wins when a standalone artifact is superseded by an episode artifact with the same id", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-artifact-cross-entry-upsert",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const thread = createThreadFixture({
+      id: "thread-artifact-cross-entry-upsert",
+      objective: "Prefer the latest artifact entry across payload kinds",
+    });
+    const standaloneArtifact = createArtifactFixture({
+      id: "artifact-shared",
+      kind: "note",
+      description: "Standalone artifact version",
+      createdAt: "2026-04-08T09:00:01.000Z",
+    });
+    const artifactFromEpisode = createArtifactFixture({
+      id: standaloneArtifact.id,
+      kind: "note",
+      description: "Episode artifact version",
+      createdAt: "2026-04-08T09:00:02.000Z",
+    });
+
+    harness.append({ kind: "thread", data: thread });
+    harness.append({ kind: "artifact", data: standaloneArtifact });
+    harness.append({
+      kind: "episode",
+      data: createEpisodeFixture({
+        id: "episode-artifact-cross-entry-upsert",
+        threadId: thread.id,
+        artifacts: [artifactFromEpisode],
+      }),
+    });
+
+    const state = harness.reconstruct();
+    const snapshot = createThreadSnapshot(state, thread.id);
+
+    expect(state.artifacts).toHaveLength(1);
+    expect(state.artifacts[0]?.id).toBe(standaloneArtifact.id);
+    expect(state.artifacts[0]?.description).toBe("Episode artifact version");
+    expect(snapshot.artifacts).toEqual([artifactFromEpisode]);
+  });
+
+  it("uses the latest episode artifact references when an episode id is rewritten", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-artifact-reference-upsert",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const thread = createThreadFixture({
+      id: "thread-artifact-reference-upsert",
+      objective: "Keep snapshot artifacts aligned with latest episode references",
+    });
+    const artifact = createArtifactFixture({
+      id: "artifact-removed-ref",
+      kind: "file",
+      description: "Artifact referenced by the first episode revision",
+      path: "/repo/reports/removed-ref.txt",
+      createdAt: "2026-04-08T09:00:01.000Z",
+    });
+    const firstEpisodeRevision = createEpisodeFixture({
+      id: "episode-artifact-reference-upsert",
+      threadId: thread.id,
+      artifacts: [artifact],
+      conclusions: ["First revision references an artifact."],
+    });
+    const secondEpisodeRevision = createEpisodeFixture({
+      ...firstEpisodeRevision,
+      artifacts: [],
+      conclusions: ["Second revision removes the artifact reference."],
+      completedAt: "2026-04-08T09:00:03.000Z",
+    });
+
+    harness.append({ kind: "thread", data: thread });
+    harness.append({ kind: "episode", data: firstEpisodeRevision });
+    harness.append({ kind: "episode", data: secondEpisodeRevision });
+
+    const state = harness.reconstruct();
+    const snapshot = createThreadSnapshot(state, thread.id);
+
+    expect(state.artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
+    expect(state.episodes).toHaveLength(1);
+    expect(state.episodes[0]?.id).toBe(firstEpisodeRevision.id);
+    expect(state.episodes[0]?.artifacts).toEqual([]);
+    expect(snapshot.episodes[0]?.artifacts).toEqual([]);
+    expect(snapshot.artifacts).toEqual([]);
+  });
+
   it("derives global verification from episode and standalone records when no global snapshot is stored", () => {
     const harness = new InMemorySessionJsonlHarness({
       sessionId: "session-2",
@@ -434,6 +836,51 @@ describe("@hellm/session-model reconstruction", () => {
     expect(snapshot.thread).toEqual(updated);
     expect(snapshot.episodes).toEqual([]);
   });
+
+  it("drops a stale thread worktree binding when the latest thread entry omits worktreePath", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-thread-worktree-clear",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+
+    const initial = createThreadFixture({
+      id: "thread-worktree-clear",
+      kind: "direct",
+      objective: "Carry forward thread metadata",
+      status: "running",
+      worktreePath: "/repo/worktrees/initial",
+      createdAt: "2026-04-08T09:00:00.000Z",
+      updatedAt: "2026-04-08T09:01:00.000Z",
+    });
+    const updated = createThreadFixture({
+      id: initial.id,
+      kind: initial.kind,
+      objective: "Carry forward thread metadata",
+      status: "completed",
+      inputEpisodeIds: ["episode-1"],
+      createdAt: initial.createdAt,
+      updatedAt: "2026-04-08T09:02:00.000Z",
+    });
+
+    expect(updated.worktreePath).toBeUndefined();
+
+    harness.append({ kind: "thread", data: initial });
+    harness.append({ kind: "thread", data: updated });
+
+    const state = harness.reconstruct();
+    const snapshot = createThreadSnapshot(state, updated.id);
+
+    expect(state.threads).toHaveLength(1);
+    expect(state.threads[0]?.worktreePath).toBeUndefined();
+    expect(snapshot.thread.worktreePath).toBeUndefined();
+    expect(snapshot.thread.inputEpisodeIds).toEqual(["episode-1"]);
+  });
+
+  test.todo(
+    "secondary storage backends can reconstruct the same state contract without changing the pi-session schema",
+    () => {},
+  );
 
   it("reconstructs standalone artifact entries before any episode reference exists", () => {
     const harness = new InMemorySessionJsonlHarness({

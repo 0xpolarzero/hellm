@@ -81,6 +81,47 @@ describe("@hellm/session-model thread status lifecycle", () => {
     }
   });
 
+  it("allows identity transitions for every status while preserving thread metadata", () => {
+    const baseThread = createThread({
+      id: "thread-identity",
+      kind: "smithers-workflow",
+      objective: "identity lifecycle transitions",
+      status: "pending",
+      parentThreadId: "thread-parent",
+      inputEpisodeIds: ["episode-a", "episode-b"],
+      worktreePath: "/repo/worktrees/feature-status",
+      smithersRunId: "run-identity",
+      createdAt: "2026-04-08T09:00:00.000Z",
+      updatedAt: "2026-04-08T09:00:00.000Z",
+    });
+
+    for (const status of ALL_THREAD_STATUSES) {
+      const source = {
+        ...baseThread,
+        status,
+      };
+
+      const transitioned = transitionThreadStatus(
+        source,
+        status,
+        "2026-04-08T09:03:00.000Z",
+      );
+
+      expect(transitioned).not.toBe(source);
+      expect(transitioned.status).toBe(status);
+      expect(transitioned.updatedAt).toBe("2026-04-08T09:03:00.000Z");
+      expect(transitioned.id).toBe(baseThread.id);
+      expect(transitioned.kind).toBe(baseThread.kind);
+      expect(transitioned.objective).toBe(baseThread.objective);
+      expect(transitioned.parentThreadId).toBe(baseThread.parentThreadId);
+      expect(transitioned.inputEpisodeIds).toEqual(baseThread.inputEpisodeIds);
+      expect(transitioned.worktreePath).toBe(baseThread.worktreePath);
+      expect(transitioned.smithersRunId).toBe(baseThread.smithersRunId);
+      expect(transitioned.createdAt).toBe(baseThread.createdAt);
+      expect(source.updatedAt).toBe(baseThread.updatedAt);
+    }
+  });
+
   it("rejects disallowed edges, including transitions out of terminal states", () => {
     const baseThread = createThread({
       id: "thread-invalid",

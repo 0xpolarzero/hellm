@@ -3,6 +3,7 @@ import { executeHeadlessRun } from "@hellm/cli";
 import { createOrchestrator } from "@hellm/orchestrator";
 import { createEmptySessionState } from "@hellm/session-model";
 import {
+  createTempGitWorkspace,
   FakePiRuntimeBridge,
   FakeSmithersWorkflowBridge,
   FakeVerificationRunner,
@@ -11,6 +12,7 @@ import {
   createEpisodeFixture,
   createVerificationFixture,
   fixedClock,
+  hasGit,
   runHeadlessHarness,
   withTempWorkspace,
 } from "@hellm/test-support";
@@ -211,6 +213,11 @@ describe("golden path headless specs", () => {
     expect(result.raw.state.visibleSummary).toBe("pi-worker:completed:completed");
     expect(result.raw.state.waiting).toBe(false);
     expect(result.raw.state.blocked).toBe(false);
+    expect(piBridge.workerRequests[0]?.runtimeTransition).toEqual({
+      reason: "new",
+      toSessionId: "golden-pi:pi",
+      aligned: true,
+    });
     expect(result.threadSnapshot.episodes.at(-1)?.source).toBe("pi-worker");
   });
 
@@ -246,6 +253,78 @@ describe("golden path headless specs", () => {
       aligned: false,
       toWorktreePath: worktreePath,
     });
+    expect(piBridge.workerRequests[0]?.runtimeTransition?.fromSessionId).toBeUndefined();
+    expect(
+      piBridge.workerRequests[0]?.runtimeTransition?.fromWorktreePath,
+    ).toBeUndefined();
+    expect(result.threadSnapshot.thread.worktreePath).toBe(worktreePath);
+  });
+
+  it("derives resume runtime transition worktree from context when the request omits worktreePath", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const worktreePath = await workspace.createLinkedWorktree(
+        "feature-pi-context-runtime",
+      );
+      const piBridge = new FakePiRuntimeBridge();
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: createEpisodeFixture({
+          id: "golden-pi-context-resume-episode",
+          threadId: "golden-pi-context-resume",
+          source: "pi-worker",
+          worktreePath,
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        piBridge,
+        contextLoader: {
+          async load(request) {
+            return {
+              sessionHistory: [],
+              repoAndWorktree: { cwd: workspace.root, worktreePath },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: [],
+              priorArtifacts: [],
+              state: createEmptySessionState({
+                sessionId: request.threadId,
+                sessionCwd: workspace.root,
+                activeWorktreePath: worktreePath,
+              }),
+            };
+          },
+        },
+      });
+
+      const { result } = await runHeadlessHarness(
+        {
+          threadId: "golden-pi-context-resume",
+          prompt: "Resume from context-bound worktree.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+          resumeRunId: "pi-context-resume-1",
+        },
+        orchestrator,
+      );
+
+      expect(result.output.status).toBe("completed");
+      expect(piBridge.workerRequests[0]?.runtimeTransition).toEqual({
+        reason: "resume",
+        toSessionId: "golden-pi-context-resume:pi",
+        aligned: false,
+        toWorktreePath: worktreePath,
+      });
+      expect(result.threadSnapshot.thread.worktreePath).toBe(worktreePath);
+    } finally {
+      await workspace.cleanup();
+    }
   });
 
   it("covers a waiting pi worker path request and emits waiting JSONL events", async () => {
@@ -564,6 +643,308 @@ describe("golden path headless specs", () => {
     expect(second.result.raw.state.waiting).toBe(false);
     expect(second.result.raw.state.blocked).toBe(false);
     expect(second.result.events.at(-1)?.type).toBe("run.completed");
+  });
+
+  it("persists smithers isolation references across file-backed headless runs and upserts by run id", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-smithers-isolation-upsert";
+      const runId = "golden-isolation-run";
+      const worktreePath = workspace.path("worktrees/feature-smithers");
+      const firstStore = workspace.path(".smithers/run-isolation-v1.sqlite");
+      const secondStore = workspace.path(".smithers/run-isolation-v2.sqlite");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-smithers-isolation-upsert.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      let state = createEmptySessionState({
+        sessionId: threadId,
+        sessionCwd: workspace.root,
+      });
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueRunResult({
+        run: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "waiting_approval",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+          worktreePath,
+        },
+        status: "waiting_approval",
+        outputs: [],
+        approval: {
+          nodeId: "approve",
+          title: "Approve workflow",
+          summary: "Awaiting approval",
+          mode: "needsApproval",
+        },
+        episode: createEpisodeFixture({
+          id: "golden-smithers-isolation-upsert-waiting",
+          threadId,
+          source: "smithers",
+          status: "waiting_approval",
+          smithersRunId: runId,
+          worktreePath,
+        }),
+        isolation: {
+          runId,
+          runStateStore: firstStore,
+          sessionEntryIds: ["entry-1"],
+        },
+      });
+      smithersBridge.enqueueResumeResult({
+        run: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+          worktreePath,
+        },
+        status: "completed",
+        outputs: [],
+        episode: createEpisodeFixture({
+          id: "golden-smithers-isolation-upsert-completed",
+          threadId,
+          source: "smithers",
+          status: "completed",
+          smithersRunId: runId,
+          worktreePath,
+        }),
+        isolation: {
+          runId,
+          runStateStore: secondStore,
+          sessionEntryIds: ["entry-1", "entry-2"],
+        },
+      });
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        smithersBridge,
+        contextLoader: {
+          async load(request) {
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: {
+                cwd: request.cwd,
+                ...(request.worktreePath ? { worktreePath: request.worktreePath } : {}),
+              },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run smithers workflow with isolated state.",
+          cwd: workspace.root,
+          worktreePath,
+          routeHint: "smithers-workflow",
+          requireApproval: true,
+        },
+        orchestrator,
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+      state = harness.reconstruct();
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Resume smithers workflow.",
+          cwd: workspace.root,
+          worktreePath,
+          routeHint: "smithers-workflow",
+          resumeRunId: runId,
+        },
+        orchestrator,
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+      const reconstructed = harness.reconstruct();
+
+      expect(first.result.raw.sessionState.smithersIsolations).toEqual([
+        {
+          runId,
+          runStateStore: firstStore,
+          sessionEntryIds: ["entry-1"],
+        },
+      ]);
+      expect(second.result.raw.sessionState.smithersIsolations).toEqual([
+        {
+          runId,
+          runStateStore: secondStore,
+          sessionEntryIds: ["entry-1", "entry-2"],
+        },
+      ]);
+      expect(reconstructed.smithersIsolations).toEqual([
+        {
+          runId,
+          runStateStore: secondStore,
+          sessionEntryIds: ["entry-1", "entry-2"],
+        },
+      ]);
+      expect(second.result.output.workflowRunIds).toEqual([runId]);
+      expect(
+        second.result.raw.sessionEntries.filter(
+          (entry) => entry.message.customType === "hellm/smithers-isolation",
+        ),
+      ).toHaveLength(1);
+      expect(
+        (second.result.threadSnapshot as unknown as { smithersIsolations?: unknown })
+          .smithersIsolations,
+      ).toBeUndefined();
+      expect(JSON.stringify(second.result.output)).not.toContain(".sqlite");
+    });
+  });
+
+  it("keeps the prior smithers isolation reference when a resume response omits isolation metadata", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-smithers-isolation-retain";
+      const runId = "golden-isolation-retain-run";
+      const worktreePath = workspace.path("worktrees/feature-smithers-retain");
+      const storePath = workspace.path(".smithers/run-isolation-retain.sqlite");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-smithers-isolation-retain.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      let state = createEmptySessionState({
+        sessionId: threadId,
+        sessionCwd: workspace.root,
+      });
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueRunResult({
+        run: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "waiting_approval",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+          worktreePath,
+        },
+        status: "waiting_approval",
+        outputs: [],
+        approval: {
+          nodeId: "approve",
+          title: "Approve workflow",
+          summary: "Awaiting approval",
+          mode: "needsApproval",
+        },
+        episode: createEpisodeFixture({
+          id: "golden-smithers-isolation-retain-waiting",
+          threadId,
+          source: "smithers",
+          status: "waiting_approval",
+          smithersRunId: runId,
+          worktreePath,
+        }),
+        isolation: {
+          runId,
+          runStateStore: storePath,
+          sessionEntryIds: ["entry-start"],
+        },
+      });
+      smithersBridge.enqueueResumeResult({
+        run: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+          worktreePath,
+        },
+        status: "completed",
+        outputs: [],
+        episode: createEpisodeFixture({
+          id: "golden-smithers-isolation-retain-completed",
+          threadId,
+          source: "smithers",
+          status: "completed",
+          smithersRunId: runId,
+          worktreePath,
+        }),
+      });
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        smithersBridge,
+        contextLoader: {
+          async load(request) {
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: {
+                cwd: request.cwd,
+                ...(request.worktreePath ? { worktreePath: request.worktreePath } : {}),
+              },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run smithers workflow with isolated state.",
+          cwd: workspace.root,
+          worktreePath,
+          routeHint: "smithers-workflow",
+          requireApproval: true,
+        },
+        orchestrator,
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+      state = harness.reconstruct();
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Resume smithers workflow without a new isolation payload.",
+          cwd: workspace.root,
+          worktreePath,
+          routeHint: "smithers-workflow",
+          resumeRunId: runId,
+        },
+        orchestrator,
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+      const reconstructed = harness.reconstruct();
+
+      expect(first.result.raw.sessionState.smithersIsolations).toEqual([
+        {
+          runId,
+          runStateStore: storePath,
+          sessionEntryIds: ["entry-start"],
+        },
+      ]);
+      expect(second.result.raw.sessionState.smithersIsolations).toEqual([
+        {
+          runId,
+          runStateStore: storePath,
+          sessionEntryIds: ["entry-start"],
+        },
+      ]);
+      expect(reconstructed.smithersIsolations).toEqual([
+        {
+          runId,
+          runStateStore: storePath,
+          sessionEntryIds: ["entry-start"],
+        },
+      ]);
+      expect(
+        second.result.raw.sessionEntries.some(
+          (entry) => entry.message.customType === "hellm/smithers-isolation",
+        ),
+      ).toBe(false);
+    });
   });
 
   it("covers a blocked smithers workflow request and preserves blocked visible state in headless output", async () => {

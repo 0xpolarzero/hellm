@@ -9,6 +9,7 @@ import {
   createArtifact,
   createEmptySessionState,
   createEpisode,
+  createThread,
   createThreadSnapshot,
   createVerificationRecord,
   reconstructSessionState,
@@ -462,6 +463,156 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
     }
   });
 
+  it("upserts persisted workflow run references by run id across a file-backed smithers resume", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const threadId = "thread-smithers-resume";
+      const worktreePath = await workspace.createLinkedWorktree("feature-smithers-resume");
+      const sessionFile = workspace.path(".pi/sessions/thread-smithers-resume.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      harness.append({
+        kind: "workflow-run",
+        data: {
+          runId: "run-legacy",
+          threadId,
+          workflowId: "workflow:legacy",
+          status: "completed",
+          updatedAt: "2026-04-08T08:58:00.000Z",
+        },
+      });
+      harness.append({
+        kind: "workflow-run",
+        data: {
+          runId: "run-resume",
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "waiting_approval",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+          worktreePath: "/repo/.worktrees/stale",
+        },
+      });
+      harness.append({
+        kind: "smithers-isolation",
+        data: {
+          runId: "run-resume",
+          runStateStore: workspace.path(".smithers/run-resume-old.sqlite"),
+          sessionEntryIds: ["entry-old"],
+        },
+      });
+
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueResumeResult({
+        run: {
+          runId: "run-resume",
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+          worktreePath,
+        },
+        status: "completed",
+        outputs: [],
+        episode: createEpisodeFixture({
+          id: "episode-smithers-resume",
+          threadId,
+          source: "smithers",
+          status: "completed",
+          smithersRunId: "run-resume",
+          worktreePath,
+        }),
+        isolation: {
+          runId: "run-resume",
+          runStateStore: workspace.path(".smithers/run-resume-new.sqlite"),
+          sessionEntryIds: ["entry-new"],
+        },
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        smithersBridge,
+        contextLoader: createFilesystemContextLoader({
+          sessionFile,
+        }),
+      });
+
+      const resumed = await orchestrator.run({
+        threadId,
+        prompt: "Resume workflow reference state from disk.",
+        cwd: workspace.root,
+        worktreePath,
+        routeHint: "smithers-workflow",
+        resumeRunId: "run-resume",
+      });
+
+      harness.appendEntries(resumed.sessionEntries);
+      const reconstructed = harness.reconstruct();
+      const snapshot = createThreadSnapshot(reconstructed, threadId);
+      const workflowRunEntries = readSessionFile(sessionFile)
+        .filter(isStructuredSessionEntry)
+        .map((entry) => entry.message.details)
+        .filter((details) => details.kind === "workflow-run");
+
+      expect(resumed.sessionState.workflowRuns).toEqual([
+        {
+          runId: "run-legacy",
+          threadId,
+          workflowId: "workflow:legacy",
+          status: "completed",
+          updatedAt: "2026-04-08T08:58:00.000Z",
+        },
+        {
+          runId: "run-resume",
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+          worktreePath,
+        },
+      ]);
+      expect(
+        resumed.sessionEntries.map((entry) => entry.message.customType),
+      ).toContain("hellm/workflow-run");
+      expect(snapshot.workflowRuns.map((run) => run.runId)).toEqual([
+        "run-legacy",
+        "run-resume",
+      ]);
+      expect(reconstructed.workflowRuns).toHaveLength(2);
+      expect(reconstructed.workflowRuns.find((run) => run.runId === "run-resume")).toEqual(
+        {
+          runId: "run-resume",
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+          worktreePath,
+        },
+      );
+      expect(
+        reconstructed.smithersIsolations.find((isolation) => isolation.runId === "run-resume"),
+      ).toEqual({
+        runId: "run-resume",
+        runStateStore: workspace.path(".smithers/run-resume-new.sqlite"),
+        sessionEntryIds: ["entry-new"],
+      });
+      expect(
+        workflowRunEntries
+          .map((details) => details.data)
+          .filter((run) => run.runId === "run-resume")
+          .map((run) => run.status),
+      ).toEqual(["waiting_approval", "completed"]);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   it("forwards scoped pi worker context and runtime transitions from a file-backed worktree session", async () => {
     if (!hasGit()) {
       return;
@@ -747,6 +898,73 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
       expect(snapshot.thread.worktreePath).toBe(worktreePath);
       expect(snapshot.episodes.at(-1)?.worktreePath).toBe(worktreePath);
       expect(snapshot.alignment.activeWorktreePath).toBe(worktreePath);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("keeps an existing thread worktree binding when a later request points at a different worktree", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const boundWorktreePath = await workspace.createLinkedWorktree("feature-bound");
+      const conflictingWorktreePath = await workspace.createLinkedWorktree(
+        "feature-conflict",
+      );
+      const sessionFile = workspace.path(".pi/sessions/thread-bound.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "thread-bound",
+        cwd: workspace.root,
+      });
+      const existingThread = createThread({
+        id: "thread-bound",
+        kind: "direct",
+        objective: "Keep this thread pinned to a bound worktree",
+        status: "running",
+        worktreePath: boundWorktreePath,
+        createdAt: "2026-04-08T09:00:00.000Z",
+        updatedAt: "2026-04-08T09:00:01.000Z",
+      });
+      harness.append({ kind: "thread", data: existingThread });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        contextLoader: createFilesystemContextLoader({
+          sessionFile,
+        }),
+      });
+
+      const result = await orchestrator.run({
+        threadId: "thread-bound",
+        prompt: "Summarize the state of this workstream.",
+        cwd: workspace.root,
+        worktreePath: conflictingWorktreePath,
+        routeHint: "direct",
+      });
+
+      harness.appendEntries(result.sessionEntries);
+      const snapshot = createThreadSnapshot(harness.reconstruct(), "thread-bound");
+
+      expect(result.context.repoAndWorktree.worktreePath).toBe(
+        conflictingWorktreePath,
+      );
+      expect(result.threadSnapshot.thread.worktreePath).toBe(boundWorktreePath);
+      expect(result.threadSnapshot.thread.worktreePath).not.toBe(
+        conflictingWorktreePath,
+      );
+      expect(result.threadSnapshot.episodes.at(-1)?.worktreePath).toBe(
+        boundWorktreePath,
+      );
+      expect(result.threadSnapshot.alignment.activeWorktreePath).toBe(
+        boundWorktreePath,
+      );
+      expect(snapshot.thread.worktreePath).toBe(boundWorktreePath);
+      expect(snapshot.episodes.at(-1)?.worktreePath).toBe(boundWorktreePath);
+      expect(snapshot.alignment.activeWorktreePath).toBe(boundWorktreePath);
     } finally {
       await workspace.cleanup();
     }

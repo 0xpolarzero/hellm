@@ -291,7 +291,7 @@ export function createThread(input: CreateThreadInput): ThreadRef {
     status: input.status ?? "pending",
     objective: input.objective,
     ...(input.parentThreadId ? { parentThreadId: input.parentThreadId } : {}),
-    inputEpisodeIds: input.inputEpisodeIds ?? [],
+    inputEpisodeIds: [...(input.inputEpisodeIds ?? [])],
     ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
     ...(input.smithersRunId ? { smithersRunId: input.smithersRunId } : {}),
     createdAt: input.createdAt,
@@ -302,7 +302,10 @@ export function createThread(input: CreateThreadInput): ThreadRef {
 export const createThreadRef = createThread;
 
 export function createArtifact(input: CreateArtifactInput): ArtifactRecord {
-  if (FILE_BACKED_ARTIFACT_KINDS.has(input.kind) && !input.path) {
+  const normalizedPath =
+    typeof input.path === "string" ? input.path.trim() : undefined;
+
+  if (FILE_BACKED_ARTIFACT_KINDS.has(input.kind) && !normalizedPath) {
     throw new Error(`Artifact kind "${input.kind}" requires a file path.`);
   }
 
@@ -310,7 +313,7 @@ export function createArtifact(input: CreateArtifactInput): ArtifactRecord {
     id: input.id,
     kind: input.kind,
     description: input.description,
-    ...(input.path ? { path: input.path } : {}),
+    ...(normalizedPath ? { path: normalizedPath } : {}),
     createdAt: input.createdAt,
   };
 }
@@ -318,7 +321,7 @@ export function createArtifact(input: CreateArtifactInput): ArtifactRecord {
 export const createArtifactRecord = createArtifact;
 
 export function isFileAddressableArtifact(artifact: ArtifactRecord): boolean {
-  return typeof artifact.path === "string" && artifact.path.length > 0;
+  return typeof artifact.path === "string" && artifact.path.trim().length > 0;
 }
 
 export function createVerificationRecord(
@@ -561,15 +564,17 @@ export function reconstructSessionState(
       case "thread":
         upsertById(threads, payload.data);
         break;
-      case "episode":
-        upsertById(episodes, payload.data);
-        for (const artifact of payload.data.artifacts) {
+      case "episode": {
+        const normalizedEpisode = createEpisode(payload.data);
+        upsertById(episodes, normalizedEpisode);
+        for (const artifact of normalizedEpisode.artifacts) {
           upsertById(artifacts, artifact);
         }
-        for (const record of payload.data.verification) {
+        for (const record of normalizedEpisode.verification) {
           upsertById(verificationRecords, record);
         }
         break;
+      }
       case "artifact":
         upsertById(artifacts, payload.data);
         break;

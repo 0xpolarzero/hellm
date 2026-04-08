@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { resolve } from "node:path";
 import {
   canTransitionThreadStatus,
   createArtifact,
@@ -38,6 +39,21 @@ describe("@hellm/session-model contract surface", () => {
     expect(thread.smithersRunId).toBe("run-123");
     expect(thread.createdAt).toBe("2026-04-08T09:00:00.000Z");
     expect(thread.updatedAt).toBe("2026-04-08T09:00:00.000Z");
+  });
+
+  it("copies input episode references so external mutation cannot rewrite thread state", () => {
+    const inputEpisodeIds = ["episode-a"];
+    const thread = createThread({
+      id: "thread-copy-inputs",
+      kind: "direct",
+      objective: "Preserve stable thread inputs",
+      inputEpisodeIds,
+      createdAt: "2026-04-08T09:00:00.000Z",
+    });
+
+    inputEpisodeIds.push("episode-b");
+
+    expect(thread.inputEpisodeIds).toEqual(["episode-a"]);
   });
 
   it("enforces the documented thread status lifecycle", () => {
@@ -207,6 +223,31 @@ describe("@hellm/session-model contract surface", () => {
     expect(createGlobalVerificationState().overallStatus).toBe("unknown");
   });
 
+  it("resolves per-kind verification by append order rather than record timestamps", () => {
+    const newerTimestamp = createVerificationRecord({
+      id: "verification-build-newer-ts",
+      kind: "build",
+      status: "passed",
+      summary: "Built at a newer timestamp",
+      createdAt: "2026-04-08T09:10:00.000Z",
+    });
+    const olderTimestamp = createVerificationRecord({
+      id: "verification-build-older-ts",
+      kind: "build",
+      status: "failed",
+      summary: "Appended later but with older timestamp",
+      createdAt: "2026-04-08T09:00:00.000Z",
+    });
+
+    const aggregated = createGlobalVerificationState([
+      newerTimestamp,
+      olderTimestamp,
+    ]);
+
+    expect(aggregated.byKind.build?.id).toBe("verification-build-older-ts");
+    expect(aggregated.overallStatus).toBe("failed");
+  });
+
   it("normalizes session/worktree alignment and empty top-level state defaults", () => {
     const aligned = createSessionWorktreeAlignment({
       sessionCwd: "/repo",
@@ -237,6 +278,25 @@ describe("@hellm/session-model contract surface", () => {
     expect(empty.alignment.aligned).toBe(false);
   });
 
+  it("marks omitted worktree paths as aligned and resolves non-canonical paths before comparison", () => {
+    const withoutActiveWorktree = createSessionWorktreeAlignment({
+      sessionCwd: "./repo-root",
+    });
+    const normalizedAligned = createSessionWorktreeAlignment({
+      sessionCwd: "./repo-root/./src/..",
+      activeWorktreePath: "./repo-root",
+    });
+
+    expect(withoutActiveWorktree.sessionCwd).toBe(resolve("./repo-root"));
+    expect(withoutActiveWorktree.activeWorktreePath).toBeUndefined();
+    expect(withoutActiveWorktree.aligned).toBe(true);
+    expect(withoutActiveWorktree.reason).toBe("session and worktree are aligned");
+    expect(normalizedAligned.sessionCwd).toBe(resolve("./repo-root"));
+    expect(normalizedAligned.activeWorktreePath).toBe(resolve("./repo-root"));
+    expect(normalizedAligned.aligned).toBe(true);
+    expect(normalizedAligned.reason).toBe("session and worktree are aligned");
+  });
+
   it("stores structured session entries as pi-style custom messages", () => {
     const thread = createThread({
       id: "thread-1",
@@ -255,9 +315,12 @@ describe("@hellm/session-model contract surface", () => {
     });
 
     expect(entry.type).toBe("message");
+    expect(entry.parentId).toBeNull();
     expect(entry.message.role).toBe("custom");
     expect(entry.message.customType).toBe("hellm/thread");
+    expect(entry.message.content).toBe("hellm:thread");
     expect(entry.message.display).toBe(false);
+    expect(entry.message.timestamp).toBe(Date.parse("2026-04-08T09:00:01.000Z"));
     expect(entry.message.details.kind).toBe("thread");
   });
 
@@ -292,6 +355,63 @@ describe("@hellm/session-model contract surface", () => {
     expect(parseStructuredEntry("{not-json")).toBeNull();
     expect(parseStructuredEntry({ type: "session", id: "session-1" })).toBeNull();
     expect(foreignCustom).toBeNull();
+  });
+
+  it("rejects malformed hellm custom payload details and non-custom parse inputs", () => {
+    const thread = createThread({
+      id: "thread-malformed",
+      kind: "direct",
+      objective: "Reject malformed custom payload details",
+      createdAt: "2026-04-08T09:00:00.000Z",
+    });
+    const entry = createStructuredSessionEntry({
+      id: "entry-malformed",
+      parentId: null,
+      timestamp: "2026-04-08T09:00:01.000Z",
+      payload: { kind: "thread", data: thread },
+    });
+
+    const missingDetails = parseStructuredSessionEntry({
+      ...entry,
+      message: {
+        ...entry.message,
+        details: undefined as unknown as typeof entry.message.details,
+      },
+    });
+    const nonObjectDetails = parseStructuredSessionEntry({
+      ...entry,
+      message: {
+        ...entry.message,
+        details: "not-an-object" as unknown as typeof entry.message.details,
+      },
+    });
+    const missingData = parseStructuredSessionEntry({
+      ...entry,
+      message: {
+        ...entry.message,
+        details: { kind: "thread" } as unknown as typeof entry.message.details,
+      },
+    });
+    const nonCustomRole = parseStructuredEntry({
+      ...entry,
+      message: {
+        ...entry.message,
+        role: "user",
+      },
+    });
+    const invalidCustomType = parseStructuredEntry({
+      ...entry,
+      message: {
+        ...entry.message,
+        customType: "hellm",
+      },
+    });
+
+    expect(missingDetails).toBeNull();
+    expect(nonObjectDetails).toBeNull();
+    expect(missingData).toBeNull();
+    expect(nonCustomRole).toBeNull();
+    expect(invalidCustomType).toBeNull();
   });
 
   it("preserves thread worktree binding and aligned session metadata", () => {
