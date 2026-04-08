@@ -1036,6 +1036,64 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     });
   });
 
+  it("supports lint-only verification runs and preserves lint outcomes in reconciled state", async () => {
+    const verificationRunner = new FakeVerificationRunner();
+    verificationRunner.enqueueResult({
+      status: "failed",
+      records: [
+        createVerificationFixture({
+          id: "verification-lint-only",
+          kind: "lint",
+          status: "failed",
+          summary: "eslint found 3 errors",
+        }),
+      ],
+      artifacts: [],
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      verificationRunner,
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext(request);
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-verify-lint-only",
+      prompt: "Run lint verification only.",
+      cwd: "/repo",
+      routeHint: "verification",
+      workflowSeedInput: {
+        verificationKinds: ["lint"],
+      },
+    });
+
+    expect(verificationRunner.calls[0]).toMatchObject({
+      kinds: ["lint"],
+    });
+    expect(result.threadSnapshot.thread.kind).toBe("verification");
+    expect(result.threadSnapshot.thread.status).toBe("completed");
+    expect(result.threadSnapshot.episodes.at(-1)?.verification).toEqual([
+      expect.objectContaining({
+        kind: "lint",
+        status: "failed",
+      }),
+    ]);
+    expect(result.threadSnapshot.episodes.at(-1)?.unresolvedIssues).toEqual([
+      "eslint found 3 errors",
+    ]);
+    expect(result.state.verification.byKind.lint).toEqual(
+      expect.objectContaining({
+        kind: "lint",
+        status: "failed",
+      }),
+    );
+    expect(result.state.verification.overallStatus).toBe("failed");
+  });
+
   it("auto-routes requireApproval requests into the approval path and waiting_approval state", async () => {
     const orchestrator = createOrchestrator({
       clock: fixedClock(),

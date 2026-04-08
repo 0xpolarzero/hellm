@@ -6,6 +6,7 @@ import {
   FakeSmithersWorkflowBridge,
   FakeVerificationRunner,
   FileBackedSessionJsonlHarness,
+  createArtifactFixture,
   createEpisodeFixture,
   createVerificationFixture,
   fixedClock,
@@ -362,6 +363,120 @@ describe("golden path headless specs", () => {
     });
   });
 
+  it("re-enters lint verification using file-backed JSONL session state", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-lint-reenter";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-lint-reenter.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const verificationRunner = new FakeVerificationRunner();
+      verificationRunner.enqueueResult({
+        status: "failed",
+        records: [
+          createVerificationFixture({
+            id: "golden-lint-reenter-1",
+            kind: "lint",
+            status: "failed",
+            summary: "eslint found 2 errors",
+          }),
+        ],
+        artifacts: [
+          createArtifactFixture({
+            id: "golden-lint-artifact-1",
+            kind: "log",
+            path: workspace.path("reports/lint-1.log"),
+          }),
+        ],
+      });
+      verificationRunner.enqueueResult({
+        status: "passed",
+        records: [
+          createVerificationFixture({
+            id: "golden-lint-reenter-2",
+            kind: "lint",
+            status: "passed",
+            summary: "eslint clean",
+          }),
+        ],
+        artifacts: [
+          createArtifactFixture({
+            id: "golden-lint-artifact-2",
+            kind: "log",
+            path: workspace.path("reports/lint-2.log"),
+          }),
+        ],
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        verificationRunner,
+        contextLoader: {
+          async load(request) {
+            const state = harness.reconstruct();
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run lint verification first pass.",
+          cwd: workspace.root,
+          routeHint: "verification",
+          workflowSeedInput: {
+            verificationKinds: ["lint"],
+          },
+        },
+        orchestrator,
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run lint verification second pass.",
+          cwd: workspace.root,
+          routeHint: "verification",
+          workflowSeedInput: {
+            verificationKinds: ["lint"],
+          },
+        },
+        orchestrator,
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+
+      const reconstructed = harness.reconstruct();
+      const firstEpisodeId = first.result.threadSnapshot.episodes.at(-1)?.id;
+      expect(firstEpisodeId).toBeDefined();
+      const expectedInputEpisodeIds = [firstEpisodeId as string];
+
+      expect(verificationRunner.calls.map((call) => call.kinds)).toEqual([
+        ["lint"],
+        ["lint"],
+      ]);
+      expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual(
+        expectedInputEpisodeIds,
+      );
+      expect(second.result.threadSnapshot.episodes.at(-1)?.inputEpisodeIds).toEqual(
+        expectedInputEpisodeIds,
+      );
+      expect(reconstructed.verification.byKind.lint?.status).toBe("passed");
+      expect(reconstructed.verification.overallStatus).toBe("passed");
+      expect(reconstructed.episodes.at(-1)?.verification[0]?.kind).toBe("lint");
+    });
+  });
+
   it("covers a smithers workflow path with approval and resume", async () => {
     const smithersBridge = new FakeSmithersWorkflowBridge();
     smithersBridge.enqueueRunResult({
@@ -488,13 +603,28 @@ describe("golden path headless specs", () => {
 
   it("covers a verification-only request", async () => {
     const verificationRunner = new FakeVerificationRunner();
+    const lintArtifact = createArtifactFixture({
+      id: "golden-verify-lint-artifact",
+      kind: "log",
+      path: "/repo/reports/lint.log",
+    });
     verificationRunner.enqueueResult({
-      status: "passed",
+      status: "failed",
       records: [
         createVerificationFixture({ kind: "build", status: "passed" }),
         createVerificationFixture({ kind: "test", status: "passed" }),
+        createVerificationFixture({
+          kind: "integration",
+          status: "failed",
+          summary: "Integration smoke test failed",
+        }),
+        createVerificationFixture({
+          kind: "lint",
+          status: "passed",
+          artifactIds: [lintArtifact.id],
+        }),
       ],
-      artifacts: [],
+      artifacts: [lintArtifact],
     });
     const orchestrator = createBaseOrchestrator({ verificationRunner });
     const { result } = await runHeadlessHarness(
@@ -509,11 +639,85 @@ describe("golden path headless specs", () => {
 
     expect(result.raw.classification.path).toBe("verification");
     expect(result.raw.state.visibleSummary).toBe(
-      "verification:completed:completed",
+      "verification:completed:completed_with_issues",
     );
     expect(result.raw.state.waiting).toBe(false);
     expect(result.raw.state.blocked).toBe(false);
     expect(result.output.status).toBe("completed");
+    expect(result.threadSnapshot.episodes.at(-1)?.status).toBe(
+      "completed_with_issues",
+    );
+    expect(result.raw.state.verification.byKind.integration?.status).toBe(
+      "failed",
+    );
+    expect(result.raw.state.verification.overallStatus).toBe("failed");
+    expect(verificationRunner.calls[0]?.kinds).toEqual(["build", "test", "lint", "integration"]);
+    expect(result.threadSnapshot.episodes.at(-1)?.verification).toEqual([
+      expect.objectContaining({ kind: "build", status: "passed" }),
+      expect.objectContaining({ kind: "test", status: "passed" }),
+      expect.objectContaining({ kind: "integration", status: "failed" }),
+      expect.objectContaining({ kind: "lint", status: "passed" }),
+    ]);
+    expect(result.threadSnapshot.episodes.at(-1)?.artifacts).toEqual([
+      lintArtifact,
+    ]);
+    expect(result.raw.state.verification.byKind.lint).toEqual(
+      expect.objectContaining({ kind: "lint", status: "passed" }),
+    );
+  });
+
+  it("covers a manual-only verification request and forwards manual checks", async () => {
+    const verificationRunner = new FakeVerificationRunner();
+    verificationRunner.enqueueResult({
+      status: "failed",
+      records: [
+        createVerificationFixture({
+          kind: "manual",
+          status: "failed",
+          summary: "Manual verification failed on acceptance checks",
+        }),
+      ],
+      artifacts: [],
+    });
+    const orchestrator = createBaseOrchestrator({ verificationRunner });
+    const { result, jsonl } = await runHeadlessHarness(
+      {
+        threadId: "golden-verify-manual",
+        prompt: "Run only manual verification checks.",
+        cwd: "/repo",
+        routeHint: "verification",
+        workflowSeedInput: {
+          verificationKinds: ["manual"],
+          manualChecks: [
+            "Open the app and validate the acceptance flow.",
+            "Capture outcomes for manual QA sign-off.",
+          ],
+        },
+      },
+      orchestrator,
+    );
+
+    expect(verificationRunner.calls[0]).toMatchObject({
+      kinds: ["manual"],
+      manualChecks: [
+        "Open the app and validate the acceptance flow.",
+        "Capture outcomes for manual QA sign-off.",
+      ],
+    });
+    expect(result.raw.classification.path).toBe("verification");
+    expect(result.raw.state.visibleSummary).toBe(
+      "verification:completed:completed_with_issues",
+    );
+    expect(result.raw.state.verification.byKind.manual?.status).toBe("failed");
+    expect(result.output.status).toBe("completed");
+    expect(result.output.summary).toBe("Verification failed.");
+    expect(result.events[2]).toMatchObject({
+      type: "run.episode",
+      source: "verification",
+      status: "completed_with_issues",
+    });
+    expect(result.events.at(-1)?.type).toBe("run.completed");
+    expect(jsonl.at(-1)).toContain("\"run.completed\"");
   });
 
   it("treats failed verification as completed headless output while surfacing failed reconciliation state", async () => {
