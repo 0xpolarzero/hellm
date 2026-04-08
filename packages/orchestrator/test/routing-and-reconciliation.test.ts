@@ -188,6 +188,102 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     ]);
   });
 
+  it("normalizes the direct path into the canonical episode shape", async () => {
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext(request);
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-direct-canonical",
+      prompt: "Apply a tiny direct-path update.",
+      cwd: "/repo",
+      routeHint: "direct",
+      workflowSeedInput: {
+        objective: "Deliver the direct-path change with no delegation.",
+      },
+    });
+
+    const episode = result.threadSnapshot.episodes.at(-1);
+    expect(episode).toEqual({
+      id: "thread-direct-canonical:direct:2026-04-08T09:00:00.000Z",
+      threadId: "thread-direct-canonical",
+      source: "orchestrator",
+      objective: "Deliver the direct-path change with no delegation.",
+      status: "completed",
+      conclusions: ["Apply a tiny direct-path update."],
+      changedFiles: [],
+      artifacts: [],
+      verification: [],
+      unresolvedIssues: [],
+      followUpSuggestions: [],
+      provenance: {
+        executionPath: "direct",
+        actor: "orchestrator",
+        notes: "Direct path normalized into an episode.",
+      },
+      startedAt: "2026-04-08T09:00:00.000Z",
+      completedAt: "2026-04-08T09:00:00.000Z",
+      inputEpisodeIds: [],
+    });
+    expect(result.threadSnapshot.thread.objective).toBe(
+      "Deliver the direct-path change with no delegation.",
+    );
+    expect("worktreePath" in (episode ?? {})).toBe(false);
+  });
+
+  it("normalizes direct episodes with the loaded context worktree when no request worktree is supplied", async () => {
+    const worktreePath = "/repo/.worktrees/context-direct";
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      contextLoader: {
+        async load(request) {
+          return {
+            ...baseLoadedContext(request),
+            repoAndWorktree: {
+              cwd: request.cwd,
+              worktreePath,
+            },
+            state: createEmptySessionState({
+              sessionId: request.threadId,
+              sessionCwd: request.cwd,
+              activeWorktreePath: worktreePath,
+            }),
+          };
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-direct-context-worktree",
+      prompt: "Summarize direct-path state in a context worktree.",
+      cwd: "/repo",
+      routeHint: "direct",
+    });
+
+    expect(result.threadSnapshot.thread.worktreePath).toBe(worktreePath);
+    expect(result.threadSnapshot.episodes.at(-1)?.worktreePath).toBe(worktreePath);
+    expect(result.threadSnapshot.alignment.activeWorktreePath).toBe(worktreePath);
+    expect(
+      result.sessionEntries.find((entry) => entry.message.customType === "hellm/episode")
+        ?.message.details,
+    ).toMatchObject({
+      kind: "episode",
+      data: {
+        id: "thread-direct-context-worktree:direct:2026-04-08T09:00:00.000Z",
+        worktreePath,
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+      },
+    });
+  });
+
   it("reuses prior episode ids as thread and episode inputs on the direct path", async () => {
     const priorEpisode = createEpisodeFixture({
       id: "episode-direct-prior",
