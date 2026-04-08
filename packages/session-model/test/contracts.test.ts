@@ -207,6 +207,31 @@ describe("@hellm/session-model contract surface", () => {
     expect(createGlobalVerificationState().overallStatus).toBe("unknown");
   });
 
+  it("resolves per-kind verification by append order rather than record timestamps", () => {
+    const newerTimestamp = createVerificationRecord({
+      id: "verification-build-newer-ts",
+      kind: "build",
+      status: "passed",
+      summary: "Built at a newer timestamp",
+      createdAt: "2026-04-08T09:10:00.000Z",
+    });
+    const olderTimestamp = createVerificationRecord({
+      id: "verification-build-older-ts",
+      kind: "build",
+      status: "failed",
+      summary: "Appended later but with older timestamp",
+      createdAt: "2026-04-08T09:00:00.000Z",
+    });
+
+    const aggregated = createGlobalVerificationState([
+      newerTimestamp,
+      olderTimestamp,
+    ]);
+
+    expect(aggregated.byKind.build?.id).toBe("verification-build-older-ts");
+    expect(aggregated.overallStatus).toBe("failed");
+  });
+
   it("normalizes session/worktree alignment and empty top-level state defaults", () => {
     const aligned = createSessionWorktreeAlignment({
       sessionCwd: "/repo",
