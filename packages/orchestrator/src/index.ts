@@ -2,6 +2,7 @@ import {
   createEmptySessionState,
   createEpisode,
   createGlobalVerificationState,
+  parseStructuredSessionEntry,
   createSessionWorktreeAlignment,
   createStructuredSessionEntry,
   createThread,
@@ -668,6 +669,7 @@ function buildStructuredEntries(input: {
     .toReversed()
     .find(
       (entry): entry is StructuredSessionEntry =>
+        parseStructuredSessionEntry(entry) !== null &&
         typeof entry === "object" &&
         entry !== null &&
         "type" in entry &&

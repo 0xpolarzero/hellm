@@ -95,6 +95,14 @@ function isStructuredSessionEntry(
     entry !== null &&
     "type" in entry &&
     entry.type === "message" &&
+    "message" in entry &&
+    typeof entry.message === "object" &&
+    entry.message !== null &&
+    "role" in entry.message &&
+    entry.message.role === "custom" &&
+    "customType" in entry.message &&
+    typeof entry.message.customType === "string" &&
+    entry.message.customType.startsWith("hellm/") &&
     "id" in entry &&
     typeof entry.id === "string"
   );
@@ -601,6 +609,10 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
       });
       harness.append({ kind: "episode", data: priorEpisodeOne });
       harness.append({ kind: "episode", data: priorEpisodeTwo });
+      const lastStructuredEntryId = readSessionFile(sessionFile)
+        .filter(isStructuredSessionEntry)
+        .at(-1)?.id;
+      expect(lastStructuredEntryId).toBeDefined();
 
       const decoyEntries: SessionJsonlEntry[] = [
         {
@@ -674,6 +686,8 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
           entry.includes("\"entry-decoy-user\""),
         ),
       ).toBe(true);
+      expect(result.sessionEntries[0]?.parentId).toBe(lastStructuredEntryId);
+      expect(result.sessionEntries[0]?.parentId).not.toBe("entry-decoy-assistant");
       expect(piBridge.workerRequests[0]?.inputEpisodeIds).toEqual([
         "episode-structured-1",
         "episode-structured-2",
