@@ -154,6 +154,112 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     expect(result.threadSnapshot.thread.smithersRunId).toBe("run-seeded-routing");
   });
 
+  it("authors an implicit bounded pi task for smithers workflow runs and scopes approval/worktree from the request", async () => {
+    const smithersBridge = new FakeSmithersWorkflowBridge();
+    smithersBridge.enqueueRunResult({
+      run: {
+        runId: "run-implicit-pi-task",
+        threadId: "thread-implicit-pi-task",
+        workflowId: "workflow:thread-implicit-pi-task",
+        status: "waiting_approval",
+        updatedAt: "2026-04-08T09:00:00.000Z",
+        worktreePath: "/repo/worktrees/feature-implicit-task",
+      },
+      status: "waiting_approval",
+      outputs: [],
+      episode: createEpisodeFixture({
+        id: "episode-implicit-pi-task",
+        threadId: "thread-implicit-pi-task",
+        source: "smithers",
+        status: "waiting_approval",
+        smithersRunId: "run-implicit-pi-task",
+        worktreePath: "/repo/worktrees/feature-implicit-task",
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      smithersBridge,
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext(request);
+        },
+      },
+    });
+
+    await orchestrator.run({
+      threadId: "thread-implicit-pi-task",
+      prompt: "Implement the requested change through a delegated run.",
+      cwd: "/repo",
+      routeHint: "smithers-workflow",
+      requireApproval: true,
+      worktreePath: "/repo/worktrees/feature-implicit-task",
+    });
+
+    expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual([
+      {
+        id: "pi-task",
+        outputKey: "result",
+        prompt: "Implement the requested change through a delegated run.",
+        agent: "pi",
+        needsApproval: true,
+        worktreePath: "/repo/worktrees/feature-implicit-task",
+      },
+    ]);
+    expect(smithersBridge.runRequests[0]?.worktreePath).toBe(
+      "/repo/worktrees/feature-implicit-task",
+    );
+  });
+
+  it("keeps the implicit smithers pi task minimal when approval and worktree scope are not requested", async () => {
+    const smithersBridge = new FakeSmithersWorkflowBridge();
+    smithersBridge.enqueueRunResult({
+      run: {
+        runId: "run-implicit-pi-task-minimal",
+        threadId: "thread-implicit-pi-task-minimal",
+        workflowId: "workflow:thread-implicit-pi-task-minimal",
+        status: "completed",
+        updatedAt: "2026-04-08T09:00:00.000Z",
+      },
+      status: "completed",
+      outputs: [],
+      episode: createEpisodeFixture({
+        id: "episode-implicit-pi-task-minimal",
+        threadId: "thread-implicit-pi-task-minimal",
+        source: "smithers",
+        status: "completed",
+        smithersRunId: "run-implicit-pi-task-minimal",
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      smithersBridge,
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext(request);
+        },
+      },
+    });
+
+    await orchestrator.run({
+      threadId: "thread-implicit-pi-task-minimal",
+      prompt: "Run an implicit delegated task.",
+      cwd: "/repo",
+      routeHint: "smithers-workflow",
+    });
+
+    expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual([
+      {
+        id: "pi-task",
+        outputKey: "result",
+        prompt: "Run an implicit delegated task.",
+        agent: "pi",
+      },
+    ]);
+    expect(smithersBridge.runRequests[0]?.worktreePath).toBeUndefined();
+  });
+
   it("normalizes a direct request into a completed thread, session entries, and visible orchestrator state", async () => {
     const orchestrator = createOrchestrator({
       clock: fixedClock(),
