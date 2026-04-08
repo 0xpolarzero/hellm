@@ -1,5 +1,9 @@
 import { describe, expect, it, test } from "bun:test";
-import { executeHeadlessRun } from "@hellm/cli";
+import {
+  createJsonlEvents,
+  executeHeadlessRun,
+  serializeJsonlEvents,
+} from "@hellm/cli";
 import {
   createOrchestrator,
   type Orchestrator,
@@ -326,6 +330,110 @@ describe("@hellm/cli headless execution", () => {
     ).rejects.toThrow("Cannot build JSONL events without an episode.");
   });
 
+  it("emits run.episode and latestEpisodeId from the latest thread episode when history exists", async () => {
+    const firstEpisode = createEpisodeFixture({
+      id: "episode-first",
+      threadId: "thread-latest-episode",
+      status: "waiting_input",
+      source: "pi-worker",
+    });
+    const latestEpisode = createEpisodeFixture({
+      id: "episode-latest",
+      threadId: "thread-latest-episode",
+      status: "completed",
+      source: "smithers",
+    });
+    const orchestrator = createStubOrchestrator(
+      createRunResultForHeadless({
+        threadId: "thread-latest-episode",
+        episodes: [firstEpisode, latestEpisode],
+      }),
+    );
+
+    const result = await executeHeadlessRun(
+      {
+        threadId: "thread-latest-episode",
+        prompt: "Continue from prior episode history.",
+        cwd: "/repo",
+        routeHint: "direct",
+      },
+      { orchestrator },
+    );
+
+    expect(result.output.latestEpisodeId).toBe("episode-latest");
+    expect(result.events).toContainEqual({
+      type: "run.episode",
+      episodeId: "episode-latest",
+      status: "completed",
+      source: "smithers",
+    });
+    expect(result.events.at(-1)).toEqual({
+      type: "run.completed",
+      threadId: "thread-latest-episode",
+      status: "completed",
+      latestEpisodeId: "episode-latest",
+    });
+  });
+
+  it("emits run.waiting for blocked completion states while preserving blocked thread status", async () => {
+    const blockedEpisode = createEpisodeFixture({
+      id: "episode-blocked",
+      threadId: "thread-blocked",
+      status: "blocked",
+      source: "pi-worker",
+    });
+    const orchestrator = createStubOrchestrator(
+      createRunResultForHeadless({
+        threadId: "thread-blocked",
+        episodes: [blockedEpisode],
+        threadStatus: "blocked",
+        completion: {
+          isComplete: false,
+          reason: "blocked",
+        },
+      }),
+    );
+
+    const result = await executeHeadlessRun(
+      {
+        threadId: "thread-blocked",
+        prompt: "Run in blocked mode.",
+        cwd: "/repo",
+        routeHint: "pi-worker",
+      },
+      { orchestrator },
+    );
+
+    expect(result.events.at(-1)).toEqual({
+      type: "run.waiting",
+      threadId: "thread-blocked",
+      status: "blocked",
+      latestEpisodeId: "episode-blocked",
+    });
+  });
+
+  it("serializes JSONL events as one parseable object per line without a trailing newline", () => {
+    const runResult = createRunResultForHeadless({
+      threadId: "thread-jsonl-serialize",
+      episodes: [
+        createEpisodeFixture({
+          id: "episode-jsonl-serialize",
+          threadId: "thread-jsonl-serialize",
+        }),
+      ],
+      classificationReason:
+        "reason includes \"quotes\", newlines,\nand escaped slashes \\\\ for JSONL",
+    });
+    const events = createJsonlEvents(createStubOrchestrator(runResult), runResult);
+    const stream = serializeJsonlEvents(events);
+    const reparsed = stream.split("\n").map((line) => JSON.parse(line));
+
+    expect(stream.endsWith("\n")).toBe(false);
+    expect(stream.split("\n")).toHaveLength(events.length);
+    expect(reparsed).toEqual(events);
+    expect(reparsed[1]?.reason).toBe(runResult.classification.reason);
+  });
+
   test.todo(
     "whole product server mode reuses the same structured contract without requiring a separate orchestration model",
     () => {},
@@ -354,8 +462,17 @@ function createStubOrchestrator(result: OrchestratorRunResult): Orchestrator {
 function createRunResultForHeadless(input: {
   threadId: string;
   episodes: Episode[];
+  threadStatus?: OrchestratorRunResult["threadSnapshot"]["thread"]["status"];
+  completion?: OrchestratorRunResult["completion"];
+  classificationReason?: string;
 }): OrchestratorRunResult {
   const now = "2026-04-08T09:00:00.000Z";
+  const completion =
+    input.completion ??
+    ({
+      isComplete: input.episodes.length > 0,
+      reason: input.episodes.length > 0 ? "completed" : "waiting_input",
+    } as OrchestratorRunResult["completion"]);
   const sessionState = createEmptySessionState({
     sessionId: input.threadId,
     sessionCwd: "/repo",
@@ -364,7 +481,7 @@ function createRunResultForHeadless(input: {
     id: input.threadId,
     kind: "direct",
     objective: "headless test objective",
-    status: input.episodes.length > 0 ? "completed" : "running",
+    status: input.threadStatus ?? (input.episodes.length > 0 ? "completed" : "running"),
     createdAt: now,
     updatedAt: now,
   });
@@ -384,7 +501,7 @@ function createRunResultForHeadless(input: {
     classification: {
       path: "direct",
       confidence: "hint",
-      reason: "Explicit route hint supplied by caller.",
+      reason: input.classificationReason ?? "Explicit route hint supplied by caller.",
     },
     context: {
       sessionHistory: [],
@@ -412,8 +529,8 @@ function createRunResultForHeadless(input: {
     sessionState,
     sessionEntries: [],
     completion: {
-      isComplete: input.episodes.length > 0,
-      reason: input.episodes.length > 0 ? "completed" : "waiting_input",
+      isComplete: completion.isComplete,
+      reason: completion.reason,
     },
   };
 }
