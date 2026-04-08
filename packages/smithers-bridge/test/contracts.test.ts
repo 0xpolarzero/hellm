@@ -154,6 +154,153 @@ describe("@hellm/smithers-bridge contract surface", () => {
     expect(translateSmithersRunToEpisode(resumed).id).toBe("episode-complete");
   });
 
+  it("models a looped retry execution across waiting_resume attempts before completion", async () => {
+    const thread = createThreadFixture({
+      id: "thread-smithers-retry",
+      kind: "smithers-workflow",
+      worktreePath: "/repo/worktrees/retry",
+    });
+    const workflow = authorWorkflow({
+      thread,
+      objective: "Retry until the workflow passes verification",
+      inputEpisodeIds: ["episode-before-retry"],
+      tasks: [
+        {
+          id: "retry-task",
+          outputKey: "result",
+          prompt: "Implement and verify",
+          agent: "pi",
+          retryLimit: 3,
+          worktreePath: thread.worktreePath,
+        },
+      ],
+    });
+    const bridge = new FakeSmithersWorkflowBridge();
+    bridge.enqueueRunResult({
+      run: {
+        runId: "run-retry",
+        threadId: thread.id,
+        workflowId: workflow.workflowId,
+        status: "waiting_resume",
+        updatedAt: "2026-04-08T09:00:00.000Z",
+        worktreePath: thread.worktreePath,
+      },
+      status: "waiting_resume",
+      outputs: [
+        {
+          nodeId: "retry-task",
+          schema: "result",
+          value: { attempt: 1, passed: false },
+        },
+      ],
+      episode: createEpisodeFixture({
+        id: "episode-retry-1",
+        threadId: thread.id,
+        source: "smithers",
+        status: "waiting_input",
+        smithersRunId: "run-retry",
+        worktreePath: thread.worktreePath!,
+        followUpSuggestions: ["Retry attempt 1 failed verification; resume run."],
+      }),
+      waitReason: "Attempt 1 failed verification.",
+      retryCount: 1,
+    });
+    bridge.enqueueResumeResult({
+      run: {
+        runId: "run-retry",
+        threadId: thread.id,
+        workflowId: workflow.workflowId,
+        status: "waiting_resume",
+        updatedAt: "2026-04-08T09:01:00.000Z",
+        worktreePath: thread.worktreePath,
+      },
+      status: "waiting_resume",
+      outputs: [
+        {
+          nodeId: "retry-task",
+          schema: "result",
+          value: { attempt: 2, passed: false },
+        },
+      ],
+      episode: createEpisodeFixture({
+        id: "episode-retry-2",
+        threadId: thread.id,
+        source: "smithers",
+        status: "waiting_input",
+        smithersRunId: "run-retry",
+        worktreePath: thread.worktreePath!,
+        followUpSuggestions: ["Retry attempt 2 failed verification; resume run."],
+      }),
+      waitReason: "Attempt 2 failed verification.",
+      retryCount: 2,
+    });
+    bridge.enqueueResumeResult({
+      run: {
+        runId: "run-retry",
+        threadId: thread.id,
+        workflowId: workflow.workflowId,
+        status: "completed",
+        updatedAt: "2026-04-08T09:02:00.000Z",
+        worktreePath: thread.worktreePath,
+      },
+      status: "completed",
+      outputs: [
+        {
+          nodeId: "retry-task",
+          schema: "result",
+          value: { attempt: 3, passed: true },
+        },
+      ],
+      episode: createEpisodeFixture({
+        id: "episode-retry-3",
+        threadId: thread.id,
+        source: "smithers",
+        status: "completed",
+        smithersRunId: "run-retry",
+        worktreePath: thread.worktreePath!,
+      }),
+      retryCount: 3,
+    });
+
+    const first = await bridge.runWorkflow({
+      path: "smithers-workflow",
+      thread,
+      objective: workflow.objective,
+      cwd: "/repo",
+      workflow,
+      worktreePath: thread.worktreePath!,
+    });
+    const second = await bridge.resumeWorkflow({
+      runId: "run-retry",
+      thread,
+      objective: workflow.objective,
+    });
+    const third = await bridge.resumeWorkflow({
+      runId: "run-retry",
+      thread,
+      objective: workflow.objective,
+    });
+
+    expect(bridge.runRequests).toHaveLength(1);
+    expect(bridge.runRequests[0]?.workflow.tasks[0]?.retryLimit).toBe(3);
+    expect(bridge.resumeRequests.map((request) => request.runId)).toEqual([
+      "run-retry",
+      "run-retry",
+    ]);
+    expect(first.status).toBe("waiting_resume");
+    expect(first.waitReason).toBe("Attempt 1 failed verification.");
+    expect(first.retryCount).toBe(1);
+    expect(second.status).toBe("waiting_resume");
+    expect(second.waitReason).toBe("Attempt 2 failed verification.");
+    expect(second.retryCount).toBe(2);
+    expect(third.status).toBe("completed");
+    expect(third.retryCount).toBe(3);
+    expect(third.outputs[0]?.value).toEqual({ attempt: 3, passed: true });
+    expect(translateSmithersRunToEpisode(first).id).toBe("episode-retry-1");
+    expect(translateSmithersRunToEpisode(second).id).toBe("episode-retry-2");
+    expect(translateSmithersRunToEpisode(third).id).toBe("episode-retry-3");
+  });
+
   it.todo(
     "pi-agent tasks inside smithers carry explicit scoped context from the orchestrator without assuming Slate internals",
     () => {},
@@ -164,6 +311,10 @@ describe("@hellm/smithers-bridge contract surface", () => {
   );
   it.todo(
     "pi-agent tasks inside smithers carry explicit completion conditions for episode handoff",
+    () => {},
+  );
+  it.todo(
+    "concrete smithers bridge execution enforces retryLimit exhaustion behavior without rerunning already completed workflow nodes",
     () => {},
   );
 });
