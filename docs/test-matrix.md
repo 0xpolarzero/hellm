@@ -76,7 +76,7 @@ It is intentionally the auditable checklist for product coverage. Completeness a
 | `ui.orchestrationAwareTui` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
 | `ui.orchestratorStateProjection` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
 | `ui.threadsPane` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
-| `ui.episodeInspector` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
+| `ui.episodeInspector` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts; packages/tui/test/episode-inspector.test.ts; packages/tui/test/frame-and-process.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
 | `ui.verificationPanel` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
 | `ui.sessionWorktreeIndicator` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
 | `ui.workflowActivityView` | `@hellm/tui` | package integration | `packages/tui/test/projection.test.ts` | executable | PRD TUI requirements plus local pi virtual-terminal testing style references. |
