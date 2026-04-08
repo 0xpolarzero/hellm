@@ -385,6 +385,113 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
     }
   });
 
+  it("authors a default single pi-task smithers workflow in a linked worktree when no seed tasks are provided", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const worktreePath = await workspace.createLinkedWorktree(
+        "feature-single-subagent",
+      );
+      const sessionFile = workspace.path(".pi/sessions/thread-smithers-single.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "thread-smithers-single",
+        cwd: workspace.root,
+      });
+      const priorEpisode = createEpisode({
+        id: "episode-prior-single",
+        threadId: "thread-smithers-single",
+        source: "orchestrator",
+        objective: "Prior objective",
+        status: "completed",
+        conclusions: ["Prior episode"],
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+        startedAt: "2026-04-08T09:00:00.000Z",
+        completedAt: "2026-04-08T09:00:01.000Z",
+      });
+      harness.append({ kind: "episode", data: priorEpisode });
+
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueRunResult({
+        run: {
+          runId: "run-smithers-single",
+          threadId: "thread-smithers-single",
+          workflowId: "workflow:thread-smithers-single",
+          status: "waiting_approval",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+          worktreePath,
+        },
+        status: "waiting_approval",
+        outputs: [],
+        approval: {
+          nodeId: "pi-task",
+          title: "Approve single delegated step",
+          summary: "Waiting for approval before continuing.",
+          mode: "needsApproval",
+        },
+        episode: createEpisodeFixture({
+          id: "episode-smithers-single",
+          threadId: "thread-smithers-single",
+          source: "smithers",
+          status: "waiting_approval",
+          smithersRunId: "run-smithers-single",
+          worktreePath,
+          inputEpisodeIds: ["episode-prior-single"],
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        smithersBridge,
+        contextLoader: createFilesystemContextLoader({
+          sessionFile,
+        }),
+      });
+
+      const result = await orchestrator.run({
+        threadId: "thread-smithers-single",
+        prompt: "Implement from the single-subagent fallback.",
+        cwd: workspace.root,
+        worktreePath,
+        routeHint: "smithers-workflow",
+        requireApproval: true,
+      });
+
+      expect(smithersBridge.runRequests).toHaveLength(1);
+      expect(smithersBridge.resumeRequests).toHaveLength(0);
+      expect(smithersBridge.runRequests[0]?.workflow.workflowId).toBe(
+        "workflow:thread-smithers-single",
+      );
+      expect(smithersBridge.runRequests[0]?.workflow.inputEpisodeIds).toEqual([
+        "episode-prior-single",
+      ]);
+      expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual([
+        {
+          id: "pi-task",
+          outputKey: "result",
+          prompt: "Implement from the single-subagent fallback.",
+          agent: "pi",
+          needsApproval: true,
+          worktreePath,
+        },
+      ]);
+      expect(smithersBridge.runRequests[0]?.worktreePath).toBe(worktreePath);
+      expect(result.classification.path).toBe("smithers-workflow");
+      expect(result.state.waiting).toBe(true);
+      expect(result.state.visibleSummary).toBe(
+        "smithers-workflow:waiting_approval:waiting_approval",
+      );
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   it("forwards scoped pi worker context and runtime transitions from a file-backed worktree session", async () => {
     if (!hasGit()) {
       return;

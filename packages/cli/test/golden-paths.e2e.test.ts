@@ -446,6 +446,68 @@ describe("golden path headless specs", () => {
     expect(second.result.events.at(-1)?.type).toBe("run.completed");
   });
 
+  it("covers an implicit single-subagent smithers workflow when no seed tasks are provided", async () => {
+    const worktreePath = "/repo/.worktrees/golden-single";
+    const smithersBridge = new FakeSmithersWorkflowBridge();
+    smithersBridge.enqueueRunResult({
+      run: {
+        runId: "golden-single-run",
+        threadId: "golden-smithers-single",
+        workflowId: "workflow:golden-smithers-single",
+        status: "completed",
+        updatedAt: "2026-04-08T09:00:00.000Z",
+        worktreePath,
+      },
+      status: "completed",
+      outputs: [
+        {
+          nodeId: "pi-task",
+          schema: "result",
+          value: { summary: "Single delegated task complete." },
+        },
+      ],
+      episode: createEpisodeFixture({
+        id: "golden-smithers-single-episode",
+        threadId: "golden-smithers-single",
+        source: "smithers",
+        status: "completed",
+        smithersRunId: "golden-single-run",
+        worktreePath,
+      }),
+    });
+    const orchestrator = createBaseOrchestrator({ smithersBridge });
+    const { result, jsonl } = await runHeadlessHarness(
+      {
+        threadId: "golden-smithers-single",
+        prompt: "Implement this via one delegated subagent.",
+        cwd: "/repo",
+        worktreePath,
+        routeHint: "smithers-workflow",
+      },
+      orchestrator,
+    );
+
+    expect(result.output.status).toBe("completed");
+    expect(result.output.workflowRunIds).toEqual(["golden-single-run"]);
+    expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual([
+      {
+        id: "pi-task",
+        outputKey: "result",
+        prompt: "Implement this via one delegated subagent.",
+        agent: "pi",
+        worktreePath,
+      },
+    ]);
+    expect(smithersBridge.runRequests[0]?.worktreePath).toBe(worktreePath);
+    expect(result.events.map((event) => event.type)).toEqual([
+      "run.started",
+      "run.classified",
+      "run.episode",
+      "run.completed",
+    ]);
+    expect(jsonl.at(-1)).toContain("\"run.completed\"");
+  });
+
   it("covers a blocked smithers workflow request and preserves blocked visible state in headless output", async () => {
     const smithersBridge = new FakeSmithersWorkflowBridge();
     smithersBridge.enqueueRunResult({
