@@ -1,7 +1,17 @@
 import { describe, expect, it, test } from "bun:test";
 import { executeHeadlessRun } from "@hellm/cli";
-import { createOrchestrator } from "@hellm/orchestrator";
-import { createEmptySessionState } from "@hellm/session-model";
+import {
+  createOrchestrator,
+  type Orchestrator,
+  type OrchestratorRunResult,
+} from "@hellm/orchestrator";
+import {
+  createEmptySessionState,
+  createGlobalVerificationState,
+  createThread,
+  createThreadSnapshot,
+  type Episode,
+} from "@hellm/session-model";
 import {
   FakeSmithersWorkflowBridge,
   FakeVerificationRunner,
@@ -42,8 +52,14 @@ describe("@hellm/cli headless execution", () => {
       { orchestrator },
     );
 
+    expect(result.orchestratorId).toBe("main");
     expect(result.output.threadId).toBe("thread-headless");
     expect(result.output.status).toBe("completed");
+    expect(result.events[0]).toEqual({
+      type: "run.started",
+      orchestratorId: result.orchestratorId,
+      threadId: "thread-headless",
+    });
     expect(result.events.map((event) => event.type)).toEqual([
       "run.started",
       "run.classified",
@@ -121,8 +137,8 @@ describe("@hellm/cli headless execution", () => {
 
   it("uses prompt-driven verification classification when routeHint is omitted or auto and emits run.classified", async () => {
     const scenarios = [
-      {id: "omitted-route-hint"},
-      {id: "auto-route-hint", routeHint: "auto" as const},
+      { id: "omitted-route-hint" },
+      { id: "auto-route-hint", routeHint: "auto" as const },
     ];
 
     for (const scenario of scenarios) {
@@ -215,6 +231,99 @@ describe("@hellm/cli headless execution", () => {
 
     expect(first.orchestratorId).toBe("main");
     expect(second.orchestratorId).toBe(first.orchestratorId);
+    expect(first.events[0]).toEqual({
+      type: "run.started",
+      orchestratorId: first.orchestratorId,
+      threadId: "thread-a",
+    });
+    expect(second.events[0]).toEqual({
+      type: "run.started",
+      orchestratorId: first.orchestratorId,
+      threadId: "thread-b",
+    });
+  });
+
+  it("chooses summary output from conclusions, then follow-up suggestions, then objective", async () => {
+    const scenarios: Array<{
+      id: string;
+      episode: Episode;
+      expectedSummary: string;
+    }> = [
+      {
+        id: "conclusions-first",
+        episode: createEpisodeFixture({
+          id: "episode-summary-conclusion",
+          threadId: "thread-summary-conclusion",
+          objective: "Objective should not be used",
+          conclusions: ["Conclusion takes priority"],
+          followUpSuggestions: ["Follow-up fallback"],
+        }),
+        expectedSummary: "Conclusion takes priority",
+      },
+      {
+        id: "follow-up-second",
+        episode: createEpisodeFixture({
+          id: "episode-summary-follow-up",
+          threadId: "thread-summary-follow-up",
+          objective: "Objective should not be used",
+          conclusions: [],
+          followUpSuggestions: ["Follow-up becomes summary"],
+        }),
+        expectedSummary: "Follow-up becomes summary",
+      },
+      {
+        id: "objective-fallback",
+        episode: createEpisodeFixture({
+          id: "episode-summary-objective",
+          threadId: "thread-summary-objective",
+          objective: "Objective fallback summary",
+          conclusions: [],
+          followUpSuggestions: [],
+        }),
+        expectedSummary: "Objective fallback summary",
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const orchestrator = createStubOrchestrator(
+        createRunResultForHeadless({
+          threadId: scenario.episode.threadId,
+          episodes: [scenario.episode],
+        }),
+      );
+      const result = await executeHeadlessRun(
+        {
+          threadId: scenario.episode.threadId,
+          prompt: `summary scenario ${scenario.id}`,
+          cwd: "/repo",
+          routeHint: "direct",
+        },
+        { orchestrator },
+      );
+
+      expect(result.output.summary).toBe(scenario.expectedSummary);
+    }
+  });
+
+  it("throws when one-shot execution does not produce any episodes", async () => {
+    const orchestrator = createStubOrchestrator(
+      createRunResultForHeadless({
+        threadId: "thread-without-episode",
+        episodes: [],
+      }),
+    );
+
+    expect(
+      executeHeadlessRun(
+        {
+          threadId: "thread-without-episode",
+          prompt: "Run without output episodes.",
+          cwd: "/repo",
+          routeHint: "direct",
+        },
+        { orchestrator },
+      ),
+    ).rejects.toThrow("Cannot build JSONL events without an episode.");
   });
 
   test.todo(
@@ -226,3 +335,85 @@ describe("@hellm/cli headless execution", () => {
     () => {},
   );
 });
+
+function createStubOrchestrator(result: OrchestratorRunResult): Orchestrator {
+  return {
+    id: "main",
+    async loadContext() {
+      throw new Error("createStubOrchestrator.loadContext should not be called");
+    },
+    classifyRequest() {
+      throw new Error("createStubOrchestrator.classifyRequest should not be called");
+    },
+    async run() {
+      return result;
+    },
+  };
+}
+
+function createRunResultForHeadless(input: {
+  threadId: string;
+  episodes: Episode[];
+}): OrchestratorRunResult {
+  const now = "2026-04-08T09:00:00.000Z";
+  const sessionState = createEmptySessionState({
+    sessionId: input.threadId,
+    sessionCwd: "/repo",
+  });
+  const thread = createThread({
+    id: input.threadId,
+    kind: "direct",
+    objective: "headless test objective",
+    status: input.episodes.length > 0 ? "completed" : "running",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  sessionState.threads = [thread];
+  sessionState.episodes = input.episodes;
+
+  const threadSnapshot = createThreadSnapshot(sessionState, input.threadId);
+  const latestEpisode =
+    input.episodes.at(-1) ??
+    createEpisodeFixture({
+      id: "episode-placeholder",
+      threadId: input.threadId,
+    });
+
+  return {
+    classification: {
+      path: "direct",
+      confidence: "hint",
+      reason: "Explicit route hint supplied by caller.",
+    },
+    context: {
+      sessionHistory: [],
+      repoAndWorktree: { cwd: "/repo" },
+      agentsInstructions: [],
+      relevantSkills: [],
+      priorEpisodes: [],
+      priorArtifacts: [],
+      state: createEmptySessionState({
+        sessionId: input.threadId,
+        sessionCwd: "/repo",
+      }),
+    },
+    threadSnapshot,
+    state: {
+      thread,
+      latestEpisode,
+      verification: createGlobalVerificationState(),
+      alignment: threadSnapshot.alignment,
+      workflowRuns: [],
+      waiting: thread.status !== "completed",
+      blocked: false,
+      visibleSummary: "stubbed",
+    },
+    sessionState,
+    sessionEntries: [],
+    completion: {
+      isComplete: input.episodes.length > 0,
+      reason: input.episodes.length > 0 ? "completed" : "waiting_input",
+    },
+  };
+}

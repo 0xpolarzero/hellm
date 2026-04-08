@@ -11,3 +11,4 @@ smithers.db-wal
 workflows/.smithers/
 workflows/.worktrees/
 workflows/run-*.log
+.worktrees/

@@ -1,4 +1,4 @@
-import { describe, expect, it, test } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import {
   createPiRuntimeBridge,
   createPiWorkerRequest,
@@ -100,9 +100,4 @@ describe("@hellm/pi-bridge contract surface", () => {
     expect(bridge.transitions[0]?.toSessionId).toBe("session-b");
     expect(workerResult.episode.id).toBe("episode-pi");
   });
-
-  test.todo(
-    "explicit write scope rules deny out-of-scope mutations before the worker receives tool access",
-    () => {},
-  );
 });

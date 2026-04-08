@@ -21,7 +21,15 @@ describe("@hellm/cli process boundary", () => {
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
     const events = lines.map(
-      (line) => JSON.parse(line) as { type: string; status?: string; threadId?: string },
+      (line) =>
+        JSON.parse(line) as {
+          type: string;
+          orchestratorId?: string;
+          path?: string;
+          reason?: string;
+          status?: string;
+          threadId?: string;
+        },
     );
 
     expect(events.map((event) => event.type)).toEqual([
@@ -30,12 +38,16 @@ describe("@hellm/cli process boundary", () => {
       "run.episode",
       "run.completed",
     ]);
+    expect(events[0]).toMatchObject({
+      type: "run.started",
+      orchestratorId: "main",
+      threadId: "cli",
+    });
     expect(events[1]).toMatchObject({
       type: "run.classified",
       path: "direct",
       reason: "Explicit route hint supplied by caller.",
     });
-    expect(events[0]?.threadId).toBe("cli");
     expect(events.at(-1)?.status).toBe("completed");
   });
 });

@@ -126,8 +126,8 @@ const { smithers, outputs } = createSmithers({
   report: reportSchema,
 });
 
-const workerAgent = createWorkerAgent();
-const workerRetries = workerAgent instanceof CodexAgent ? 0 : 1;
+const workerAgentKind = (process.env.HELLM_FEATURE_TEST_AGENT ?? "codex").toLowerCase();
+const workerRetries = workerAgentKind === "codex" ? 0 : 1;
 type FeatureCoverageResult = z.infer<typeof featureCoverageSchema>;
 type VerificationResult = z.infer<typeof verificationResultSchema>;
 type CommitResult = z.infer<typeof commitResultSchema>;
@@ -156,6 +156,7 @@ export default smithers((ctx) => {
             <Parallel maxConcurrency={input.maxConcurrency}>
               {batch.map((featureId) => {
                 const taskSpec = createTaskSpec(featureId, input);
+                const workerAgent = createWorkerAgent(taskSpec);
 
                 return (
                   <Worktree
@@ -301,8 +302,8 @@ export default smithers((ctx) => {
   );
 });
 
-function createWorkerAgent() {
-  const agentKind = (process.env.HELLM_FEATURE_TEST_AGENT ?? "codex").toLowerCase();
+function createWorkerAgent(taskSpec?: { slug: string }) {
+  const agentKind = workerAgentKind;
 
   switch (agentKind) {
     case "pi":
@@ -321,7 +322,7 @@ function createWorkerAgent() {
       });
     default:
       {
-        const codexEnv = createIsolatedCodexWorkerEnv();
+        const codexEnv = createIsolatedCodexWorkerEnv(taskSpec?.slug ?? "shared");
       return new CodexAgent({
         model: process.env.HELLM_FEATURE_TEST_CODEX_MODEL ?? "gpt-5.3-codex",
         sandbox:
@@ -337,18 +338,24 @@ function createWorkerAgent() {
         config: {
           model_reasoning_effort:
             process.env.HELLM_FEATURE_TEST_REASONING_EFFORT ?? "high",
+          "features.multi_agent": false,
+          "agents.max_threads": 1,
         },
       });
     }
   }
 }
 
-function createIsolatedCodexWorkerEnv(): Record<string, string> {
+function createIsolatedCodexWorkerEnv(taskSlug: string): Record<string, string> {
   const configuredHome = process.env.HELLM_FEATURE_TEST_CODEX_HOME?.trim();
-  const codexHome =
+  const codexHomeRoot =
     configuredHome && configuredHome.length > 0
       ? resolve(configuredHome)
-      : mkdtempSync(`${tmpdir()}/hellm-codex-home-`);
+      : tmpdir();
+  mkdirSync(codexHomeRoot, { recursive: true });
+  const codexHome = mkdtempSync(
+    resolve(codexHomeRoot, `hellm-codex-home-${taskSlug}-`),
+  );
 
   mkdirSync(codexHome, { recursive: true });
 

@@ -74,10 +74,6 @@ describe("@hellm/tui projection", () => {
   });
 
   test.todo(
-    "richer worktree UX exposes more than the baseline alignment indicator",
-    () => {},
-  );
-  test.todo(
     "advanced worktree switching UX remains orchestration-aware",
     () => {},
   );
