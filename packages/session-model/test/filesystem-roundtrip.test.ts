@@ -10,6 +10,7 @@ import {
 } from "@hellm/session-model";
 import {
   FileBackedSessionJsonlHarness,
+  runBunModule,
   withTempWorkspace,
 } from "@hellm/test-support";
 
@@ -445,6 +446,192 @@ describe("@hellm/session-model filesystem roundtrip", () => {
       expect(threadASnapshot.artifacts[0]?.description).toBe("Updated shared diff");
       expect(threadBSnapshot.artifacts.map((artifact) => artifact.id)).toEqual([
         "artifact-other-thread",
+      ]);
+    });
+  });
+
+  it("ignores malformed hellm custom entries while reconstructing top-level session state", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const sessionFile = workspace.path(".pi/sessions/malformed.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "session-malformed",
+        cwd: workspace.root,
+      });
+      const validThread = createThread({
+        id: "thread-valid",
+        kind: "direct",
+        objective: "Preserve valid state despite malformed custom entries",
+        status: "running",
+        createdAt: "2026-04-08T09:00:00.000Z",
+        updatedAt: "2026-04-08T09:00:01.000Z",
+      });
+
+      harness.append({ kind: "thread", data: validThread });
+      appendFileSync(
+        sessionFile,
+        `${JSON.stringify({
+          type: "message",
+          id: "malformed-missing-data",
+          parentId: null,
+          timestamp: "2026-04-08T09:00:02.000Z",
+          message: {
+            role: "custom",
+            customType: "hellm/thread",
+            content: "hellm:thread",
+            display: false,
+            details: { kind: "thread" },
+            timestamp: Date.parse("2026-04-08T09:00:02.000Z"),
+          },
+        })}\n`,
+        "utf8",
+      );
+      appendFileSync(
+        sessionFile,
+        `${JSON.stringify({
+          type: "message",
+          id: "malformed-unknown-kind",
+          parentId: null,
+          timestamp: "2026-04-08T09:00:03.000Z",
+          message: {
+            role: "custom",
+            customType: "hellm/unknown",
+            content: "hellm:unknown",
+            display: false,
+            details: { kind: "unknown-kind", data: { x: 1 } },
+            timestamp: Date.parse("2026-04-08T09:00:03.000Z"),
+          },
+        })}\n`,
+        "utf8",
+      );
+
+      const state = harness.reconstruct();
+
+      expect(state.sessionId).toBe("session-malformed");
+      expect(state.threads).toEqual([validThread]);
+      expect(state.episodes).toEqual([]);
+      expect(state.artifacts).toEqual([]);
+      expect(state.workflowRuns).toEqual([]);
+      expect(state.smithersIsolations).toEqual([]);
+      expect(state.verification.overallStatus).toBe("unknown");
+    });
+  });
+
+  it("maintains JSONL parentId chaining and state reconstruction across real process boundaries", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const sessionFile = workspace.path(".pi/sessions/multi-process.jsonl");
+      const repoRoot = process.cwd().replaceAll("\\", "/");
+      const writerScript = await workspace.write(
+        "scripts/session-writer.ts",
+        `
+import { createEpisode, createThread } from "${repoRoot}/packages/session-model/src/index.ts";
+import { FileBackedSessionJsonlHarness } from "${repoRoot}/test-support/session-jsonl.ts";
+
+const [filePath, cwd, mode] = process.argv.slice(2);
+
+if (!filePath || !cwd || !mode) {
+  console.error("Expected filePath, cwd, and mode arguments.");
+  process.exit(2);
+}
+
+const harness = new FileBackedSessionJsonlHarness({
+  filePath,
+  sessionId: "session-process-boundary",
+  cwd,
+  timestamp: "2026-04-08T09:00:00.000Z",
+});
+
+if (mode === "thread") {
+  harness.append(
+    {
+      kind: "thread",
+      data: createThread({
+        id: "thread-process",
+        kind: "direct",
+        objective: "Cross-process JSONL append",
+        status: "running",
+        createdAt: "2026-04-08T09:00:00.000Z",
+        updatedAt: "2026-04-08T09:00:01.000Z",
+      }),
+    },
+    "2026-04-08T09:00:01.000Z",
+  );
+  process.exit(0);
+}
+
+if (mode === "episode") {
+  harness.append(
+    {
+      kind: "episode",
+      data: createEpisode({
+        id: "episode-process",
+        threadId: "thread-process",
+        source: "orchestrator",
+        objective: "Cross-process JSONL append",
+        status: "completed",
+        conclusions: ["Second process appended episode state."],
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+        startedAt: "2026-04-08T09:00:02.000Z",
+        completedAt: "2026-04-08T09:00:03.000Z",
+      }),
+    },
+    "2026-04-08T09:00:03.000Z",
+  );
+  process.exit(0);
+}
+
+console.error("Unknown mode.");
+process.exit(2);
+`,
+      );
+
+      const firstRun = runBunModule({
+        entryPath: writerScript,
+        cwd: process.cwd(),
+        args: [sessionFile, workspace.root, "thread"],
+      });
+      const secondRun = runBunModule({
+        entryPath: writerScript,
+        cwd: process.cwd(),
+        args: [sessionFile, workspace.root, "episode"],
+      });
+
+      expect(firstRun.exitCode).toBe(0);
+      expect(firstRun.stderr).toBe("");
+      expect(secondRun.exitCode).toBe(0);
+      expect(secondRun.stderr).toBe("");
+
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        cwd: workspace.root,
+      });
+      const structuredEntries = harness
+        .lines()
+        .filter(
+          (entry): entry is { type: "message"; id: string; parentId: string | null } =>
+            typeof entry === "object" &&
+            entry !== null &&
+            "type" in entry &&
+            entry.type === "message" &&
+            "id" in entry &&
+            typeof entry.id === "string",
+        );
+      const [threadEntry, episodeEntry] = structuredEntries;
+      const state = harness.reconstruct();
+      const snapshot = createThreadSnapshot(state, "thread-process");
+
+      expect(structuredEntries).toHaveLength(2);
+      expect(episodeEntry?.parentId).toBe(threadEntry?.id);
+      expect(state.sessionId).toBe("session-process-boundary");
+      expect(state.threads.map((thread) => thread.id)).toEqual(["thread-process"]);
+      expect(state.episodes.map((episode) => episode.id)).toEqual(["episode-process"]);
+      expect(snapshot.thread.status).toBe("running");
+      expect(snapshot.episodes[0]?.status).toBe("completed");
+      expect(snapshot.episodes[0]?.conclusions).toEqual([
+        "Second process appended episode state.",
       ]);
     });
   });
