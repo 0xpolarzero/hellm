@@ -372,6 +372,39 @@ describe("golden path headless specs", () => {
     });
   });
 
+  it("covers a blocked pi worker path request and keeps blocked state in headless output/events", async () => {
+    const piBridge = new FakePiRuntimeBridge();
+    piBridge.enqueueResult({
+      status: "blocked",
+      episode: createEpisodeFixture({
+        id: "golden-pi-blocked-episode",
+        threadId: "golden-pi-blocked",
+        source: "pi-worker",
+        status: "blocked",
+      }),
+    });
+    const orchestrator = createBaseOrchestrator({ piBridge });
+    const { result, jsonl } = await runHeadlessHarness(
+      {
+        threadId: "golden-pi-blocked",
+        prompt: "Run bounded worker and stop on blocked state.",
+        cwd: "/repo",
+        routeHint: "pi-worker",
+      },
+      orchestrator,
+    );
+
+    expect(result.output.status).toBe("blocked");
+    expect(result.raw.state.visibleSummary).toBe("pi-worker:blocked:blocked");
+    expect(result.raw.state.waiting).toBe(false);
+    expect(result.raw.state.blocked).toBe(true);
+    expect(result.events.at(-1)).toMatchObject({
+      type: "run.waiting",
+      status: "blocked",
+    });
+    expect(jsonl.at(-1)).toContain("\"run.waiting\"");
+  });
+
   it("re-enters after each headless episode using file-backed JSONL session state", async () => {
     await withTempWorkspace(async (workspace) => {
       const threadId = "golden-reenter";
