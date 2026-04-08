@@ -40,6 +40,39 @@ describe("@hellm/orchestrator classification", () => {
     });
   });
 
+  it("treats each explicit non-auto route hint as an authoritative request-classification hint", () => {
+    const orchestrator = createOrchestrator();
+    const explicitHints = [
+      "direct",
+      "pi-worker",
+      "smithers-workflow",
+      "verification",
+      "approval",
+    ] as const;
+
+    for (const routeHint of explicitHints) {
+      expect(
+        orchestrator.classifyRequest(
+          {
+            threadId: `hint-${routeHint}`,
+            prompt: "verify and wait for approval",
+            cwd: "/repo",
+            routeHint,
+            requireApproval: true,
+            workflowSeedInput: {
+              preferredPath: "smithers-workflow",
+            },
+          },
+          EMPTY_CONTEXT,
+        ),
+      ).toEqual({
+        path: routeHint,
+        confidence: "hint",
+        reason: "Explicit route hint supplied by caller.",
+      });
+    }
+  });
+
   it("falls through workflow seed hints, approval waits, verification heuristics, and the direct default in that order", () => {
     const orchestrator = createOrchestrator();
 
@@ -156,6 +189,63 @@ describe("@hellm/orchestrator classification", () => {
         {
           threadId: "verify-uppercase-auto",
           prompt: "VERIFY the branch before merge.",
+          cwd: "/repo",
+          routeHint: "auto",
+        },
+        EMPTY_CONTEXT,
+      ),
+    ).toEqual({
+      path: "verification",
+      confidence: "medium",
+      reason: "Prompt emphasizes verification work.",
+    });
+  });
+
+  it("treats routeHint=auto as an instruction to apply downstream classification rules", () => {
+    const orchestrator = createOrchestrator();
+
+    expect(
+      orchestrator.classifyRequest(
+        {
+          threadId: "auto-seed",
+          prompt: "VERIFY this change and wait for approval",
+          cwd: "/repo",
+          routeHint: "auto",
+          requireApproval: true,
+          workflowSeedInput: {
+            preferredPath: "verification",
+          },
+        },
+        EMPTY_CONTEXT,
+      ),
+    ).toEqual({
+      path: "verification",
+      confidence: "hint",
+      reason: "Structured workflow seed requested a preferred path.",
+    });
+
+    expect(
+      orchestrator.classifyRequest(
+        {
+          threadId: "auto-approval",
+          prompt: "Please VERIFY this change",
+          cwd: "/repo",
+          routeHint: "auto",
+          requireApproval: true,
+        },
+        EMPTY_CONTEXT,
+      ),
+    ).toEqual({
+      path: "approval",
+      confidence: "high",
+      reason: "Request requires approval or clarification.",
+    });
+
+    expect(
+      orchestrator.classifyRequest(
+        {
+          threadId: "auto-verification",
+          prompt: "PLEASE VERIFY THE WORKSPACE",
           cwd: "/repo",
           routeHint: "auto",
         },
