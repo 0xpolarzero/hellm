@@ -22,6 +22,7 @@ import {
   FakeVerificationRunner,
   FileBackedSessionJsonlHarness,
   createEpisodeFixture,
+  createThreadFixture,
   createTempGitWorkspace,
   fixedClock,
   hasGit,
@@ -683,6 +684,191 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
     }
   });
 
+  it("keeps smithers workflow execution isolated to an existing thread worktree across run and resume even when the caller provides a different worktree", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const isolatedWorktreePath =
+        await workspace.createLinkedWorktree("feature-smithers-isolated");
+      const requestedWorktreePath = await workspace.createLinkedWorktree(
+        "feature-smithers-requested",
+      );
+      const threadId = "thread-smithers-isolated";
+      const runId = "run-smithers-isolated";
+      const sessionFile = workspace.path(".pi/sessions/thread-smithers-isolated.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+
+      harness.append({
+        kind: "thread",
+        data: createThreadFixture({
+          id: threadId,
+          kind: "smithers-workflow",
+          objective: "Run isolated workflow",
+          status: "waiting_approval",
+          smithersRunId: runId,
+          worktreePath: isolatedWorktreePath,
+        }),
+      });
+      harness.append({
+        kind: "workflow-run",
+        data: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "waiting_approval",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+          worktreePath: isolatedWorktreePath,
+        },
+      });
+
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueRunResult({
+        run: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "waiting_approval",
+          updatedAt: "2026-04-08T09:01:00.000Z",
+          worktreePath: isolatedWorktreePath,
+        },
+        status: "waiting_approval",
+        outputs: [],
+        episode: createEpisodeFixture({
+          id: "episode-smithers-isolated-waiting",
+          threadId,
+          source: "smithers",
+          status: "waiting_approval",
+          smithersRunId: runId,
+          worktreePath: isolatedWorktreePath,
+        }),
+        approval: {
+          nodeId: "approve",
+          title: "Approve isolated run",
+          summary: "Workflow remains isolated to the original worktree.",
+          mode: "needsApproval",
+        },
+        isolation: {
+          runId,
+          runStateStore: workspace.path(".smithers/run-smithers-isolated-v1.sqlite"),
+          sessionEntryIds: ["entry-v1"],
+        },
+      });
+      smithersBridge.enqueueResumeResult({
+        run: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:02:00.000Z",
+          worktreePath: isolatedWorktreePath,
+        },
+        status: "completed",
+        outputs: [],
+        episode: createEpisodeFixture({
+          id: "episode-smithers-isolated-completed",
+          threadId,
+          source: "smithers",
+          status: "completed",
+          smithersRunId: runId,
+          worktreePath: isolatedWorktreePath,
+        }),
+        isolation: {
+          runId,
+          runStateStore: workspace.path(".smithers/run-smithers-isolated-v2.sqlite"),
+          sessionEntryIds: ["entry-v2"],
+        },
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        smithersBridge,
+        contextLoader: createFilesystemContextLoader({
+          sessionFile,
+        }),
+      });
+
+      const first = await orchestrator.run({
+        threadId,
+        prompt: "Continue the isolated workflow.",
+        cwd: workspace.root,
+        worktreePath: requestedWorktreePath,
+        routeHint: "smithers-workflow",
+      });
+      harness.appendEntries(first.sessionEntries);
+      const second = await orchestrator.run({
+        threadId,
+        prompt: "Resume the isolated workflow after approval.",
+        cwd: workspace.root,
+        worktreePath: requestedWorktreePath,
+        routeHint: "smithers-workflow",
+        resumeRunId: runId,
+      });
+      harness.appendEntries(second.sessionEntries);
+
+      expect(first.context.repoAndWorktree.worktreePath).toBe(requestedWorktreePath);
+      expect(smithersBridge.runRequests).toHaveLength(1);
+      expect(smithersBridge.resumeRequests).toHaveLength(1);
+      expect(smithersBridge.runRequests[0]?.worktreePath).toBe(isolatedWorktreePath);
+      expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual([
+        {
+          id: "pi-task",
+          outputKey: "result",
+          prompt: "Continue the isolated workflow.",
+          agent: "pi",
+          worktreePath: isolatedWorktreePath,
+        },
+      ]);
+      expect(smithersBridge.resumeRequests[0]).toEqual({
+        runId,
+        thread: expect.objectContaining({
+          id: threadId,
+          worktreePath: isolatedWorktreePath,
+        }),
+        objective: "Run isolated workflow",
+      });
+
+      expect(first.threadSnapshot.thread.worktreePath).toBe(isolatedWorktreePath);
+      expect(second.threadSnapshot.thread.worktreePath).toBe(isolatedWorktreePath);
+      expect(second.threadSnapshot.thread.smithersRunId).toBe(runId);
+      expect(second.sessionState.alignment.activeWorktreePath).toBe(
+        isolatedWorktreePath,
+      );
+      expect(second.sessionState.workflowRuns).toEqual([
+        {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:02:00.000Z",
+          worktreePath: isolatedWorktreePath,
+        },
+      ]);
+      expect(second.sessionState.smithersIsolations).toEqual([
+        {
+          runId,
+          runStateStore: workspace.path(".smithers/run-smithers-isolated-v2.sqlite"),
+          sessionEntryIds: ["entry-v2"],
+        },
+      ]);
+
+      const reconstructed = harness.reconstruct();
+      const snapshot = createThreadSnapshot(reconstructed, threadId);
+      expect(snapshot.thread.worktreePath).toBe(isolatedWorktreePath);
+      expect(snapshot.workflowRuns).toEqual(second.sessionState.workflowRuns);
+      expect(reconstructed.smithersIsolations).toEqual(
+        second.sessionState.smithersIsolations,
+      );
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 
   it("upserts persisted workflow run references by run id across a file-backed smithers resume", async () => {
     if (!hasGit()) {
