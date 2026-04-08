@@ -430,6 +430,21 @@ describe("golden path headless specs", () => {
       orchestrator,
     );
 
+    expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual([
+      {
+        id: "pi-task",
+        outputKey: "result",
+        prompt: "Run the workflow path.",
+        agent: "pi",
+        needsApproval: true,
+      },
+    ]);
+    expect(smithersBridge.runRequests[0]?.workflow.inputEpisodeIds).toEqual([]);
+    expect(first.result.events.find((event) => event.type === "run.episode")).toMatchObject(
+      {
+        source: "smithers",
+      },
+    );
     expect(first.result.output.status).toBe("waiting_approval");
     expect(first.result.raw.state.visibleSummary).toBe(
       "smithers-workflow:waiting_approval:waiting_approval",

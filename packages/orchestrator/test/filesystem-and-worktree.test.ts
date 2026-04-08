@@ -493,6 +493,110 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
     }
   });
 
+  it("maps an implicit single delegated subagent request to one default smithers pi-task in a file-backed worktree session", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const worktreePath = await workspace.createLinkedWorktree(
+        "feature-smithers-default",
+      );
+      const sessionFile = workspace.path(
+        ".pi/sessions/thread-smithers-default.jsonl",
+      );
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "thread-smithers-default",
+        cwd: workspace.root,
+      });
+      const priorEpisode = createEpisode({
+        id: "episode-smithers-prior",
+        threadId: "thread-smithers-default",
+        source: "orchestrator",
+        objective: "Prior delegated objective",
+        status: "completed",
+        conclusions: ["Prior delegated episode."],
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+        startedAt: "2026-04-08T09:00:00.000Z",
+        completedAt: "2026-04-08T09:00:01.000Z",
+      });
+      harness.append({ kind: "episode", data: priorEpisode });
+
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueRunResult({
+        run: {
+          runId: "run-smithers-default",
+          threadId: "thread-smithers-default",
+          workflowId: "workflow:thread-smithers-default",
+          status: "completed",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+          worktreePath,
+        },
+        status: "completed",
+        outputs: [
+          {
+            nodeId: "pi-task",
+            schema: "result",
+            value: { summary: "Completed delegated task." },
+          },
+        ],
+        episode: createEpisodeFixture({
+          id: "episode-smithers-default",
+          threadId: "thread-smithers-default",
+          source: "smithers",
+          status: "completed",
+          smithersRunId: "run-smithers-default",
+          worktreePath,
+          inputEpisodeIds: ["episode-smithers-prior"],
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        smithersBridge,
+        contextLoader: createFilesystemContextLoader({
+          sessionFile,
+        }),
+      });
+      const prompt = "Implement the delegated subagent task.";
+      const result = await orchestrator.run({
+        threadId: "thread-smithers-default",
+        prompt,
+        cwd: workspace.root,
+        worktreePath,
+        routeHint: "smithers-workflow",
+        requireApproval: true,
+      });
+
+      harness.appendEntries(result.sessionEntries);
+      const request = smithersBridge.runRequests[0];
+
+      expect(request?.workflow.workflowId).toBe("workflow:thread-smithers-default");
+      expect(request?.workflow.inputEpisodeIds).toEqual(["episode-smithers-prior"]);
+      expect(request?.workflow.tasks).toEqual([
+        {
+          id: "pi-task",
+          outputKey: "result",
+          prompt,
+          agent: "pi",
+          needsApproval: true,
+          worktreePath,
+        },
+      ]);
+      expect(request?.worktreePath).toBe(worktreePath);
+      expect(result.classification.path).toBe("smithers-workflow");
+      expect(result.threadSnapshot.thread.kind).toBe("smithers-workflow");
+      expect(result.threadSnapshot.episodes.at(-1)?.source).toBe("smithers");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   it("prefers reconstructed structured prior episodes for input episode IDs over decoy raw transcript entries", async () => {
     await withTempWorkspace(async (workspace) => {
       const sessionFile = workspace.path(".pi/sessions/thread-structured-state.jsonl");
