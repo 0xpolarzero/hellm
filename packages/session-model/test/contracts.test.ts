@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { resolve } from "node:path";
 import {
   canTransitionThreadStatus,
   createArtifact,
@@ -260,6 +261,25 @@ describe("@hellm/session-model contract surface", () => {
     expect(empty.verification.overallStatus).toBe("unknown");
     expect(empty.alignment.activeWorktreePath).toBe("/repo/worktrees/feature-a");
     expect(empty.alignment.aligned).toBe(false);
+  });
+
+  it("marks omitted worktree paths as aligned and resolves non-canonical paths before comparison", () => {
+    const withoutActiveWorktree = createSessionWorktreeAlignment({
+      sessionCwd: "./repo-root",
+    });
+    const normalizedAligned = createSessionWorktreeAlignment({
+      sessionCwd: "./repo-root/./src/..",
+      activeWorktreePath: "./repo-root",
+    });
+
+    expect(withoutActiveWorktree.sessionCwd).toBe(resolve("./repo-root"));
+    expect(withoutActiveWorktree.activeWorktreePath).toBeUndefined();
+    expect(withoutActiveWorktree.aligned).toBe(true);
+    expect(withoutActiveWorktree.reason).toBe("session and worktree are aligned");
+    expect(normalizedAligned.sessionCwd).toBe(resolve("./repo-root"));
+    expect(normalizedAligned.activeWorktreePath).toBe(resolve("./repo-root"));
+    expect(normalizedAligned.aligned).toBe(true);
+    expect(normalizedAligned.reason).toBe("session and worktree are aligned");
   });
 
   it("stores structured session entries as pi-style custom messages", () => {

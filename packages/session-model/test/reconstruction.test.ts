@@ -116,6 +116,59 @@ describe("@hellm/session-model reconstruction", () => {
     expect(state.verification.overallStatus).toBe("passed");
   });
 
+  it("derives aligned session/worktree metadata from the JSONL header when no alignment payload exists", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-header-alignment",
+      cwd: "/repo/worktrees/feature",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+
+    harness.append({
+      kind: "thread",
+      data: createThreadFixture({
+        id: "thread-header-alignment",
+        objective: "Derive alignment from header metadata",
+      }),
+    });
+
+    const state = harness.reconstruct();
+
+    expect(state.alignment.sessionCwd).toBe("/repo/worktrees/feature");
+    expect(state.alignment.activeWorktreePath).toBeUndefined();
+    expect(state.alignment.aligned).toBe(true);
+    expect(state.alignment.reason).toBe("session and worktree are aligned");
+  });
+
+  it("applies last-write-wins semantics for repeated alignment entries", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-alignment-upsert",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+
+    harness.append({
+      kind: "alignment",
+      data: createSessionWorktreeAlignment({
+        sessionCwd: "/repo",
+        activeWorktreePath: "/repo/worktrees/feature-a",
+      }),
+    });
+    harness.append({
+      kind: "alignment",
+      data: createSessionWorktreeAlignment({
+        sessionCwd: "/repo/worktrees/feature-a",
+        activeWorktreePath: "/repo/worktrees/feature-a",
+      }),
+    });
+
+    const state = harness.reconstruct();
+
+    expect(state.alignment.sessionCwd).toBe("/repo/worktrees/feature-a");
+    expect(state.alignment.activeWorktreePath).toBe("/repo/worktrees/feature-a");
+    expect(state.alignment.aligned).toBe(true);
+    expect(state.alignment.reason).toBe("session and worktree are aligned");
+  });
+
   it("preserves explicit global verification payloads over derived verification records", () => {
     const harness = new InMemorySessionJsonlHarness({
       sessionId: "session-verification-override",
