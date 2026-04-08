@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { createOrchestrator } from "@hellm/orchestrator";
 import { createEmptySessionState } from "@hellm/session-model";
 import {
+  createTempGitWorkspace,
   FakePiRuntimeBridge,
   FakeSmithersWorkflowBridge,
   FakeVerificationRunner,
@@ -9,6 +10,7 @@ import {
   createEpisodeFixture,
   createVerificationFixture,
   fixedClock,
+  hasGit,
   runHeadlessHarness,
   withTempWorkspace,
 } from "@hellm/test-support";
@@ -209,6 +211,11 @@ describe("golden path headless specs", () => {
     expect(result.raw.state.visibleSummary).toBe("pi-worker:completed:completed");
     expect(result.raw.state.waiting).toBe(false);
     expect(result.raw.state.blocked).toBe(false);
+    expect(piBridge.workerRequests[0]?.runtimeTransition).toEqual({
+      reason: "new",
+      toSessionId: "golden-pi:pi",
+      aligned: true,
+    });
     expect(result.threadSnapshot.episodes.at(-1)?.source).toBe("pi-worker");
   });
 
@@ -244,6 +251,78 @@ describe("golden path headless specs", () => {
       aligned: false,
       toWorktreePath: worktreePath,
     });
+    expect(piBridge.workerRequests[0]?.runtimeTransition?.fromSessionId).toBeUndefined();
+    expect(
+      piBridge.workerRequests[0]?.runtimeTransition?.fromWorktreePath,
+    ).toBeUndefined();
+    expect(result.threadSnapshot.thread.worktreePath).toBe(worktreePath);
+  });
+
+  it("derives resume runtime transition worktree from context when the request omits worktreePath", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const worktreePath = await workspace.createLinkedWorktree(
+        "feature-pi-context-runtime",
+      );
+      const piBridge = new FakePiRuntimeBridge();
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: createEpisodeFixture({
+          id: "golden-pi-context-resume-episode",
+          threadId: "golden-pi-context-resume",
+          source: "pi-worker",
+          worktreePath,
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        piBridge,
+        contextLoader: {
+          async load(request) {
+            return {
+              sessionHistory: [],
+              repoAndWorktree: { cwd: workspace.root, worktreePath },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: [],
+              priorArtifacts: [],
+              state: createEmptySessionState({
+                sessionId: request.threadId,
+                sessionCwd: workspace.root,
+                activeWorktreePath: worktreePath,
+              }),
+            };
+          },
+        },
+      });
+
+      const { result } = await runHeadlessHarness(
+        {
+          threadId: "golden-pi-context-resume",
+          prompt: "Resume from context-bound worktree.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+          resumeRunId: "pi-context-resume-1",
+        },
+        orchestrator,
+      );
+
+      expect(result.output.status).toBe("completed");
+      expect(piBridge.workerRequests[0]?.runtimeTransition).toEqual({
+        reason: "resume",
+        toSessionId: "golden-pi-context-resume:pi",
+        aligned: false,
+        toWorktreePath: worktreePath,
+      });
+      expect(result.threadSnapshot.thread.worktreePath).toBe(worktreePath);
+    } finally {
+      await workspace.cleanup();
+    }
   });
 
   it("covers a waiting pi worker path request and emits waiting JSONL events", async () => {
