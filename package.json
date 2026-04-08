@@ -10,8 +10,8 @@
     "build": "bun run --filter '@hellm/*' --if-present build",
     "dev": "bun run --filter @hellm/tui dev",
     "start": "bun run --filter @hellm/tui start",
-    "test": "bun test ./packages/session-model/test ./packages/orchestrator/test ./packages/pi-bridge/test ./packages/smithers-bridge/test ./packages/verification/test ./packages/tui/test ./packages/cli/test",
-    "test:watch": "bun test ./packages/session-model/test ./packages/orchestrator/test ./packages/pi-bridge/test ./packages/smithers-bridge/test ./packages/verification/test ./packages/tui/test ./packages/cli/test --watch",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
     "typecheck": "bun run --filter '@hellm/*' typecheck",
     "lint": "oxlint packages --import-plugin --node-plugin --deny-warnings",
     "lint:fix": "oxlint packages --import-plugin --node-plugin --deny-warnings --fix --fix-suggestions",
@@ -23,7 +23,15 @@
   },
   "devDependencies": {
     "@types/bun": "1.3.11",
+    "@types/mdx": "2.0.13",
+    "@types/react": "19.2.10",
+    "@types/react-dom": "19.2.3",
+    "ai": "6.0.69",
     "oxlint": "1.59.0",
-    "typescript": "6.0.2"
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "smithers-orchestrator": "0.13.0",
+    "typescript": "6.0.2",
+    "zod": "4.3.6"
   }
 }

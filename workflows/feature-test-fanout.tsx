@@ -13,6 +13,8 @@ import {
   createSmithers,
 } from "smithers-orchestrator";
 import { spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { ALL_HELLM_FEATURES } from "../docs/features.ts";
@@ -50,10 +52,10 @@ const featureCoverageSchema = z.object({
   docsFiles: z.array(z.string()),
   verificationCommands: z.array(z.string()),
   committed: z.boolean(),
-  commitSha: z.string().optional(),
+  commitSha: z.string().nullable(),
   branch: z.string(),
   worktreePath: z.string(),
-  pendingReason: z.string().optional(),
+  pendingReason: z.string().nullable(),
 });
 
 const verificationResultSchema = z.object({
@@ -102,7 +104,6 @@ const reportSchema = z.object({
 });
 
 const { smithers, outputs } = createSmithers({
-  input: inputSchema,
   featureCoverage: featureCoverageSchema,
   verificationResult: verificationResultSchema,
   mergeResult: mergeResultSchema,
@@ -111,13 +112,15 @@ const { smithers, outputs } = createSmithers({
 });
 
 const workerAgent = createWorkerAgent();
+const workerRetries = workerAgent instanceof CodexAgent ? 0 : 1;
 type FeatureCoverageResult = z.infer<typeof featureCoverageSchema>;
 type VerificationResult = z.infer<typeof verificationResultSchema>;
 type MergeResult = z.infer<typeof mergeResultSchema>;
 type CleanupResult = z.infer<typeof cleanupResultSchema>;
 
 export default smithers((ctx) => {
-  const selectedFeatures = selectFeatures(ctx.input.features);
+  const input = inputSchema.parse(ctx.input ?? {});
+  const selectedFeatures = selectFeatures(input.features);
   const featureResults = dedupeResults(ctx.outputs.featureCoverage ?? []);
   const verificationResults = dedupeResults(ctx.outputs.verificationResult ?? []);
   const mergeResults = dedupeResults(ctx.outputs.mergeResult ?? []);
@@ -129,24 +132,24 @@ export default smithers((ctx) => {
   return (
     <Workflow name="hellm-feature-test-fanout">
       <Sequence>
-        <Parallel maxConcurrency={ctx.input.maxConcurrency}>
+        <Parallel maxConcurrency={input.maxConcurrency}>
           {selectedFeatures.map((featureId) => {
-            const taskSpec = createTaskSpec(featureId, ctx.input);
+            const taskSpec = createTaskSpec(featureId, input);
 
             return (
               <Worktree
                 key={taskSpec.taskId}
                 path={taskSpec.worktreePath}
                 branch={taskSpec.branch}
-                baseBranch={ctx.input.baseBranch}
+                baseBranch={input.baseBranch}
               >
                 <Task
                   id={taskSpec.taskId}
                   output={outputs.featureCoverage}
                   agent={workerAgent}
-                  retries={1}
+                  retries={workerRetries}
                   continueOnFail
-                  timeoutMs={ctx.input.timeoutMs}
+                  timeoutMs={input.timeoutMs}
                 >
                   <WorkerPrompt
                     featureId={taskSpec.featureId}
@@ -159,9 +162,9 @@ export default smithers((ctx) => {
           })}
         </Parallel>
 
-        <Parallel maxConcurrency={ctx.input.maxConcurrency}>
+        <Parallel maxConcurrency={input.maxConcurrency}>
           {selectedFeatures.map((featureId) => {
-            const taskSpec = createTaskSpec(featureId, ctx.input);
+            const taskSpec = createTaskSpec(featureId, input);
             const featureResult = featureById.get(featureId);
             if (!featureResult) {
               return null;
@@ -182,7 +185,7 @@ export default smithers((ctx) => {
 
         <MergeQueue>
           {selectedFeatures.map((featureId) => {
-            const taskSpec = createTaskSpec(featureId, ctx.input);
+            const taskSpec = createTaskSpec(featureId, input);
             const featureResult = featureById.get(featureId);
             const verificationResult = verificationById.get(featureId);
             if (!featureResult || !verificationResult) {
@@ -198,7 +201,7 @@ export default smithers((ctx) => {
               >
                 {async () =>
                   mergeFeature({
-                    repoRoot: ctx.input.repoRoot,
+                    repoRoot: input.repoRoot,
                     task: taskSpec,
                     feature: featureResult,
                     verification: verificationResult,
@@ -210,7 +213,7 @@ export default smithers((ctx) => {
 
         <MergeQueue>
           {selectedFeatures.map((featureId) => {
-            const taskSpec = createTaskSpec(featureId, ctx.input);
+            const taskSpec = createTaskSpec(featureId, input);
             const mergeResult = mergeById.get(featureId);
             if (!mergeResult) {
               return null;
@@ -225,11 +228,11 @@ export default smithers((ctx) => {
               >
                 {async () =>
                   cleanupFeature({
-                    repoRoot: ctx.input.repoRoot,
+                    repoRoot: input.repoRoot,
                     task: taskSpec,
                     merge: mergeResult,
-                    deleteMergedBranches: ctx.input.deleteMergedBranches,
-                    cleanupBlockedWorktrees: ctx.input.cleanupBlockedWorktrees,
+                    deleteMergedBranches: input.deleteMergedBranches,
+                    cleanupBlockedWorktrees: input.cleanupBlockedWorktrees,
                   })}
               </Task>
             );
@@ -269,6 +272,8 @@ function createWorkerAgent() {
         timeoutMs: DEFAULT_TIMEOUT_MS,
       });
     default:
+      {
+        const codexEnv = createIsolatedCodexWorkerEnv();
       return new CodexAgent({
         model: process.env.HELLM_FEATURE_TEST_CODEX_MODEL ?? "gpt-5.3-codex",
         sandbox:
@@ -279,12 +284,39 @@ function createWorkerAgent() {
             | undefined) ?? "workspace-write",
         fullAuto: process.env.HELLM_FEATURE_TEST_FULL_AUTO !== "0",
         timeoutMs: DEFAULT_TIMEOUT_MS,
+        env: codexEnv,
+        extraArgs: ["--ephemeral"],
         config: {
           model_reasoning_effort:
             process.env.HELLM_FEATURE_TEST_REASONING_EFFORT ?? "high",
         },
       });
+    }
   }
+}
+
+function createIsolatedCodexWorkerEnv(): Record<string, string> {
+  const configuredHome = process.env.HELLM_FEATURE_TEST_CODEX_HOME?.trim();
+  const codexHome =
+    configuredHome && configuredHome.length > 0
+      ? resolve(configuredHome)
+      : mkdtempSync(`${tmpdir()}/hellm-codex-home-`);
+
+  mkdirSync(codexHome, { recursive: true });
+
+  const sourceCodexHome =
+    process.env.CODEX_HOME?.trim() || resolve(process.env.HOME ?? homedir(), ".codex");
+  for (const filename of ["auth.json", "config.toml"]) {
+    const source = resolve(sourceCodexHome, filename);
+    const target = resolve(codexHome, filename);
+    if (existsSync(source) && !existsSync(target)) {
+      copyFileSync(source, target);
+    }
+  }
+
+  return {
+    CODEX_HOME: codexHome,
+  };
 }
 
 function selectFeatures(requested?: string[]): string[] {
