@@ -255,9 +255,12 @@ describe("@hellm/session-model contract surface", () => {
     });
 
     expect(entry.type).toBe("message");
+    expect(entry.parentId).toBeNull();
     expect(entry.message.role).toBe("custom");
     expect(entry.message.customType).toBe("hellm/thread");
+    expect(entry.message.content).toBe("hellm:thread");
     expect(entry.message.display).toBe(false);
+    expect(entry.message.timestamp).toBe(Date.parse("2026-04-08T09:00:01.000Z"));
     expect(entry.message.details.kind).toBe("thread");
   });
 
@@ -292,6 +295,63 @@ describe("@hellm/session-model contract surface", () => {
     expect(parseStructuredEntry("{not-json")).toBeNull();
     expect(parseStructuredEntry({ type: "session", id: "session-1" })).toBeNull();
     expect(foreignCustom).toBeNull();
+  });
+
+  it("rejects malformed hellm custom payload details and non-custom parse inputs", () => {
+    const thread = createThread({
+      id: "thread-malformed",
+      kind: "direct",
+      objective: "Reject malformed custom payload details",
+      createdAt: "2026-04-08T09:00:00.000Z",
+    });
+    const entry = createStructuredSessionEntry({
+      id: "entry-malformed",
+      parentId: null,
+      timestamp: "2026-04-08T09:00:01.000Z",
+      payload: { kind: "thread", data: thread },
+    });
+
+    const missingDetails = parseStructuredSessionEntry({
+      ...entry,
+      message: {
+        ...entry.message,
+        details: undefined as unknown as typeof entry.message.details,
+      },
+    });
+    const nonObjectDetails = parseStructuredSessionEntry({
+      ...entry,
+      message: {
+        ...entry.message,
+        details: "not-an-object" as unknown as typeof entry.message.details,
+      },
+    });
+    const missingData = parseStructuredSessionEntry({
+      ...entry,
+      message: {
+        ...entry.message,
+        details: { kind: "thread" } as unknown as typeof entry.message.details,
+      },
+    });
+    const nonCustomRole = parseStructuredEntry({
+      ...entry,
+      message: {
+        ...entry.message,
+        role: "user",
+      },
+    });
+    const invalidCustomType = parseStructuredEntry({
+      ...entry,
+      message: {
+        ...entry.message,
+        customType: "hellm",
+      },
+    });
+
+    expect(missingDetails).toBeNull();
+    expect(nonObjectDetails).toBeNull();
+    expect(missingData).toBeNull();
+    expect(nonCustomRole).toBeNull();
+    expect(invalidCustomType).toBeNull();
   });
 
   it("preserves thread worktree binding and aligned session metadata", () => {

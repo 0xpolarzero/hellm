@@ -215,6 +215,99 @@ describe("@hellm/session-model filesystem roundtrip", () => {
     });
   });
 
+  it("ignores malformed hellm custom entries in a real JSONL file while preserving valid state", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const sessionFile = workspace.path(".pi/sessions/malformed-custom.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "session-malformed-custom",
+        cwd: workspace.root,
+      });
+      const thread = createThread({
+        id: "thread-malformed-custom",
+        kind: "direct",
+        objective: "Ignore malformed custom entries",
+        status: "completed",
+        createdAt: "2026-04-08T11:00:00.000Z",
+        updatedAt: "2026-04-08T11:00:05.000Z",
+      });
+      const episode = createEpisode({
+        id: "episode-malformed-custom",
+        threadId: thread.id,
+        source: "orchestrator",
+        objective: thread.objective,
+        status: "completed",
+        conclusions: ["Valid state is preserved."],
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+        startedAt: "2026-04-08T11:00:00.000Z",
+        completedAt: "2026-04-08T11:00:05.000Z",
+      });
+
+      harness.append({ kind: "thread", data: thread });
+      harness.append({ kind: "episode", data: episode });
+      appendFileSync(
+        sessionFile,
+        `${JSON.stringify({
+          type: "message",
+          id: "entry-malformed-no-details",
+          parentId: null,
+          timestamp: "2026-04-08T11:00:06.000Z",
+          message: {
+            role: "custom",
+            customType: "hellm/thread",
+            content: "hellm:thread",
+            display: false,
+            timestamp: Date.parse("2026-04-08T11:00:06.000Z"),
+          },
+        })}\n${JSON.stringify({
+          type: "message",
+          id: "entry-malformed-no-data",
+          parentId: "entry-malformed-no-details",
+          timestamp: "2026-04-08T11:00:07.000Z",
+          message: {
+            role: "custom",
+            customType: "hellm/thread",
+            content: "hellm:thread",
+            display: false,
+            details: { kind: "thread" },
+            timestamp: Date.parse("2026-04-08T11:00:07.000Z"),
+          },
+        })}\n${JSON.stringify({
+          type: "message",
+          id: "entry-unknown-kind",
+          parentId: "entry-malformed-no-data",
+          timestamp: "2026-04-08T11:00:08.000Z",
+          message: {
+            role: "custom",
+            customType: "hellm/future",
+            content: "hellm:future",
+            display: false,
+            details: {
+              kind: "future",
+              data: { id: "future-1", note: "ignore until supported" },
+            },
+            timestamp: Date.parse("2026-04-08T11:00:08.000Z"),
+          },
+        })}\n`,
+        "utf8",
+      );
+
+      const reconstructed = harness.reconstruct();
+      const snapshot = createThreadSnapshot(reconstructed, thread.id);
+
+      expect(reconstructed.sessionId).toBe("session-malformed-custom");
+      expect(reconstructed.threads).toEqual([thread]);
+      expect(reconstructed.episodes).toEqual([episode]);
+      expect(reconstructed.artifacts).toEqual([]);
+      expect(snapshot.thread.id).toBe(thread.id);
+      expect(snapshot.episodes).toEqual([episode]);
+      expect(snapshot.artifacts).toEqual([]);
+    });
+  });
+
   it("filters snapshots by thread and raises when the requested thread does not exist", async () => {
     const threadA = createThread({
       id: "thread-a",
