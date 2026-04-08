@@ -1,0 +1,6 @@
+[submodule "docs/references/pi-mono"]
+	path = docs/references/pi-mono
+	url = https://github.com/badlogic/pi-mono.git
+[submodule "docs/references/smithers"]
+	path = docs/references/smithers
+	url = https://github.com/codeplaneapp/smithers.git
