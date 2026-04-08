@@ -7,6 +7,7 @@ import {
   createThread,
   createThreadSnapshot,
   createVerificationRecord,
+  type ThreadStatus,
 } from "@hellm/session-model";
 import { projectThreadSnapshot, renderProjection } from "@hellm/tui";
 import {
@@ -63,6 +64,99 @@ describe("@hellm/tui projection", () => {
       ...projection.workflowActivity,
       "[footer]",
       ...projection.footer,
+    ]);
+  });
+
+  it("renders deterministic threads pane lines for id, kind, status, and objective", () => {
+    const thread = createThread({
+      id: "thread-pane-order",
+      kind: "verification",
+      objective: "Show deterministic thread metadata order",
+      status: "running",
+      createdAt: "2026-04-08T09:00:00.000Z",
+    });
+
+    const projection = projectThreadSnapshot({
+      thread,
+      episodes: [],
+      artifacts: [],
+      verification: createGlobalVerificationState(),
+      alignment: createSessionWorktreeAlignment({
+        sessionCwd: "/repo",
+      }),
+      workflowRuns: [],
+    });
+
+    expect(projection.threadsPane).toEqual([
+      "thread thread-pane-order",
+      "kind verification",
+      "status running",
+      "objective Show deterministic thread metadata order",
+    ]);
+  });
+
+  it("keeps thread lifecycle statuses visible in the threads pane", () => {
+    const statuses: readonly ThreadStatus[] = [
+      "pending",
+      "running",
+      "waiting_input",
+      "waiting_approval",
+      "blocked",
+      "completed",
+      "failed",
+      "cancelled",
+    ];
+
+    for (const status of statuses) {
+      const thread = createThread({
+        id: `thread-${status}`,
+        kind: "direct",
+        objective: "Track status visibility",
+        status,
+        createdAt: "2026-04-08T09:00:00.000Z",
+      });
+      const projection = projectThreadSnapshot({
+        thread,
+        episodes: [],
+        artifacts: [],
+        verification: createGlobalVerificationState(),
+        alignment: createSessionWorktreeAlignment({
+          sessionCwd: "/repo",
+        }),
+        workflowRuns: [],
+      });
+
+      expect(projection.threadsPane).toContain(`status ${status}`);
+    }
+  });
+
+  it("prioritizes rendering the threads pane in constrained viewports", () => {
+    const thread = createThread({
+      id: "thread-priority",
+      kind: "direct",
+      objective: "Ensure threads pane remains visible first",
+      status: "blocked",
+      createdAt: "2026-04-08T09:00:00.000Z",
+    });
+    const projection = projectThreadSnapshot({
+      thread,
+      episodes: [],
+      artifacts: [],
+      verification: createGlobalVerificationState(),
+      alignment: createSessionWorktreeAlignment({
+        sessionCwd: "/repo",
+      }),
+      workflowRuns: [],
+    });
+    const terminal = new VirtualTerminalHarness(120, 5);
+    const viewport = terminal.render(projection);
+
+    expect(viewport).toEqual([
+      "[threads]",
+      "thread thread-priority",
+      "kind direct",
+      "status blocked",
+      "objective Ensure threads pane remains visible first",
     ]);
   });
 
