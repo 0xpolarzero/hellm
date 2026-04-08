@@ -149,7 +149,13 @@ describe("@hellm/smithers-bridge contract surface", () => {
     expect(first.approval?.nodeId).toBe("pi-task");
     expect(first.retryCount).toBe(1);
     expect(first.run.worktreePath).toBe("/repo/worktrees/flow");
+    expect(first.isolation).toEqual({
+      runId: "run-1",
+      runStateStore: "/tmp/run-1.sqlite",
+      sessionEntryIds: ["entry-1"],
+    });
     expect(resumed.outputs[0]?.value).toEqual({ attempt: 2, approved: true });
+    expect(resumed.isolation).toEqual(first.isolation);
     expect(bridge.approvals[0]?.runId).toBe("run-1");
     expect(translateSmithersRunToEpisode(resumed).id).toBe("episode-complete");
   });
