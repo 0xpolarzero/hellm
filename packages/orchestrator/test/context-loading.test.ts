@@ -12,7 +12,9 @@ import {
   type SessionJsonlEntry,
 } from "@hellm/session-model";
 import {
+  FakePiRuntimeBridge,
   FileBackedSessionJsonlHarness,
+  createEpisodeFixture,
   withTempWorkspace,
 } from "@hellm/test-support";
 
@@ -137,6 +139,88 @@ describe("@hellm/orchestrator context loading", () => {
     });
 
     expect(context.agentsInstructions).toEqual([]);
+  });
+
+  it("passes the request through to loadAgentsInstructions and preserves returned instruction ordering", async () => {
+    const requests: string[] = [];
+    const instructions = [
+      "Read docs/prd.md before doing any work.",
+      "Use Smithers for delegated work.",
+      "Use Smithers for delegated work.",
+    ];
+    const loader = createContextLoader({
+      async loadAgentsInstructions(request) {
+        requests.push(
+          `${request.threadId}:${request.cwd}:${request.worktreePath ?? "none"}`,
+        );
+        return instructions;
+      },
+    });
+
+    const context = await loader.load({
+      threadId: "thread-agents-source",
+      prompt: "Load AGENTS from source",
+      cwd: "/repo",
+      worktreePath: "/repo/worktrees/feature",
+    });
+
+    expect(requests).toEqual([
+      "thread-agents-source:/repo:/repo/worktrees/feature",
+    ]);
+    expect(context.agentsInstructions).toEqual(instructions);
+  });
+
+  it("falls back to an empty AGENTS instruction list when the source resolves undefined", async () => {
+    const loader = createContextLoader({
+      async loadAgentsInstructions() {
+        return undefined as unknown as string[];
+      },
+    });
+
+    const context = await loader.load({
+      threadId: "thread-agents-undefined",
+      prompt: "Load AGENTS from an undefined source result",
+      cwd: "/repo",
+    });
+
+    expect(context.agentsInstructions).toEqual([]);
+  });
+
+  it("forwards loaded AGENTS instructions into the pi worker scoped context", async () => {
+    const instructions = [
+      "Read docs/prd.md before doing any work.",
+      "Run verification before marking completion.",
+    ];
+    const piBridge = new FakePiRuntimeBridge();
+    piBridge.enqueueResult({
+      status: "completed",
+      episode: createEpisodeFixture({
+        id: "episode-pi-agents-forward",
+        threadId: "thread-pi-agents-forward",
+        source: "pi-worker",
+      }),
+    });
+    const loader = createContextLoader({
+      async loadAgentsInstructions() {
+        return instructions;
+      },
+    });
+    const orchestrator = createOrchestrator({
+      contextLoader: loader,
+      piBridge,
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-pi-agents-forward",
+      prompt: "Use pi worker",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+    });
+
+    expect(result.context.agentsInstructions).toEqual(instructions);
+    expect(piBridge.workerRequests[0]?.scopedContext.agentsInstructions).toEqual(
+      instructions,
+    );
   });
 
   it("falls back to request cwd/worktree when no repo source is provided", async () => {
