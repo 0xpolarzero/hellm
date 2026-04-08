@@ -13,6 +13,7 @@ import {
 } from "@hellm/session-model";
 import {
   FileBackedSessionJsonlHarness,
+  FakePiRuntimeBridge,
   withTempWorkspace,
 } from "@hellm/test-support";
 
@@ -80,6 +81,50 @@ describe("@hellm/orchestrator context loading", () => {
     expect(context.relevantSkills).toEqual([]);
   });
 
+  it("passes the request through to loadRelevantSkills and preserves the returned order", async () => {
+    const requests: string[] = [];
+    const loader = createContextLoader({
+      async loadRelevantSkills(request) {
+        requests.push(
+          `${request.threadId}:${request.cwd}:${request.worktreePath ?? "none"}`,
+        );
+        return ["frontend-design", "audit", "frontend-design"];
+      },
+    });
+
+    const context = await loader.load({
+      threadId: "thread-skills-source",
+      prompt: "Load relevant skills from explicit source.",
+      cwd: "/repo",
+      worktreePath: "/repo/worktrees/feature",
+    });
+
+    expect(requests).toEqual([
+      "thread-skills-source:/repo:/repo/worktrees/feature",
+    ]);
+    expect(context.relevantSkills).toEqual([
+      "frontend-design",
+      "audit",
+      "frontend-design",
+    ]);
+  });
+
+  it("falls back to an empty relevant skills list when loadRelevantSkills resolves to nullish at runtime", async () => {
+    const loader = createContextLoader({
+      async loadRelevantSkills() {
+        return undefined as unknown as string[];
+      },
+    });
+
+    const context = await loader.load({
+      threadId: "thread-skills-nullish",
+      prompt: "Load nullish relevant skills.",
+      cwd: "/repo",
+    });
+
+    expect(context.relevantSkills).toEqual([]);
+  });
+
   it("loads session history, repo/worktree state, AGENTS instructions, relevant skills, and prior state from explicit sources", async () => {
     const loader = createContextLoader({
       async loadSessionHistory() {
@@ -137,6 +182,50 @@ describe("@hellm/orchestrator context loading", () => {
     });
 
     expect(context.agentsInstructions).toEqual([]);
+  });
+
+  it("forwards context-loaded relevant skills into the pi-worker scoped context", async () => {
+    const piBridge = new FakePiRuntimeBridge();
+    piBridge.enqueueResult({
+      status: "completed",
+      episode: createEpisode({
+        id: "episode-pi-relevant-skills",
+        threadId: "thread-pi-relevant-skills",
+        source: "pi-worker",
+        objective: "Run bounded worker with loaded skills.",
+        status: "completed",
+        conclusions: ["Pi worker completed."],
+        provenance: {
+          executionPath: "pi-worker",
+          actor: "pi-worker",
+        },
+        startedAt: "2026-04-08T09:00:00.000Z",
+        completedAt: "2026-04-08T09:00:01.000Z",
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      piBridge,
+      contextLoader: createContextLoader({
+        async loadRelevantSkills() {
+          return ["frontend-design", "audit"];
+        },
+      }),
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-pi-relevant-skills",
+      prompt: "Run pi worker with loaded skills context.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+    });
+
+    expect(result.context.relevantSkills).toEqual(["frontend-design", "audit"]);
+    expect(piBridge.workerRequests).toHaveLength(1);
+    expect(piBridge.workerRequests[0]?.scopedContext.relevantSkills).toEqual([
+      "frontend-design",
+      "audit",
+    ]);
   });
 
   it("falls back to request cwd/worktree when no repo source is provided", async () => {
