@@ -398,6 +398,105 @@ describe("@hellm/smithers-bridge contract surface", () => {
     expect(translateSmithersRunToEpisode(resumed).id).toBe("episode-complete");
   });
 
+  it("preserves waiting_resume run metadata and allows deterministic resume continuation through the fake bridge", async () => {
+    const thread = createThreadFixture({
+      id: "thread-smithers-waiting-resume",
+      kind: "smithers-workflow",
+    });
+    const workflow = authorWorkflow({
+      thread,
+      objective: "Wait for an external resume signal",
+      inputEpisodeIds: ["episode-prior"],
+      tasks: [
+        {
+          id: "resume-task",
+          outputKey: "resume-result",
+          prompt: "Pause until external trigger is ready",
+          agent: "pi",
+        },
+      ],
+    });
+    const waitingEpisode = createEpisodeFixture({
+      id: "episode-waiting-resume",
+      threadId: thread.id,
+      source: "smithers",
+      status: "waiting_input",
+      smithersRunId: "run-waiting-resume",
+    });
+    const completedEpisode = createEpisodeFixture({
+      id: "episode-waiting-resume-done",
+      threadId: thread.id,
+      source: "smithers",
+      status: "completed",
+      smithersRunId: "run-waiting-resume",
+    });
+    const waitingResult: SmithersRunResult = {
+      run: {
+        runId: "run-waiting-resume",
+        threadId: thread.id,
+        workflowId: workflow.workflowId,
+        status: "waiting_resume",
+        updatedAt: "2026-04-08T09:10:00.000Z",
+      },
+      status: "waiting_resume",
+      outputs: [],
+      episode: waitingEpisode,
+      waitReason: "Awaiting external event payload before continuing.",
+      isolation: {
+        runId: "run-waiting-resume",
+        runStateStore: "/tmp/run-waiting-resume.sqlite",
+        sessionEntryIds: ["entry-waiting-resume"],
+      },
+    };
+    const resumedResult: SmithersRunResult = {
+      run: {
+        runId: "run-waiting-resume",
+        threadId: thread.id,
+        workflowId: workflow.workflowId,
+        status: "completed",
+        updatedAt: "2026-04-08T09:12:00.000Z",
+      },
+      status: "completed",
+      outputs: [
+        {
+          nodeId: "resume-task",
+          schema: "resume-result",
+          value: { resumed: true },
+        },
+      ],
+      episode: completedEpisode,
+      isolation: waitingResult.isolation,
+    };
+
+    const bridge = new FakeSmithersWorkflowBridge();
+    bridge.enqueueRunResult(waitingResult);
+    bridge.enqueueResumeResult(resumedResult);
+
+    const first = await bridge.runWorkflow({
+      path: "smithers-workflow",
+      thread,
+      objective: workflow.objective,
+      cwd: "/repo",
+      workflow,
+    });
+    const resumed = await bridge.resumeWorkflow({
+      runId: "run-waiting-resume",
+      thread,
+      objective: workflow.objective,
+    });
+
+    expect(first.status).toBe("waiting_resume");
+    expect(first.run.status).toBe("waiting_resume");
+    expect(first.waitReason).toBe(
+      "Awaiting external event payload before continuing.",
+    );
+    expect(first.episode.status).toBe("waiting_input");
+    expect(first.isolation?.runStateStore).toBe("/tmp/run-waiting-resume.sqlite");
+    expect(resumed.status).toBe("completed");
+    expect(resumed.outputs[0]?.value).toEqual({ resumed: true });
+    expect(bridge.resumeRequests[0]?.runId).toBe("run-waiting-resume");
+  });
+
   it("preserves run identity across waiting_resume and approval-gated resume stages", async () => {
     const thread = createThreadFixture({
       id: "thread-smithers-resume-chain",
