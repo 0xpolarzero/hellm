@@ -929,6 +929,85 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     expect(approval.completion.isComplete).toBe(false);
   });
 
+  it("normalizes clarification and approval requests into deterministic waiting states and session entries", async () => {
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext(request);
+        },
+      },
+    });
+
+    const scenarios = [
+      {
+        threadId: "thread-clarification-normalization",
+        requireApproval: false,
+        expectedStatus: "waiting_input",
+        expectedFollowUp: "Collect the missing user clarification before resuming work.",
+        expectedReason: "waiting_input",
+      },
+      {
+        threadId: "thread-approval-normalization",
+        requireApproval: true,
+        expectedStatus: "waiting_approval",
+        expectedFollowUp: "Await explicit approval before resuming work.",
+        expectedReason: "waiting_approval",
+      },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const result = await orchestrator.run({
+        threadId: scenario.threadId,
+        prompt: "Wait before executing any action.",
+        cwd: "/repo",
+        routeHint: "approval",
+        requireApproval: scenario.requireApproval,
+      });
+      const latestEpisode = result.threadSnapshot.episodes.at(-1);
+
+      expect(result.classification.path).toBe("approval");
+      expect(result.threadSnapshot.thread.kind).toBe("approval");
+      expect(result.threadSnapshot.thread.status).toBe(scenario.expectedStatus);
+      expect(latestEpisode?.status).toBe(scenario.expectedStatus);
+      expect(latestEpisode?.followUpSuggestions).toEqual([scenario.expectedFollowUp]);
+      expect(latestEpisode?.provenance).toEqual({
+        executionPath: "approval",
+        actor: "orchestrator",
+        notes: "Approval and clarification paths are explicit state transitions.",
+      });
+      expect(result.state.visibleSummary).toBe(
+        `approval:${scenario.expectedStatus}:${scenario.expectedStatus}`,
+      );
+      expect(result.state.waiting).toBe(true);
+      expect(result.state.blocked).toBe(false);
+      expect(result.completion).toEqual({
+        isComplete: false,
+        reason: scenario.expectedReason,
+      });
+      expect(result.threadSnapshot.workflowRuns).toEqual([]);
+      expect(result.sessionEntries.map((entry) => entry.message.customType)).toEqual([
+        "hellm/thread",
+        "hellm/episode",
+        "hellm/verification",
+        "hellm/alignment",
+      ]);
+
+      const reconstructed = reconstructSessionState([
+        createSessionHeader({
+          sessionId: scenario.threadId,
+          cwd: "/repo",
+          timestamp: "2026-04-08T08:59:00.000Z",
+        }),
+        ...result.sessionEntries,
+      ] as SessionJsonlEntry[]);
+
+      expect(reconstructed.threads.at(-1)?.id).toBe(scenario.threadId);
+      expect(reconstructed.threads.at(-1)?.status).toBe(scenario.expectedStatus);
+      expect(reconstructed.episodes.at(-1)?.status).toBe(scenario.expectedStatus);
+    }
+  });
+
   it("auto-routes verify prompts into the verification path and runs verification", async () => {
     const verificationRunner = new FakeVerificationRunner();
     verificationRunner.enqueueResult({
