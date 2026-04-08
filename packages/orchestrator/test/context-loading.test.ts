@@ -461,4 +461,88 @@ describe("@hellm/orchestrator context loading", () => {
     expect(result.sessionEntries).toHaveLength(4);
     expect(result.sessionEntries[0]?.parentId).toBe("entry-prior");
   });
+
+  it("ignores trailing transcript-only session messages when chaining new structured entries", async () => {
+    const timestamp = "2026-04-08T09:00:00.000Z";
+    const priorThread = createThread({
+      id: "thread-mixed-history",
+      kind: "direct",
+      objective: "Prior objective",
+      status: "completed",
+      inputEpisodeIds: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const priorStructuredEntry = createStructuredSessionEntry({
+      id: "entry-prior-structured",
+      parentId: null,
+      timestamp,
+      payload: { kind: "thread", data: priorThread },
+    });
+    const transcriptUserEntry: SessionJsonlEntry = {
+      type: "message",
+      id: "entry-transcript-user",
+      parentId: "entry-prior-structured",
+      timestamp: "2026-04-08T09:00:01.000Z",
+      message: {
+        role: "user",
+        content: "Continue from this conversation context.",
+        timestamp: Date.parse("2026-04-08T09:00:01.000Z"),
+      },
+    };
+    const transcriptAssistantEntry: SessionJsonlEntry = {
+      type: "message",
+      id: "entry-transcript-assistant",
+      parentId: "entry-transcript-user",
+      timestamp: "2026-04-08T09:00:02.000Z",
+      message: {
+        role: "assistant",
+        content: "Raw transcript tail entry.",
+        timestamp: Date.parse("2026-04-08T09:00:02.000Z"),
+      },
+    };
+    const sessionHistory: SessionJsonlEntry[] = [
+      createSessionHeader({
+        id: "thread-mixed-history",
+        timestamp,
+        cwd: "/repo",
+      }),
+      priorStructuredEntry,
+      transcriptUserEntry,
+      transcriptAssistantEntry,
+    ];
+
+    const orchestrator = createOrchestrator({
+      clock: () => "2026-04-08T09:00:03.000Z",
+      contextLoader: {
+        async load(request) {
+          return {
+            sessionHistory,
+            repoAndWorktree: { cwd: request.cwd },
+            agentsInstructions: [],
+            relevantSkills: [],
+            priorEpisodes: [],
+            priorArtifacts: [],
+            state: createEmptySessionState({
+              sessionId: request.threadId,
+              sessionCwd: request.cwd,
+            }),
+          };
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-mixed-history",
+      prompt: "Run direct path.",
+      cwd: "/repo",
+      routeHint: "direct",
+    });
+
+    expect(result.sessionEntries).toHaveLength(4);
+    expect(result.sessionEntries[0]?.parentId).toBe("entry-prior-structured");
+    expect(result.sessionEntries[0]?.parentId).not.toBe(
+      "entry-transcript-assistant",
+    );
+  });
 });
