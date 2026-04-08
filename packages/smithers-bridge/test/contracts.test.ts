@@ -12,6 +12,46 @@ import {
 } from "@hellm/test-support";
 
 describe("@hellm/smithers-bridge contract surface", () => {
+  it("authors deterministic workflow metadata for dynamic plans", () => {
+    const thread = createThreadFixture({
+      id: "thread-authoring",
+      kind: "smithers-workflow",
+      worktreePath: "/repo/worktrees/authoring",
+    });
+    const tasks = [
+      {
+        id: "task-plan",
+        outputKey: "plan",
+        prompt: "Plan the migration.",
+        agent: "pi" as const,
+        retryLimit: 2,
+      },
+      {
+        id: "task-verify",
+        outputKey: "verification",
+        prompt: "Run verification checks.",
+        agent: "verification" as const,
+        needsApproval: true,
+        worktreePath: "/repo/worktrees/authoring",
+      },
+    ];
+
+    const workflow = authorWorkflow({
+      thread,
+      objective: "Run dynamic authoring workflow",
+      inputEpisodeIds: ["episode-a", "episode-b"],
+      tasks,
+    });
+
+    expect(workflow).toEqual({
+      workflowId: "workflow:thread-authoring",
+      name: "Run dynamic authoring workflow",
+      objective: "Run dynamic authoring workflow",
+      inputEpisodeIds: ["episode-a", "episode-b"],
+      tasks,
+    });
+  });
+
   it("ships a default bridge that is explicit about missing implementation", async () => {
     const bridge = createSmithersWorkflowBridge();
     const thread = createThreadFixture({ id: "thread-smithers", kind: "smithers-workflow" });
