@@ -215,6 +215,54 @@ describe("@hellm/session-model filesystem roundtrip", () => {
     });
   });
 
+  it("keeps the latest persisted alignment snapshot and normalized paths in a real JSONL session file", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const sessionFile = workspace.path(".pi/sessions/alignment-updates.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "session-alignment-updates",
+        cwd: workspace.root,
+      });
+
+      harness.append({
+        kind: "alignment",
+        data: createSessionWorktreeAlignment({
+          sessionCwd: `${workspace.root}/nested/..`,
+          activeWorktreePath: workspace.path("worktrees/feature-a"),
+        }),
+      });
+      harness.append({
+        kind: "alignment",
+        data: createSessionWorktreeAlignment({
+          sessionCwd: `${workspace.root}/nested/..`,
+          activeWorktreePath: `${workspace.root}/./`,
+        }),
+      });
+
+      const alignmentEntries = harness
+        .lines()
+        .filter(
+          (entry) =>
+            typeof entry === "object" &&
+            entry !== null &&
+            "type" in entry &&
+            entry.type === "message" &&
+            "message" in entry &&
+            typeof entry.message === "object" &&
+            entry.message !== null &&
+            "customType" in entry.message &&
+            entry.message.customType === "hellm/alignment",
+        );
+      const reconstructed = harness.reconstruct();
+
+      expect(alignmentEntries).toHaveLength(2);
+      expect(reconstructed.alignment.sessionCwd).toBe(workspace.root);
+      expect(reconstructed.alignment.activeWorktreePath).toBe(workspace.root);
+      expect(reconstructed.alignment.aligned).toBe(true);
+      expect(reconstructed.alignment.reason).toBe("session and worktree are aligned");
+    });
+  });
+
   it("filters snapshots by thread and raises when the requested thread does not exist", async () => {
     const threadA = createThread({
       id: "thread-a",
