@@ -147,4 +147,24 @@ describe("@hellm/orchestrator classification", () => {
       });
     }
   });
+
+  it("routes uppercase verify prompts to verification when routeHint is auto", () => {
+    const orchestrator = createOrchestrator();
+
+    expect(
+      orchestrator.classifyRequest(
+        {
+          threadId: "verify-uppercase-auto",
+          prompt: "VERIFY the branch before merge.",
+          cwd: "/repo",
+          routeHint: "auto",
+        },
+        EMPTY_CONTEXT,
+      ),
+    ).toEqual({
+      path: "verification",
+      confidence: "medium",
+      reason: "Prompt emphasizes verification work.",
+    });
+  });
 });
