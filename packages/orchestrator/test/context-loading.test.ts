@@ -70,7 +70,7 @@ describe("@hellm/orchestrator context loading", () => {
     expect(context.sessionHistory).toEqual(history);
   });
 
-  it("defaults relevant skills to an empty list when no source loader is configured", async () => {
+  it("defaults repo/worktree context from the request and seeds empty state alignment", async () => {
     const loader = createContextLoader();
 
     const context = await loader.load({
@@ -80,6 +80,132 @@ describe("@hellm/orchestrator context loading", () => {
     });
 
     expect(context.relevantSkills).toEqual([]);
+  });
+
+  it("passes the request through to loadRelevantSkills and preserves the returned order", async () => {
+    const requests: string[] = [];
+    const loader = createContextLoader({
+      async loadRelevantSkills(request) {
+        requests.push(
+          `${request.threadId}:${request.cwd}:${request.worktreePath ?? "none"}`,
+        );
+        return ["frontend-design", "audit", "frontend-design"];
+      },
+    });
+
+    const context = await loader.load({
+      threadId: "thread-skills-source",
+      prompt: "Load relevant skills from explicit source.",
+      cwd: "/repo",
+      worktreePath: "/repo/worktrees/feature",
+    });
+
+    expect(requests).toEqual([
+      "thread-skills-source:/repo:/repo/worktrees/feature",
+    ]);
+    expect(context.relevantSkills).toEqual([
+      "frontend-design",
+      "audit",
+      "frontend-design",
+    ]);
+  });
+
+  it("falls back to an empty relevant skills list when loadRelevantSkills resolves to nullish at runtime", async () => {
+    const loader = createContextLoader({
+      async loadRelevantSkills() {
+        return undefined as unknown as string[];
+      },
+    });
+
+    const context = await loader.load({
+      threadId: "thread-skills-nullish",
+      prompt: "Load nullish relevant skills.",
+      cwd: "/repo",
+    });
+
+    expect(context.relevantSkills).toEqual([]);
+  });
+
+  it("defaults repo/worktree context from the request and seeds empty state alignment", async () => {
+    const loader = createContextLoader();
+
+    const context = await loader.load({
+      threadId: "thread-defaults",
+      prompt: "Load defaults.",
+      cwd: "/repo",
+      worktreePath: "/repo/worktrees/default",
+    });
+
+    expect(context.repoAndWorktree).toEqual({
+      cwd: "/repo",
+      worktreePath: "/repo/worktrees/default",
+    });
+    expect(context.state.sessionCwd).toBe("/repo");
+    expect(context.state.alignment.activeWorktreePath).toBe(
+      "/repo/worktrees/default",
+    );
+    expect(context.state.alignment.aligned).toBe(false);
+    expect(context.sessionHistory).toEqual([]);
+  });
+
+  it("uses explicit repo/worktree sources as authoritative over request fallbacks", async () => {
+    const loader = createContextLoader({
+      async loadRepoAndWorktree() {
+        return {
+          cwd: "/source-repo",
+        };
+      },
+    });
+
+    const context = await loader.load({
+      threadId: "thread-explicit-source",
+      prompt: "Load explicit source values.",
+      cwd: "/request-repo",
+      worktreePath: "/request-repo/worktrees/feature",
+    });
+
+    expect(context.repoAndWorktree).toEqual({
+      cwd: "/source-repo",
+    });
+    expect(context.state.sessionCwd).toBe("/source-repo");
+    expect(context.state.alignment.activeWorktreePath).toBeUndefined();
+    expect(context.state.alignment.aligned).toBe(true);
+  });
+
+  it("preserves explicitly loaded state even when repo/worktree context differs", async () => {
+    const loadedState = createEmptySessionState({
+      sessionId: "session-loaded",
+      sessionCwd: "/state-repo",
+      activeWorktreePath: "/state-repo/worktrees/existing",
+    });
+
+    const loader = createContextLoader({
+      async loadRepoAndWorktree() {
+        return {
+          cwd: "/repo",
+          worktreePath: "/repo/worktrees/current",
+        };
+      },
+      async loadState() {
+        return loadedState;
+      },
+    });
+
+    const context = await loader.load({
+      threadId: "thread-loaded-state",
+      prompt: "Load state and context.",
+      cwd: "/repo",
+    });
+
+    expect(context.repoAndWorktree).toEqual({
+      cwd: "/repo",
+      worktreePath: "/repo/worktrees/current",
+    });
+    expect(context.state).toBe(loadedState);
+    expect(context.state.sessionCwd).toBe("/state-repo");
+    expect(context.state.alignment.activeWorktreePath).toBe(
+      "/state-repo/worktrees/existing",
+    );
   });
 
   it("loads session history, repo/worktree state, AGENTS instructions, relevant skills, and prior state from explicit sources", async () => {
@@ -221,6 +347,50 @@ describe("@hellm/orchestrator context loading", () => {
     expect(piBridge.workerRequests[0]?.scopedContext.agentsInstructions).toEqual(
       instructions,
     );
+  });
+
+  it("forwards context-loaded relevant skills into the pi-worker scoped context", async () => {
+    const piBridge = new FakePiRuntimeBridge();
+    piBridge.enqueueResult({
+      status: "completed",
+      episode: createEpisode({
+        id: "episode-pi-relevant-skills",
+        threadId: "thread-pi-relevant-skills",
+        source: "pi-worker",
+        objective: "Run bounded worker with loaded skills.",
+        status: "completed",
+        conclusions: ["Pi worker completed."],
+        provenance: {
+          executionPath: "pi-worker",
+          actor: "pi-worker",
+        },
+        startedAt: "2026-04-08T09:00:00.000Z",
+        completedAt: "2026-04-08T09:00:01.000Z",
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      piBridge,
+      contextLoader: createContextLoader({
+        async loadRelevantSkills() {
+          return ["frontend-design", "audit"];
+        },
+      }),
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-pi-relevant-skills",
+      prompt: "Run pi worker with loaded skills context.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+    });
+
+    expect(result.context.relevantSkills).toEqual(["frontend-design", "audit"]);
+    expect(piBridge.workerRequests).toHaveLength(1);
+    expect(piBridge.workerRequests[0]?.scopedContext.relevantSkills).toEqual([
+      "frontend-design",
+      "audit",
+    ]);
   });
 
   it("falls back to request cwd/worktree when no repo source is provided", async () => {
@@ -728,5 +898,89 @@ describe("@hellm/orchestrator context loading", () => {
 
     expect(result.sessionEntries).toHaveLength(4);
     expect(result.sessionEntries[0]?.parentId).toBe("entry-prior");
+  });
+
+  it("ignores trailing transcript-only session messages when chaining new structured entries", async () => {
+    const timestamp = "2026-04-08T09:00:00.000Z";
+    const priorThread = createThread({
+      id: "thread-mixed-history",
+      kind: "direct",
+      objective: "Prior objective",
+      status: "completed",
+      inputEpisodeIds: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const priorStructuredEntry = createStructuredSessionEntry({
+      id: "entry-prior-structured",
+      parentId: null,
+      timestamp,
+      payload: { kind: "thread", data: priorThread },
+    });
+    const transcriptUserEntry: SessionJsonlEntry = {
+      type: "message",
+      id: "entry-transcript-user",
+      parentId: "entry-prior-structured",
+      timestamp: "2026-04-08T09:00:01.000Z",
+      message: {
+        role: "user",
+        content: "Continue from this conversation context.",
+        timestamp: Date.parse("2026-04-08T09:00:01.000Z"),
+      },
+    };
+    const transcriptAssistantEntry: SessionJsonlEntry = {
+      type: "message",
+      id: "entry-transcript-assistant",
+      parentId: "entry-transcript-user",
+      timestamp: "2026-04-08T09:00:02.000Z",
+      message: {
+        role: "assistant",
+        content: "Raw transcript tail entry.",
+        timestamp: Date.parse("2026-04-08T09:00:02.000Z"),
+      },
+    };
+    const sessionHistory: SessionJsonlEntry[] = [
+      createSessionHeader({
+        id: "thread-mixed-history",
+        timestamp,
+        cwd: "/repo",
+      }),
+      priorStructuredEntry,
+      transcriptUserEntry,
+      transcriptAssistantEntry,
+    ];
+
+    const orchestrator = createOrchestrator({
+      clock: () => "2026-04-08T09:00:03.000Z",
+      contextLoader: {
+        async load(request) {
+          return {
+            sessionHistory,
+            repoAndWorktree: { cwd: request.cwd },
+            agentsInstructions: [],
+            relevantSkills: [],
+            priorEpisodes: [],
+            priorArtifacts: [],
+            state: createEmptySessionState({
+              sessionId: request.threadId,
+              sessionCwd: request.cwd,
+            }),
+          };
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-mixed-history",
+      prompt: "Run direct path.",
+      cwd: "/repo",
+      routeHint: "direct",
+    });
+
+    expect(result.sessionEntries).toHaveLength(4);
+    expect(result.sessionEntries[0]?.parentId).toBe("entry-prior-structured");
+    expect(result.sessionEntries[0]?.parentId).not.toBe(
+      "entry-transcript-assistant",
+    );
   });
 });

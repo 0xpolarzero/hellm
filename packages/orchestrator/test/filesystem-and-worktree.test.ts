@@ -95,6 +95,14 @@ function isStructuredSessionEntry(
     entry !== null &&
     "type" in entry &&
     entry.type === "message" &&
+    "message" in entry &&
+    typeof entry.message === "object" &&
+    entry.message !== null &&
+    "role" in entry.message &&
+    entry.message.role === "custom" &&
+    "customType" in entry.message &&
+    typeof entry.message.customType === "string" &&
+    entry.message.customType.startsWith("hellm/") &&
     "id" in entry &&
     typeof entry.id === "string"
   );
@@ -200,6 +208,75 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
 
       expect(context.relevantSkills).toEqual([]);
     });
+  });
+
+  it("loads repo/worktree context from a real git workspace and disk-backed JSONL session state", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const worktreePath = await workspace.createLinkedWorktree("feature-context");
+      const sessionFile = workspace.path(".pi/sessions/thread-context.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "thread-context",
+        cwd: workspace.root,
+      });
+
+      harness.append({
+        kind: "alignment",
+        data: createEmptySessionState({
+          sessionId: "thread-context",
+          sessionCwd: workspace.root,
+          activeWorktreePath: worktreePath,
+        }).alignment,
+      });
+      harness.append({
+        kind: "episode",
+        data: createEpisode({
+          id: "episode-context-prior",
+          threadId: "thread-context",
+          source: "orchestrator",
+          objective: "Prior context load",
+          status: "completed",
+          conclusions: ["Prior context reconstructed from JSONL."],
+          provenance: {
+            executionPath: "direct",
+            actor: "orchestrator",
+          },
+          startedAt: "2026-04-08T09:00:00.000Z",
+          completedAt: "2026-04-08T09:00:01.000Z",
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        contextLoader: createFilesystemContextLoader({
+          sessionFile,
+        }),
+      });
+      const context = await orchestrator.loadContext({
+        threadId: "thread-context",
+        prompt: "Load repository context.",
+        cwd: workspace.root,
+        worktreePath,
+      });
+
+      expect(context.repoAndWorktree).toEqual({
+        cwd: workspace.root,
+        worktreePath,
+      });
+      expect(context.sessionHistory).toHaveLength(3);
+      expect(context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        "episode-context-prior",
+      ]);
+      expect(context.state.sessionCwd).toBe(workspace.root);
+      expect(context.state.alignment.activeWorktreePath).toBe(worktreePath);
+      expect(context.state.alignment.aligned).toBe(false);
+    } finally {
+      await workspace.cleanup();
+    }
   });
 
   it("reconciles a smithers workflow run into a file-backed session inside a real git worktree", async () => {
@@ -532,6 +609,10 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
       });
       harness.append({ kind: "episode", data: priorEpisodeOne });
       harness.append({ kind: "episode", data: priorEpisodeTwo });
+      const lastStructuredEntryId = readSessionFile(sessionFile)
+        .filter(isStructuredSessionEntry)
+        .at(-1)?.id;
+      expect(lastStructuredEntryId).toBeDefined();
 
       const decoyEntries: SessionJsonlEntry[] = [
         {
@@ -605,6 +686,8 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
           entry.includes("\"entry-decoy-user\""),
         ),
       ).toBe(true);
+      expect(result.sessionEntries[0]?.parentId).toBe(lastStructuredEntryId);
+      expect(result.sessionEntries[0]?.parentId).not.toBe("entry-decoy-assistant");
       expect(piBridge.workerRequests[0]?.inputEpisodeIds).toEqual([
         "episode-structured-1",
         "episode-structured-2",
