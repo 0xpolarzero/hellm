@@ -837,6 +837,46 @@ describe("@hellm/session-model reconstruction", () => {
     expect(snapshot.episodes).toEqual([]);
   });
 
+  it("drops a stale thread worktree binding when the latest thread entry omits worktreePath", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-thread-worktree-clear",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+
+    const initial = createThreadFixture({
+      id: "thread-worktree-clear",
+      kind: "direct",
+      objective: "Carry forward thread metadata",
+      status: "running",
+      worktreePath: "/repo/worktrees/initial",
+      createdAt: "2026-04-08T09:00:00.000Z",
+      updatedAt: "2026-04-08T09:01:00.000Z",
+    });
+    const updated = createThreadFixture({
+      id: initial.id,
+      kind: initial.kind,
+      objective: "Carry forward thread metadata",
+      status: "completed",
+      inputEpisodeIds: ["episode-1"],
+      createdAt: initial.createdAt,
+      updatedAt: "2026-04-08T09:02:00.000Z",
+    });
+
+    expect(updated.worktreePath).toBeUndefined();
+
+    harness.append({ kind: "thread", data: initial });
+    harness.append({ kind: "thread", data: updated });
+
+    const state = harness.reconstruct();
+    const snapshot = createThreadSnapshot(state, updated.id);
+
+    expect(state.threads).toHaveLength(1);
+    expect(state.threads[0]?.worktreePath).toBeUndefined();
+    expect(snapshot.thread.worktreePath).toBeUndefined();
+    expect(snapshot.thread.inputEpisodeIds).toEqual(["episode-1"]);
+  });
+
   test.todo(
     "secondary storage backends can reconstruct the same state contract without changing the pi-session schema",
     () => {},
