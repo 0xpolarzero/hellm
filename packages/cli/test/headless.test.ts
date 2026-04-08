@@ -7,6 +7,7 @@ import {
 import {
   createOrchestrator,
   type Orchestrator,
+  type OrchestratorRequest,
   type OrchestratorRunResult,
 } from "@hellm/orchestrator";
 import {
@@ -207,6 +208,64 @@ describe("@hellm/cli headless execution", () => {
 
     expect(result.raw.classification.path).toBe("smithers-workflow");
     expect(result.output.workflowRunIds).toEqual(["run-seed"]);
+  });
+
+  it("forwards structured workflow seed input to the orchestrator without mutation", async () => {
+    const capturedRequests: OrchestratorRequest[] = [];
+    const orchestrator = createStubOrchestrator(
+      createRunResultForHeadless({
+        threadId: "thread-seed-pass-through",
+        episodes: [
+          createEpisodeFixture({
+            id: "episode-seed-pass-through",
+            threadId: "thread-seed-pass-through",
+          }),
+        ],
+      }),
+      {
+        onRun(request) {
+          capturedRequests.push(request);
+        },
+      },
+    );
+    const workflowSeedInput = {
+      objective: "Seeded objective",
+      preferredPath: "smithers-workflow" as const,
+      verificationKinds: ["build", "test"] as const,
+      manualChecks: ["Confirm release checklist is complete."],
+      tasks: [
+        {
+          id: "seed-task",
+          outputKey: "result",
+          prompt: "Execute seeded workflow",
+          agent: "pi" as const,
+          retryLimit: 2,
+          needsApproval: true,
+        },
+      ],
+      metadata: {
+        source: "seed-file",
+        labels: ["nightly", "ci"],
+        nested: { attempt: 1 },
+      },
+    };
+    const inputSnapshot = structuredClone(workflowSeedInput);
+
+    await executeHeadlessRun(
+      {
+        threadId: "thread-seed-pass-through",
+        prompt: "Use the workflow seed.",
+        cwd: "/repo",
+        routeHint: "auto",
+        workflowSeedInput,
+      },
+      { orchestrator },
+    );
+
+    expect(capturedRequests).toHaveLength(1);
+    expect(capturedRequests[0]?.workflowSeedInput).toEqual(inputSnapshot);
+    expect(capturedRequests[0]?.workflowSeedInput).toBe(workflowSeedInput);
+    expect(workflowSeedInput).toEqual(inputSnapshot);
   });
 
   it("uses prompt-driven verification classification when routeHint is omitted or auto and emits run.classified", async () => {
@@ -610,7 +669,10 @@ describe("@hellm/cli headless execution", () => {
   );
 });
 
-function createStubOrchestrator(result: OrchestratorRunResult): Orchestrator {
+function createStubOrchestrator(
+  result: OrchestratorRunResult,
+  options: { onRun?: (request: OrchestratorRequest) => void } = {},
+): Orchestrator {
   return {
     id: "main",
     async loadContext() {
@@ -619,7 +681,8 @@ function createStubOrchestrator(result: OrchestratorRunResult): Orchestrator {
     classifyRequest() {
       throw new Error("createStubOrchestrator.classifyRequest should not be called");
     },
-    async run() {
+    async run(request) {
+      options.onRun?.(request);
       return result;
     },
   };
