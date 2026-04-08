@@ -24,6 +24,10 @@ const DEFAULT_MAX_CONCURRENCY = parsePositiveInt(
   process.env.HELLM_FEATURE_TEST_MAX_CONCURRENCY,
   6,
 );
+const DEFAULT_BATCH_SIZE = parsePositiveInt(
+  process.env.HELLM_FEATURE_TEST_BATCH_SIZE,
+  DEFAULT_MAX_CONCURRENCY,
+);
 const DEFAULT_TIMEOUT_MS = parsePositiveInt(
   process.env.HELLM_FEATURE_TEST_TIMEOUT_MS,
   30 * 60 * 1000,
@@ -32,6 +36,7 @@ const DEFAULT_TIMEOUT_MS = parsePositiveInt(
 const inputSchema = z.object({
   features: z.array(z.string()).optional(),
   maxConcurrency: z.number().int().positive().default(DEFAULT_MAX_CONCURRENCY),
+  batchSize: z.number().int().positive().default(DEFAULT_BATCH_SIZE),
   timeoutMs: z.number().int().positive().default(DEFAULT_TIMEOUT_MS),
   repoRoot: z.string().default("."),
   worktreeRoot: z.string().default(".worktrees/feature-tests"),
@@ -67,6 +72,15 @@ const verificationResultSchema = z.object({
   failedCommands: z.array(z.string()),
   summaries: z.array(z.string()),
   shouldMerge: z.boolean(),
+});
+
+const commitResultSchema = z.object({
+  featureId: z.string(),
+  branch: z.string(),
+  worktreePath: z.string(),
+  status: z.enum(["committed", "skipped", "blocked"]),
+  summary: z.string(),
+  commitSha: z.string().optional(),
 });
 
 const mergeResultSchema = z.object({
@@ -106,6 +120,7 @@ const reportSchema = z.object({
 const { smithers, outputs } = createSmithers({
   featureCoverage: featureCoverageSchema,
   verificationResult: verificationResultSchema,
+  commitResult: commitResultSchema,
   mergeResult: mergeResultSchema,
   cleanupResult: cleanupResultSchema,
   report: reportSchema,
@@ -115,129 +130,162 @@ const workerAgent = createWorkerAgent();
 const workerRetries = workerAgent instanceof CodexAgent ? 0 : 1;
 type FeatureCoverageResult = z.infer<typeof featureCoverageSchema>;
 type VerificationResult = z.infer<typeof verificationResultSchema>;
+type CommitResult = z.infer<typeof commitResultSchema>;
 type MergeResult = z.infer<typeof mergeResultSchema>;
 type CleanupResult = z.infer<typeof cleanupResultSchema>;
 
 export default smithers((ctx) => {
   const input = inputSchema.parse(ctx.input ?? {});
   const selectedFeatures = selectFeatures(input.features);
+  const batches = chunkFeatures(selectedFeatures, input.batchSize);
   const featureResults = dedupeResults(ctx.outputs.featureCoverage ?? []);
   const verificationResults = dedupeResults(ctx.outputs.verificationResult ?? []);
+  const commitResults = dedupeResults(ctx.outputs.commitResult ?? []);
   const mergeResults = dedupeResults(ctx.outputs.mergeResult ?? []);
   const cleanupResults = dedupeResults(ctx.outputs.cleanupResult ?? []);
   const featureById = byFeatureId(featureResults);
   const verificationById = byFeatureId(verificationResults);
+  const commitById = byFeatureId(commitResults);
   const mergeById = byFeatureId(mergeResults);
 
   return (
     <Workflow name="hellm-feature-test-fanout">
       <Sequence>
-        <Parallel maxConcurrency={input.maxConcurrency}>
-          {selectedFeatures.map((featureId) => {
-            const taskSpec = createTaskSpec(featureId, input);
+        {batches.map((batch, batchIndex) => (
+          <Sequence key={`batch-${batchIndex}`}>
+            <Parallel maxConcurrency={input.maxConcurrency}>
+              {batch.map((featureId) => {
+                const taskSpec = createTaskSpec(featureId, input);
 
-            return (
-              <Worktree
-                key={taskSpec.taskId}
-                path={taskSpec.worktreePath}
-                branch={taskSpec.branch}
-                baseBranch={input.baseBranch}
-              >
-                <Task
-                  id={taskSpec.taskId}
-                  output={outputs.featureCoverage}
-                  agent={workerAgent}
-                  retries={workerRetries}
-                  continueOnFail
-                  timeoutMs={input.timeoutMs}
-                >
-                  <WorkerPrompt
-                    featureId={taskSpec.featureId}
+                return (
+                  <Worktree
+                    key={taskSpec.taskId}
+                    path={taskSpec.worktreePath}
                     branch={taskSpec.branch}
-                    worktreePath={taskSpec.worktreePath}
-                  />
-                </Task>
-              </Worktree>
-            );
-          })}
-        </Parallel>
+                    baseBranch={input.baseBranch}
+                  >
+                    <Task
+                      id={taskSpec.taskId}
+                      output={outputs.featureCoverage}
+                      agent={workerAgent}
+                      retries={workerRetries}
+                      continueOnFail
+                      timeoutMs={input.timeoutMs}
+                    >
+                      <WorkerPrompt
+                        featureId={taskSpec.featureId}
+                        branch={taskSpec.branch}
+                        worktreePath={taskSpec.worktreePath}
+                      />
+                    </Task>
+                  </Worktree>
+                );
+              })}
+            </Parallel>
 
-        <Parallel maxConcurrency={input.maxConcurrency}>
-          {selectedFeatures.map((featureId) => {
-            const taskSpec = createTaskSpec(featureId, input);
-            const featureResult = featureById.get(featureId);
-            if (!featureResult) {
-              return null;
-            }
+            <Parallel maxConcurrency={input.maxConcurrency}>
+              {batch.map((featureId) => {
+                const taskSpec = createTaskSpec(featureId, input);
+                const featureResult = featureById.get(featureId);
+                if (!featureResult) {
+                  return null;
+                }
 
-            return (
-              <Task
-                key={`verify-${taskSpec.slug}`}
-                id={`verify-${taskSpec.slug}`}
-                output={outputs.verificationResult}
-                continueOnFail
-              >
-                {async () => verifyFeature(taskSpec, featureResult)}
-              </Task>
-            );
-          })}
-        </Parallel>
+                return (
+                  <Task
+                    key={`verify-${taskSpec.slug}`}
+                    id={`verify-${taskSpec.slug}`}
+                    output={outputs.verificationResult}
+                    continueOnFail
+                  >
+                    {async () => verifyFeature(taskSpec, featureResult)}
+                  </Task>
+                );
+              })}
+            </Parallel>
 
-        <MergeQueue>
-          {selectedFeatures.map((featureId) => {
-            const taskSpec = createTaskSpec(featureId, input);
-            const featureResult = featureById.get(featureId);
-            const verificationResult = verificationById.get(featureId);
-            if (!featureResult || !verificationResult) {
-              return null;
-            }
+            <Parallel maxConcurrency={input.maxConcurrency}>
+              {batch.map((featureId) => {
+                const taskSpec = createTaskSpec(featureId, input);
+                const featureResult = featureById.get(featureId);
+                const verificationResult = verificationById.get(featureId);
+                if (!featureResult || !verificationResult) {
+                  return null;
+                }
 
-            return (
-              <Task
-                key={`merge-${taskSpec.slug}`}
-                id={`merge-${taskSpec.slug}`}
-                output={outputs.mergeResult}
-                continueOnFail
-              >
-                {async () =>
-                  mergeFeature({
-                    repoRoot: input.repoRoot,
-                    task: taskSpec,
-                    feature: featureResult,
-                    verification: verificationResult,
-                  })}
-              </Task>
-            );
-          })}
-        </MergeQueue>
+                return (
+                  <Task
+                    key={`commit-${taskSpec.slug}`}
+                    id={`commit-${taskSpec.slug}`}
+                    output={outputs.commitResult}
+                    continueOnFail
+                  >
+                    {async () =>
+                      commitFeature({
+                        task: taskSpec,
+                        feature: featureResult,
+                        verification: verificationResult,
+                      })}
+                  </Task>
+                );
+              })}
+            </Parallel>
 
-        <MergeQueue>
-          {selectedFeatures.map((featureId) => {
-            const taskSpec = createTaskSpec(featureId, input);
-            const mergeResult = mergeById.get(featureId);
-            if (!mergeResult) {
-              return null;
-            }
+            <MergeQueue>
+              {batch.map((featureId) => {
+                const taskSpec = createTaskSpec(featureId, input);
+                const commitResult = commitById.get(featureId);
+                if (!commitResult) {
+                  return null;
+                }
 
-            return (
-              <Task
-                key={`cleanup-${taskSpec.slug}`}
-                id={`cleanup-${taskSpec.slug}`}
-                output={outputs.cleanupResult}
-                continueOnFail
-              >
-                {async () =>
-                  cleanupFeature({
-                    repoRoot: input.repoRoot,
-                    task: taskSpec,
-                    merge: mergeResult,
-                    deleteMergedBranches: input.deleteMergedBranches,
-                    cleanupBlockedWorktrees: input.cleanupBlockedWorktrees,
-                  })}
-              </Task>
-            );
-          })}
-        </MergeQueue>
+                return (
+                  <Task
+                    key={`merge-${taskSpec.slug}`}
+                    id={`merge-${taskSpec.slug}`}
+                    output={outputs.mergeResult}
+                    continueOnFail
+                  >
+                    {async () =>
+                      mergeFeature({
+                        repoRoot: input.repoRoot,
+                        task: taskSpec,
+                        commit: commitResult,
+                      })}
+                  </Task>
+                );
+              })}
+            </MergeQueue>
+
+            <Parallel maxConcurrency={input.maxConcurrency}>
+              {batch.map((featureId) => {
+                const taskSpec = createTaskSpec(featureId, input);
+                const mergeResult = mergeById.get(featureId);
+                if (!mergeResult) {
+                  return null;
+                }
+
+                return (
+                  <Task
+                    key={`cleanup-${taskSpec.slug}`}
+                    id={`cleanup-${taskSpec.slug}`}
+                    output={outputs.cleanupResult}
+                    continueOnFail
+                  >
+                    {async () =>
+                      cleanupFeature({
+                        repoRoot: input.repoRoot,
+                        task: taskSpec,
+                        merge: mergeResult,
+                        deleteMergedBranches: input.deleteMergedBranches,
+                        cleanupBlockedWorktrees: input.cleanupBlockedWorktrees,
+                      })}
+                  </Task>
+                );
+              })}
+            </Parallel>
+          </Sequence>
+        ))}
 
         <Task id="feature-test-report" output={outputs.report}>
           {buildReport({
@@ -373,26 +421,23 @@ function byFeatureId<T extends { featureId: string }>(results: T[]): Map<string,
   return new Map(results.map((result) => [result.featureId, result]));
 }
 
+function chunkFeatures(features: string[], batchSize: number): string[][] {
+  const chunks: string[][] = [];
+
+  for (let index = 0; index < features.length; index += batchSize) {
+    chunks.push(features.slice(index, index + batchSize));
+  }
+
+  return chunks;
+}
+
 async function verifyFeature(
   task: ReturnType<typeof createTaskSpec>,
   feature: FeatureCoverageResult,
 ): Promise<VerificationResult> {
   const worktreePath = resolve(task.worktreePath);
-
-  if (!feature.committed && feature.verificationCommands.length === 0) {
-    return {
-      featureId: feature.featureId,
-      branch: task.branch,
-      worktreePath,
-      status: "skipped",
-      executedCommands: [],
-      failedCommands: [],
-      summaries: ["No committed changes and no verification commands were provided."],
-      shouldMerge: false,
-    };
-  }
-
-  if (feature.committed && feature.verificationCommands.length === 0) {
+  const worktreeState = inspectWorktree(worktreePath);
+  if (!worktreeState.ok) {
     return {
       featureId: feature.featureId,
       branch: task.branch,
@@ -400,9 +445,23 @@ async function verifyFeature(
       status: "blocked",
       executedCommands: [],
       failedCommands: [],
-      summaries: [
-        "Committed changes were produced without workflow-verifiable commands.",
-      ],
+      summaries: [worktreeState.error],
+      shouldMerge: false,
+    };
+  }
+
+  if (feature.verificationCommands.length === 0) {
+    return {
+      featureId: feature.featureId,
+      branch: task.branch,
+      worktreePath,
+      status: worktreeState.dirty || feature.committed ? "blocked" : "skipped",
+      executedCommands: [],
+      failedCommands: [],
+      summaries:
+        worktreeState.dirty || feature.committed
+          ? ["Repo changes exist but no verification commands were provided."]
+          : ["No repo changes and no verification commands were provided."],
       shouldMerge: false,
     };
   }
@@ -445,34 +504,138 @@ async function verifyFeature(
       summaries.length > 0
         ? summaries
         : ["No verification commands were required."],
-    shouldMerge: feature.committed,
+    shouldMerge: worktreeState.dirty || feature.committed,
+  };
+}
+
+async function commitFeature(input: {
+  task: ReturnType<typeof createTaskSpec>;
+  feature: FeatureCoverageResult;
+  verification: VerificationResult;
+}): Promise<CommitResult> {
+  const worktreePath = resolve(input.task.worktreePath);
+
+  if (!input.verification.shouldMerge) {
+    return {
+      featureId: input.feature.featureId,
+      branch: input.task.branch,
+      worktreePath,
+      status: input.verification.status === "blocked" ? "blocked" : "skipped",
+      summary:
+        input.verification.status === "blocked"
+          ? "Verification blocked commit creation."
+          : "Verification did not authorize a commit.",
+    };
+  }
+
+  const worktreeState = inspectWorktree(worktreePath);
+  if (!worktreeState.ok) {
+    return {
+      featureId: input.feature.featureId,
+      branch: input.task.branch,
+      worktreePath,
+      status: "blocked",
+      summary: worktreeState.error,
+    };
+  }
+
+  if (input.feature.committed) {
+    if (worktreeState.dirty) {
+      return {
+        featureId: input.feature.featureId,
+        branch: input.task.branch,
+        worktreePath,
+        status: "blocked",
+        summary: "Worker reported a commit, but the feature worktree is still dirty.",
+      };
+    }
+
+    const head = runGit(worktreePath, ["rev-parse", "HEAD"]);
+    return {
+      featureId: input.feature.featureId,
+      branch: input.task.branch,
+      worktreePath,
+      status: "committed",
+      summary: "Worker already committed the feature branch.",
+      ...(head.code === 0
+        ? { commitSha: input.feature.commitSha ?? head.stdout.trim() }
+        : input.feature.commitSha
+          ? { commitSha: input.feature.commitSha }
+          : {}),
+    };
+  }
+
+  if (!worktreeState.dirty) {
+    return {
+      featureId: input.feature.featureId,
+      branch: input.task.branch,
+      worktreePath,
+      status: "skipped",
+      summary: "Feature worktree is clean; no commit was created.",
+    };
+  }
+
+  const addAll = runGit(worktreePath, ["add", "-A"]);
+  if (addAll.code !== 0) {
+    return {
+      featureId: input.feature.featureId,
+      branch: input.task.branch,
+      worktreePath,
+      status: "blocked",
+      summary: `Failed to stage feature changes: ${truncateOutput(addAll.stderr || addAll.stdout)}`,
+    };
+  }
+
+  const commit = runGit(worktreePath, [
+    "commit",
+    "-m",
+    `test(feature-fanout): cover ${input.task.slug}`,
+  ]);
+  if (commit.code !== 0) {
+    return {
+      featureId: input.feature.featureId,
+      branch: input.task.branch,
+      worktreePath,
+      status: "blocked",
+      summary: `Failed to commit feature changes: ${truncateOutput(commit.stderr || commit.stdout)}`,
+    };
+  }
+
+  const head = runGit(worktreePath, ["rev-parse", "HEAD"]);
+  return {
+    featureId: input.feature.featureId,
+    branch: input.task.branch,
+    worktreePath,
+    status: "committed",
+    summary: "Committed verified feature changes on the feature branch.",
+    ...(head.code === 0 ? { commitSha: head.stdout.trim() } : {}),
   };
 }
 
 async function mergeFeature(input: {
   repoRoot: string;
   task: ReturnType<typeof createTaskSpec>;
-  feature: FeatureCoverageResult;
-  verification: VerificationResult;
+  commit: CommitResult;
 }): Promise<MergeResult> {
   const repoRoot = resolve(input.repoRoot);
 
-  if (!input.verification.shouldMerge) {
+  if (input.commit.status !== "committed") {
     return {
-      featureId: input.feature.featureId,
+      featureId: input.commit.featureId,
       branch: input.task.branch,
       worktreePath: resolve(input.task.worktreePath),
-      status: input.feature.committed ? "blocked" : "skipped",
-      summary: input.feature.committed
-        ? "Verification did not authorize merge."
-        : "No committed changes to merge.",
+      status: input.commit.status === "blocked" ? "blocked" : "skipped",
+      summary:
+        input.commit.status === "blocked"
+          ? input.commit.summary
+          : "No committed changes to merge.",
     };
   }
 
   const cleanliness = runGit(repoRoot, ["status", "--porcelain"]);
   if (cleanliness.code !== 0) {
     return {
-      featureId: input.feature.featureId,
+      featureId: input.commit.featureId,
       branch: input.task.branch,
       worktreePath: resolve(input.task.worktreePath),
       status: "blocked",
@@ -481,7 +644,7 @@ async function mergeFeature(input: {
   }
   if (cleanliness.stdout.trim().length > 0) {
     return {
-      featureId: input.feature.featureId,
+      featureId: input.commit.featureId,
       branch: input.task.branch,
       worktreePath: resolve(input.task.worktreePath),
       status: "blocked",
@@ -493,7 +656,7 @@ async function mergeFeature(input: {
   if (merge.code !== 0) {
     runGit(repoRoot, ["merge", "--abort"]);
     return {
-      featureId: input.feature.featureId,
+      featureId: input.commit.featureId,
       branch: input.task.branch,
       worktreePath: resolve(input.task.worktreePath),
       status: "conflicted",
@@ -503,7 +666,7 @@ async function mergeFeature(input: {
 
   const head = runGit(repoRoot, ["rev-parse", "HEAD"]);
   return {
-    featureId: input.feature.featureId,
+    featureId: input.commit.featureId,
     branch: input.task.branch,
     worktreePath: resolve(input.task.worktreePath),
     status: "merged",
@@ -521,6 +684,19 @@ async function cleanupFeature(input: {
 }): Promise<CleanupResult> {
   const repoRoot = resolve(input.repoRoot);
   const worktreePath = resolve(input.task.worktreePath);
+  const worktreeState = inspectWorktree(worktreePath);
+
+  if (!worktreeState.ok) {
+    return {
+      featureId: input.merge.featureId,
+      branch: input.task.branch,
+      worktreePath,
+      status: "blocked",
+      removedWorktree: false,
+      deletedBranch: false,
+      summary: worktreeState.error,
+    };
+  }
 
   if (
     input.merge.status !== "merged" &&
@@ -538,7 +714,19 @@ async function cleanupFeature(input: {
     };
   }
 
-  const remove = runGit(repoRoot, ["worktree", "remove", "--force", worktreePath]);
+  if (worktreeState.dirty) {
+    return {
+      featureId: input.merge.featureId,
+      branch: input.task.branch,
+      worktreePath,
+      status: "retained",
+      removedWorktree: false,
+      deletedBranch: false,
+      summary: "Retained dirty worktree for manual follow-up.",
+    };
+  }
+
+  const remove = runGit(repoRoot, ["worktree", "remove", worktreePath]);
   if (remove.code !== 0) {
     return {
       featureId: input.merge.featureId,
@@ -618,6 +806,21 @@ function buildReport(input: {
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(raw ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function inspectWorktree(worktreePath: string) {
+  const status = runGit(worktreePath, ["status", "--porcelain"]);
+  if (status.code !== 0) {
+    return {
+      ok: false as const,
+      error: `Unable to inspect feature worktree state: ${truncateOutput(status.stderr || status.stdout)}`,
+    };
+  }
+
+  return {
+    ok: true as const,
+    dirty: status.stdout.trim().length > 0,
+  };
 }
 
 function runGit(cwd: string, args: string[]) {

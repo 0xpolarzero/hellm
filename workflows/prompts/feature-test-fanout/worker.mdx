@@ -28,7 +28,7 @@ Branch and worktree:
 Required execution behavior:
 
 - Write or deepen tests for this feature.
-- If you modify the repo, commit your changes on your branch using a Conventional Commit message.
+- Do not create git commits yourself. Leave any repo changes in the feature worktree; the workflow will verify and commit them after your task completes.
 - Run the most focused verification you reasonably can for this feature before you finish.
 - Return the verification commands that should be re-run by the workflow verifier.
 - If no repo changes are needed, leave the worktree clean and report `committed=false`.
@@ -42,7 +42,7 @@ Required structured return fields:
 - `supportFiles`
 - `docsFiles`
 - `verificationCommands`
-- `committed`
+- `committed` (normally `false`; the workflow owns commits)
 - `commitSha` when `committed=true`
 - `branch`
 - `worktreePath`
