@@ -789,6 +789,91 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     ]);
   });
 
+  it("persists waiting_input then blocked status across structured session re-entry", async () => {
+    const threadId = "thread-status-reentry";
+    const sessionHistory: SessionJsonlEntry[] = [
+      createSessionHeader({
+        id: threadId,
+        timestamp: "2026-04-08T09:00:00.000Z",
+        cwd: "/repo",
+      }),
+    ];
+    const piBridge = new FakePiRuntimeBridge();
+    piBridge.enqueueResult({
+      status: "waiting_input",
+      episode: createEpisodeFixture({
+        id: "episode-status-waiting",
+        threadId,
+        source: "pi-worker",
+        status: "waiting_input",
+      }),
+    });
+    piBridge.enqueueResult({
+      status: "blocked",
+      episode: createEpisodeFixture({
+        id: "episode-status-blocked",
+        threadId,
+        source: "pi-worker",
+        status: "blocked",
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      piBridge,
+      contextLoader: {
+        async load(request) {
+          const state = reconstructSessionState(sessionHistory);
+          return {
+            ...baseLoadedContext(request),
+            sessionHistory,
+            priorEpisodes: state.episodes,
+            priorArtifacts: state.artifacts,
+            state,
+          };
+        },
+      },
+    });
+
+    const waiting = await orchestrator.run({
+      threadId,
+      prompt: "First worker run needs input.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+    });
+    sessionHistory.push(...waiting.sessionEntries);
+    const blocked = await orchestrator.run({
+      threadId,
+      prompt: "Second worker run remains blocked.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+    });
+    sessionHistory.push(...blocked.sessionEntries);
+    const reconstructed = reconstructSessionState(sessionHistory);
+
+    expect(waiting.completion).toEqual({
+      isComplete: false,
+      reason: "waiting_input",
+    });
+    expect(waiting.state.waiting).toBe(true);
+    expect(waiting.state.blocked).toBe(false);
+    expect(blocked.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+      "episode-status-waiting",
+    ]);
+    expect(blocked.completion).toEqual({
+      isComplete: false,
+      reason: "blocked",
+    });
+    expect(blocked.state.waiting).toBe(false);
+    expect(blocked.state.blocked).toBe(true);
+    expect(reconstructed.threads).toHaveLength(1);
+    expect(reconstructed.threads[0]?.status).toBe("blocked");
+    expect(reconstructed.episodes.map((episode) => episode.status)).toEqual([
+      "waiting_input",
+      "blocked",
+    ]);
+  });
+
   it("reconciles artifacts by replacing stale records with the latest episode artifact", async () => {
     const piBridge = new FakePiRuntimeBridge();
     const staleArtifact = createArtifact({

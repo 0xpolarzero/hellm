@@ -279,6 +279,99 @@ describe("golden path headless specs", () => {
     expect(jsonl.at(-1)).toContain("\"run.waiting\"");
   });
 
+  it("persists waiting and blocked worker states through file-backed JSONL re-entry", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-waiting-blocked-jsonl";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-waiting-blocked.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const piBridge = new FakePiRuntimeBridge();
+      piBridge.enqueueResult({
+        status: "waiting_input",
+        episode: createEpisodeFixture({
+          id: "golden-waiting-jsonl-episode",
+          threadId,
+          source: "pi-worker",
+          status: "waiting_input",
+        }),
+      });
+      piBridge.enqueueResult({
+        status: "blocked",
+        episode: createEpisodeFixture({
+          id: "golden-blocked-jsonl-episode",
+          threadId,
+          source: "pi-worker",
+          status: "blocked",
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        piBridge,
+        contextLoader: {
+          async load(request) {
+            const state = harness.reconstruct();
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run worker episode that needs user input.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Retry worker episode that remains blocked.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+
+      const reconstructed = harness.reconstruct();
+
+      expect(first.result.output.status).toBe("waiting_input");
+      expect(first.result.events.at(-1)?.type).toBe("run.waiting");
+      expect(second.result.output.status).toBe("blocked");
+      expect(second.result.events.at(-1)?.type).toBe("run.waiting");
+      expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        "golden-waiting-jsonl-episode",
+      ]);
+      expect(reconstructed.threads).toHaveLength(1);
+      expect(reconstructed.threads[0]?.status).toBe("blocked");
+      expect(reconstructed.episodes.map((episode) => episode.id)).toEqual([
+        "golden-waiting-jsonl-episode",
+        "golden-blocked-jsonl-episode",
+      ]);
+      expect(reconstructed.episodes.map((episode) => episode.status)).toEqual([
+        "waiting_input",
+        "blocked",
+      ]);
+      expect(harness.jsonl()).toContain("\"status\":\"waiting_input\"");
+      expect(harness.jsonl()).toContain("\"status\":\"blocked\"");
+    });
+  });
+
   it("re-enters after each headless episode using file-backed JSONL session state", async () => {
     await withTempWorkspace(async (workspace) => {
       const threadId = "golden-reenter";
