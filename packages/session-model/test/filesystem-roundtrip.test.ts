@@ -17,6 +17,7 @@ describe("@hellm/session-model filesystem roundtrip", () => {
   it("reconstructs structured state from a real JSONL file while ignoring non-hellm entries", async () => {
     await withTempWorkspace(async (workspace) => {
       const reportPath = await workspace.write("reports/build.log", "build passed\n");
+      const changedFilePath = workspace.path("src/index.ts");
       const sessionFile = workspace.path(".pi/sessions/thread.jsonl");
       const harness = new FileBackedSessionJsonlHarness({
         filePath: sessionFile,
@@ -28,7 +29,10 @@ describe("@hellm/session-model filesystem roundtrip", () => {
         kind: "smithers-workflow",
         objective: "Persist structured workflow state",
         status: "waiting_approval",
+        parentThreadId: "thread-parent",
+        inputEpisodeIds: ["episode-prior", "episode-context"],
         worktreePath: workspace.path("worktrees/feature"),
+        smithersRunId: "run-fs",
         createdAt: "2026-04-08T09:00:00.000Z",
         updatedAt: "2026-04-08T09:05:00.000Z",
       });
@@ -54,8 +58,10 @@ describe("@hellm/session-model filesystem roundtrip", () => {
         objective: thread.objective,
         status: "waiting_approval",
         conclusions: ["Workflow paused at approval gate."],
+        changedFiles: [changedFilePath],
         artifacts: [artifact],
         verification: [verification],
+        unresolvedIssues: ["Approval is still pending from the repository owner."],
         followUpSuggestions: ["Approve the workflow to continue."],
         provenance: {
           executionPath: "smithers-workflow",
@@ -127,12 +133,85 @@ describe("@hellm/session-model filesystem roundtrip", () => {
       expect(state.workflowRuns).toHaveLength(1);
       expect(state.smithersIsolations).toHaveLength(1);
       expect(state.verification.byKind.build?.artifactIds).toEqual([artifact.id]);
+      expect(state.episodes.at(-1)?.unresolvedIssues).toEqual([
+        "Approval is still pending from the repository owner.",
+      ]);
+      expect(snapshot.thread.status).toBe("waiting_approval");
+      expect(snapshot.thread.parentThreadId).toBe("thread-parent");
+      expect(snapshot.thread.inputEpisodeIds).toEqual([
+        "episode-prior",
+        "episode-context",
+      ]);
+      expect(snapshot.thread.smithersRunId).toBe("run-fs");
       expect(snapshot.episodes.at(-1)?.smithersRunId).toBe("run-fs");
+      expect(snapshot.episodes.at(-1)?.changedFiles).toEqual([changedFilePath]);
+      expect(snapshot.episodes.at(-1)?.inputEpisodeIds).toEqual(["episode-prior"]);
+      expect(snapshot.episodes.at(-1)?.unresolvedIssues).toEqual([
+        "Approval is still pending from the repository owner.",
+      ]);
       expect(snapshot.artifacts[0]?.path).toBe(reportPath);
+      expect(snapshot.verification.overallStatus).toBe("passed");
       expect(snapshot.workflowRuns[0]?.worktreePath).toBe(thread.worktreePath);
       expect(snapshot.alignment.activeWorktreePath).toBe(thread.worktreePath);
       expect(harness.jsonl()).toContain("\"customType\":\"hellm/thread\"");
       expect(harness.jsonl()).toContain("ignore me");
+    });
+  });
+
+  it("rebuilds episode verification records from real JSONL when no global verification snapshot exists", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const sessionFile = workspace.path(".pi/sessions/verification-only.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "session-verification-fs",
+        cwd: workspace.root,
+      });
+      const thread = createThread({
+        id: "thread-verification-fs",
+        kind: "verification",
+        objective: "Rebuild verification records",
+        status: "completed",
+        createdAt: "2026-04-08T10:00:00.000Z",
+        updatedAt: "2026-04-08T10:05:00.000Z",
+      });
+      const buildRecord = createVerificationRecord({
+        id: "verification-build-fs",
+        kind: "build",
+        status: "passed",
+        summary: "Build passed",
+        createdAt: "2026-04-08T10:00:01.000Z",
+      });
+      const episode = createEpisode({
+        id: "episode-verification-fs",
+        threadId: thread.id,
+        source: "verification",
+        objective: "Verification run",
+        status: "completed_with_issues",
+        verification: [buildRecord],
+        provenance: {
+          executionPath: "verification",
+          actor: "verification",
+        },
+        startedAt: "2026-04-08T10:00:00.000Z",
+        completedAt: "2026-04-08T10:05:00.000Z",
+      });
+      const manualRecord = createVerificationRecord({
+        id: "verification-manual-fs",
+        kind: "manual",
+        status: "failed",
+        summary: "Manual verification failed",
+        createdAt: "2026-04-08T10:05:00.000Z",
+      });
+
+      harness.append({ kind: "thread", data: thread });
+      harness.append({ kind: "episode", data: episode });
+      harness.append({ kind: "verification", data: manualRecord });
+
+      const reconstructed = harness.reconstruct();
+
+      expect(reconstructed.verification.byKind.build?.status).toBe("passed");
+      expect(reconstructed.verification.byKind.manual?.status).toBe("failed");
+      expect(reconstructed.verification.overallStatus).toBe("failed");
     });
   });
 
