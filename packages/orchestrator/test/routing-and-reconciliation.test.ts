@@ -303,6 +303,67 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     expect(result.threadSnapshot.thread.status).toBe("completed");
   });
 
+  it("dispatches bounded worker requests with objective overrides and bounded completion/tool scope contracts", async () => {
+    const piBridge = new FakePiRuntimeBridge();
+    const worktreePath = "/repo/.worktrees/feature-bounded-contract";
+    piBridge.enqueueResult({
+      status: "completed",
+      episode: createEpisodeFixture({
+        id: "episode-pi-bounded-contract",
+        threadId: "thread-pi-bounded-contract",
+        source: "pi-worker",
+        worktreePath,
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      piBridge,
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext({ ...request, worktreePath });
+        },
+      },
+    });
+
+    const result = await orchestrator.run({
+      threadId: "thread-pi-bounded-contract",
+      prompt: "Prompt is separate from objective override.",
+      cwd: "/repo",
+      worktreePath,
+      routeHint: "pi-worker",
+      workflowSeedInput: {
+        objective: "Deliver bounded worker artifact.",
+      },
+    });
+
+    expect(piBridge.workerRequests[0]).toMatchObject({
+      path: "pi-worker",
+      objective: "Deliver bounded worker artifact.",
+      cwd: "/repo",
+      completion: {
+        type: "episode-produced",
+        maxTurns: 1,
+      },
+      scopedContext: {
+        relevantPaths: ["/repo", worktreePath],
+      },
+      toolScope: {
+        allow: ["read", "edit", "bash"],
+        writeRoots: ["/repo"],
+      },
+      runtimeTransition: {
+        reason: "new",
+        toSessionId: "thread-pi-bounded-contract:pi",
+        aligned: false,
+        toWorktreePath: worktreePath,
+      },
+    });
+    expect(result.threadSnapshot.thread.objective).toBe(
+      "Deliver bounded worker artifact.",
+    );
+  });
+
   it("uses a resume runtime transition when a bounded worker run is resumed in a worktree", async () => {
     const piBridge = new FakePiRuntimeBridge();
     const worktreePath = "/repo/.worktrees/feature";
@@ -365,6 +426,57 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     });
     expect(result.threadSnapshot.thread.status).toBe("completed");
     expect(result.threadSnapshot.episodes.at(-1)?.id).toBe("episode-resumed");
+  });
+
+  it("uses a resume runtime transition aligned to session cwd when bounded worker resume has no worktree", async () => {
+    const piBridge = new FakePiRuntimeBridge();
+    piBridge.enqueueResult({
+      status: "completed",
+      episode: createEpisodeFixture({
+        id: "episode-resumed-no-worktree",
+        threadId: "thread-pi-resume-no-worktree",
+        source: "pi-worker",
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      piBridge,
+      contextLoader: {
+        async load(request) {
+          const thread = createThreadFixture({
+            id: request.threadId,
+            kind: "pi-worker",
+            objective: request.prompt,
+            status: "running",
+          });
+          return {
+            ...baseLoadedContext(request),
+            state: {
+              ...baseLoadedContext(request).state,
+              threads: [thread],
+            },
+          };
+        },
+      },
+    });
+
+    await orchestrator.run({
+      threadId: "thread-pi-resume-no-worktree",
+      prompt: "Resume bounded worker execution without a worktree.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+      resumeRunId: "run-resume-no-worktree",
+    });
+
+    expect(piBridge.workerRequests[0]?.runtimeTransition).toEqual({
+      reason: "resume",
+      toSessionId: "thread-pi-resume-no-worktree:pi",
+      aligned: true,
+    });
+    expect(piBridge.workerRequests[0]?.runtimeTransition).not.toHaveProperty(
+      "toWorktreePath",
+    );
   });
 
   it("re-enters after every pi-worker episode by loading reconciled state into the next run", async () => {
