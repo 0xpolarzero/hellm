@@ -538,4 +538,63 @@ describe("@hellm/session-model filesystem roundtrip", () => {
       ]);
     });
   });
+
+  it("uses latest file-backed episode artifact references when an episode revision removes an artifact", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const reportPath = await workspace.write("reports/old-output.log", "old output\n");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/artifact-upsert.jsonl"),
+        sessionId: "session-artifact-upsert-fs",
+        cwd: workspace.root,
+      });
+      const thread = createThread({
+        id: "thread-artifact-upsert-fs",
+        kind: "direct",
+        objective: "Track artifact references across episode revisions",
+        status: "running",
+        createdAt: "2026-04-08T09:00:00.000Z",
+        updatedAt: "2026-04-08T09:01:00.000Z",
+      });
+      const artifact = createArtifact({
+        id: "artifact-fs-removed",
+        kind: "log",
+        description: "Artifact from first revision",
+        path: reportPath,
+        createdAt: "2026-04-08T09:00:00.000Z",
+      });
+      const firstEpisodeRevision = createEpisode({
+        id: "episode-fs-artifact-upsert",
+        threadId: thread.id,
+        source: "orchestrator",
+        objective: thread.objective,
+        status: "completed",
+        artifacts: [artifact],
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+        },
+        startedAt: "2026-04-08T09:00:00.000Z",
+        completedAt: "2026-04-08T09:00:01.000Z",
+      });
+      const secondEpisodeRevision = createEpisode({
+        ...firstEpisodeRevision,
+        artifacts: [],
+        conclusions: ["Final episode no longer references the prior log artifact."],
+        completedAt: "2026-04-08T09:00:02.000Z",
+      });
+
+      harness.append({ kind: "thread", data: thread });
+      harness.append({ kind: "episode", data: firstEpisodeRevision });
+      harness.append({ kind: "episode", data: secondEpisodeRevision });
+
+      const state = harness.reconstruct();
+      const snapshot = createThreadSnapshot(state, thread.id);
+
+      expect(state.artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
+      expect(snapshot.episodes).toHaveLength(1);
+      expect(snapshot.episodes[0]?.id).toBe(firstEpisodeRevision.id);
+      expect(snapshot.episodes[0]?.artifacts).toEqual([]);
+      expect(snapshot.artifacts).toEqual([]);
+    });
+  });
 });
