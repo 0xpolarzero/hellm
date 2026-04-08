@@ -1,6 +1,7 @@
 # AGENTS
 
 - Read `docs/prd.md` before doing any work.
+- Read `docs/features.ts` before doing any work that affects product scope, feature behavior, or test planning.
 - This repo exists to turn pi coding agent into a Slate-like orchestrated coding agent and TUI.
 - Use `docs/references/pi-mono` as the default local reference when reasoning about pi code, APIs, architecture, or behavior.
 - Use `docs/references/smithers` as the default local reference when reasoning about Smithers code, APIs, architecture, or behavior.
@@ -17,3 +18,5 @@
 - Treat explicit public Slate facts and PRD inferences separately.
 - Do not treat Smithers source as evidence of Slate internals; keep public Slate facts, PRD inferences, and Smithers-derived ideas clearly separated.
 - Update `docs/prd.md` whenever architecture, scope, or priorities change materially.
+- Treat `docs/features.ts` as the exhaustive feature inventory for the product delta over stock `pi`.
+- Update `docs/features.ts` whenever features are added, removed, renamed, split, merged, or materially revamped so it stays in sync with the real product surface.
