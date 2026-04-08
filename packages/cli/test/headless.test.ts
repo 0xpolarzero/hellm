@@ -135,6 +135,172 @@ describe("@hellm/cli headless execution", () => {
     expect(result.output.workflowRunIds).toEqual(["run-seed"]);
   });
 
+  it("keeps explicit route hints authoritative over workflow seed preferredPath in headless mode", async () => {
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      contextLoader: createDefaultHeadlessContextLoader(),
+    });
+
+    const result = await executeHeadlessRun(
+      {
+        threadId: "thread-seed-explicit-hint",
+        prompt: "Prefer the explicit route hint.",
+        cwd: "/repo",
+        routeHint: "direct",
+        workflowSeedInput: {
+          preferredPath: "smithers-workflow",
+        },
+      },
+      { orchestrator },
+    );
+
+    expect(result.raw.classification).toEqual({
+      path: "direct",
+      confidence: "hint",
+      reason: "Explicit route hint supplied by caller.",
+    });
+    expect(result.events).toContainEqual({
+      type: "run.classified",
+      path: "direct",
+      reason: "Explicit route hint supplied by caller.",
+    });
+  });
+
+  it("falls back to approval, verification, and direct semantics when workflow seed input omits preferredPath", async () => {
+    const scenarios = [
+      {
+        id: "approval",
+        request: {
+          prompt: "Wait for approval before executing.",
+          requireApproval: true,
+        },
+        expected: {
+          path: "approval" as const,
+          reason: "Request requires approval or clarification.",
+        },
+      },
+      {
+        id: "verification",
+        request: {
+          prompt: "Please verify this workspace state.",
+        },
+        expected: {
+          path: "verification" as const,
+          reason: "Prompt emphasizes verification work.",
+        },
+      },
+      {
+        id: "direct",
+        request: {
+          prompt: "Describe what changed in the repository.",
+        },
+        expected: {
+          path: "direct" as const,
+          reason: "Defaulted to direct execution for a small local request.",
+        },
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const verificationRunner = new FakeVerificationRunner();
+      verificationRunner.enqueueResult({
+        status: "passed",
+        records: [createVerificationFixture({ kind: "build", status: "passed" })],
+        artifacts: [],
+      });
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        verificationRunner,
+        contextLoader: createDefaultHeadlessContextLoader(),
+      });
+
+      const result = await executeHeadlessRun(
+        {
+          threadId: `thread-seed-fallback-${scenario.id}`,
+          cwd: "/repo",
+          routeHint: "auto",
+          workflowSeedInput: {
+            objective: "Workflow seed objective without preferred path",
+            tasks: [
+              {
+                id: "seed-task",
+                outputKey: "result",
+                prompt: "Seeded task definition.",
+                agent: "pi",
+              },
+            ],
+          },
+          ...scenario.request,
+        },
+        { orchestrator },
+      );
+
+      expect(result.raw.classification.path).toBe(scenario.expected.path);
+      expect(result.events).toContainEqual({
+        type: "run.classified",
+        path: scenario.expected.path,
+        reason: scenario.expected.reason,
+      });
+    }
+  });
+
+  it("forwards workflow seed objective and tasks when seed semantics choose smithers workflow", async () => {
+    const smithersBridge = new FakeSmithersWorkflowBridge();
+    const seededObjective = "Seeded objective from workflow input";
+    const seededTasks = [
+      {
+        id: "seed-task-plan",
+        outputKey: "plan",
+        prompt: "Plan the seeded change.",
+        agent: "pi" as const,
+      },
+    ];
+    smithersBridge.enqueueRunResult({
+      run: {
+        runId: "run-seed-objective",
+        threadId: "thread-seed-objective",
+        workflowId: "workflow:thread-seed-objective",
+        status: "completed",
+        updatedAt: "2026-04-08T09:00:00.000Z",
+      },
+      status: "completed",
+      outputs: [],
+      episode: createEpisodeFixture({
+        id: "episode-seed-objective",
+        threadId: "thread-seed-objective",
+        source: "smithers",
+        smithersRunId: "run-seed-objective",
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      smithersBridge,
+      contextLoader: createDefaultHeadlessContextLoader(),
+    });
+
+    const result = await executeHeadlessRun(
+      {
+        threadId: "thread-seed-objective",
+        prompt: "Prompt should not override the workflow seed objective.",
+        cwd: "/repo",
+        routeHint: "auto",
+        workflowSeedInput: {
+          objective: seededObjective,
+          preferredPath: "smithers-workflow",
+          tasks: seededTasks,
+        },
+      },
+      { orchestrator },
+    );
+
+    expect(result.raw.classification.path).toBe("smithers-workflow");
+    expect(smithersBridge.runRequests[0]?.objective).toBe(seededObjective);
+    expect(smithersBridge.runRequests[0]?.workflow.objective).toBe(seededObjective);
+    expect(smithersBridge.runRequests[0]?.workflow.name).toBe(seededObjective);
+    expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual(seededTasks);
+  });
+
   it("uses prompt-driven verification classification when routeHint is omitted or auto and emits run.classified", async () => {
     const scenarios = [
       { id: "omitted-route-hint" },
@@ -335,6 +501,25 @@ describe("@hellm/cli headless execution", () => {
     () => {},
   );
 });
+
+function createDefaultHeadlessContextLoader() {
+  return {
+    async load(request: { threadId: string; cwd: string }) {
+      return {
+        sessionHistory: [],
+        repoAndWorktree: { cwd: request.cwd },
+        agentsInstructions: [],
+        relevantSkills: [],
+        priorEpisodes: [],
+        priorArtifacts: [],
+        state: createEmptySessionState({
+          sessionId: request.threadId,
+          sessionCwd: request.cwd,
+        }),
+      };
+    },
+  };
+}
 
 function createStubOrchestrator(result: OrchestratorRunResult): Orchestrator {
   return {
