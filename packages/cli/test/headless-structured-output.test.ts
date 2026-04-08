@@ -4,8 +4,10 @@ import { createOrchestrator } from "@hellm/orchestrator";
 import { createEmptySessionState, type SessionState } from "@hellm/session-model";
 import {
   FakePiRuntimeBridge,
+  FileBackedSessionJsonlHarness,
   createEpisodeFixture,
   fixedClock,
+  withTempWorkspace,
 } from "@hellm/test-support";
 
 function createContextState(
@@ -204,6 +206,162 @@ describe("@hellm/cli structured headless output", () => {
       result.threadSnapshot.episodes.at(-1)?.id,
     );
     expect(result.output.workflowRunIds).toEqual(["run-owned"]);
+  });
+
+  it("includes all thread-scoped workflow run ids in snapshot order", async () => {
+    const threadId = "thread-structured-runs";
+    const state = createContextState(threadId, "/repo", {
+      workflowRuns: [
+        {
+          runId: "run-one",
+          threadId,
+          workflowId: "workflow:one",
+          status: "running",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+        },
+        {
+          runId: "run-two",
+          threadId,
+          workflowId: "workflow:two",
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+        },
+        {
+          runId: "run-three",
+          threadId: "other-thread",
+          workflowId: "workflow:three",
+          status: "completed",
+          updatedAt: "2026-04-08T09:10:00.000Z",
+        },
+        {
+          runId: "run-four",
+          threadId,
+          workflowId: "workflow:four",
+          status: "waiting_approval",
+          updatedAt: "2026-04-08T09:15:00.000Z",
+        },
+      ],
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      contextLoader: {
+        async load(request) {
+          return {
+            sessionHistory: [],
+            repoAndWorktree: { cwd: request.cwd },
+            agentsInstructions: [],
+            relevantSkills: [],
+            priorEpisodes: state.episodes,
+            priorArtifacts: state.artifacts,
+            state,
+          };
+        },
+      },
+    });
+
+    const result = await executeHeadlessRun(
+      {
+        threadId,
+        prompt: "Direct path summary",
+        cwd: "/repo",
+        routeHint: "direct",
+      },
+      { orchestrator },
+    );
+
+    expect(result.output.workflowRunIds).toEqual([
+      "run-one",
+      "run-two",
+      "run-four",
+    ]);
+  });
+
+  it("tracks the latest structured output fields across file-backed JSONL re-entry", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "thread-structured-reentry";
+      const sessionHarness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/structured-reentry.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const piBridge = new FakePiRuntimeBridge();
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: createEpisodeFixture({
+          id: "episode-structured-reentry-1",
+          threadId,
+          source: "pi-worker",
+          conclusions: ["First summary"],
+        }),
+      });
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: createEpisodeFixture({
+          id: "episode-structured-reentry-2",
+          threadId,
+          source: "pi-worker",
+          conclusions: ["Second summary"],
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        piBridge,
+        contextLoader: {
+          async load(request) {
+            const state = sessionHarness.reconstruct();
+            return {
+              sessionHistory: sessionHarness.lines(),
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: [],
+              relevantSkills: [],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await executeHeadlessRun(
+        {
+          threadId,
+          prompt: "First worker run",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        { orchestrator },
+      );
+      sessionHarness.appendEntries(first.raw.sessionEntries);
+
+      const second = await executeHeadlessRun(
+        {
+          threadId,
+          prompt: "Second worker run",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        { orchestrator },
+      );
+      sessionHarness.appendEntries(second.raw.sessionEntries);
+      const reconstructed = sessionHarness.reconstruct();
+
+      expect(first.output.summary).toBe("First summary");
+      expect(second.output.summary).toBe("Second summary");
+      expect(second.output.latestEpisodeId).toBe("episode-structured-reentry-2");
+      expect(second.output.latestEpisodeId).toBe(
+        second.threadSnapshot.episodes.at(-1)?.id,
+      );
+      expect(second.output.latestEpisodeId).not.toBe(first.output.latestEpisodeId);
+      expect(second.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        "episode-structured-reentry-1",
+      ]);
+      expect(reconstructed.episodes.map((episode) => episode.id)).toEqual([
+        "episode-structured-reentry-1",
+        "episode-structured-reentry-2",
+      ]);
+    });
   });
 
   it("fails fast when orchestrator returns a thread snapshot with no episodes", async () => {

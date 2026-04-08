@@ -4,6 +4,9 @@ import { describe, expect, it } from "bun:test";
 import { runBunModule } from "@hellm/test-support";
 
 const CLI_ENTRY = fileURLToPath(new URL("../src/index.ts", import.meta.url));
+const STRUCTURED_OUTPUT_FIXTURE = fileURLToPath(
+  new URL("./fixtures/structured-output.process.ts", import.meta.url),
+);
 const REPO_ROOT = resolve(import.meta.dir, "../../../");
 
 interface ProcessJsonlEvent {
@@ -74,6 +77,35 @@ describe("@hellm/cli process boundary", () => {
     const secondEpisode = secondEvents.find((event) => event.type === "run.episode");
     const secondTerminal = secondEvents.at(-1);
     expect(secondEpisode?.episodeId).toBe(secondTerminal?.latestEpisodeId);
+  });
+
+  it("executes structured headless output over a real process boundary", async () => {
+    const result = runBunModule({
+      entryPath: STRUCTURED_OUTPUT_FIXTURE,
+      cwd: REPO_ROOT,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.trim()).toBe("");
+
+    const parsed = JSON.parse(result.stdout.trim()) as {
+      output: {
+        threadId: string;
+        status: string;
+        latestEpisodeId: string;
+        summary: string;
+        workflowRunIds: string[];
+      };
+      latestEpisodeIdFromSnapshot?: string;
+    };
+
+    expect(parsed.output.threadId).toBe("process-structured-output");
+    expect(parsed.output.status).toBe("completed");
+    expect(parsed.output.latestEpisodeId).toBe(
+      parsed.latestEpisodeIdFromSnapshot,
+    );
+    expect(parsed.output.summary.length).toBeGreaterThan(0);
+    expect(parsed.output.workflowRunIds).toEqual([]);
   });
 });
 
