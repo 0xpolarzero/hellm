@@ -763,4 +763,163 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
       await workspace.cleanup();
     }
   });
+
+  it("persists normalized verification episodes across file-backed re-entry and refreshes global verification state by kind", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const sessionFile = workspace.path(
+        ".pi/sessions/thread-verify-normalization.jsonl",
+      );
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "thread-verify-normalization",
+        cwd: workspace.root,
+      });
+      const verificationRunner = new FakeVerificationRunner();
+      const failedReportPath = await workspace.write(
+        "reports/verification-failed.log",
+        "verification failed\n",
+      );
+      const passedReportPath = await workspace.write(
+        "reports/verification-passed.log",
+        "verification passed\n",
+      );
+
+      verificationRunner.enqueueResult({
+        status: "failed",
+        records: [
+          createVerificationRecord({
+            id: "verification-first-build",
+            kind: "build",
+            status: "passed",
+            summary: "Build passed",
+            createdAt: "2026-04-08T09:00:00.000Z",
+          }),
+          createVerificationRecord({
+            id: "verification-first-test",
+            kind: "test",
+            status: "failed",
+            summary: "Test suite failed",
+            createdAt: "2026-04-08T09:00:00.000Z",
+          }),
+          createVerificationRecord({
+            id: "verification-first-lint",
+            kind: "lint",
+            status: "failed",
+            summary: "Lint failed",
+            createdAt: "2026-04-08T09:00:00.000Z",
+          }),
+        ],
+        artifacts: [
+          createArtifact({
+            id: "artifact-verification-failed",
+            kind: "log",
+            description: "Failed verification report",
+            path: failedReportPath,
+            createdAt: "2026-04-08T09:00:00.000Z",
+          }),
+        ],
+      });
+      verificationRunner.enqueueResult({
+        status: "passed",
+        records: [
+          createVerificationRecord({
+            id: "verification-second-build",
+            kind: "build",
+            status: "passed",
+            summary: "Build passed on rerun",
+            createdAt: "2026-04-08T09:00:00.000Z",
+          }),
+          createVerificationRecord({
+            id: "verification-second-test",
+            kind: "test",
+            status: "passed",
+            summary: "Tests passed on rerun",
+            createdAt: "2026-04-08T09:00:00.000Z",
+          }),
+          createVerificationRecord({
+            id: "verification-second-lint",
+            kind: "lint",
+            status: "passed",
+            summary: "Lint passed on rerun",
+            createdAt: "2026-04-08T09:00:00.000Z",
+          }),
+        ],
+        artifacts: [
+          createArtifact({
+            id: "artifact-verification-passed",
+            kind: "log",
+            description: "Passing verification report",
+            path: passedReportPath,
+            createdAt: "2026-04-08T09:00:00.000Z",
+          }),
+        ],
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        verificationRunner,
+        contextLoader: createFilesystemContextLoader({ sessionFile }),
+      });
+
+      const first = await orchestrator.run({
+        threadId: "thread-verify-normalization",
+        prompt: "Run verification and normalize failures.",
+        cwd: workspace.root,
+        routeHint: "verification",
+      });
+      harness.appendEntries(first.sessionEntries);
+      const firstEpisode = first.threadSnapshot.episodes.at(-1);
+
+      expect(firstEpisode).toBeDefined();
+      expect(firstEpisode?.source).toBe("verification");
+      expect(firstEpisode?.status).toBe("completed_with_issues");
+      expect(firstEpisode?.unresolvedIssues).toEqual([
+        "Test suite failed",
+        "Lint failed",
+      ]);
+      expect(firstEpisode?.followUpSuggestions).toEqual([
+        "Resolve the failing verification steps before closing the thread.",
+      ]);
+      expect(firstEpisode?.provenance).toEqual({
+        executionPath: "verification",
+        actor: "verification",
+        notes: "Normalized verification execution path.",
+      });
+
+      const second = await orchestrator.run({
+        threadId: "thread-verify-normalization",
+        prompt: "Rerun verification after fixes.",
+        cwd: workspace.root,
+        routeHint: "verification",
+      });
+      harness.appendEntries(second.sessionEntries);
+      const secondEpisode = second.threadSnapshot.episodes.at(-1);
+      const firstEpisodeId = firstEpisode?.id;
+      const reconstructed = harness.reconstruct();
+      const snapshot = createThreadSnapshot(
+        reconstructed,
+        "thread-verify-normalization",
+      );
+
+      expect(verificationRunner.calls).toHaveLength(2);
+      expect(verificationRunner.calls[0]?.kinds).toEqual(["build", "test", "lint"]);
+      expect(verificationRunner.calls[1]?.kinds).toEqual(["build", "test", "lint"]);
+      expect(secondEpisode?.status).toBe("completed");
+      expect(secondEpisode?.unresolvedIssues).toEqual([]);
+      expect(secondEpisode?.followUpSuggestions).toEqual([]);
+      expect(firstEpisodeId).toBeDefined();
+      expect(secondEpisode?.inputEpisodeIds).toEqual([firstEpisodeId!]);
+      expect(snapshot.episodes.map((episode) => episode.status)).toEqual([
+        "completed_with_issues",
+        "completed",
+      ]);
+      expect(snapshot.verification.overallStatus).toBe("passed");
+      expect(snapshot.verification.byKind.build?.status).toBe("passed");
+      expect(snapshot.verification.byKind.test?.status).toBe("passed");
+      expect(snapshot.verification.byKind.lint?.status).toBe("passed");
+      expect(snapshot.artifacts.map((artifact) => artifact.path)).toEqual(
+        expect.arrayContaining([failedReportPath, passedReportPath]),
+      );
+    });
+  });
 });
