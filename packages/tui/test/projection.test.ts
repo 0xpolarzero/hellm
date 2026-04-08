@@ -74,10 +74,6 @@ describe("@hellm/tui projection", () => {
   });
 
   test.todo(
-    "advanced worktree switching UX remains orchestration-aware",
-    () => {},
-  );
-  test.todo(
     "rich slash command surface integrates with the orchestration projection",
     () => {},
   );
