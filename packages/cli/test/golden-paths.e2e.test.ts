@@ -491,6 +491,93 @@ describe("golden path headless specs", () => {
     });
   });
 
+  it("re-enters from persisted JSONL using a fresh orchestrator instance for each headless run", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-reenter-fresh-orchestrator";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-reenter-fresh.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const piBridge = new FakePiRuntimeBridge();
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: createEpisodeFixture({
+          id: "golden-fresh-episode-1",
+          threadId,
+          source: "pi-worker",
+        }),
+      });
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: createEpisodeFixture({
+          id: "golden-fresh-episode-2",
+          threadId,
+          source: "pi-worker",
+        }),
+      });
+
+      const createReentryOrchestrator = () =>
+        createOrchestrator({
+          clock: fixedClock(),
+          piBridge,
+          contextLoader: {
+            async load(request) {
+              const state = harness.reconstruct();
+              return {
+                sessionHistory: harness.lines(),
+                repoAndWorktree: { cwd: request.cwd },
+                agentsInstructions: ["Read docs/prd.md"],
+                relevantSkills: ["tests"],
+                priorEpisodes: state.episodes,
+                priorArtifacts: state.artifacts,
+                state,
+              };
+            },
+          },
+        });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run first worker episode.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        createReentryOrchestrator(),
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run second worker episode.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        createReentryOrchestrator(),
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+
+      const firstEntryIds = first.result.raw.sessionEntries.map((entry) => entry.id);
+      const secondEntryIds = second.result.raw.sessionEntries.map((entry) => entry.id);
+      const allEntryIds = [...firstEntryIds, ...secondEntryIds];
+
+      expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual(
+        ["golden-fresh-episode-1"],
+      );
+      expect(piBridge.workerRequests[1]?.inputEpisodeIds).toEqual([
+        "golden-fresh-episode-1",
+      ]);
+      expect(secondEntryIds.some((id) => firstEntryIds.includes(id))).toBe(false);
+      expect(new Set(allEntryIds).size).toBe(allEntryIds.length);
+      expect(second.result.raw.sessionEntries[0]?.parentId).toBe(
+        first.result.raw.sessionEntries.at(-1)?.id,
+      );
+      expect(second.result.events.at(-1)?.type).toBe("run.completed");
+    });
+  });
+
   it("covers a smithers workflow path with approval and resume", async () => {
     const smithersBridge = new FakeSmithersWorkflowBridge();
     smithersBridge.enqueueRunResult({

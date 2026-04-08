@@ -1694,4 +1694,57 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
       "episode-stale",
     );
   });
+
+  it("re-enters from a fresh orchestrator instance without reusing structured session entry ids", async () => {
+    const sessionHistory: SessionJsonlEntry[] = [
+      createSessionHeader({
+        id: "thread-reentry-fresh-orchestrator",
+        timestamp: "2026-04-08T09:00:00.000Z",
+        cwd: "/repo",
+      }),
+    ];
+
+    const createReentryOrchestrator = () =>
+      createOrchestrator({
+        clock: fixedClock(),
+        contextLoader: {
+          async load(request) {
+            const state = reconstructSessionState(sessionHistory);
+            return {
+              ...baseLoadedContext(request),
+              sessionHistory,
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+    const first = await createReentryOrchestrator().run({
+      threadId: "thread-reentry-fresh-orchestrator",
+      prompt: "Summarize the first pass.",
+      cwd: "/repo",
+      routeHint: "direct",
+    });
+    sessionHistory.push(...first.sessionEntries);
+
+    const second = await createReentryOrchestrator().run({
+      threadId: "thread-reentry-fresh-orchestrator",
+      prompt: "Summarize the second pass.",
+      cwd: "/repo",
+      routeHint: "direct",
+    });
+
+    const firstIds = first.sessionEntries.map((entry) => entry.id);
+    const secondIds = second.sessionEntries.map((entry) => entry.id);
+    const allIds = [...firstIds, ...secondIds];
+
+    expect(secondIds.some((id) => firstIds.includes(id))).toBe(false);
+    expect(new Set(allIds).size).toBe(allIds.length);
+    expect(second.sessionEntries[0]?.parentId).toBe(first.sessionEntries.at(-1)?.id);
+    expect(second.threadSnapshot.episodes.map((episode) => episode.id)).toHaveLength(
+      2,
+    );
+  });
 });
