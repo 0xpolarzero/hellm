@@ -17,13 +17,17 @@ import {
   type Episode,
 } from "@hellm/session-model";
 import {
+  FakePiRuntimeBridge,
   FakeSmithersWorkflowBridge,
   FakeVerificationRunner,
+  FileBackedSessionJsonlHarness,
   createTempGitWorkspace,
   createEpisodeFixture,
   createVerificationFixture,
   fixedClock,
   hasGit,
+  runHeadlessHarness,
+  withTempWorkspace,
 } from "@hellm/test-support";
 
 describe("@hellm/cli headless execution", () => {
@@ -313,6 +317,102 @@ describe("@hellm/cli headless execution", () => {
     });
   });
 
+  it("preserves a shared orchestrator session-entry chain across mixed headless entry surfaces", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "thread-shared-entry-surfaces";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/shared-entry-surfaces.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const piBridge = new FakePiRuntimeBridge();
+      const firstEpisode = createEpisodeFixture({
+        id: "shared-entry-episode-1",
+        threadId,
+        source: "pi-worker",
+      });
+      const secondEpisode = createEpisodeFixture({
+        id: "shared-entry-episode-2",
+        threadId,
+        source: "pi-worker",
+      });
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: firstEpisode,
+      });
+      piBridge.enqueueResult({
+        status: "completed",
+        episode: secondEpisode,
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        piBridge,
+        contextLoader: {
+          async load(request) {
+            const state = harness.reconstruct();
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: [],
+              relevantSkills: [],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await executeHeadlessRun(
+        {
+          threadId,
+          prompt: "First headless surface call.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        { orchestrator },
+      );
+      harness.appendEntries(first.raw.sessionEntries);
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Second headless surface call via harness.",
+          cwd: workspace.root,
+          routeHint: "pi-worker",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+
+      const firstLastEntryId = first.raw.sessionEntries.at(-1)?.id;
+      const secondFirstEntryId = second.result.raw.sessionEntries[0]?.id;
+
+      expect(first.orchestratorId).toBe("main");
+      expect(second.result.orchestratorId).toBe(first.orchestratorId);
+      expect(second.result.events[0]).toEqual({
+        type: "run.started",
+        orchestratorId: first.orchestratorId,
+        threadId,
+      });
+      expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual(
+        [firstEpisode.id],
+      );
+      expect(piBridge.workerRequests[1]?.inputEpisodeIds).toEqual([firstEpisode.id]);
+      expect(second.result.raw.sessionEntries[0]?.parentId).toBe(firstLastEntryId);
+      expect(parseStructuredEntryCounter(secondFirstEntryId)).toBe(
+        parseStructuredEntryCounter(firstLastEntryId) + 1,
+      );
+
+      const reconstructed = harness.reconstruct();
+      expect(reconstructed.episodes.map((episode) => episode.id)).toEqual([
+        firstEpisode.id,
+        secondEpisode.id,
+      ]);
+    });
+  });
+
   it("chooses summary output from conclusions, then follow-up suggestions, then objective", async () => {
     const scenarios: Array<{
       id: string;
@@ -599,4 +699,12 @@ function createRunResultForHeadless(input: {
       reason: completion.reason,
     },
   };
+}
+
+function parseStructuredEntryCounter(id: string | undefined): number {
+  if (!id || !id.startsWith("hellm-")) {
+    throw new Error(`Expected orchestrator-generated structured entry id, received: ${id}`);
+  }
+
+  return Number.parseInt(id.slice("hellm-".length), 16);
 }

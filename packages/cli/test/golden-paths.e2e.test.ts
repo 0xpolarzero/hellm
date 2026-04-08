@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { executeHeadlessRun } from "@hellm/cli";
 import { createOrchestrator } from "@hellm/orchestrator";
 import { createEmptySessionState } from "@hellm/session-model";
 import {
@@ -279,7 +280,7 @@ describe("golden path headless specs", () => {
     expect(jsonl.at(-1)).toContain("\"run.waiting\"");
   });
 
-  it("re-enters after each headless episode using file-backed JSONL session state", async () => {
+  it("re-enters across mixed headless entry surfaces using file-backed JSONL session state", async () => {
     await withTempWorkspace(async (workspace) => {
       const threadId = "golden-reenter";
       const harness = new FileBackedSessionJsonlHarness({
@@ -324,16 +325,16 @@ describe("golden path headless specs", () => {
         },
       });
 
-      const first = await runHeadlessHarness(
+      const first = await executeHeadlessRun(
         {
           threadId,
           prompt: "Run first worker episode.",
           cwd: workspace.root,
           routeHint: "pi-worker",
         },
-        orchestrator,
+        { orchestrator },
       );
-      harness.appendEntries(first.result.raw.sessionEntries);
+      harness.appendEntries(first.raw.sessionEntries);
 
       const second = await runHeadlessHarness(
         {
@@ -347,9 +348,13 @@ describe("golden path headless specs", () => {
       harness.appendEntries(second.result.raw.sessionEntries);
       const reconstructed = harness.reconstruct();
 
+      expect(first.orchestratorId).toBe(second.result.orchestratorId);
       expect(piBridge.workerRequests[0]?.inputEpisodeIds).toEqual([]);
       expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual(
         ["golden-reenter-episode-1"],
+      );
+      expect(second.result.raw.sessionEntries[0]?.parentId).toBe(
+        first.raw.sessionEntries.at(-1)?.id,
       );
       expect(piBridge.workerRequests[1]?.inputEpisodeIds).toEqual([
         "golden-reenter-episode-1",
