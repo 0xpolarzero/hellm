@@ -543,6 +543,77 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     ]);
   });
 
+  it("re-enters after a waiting pi-worker episode and carries that waiting episode into the next run context", async () => {
+    const threadId = "thread-pi-reenter-waiting";
+    const piBridge = new FakePiRuntimeBridge();
+    piBridge.enqueueResult({
+      status: "waiting_input",
+      episode: createEpisodeFixture({
+        id: "episode-pi-waiting",
+        threadId,
+        source: "pi-worker",
+        status: "waiting_input",
+      }),
+    });
+    piBridge.enqueueResult({
+      status: "completed",
+      episode: createEpisodeFixture({
+        id: "episode-pi-after-waiting",
+        threadId,
+        source: "pi-worker",
+      }),
+    });
+
+    let state = createEmptySessionState({
+      sessionId: threadId,
+      sessionCwd: "/repo",
+    });
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      piBridge,
+      contextLoader: {
+        async load(request) {
+          return {
+            ...baseLoadedContext(request),
+            priorEpisodes: state.episodes,
+            priorArtifacts: state.artifacts,
+            state,
+          };
+        },
+      },
+    });
+
+    const waiting = await orchestrator.run({
+      threadId,
+      prompt: "Worker needs more context.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+    });
+    state = waiting.sessionState;
+    const resumed = await orchestrator.run({
+      threadId,
+      prompt: "Worker resumes after user clarification.",
+      cwd: "/repo",
+      routeHint: "pi-worker",
+      resumeRunId: "pi-waiting-run",
+    });
+
+    expect(waiting.completion).toEqual({
+      isComplete: false,
+      reason: "waiting_input",
+    });
+    expect(resumed.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+      "episode-pi-waiting",
+    ]);
+    expect(piBridge.workerRequests[1]?.inputEpisodeIds).toEqual([
+      "episode-pi-waiting",
+    ]);
+    expect(resumed.threadSnapshot.episodes.map((episode) => episode.id)).toEqual([
+      "episode-pi-waiting",
+      "episode-pi-after-waiting",
+    ]);
+  });
+
   it("honors explicit smithers workflow seed tasks and emits workflow/isolation session entries", async () => {
     const smithersBridge = new FakeSmithersWorkflowBridge();
     const explicitTasks = [

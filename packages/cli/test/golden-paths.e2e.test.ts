@@ -578,6 +578,119 @@ describe("golden path headless specs", () => {
     });
   });
 
+  it("re-enters a smithers approval flow from file-backed JSONL state and resumes with prior waiting episode context", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-reenter-smithers";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-reenter-smithers.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueRunResult({
+        run: {
+          runId: "golden-reenter-smithers-run",
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "waiting_approval",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+        },
+        status: "waiting_approval",
+        outputs: [],
+        approval: {
+          nodeId: "approve",
+          title: "Approve workflow",
+          summary: "Need approval before resuming.",
+          mode: "needsApproval",
+        },
+        episode: createEpisodeFixture({
+          id: "golden-reenter-smithers-wait",
+          threadId,
+          source: "smithers",
+          status: "waiting_approval",
+          smithersRunId: "golden-reenter-smithers-run",
+        }),
+      });
+      smithersBridge.enqueueResumeResult({
+        run: {
+          runId: "golden-reenter-smithers-run",
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:05:00.000Z",
+        },
+        status: "completed",
+        outputs: [],
+        episode: createEpisodeFixture({
+          id: "golden-reenter-smithers-done",
+          threadId,
+          source: "smithers",
+          status: "completed",
+          smithersRunId: "golden-reenter-smithers-run",
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        smithersBridge,
+        contextLoader: {
+          async load(request) {
+            const state = harness.reconstruct();
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const waiting = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run smithers episode that requires approval.",
+          cwd: workspace.root,
+          routeHint: "smithers-workflow",
+          requireApproval: true,
+        },
+        orchestrator,
+      );
+      harness.appendEntries(waiting.result.raw.sessionEntries);
+
+      const resumed = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Resume smithers workflow after approval.",
+          cwd: workspace.root,
+          routeHint: "smithers-workflow",
+          resumeRunId: "golden-reenter-smithers-run",
+        },
+        orchestrator,
+      );
+      harness.appendEntries(resumed.result.raw.sessionEntries);
+      const reconstructed = harness.reconstruct();
+
+      expect(waiting.result.output.status).toBe("waiting_approval");
+      expect(resumed.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual(
+        ["golden-reenter-smithers-wait"],
+      );
+      expect(smithersBridge.resumeRequests[0]?.runId).toBe(
+        "golden-reenter-smithers-run",
+      );
+      expect(reconstructed.episodes.map((episode) => episode.id)).toEqual([
+        "golden-reenter-smithers-wait",
+        "golden-reenter-smithers-done",
+      ]);
+      expect(resumed.result.events.at(-1)?.type).toBe("run.completed");
+    });
+  });
+    });
+  });
+
   it("covers a smithers workflow path with approval and resume", async () => {
     const smithersBridge = new FakeSmithersWorkflowBridge();
     smithersBridge.enqueueRunResult({
