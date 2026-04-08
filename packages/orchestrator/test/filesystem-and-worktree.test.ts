@@ -763,4 +763,102 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
       await workspace.cleanup();
     }
   });
+
+  it("persists failed integration verification from a real worktree session as completed_with_issues", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const worktreePath = await workspace.createLinkedWorktree(
+        "feature-verify-integration-failure",
+      );
+      const sessionFile = workspace.path(
+        ".pi/sessions/thread-verify-integration-failure.jsonl",
+      );
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "thread-verify-integration-failure",
+        cwd: workspace.root,
+      });
+      const verificationRunner = new FakeVerificationRunner();
+      const reportPath = await workspace.write(
+        "reports/integration-failure.log",
+        "integration regression detected\n",
+      );
+      verificationRunner.enqueueResult({
+        status: "failed",
+        records: [
+          createVerificationRecord({
+            id: "verification-integration",
+            kind: "integration",
+            status: "failed",
+            summary: "Integration regression detected",
+            artifactIds: ["artifact-integration-report"],
+            createdAt: "2026-04-08T09:00:00.000Z",
+          }),
+        ],
+        artifacts: [
+          createArtifact({
+            id: "artifact-integration-report",
+            kind: "log",
+            description: "Integration failure report",
+            path: reportPath,
+            createdAt: "2026-04-08T09:00:00.000Z",
+          }),
+        ],
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        verificationRunner,
+        contextLoader: createFilesystemContextLoader({
+          sessionFile,
+        }),
+      });
+
+      const result = await orchestrator.run({
+        threadId: "thread-verify-integration-failure",
+        prompt: "Run integration verification only.",
+        cwd: workspace.root,
+        worktreePath,
+        routeHint: "verification",
+        workflowSeedInput: {
+          verificationKinds: ["integration"],
+        },
+      });
+
+      harness.appendEntries(result.sessionEntries);
+      const reconstructed = harness.reconstruct();
+      const snapshot = createThreadSnapshot(
+        reconstructed,
+        "thread-verify-integration-failure",
+      );
+      const latestEpisode = result.threadSnapshot.episodes.at(-1);
+
+      expect(verificationRunner.calls[0]?.kinds).toEqual(["integration"]);
+      expect(result.threadSnapshot.thread.kind).toBe("verification");
+      expect(result.threadSnapshot.thread.status).toBe("completed");
+      expect(latestEpisode?.status).toBe("completed_with_issues");
+      expect(latestEpisode?.unresolvedIssues).toEqual([
+        "Integration regression detected",
+      ]);
+      expect(latestEpisode?.artifacts[0]?.path).toBe(reportPath);
+      expect(result.state.verification.byKind.integration?.status).toBe("failed");
+      expect(result.state.verification.overallStatus).toBe("failed");
+      expect(reconstructed.verification.byKind.integration?.status).toBe("failed");
+      expect(reconstructed.verification.byKind.integration?.summary).toBe(
+        "Integration regression detected",
+      );
+      expect(snapshot.verification.overallStatus).toBe("failed");
+      expect(snapshot.alignment.activeWorktreePath).toBe(worktreePath);
+      expect(result.completion).toEqual({
+        isComplete: true,
+        reason: "completed",
+      });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 });
