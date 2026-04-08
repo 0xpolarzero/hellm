@@ -9,7 +9,33 @@ import {
   FakeSmithersWorkflowBridge,
   createEpisodeFixture,
   createThreadFixture,
+  withTempWorkspace,
 } from "@hellm/test-support";
+
+const SCOPED_CONTEXT_MARKER = "[[SCOPED_CONTEXT_JSON]]";
+
+interface TaskScopedContextEnvelope {
+  taskId: string;
+  sessionHistory: string[];
+  relevantPaths: string[];
+  agentsInstructions: string[];
+  relevantSkills: string[];
+  priorEpisodeIds: string[];
+}
+
+function withScopedContextPrompt(
+  prompt: string,
+  scopedContext: TaskScopedContextEnvelope,
+): string {
+  return `${prompt}\n\n${SCOPED_CONTEXT_MARKER}${JSON.stringify(scopedContext)}`;
+}
+
+function parseScopedContext(prompt: string): TaskScopedContextEnvelope {
+  const markerIndex = prompt.indexOf(SCOPED_CONTEXT_MARKER);
+  expect(markerIndex).toBeGreaterThanOrEqual(0);
+  const payload = prompt.slice(markerIndex + SCOPED_CONTEXT_MARKER.length);
+  return JSON.parse(payload) as TaskScopedContextEnvelope;
+}
 
 describe("@hellm/smithers-bridge contract surface", () => {
   it("authors deterministic workflow metadata for dynamic plans", () => {
@@ -364,8 +390,125 @@ describe("@hellm/smithers-bridge contract surface", () => {
     });
   });
 
+  it("keeps context payloads task-scoped when callers encode them inside per-task prompts", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadWorktreePath = await workspace.createWorktree("thread-scope");
+      const taskOneScopePath = await workspace.createWorktree("task-one");
+      const taskTwoScopePath = await workspace.createWorktree("task-two");
+      const thread = createThreadFixture({
+        id: "thread-smithers-scoped-context",
+        kind: "smithers-workflow",
+        worktreePath: threadWorktreePath,
+      });
+      const taskOneContext: TaskScopedContextEnvelope = {
+        taskId: "pi-task-one",
+        sessionHistory: ['{"type":"message","id":"entry-1"}'],
+        relevantPaths: [workspace.root, taskOneScopePath],
+        agentsInstructions: ["Only inspect task-one files."],
+        relevantSkills: ["tests"],
+        priorEpisodeIds: ["episode-0"],
+      };
+      const taskTwoContext: TaskScopedContextEnvelope = {
+        taskId: "pi-task-two",
+        sessionHistory: ['{"type":"message","id":"entry-2"}'],
+        relevantPaths: [workspace.root, taskTwoScopePath],
+        agentsInstructions: ["Only inspect task-two files."],
+        relevantSkills: ["lint"],
+        priorEpisodeIds: ["episode-1"],
+      };
+      const workflow = authorWorkflow({
+        thread,
+        objective: "Run scoped workflow",
+        inputEpisodeIds: ["episode-0", "episode-1"],
+        tasks: [
+          {
+            id: "pi-task-one",
+            outputKey: "result-one",
+            prompt: withScopedContextPrompt("Implement task one", taskOneContext),
+            agent: "pi",
+            worktreePath: threadWorktreePath,
+          },
+          {
+            id: "pi-task-two",
+            outputKey: "result-two",
+            prompt: withScopedContextPrompt("Implement task two", taskTwoContext),
+            agent: "pi",
+            worktreePath: threadWorktreePath,
+          },
+        ],
+      });
+      const bridge = new FakeSmithersWorkflowBridge();
+      bridge.enqueueRunResult({
+        run: {
+          runId: "run-scoped",
+          threadId: thread.id,
+          workflowId: workflow.workflowId,
+          status: "completed",
+          updatedAt: "2026-04-08T10:00:00.000Z",
+          worktreePath: threadWorktreePath,
+        },
+        status: "completed",
+        outputs: [],
+        episode: createEpisodeFixture({
+          id: "episode-scoped",
+          threadId: thread.id,
+          source: "smithers",
+          status: "completed",
+          worktreePath: threadWorktreePath,
+          smithersRunId: "run-scoped",
+        }),
+      });
+
+      await bridge.runWorkflow({
+        path: "smithers-workflow",
+        thread,
+        objective: workflow.objective,
+        cwd: workspace.root,
+        workflow,
+        worktreePath: threadWorktreePath,
+      });
+
+      const submittedWorkflow = bridge.runRequests[0]?.workflow;
+      expect(submittedWorkflow?.tasks).toHaveLength(2);
+      const submittedTaskOneContext = parseScopedContext(
+        submittedWorkflow?.tasks[0]?.prompt ?? "",
+      );
+      const submittedTaskTwoContext = parseScopedContext(
+        submittedWorkflow?.tasks[1]?.prompt ?? "",
+      );
+
+      expect(submittedTaskOneContext).toEqual(taskOneContext);
+      expect(submittedTaskTwoContext).toEqual(taskTwoContext);
+      expect(submittedTaskOneContext.relevantPaths).not.toContain(taskTwoScopePath);
+      expect(submittedTaskTwoContext.relevantPaths).not.toContain(taskOneScopePath);
+    });
+  });
+
+  it("documents the current API gap: WorkflowTaskSpec has no dedicated scopedContext field yet", () => {
+    const thread = createThreadFixture({
+      id: "thread-smithers-context-gap",
+      kind: "smithers-workflow",
+    });
+    const workflow = authorWorkflow({
+      thread,
+      objective: "Capture scoped context contract gap",
+      inputEpisodeIds: [],
+      tasks: [
+        {
+          id: "pi-task",
+          outputKey: "result",
+          prompt: "Context currently rides inside prompt text.",
+          agent: "pi",
+        },
+      ],
+    });
+
+    const task = workflow.tasks[0] as Record<string, unknown>;
+    expect(task).not.toHaveProperty("scopedContext");
+  });
+
   it.todo(
-    "pi-agent tasks inside smithers carry explicit scoped context from the orchestrator without assuming Slate internals",
+    "adds a first-class `scopedContext` object on smithers workflow pi-agent tasks so orchestrator context is structured instead of prompt-encoded",
     () => {},
   );
   it.todo(
