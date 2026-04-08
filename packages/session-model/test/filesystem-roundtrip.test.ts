@@ -158,6 +158,64 @@ describe("@hellm/session-model filesystem roundtrip", () => {
     });
   });
 
+  it("persists unresolved issue clearance when an episode is rewritten in a real JSONL file", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const sessionFile = workspace.path(".pi/sessions/unresolved-rewrite.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "session-unresolved-rewrite",
+        cwd: workspace.root,
+      });
+      const thread = createThread({
+        id: "thread-unresolved-rewrite",
+        kind: "direct",
+        objective: "Resolve previously unresolved issues",
+        status: "completed",
+        createdAt: "2026-04-08T11:00:00.000Z",
+        updatedAt: "2026-04-08T11:05:00.000Z",
+      });
+      const initialEpisode = createEpisode({
+        id: "episode-unresolved-rewrite",
+        threadId: thread.id,
+        source: "orchestrator",
+        objective: thread.objective,
+        status: "completed_with_issues",
+        conclusions: ["Initial run completed with unresolved issues."],
+        unresolvedIssues: ["Need product-owner confirmation."],
+        followUpSuggestions: ["Ask the product owner for confirmation."],
+        provenance: {
+          executionPath: "direct",
+          actor: "orchestrator",
+          notes: "Initial unresolved state.",
+        },
+        startedAt: "2026-04-08T11:00:00.000Z",
+        completedAt: "2026-04-08T11:01:00.000Z",
+      });
+      const resolvedEpisode = createEpisode({
+        ...initialEpisode,
+        status: "completed",
+        conclusions: ["Follow-up completed and unresolved issues cleared."],
+        unresolvedIssues: [],
+        followUpSuggestions: [],
+        completedAt: "2026-04-08T11:05:00.000Z",
+      });
+
+      harness.append({ kind: "thread", data: thread });
+      harness.append({ kind: "episode", data: initialEpisode });
+      harness.append({ kind: "episode", data: resolvedEpisode });
+
+      const state = harness.reconstruct();
+      const snapshot = createThreadSnapshot(state, thread.id);
+
+      expect(state.episodes).toHaveLength(1);
+      expect(state.episodes[0]?.id).toBe("episode-unresolved-rewrite");
+      expect(state.episodes[0]?.unresolvedIssues).toEqual([]);
+      expect(state.episodes[0]?.followUpSuggestions).toEqual([]);
+      expect(snapshot.episodes[0]?.unresolvedIssues).toEqual([]);
+      expect(harness.jsonl()).toContain("\"unresolvedIssues\":[]");
+    });
+  });
+
   it("rebuilds episode verification records from real JSONL when no global verification snapshot exists", async () => {
     await withTempWorkspace(async (workspace) => {
       const sessionFile = workspace.path(".pi/sessions/verification-only.jsonl");
