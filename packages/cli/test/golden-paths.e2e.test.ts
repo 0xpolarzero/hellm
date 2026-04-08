@@ -516,6 +516,57 @@ describe("golden path headless specs", () => {
     expect(result.output.status).toBe("completed");
   });
 
+  it("treats failed verification as completed headless output while surfacing failed reconciliation state", async () => {
+    const verificationRunner = new FakeVerificationRunner();
+    verificationRunner.enqueueResult({
+      status: "failed",
+      records: [
+        createVerificationFixture({
+          id: "golden-verification-build-failed",
+          kind: "build",
+          status: "failed",
+        }),
+        createVerificationFixture({
+          id: "golden-verification-test-passed",
+          kind: "test",
+          status: "passed",
+        }),
+      ],
+      artifacts: [],
+    });
+    const orchestrator = createBaseOrchestrator({ verificationRunner });
+    const { result, jsonl } = await runHeadlessHarness(
+      {
+        threadId: "golden-verify-failed",
+        prompt: "Verify and report failures.",
+        cwd: "/repo",
+        routeHint: "verification",
+      },
+      orchestrator,
+    );
+
+    expect(result.output.status).toBe("completed");
+    expect(result.raw.completion).toEqual({
+      isComplete: true,
+      reason: "completed",
+    });
+    expect(result.raw.state.verification.overallStatus).toBe("failed");
+    expect(result.raw.state.visibleSummary).toBe(
+      "verification:completed:completed_with_issues",
+    );
+    expect(result.threadSnapshot.episodes.at(-1)?.status).toBe(
+      "completed_with_issues",
+    );
+    expect(result.events.at(-1)?.type).toBe("run.completed");
+    expect(result.events.find((event) => event.type === "run.episode")).toMatchObject(
+      {
+        source: "verification",
+        status: "completed_with_issues",
+      },
+    );
+    expect(jsonl.at(-1)).toContain("\"run.completed\"");
+  });
+
   it("covers a clarification or waiting request", async () => {
     const orchestrator = createBaseOrchestrator({});
     const { result } = await runHeadlessHarness(

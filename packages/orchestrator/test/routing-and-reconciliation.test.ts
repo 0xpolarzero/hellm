@@ -906,6 +906,136 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     });
   });
 
+  it("keeps global verification failed until the previously failing kind is rerun and passes", async () => {
+    const threadId = "thread-verify-evolution";
+    const verificationRunner = new FakeVerificationRunner();
+    verificationRunner.enqueueResult({
+      status: "failed",
+      records: [
+        createVerificationFixture({
+          id: "verification-build-initial",
+          kind: "build",
+          status: "failed",
+        }),
+        createVerificationFixture({
+          id: "verification-test-initial",
+          kind: "test",
+          status: "passed",
+        }),
+      ],
+      artifacts: [],
+    });
+    verificationRunner.enqueueResult({
+      status: "passed",
+      records: [
+        createVerificationFixture({
+          id: "verification-test-rerun",
+          kind: "test",
+          status: "passed",
+        }),
+      ],
+      artifacts: [],
+    });
+    verificationRunner.enqueueResult({
+      status: "passed",
+      records: [
+        createVerificationFixture({
+          id: "verification-build-rerun",
+          kind: "build",
+          status: "passed",
+        }),
+      ],
+      artifacts: [],
+    });
+
+    let state = createEmptySessionState({
+      sessionId: threadId,
+      sessionCwd: "/repo",
+    });
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      verificationRunner,
+      contextLoader: {
+        async load(request) {
+          return {
+            ...baseLoadedContext(request),
+            priorEpisodes: state.episodes,
+            priorArtifacts: state.artifacts,
+            state,
+          };
+        },
+      },
+    });
+
+    const first = await orchestrator.run({
+      threadId,
+      prompt: "Run full verification sweep.",
+      cwd: "/repo",
+      routeHint: "verification",
+      workflowSeedInput: {
+        verificationKinds: ["build", "test"],
+      },
+    });
+    state = first.sessionState;
+    const second = await orchestrator.run({
+      threadId,
+      prompt: "Rerun test checks only.",
+      cwd: "/repo",
+      routeHint: "verification",
+      workflowSeedInput: {
+        verificationKinds: ["test"],
+      },
+    });
+    state = second.sessionState;
+    const third = await orchestrator.run({
+      threadId,
+      prompt: "Rerun build checks only.",
+      cwd: "/repo",
+      routeHint: "verification",
+      workflowSeedInput: {
+        verificationKinds: ["build"],
+      },
+    });
+
+    expect(verificationRunner.calls.map((call) => call.kinds)).toEqual([
+      ["build", "test"],
+      ["test"],
+      ["build"],
+    ]);
+
+    expect(first.state.verification.overallStatus).toBe("failed");
+    expect(first.state.verification.byKind.build?.status).toBe("failed");
+    expect(first.state.verification.byKind.test?.status).toBe("passed");
+    expect(first.completion).toEqual({
+      isComplete: true,
+      reason: "completed",
+    });
+
+    const firstEpisodeId = first.threadSnapshot.episodes.at(-1)?.id;
+    expect(firstEpisodeId).toBeDefined();
+    expect(second.context.priorEpisodes.map((episode) => episode.id)).toEqual([
+      firstEpisodeId!,
+    ]);
+    expect(second.state.verification.overallStatus).toBe("failed");
+    expect(second.state.verification.byKind.build?.status).toBe("failed");
+    expect(second.state.verification.byKind.test?.id).toBe(
+      "verification-test-rerun",
+    );
+
+    expect(third.state.verification.overallStatus).toBe("passed");
+    expect(third.state.verification.byKind.build?.id).toBe(
+      "verification-build-rerun",
+    );
+    expect(third.state.verification.byKind.test?.id).toBe(
+      "verification-test-rerun",
+    );
+    expect(third.threadSnapshot.thread.status).toBe("completed");
+    expect(third.completion).toEqual({
+      isComplete: true,
+      reason: "completed",
+    });
+  });
+
   it("auto-routes requireApproval requests into the approval path and waiting_approval state", async () => {
     const orchestrator = createOrchestrator({
       clock: fixedClock(),
