@@ -32,6 +32,182 @@ describe("@hellm/smithers-bridge contract surface", () => {
     ).rejects.toThrow("Not implemented");
   });
 
+  it("surfaces explicit not-implemented errors for approval-gate control methods", async () => {
+    const bridge = createSmithersWorkflowBridge();
+    const thread = createThreadFixture({
+      id: "thread-smithers-approval",
+      kind: "smithers-workflow",
+    });
+
+    await expect(
+      bridge.resumeWorkflow({
+        runId: "run-approval",
+        thread,
+        objective: "Resume workflow",
+      }),
+    ).rejects.toThrow("Not implemented");
+    await expect(
+      bridge.approveRun("run-approval", {
+        approved: true,
+        decidedBy: "reviewer",
+      }),
+    ).rejects.toThrow("Not implemented");
+    await expect(
+      bridge.denyRun("run-approval", {
+        approved: false,
+        decidedBy: "reviewer",
+      }),
+    ).rejects.toThrow("Not implemented");
+  });
+
+  it("preserves both Smithers approval-gate modes and captures approve/deny decisions in the fake bridge", async () => {
+    const bridge = new FakeSmithersWorkflowBridge();
+    const thread = createThreadFixture({
+      id: "thread-smithers-modes",
+      kind: "smithers-workflow",
+    });
+
+    const needsApprovalWorkflow = authorWorkflow({
+      thread,
+      objective: "Gate task output for approval",
+      inputEpisodeIds: [],
+      tasks: [
+        {
+          id: "task-needs-approval",
+          outputKey: "result",
+          prompt: "Implement change and wait for sign-off",
+          agent: "pi",
+          needsApproval: true,
+        },
+      ],
+    });
+    const approvalNodeWorkflow = authorWorkflow({
+      thread,
+      objective: "Ask for explicit decision node",
+      inputEpisodeIds: [],
+      tasks: [
+        {
+          id: "task-approval-node",
+          outputKey: "result",
+          prompt: "Pause on explicit approval node",
+          agent: "pi",
+        },
+      ],
+    });
+
+    bridge.enqueueRunResult({
+      run: {
+        runId: "run-needs-approval",
+        threadId: thread.id,
+        workflowId: needsApprovalWorkflow.workflowId,
+        status: "waiting_approval",
+        updatedAt: "2026-04-08T09:00:00.000Z",
+      },
+      status: "waiting_approval",
+      outputs: [],
+      approval: {
+        nodeId: "task-needs-approval",
+        title: "Approve task output",
+        summary: "Task is gated by needsApproval.",
+        mode: "needsApproval",
+      },
+      episode: createEpisodeFixture({
+        id: "episode-needs-approval",
+        threadId: thread.id,
+        source: "smithers",
+        status: "waiting_approval",
+        smithersRunId: "run-needs-approval",
+      }),
+    });
+    bridge.enqueueRunResult({
+      run: {
+        runId: "run-approval-node",
+        threadId: thread.id,
+        workflowId: approvalNodeWorkflow.workflowId,
+        status: "waiting_approval",
+        updatedAt: "2026-04-08T09:01:00.000Z",
+      },
+      status: "waiting_approval",
+      outputs: [],
+      approval: {
+        nodeId: "task-approval-node",
+        title: "Approve explicit node",
+        summary: "Workflow is paused on an Approval node.",
+        mode: "approval-node",
+      },
+      episode: createEpisodeFixture({
+        id: "episode-approval-node",
+        threadId: thread.id,
+        source: "smithers",
+        status: "waiting_approval",
+        smithersRunId: "run-approval-node",
+      }),
+    });
+
+    const needsApprovalResult = await bridge.runWorkflow({
+      path: "smithers-workflow",
+      thread,
+      objective: needsApprovalWorkflow.objective,
+      cwd: "/repo",
+      workflow: needsApprovalWorkflow,
+    });
+    await bridge.approveRun("run-needs-approval", {
+      approved: true,
+      note: "Approved output.",
+      decidedAt: "2026-04-08T09:02:00.000Z",
+      decidedBy: "maintainer",
+    });
+
+    const approvalNodeResult = await bridge.runWorkflow({
+      path: "smithers-workflow",
+      thread,
+      objective: approvalNodeWorkflow.objective,
+      cwd: "/repo",
+      workflow: approvalNodeWorkflow,
+    });
+    await bridge.denyRun("run-approval-node", {
+      approved: false,
+      note: "Denied explicit decision node.",
+      decidedAt: "2026-04-08T09:03:00.000Z",
+      decidedBy: "maintainer",
+    });
+
+    expect(needsApprovalResult.status).toBe("waiting_approval");
+    expect(needsApprovalResult.approval?.mode).toBe("needsApproval");
+    expect(approvalNodeResult.status).toBe("waiting_approval");
+    expect(approvalNodeResult.approval?.mode).toBe("approval-node");
+    expect(needsApprovalWorkflow.tasks[0]?.needsApproval).toBe(true);
+    expect(approvalNodeWorkflow.tasks[0]?.needsApproval).toBeUndefined();
+    expect(bridge.approvals).toEqual([
+      {
+        runId: "run-needs-approval",
+        decision: {
+          approved: true,
+          note: "Approved output.",
+          decidedAt: "2026-04-08T09:02:00.000Z",
+          decidedBy: "maintainer",
+        },
+      },
+    ]);
+    expect(bridge.denials).toEqual([
+      {
+        runId: "run-approval-node",
+        decision: {
+          approved: false,
+          note: "Denied explicit decision node.",
+          decidedAt: "2026-04-08T09:03:00.000Z",
+          decidedBy: "maintainer",
+        },
+      },
+    ]);
+    expect(translateSmithersRunToEpisode(needsApprovalResult).id).toBe(
+      "episode-needs-approval",
+    );
+    expect(translateSmithersRunToEpisode(approvalNodeResult).id).toBe(
+      "episode-approval-node",
+    );
+  });
+
   it("authors deterministic workflow plans and preserves typed outputs, approvals, retries, and worktree state through the fake bridge", async () => {
     const thread = createThreadFixture({
       id: "thread-smithers",
