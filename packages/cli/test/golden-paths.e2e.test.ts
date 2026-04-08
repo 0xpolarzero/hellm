@@ -1689,6 +1689,191 @@ describe("golden path headless specs", () => {
     });
   });
 
+  it("covers a smithers retry loop that resumes from file-backed JSONL state until completion", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const threadId = "golden-smithers-retry";
+      const runId = "golden-run-retry";
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: workspace.path(".pi/sessions/golden-smithers-retry.jsonl"),
+        sessionId: threadId,
+        cwd: workspace.root,
+      });
+      const smithersBridge = new FakeSmithersWorkflowBridge();
+      smithersBridge.enqueueRunResult({
+        run: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "waiting_resume",
+          updatedAt: "2026-04-08T09:00:00.000Z",
+        },
+        status: "waiting_resume",
+        outputs: [
+          {
+            nodeId: "retry-task",
+            schema: "result",
+            value: { attempt: 1, passed: false },
+          },
+        ],
+        waitReason: "Attempt 1 failed verification.",
+        retryCount: 1,
+        episode: createEpisodeFixture({
+          id: "golden-smithers-retry-1",
+          threadId,
+          source: "smithers",
+          status: "waiting_input",
+          smithersRunId: runId,
+          followUpSuggestions: ["Retry attempt 1 failed verification; resume run."],
+        }),
+      });
+      smithersBridge.enqueueResumeResult({
+        run: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "waiting_resume",
+          updatedAt: "2026-04-08T09:01:00.000Z",
+        },
+        status: "waiting_resume",
+        outputs: [
+          {
+            nodeId: "retry-task",
+            schema: "result",
+            value: { attempt: 2, passed: false },
+          },
+        ],
+        waitReason: "Attempt 2 failed verification.",
+        retryCount: 2,
+        episode: createEpisodeFixture({
+          id: "golden-smithers-retry-2",
+          threadId,
+          source: "smithers",
+          status: "waiting_input",
+          smithersRunId: runId,
+          followUpSuggestions: ["Retry attempt 2 failed verification; resume run."],
+        }),
+      });
+      smithersBridge.enqueueResumeResult({
+        run: {
+          runId,
+          threadId,
+          workflowId: `workflow:${threadId}`,
+          status: "completed",
+          updatedAt: "2026-04-08T09:02:00.000Z",
+        },
+        status: "completed",
+        outputs: [
+          {
+            nodeId: "retry-task",
+            schema: "result",
+            value: { attempt: 3, passed: true },
+          },
+        ],
+        retryCount: 3,
+        episode: createEpisodeFixture({
+          id: "golden-smithers-retry-3",
+          threadId,
+          source: "smithers",
+          status: "completed",
+          smithersRunId: runId,
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        clock: fixedClock(),
+        smithersBridge,
+        contextLoader: {
+          async load(request) {
+            const state = harness.reconstruct();
+            return {
+              sessionHistory: harness.lines(),
+              repoAndWorktree: { cwd: request.cwd },
+              agentsInstructions: ["Read docs/prd.md"],
+              relevantSkills: ["tests"],
+              priorEpisodes: state.episodes,
+              priorArtifacts: state.artifacts,
+              state,
+            };
+          },
+        },
+      });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Run retry loop attempt 1.",
+          cwd: workspace.root,
+          routeHint: "smithers-workflow",
+          workflowSeedInput: {
+            tasks: [
+              {
+                id: "retry-task",
+                outputKey: "result",
+                prompt: "Implement and verify",
+                agent: "pi",
+                retryLimit: 3,
+              },
+            ],
+          },
+        },
+        orchestrator,
+      );
+      harness.appendEntries(first.result.raw.sessionEntries);
+      const afterFirst = harness.reconstruct();
+
+      const second = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Resume retry loop attempt 2.",
+          cwd: workspace.root,
+          routeHint: "smithers-workflow",
+          resumeRunId: runId,
+        },
+        orchestrator,
+      );
+      harness.appendEntries(second.result.raw.sessionEntries);
+      const afterSecond = harness.reconstruct();
+
+      const third = await runHeadlessHarness(
+        {
+          threadId,
+          prompt: "Resume retry loop attempt 3.",
+          cwd: workspace.root,
+          routeHint: "smithers-workflow",
+          resumeRunId: runId,
+        },
+        orchestrator,
+      );
+      harness.appendEntries(third.result.raw.sessionEntries);
+      const afterThird = harness.reconstruct();
+
+      expect(first.result.output.status).toBe("waiting_input");
+      expect(first.result.events.at(-1)?.type).toBe("run.waiting");
+      expect(first.result.output.workflowRunIds).toEqual([runId]);
+      expect(afterFirst.workflowRuns[0]?.status).toBe("waiting_resume");
+      expect(second.result.output.status).toBe("waiting_input");
+      expect(second.result.events.at(-1)?.type).toBe("run.waiting");
+      expect(second.result.output.workflowRunIds).toEqual([runId]);
+      expect(afterSecond.workflowRuns[0]?.status).toBe("waiting_resume");
+      expect(third.result.output.status).toBe("completed");
+      expect(third.result.events.at(-1)?.type).toBe("run.completed");
+      expect(third.result.output.workflowRunIds).toEqual([runId]);
+      expect(afterThird.workflowRuns).toHaveLength(1);
+      expect(afterThird.workflowRuns[0]?.status).toBe("completed");
+      expect(afterThird.episodes.map((episode) => episode.id)).toEqual([
+        "golden-smithers-retry-1",
+        "golden-smithers-retry-2",
+        "golden-smithers-retry-3",
+      ]);
+      expect(smithersBridge.runRequests).toHaveLength(1);
+      expect(smithersBridge.runRequests[0]?.workflow.tasks[0]?.retryLimit).toBe(3);
+      expect(smithersBridge.resumeRequests.map((request) => request.runId)).toEqual([
+        runId,
+        runId,
+      ]);
+    });
+  });
+
 
   it("persists smithers isolation references across file-backed headless runs and upserts by run id", async () => {
     await withTempWorkspace(async (workspace) => {
