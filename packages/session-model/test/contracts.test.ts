@@ -41,6 +41,21 @@ describe("@hellm/session-model contract surface", () => {
     expect(thread.updatedAt).toBe("2026-04-08T09:00:00.000Z");
   });
 
+  it("copies input episode references so external mutation cannot rewrite thread state", () => {
+    const inputEpisodeIds = ["episode-a"];
+    const thread = createThread({
+      id: "thread-copy-inputs",
+      kind: "direct",
+      objective: "Preserve stable thread inputs",
+      inputEpisodeIds,
+      createdAt: "2026-04-08T09:00:00.000Z",
+    });
+
+    inputEpisodeIds.push("episode-b");
+
+    expect(thread.inputEpisodeIds).toEqual(["episode-a"]);
+  });
+
   it("enforces the documented thread status lifecycle", () => {
     const thread = createThread({
       id: "thread-1",
