@@ -202,6 +202,75 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
     });
   });
 
+  it("loads repo/worktree context from a real git workspace and disk-backed JSONL session state", async () => {
+    if (!hasGit()) {
+      return;
+    }
+
+    const workspace = await createTempGitWorkspace();
+    try {
+      const worktreePath = await workspace.createLinkedWorktree("feature-context");
+      const sessionFile = workspace.path(".pi/sessions/thread-context.jsonl");
+      const harness = new FileBackedSessionJsonlHarness({
+        filePath: sessionFile,
+        sessionId: "thread-context",
+        cwd: workspace.root,
+      });
+
+      harness.append({
+        kind: "alignment",
+        data: createEmptySessionState({
+          sessionId: "thread-context",
+          sessionCwd: workspace.root,
+          activeWorktreePath: worktreePath,
+        }).alignment,
+      });
+      harness.append({
+        kind: "episode",
+        data: createEpisode({
+          id: "episode-context-prior",
+          threadId: "thread-context",
+          source: "orchestrator",
+          objective: "Prior context load",
+          status: "completed",
+          conclusions: ["Prior context reconstructed from JSONL."],
+          provenance: {
+            executionPath: "direct",
+            actor: "orchestrator",
+          },
+          startedAt: "2026-04-08T09:00:00.000Z",
+          completedAt: "2026-04-08T09:00:01.000Z",
+        }),
+      });
+
+      const orchestrator = createOrchestrator({
+        contextLoader: createFilesystemContextLoader({
+          sessionFile,
+        }),
+      });
+      const context = await orchestrator.loadContext({
+        threadId: "thread-context",
+        prompt: "Load repository context.",
+        cwd: workspace.root,
+        worktreePath,
+      });
+
+      expect(context.repoAndWorktree).toEqual({
+        cwd: workspace.root,
+        worktreePath,
+      });
+      expect(context.sessionHistory).toHaveLength(3);
+      expect(context.priorEpisodes.map((episode) => episode.id)).toEqual([
+        "episode-context-prior",
+      ]);
+      expect(context.state.sessionCwd).toBe(workspace.root);
+      expect(context.state.alignment.activeWorktreePath).toBe(worktreePath);
+      expect(context.state.alignment.aligned).toBe(false);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   it("reconciles a smithers workflow run into a file-backed session inside a real git worktree", async () => {
     if (!hasGit()) {
       return;
