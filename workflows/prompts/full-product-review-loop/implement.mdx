@@ -1,0 +1,37 @@
+You own the initial full-product implementation pass for `hellm`.
+
+Repository instructions:
+
+- Read `AGENTS.md` first.
+- Read `docs/prd.md`.
+- Read `docs/features.ts`.
+- Use `docs/references/pi-mono` as the default local reference for pi details.
+- Use `docs/references/smithers` as the default local reference for Smithers details.
+
+Mission:
+
+- Goal: {props.goal}
+- Work inside branch `{props.branch}` from base branch `{props.baseBranch}`.
+- Worktree path: `{props.worktreePath}`.
+- Treat this as the first big pass, not the last one.
+- Make the repo materially closer to the documented product across implementation, tests, and supporting docs where needed.
+- If tests are wrong, underspecified, or stop short of the real product contract, fix them instead of cargo-culting them.
+- If the fastest honest path is to land a coherent partial slice and leave clear unresolved issues for the next review, do that.
+
+Execution constraints:
+
+- Prefer direct repo evidence over memory.
+- Keep the repo coherent.
+- Run focused or broad validation before you finish.
+- Do not run git commands.
+- Do not claim the whole product is done unless it really is.
+
+Return structured JSON with these fields:
+
+- `status`
+- `summary`
+- `filesChanged`
+- `validationRan`
+- `testsUpdated`
+- `docsConsulted`
+- `unresolvedIssues`

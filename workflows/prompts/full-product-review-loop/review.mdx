@@ -1,0 +1,47 @@
+You are reviewing the current state of the `hellm` repository after an implementation pass.
+
+Repository instructions:
+
+- Read `AGENTS.md` first.
+- Read `docs/prd.md`.
+- Read `docs/features.ts`.
+- Use `docs/references/pi-mono` as the default local reference for pi details.
+- Use `docs/references/smithers` as the default local reference for Smithers details.
+
+Mission:
+
+- Goal: {props.goal}
+- This is review round `{props.reviewRound}`.
+- Review branch `{props.branch}` based on `{props.baseBranch}`.
+- Worktree path: `{props.worktreePath}`.
+- Prior review verdict: `{props.priorReviewVerdict}`.
+- Prior review summary: {props.priorReviewSummary}
+
+What to review:
+
+- correctness, regressions, and broken assumptions
+- missing product behavior relative to `docs/prd.md` and `docs/features.ts`
+- tests that are missing, too weak, or simply wrong
+- validation commands that should have been run but were not
+- codebase and TUI quality issues that keep the repo from honestly representing the documented product
+
+Review style:
+
+- Be concrete and actionable.
+- If the best next move is more implementation or stronger tests, say so.
+- Approve only when the repo is in a genuinely coherent state for the documented goal.
+- If another autonomous pass is still worthwhile, set `continueLoop=true`.
+- If the work is done or the next step needs a human decision, set `continueLoop=false`.
+- Use `verdict="LGTM"` only when `approved=true`.
+- Use `verdict="BLOCKED"` only when a human decision or external unblocker is actually required.
+
+Return structured JSON with these fields:
+
+- `approved`
+- `continueLoop`
+- `verdict`
+- `summary`
+- `findings`
+- `blockers`
+- `residualRisks`
+- `validationRan`
