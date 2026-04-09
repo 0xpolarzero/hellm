@@ -2,561 +2,47 @@
 
 ## Title
 
-Build `hellm` as a pi-backed desktop coding app, starting from an Electrobun shell with a Bun-side pi host and room for orchestration above it.
+Ship `hellm` as an Electrobun desktop coding app with a pi-backed runtime, a visible `hellm` orchestrator, and Smithers-backed delegated workflows.
 
 ## Status
 
 - Date: 2026-04-09
-- Status: Repository reset in progress; the current codebase now boots from an Electrobun desktop app scaffold with pi connected through a Bun-side host
-- Repository purpose: desktop-app bootstrap for `hellm` that ports the minimal Electrobun + pi integration from `../acai` so product work can restart from a working native shell
+- Status: target product PRD
+- Scope: this document defines the intended shipped product, not just the current bootstrap implementation
 
-## Document Purpose
+## Product Summary
 
-This document is the source of truth for what this repository is trying to build.
+`hellm` is a desktop coding agent for working inside real repositories with visible orchestration instead of a single opaque chat loop.
 
-It is intentionally explicit about:
+The product combines:
 
-- what the product is
-- what it is not
-- which claims are grounded in public Slate material
-- which facts come from the vendored `pi` and `smithers` references
-- which choices are our design decisions
-- which features are in scope now, later, or not at all
+- an Electrobun desktop shell
+- a pi-backed interactive runtime and session substrate
+- a `hellm` orchestrator that owns routing, reconciliation, and final decisions
+- Smithers-backed delegated workflows for bounded subagent work
+- first-class episodes, artifacts, verification, approvals, and worktree awareness
 
-When reference docs and reference code disagree, reference code wins.
+The result should feel closer to Slate than to stock pi:
 
-## Implementation Reset Note
-
-The repository has been reset away from the earlier Bun monorepo scaffold and now starts from a working Electrobun desktop app.
-
-Current implementation truth:
-
-- Electrobun owns the native desktop window and packaging
-- the Bun process hosts pi through a direct `pi-coding-agent` SDK session host
-- the renderer uses `@mariozechner/pi-web-ui` as the initial chat surface
-- provider auth, prompt dispatch, streamed response projection, and session mutation are wired end-to-end
-
-The remaining sections below still capture valuable product intent, but they predate this reset and should be treated as directional rather than perfectly aligned implementation guidance until the PRD rewrite is completed under direct user steering.
-
-## Executive Decision
-
-We are adopting a pi-first hybrid architecture.
-
-- `pi` is the only user-facing interactive shell and terminal host:
-  - core agent runtime
-  - tool loop
-  - sessions
-  - TUI foundation
-  - SDK / RPC / headless integration
-  - skills, prompt templates, AGENTS loading, extensions
-  - the interactive loop, keyboard handling, and visual shell must remain pi-owned
-- our product layer sits inside and above pi:
-  - main orchestrator
-  - thread model
-  - episode model
-  - reconciliation loop
-  - routing decisions
-  - orchestration-aware UI projection
-  - launcher and extension code that boots pi with hellm behavior loaded
-- `smithers` is used selectively under the orchestrator as an internal executor for complex jobs:
-  - short-lived authored workflows for complex requests
-  - durable multi-step workflows
-  - approvals
-  - loops
-  - worktrees
-  - resumable structured jobs
-
-The orchestrator is the only strategic source of truth.
-
-Smithers is not the top-level product shell.
-Smithers is not the main TUI foundation.
-hellm does not get to replace pi with a separate shell.
-The product is the combination:
-
-- pi-owned interactive shell and session runtime
-- our orchestrator and data model
-- launcher and extension code that projects hellm into pi
-- Smithers-backed delegated execution paths whenever work needs explicit subagent boundaries
-
-## Hard Invariant
-
-The interactive product must start inside pi's interactive shell.
-
-- We do not build a standalone custom terminal shell, readline loop, or bespoke TUI engine.
-- We do not treat `packages/tui` as an independent shell implementation.
-- Any launcher code may prepare environment, load extensions, seed sessions, or choose modes, but it must hand control to pi.
-- Any feature that needs keyboard input, raw terminal control, session navigation, slash commands, widgets, status lines, or prompt submission must be implemented through pi's extension/runtime APIs or existing pi internals.
-- If a future change can be described as "hellm starts its own shell", that change is wrong.
-
-## Non-Negotiable Runtime Invariants
-
-The following requirements are mandatory and are not optional implementation preferences.
-
-### 1. Pi Owns The Interactive Shell
-
-- the interactive terminal application must start from `pi` coding agent runtime and `InteractiveMode`
-- the top-level TUI entrypoint must be a pi-based shell adapter, not a standalone renderer
-- `packages/tui` may extend pi, compose pi, or preconfigure pi, but it must not replace pi with a separate homegrown terminal app
-- any custom interface chrome must be implemented through pi-supported extension seams such as widgets, custom header/footer components, custom message rendering, commands, shortcuts, or other pi runtime hooks
-
-### 2. Hellm Extends Pi, It Does Not Emulate Pi
-
-- we are building a pi-first product, not a mock of pi behavior
-- it is unacceptable to satisfy TUI requirements with code that only prints static lines, demo frames, or one-shot projections to stdout
-- it is unacceptable to treat a projection helper or snapshot renderer as the product shell
-- it is unacceptable for `bun run start` to succeed by printing a demo state and exiting when attached to an interactive terminal
-
-### 3. Structured Product State Lives In Pi Sessions
-
-- threads, episodes, artifacts, workflow references, verification state, and other hellm product state must persist through pi session storage
-- a separate sidecar session system must not become the primary durable state for the interactive product
-- temporary caches and bridge-specific runtime state are allowed, but the canonical interactive-session history must remain pi-backed
-
-### 4. One Shared Product Runtime Across Entry Surfaces
-
-- the pi interactive shell and headless entrypoints must share the same orchestrator and product state model
-- the interactive path is primary, and headless mode is an alternate surface over the same product
-- the headless path must not become the real implementation while the interactive path degenerates into a demo wrapper
-
-### 5. Tests Must Defend The Real Shell Contract
-
-- tests must not define success for the TUI entrypoint as "prints some lines and exits"
-- tests for startup may use init-only or harnessed interactive boot flows, but they must still exercise the real pi-based shell path
-- init-only startup is allowed only as a bootstrap probe that still creates the real pi session runtime, loads the hellm extension bundle, and registers the live slash-command surface before exiting
-- tests may validate projection helpers separately, but projection tests are not evidence that the product TUI exists
-- if a test fixture uses a fake shell, it must be labeled as a helper, not the product entrypoint
-
-For test seams below the shell, we follow the same split used in the vendored pi tests.
-
-- default package and process tests must keep the real hellm and pi runtime objects above the external seam, but replace the external pi/model boundary with deterministic faux providers, fake SDK modules, or fake bridges
-- ambient real pi subprocess execution, ambient real model calls, and machine-dependent CLI behavior are forbidden in the default test suite
-- true external-runtime tests are allowed only when they are explicitly gated by environment checks and clearly labeled as real-environment coverage
-- if a test is not explicitly gated, it must be deterministic on a clean machine with no API keys, no globally installed `pi`, and no pre-existing repo state
-
-The local pi reference demonstrates this split directly:
-
-- deterministic harness and faux-provider tests in `docs/references/pi-mono/packages/coding-agent/test/test-harness.ts`
-- real runtime object tests with deterministic providers in `docs/references/pi-mono/packages/coding-agent/test/extensions-input-event.test.ts` and `docs/references/pi-mono/packages/coding-agent/test/agent-session-runtime-events.test.ts`
-- explicitly gated real-LLM coverage in `docs/references/pi-mono/packages/coding-agent/test/agent-session-compaction.test.ts`
-
-### 6. Baseline Interactive Surface Is Part Of The Product
-
-- the minimum acceptable hellm interactive surface includes a pi-hosted launcher plus baseline slash commands for `/threads`, `/reconcile`, and `/verify`
-- those commands must be registered through pi's command system, not simulated by projection helpers or stdout snapshots
-- richer command discovery, richer help, and more advanced command UX may be deferred, but the baseline command surface is not optional
-
-## Simple Product Picture
-
-The simplest correct mental model is:
-
-- `pi` is the terminal app, session system, and base agent runtime
-- the orchestrator is the boss that decides what happens next
-- `Smithers` is a specialist workflow engine the orchestrator can call for complex jobs
-
-In practice that means:
-
-- we keep pi's interactive shell and extend it
-- we do not build a separate top-level Smithers UI
-- for simple work, the orchestrator answers directly or does a tiny action itself
-- for delegated work, even if it only needs one subagent, the orchestrator should usually author a short-lived Smithers workflow
-- those workflows can be as small as one `PiAgent` task or as large as a multi-step graph
-- the pi-based shell shows workflow state while that delegated work runs
-- when the workflow finishes, pauses, or fails, the orchestrator takes control back
-
-## How Slate-Like Subagents Map Here
-
-The product-level meaning of "subagent" should be explicit.
-
-- the main orchestrator is not a subagent; it is the strategic controller
-- when the orchestrator decides work should be delegated, that delegated work should usually be represented as a Smithers workflow
-- that workflow may contain one bounded agent task or many bounded agent tasks
-- each bounded task inside the workflow is the implementation of a Slate-like short-lived subagent action
-- the workflow produces one or more durable episodes and returns control to the orchestrator
-
-This means we should not optimize for a separate top-level "raw pi worker path" as the main delegated model.
-
-Instead:
-
-- direct path for simple local work
-- Smithers workflow path for delegated or subagent work
-- verification path when the next useful step is to check reality rather than modify it
-- approval / clarification path when the system should pause instead of guess
-
-## Simple Build Order
-
-The build order should be easy to explain:
-
-1. Start from `pi` as-is, including its TUI, runtime, sessions, skills, prompts, and extension system.
-2. Add one orchestrator above `pi` so requests stop behaving like one long transcript-only chat loop.
-3. Add threads, episodes, artifacts, and reconciliation as structured product state stored through `pi` sessions.
-4. Add verification as a first-class path so builds, tests, and lint results shape the next decision.
-5. Add the Smithers bridge early as the default delegated-work path so the orchestrator can author and run short-lived workflows instead of inventing separate subagent machinery.
-6. Load hellm into pi's interactive shell through a thin launcher and extension surface so orchestrator state, active Smithers-backed workflow progress, and verification results appear inside pi instead of in a separate custom shell.
-
-The build order above is literal.
-
-- step 1 is not "recreate a minimal TUI inspired by pi"
-- step 1 is not "ship headless first and add a fake TUI later"
-- step 1 is not "use pi only as a subprocess worker while a new shell is built elsewhere"
-- if the implementation does not start from a real pi interactive shell, then step 1 has failed and downstream work is built on the wrong foundation
-
-## Mission
-
-Build a coding agent and TUI that feels much closer to Slate than to stock pi by adding:
-
-- one visible orchestrator
+- one strategic brain
 - bounded delegated work instead of persistent role agents
-- reusable structured outputs
-- explicit reconciliation
-- visible thread state
-- first-class verification
-- strong session and worktree alignment
-- strong headless and automation surfaces
-
-## Product Definition
-
-The product should feel like one coherent agent system with these properties:
-
-- the user can see what workstreams exist and what each one produced
-- the system can choose between direct action, Smithers-backed delegated workflows, verification-only runs, and explicit pause states
-- when work needs even one bounded subagent, the system should usually author a short-lived Smithers workflow instead of inventing a separate delegated path
-- every meaningful unit of work produces a reusable structured episode
-- long tasks can resume safely
-- worktree context and session context stay aligned
-- verification results are not buried in chat
-- the system remains adaptive rather than rigid
-
-## Non-Goals
-
-This project is not trying to:
-
-- visually clone Slate
-- claim private knowledge of Slate internals
-- turn the repo into a generic multi-agent playground
-- build or preserve a standalone custom interactive shell, readline loop, or alternate TUI framework outside pi
-- make Smithers the top-level chat or TUI runtime
-- replace pi's session and UI substrate with Smithers storage
-- force all tasks through predeclared workflows
-- build a planner / implementer / reviewer bureaucracy
-- treat transcripts as the only durable state
-- optimize for benchmark theater over developer experience
-
-## Reference Basis
-
-This PRD is grounded in three different kinds of source material.
-
-### 1. Public Slate Facts
-
-From Slate's public docs and architecture writing, the following are fair to treat as public product behavior:
-
-- one central orchestrator owns strategy and integration
-- bounded worker threads are the main delegation unit
-- worker outputs are compressed durable artifacts called episodes
-- episodes can be reused as inputs to later work
-- synchronization is frequent rather than deferred
-- rigid task trees and stale markdown plans are not the primary architecture
-- headless / structured / server-oriented control surfaces matter
-- worktree and session support matter
-- multiple model slots matter
-
-### 2. Slate Inferences
-
-These are reasonable design inferences, not public implementation facts:
-
-- Slate quality likely comes from orchestration discipline, not UI polish alone
-- structured intermediate artifacts likely matter more than prose summaries
-- task-type-based routing likely matters in practice
-- flexibility plus bounded synchronization is the core tradeoff
-
-We must keep this distinction explicit.
-
-### 3. Local Reference Facts
-
-We have two vendored local references under `docs/references/`:
-
-- `docs/references/pi-mono`
-- `docs/references/smithers`
-
-These are the implementation references for what we can reuse, depend on, or adapt.
-
-### 4. Pi Extension and Launcher Facts
-
-The vendored `pi` reference also exposes the supported interactive seam we should build on:
-
-- extensions can register commands, tools, widgets, footers, headers, message renderers, and session persistence
-- extensions can use `ctx.ui` and `pi.sendMessage()` / `pi.sendUserMessage()` to project state into the interactive shell
-- `createAgentSessionRuntime()` and `InteractiveMode` are the supported launcher/runtime layer when a thin wrapper is needed around pi
-
-Relevant references:
-
-- `docs/references/pi-mono/packages/coding-agent/docs/extensions.md`
-- `docs/references/pi-mono/packages/coding-agent/docs/sdk.md`
-- `docs/references/pi-mono/packages/coding-agent/src/main.ts`
-
-## Reference Facts: pi
-
-The vendored `pi` reference provides the following relevant capabilities.
-
-### Runtime and SDK
-
-`@mariozechner/pi-agent-core` provides:
-
-- a stateful tool-calling agent runtime
-- streaming events
-- configurable tool execution
-- hooks before and after tool calls
-- explicit agent state access
-
-Relevant references:
-
-- `docs/references/pi-mono/packages/agent/README.md`
-- `docs/references/pi-mono/packages/coding-agent/docs/sdk.md`
-
-### Sessions
-
-`pi` sessions are:
-
-- JSONL files
-- tree-shaped via `id` / `parentId`
-- branchable in-place
-- forkable into new session files
-- resumable
-- navigable via `/tree`
-
-Relevant references:
-
-- `docs/references/pi-mono/packages/coding-agent/docs/session.md`
-- `docs/references/pi-mono/packages/coding-agent/docs/tree.md`
-
-### Session Runtime Replacement
-
-`AgentSessionRuntime` can replace the active session across:
-
-- new session
-- resume
-- fork
-- import
-
-This matters because our product needs session-aware and worktree-aware runtime switching without rebuilding everything manually.
-
-Relevant references:
-
-- `docs/references/pi-mono/packages/coding-agent/docs/sdk.md`
-- `docs/references/pi-mono/packages/coding-agent/src/core/agent-session-runtime.ts`
-
-### Extensibility
-
-`pi` supports:
-
-- custom tools
-- custom commands
-- event interception
-- custom UI surfaces
-- state persistence through session entries
-- custom message rendering
-- skills
-- prompt templates
-- AGENTS loading
-- themes
-
-Relevant references:
-
-- `docs/references/pi-mono/packages/coding-agent/docs/extensions.md`
-- `docs/references/pi-mono/packages/coding-agent/examples/extensions/README.md`
-- `docs/references/pi-mono/packages/coding-agent/src/core/extensions/types.ts`
-
-### TUI
-
-`pi` already has:
-
-- a coding-agent TUI shell
-- tool and message rendering
-- footer and status surfaces
-- custom widgets and overlays
-- tree navigation
-- session selectors
-
-This is the right substrate for our UI, and the product must remain pi-hosted rather than replacing it with a standalone shell. Our job is to make it orchestration-aware through extensions and launcher code. Any implementation that reaches for a new shell loop, custom terminal renderer, or stdout-only snapshot path is a regression unless this PRD explicitly labels it as a test helper.
-
-## Reference Facts: Smithers
-
-The vendored `smithers` reference provides the following relevant capabilities.
-
-### Workflow Engine
-
-Smithers executes a render-extract-schedule-execute-persist loop:
-
-1. render workflow tree
-2. extract task descriptors
-3. schedule runnable work
-4. execute work
-5. persist outputs and events
-6. rerender until terminal
-
-Relevant references:
-
-- `docs/references/smithers/README.md`
-- `docs/references/smithers/docs/concepts/execution-model.mdx`
-- `docs/references/smithers/src/engine/index.ts`
-
-### Persistence and Resume
-
-Smithers persists completed task outputs durably and resumes from the first incomplete mounted work.
-
-Important constraints:
-
-- completed work is not rerun on resume
-- task identity depends on stable task IDs
-- resume validates workflow hash and VCS state
-- stale in-progress work is cleaned up on resume
-
-Relevant references:
-
-- `docs/references/smithers/docs/concepts/suspend-and-resume.mdx`
-- `docs/references/smithers/src/RunOptions.ts`
-- `docs/references/smithers/src/RunResult.ts`
-- `docs/references/smithers/src/engine/index.ts`
-
-### Workflow Primitives
-
-Smithers provides:
-
-- `Workflow`
-- `Task`
-- `Sequence`
-- `Parallel`
-- `Branch`
-- `Ralph` / `Loop`
-- `Approval`
-- `Worktree`
-- `Sandbox`
-- `Timer`
-
-Relevant references:
-
-- `docs/references/smithers/src/components/index.ts`
-- `docs/references/smithers/docs/jsx/overview.mdx`
-
-### Approvals
-
-Smithers supports two approval modes:
-
-- `needsApproval` for task gates
-- `<Approval>` as an explicit decision-producing node
-
-Relevant references:
-
-- `docs/references/smithers/docs/concepts/human-in-the-loop.mdx`
-- `docs/references/smithers/src/engine/approvals.ts`
-
-### Worktrees
-
-Smithers has a first-class `Worktree` primitive and engine support for worktree creation and sync.
-
-Important accuracy note:
-
-- the component docs emphasize JJ
-- the engine implementation supports both `git` and `jj`
-
-Relevant references:
-
-- `docs/references/smithers/docs/components/worktree.mdx`
-- `docs/references/smithers/src/components/Worktree.ts`
-- `docs/references/smithers/src/engine/index.ts`
-
-### Agent Adapters
-
-Smithers can run tasks using different agent adapters, including:
-
-- `PiAgent`
-- `CodexAgent`
-- `ClaudeCodeAgent`
-- API-backed agents
-
-Relevant references:
-
-- `docs/references/smithers/src/agents/PiAgent.ts`
-- `docs/references/smithers/src/agents/index.ts`
-
-### Server and CLI Surfaces
-
-Smithers provides:
-
-- CLI run/resume/approve/deny/list functionality
-- server surfaces
-- a separate serve app
-
-Relevant references:
-
-- `docs/references/smithers/src/cli/index.ts`
-- `docs/references/smithers/src/server/index.ts`
-- `docs/references/smithers/src/server/serve.ts`
-
-### Important Constraint
-
-Smithers currently assumes Bun as its runtime in package metadata and implementation patterns.
-
-Relevant reference:
-
-- `docs/references/smithers/package.json`
-
-This strongly affects how tightly we should couple it to the main product runtime.
-
-## Product Architecture Decision
-
-We are not choosing between pi and Smithers.
-We are assigning them different jobs.
-
-### Decision Summary
-
-- pi owns the interactive coding-agent substrate and TUI foundation
-- our orchestrator owns strategy and product behavior
-- Smithers owns selective internal workflow execution for complex jobs under the orchestrator
-
-### Why This Split
-
-Pi is strongest at:
-
-- interactive coding-agent runtime behavior
-- TUI and session ergonomics
-- extensibility
-- SDK / RPC integration
-
-Smithers is strongest at:
-
-- typed durable multi-step execution
-- explicit workflow graphs
-- approval handling
-- resumable loops and branches
-- worktree-isolated structured jobs
-
-Trying to make pi do all durable workflow orchestration inside ad hoc extensions would create extension spaghetti.
-
-Trying to make Smithers the top-level chat, session, and TUI runtime would discard the strongest parts of pi and create two competing user models.
-
-### Concrete Anti-Patterns
-
-The following are explicit implementation failures:
-
-- a `tui` package whose main entrypoint just prints a textual snapshot or demo frame instead of starting pi's interactive shell
-- a start script that exits immediately after rendering static orchestration lines
-- storing the real interactive product state primarily in a parallel `.hellm/sessions` store instead of pi sessions
-- defining the product TUI as pure render helpers with no pi interactive runtime behind them
-- shipping tests that prove only that a demo renderer prints expected strings
-
-### Delegated Work Policy
-
-We should be explicit about how delegated jobs work.
-
-- simple local work should use the direct path
-- if the orchestrator decides work needs even one bounded subagent, it should usually express that work as a Smithers workflow
-- a Smithers workflow may be as small as one `PiAgent` task or as large as a multi-step graph with approvals, loops, and worktrees
-- the orchestrator may author that workflow dynamically from the current request and state
-- while the workflow runs, the user should see workflow state through the pi shell
-- when the workflow finishes, fails, or pauses, control returns to the orchestrator for reconciliation and next-step decisions
-- raw top-level chaining of `pi` workers should not be the main product model; if we need subagent boundaries, Smithers should usually be the thing that represents them
-
-## Core Product Principles
+- reusable structured outputs instead of transcript-only memory
+- visible verification and workflow state
+- safe resume after interruption
+
+## Product Goals
+
+The shipped product must let a user:
+
+- open a local repository in a native desktop app and work in long-lived coding sessions
+- understand what the system is doing without reconstructing state from raw logs
+- move fluidly between direct action, delegated workflow execution, verification, and pause states
+- inspect durable outputs from each meaningful unit of work
+- resume interrupted work safely across app restarts
+- keep session context and worktree context aligned
+- use the same product model from both the desktop app and headless automation surfaces
+
+## Product Principles
 
 ### 1. One Strategic Brain
 
@@ -564,885 +50,659 @@ The main orchestrator owns:
 
 - request interpretation
 - path selection
-- worker spawning
+- context loading
+- delegated work authoring
 - reconciliation
-- next-step decisions
 - final user-facing decisions
 
 No worker becomes the source of truth for overall strategy.
 
 ### 2. Bounded Work Over Persistent Roles
 
-Workers are:
+Subagents are short-lived and task-specific.
 
-- short-lived
-- scoped
-- task-specific
-- terminated at explicit completion boundaries
+The product does not use permanent planner, implementer, or reviewer personas as the default operating model.
 
-Workers are not:
+### 3. Sessions Are Product Containers, Not Just Transcripts
 
-- permanent planner agents
-- permanent reviewer agents
-- long-running side conversations
+A session is the durable user-facing container for:
 
-### 3. Episodes Are the Synchronization Unit
-
-Every path returns a structured episode.
-
-Episodes capture durable value, not transcript noise:
-
-- conclusions
-- changed files
+- conversation history
+- threads
+- episodes
 - artifacts
-- verification results
-- unresolved issues
-- follow-up suggestions
-- provenance
+- verification state
+- workflow references
+- approvals and waiting states
 
-### 4. Frequent Re-entry
+### 4. Episodes Are the Main Reusable Output
 
-The orchestrator should re-enter cheaply after every meaningful unit of work.
+Every meaningful work unit produces a structured episode that captures durable value rather than transcript noise.
 
-The system should prefer:
+### 5. Verification Changes What Happens Next
 
-- short worker runs
-- fast reconciliation
-- reevaluation after each durable outcome
+Build, test, lint, integration, and manual checks are first-class product events. They are not cosmetic post-processing.
 
-### 5. Explicit Verification
+### 6. Visible State Beats Hidden Mechanics
 
-Verification is part of the main loop, not a cosmetic last step.
-
-### 6. Visible Orchestration
-
-The user must be able to understand:
+The user must be able to see:
 
 - what is active
 - what finished
 - what is blocked
 - what was verified
-- what still needs attention
+- what needs approval
+- which worktree and session are currently in play
 
-without reconstructing state from raw logs.
+### 7. Context Is a Scarce Resource
 
-### 7. Pi Sessions Stay the User-Facing Session Substrate
+The system should preserve strategic context in the orchestrator, spend local context deliberately, and externalize whatever does not need to stay in the active model window.
 
-For the first implementation, the top-level product session remains pi's session system.
+In practice that means:
 
-We extend it with structured entries. We do not replace it.
+- useful results are compressed into episodes and artifacts instead of dragging full transcripts forward
+- repeatable structure is scripted rather than repeatedly re-derived in prose
+- dynamic composition should move into `execute_typescript` when a short program is clearer and more reliable than many low-level tool calls
+- raw model reasoning is reserved for ambiguity, synthesis, prioritization, and recovery
 
-## End-to-End Request Lifecycle
+This is the intended middle path between two failure modes:
 
-This is the intended lifecycle of a single request.
+- transcript-heavy agents that keep too much in context and lose focus
+- rigid workflow systems that over-script work and lose adaptability
 
-```mermaid
-flowchart TD
-    A["User request"] --> B["Load context"]
-    B --> B1["Session history"]
-    B --> B2["Current repo / worktree"]
-    B --> B3["AGENTS instructions"]
-    B --> B4["Relevant skills"]
-    B --> B5["Prior episodes / artifacts"]
+`hellm` should deliberately interleave agentic reasoning and executable structure:
 
-    B --> C["Main orchestrator classifies request"]
+- use the model where judgment matters
+- use code and workflow structure where repetition, composition, or verification matter
+- move information across that boundary in compressed, reusable forms
 
-    C --> D1["Path A: answer directly"]
-    C --> D2["Path B: author and run a Smithers workflow"]
-    C --> D3["Path C: run verification only"]
-    C --> D4["Path D: ask for approval or clarification"]
+## Product Ownership Boundaries
 
-    D1 --> E["Episode created"]
-    D2 --> E
-    D3 --> E
-    D4 --> W["Pause and wait"]
-    W --> C
+### Electrobun
 
-    E --> F["Reconcile into thread, session, artifact, and verification state"]
-    F --> G{"Request complete?"}
-    G -->|"Yes"| H["Return final response"]
-    G -->|"No"| C
-```
+Electrobun owns:
 
-## Request Routing Paths
+- the native desktop shell
+- windowing
+- packaging
+- app lifecycle
+- OS integration
 
-This graph expands the decision points.
+### pi
 
-```mermaid
-flowchart TD
-    A["User request"] --> B["Load context"]
-    B --> C["Orchestrator classifies request"]
+`pi` owns:
 
-    C --> Q1{"Small and local?"}
-    Q1 -->|"Yes"| P1["Direct path"]
-    Q1 -->|"No"| Q2{"Verification only?"}
+- the interactive runtime seam
+- the base tool loop substrate
+- the session substrate
+- supported extension and runtime hooks
+- core provider-facing agent runtime behavior
 
-    Q2 -->|"Yes"| P3["Verification path"]
-    Q2 -->|"No"| Q3{"Need approval or clarification before acting?"}
+`hellm` must extend or project through pi's runtime and extension APIs. It must not replace pi with a second agent shell.
 
-    Q3 -->|"Yes"| P4["Approval / clarification path"]
-    Q3 -->|"No"| P2["Smithers workflow path"]
+### hellm
 
-    P1 --> P1A["Answer directly or do tiny tool action"]
-    P1A --> E["Normalize to episode"]
+`hellm` owns:
 
-    P2 --> P2A["Author short-lived Smithers workflow"]
-    P2A --> P2B["Run workflow steps / agent tasks / loops / worktrees / approvals"]
-    P2B --> P2C{"Workflow state"}
-    P2C -->|"Finished"| E
-    P2C -->|"Waiting approval"| W1["Wait for approval"] --> P2B
-    P2C -->|"Needs resume"| W2["Resume persisted run"] --> P2B
-    P2C -->|"Failed or blocked"| E
+- product behavior above the pi seam
+- the orchestrator
+- thread, episode, artifact, and verification models
+- reconciliation
+- routing decisions
+- desktop UI product semantics
+- workflow and verification projection in the app
 
-    P3 --> P3A["Run build / test / lint / manual checks"]
-    P3A --> E
+### Smithers
 
-    P4 --> P4A["Pause and wait for user input"]
-    P4A --> C
-```
+Smithers owns:
 
-## Path Selection Table
+- delegated workflow execution
+- durable multi-step runs
+- approvals inside delegated work
+- loops, retries, and branches when a delegated workflow needs them
+- worktree-isolated execution when delegated work requires it
 
-| Path | Use when | Executor | Typical output |
-| --- | --- | --- | --- |
-| Direct | explanation, tiny reads, tiny tool actions, simple synthesis | orchestrator itself | small episode |
-| Smithers workflow | any delegated or subagent work, especially when explicit boundaries, durability, approvals, loops, retries, or worktrees help | Smithers workflow engine via an orchestrator-authored workflow, often using `PiAgent`-backed tasks | workflow episode or set of episodes |
-| Verification | build / test / lint / integration / manual checks are the main next step | verification subsystem | verification episode |
-| Approval / clarification | ambiguity or risk is too high to guess | orchestrator wait state | waiting episode or paused thread |
+Smithers is not:
 
-## Runtime Architecture
+- the top-level product shell
+- the top-level session model
+- the main source of product strategy
 
-### Entry Surfaces
+### execute_typescript
 
-The product should have three request entry surfaces:
+`execute_typescript` is an internal execution primitive, not a top-level user path.
 
-- interactive TUI built on pi's shell and loaded with hellm extensions
-- headless CLI / JSONL / workflow input
-- later server surface
+It is available to the orchestrator and to delegated work when typed capability composition is the most effective way to complete a bounded task.
 
-These are different entry points to the same orchestrator, not different products.
+## Users and Primary Jobs
 
-### Main Orchestrator
+The product is for developers who want an agent that can work in a real repository without collapsing into either:
 
-The main orchestrator is responsible for:
+- a transcript-heavy chat bot
+- a rigid static automation graph
 
-- loading current context
-- deciding execution path
-- authoring short-lived Smithers workflows for delegated work by default
-- spawning bounded work
-- reconciling outputs
-- deciding whether to continue
-- producing the final response
+Primary jobs:
 
-The orchestrator must always reason over compact structured state first:
+- understand an unfamiliar codebase
+- make code and docs changes safely
+- run and interpret verification
+- delegate bounded work while keeping strategic control visible
+- inspect what happened and why
+- resume work after interruption without losing state
+- automate the same product behavior outside the desktop UI when needed
 
-- current thread states
-- existing episodes
-- current worktree binding
-- current verification state
+## Product Model
 
-It must not depend on replaying the full transcript for every decision.
+### Workspace
 
-### Code Mode Execution Primitive
+A workspace is the local repository context the app is attached to.
 
-The product adopts one internal code-composition primitive:
+It includes:
 
-- a TanStack-style `execute_typescript` tool contract
-- generated TypeScript stubs for the exposed host tools
-- a flat in-sandbox `external_*` capability surface
-- QuickJS as the initial runtime
+- repository root
+- current branch or VCS state
+- available worktrees
+- repo-local `AGENTS.md` and `.hellm/` configuration
+- recent session history for that workspace
 
-This primitive is not a top-level user-facing path.
+### Session
 
-It is an internal execution substrate that the orchestrator may use:
+A session is the top-level user-visible unit of ongoing work inside a workspace.
 
-- on the direct path when typed capability composition is the best fit
-- inside Smithers-backed delegated work when a worker task benefits from typed capability composition
+A session must support:
 
-Important scope decision:
+- creation
+- resume
+- branch or fork navigation
+- durable history
+- structured product state in addition to chat messages
+- session-level model and provider settings
+- session-level view of active and completed work
 
-- sandbox work is not part of the initial `execute_typescript` adoption
+### Thread
 
-The initial implementation should control access by:
-
-- curating which host tools are injected into each `execute_typescript` call
-
-not by:
-
-- a separate outer sandbox
-- a built-in capability approval layer inside code mode
-- a namespaced capability API
-
-### Direct Path
-
-The direct path exists for work that does not justify a worker run.
+A thread is a bounded workstream within a session.
 
 Examples:
 
-- explain architecture
-- answer a small question about local code
-- perform a tiny read-only inspection
-- carry out a tiny single-step action
+- direct answer or small action
+- delegated Smithers workflow
+- verification run
+- approval wait
 
-The direct path still emits an episode so the orchestrator loop stays uniform.
+Threads must expose:
 
-The direct path may use `execute_typescript` internally when the work is still small enough to stay on the direct path but benefits from:
+- objective
+- status
+- current executor
+- related worktree
+- related episodes
+- blocked or waiting reason when applicable
 
-- typed capability composition
-- data transformation
-- filtering or aggregation
-- parallel tool usage inside one execution step
+### Episode
 
-### Smithers Workflow Path
+An episode is the main synchronization unit produced by any meaningful work step.
 
-This path is the default path for delegated work.
+An episode should capture:
 
-If the orchestrator thinks the task needs a bounded subagent, even only one, it should usually express that work as a Smithers workflow.
+- objective
+- source
+- status
+- conclusions
+- changed files
+- artifacts
+- verification outcomes
+- unresolved issues
+- follow-up suggestions
+- provenance
 
-Use Smithers when the task needs one or more of:
+### Artifact
 
-- one explicit bounded subagent with visible workflow state
-- explicit multi-step workflow structure
-- durable resume across crashes or pauses
-- human approvals
-- looped review / validate / retry behavior
-- worktree-isolated execution
-- explicit typed outputs
+Artifacts are file-addressable outputs referenced by episodes.
 
-A workflow may be as small as:
+Examples:
 
-- one `PiAgent` task with explicit objective, scope, tools, and completion boundary
+- diffs
+- logs
+- test reports
+- screenshots
+- structured workflow outputs
+- exported verification details
 
-or as large as:
+### Verification Record
 
-- a multi-step graph with approvals, loops, retries, and worktrees
+A verification record captures a single meaningful check such as:
 
-Typical lifecycle:
+- build
+- test
+- lint
+- integration
+- manual review checkpoint
 
-1. the orchestrator decides the task needs delegated work or explicit workflow structure
-2. the orchestrator authors a short-lived Smithers workflow from the current request, constraints, and prior episodes
-3. Smithers runs that workflow and persists its internal state
-4. the pi shell shows workflow progress as part of the thread state, not as a separate top-level app
-5. when the workflow finishes, blocks, or pauses, the result is normalized into episodes
-6. the orchestrator resumes control and decides the next step
+It must include status, summary, and linked artifacts.
 
-Smithers runs are invoked programmatically and translated back into our product's episode model.
+### Workflow Run
 
-Smithers run state is internal workflow state, not the top-level user session model.
+A workflow run is the durable record of delegated Smithers-backed work associated with a thread and its episodes.
 
-Smithers-backed tasks may also use the same `execute_typescript` primitive internally when typed capability composition is useful inside the delegated workflow.
+### Approval State
 
-### Raw pi Execution Primitive
+An approval state represents explicit user gating rather than silent guessing.
 
-We still keep direct access to `pi` runtime APIs.
+The system should surface:
 
-That is useful for:
+- what decision is needed
+- why it is needed
+- what is waiting on it
 
-- direct-path actions performed by the orchestrator itself
-- `PiAgent`-backed tasks inside Smithers workflows
-- rare internal implementation or automation cases where the pi runtime must be invoked without the interactive shell, such as tests or headless execution
+## Desktop Experience
 
-But this is an implementation primitive, not the primary user-facing delegated-work model.
+The desktop experience is the primary user-facing surface for the product.
+
+### App Shell
+
+The shipped desktop app should present one coherent workspace, not a loose collection of screens.
+
+The default shell includes:
+
+- a left navigation rail for workspace and session navigation
+- a main work area for conversation and live orchestration state
+- a right-side inspector for selected details
+- a bottom composer and status strip for prompt entry and current runtime context
+
+### Session UI
+
+The session view is the center of the product.
+
+It must show more than a transcript. The session UI combines:
+
+- the conversation timeline
+- visible thread state
+- episode summaries
+- workflow progress
+- verification summaries
+- approval prompts
+- artifact access
+
+The user should be able to understand the current state of work at a glance without opening raw logs.
+
+### Navigation
+
+Navigation must be session-centric and workspace-aware.
+
+The app must support:
+
+- recent workspace selection
+- session creation
+- session switching
+- session resume
+- session branch or tree navigation
+- thread selection within a session
+- jumps from messages to episodes, artifacts, verification, and workflow details
+- clear indication of current repo and worktree context
+
+### Composer and Runtime Controls
+
+The composer area must support:
+
+- prompt entry
+- prompt cancellation while streaming
+- provider selection
+- model selection
+- thinking-level or equivalent reasoning control
+- explicit context cues for active workspace, session, and worktree
+
+### Inspector Surfaces
+
+The inspector area must support focused inspection of:
+
+- the selected thread
+- the selected episode
+- verification results
+- workflow progress
+- artifact previews when available
+- unresolved issues and follow-up suggestions
+
+### Settings and Auth
+
+The app must include settings surfaces for:
+
+- provider authentication
+- model preferences
+- local key management and environment-backed credentials
+- repo-local product behavior where relevant
+
+## Core Execution Model
+
+Companion diagram: [Execution Model](./execution-model.md)
+
+Every user request goes through one orchestrator-controlled loop:
+
+1. load current workspace, session, thread, episode, artifact, and verification context
+2. classify the request
+3. choose the next path
+4. execute bounded work
+5. normalize the output into one or more episodes
+6. reconcile product state
+7. continue, pause, or finish
+
+The product supports four top-level execution paths.
+
+### Direct Path
+
+Use the direct path for:
+
+- explanation
+- small synthesis
+- small read-only inspection
+- tiny single-step actions
+
+The direct path still produces an episode.
+
+### Delegated Workflow Path
+
+Use the delegated path when work benefits from:
+
+- an explicit bounded subagent
+- multi-step structure
+- durable resume
+- approvals
+- loops or retries
+- worktree isolation
+- explicit workflow state in the UI
+
+Delegated work should usually be represented as a Smithers workflow, even when the workflow is small.
 
 ### Verification Path
 
-Verification is a first-class execution path.
+Use the verification path when the main next step is to check reality rather than modify it.
 
-It should normalize:
+Verification results must feed back into routing and reconciliation.
+
+### Approval or Clarification Path
+
+Use the pause path when:
+
+- the user must make a product choice
+- the next action is ambiguous
+- a destructive step should be gated
+- a delegated workflow is waiting on approval
+
+Waiting is an explicit product state, not an implementation detail.
+
+## Slate-Inspired Subagent Model
+
+`hellm` borrows product behavior from public Slate material and from defensible inferences about what makes that behavior effective.
+
+The adopted subagent model is:
+
+- one main orchestrator owns strategy and integration
+- delegated work is bounded and short-lived
+- subagents return durable outputs instead of long private side conversations
+- synchronization happens frequently through episodes
+- the system re-enters cheaply after each meaningful unit of work
+
+This means the product should not optimize for:
+
+- persistent role agents
+- stale long-range plans as the main control surface
+- transcript replay as the primary memory mechanism
+
+## Feature Requirements
+
+### 1. Desktop Workspace and Repository Lifecycle
+
+The app must support:
+
+- opening a local repository in a native desktop shell
+- remembering recent workspaces
+- showing repository identity and status in the UI
+- preserving workspace-scoped session history
+- surfacing worktree context clearly
+
+### 2. Provider Authentication and Model Configuration
+
+The app must support:
+
+- provider login and key configuration
+- local persistence of auth state
+- environment-backed provider keys
+- model selection
+- per-session model changes
+- per-session reasoning or thought-level changes
+
+### 3. Session Lifecycle and Navigation
+
+The app must support:
+
+- creating a new session
+- resuming an existing session
+- branching or forking session history
+- listing and filtering sessions
+- preserving durable session state across app restarts
+- reconstructing visible product state from durable session data
+
+### 4. Session-Centric Orchestration UI
+
+The app must show, within a single session surface:
+
+- the conversation
+- active and completed threads
+- latest episodes
+- verification summaries
+- blocked or waiting work
+- workflow activity
+- current workspace and worktree context
+
+This is a core product requirement, not a stretch goal.
+
+### 5. Orchestrator and Routing
+
+The orchestrator must:
+
+- classify requests against current context
+- choose between direct, delegated, verification, and pause paths
+- author delegated workflow requests when appropriate
+- reconcile all path outputs into the same product model
+- make final user-facing decisions after delegated work completes or pauses
+
+### 6. Delegated Workflows and Smithers Integration
+
+Smithers-backed workflows are the default delegated-work substrate when a request needs explicit subagent boundaries or durable workflow structure.
+
+The product must support:
+
+- short-lived delegated workflows for bounded work
+- workflows as small as one explicit bounded agent task
+- larger workflows with approvals, retries, loops, and worktrees when needed
+- durable workflow pause and resume
+- workflow progress projected into the desktop UI
+- workflow results translated into episodes and artifacts
+
+### 7. Episodes, Artifacts, and Reconciliation
+
+The system must:
+
+- create episodes from direct work, delegated work, and verification
+- preserve artifact references durably
+- expose changed files and outputs clearly
+- retain unresolved issues and follow-up suggestions
+- make episodes reusable as inputs to later work
+
+### 8. Verification
+
+Verification is a first-class feature area.
+
+The product must support structured capture and display of:
 
 - build runs
 - test runs
 - lint runs
+- integration checks
 - manual verification checkpoints
-- integration test runs
 
-into structured verification records with artifacts.
+Verification must influence routing. A failed or incomplete verification result cannot be treated as a cosmetic note.
 
-### Approval / Clarification Path
+### 9. Worktree Awareness
 
-The orchestrator should pause instead of guessing when:
-
-- the user must make a product choice
-- a destructive operation should be gated
-- the next step is ambiguous
-- a Smithers approval node is waiting
-
-This path should be explicit in both state and UI.
-
-### Episode Normalizer
-
-All execution paths must end by producing the same product-level episode model.
-
-That means we normalize:
-
-- direct actions
-- Smithers workflow outcomes
-- verification runs
-
-into the same structure before reconciliation.
-
-### Reconciler
-
-The reconciler updates:
-
-- threads
-- episodes
-- artifacts
-- verification state
-- session entries
-- worktree associations
-
-It then decides whether the orchestrator has enough information to finish or must dispatch new work.
-
-### UI Projection
-
-The TUI should project orchestrator state, not raw internal mechanics.
-
-Minimum required user-visible surfaces:
-
-- active threads
-- latest episodes
-- blocked / waiting work
-- verification status
-- current session and worktree context
-- active workflow status when a thread is currently backed by Smithers
-
-## Data Model
-
-### Session Persistence Strategy
-
-### Product Decision
-
-Initial top-level persistence should extend pi sessions, not replace them.
-
-That means:
-
-- pi JSONL session remains the user-facing session of record
-- orchestrator state is added as structured custom entries
-- episode and thread records are stored in or referenced from those entries
-- artifacts live on disk and are referenced from episodes
-- Smithers keeps its own SQLite run state for Smithers workflows only
-
-This gives us:
-
-- continuity with pi sessions, forks, and tree navigation
-- no second top-level session system in phase 1
-- clear boundaries between product session state and Smithers workflow state
-
-### Why Not Make Smithers the Main Store
-
-Because that would:
-
-- replace pi's established user-facing session model
-- create two competing interaction models
-- overcouple the whole product to Smithers and Bun too early
-
-### Why Not Use Transcript-Only Storage
-
-Because the core product requires structured orchestration state:
-
-- threads
-- episodes
-- artifacts
-- verification
-- waiting and blocked status
-
-### Thread Model
-
-A thread is a bounded product-level workstream.
-
-Recommended shape:
-
-```ts
-type ThreadKind =
-  | "direct"
-  | "smithers-workflow"
-  | "verification"
-  | "approval";
-
-type ThreadStatus =
-  | "pending"
-  | "running"
-  | "waiting_input"
-  | "waiting_approval"
-  | "blocked"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
-interface ThreadRef {
-  id: string;
-  kind: ThreadKind;
-  status: ThreadStatus;
-  objective: string;
-  parentThreadId?: string;
-  inputEpisodeIds: string[];
-  worktreePath?: string;
-  smithersRunId?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-```
-
-### Episode Model
-
-Episodes are the primary synchronization unit.
-
-Recommended shape:
-
-```ts
-type EpisodeSource =
-  | "orchestrator"
-  | "smithers"
-  | "verification";
-
-type EpisodeStatus =
-  | "completed"
-  | "completed_with_issues"
-  | "waiting_input"
-  | "waiting_approval"
-  | "blocked"
-  | "failed"
-  | "cancelled";
-
-interface EpisodeArtifactRef {
-  id: string;
-  kind:
-    | "file"
-    | "diff"
-    | "log"
-    | "test-report"
-    | "screenshot"
-    | "workflow-run"
-    | "note";
-  path?: string;
-  description: string;
-}
-
-interface EpisodeVerification {
-  kind: "build" | "test" | "lint" | "manual" | "integration";
-  status: "passed" | "failed" | "skipped" | "unknown";
-  summary: string;
-  artifactIds: string[];
-}
-
-interface Episode {
-  id: string;
-  threadId: string;
-  source: EpisodeSource;
-  objective: string;
-  status: EpisodeStatus;
-  conclusions: string[];
-  changedFiles: string[];
-  artifacts: EpisodeArtifactRef[];
-  verification: EpisodeVerification[];
-  unresolvedIssues: string[];
-  followUpSuggestions: string[];
-  smithersRunId?: string;
-  worktreePath?: string;
-  startedAt: string;
-  completedAt?: string;
-  inputEpisodeIds: string[];
-}
-```
-
-### Artifact Model
-
-Artifacts should be file-addressable and referenceable from episodes.
-
-Examples:
-
-- full logs
-- test reports
-- screenshots
-- diffs
-- exported verification output
-- Smithers run identifiers
-
-### Verification State
-
-Verification should exist both:
-
-- locally inside each episode
-- globally as current request / thread state
-
-This allows:
-
-- thread-specific verification summaries
-- whole-request "what is the latest verification state?" logic
-
-### Worktree Binding
-
-The product needs first-class worktree awareness at the thread level.
+The product must treat worktree context as first-class.
 
 At minimum:
 
-- a thread may be bound to a worktree path
-- an episode may reference a worktree path
-- the orchestrator must know whether the active session and filesystem view are aligned
+- a thread may be associated with a worktree
+- a delegated workflow may run in a worktree
+- the session UI must show which worktree active work belongs to
+- the user must be able to tell when session context and filesystem context are misaligned
 
-## How We Will Use pi
+### 10. execute_typescript / Code Mode
 
-| pi capability | Decision | Notes |
-| --- | --- | --- |
-| `pi-agent-core` runtime | keep and build on | core tool loop substrate |
-| coding-agent SDK | keep and use directly | execution primitive for orchestrator actions and `PiAgent`-backed Smithers tasks |
-| `AgentSessionRuntime` | keep and use directly | required for session replacement and worktree-aware runtime transitions |
-| JSONL sessions and tree model | keep as top-level session substrate | we extend with structured entries |
-| `/tree` and branching semantics | keep | useful for user-facing branch navigation |
-| extensions | keep | useful for UI surfaces, hooks, custom tools, safety, integration |
-| skills / prompts / AGENTS | keep | inherited context system |
-| TUI primitives | keep | base for the pi-hosted orchestration-aware UI |
-| compaction | keep but demote | not the main memory strategy once episodes exist |
+Companion spec: [execute_typescript / Code Mode](./specs/execute-typescript.spec.md)
 
-## How We Will Use Smithers
+The product adopts one internal code-mode primitive:
 
-| Smithers capability | Decision | Notes |
-| --- | --- | --- |
-| `runWorkflow()` engine | use early as the default delegated-work substrate | delegated and subagent execution path once the orchestrator and episode model exist |
-| JSX workflow primitives | use by default for delegated work | used to author short-lived workflows for subagent work, including single-subagent workflows |
-| approval support | use | strong fit for gated workflows |
-| worktree support | use | strong fit for isolated multi-branch work |
-| loop / parallel primitives | use selectively inside Smithers workflows | valuable when the delegated workflow actually needs them |
-| `PiAgent` adapter | use heavily inside Smithers workflows | primary way to execute bounded coding-agent tasks inside the workflow model |
-| CLI and server surfaces | use as integration references, not as top-level product shell | our product orchestrator remains primary |
-| web app / voice / RAG / scorers / devtools | out of scope | not core to the product we are building |
+- tool name: `execute_typescript`
+- input shape: `typescriptCode`
+- output shape: `{ success, result, logs, error }`
+- initial runtime: QuickJS
+- capability model: flat async `external_*` bindings generated from the selected host tools
 
-## Important Boundary Decisions
+Code mode is available:
 
-### Smithers Is Not the Top-Level Session Model
+- on the direct path
+- inside Smithers-backed delegated work
 
-Smithers SQLite state is workflow-internal state.
+Code mode is used for:
 
-Product session truth remains:
+- typed capability composition
+- compact scripted transformations
+- reducing low-level multi-tool chatter when a short program is the clearer execution unit
 
-- pi session
-- our thread / episode / artifact entries
+Code-mode events and traces must be captured into episodes and artifacts.
 
-### Smithers Is The Default Delegated Path
+Out of scope for the first implementation:
 
-The default path for trivial local work is still:
+- a code-mode-specific outer sandbox
+- a namespaced capability API
+- raw unrestricted shell access through code mode
 
-- direct orchestrator action
+### 11. Repo-Local Workflow Hooks
 
-But the default path for delegated or subagent work should usually be:
+Companion spec: [Workflow Hooks](./specs/workflow-hooks.spec.md)
 
-- a Smithers workflow, even when that workflow is small
+The product should support repo-local workflow hooks under a `.hellm/` configuration surface.
 
-That means:
+Initial required hooks:
 
-- Smithers is not a late afterthought
-- Smithers should usually represent explicit delegated work because we want explicit boundaries, durable workflow state, and workflow-aware UI
-- raw top-level chaining of `pi` workers should not be the main architecture
-- Smithers still should not become the top-level shell for every request
+- preflight hooks injected at the start of consequential workflows
+- validation hooks injected at the end of consequential workflows
 
-### pi Extensions Are The Interactive Seam
+Consequential workflows include repo-modifying work, heavy work, and other execution where repo-local policy should apply by default.
 
-Pi extensions are the supported way to project hellm into pi's shell. They are not the whole product architecture, and they must never be treated as a replacement for the orchestrator or the interactive host.
+These hooks should support repo-specific policy, context gathering, and failure handling without turning the product into a rigid static workflow engine.
 
-## TUI Requirements
+### 12. Headless and Automation Surfaces
 
-The TUI should become orchestration-aware without throwing away pi's foundation or replacing its shell.
+The product must remain scriptable outside the desktop UI.
 
-Minimum required views:
-
-- chat pane
-- threads pane
-- episode inspector
-- verification panel
-- current session / worktree indicator
-- workflow activity view for active Smithers-backed threads
-
-Important:
-
-- raw logs may exist, but they are not the main comprehension surface
-- the user should understand active vs blocked vs completed work at a glance
-
-## Headless and Automation Requirements
-
-The product must remain scriptable.
-
-Initial required surfaces:
+Required supporting surfaces:
 
 - headless one-shot execution
-- structured workflow input file
-- JSONL or structured event output
-- reuse of pi SDK / RPC where appropriate
-
-Deferred:
-
-- first-class long-lived server mode for the whole product
-
-## Workflow Input
-
-We still want a structured workflow input format, but it should be a seed for the orchestrator, not a rigid task tree.
-
-Recommended initial shape:
-
-```json
-{
-  "prompt": "Implement X safely in this repository.",
-  "todos": [
-    { "id": "docs", "description": "Read relevant docs", "status": "pending" },
-    { "id": "tests", "description": "Run the relevant tests", "status": "pending" }
-  ],
-  "constraints": [
-    "Do not modify deployment configuration",
-    "Prefer local verification over inference"
-  ],
-  "successCriteria": [
-    "Tests pass",
-    "Implementation matches acceptance criteria"
-  ]
-}
-```
-
-## Scope Decisions
-
-### Keep Now
-
-- pi substrate: runtime, sessions, TUI base, SDK / RPC, extensions, skills
-- main orchestrator
-- direct execution path
-- Smithers-backed delegated workflow path
-- episode model
-- thread model
-- verification subsystem
-- orchestration-aware TUI basics
-- workflow input and headless execution
-
-### Build Early Right After the Core Loop and Session Model
-
-- Smithers bridge for delegated workflow execution
-- Smithers-to-episode normalization
-- short-lived orchestrator-authored workflow generation for delegated paths
-- worktree-aware threads and session bindings
-
-### Defer
-
-- parallel independent workers as a default execution mode
-- broad multi-slot model routing beyond simple `main` and `worker`
-- richer slash-command discovery and UX beyond the baseline `/threads`, `/reconcile`, and `/verify` surface
-- full server mode for the whole product
-- advanced worktree switching UX
-- separate artifact database or sidecar store
-- Smithers hot reload integration into the main product
-- voice, RAG, scorers, observability dashboards
-
-### Explicitly Reject
-
-- persistent planner / implementer / reviewer stacks
-- rigid upfront task trees as the default operating model
-- transcript-only state
-- long-lived side-conversation workers
-- making Smithers the whole product shell
-- making compaction the main memory strategy
-
-## Implementation Plan
-
-### Phase 0: Design Lock
-
-Deliverables:
-
-- this PRD
-- exact thread / episode / artifact schema draft
-- decision to extend pi sessions with structured entries
-- decision to keep Smithers behind a bridge boundary
-
-Success condition:
-
-- no ambiguity remains about which subsystem owns strategy, session truth, and durable workflows
-
-### Phase 1: Orchestrator Skeleton on Top of pi
-
-Deliverables:
-
-- request classification
-- direct path
-- basic Smithers-backed delegated path
-- episode normalization
-- reconciliation loop
-
-Success condition:
-
-- the system no longer behaves like a single transcript-only chat loop
-
-### Phase 2: Session-Backed Thread and Episode Persistence
-
-Deliverables:
-
-- structured thread entries
-- structured episode entries
-- artifact references
-- resume reconstruction from pi session state
-
-Success condition:
-
-- restart and resume reconstruct orchestrator-visible state without inventing it from chat text
-
-### Phase 3: Verification as a First-Class Path
-
-Deliverables:
-
-- normalized verification records
-- verification artifacts
-- verification-aware reconciliation
-
-Success condition:
-
-- tests and builds shape next-step decisions programmatically
-
-### Phase 4: Advanced Smithers Workflow Capabilities
-
-Deliverables:
-
-- programmatic Smithers run adapter
-- short-lived workflow authoring from orchestrator state
-- Smithers workflow result translation into episodes
-- approval and waiting-state integration
-- worktree-aware workflow execution path
-
-Success condition:
-
-- the orchestrator can offload complex durable jobs to Smithers without giving up strategic control
-
-### Phase 5: Minimal Orchestration-Aware TUI
-
-Deliverables:
-
-- thread view
-- episode inspection
-- verification state display
-- session / worktree context display
-- active Smithers workflow visualization inside the pi-based shell
-
-Success condition:
-
-- the user can understand what the system is doing, including active workflows, without reading raw logs
-
-### Phase 6: Headless Workflow Input
-
-Deliverables:
-
 - structured workflow input
-- structured headless output
-- automation-friendly execution path
+- structured event or result output
+- reuse of the same orchestrator and product model used by the desktop app
 
-Success condition:
+The desktop app is primary, but headless execution is a real product surface, not a throwaway test mode.
 
-- the orchestrator is useful outside the interactive TUI
+## Persistence and State Requirements
 
-### Phase 7: Advanced Parallel and Worktree Flows
+- pi-backed sessions remain the top-level user-facing session substrate
+- `hellm` extends that substrate with structured product state
+- product state must not depend on replaying the raw transcript for every decision
+- artifacts may live on disk and be referenced from durable product state
+- Smithers may keep its own workflow-run state, but that state is subordinate to the top-level session and episode model
 
-Deliverables:
+## Quality Requirements
 
-- safe parallel independent work
-- stale result handling
-- explicit write-scope rules
-- richer worktree UX
+- the user must be able to recover meaningful state after app restart or workflow interruption
+- direct work, delegated work, and verification must normalize into one coherent product model
+- active, blocked, and completed work must be legible in the UI
+- approvals must be explicit
+- product behavior must stay adaptive rather than collapsing into a rigid workflow tree
+- tests for interactive behavior must exercise the real pi-backed runtime seam, not a fake shell presented as the product
 
-Success condition:
+## Required v1 Scope
 
-- the system can safely exploit independent parallelism without becoming brittle
+The shipped v1 product includes:
 
-### Deferred After Phase 7
+- Electrobun desktop shell
+- pi-backed runtime and session substrate
+- provider auth and model settings
+- session creation, resume, and navigation
+- a session-centric UI with conversation, threads, episodes, verification, workflow activity, and artifacts
+- one orchestrator with direct, delegated, verification, and pause paths
+- Smithers-backed delegated workflows
+- first-class episodes and artifact inspection
+- first-class verification
+- worktree-aware thread and workflow state
+- `execute_typescript` on the direct and delegated paths
+- repo-local preflight and validation workflow hooks
+- headless one-shot execution and structured workflow input or output
 
-- whole-product server mode
-- advanced model routing
-- secondary storage backends
-- richer remote attachment patterns
+## Later, Not v1
 
-## Package Layout
+- richer multi-model routing beyond practical session-level controls
+- advanced collaboration or multi-user features
+- a full long-lived server product surface
+- remote execution and attachment patterns beyond local-repo-first workflows
+- secondary storage backends beyond the primary pi-backed session substrate
 
-Recommended implementation layout:
+## Explicit Non-Goals
 
-```text
-docs/
-  prd.md
-packages/
-  pi-bridge/          # pi SDK/runtime wrappers and substrate integration
-  orchestrator/       # routing, thread lifecycle, episode normalization, reconciliation
-  session-model/      # custom session entry schemas, reconstruction, artifact refs
-  verification/       # normalized verification runners and artifact capture
-  smithers-bridge/    # Smithers workflow adapter and translation layer
-  tui/                # orchestration-aware UI on top of pi primitives
-  cli/                # headless entry points and workflow input handling
-```
+The product is not trying to:
 
-Important:
+- visually clone Slate
+- claim private knowledge of Slate internals
+- build a standalone custom shell, readline loop, or alternate TUI stack outside pi
+- ship a fake shell, stdout snapshot renderer, or demo-only terminal path as the real product
+- make Smithers the top-level shell or top-level session model
+- force all requests through rigid predeclared workflows
+- rely on transcript-only memory
+- adopt persistent planner, implementer, and reviewer role stacks as the default model
+- turn code mode into a second unrestricted shell
 
-- orchestrator logic must not be buried in UI code
-- Smithers integration must stay isolated behind a bridge package
-- session modeling must stay explicit rather than leaking through ad hoc message details
+## Ship Criteria
 
-## Constraints and Caveats
+The product is on target when all of the following are true:
 
-### Bun Boundary
+- a user can open a real repository in the desktop app, authenticate a provider, and work in durable sessions
+- the session UI makes current work legible through threads, episodes, verification, workflow state, and artifacts
+- the orchestrator can choose between direct, delegated, verification, and pause paths without breaking the user model
+- delegated work is visible, bounded, and resumable
+- meaningful work produces reusable episodes
+- verification is structured, inspectable, and programmatically relevant
+- worktree context is visible and aligned with active work
+- the same core product model is usable from both the desktop app and headless execution surfaces
+- pi remains the runtime substrate and Smithers remains the delegated workflow engine rather than replacing the product shell
 
-Smithers currently carries Bun assumptions.
+## Design Basis
 
-Therefore:
+### Public Slate Facts We Intend to Emulate
 
-- the whole product should not require Bun from day one
-- Smithers integration should remain isolated and optional at the boundary
-- dependency choice and packaging need to respect that constraint
+The product intentionally borrows these public ideas:
 
-### Stable IDs Matter
+- one central orchestrator owns strategy and integration
+- bounded worker threads are the delegation unit
+- durable intermediate outputs matter
+- synchronization is frequent
+- worktrees and structured automation surfaces matter
 
-Smithers durability depends on stable task IDs.
+### Hellm Inferences From Slate
 
-Therefore:
+The product also adopts these explicit inferences:
 
-- any workflow we author must treat IDs as durable keys
-- dynamic workflows must derive IDs from stable data, not array position or randomness
+- the quality comes from orchestration discipline more than cosmetic UI similarity
+- structured outputs matter more than long prose summaries
+- routing by task type improves reliability
+- the best balance is adaptive orchestration with bounded synchronization, not transcript sprawl and not rigid workflow bureaucracy
 
-### Two Durable Systems Will Exist
-
-Once Smithers is integrated, two durable systems will exist:
-
-- pi session state as top-level product session truth
-- Smithers SQLite state for workflow runs
-
-That is acceptable only if we keep the ownership boundary explicit:
-
-- product state lives in pi session plus our structured entries
-- Smithers state lives behind workflow-run references
-
-## Acceptance Criteria
-
-The project is on the right track when all of the following are true:
-
-- it no longer feels like a single chat transcript with tools
-- the user can see active workstreams clearly
-- every meaningful work unit produces a reusable episode
-- direct action, Smithers workflows, and verification all normalize into the same product model
-- when work needs delegated or subagent execution, the orchestrator can author a short-lived Smithers workflow, show its progress, and resume normal orchestration when it ends
-- session and worktree state stay aligned
-- verification is structured and visible
-- the product remains adaptive rather than becoming a rigid workflow engine
-- Smithers can be used without becoming the top-level product shell
-- pi remains the substrate rather than being discarded
-
-## Open Questions
-
-These are the remaining real design questions, after the architecture decision above.
-
-- Should `pi` be consumed as a dependency first or vendored first?
-- Should the Smithers bridge run in-process, out-of-process, or support both?
-- How much structured state should be stored inline in pi custom entries versus external artifact files?
-- What is the minimum useful episode inspector UI before a larger TUI overhaul?
-- At what phase should independent parallel workers be introduced without compromising correctness?
-
-## Final Guidance For Future Work
-
-Do not reinterpret this repository as "build some agent system."
-
-The mission is specific:
-
-- keep pi as the substrate
-- add a first-class orchestrator above it
-- use episodes and reconciliation as the durable product model
-- use Smithers selectively for durable structured jobs
-- keep orchestration visible
-- keep verification first-class
-- avoid rigid role-agent bureaucracy
+These are `hellm` product choices, not claims about private Slate internals.
