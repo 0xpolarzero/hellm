@@ -1,7 +1,9 @@
 import { appendFileSync } from "node:fs";
+import { chmod } from "node:fs/promises";
 import { describe, expect, it } from "bun:test";
 import { executeHeadlessRun } from "@hellm/cli";
 import { createOrchestrator } from "@hellm/orchestrator";
+import { createSmithersWorkflowBridge } from "@hellm/smithers-bridge";
 import { createEmptySessionState, createArtifact,
   reconstructSessionState } from "@hellm/session-model";
 import {
@@ -867,6 +869,7 @@ describe("golden path headless specs", () => {
         "build",
         "test",
         "lint",
+        "integration",
       ]);
       expect(verificationRunner.calls[1]?.manualChecks).toBeUndefined();
       expect(second.result.raw.context.priorEpisodes.map((episode) => episode.id)).toEqual([
@@ -1253,14 +1256,17 @@ describe("golden path headless specs", () => {
       },
       orchestrator,
     );
-    await smithersBridge.approveRun("golden-run", { approved: true });
     const second = await runHeadlessHarness(
       {
         threadId: "golden-smithers",
-        prompt: "Resume the workflow path.",
+        prompt: "Approve then resume the workflow path.",
         cwd: "/repo",
         routeHint: "smithers-workflow",
-        resumeRunId: "golden-run",
+        approvalDecision: {
+          runId: "golden-run",
+          approved: true,
+          decidedBy: "golden-reviewer",
+        },
       },
       orchestrator,
     );
@@ -1272,6 +1278,15 @@ describe("golden path headless specs", () => {
     expect(first.result.raw.state.waiting).toBe(true);
     expect(first.result.raw.state.blocked).toBe(false);
     expect(first.result.events.at(-1)?.type).toBe("run.waiting");
+    expect(smithersBridge.approvals).toEqual([
+      {
+        runId: "golden-run",
+        decision: {
+          approved: true,
+          decidedBy: "golden-reviewer",
+        },
+      },
+    ]);
     expect(second.result.output.workflowRunIds).toEqual(["golden-run"]);
     expect(second.result.raw.state.visibleSummary).toBe(
       "smithers-workflow:completed:completed",
@@ -1279,6 +1294,105 @@ describe("golden path headless specs", () => {
     expect(second.result.raw.state.waiting).toBe(false);
     expect(second.result.raw.state.blocked).toBe(false);
     expect(second.result.events.at(-1)?.type).toBe("run.completed");
+  });
+
+  it("keeps headless smithers runs in waiting states for real CLI-style waiting outputs until explicit approval resolves them", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const approvedMarkerPath = workspace.path("approved.marker");
+      await workspace.write(
+        "bin/smithers",
+        `#!/usr/bin/env bun
+import { existsSync, writeFileSync } from "node:fs";
+
+const argv = process.argv.slice(2);
+const command = argv[0];
+const runIdIndex = argv.indexOf("--run-id");
+const runId = runIdIndex >= 0 ? argv[runIdIndex + 1] : argv[1] ?? "missing-run-id";
+const approvedPath = ${JSON.stringify(approvedMarkerPath)};
+
+if (command === "up") {
+  const isResume = argv.includes("--resume");
+  if (!isResume) {
+    console.error("status waiting-approval");
+    console.log(JSON.stringify({ status: "waiting-approval", runId }));
+    process.exit(17);
+  }
+  if (!existsSync(approvedPath)) {
+    console.error("status waiting-resume");
+    console.log(JSON.stringify({ status: "waiting-resume", runId }));
+    process.exit(18);
+  }
+  console.log(JSON.stringify({ status: "completed", runId }));
+  process.exit(0);
+}
+if (command === "approve") {
+  writeFileSync(approvedPath, "approved");
+  process.exit(0);
+}
+if (command === "deny") {
+  process.exit(0);
+}
+console.error("unsupported command");
+process.exit(1);
+`,
+      );
+      await chmod(workspace.path("bin/smithers"), 0o755);
+
+      const smithersBridge = createSmithersWorkflowBridge({
+        smithersBinary: workspace.path("bin/smithers"),
+        runStateDir: workspace.path(".hellm/smithers-state"),
+      });
+      const orchestrator = createBaseOrchestrator({ smithersBridge });
+
+      const first = await runHeadlessHarness(
+        {
+          threadId: "golden-real-cli-waiting",
+          prompt: "Run workflow and wait for approval.",
+          cwd: workspace.root,
+          routeHint: "smithers-workflow",
+        },
+        orchestrator,
+      );
+      const runId = first.result.output.workflowRunIds[0];
+      if (!runId) {
+        throw new Error("Expected smithers run id after first waiting response.");
+      }
+      expect(first.result.output.status).toBe("waiting_approval");
+      expect(first.result.raw.state.waiting).toBe(true);
+      expect(first.result.raw.state.blocked).toBe(false);
+      expect(first.result.events.at(-1)?.type).toBe("run.waiting");
+
+      const second = await runHeadlessHarness(
+        {
+          threadId: "golden-real-cli-waiting",
+          prompt: "Try resuming before approval.",
+          cwd: workspace.root,
+          routeHint: "smithers-workflow",
+          resumeRunId: runId,
+        },
+        orchestrator,
+      );
+      expect(second.result.output.status).toBe("waiting_input");
+      expect(second.result.raw.state.waiting).toBe(true);
+      expect(second.result.raw.state.blocked).toBe(false);
+      expect(second.result.events.at(-1)?.type).toBe("run.waiting");
+
+      await smithersBridge.approveRun(runId, { approved: true, decidedBy: "golden-test" });
+      const third = await runHeadlessHarness(
+        {
+          threadId: "golden-real-cli-waiting",
+          prompt: "Resume after approval.",
+          cwd: workspace.root,
+          routeHint: "smithers-workflow",
+          resumeRunId: runId,
+        },
+        orchestrator,
+      );
+
+      expect(third.result.output.status).toBe("completed");
+      expect(third.result.raw.state.blocked).toBe(false);
+      expect(third.result.events.at(-1)?.type).toBe("run.completed");
+    });
   });
 
   it("persists smithers waiting_resume workflow state in file-backed JSONL and resumes cleanly", async () => {

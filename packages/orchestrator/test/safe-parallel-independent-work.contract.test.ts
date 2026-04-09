@@ -14,7 +14,7 @@ describe("@hellm/orchestrator advanced safe parallel independent work contract",
     expect(row).toContain("| deferred contract |");
     expect(row).toContain("| deferred |");
     expect(row).toContain(
-      "`packages/orchestrator/test/safe-parallel-independent-work.contract.test.ts`",
+      "packages/orchestrator/test/safe-parallel-independent-work.contract.test.ts",
     );
   });
 

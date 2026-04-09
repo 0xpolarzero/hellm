@@ -113,8 +113,8 @@ describe("@hellm/cli completion decisioning JSONL semantics", () => {
         type: "run.waiting",
         status: entry.expectedStatus,
       });
-      expect(jsonl.at(-1)).toContain("\"type\":\"run.waiting\"");
-      expect(jsonl.at(-1)).toContain(`\"status\":\"${entry.expectedStatus}\"`);
+      expect(jsonl.at(-1)).toContain('"type":"run.waiting"');
+      expect(jsonl.at(-1)).toContain(`"status":"${entry.expectedStatus}"`);
     }
   });
 
@@ -204,7 +204,7 @@ describe("@hellm/cli completion decisioning JSONL semantics", () => {
         type: "run.completed",
         status: entry.status,
       });
-      expect(jsonl.at(-1)).toContain("\"type\":\"run.completed\"");
+      expect(jsonl.at(-1)).toContain('"type":"run.completed"');
     }
   });
 });

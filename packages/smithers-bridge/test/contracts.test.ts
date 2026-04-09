@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { chmod, readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import {
   authorWorkflow,
   createSmithersWorkflowBridge,
@@ -80,52 +82,117 @@ describe("@hellm/smithers-bridge contract surface", () => {
     });
   });
 
-  it("ships a default bridge that is explicit about missing implementation", async () => {
+  it("ships a default bridge that reports smithers as its engine and is enabled by default", () => {
     const bridge = createSmithersWorkflowBridge();
+    expect(bridge.engine).toBe("smithers");
+    expect(bridge.enabled).toBe(true);
+  });
+
+  it("returns a failed result when the smithers CLI is not available", async () => {
+    const bridge = createSmithersWorkflowBridge({
+      smithersBinary: "nonexistent-smithers-binary-for-testing",
+    });
     const thread = createThreadFixture({ id: "thread-smithers", kind: "smithers-workflow" });
 
-    await expect(
-      bridge.runWorkflow({
-        path: "smithers-workflow",
+    const result = await bridge.runWorkflow({
+      path: "smithers-workflow",
+      thread,
+      objective: "Run workflow",
+      cwd: "/repo",
+      workflow: authorWorkflow({
         thread,
         objective: "Run workflow",
-        cwd: "/repo",
+        inputEpisodeIds: [],
+        tasks: [],
+      }),
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.episode.status).toBe("failed");
+    expect(result.episode.source).toBe("smithers");
+  });
+
+  it("normalizes blocked smithers status into a failed workflow-run reference while keeping episode status blocked", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const capturePath = workspace.path("smithers-blocked-contract.json");
+      await workspace.write(
+        "bin/smithers",
+        `#!/usr/bin/env bun
+import { writeFileSync } from "node:fs";
+const argv = process.argv.slice(2);
+const runIdIndex = argv.indexOf("--run-id");
+const runId = runIdIndex >= 0 ? argv[runIdIndex + 1] : "missing-run-id";
+writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ argv, runId }));
+console.log(JSON.stringify({
+  status: "blocked",
+  runId,
+}));
+`,
+      );
+      await chmod(resolve(workspace.path("bin"), "smithers"), 0o755);
+      const thread = createThreadFixture({
+        id: "thread-blocked-status-normalization",
+        kind: "smithers-workflow",
+      });
+      const bridge = createSmithersWorkflowBridge({
+        smithersBinary: workspace.path("bin/smithers"),
+      });
+
+      const result = await bridge.runWorkflow({
+        path: "smithers-workflow",
+        thread,
+        objective: "Run blocked workflow",
+        cwd: workspace.root,
         workflow: authorWorkflow({
           thread,
-          objective: "Run workflow",
+          objective: "Run blocked workflow",
           inputEpisodeIds: [],
           tasks: [],
         }),
-      }),
-    ).rejects.toThrow("Not implemented");
+      });
+
+      const invocation = JSON.parse(await readFile(capturePath, "utf8")) as {
+        argv: string[];
+        runId: string;
+      };
+
+      expect(invocation.argv[0]).toBe("up");
+      expect(result.status).toBe("blocked");
+      expect(result.run.runId).toBe(invocation.runId);
+      expect(result.run.status).toBe("failed");
+      expect(result.episode.status).toBe("blocked");
+    });
   });
 
-  it("surfaces explicit not-implemented errors for approval-gate control methods", async () => {
-    const bridge = createSmithersWorkflowBridge();
+  it("surfaces approve and deny CLI failures through the bridge instead of swallowing them", async () => {
+    const bridge = createSmithersWorkflowBridge({
+      smithersBinary: "nonexistent-smithers-binary-for-testing",
+    });
     const thread = createThreadFixture({
       id: "thread-smithers-approval",
       kind: "smithers-workflow",
     });
 
-    await expect(
-      bridge.resumeWorkflow({
-        runId: "run-approval",
-        thread,
-        objective: "Resume workflow",
-      }),
-    ).rejects.toThrow("Not implemented");
+    const result = await bridge.resumeWorkflow({
+      runId: "run-approval",
+      thread,
+      objective: "Resume workflow",
+    });
+    expect(result.status).toBe("failed");
+    expect(result.episode.source).toBe("smithers");
+
     await expect(
       bridge.approveRun("run-approval", {
         approved: true,
         decidedBy: "reviewer",
       }),
-    ).rejects.toThrow("Not implemented");
+    ).rejects.toThrow("Executable not found in $PATH");
     await expect(
       bridge.denyRun("run-approval", {
         approved: false,
         decidedBy: "reviewer",
       }),
-    ).rejects.toThrow("Not implemented");
+    ).rejects.toThrow("Executable not found in $PATH");
   });
 
   it("preserves both Smithers approval-gate modes and captures approve/deny decisions in the fake bridge", async () => {
@@ -908,27 +975,41 @@ describe("@hellm/smithers-bridge contract surface", () => {
     });
   });
 
-  it("documents the current API gap: WorkflowTaskSpec has no dedicated scopedContext field yet", () => {
+  it("supports a first-class `scopedContext` object on smithers workflow pi-agent tasks", () => {
     const thread = createThreadFixture({
-      id: "thread-smithers-context-gap",
+      id: "thread-smithers-context-typed",
       kind: "smithers-workflow",
     });
     const workflow = authorWorkflow({
       thread,
-      objective: "Capture scoped context contract gap",
+      objective: "Capture typed scoped context contract",
       inputEpisodeIds: [],
       tasks: [
         {
           id: "pi-task",
           outputKey: "result",
-          prompt: "Context currently rides inside prompt text.",
+          prompt: "Context should be structured metadata.",
           agent: "pi",
+          scopedContext: {
+            sessionHistory: ['{"type":"session"}'],
+            relevantPaths: ["/repo", "/repo/worktrees/feature"],
+            agentsInstructions: ["Read docs/prd.md"],
+            relevantSkills: ["orchestration"],
+            priorEpisodeIds: ["episode-1"],
+          },
         },
       ],
     });
 
     const task = workflow.tasks[0] as Record<string, unknown>;
-    expect(task).not.toHaveProperty("scopedContext");
+    expect(task).toHaveProperty("scopedContext");
+    expect(task["scopedContext"]).toEqual({
+      sessionHistory: ['{"type":"session"}'],
+      relevantPaths: ["/repo", "/repo/worktrees/feature"],
+      agentsInstructions: ["Read docs/prd.md"],
+      relevantSkills: ["orchestration"],
+      priorEpisodeIds: ["episode-1"],
+    });
   });
 
   it("translates smithers run results into episodes without dropping rich episode fields", () => {
@@ -1084,23 +1165,100 @@ describe("@hellm/smithers-bridge contract surface", () => {
     expect(translated.verification[0]?.id).toBe("verification-smithers-test");
   });
 
-  it.todo(
-    "adds a first-class `scopedContext` object on smithers workflow pi-agent tasks so orchestrator context is structured instead of prompt-encoded",
-    () => {},
-  );
+  it("pi-agent tasks inside smithers carry explicit scoped context from the orchestrator without assuming Slate internals", () => {
+    const thread = createThreadFixture({
+      id: "thread-smithers-scoped-context",
+      kind: "smithers-workflow",
+    });
+    const workflow = authorWorkflow({
+      thread,
+      objective: "Run with explicit scoped context.",
+      inputEpisodeIds: ["episode-prior"],
+      tasks: [
+        {
+          id: "pi-task",
+          outputKey: "result",
+          prompt: "Do bounded work.",
+          agent: "pi",
+          scopedContext: {
+            sessionHistory: ['{"entry":"structured"}'],
+            relevantPaths: ["/repo"],
+            agentsInstructions: ["Follow AGENTS.md"],
+            relevantSkills: ["tests"],
+            priorEpisodeIds: ["episode-prior"],
+          },
+        },
+      ],
+    });
 
-  it.todo(
-    "pi-agent tasks inside smithers carry explicit scoped context from the orchestrator without assuming Slate internals",
-    () => {},
-  );
-  it.todo(
-    "pi-agent tasks inside smithers carry explicit tool scoping for bounded execution",
-    () => {},
-  );
-  it.todo(
-    "pi-agent tasks inside smithers carry explicit completion conditions for episode handoff",
-    () => {},
-  );
+    expect(workflow.tasks[0]?.scopedContext).toEqual({
+      sessionHistory: ['{"entry":"structured"}'],
+      relevantPaths: ["/repo"],
+      agentsInstructions: ["Follow AGENTS.md"],
+      relevantSkills: ["tests"],
+      priorEpisodeIds: ["episode-prior"],
+    });
+  });
+
+  it("pi-agent tasks inside smithers carry explicit tool scoping for bounded execution", () => {
+    const thread = createThreadFixture({
+      id: "thread-smithers-tool-scope",
+      kind: "smithers-workflow",
+    });
+    const workflow = authorWorkflow({
+      thread,
+      objective: "Run with explicit tool scoping.",
+      inputEpisodeIds: [],
+      tasks: [
+        {
+          id: "pi-task",
+          outputKey: "result",
+          prompt: "Bound tool access.",
+          agent: "pi",
+          toolScope: {
+            allow: ["read", "edit"],
+            deny: ["network"],
+            writeRoots: ["/repo/worktrees/feature"],
+          },
+        },
+      ],
+    });
+
+    expect(workflow.tasks[0]?.toolScope).toEqual({
+      allow: ["read", "edit"],
+      deny: ["network"],
+      writeRoots: ["/repo/worktrees/feature"],
+    });
+  });
+
+  it("pi-agent tasks inside smithers carry explicit completion conditions for episode handoff", () => {
+    const thread = createThreadFixture({
+      id: "thread-smithers-completion",
+      kind: "smithers-workflow",
+    });
+    const workflow = authorWorkflow({
+      thread,
+      objective: "Run with explicit completion condition.",
+      inputEpisodeIds: [],
+      tasks: [
+        {
+          id: "pi-task",
+          outputKey: "result",
+          prompt: "Stop when handoff is ready.",
+          agent: "pi",
+          completionCondition: {
+            type: "episode-produced",
+            maxTurns: 1,
+          },
+        },
+      ],
+    });
+
+    expect(workflow.tasks[0]?.completionCondition).toEqual({
+      type: "episode-produced",
+      maxTurns: 1,
+    });
+  });
   it.todo(
     "concrete smithers bridge execution enforces retryLimit exhaustion behavior without rerunning already completed workflow nodes",
     () => {},

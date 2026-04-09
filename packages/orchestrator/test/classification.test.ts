@@ -138,7 +138,30 @@ describe("@hellm/orchestrator classification", () => {
     ).toEqual({
       path: "direct",
       confidence: "medium",
-      reason: "Defaulted to direct execution for a small local request.",
+      reason: "Short question or explanation request classified as small local work.",
+    });
+  });
+
+  it("routes explicit approval decisions to the smithers workflow path when no stronger hint is provided", () => {
+    const orchestrator = createOrchestrator();
+
+    expect(
+      orchestrator.classifyRequest(
+        {
+          threadId: "approval-decision-route",
+          prompt: "Approve and continue.",
+          cwd: "/repo",
+          approvalDecision: {
+            runId: "run-decision",
+            approved: true,
+          },
+        },
+        EMPTY_CONTEXT,
+      ),
+    ).toEqual({
+      path: "smithers-workflow",
+      confidence: "high",
+      reason: "Request includes an explicit approval decision for a Smithers run.",
     });
   });
 

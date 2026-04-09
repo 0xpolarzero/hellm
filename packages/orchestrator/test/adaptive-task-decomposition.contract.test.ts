@@ -85,6 +85,22 @@ describe("@hellm/orchestrator adaptive task decomposition contract", () => {
         agent: "pi",
         needsApproval: true,
         worktreePath,
+        scopedContext: {
+          sessionHistory: [],
+          relevantPaths: ["/repo", worktreePath],
+          agentsInstructions: [],
+          relevantSkills: [],
+          priorEpisodeIds: [],
+        },
+        toolScope: {
+          allow: ["read", "edit", "bash"],
+          writeRoots: [worktreePath],
+          readOnly: false,
+        },
+        completionCondition: {
+          type: "episode-produced",
+          maxTurns: 1,
+        },
       },
     ]);
   });
@@ -195,8 +211,49 @@ describe("@hellm/orchestrator adaptive task decomposition contract", () => {
     expect(smithersBridge.runRequests[1]?.workflow.inputEpisodeIds).toEqual([
       "episode-adaptive-pass-1",
     ]);
-    expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual(firstTasks);
-    expect(smithersBridge.runRequests[1]?.workflow.tasks).toEqual(secondTasks);
+    expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual([
+      {
+        ...firstTasks[0],
+        scopedContext: {
+          sessionHistory: [],
+          relevantPaths: ["/repo"],
+          agentsInstructions: [],
+          relevantSkills: [],
+          priorEpisodeIds: [],
+        },
+        toolScope: {
+          allow: ["read", "edit", "bash"],
+          writeRoots: ["/repo"],
+          readOnly: false,
+        },
+        completionCondition: {
+          type: "episode-produced",
+          maxTurns: 1,
+        },
+      },
+    ]);
+    expect(smithersBridge.runRequests[1]?.workflow.tasks).toEqual([
+      {
+        ...secondTasks[0],
+        scopedContext: {
+          sessionHistory: expect.any(Array),
+          relevantPaths: ["/repo"],
+          agentsInstructions: [],
+          relevantSkills: [],
+          priorEpisodeIds: ["episode-adaptive-pass-1"],
+        },
+        toolScope: {
+          allow: ["read", "edit", "bash"],
+          writeRoots: ["/repo"],
+          readOnly: false,
+        },
+        completionCondition: {
+          type: "episode-produced",
+          maxTurns: 1,
+        },
+      },
+      secondTasks[1],
+    ]);
   });
 
   test.todo(

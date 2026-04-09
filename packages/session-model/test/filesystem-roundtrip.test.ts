@@ -817,7 +817,7 @@ describe("@hellm/session-model filesystem roundtrip", () => {
       const state = harness.reconstruct();
       const snapshot = createThreadSnapshot(state, thread.id);
 
-      expect(state.artifacts.map((artifact) => artifact.id).sort()).toEqual([
+      expect(state.artifacts.map((artifact) => artifact.id).toSorted()).toEqual([
         "artifact-fresh",
         "artifact-stale",
       ]);
@@ -938,7 +938,7 @@ describe("@hellm/session-model filesystem roundtrip", () => {
       const threadASnapshot = createThreadSnapshot(state, threadA.id);
       const threadBSnapshot = createThreadSnapshot(state, threadB.id);
 
-      expect(state.artifacts.map((artifact) => artifact.id).sort()).toEqual([
+      expect(state.artifacts.map((artifact) => artifact.id).toSorted()).toEqual([
         "artifact-other-thread",
         "artifact-shared",
       ]);

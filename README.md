@@ -17,5 +17,6 @@ Read [docs/prd.md](docs/prd.md) first.
 ## Commands
 
 - `bun install`
+- `bun run prepare:references`
 - `bun run dev`
 - `bun run check`

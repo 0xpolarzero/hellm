@@ -11,17 +11,19 @@ import {
 } from "@hellm/test-support";
 
 describe("@hellm/verification contract surface", () => {
-  it("ships a default runner that is explicit about missing implementation", async () => {
+  it("ships a default runner that executes verification commands via subprocess", async () => {
     const runner = createVerificationRunner();
 
-    await expect(
-      runner.run({
-        threadId: "thread-1",
-        cwd: "/repo",
-        objective: "Run verification",
-        kinds: ["build"],
-      }),
-    ).rejects.toThrow("Not implemented");
+    const result = await runner.run({
+      threadId: "thread-default-runner",
+      cwd: "/repo",
+      objective: "Run verification",
+      kinds: ["manual"],
+    });
+
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.kind).toBe("manual");
+    expect(result.records[0]?.status).toBe("unknown");
   });
 
   it("normalizes build, test, lint, manual, and integration results into a verification episode", async () => {

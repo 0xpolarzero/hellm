@@ -5,6 +5,7 @@ export * from "./fake-verification-runner";
 export * from "./fixtures";
 export * from "./git-workspace";
 export * from "./process-harness";
+export * from "./reference-guard";
 export * from "./session-jsonl";
 export * from "./temp-workspace";
 export * from "./tui-harness";

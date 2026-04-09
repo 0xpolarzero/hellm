@@ -188,7 +188,7 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
         cwd: workspace.root,
       });
 
-      expect([...context.relevantSkills].sort()).toEqual([
+      expect([...context.relevantSkills].toSorted()).toEqual([
         "audit",
         "frontend-design",
       ]);
@@ -823,15 +823,34 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
           prompt: "Continue the isolated workflow.",
           agent: "pi",
           worktreePath: isolatedWorktreePath,
+          scopedContext: {
+            sessionHistory: expect.any(Array),
+            relevantPaths: [workspace.root, isolatedWorktreePath],
+            agentsInstructions: [],
+            relevantSkills: [],
+            priorEpisodeIds: [],
+          },
+          toolScope: {
+            allow: ["read", "edit", "bash"],
+            writeRoots: [isolatedWorktreePath],
+            readOnly: false,
+          },
+          completionCondition: {
+            type: "episode-produced",
+            maxTurns: 1,
+          },
         },
       ]);
-      expect(smithersBridge.resumeRequests[0]).toEqual({
+      expect(smithersBridge.resumeRequests[0]).toMatchObject({
         runId,
         thread: expect.objectContaining({
           id: threadId,
           worktreePath: isolatedWorktreePath,
         }),
         objective: "Run isolated workflow",
+        cwd: workspace.root,
+        worktreePath: isolatedWorktreePath,
+        runStateStore: workspace.path(".smithers/run-smithers-isolated-v1.sqlite"),
       });
 
       expect(first.threadSnapshot.thread.worktreePath).toBe(isolatedWorktreePath);
@@ -1221,6 +1240,22 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
           agent: "pi",
           needsApproval: true,
           worktreePath,
+          scopedContext: {
+            sessionHistory: expect.any(Array),
+            relevantPaths: [workspace.root, worktreePath],
+            agentsInstructions: [],
+            relevantSkills: [],
+            priorEpisodeIds: ["episode-smithers-prior"],
+          },
+          toolScope: {
+            allow: ["read", "edit", "bash"],
+            writeRoots: [worktreePath],
+            readOnly: false,
+          },
+          completionCondition: {
+            type: "episode-produced",
+            maxTurns: 1,
+          },
         },
       ]);
       expect(request?.worktreePath).toBe(worktreePath);
@@ -2032,6 +2067,22 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
           agent: "pi",
           needsApproval: true,
           worktreePath,
+          scopedContext: {
+            sessionHistory: expect.any(Array),
+            relevantPaths: [workspace.root, worktreePath],
+            agentsInstructions: [],
+            relevantSkills: [],
+            priorEpisodeIds: ["episode-prior-single"],
+          },
+          toolScope: {
+            allow: ["read", "edit", "bash"],
+            writeRoots: [worktreePath],
+            readOnly: false,
+          },
+          completionCondition: {
+            type: "episode-produced",
+            maxTurns: 1,
+          },
         },
       ]);
       expect(smithersBridge.runRequests[0]?.worktreePath).toBe(worktreePath);
@@ -2253,8 +2304,8 @@ describe("@hellm/orchestrator filesystem and worktree integration", () => {
       );
 
       expect(verificationRunner.calls).toHaveLength(2);
-      expect(verificationRunner.calls[0]?.kinds).toEqual(["build", "test", "lint"]);
-      expect(verificationRunner.calls[1]?.kinds).toEqual(["build", "test", "lint"]);
+      expect(verificationRunner.calls[0]?.kinds).toEqual(["build", "test", "lint", "integration"]);
+      expect(verificationRunner.calls[1]?.kinds).toEqual(["build", "test", "lint", "integration"]);
       expect(secondEpisode?.status).toBe("completed");
       expect(secondEpisode?.unresolvedIssues).toEqual([]);
       expect(secondEpisode?.followUpSuggestions).toEqual([]);

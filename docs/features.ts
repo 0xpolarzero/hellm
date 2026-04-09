@@ -58,6 +58,7 @@ export enum HellmFeature {
   SingleSubagentWorkflowPath = "path.smithersWorkflow.singleSubagentPath",
   VerificationExecutionPath = "path.verification",
   ApprovalClarificationExecutionPath = "path.approvalClarification",
+  ApprovalDecisionInput = "path.approvalClarification.decisionInput",
   DirectPathEpisodeNormalization = "path.direct.episodeNormalization",
   SmithersWorkflowEpisodeNormalization = "path.smithersWorkflow.episodeNormalization",
   VerificationEpisodeNormalization = "path.verification.episodeNormalization",

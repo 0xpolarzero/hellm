@@ -22,7 +22,7 @@ describe("@hellm/orchestrator broad multi-slot model routing contract", () => {
     const classification = orchestrator.classifyRequest(
       {
         threadId: "thread-model-routing-classification",
-        prompt: "Implement this local change.",
+        prompt: "What does the local change do?",
         cwd: "/repo",
         workflowSeedInput: {
           metadata: {
@@ -40,7 +40,7 @@ describe("@hellm/orchestrator broad multi-slot model routing contract", () => {
     expect(classification).toEqual({
       path: "direct",
       confidence: "medium",
-      reason: "Defaulted to direct execution for a small local request.",
+      reason: "Short question or explanation request classified as small local work.",
     });
   });
 

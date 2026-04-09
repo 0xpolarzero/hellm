@@ -79,7 +79,7 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     expect(verification.threadSnapshot.thread.kind).toBe("verification");
     expect(verificationRunner.calls[0]).toMatchObject({
       threadId: "thread-default-verify",
-      kinds: ["build", "test", "lint"],
+      kinds: ["build", "test", "lint", "integration"],
     });
   });
 
@@ -204,6 +204,25 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
         agent: "pi",
         needsApproval: true,
         worktreePath: "/repo/worktrees/feature-implicit-task",
+        scopedContext: {
+          sessionHistory: [],
+          relevantPaths: [
+            "/repo",
+            "/repo/worktrees/feature-implicit-task",
+          ],
+          agentsInstructions: [],
+          relevantSkills: [],
+          priorEpisodeIds: [],
+        },
+        toolScope: {
+          allow: ["read", "edit", "bash"],
+          writeRoots: ["/repo/worktrees/feature-implicit-task"],
+          readOnly: false,
+        },
+        completionCondition: {
+          type: "episode-produced",
+          maxTurns: 1,
+        },
       },
     ]);
     expect(smithersBridge.runRequests[0]?.worktreePath).toBe(
@@ -255,6 +274,22 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
         outputKey: "result",
         prompt: "Run an implicit delegated task.",
         agent: "pi",
+        scopedContext: {
+          sessionHistory: [],
+          relevantPaths: ["/repo"],
+          agentsInstructions: [],
+          relevantSkills: [],
+          priorEpisodeIds: [],
+        },
+        toolScope: {
+          allow: ["read", "edit", "bash"],
+          writeRoots: ["/repo"],
+          readOnly: false,
+        },
+        completionCondition: {
+          type: "episode-produced",
+          maxTurns: 1,
+        },
       },
     ]);
     expect(smithersBridge.runRequests[0]?.worktreePath).toBeUndefined();
@@ -604,7 +639,28 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
       },
     });
 
-    expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual(explicitTasks);
+    expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual([
+      {
+        ...explicitTasks[0],
+        scopedContext: {
+          sessionHistory: [],
+          relevantPaths: ["/repo"],
+          agentsInstructions: [],
+          relevantSkills: [],
+          priorEpisodeIds: [],
+        },
+        toolScope: {
+          allow: ["read", "edit", "bash"],
+          writeRoots: ["/repo"],
+          readOnly: false,
+        },
+        completionCondition: {
+          type: "episode-produced",
+          maxTurns: 1,
+        },
+      },
+      explicitTasks[1],
+    ]);
     expect(result.threadSnapshot.workflowRuns[0]?.runId).toBe("run-explicit-tasks");
     expect(result.sessionState.smithersIsolations[0]?.runId).toBe(
       "run-explicit-tasks",
@@ -2429,6 +2485,102 @@ describe("@hellm/orchestrator routing and reconciliation", () => {
     expect(second.sessionEntries[0]?.parentId).toBe(first.sessionEntries.at(-1)?.id);
     expect(second.threadSnapshot.episodes.map((episode) => episode.id)).toHaveLength(
       2,
+    );
+  });
+
+  it("applies explicit approval decisions before smithers resume and persists the decision outcome", async () => {
+    const smithersBridge = new FakeSmithersWorkflowBridge();
+    smithersBridge.enqueueRunResult({
+      run: {
+        runId: "decision-run",
+        threadId: "thread-decision-run",
+        workflowId: "workflow:thread-decision-run",
+        status: "waiting_approval",
+        updatedAt: "2026-04-08T09:00:00.000Z",
+      },
+      status: "waiting_approval",
+      outputs: [],
+      episode: createEpisodeFixture({
+        id: "episode-decision-wait",
+        threadId: "thread-decision-run",
+        source: "smithers",
+        status: "waiting_approval",
+        smithersRunId: "decision-run",
+      }),
+    });
+    smithersBridge.enqueueResumeResult({
+      run: {
+        runId: "decision-run",
+        threadId: "thread-decision-run",
+        workflowId: "workflow:thread-decision-run",
+        status: "completed",
+        updatedAt: "2026-04-08T09:05:00.000Z",
+      },
+      status: "completed",
+      outputs: [],
+      episode: createEpisodeFixture({
+        id: "episode-decision-done",
+        threadId: "thread-decision-run",
+        source: "smithers",
+        status: "completed",
+        smithersRunId: "decision-run",
+      }),
+    });
+
+    const orchestrator = createOrchestrator({
+      clock: fixedClock(),
+      smithersBridge,
+      contextLoader: {
+        async load(request) {
+          return baseLoadedContext(request);
+        },
+      },
+    });
+
+    const first = await orchestrator.run({
+      threadId: "thread-decision-run",
+      prompt: "Start delegated run.",
+      cwd: "/repo",
+      routeHint: "smithers-workflow",
+      requireApproval: true,
+    });
+    const second = await orchestrator.run({
+      threadId: "thread-decision-run",
+      prompt: "Approve and resume delegated run.",
+      cwd: "/repo",
+      routeHint: "smithers-workflow",
+      approvalDecision: {
+        runId: "decision-run",
+        approved: true,
+        decidedBy: "reviewer",
+        note: "Looks good.",
+      },
+    });
+
+    expect(first.threadSnapshot.thread.status).toBe("waiting_approval");
+    expect(smithersBridge.approvals).toEqual([
+      {
+        runId: "decision-run",
+        decision: {
+          approved: true,
+          decidedBy: "reviewer",
+          note: "Looks good.",
+        },
+      },
+    ]);
+    expect(smithersBridge.resumeRequests[0]?.runId).toBe("decision-run");
+    expect(second.threadSnapshot.thread.status).toBe("completed");
+    expect(second.threadSnapshot.episodes.at(-1)?.conclusions[0]).toContain(
+      'Approval decision applied before resume for run "decision-run": approved.',
+    );
+    const persistedEpisodeEntry = second.sessionEntries.find(
+      (entry) => entry.message.details.kind === "episode",
+    );
+    if (!persistedEpisodeEntry || persistedEpisodeEntry.message.details.kind !== "episode") {
+      throw new Error("Expected a structured episode entry.");
+    }
+    expect(persistedEpisodeEntry.message.details.data.conclusions[0]).toContain(
+      'Approval decision applied before resume for run "decision-run": approved.',
     );
   });
 });

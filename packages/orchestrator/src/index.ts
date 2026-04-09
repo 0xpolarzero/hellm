@@ -1,13 +1,17 @@
 import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
+import {
   createEmptySessionState,
   createEpisode,
   createGlobalVerificationState,
-  parseStructuredSessionEntry,
   createSessionWorktreeAlignment,
   createStructuredSessionEntry,
   createThread,
   createThreadSnapshot,
-  parseStructuredEntry,
+  reconstructSessionState,
   type ArtifactRecord,
   type Episode,
   type GlobalVerificationState,
@@ -33,8 +37,12 @@ import {
   authorWorkflow,
   createSmithersWorkflowBridge,
   translateSmithersRunToEpisode,
+  type SmithersApprovalDecision,
+  type WorkflowTaskCompletionCondition,
+  type WorkflowTaskScopedContext,
   type SmithersWorkflowBridge,
   type WorkflowTaskSpec,
+  type WorkflowTaskToolScope,
 } from "@hellm/smithers-bridge";
 import {
   createVerificationRunner,
@@ -60,6 +68,13 @@ export interface OrchestratorRequest {
   requireApproval?: boolean;
   workflowSeedInput?: WorkflowSeedInput;
   resumeRunId?: string;
+  approvalDecision?: {
+    runId: string;
+    approved: boolean;
+    note?: string;
+    decidedAt?: string;
+    decidedBy?: string;
+  };
 }
 
 export interface ContextSnapshot {
@@ -180,6 +195,84 @@ export function createContextLoader(
         repoAndWorktree,
         agentsInstructions: (await sources.loadAgentsInstructions?.(request)) ?? [],
         relevantSkills: (await sources.loadRelevantSkills?.(request)) ?? [],
+        priorEpisodes: state.episodes,
+        priorArtifacts: state.artifacts,
+        state,
+      };
+    },
+  };
+}
+
+export interface FilesystemContextLoaderConfig {
+  sessionFile: string;
+  agentsFile?: string;
+  skillsRoot?: string;
+}
+
+function readSessionFileFromDisk(filePath: string): SessionJsonlEntry[] {
+  if (!existsSync(filePath)) {
+    return [];
+  }
+
+  return readFileSync(filePath, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as SessionJsonlEntry);
+}
+
+function readAgentsInstructionsFromDisk(filePath: string): string[] {
+  if (!existsSync(filePath)) {
+    return [];
+  }
+
+  return readFileSync(filePath, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function readSkillsFromDisk(skillsRoot: string): string[] {
+  if (!existsSync(skillsRoot)) {
+    return [];
+  }
+
+  return readdirSync(skillsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .filter((entry) =>
+      existsSync(`${skillsRoot}/${entry.name}/SKILL.md`),
+    )
+    .map((entry) => entry.name);
+}
+
+export function createFilesystemContextLoader(
+  config: FilesystemContextLoaderConfig,
+): ContextLoader {
+  return {
+    async load(request) {
+      const sessionHistory = readSessionFileFromDisk(config.sessionFile);
+      const state = sessionHistory.length
+        ? reconstructSessionState(sessionHistory)
+        : createEmptySessionState({
+            sessionId: request.threadId,
+            sessionCwd: request.cwd,
+            ...(request.worktreePath
+              ? { activeWorktreePath: request.worktreePath }
+              : {}),
+          });
+
+      return {
+        sessionHistory,
+        repoAndWorktree: {
+          cwd: request.cwd,
+          ...(request.worktreePath ? { worktreePath: request.worktreePath } : {}),
+        },
+        agentsInstructions: config.agentsFile
+          ? readAgentsInstructionsFromDisk(config.agentsFile)
+          : [],
+        relevantSkills: config.skillsRoot
+          ? readSkillsFromDisk(config.skillsRoot)
+          : [],
         priorEpisodes: state.episodes,
         priorArtifacts: state.artifacts,
         state,
@@ -321,6 +414,27 @@ export function createOrchestrator(
   };
 }
 
+const DIRECT_INTENT_SIGNALS = [
+  "what",
+  "explain",
+  "describe",
+  "show",
+  "list",
+  "summarize",
+  "tell me",
+  "help",
+  "why",
+  "how does",
+];
+
+function isSmallLocalIntent(prompt: string): boolean {
+  const lower = prompt.toLowerCase().trim();
+  if (lower.length < 80) {
+    return DIRECT_INTENT_SIGNALS.some((signal) => lower.startsWith(signal));
+  }
+  return false;
+}
+
 function defaultClassifier(
   request: OrchestratorRequest,
   _context: ContextSnapshot,
@@ -341,6 +455,15 @@ function defaultClassifier(
     };
   }
 
+  if (request.approvalDecision) {
+    return {
+      path: "smithers-workflow",
+      confidence: "high",
+      reason:
+        "Request includes an explicit approval decision for a Smithers run.",
+    };
+  }
+
   if (request.requireApproval) {
     return {
       path: "approval",
@@ -357,10 +480,26 @@ function defaultClassifier(
     };
   }
 
+  if (isSmallLocalIntent(request.prompt)) {
+    return {
+      path: "direct",
+      confidence: "medium",
+      reason: "Short question or explanation request classified as small local work.",
+    };
+  }
+
+  if (request.workflowSeedInput?.tasks && request.workflowSeedInput.tasks.length > 0) {
+    return {
+      path: "smithers-workflow",
+      confidence: "high",
+      reason: "Structured workflow seed includes bounded tasks; routing to delegated workflow path.",
+    };
+  }
+
   return {
-    path: "direct",
+    path: "smithers-workflow",
     confidence: "medium",
-    reason: "Defaulted to direct execution for a small local request.",
+    reason: "Defaulted to delegated workflow path for bounded subagent work per PRD delegated-work policy.",
   };
 }
 
@@ -403,6 +542,80 @@ function statusFromEpisode(status: Episode["status"]): ThreadStatus {
     case "cancelled":
       return "cancelled";
   }
+}
+
+function createPiTaskScopedContext(input: {
+  context: ContextSnapshot;
+  inputEpisodeIds: string[];
+  worktreePath?: string;
+}): WorkflowTaskScopedContext {
+  const relevantPaths = [input.context.repoAndWorktree.cwd];
+  if (input.worktreePath) {
+    relevantPaths.push(input.worktreePath);
+  }
+
+  return {
+    sessionHistory: input.context.sessionHistory.map((entry) =>
+      JSON.stringify(entry),
+    ),
+    relevantPaths,
+    agentsInstructions: input.context.agentsInstructions,
+    relevantSkills: input.context.relevantSkills,
+    priorEpisodeIds: input.inputEpisodeIds,
+  };
+}
+
+function createPiTaskToolScope(input: {
+  cwd: string;
+  worktreePath?: string;
+}): WorkflowTaskToolScope {
+  return {
+    allow: ["read", "edit", "bash"],
+    writeRoots: [input.worktreePath ?? input.cwd],
+    readOnly: false,
+  };
+}
+
+function createPiTaskCompletionCondition(): WorkflowTaskCompletionCondition {
+  return {
+    type: "episode-produced",
+    maxTurns: 1,
+  };
+}
+
+function enrichWorkflowTask(input: {
+  task: WorkflowTaskSpec;
+  context: ContextSnapshot;
+  inputEpisodeIds: string[];
+  thread: ThreadRef;
+}): WorkflowTaskSpec {
+  if (input.task.agent !== "pi") {
+    return input.task;
+  }
+
+  const worktreePath = input.task.worktreePath ?? input.thread.worktreePath;
+  const scopedContext =
+    input.task.scopedContext ??
+    createPiTaskScopedContext({
+      context: input.context,
+      inputEpisodeIds: input.inputEpisodeIds,
+      ...(worktreePath ? { worktreePath } : {}),
+    });
+  const toolScope =
+    input.task.toolScope ??
+    createPiTaskToolScope({
+      cwd: input.context.repoAndWorktree.cwd,
+      ...(worktreePath ? { worktreePath } : {}),
+    });
+
+  return {
+    ...input.task,
+    ...(worktreePath ? { worktreePath } : {}),
+    scopedContext,
+    toolScope,
+    completionCondition:
+      input.task.completionCondition ?? createPiTaskCompletionCondition(),
+  };
 }
 
 async function executePath(input: {
@@ -513,21 +726,62 @@ async function executePath(input: {
       };
     }
     case "smithers-workflow": {
+      const resumeRunId =
+        input.request.resumeRunId ?? input.request.approvalDecision?.runId;
+      if (
+        input.request.resumeRunId &&
+        input.request.approvalDecision &&
+        input.request.approvalDecision.runId !== input.request.resumeRunId
+      ) {
+        throw new Error(
+          `Approval decision runId "${input.request.approvalDecision.runId}" does not match resumeRunId "${input.request.resumeRunId}".`,
+        );
+      }
+
+      if (resumeRunId && input.request.approvalDecision) {
+        const decision: SmithersApprovalDecision = {
+          approved: input.request.approvalDecision.approved,
+          ...(input.request.approvalDecision.note
+            ? { note: input.request.approvalDecision.note }
+            : {}),
+          ...(input.request.approvalDecision.decidedAt
+            ? { decidedAt: input.request.approvalDecision.decidedAt }
+            : {}),
+          ...(input.request.approvalDecision.decidedBy
+            ? { decidedBy: input.request.approvalDecision.decidedBy }
+            : {}),
+        };
+        if (decision.approved) {
+          await input.smithersBridge.approveRun(resumeRunId, decision);
+        } else {
+          await input.smithersBridge.denyRun(resumeRunId, decision);
+        }
+      }
+
       const tasks =
-        input.request.workflowSeedInput?.tasks ??
+        input.request.workflowSeedInput?.tasks?.map((task) =>
+          enrichWorkflowTask({
+            task,
+            context: input.context,
+            inputEpisodeIds: input.inputEpisodeIds,
+            thread: input.thread,
+          }),
+        ) ??
         [
-          {
-            id: "pi-task",
-            outputKey: "result",
-            prompt: input.request.prompt,
-            agent: "pi",
-            ...(input.request.requireApproval !== undefined
-              ? { needsApproval: input.request.requireApproval }
-              : {}),
-            ...(input.thread.worktreePath
-              ? { worktreePath: input.thread.worktreePath }
-              : {}),
-          },
+          enrichWorkflowTask({
+            task: {
+              id: "pi-task",
+              outputKey: "result",
+              prompt: input.request.prompt,
+              agent: "pi",
+              ...(input.request.requireApproval !== undefined
+                ? { needsApproval: input.request.requireApproval }
+                : {}),
+            },
+            context: input.context,
+            inputEpisodeIds: input.inputEpisodeIds,
+            thread: input.thread,
+          }),
         ];
       const workflow = authorWorkflow({
         thread: input.thread,
@@ -535,11 +789,21 @@ async function executePath(input: {
         inputEpisodeIds: input.inputEpisodeIds,
         tasks,
       });
-      const runResult = input.request.resumeRunId
+      const persistedIsolation = input.context.state.smithersIsolations.find(
+        (isolation) => isolation.runId === resumeRunId,
+      );
+      const runResult = resumeRunId
         ? await input.smithersBridge.resumeWorkflow({
-            runId: input.request.resumeRunId,
+            runId: resumeRunId,
             thread: input.thread,
             objective: input.thread.objective,
+            cwd: input.context.repoAndWorktree.cwd,
+            ...(input.thread.worktreePath
+              ? { worktreePath: input.thread.worktreePath }
+              : {}),
+            ...(persistedIsolation
+              ? { runStateStore: persistedIsolation.runStateStore }
+              : {}),
           })
         : await input.smithersBridge.runWorkflow({
             path: "smithers-workflow",
@@ -551,8 +815,37 @@ async function executePath(input: {
               ? { worktreePath: input.thread.worktreePath }
               : {}),
           });
+      const baseEpisode = translateSmithersRunToEpisode(runResult);
+      const approvalDecision = input.request.approvalDecision;
+      const episode =
+        resumeRunId && approvalDecision
+          ? {
+              ...baseEpisode,
+              conclusions: [
+                `Approval decision applied before resume for run "${resumeRunId}": ${approvalDecision.approved ? "approved" : "denied"}.`,
+                ...baseEpisode.conclusions,
+              ],
+              followUpSuggestions: approvalDecision.approved
+                ? baseEpisode.followUpSuggestions
+                : [
+                    ...(baseEpisode.followUpSuggestions.length > 0
+                      ? baseEpisode.followUpSuggestions
+                      : ["Review denial and provide next-step guidance."]),
+                  ],
+              provenance: {
+                ...baseEpisode.provenance,
+                notes: [
+                  baseEpisode.provenance.notes,
+                  `Decision: ${approvalDecision.approved ? "approved" : "denied"}.`,
+                ]
+                  .filter((value) => typeof value === "string" && value.length > 0)
+                  .join(" "),
+              },
+            }
+          : baseEpisode;
+
       return {
-        episode: translateSmithersRunToEpisode(runResult),
+        episode,
         workflowRun: runResult.run,
         ...(runResult.isolation
           ? { smithersIsolation: runResult.isolation }
@@ -569,6 +862,7 @@ async function executePath(input: {
             "build",
             "test",
             "lint",
+            "integration",
           ],
         ...(input.request.workflowSeedInput?.manualChecks
           ? { manualChecks: input.request.workflowSeedInput.manualChecks }
@@ -714,13 +1008,25 @@ function buildStructuredEntries(input: {
 function isStructuredSessionEntryWithId(
   entry: SessionJsonlEntry,
 ): entry is StructuredSessionEntry {
+  if (typeof entry !== "object" || entry === null) {
+    return false;
+  }
+
+  const record = entry as Record<string, unknown>;
+  if (record.type !== "message" || typeof record.id !== "string") {
+    return false;
+  }
+
+  const message = record.message;
+  if (typeof message !== "object" || message === null) {
+    return false;
+  }
+
+  const msg = message as Record<string, unknown>;
   return (
-    typeof entry === "object" &&
-    entry !== null &&
-    "type" in entry &&
-    entry.type === "message" &&
-    "id" in entry &&
-    typeof entry.id === "string"
+    msg.role === "custom" &&
+    typeof msg.customType === "string" &&
+    msg.customType.startsWith("hellm/")
   );
 }
 

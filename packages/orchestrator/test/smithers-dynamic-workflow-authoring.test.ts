@@ -114,6 +114,22 @@ describe("@hellm/orchestrator smithers dynamic workflow authoring", () => {
           agent: "pi",
           needsApproval: false,
           worktreePath,
+          scopedContext: {
+            sessionHistory: [],
+            relevantPaths: ["/repo", worktreePath],
+            agentsInstructions: [],
+            relevantSkills: [],
+            priorEpisodeIds: ["episode-smithers-prior"],
+          },
+          toolScope: {
+            allow: ["read", "edit", "bash"],
+            writeRoots: [worktreePath],
+            readOnly: false,
+          },
+          completionCondition: {
+            type: "episode-produced",
+            maxTurns: 1,
+          },
         },
       ],
     });
@@ -175,7 +191,28 @@ describe("@hellm/orchestrator smithers dynamic workflow authoring", () => {
       },
     });
 
-    expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual(seededTasks);
+    expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual([
+      {
+        ...seededTasks[0],
+        scopedContext: {
+          sessionHistory: [],
+          relevantPaths: ["/repo"],
+          agentsInstructions: [],
+          relevantSkills: [],
+          priorEpisodeIds: [],
+        },
+        toolScope: {
+          allow: ["read", "edit", "bash"],
+          writeRoots: ["/repo"],
+          readOnly: false,
+        },
+        completionCondition: {
+          type: "episode-produced",
+          maxTurns: 1,
+        },
+      },
+      seededTasks[1],
+    ]);
     expect(smithersBridge.runRequests[0]?.workflow.tasks).toHaveLength(2);
   });
 
