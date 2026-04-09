@@ -4,6 +4,7 @@ import {
   createGlobalVerificationState,
   createSessionWorktreeAlignment,
   createThread,
+  type SessionState,
   type ThreadSnapshot,
 } from "@hellm/session-model";
 
@@ -13,6 +14,11 @@ export interface TuiProjection {
   verificationPanel: string[];
   workflowActivity: string[];
   footer: string[];
+}
+
+export interface MultiThreadTuiProjection {
+  threadsOverview: string[];
+  activeThread: TuiProjection;
 }
 
 export function projectThreadSnapshot(snapshot: ThreadSnapshot): TuiProjection {
@@ -58,6 +64,78 @@ export function projectThreadSnapshot(snapshot: ThreadSnapshot): TuiProjection {
   };
 }
 
+export function projectSessionState(
+  state: SessionState,
+  activeThreadId?: string,
+): MultiThreadTuiProjection {
+  const threadId = activeThreadId ?? state.threads.at(-1)?.id;
+  const threadLines: string[] = [];
+
+  if (state.threads.length === 0) {
+    threadLines.push("no threads");
+  } else {
+    for (const thread of state.threads) {
+      const marker = thread.id === threadId ? ">" : " ";
+      const episodeCount = state.episodes.filter(
+        (episode) => episode.threadId === thread.id,
+      ).length;
+      threadLines.push(
+        `${marker} ${thread.id} [${thread.kind}] ${thread.status} (${episodeCount} episodes)`,
+      );
+    }
+  }
+
+  let activeThread: TuiProjection;
+  if (threadId) {
+    const thread = state.threads.find((t) => t.id === threadId);
+    if (thread) {
+      const episodes = state.episodes.filter((e) => e.threadId === threadId);
+      const artifactIds = new Set(
+        episodes.flatMap((e) => e.artifacts.map((a) => a.id)),
+      );
+      const artifacts = state.artifacts.filter((a) => artifactIds.has(a.id));
+      const workflowRuns = state.workflowRuns.filter(
+        (r) => r.threadId === threadId,
+      );
+
+      const snapshot: ThreadSnapshot = {
+        thread,
+        episodes,
+        artifacts,
+        verification: state.verification,
+        alignment: state.alignment,
+        workflowRuns,
+      };
+      activeThread = projectThreadSnapshot(snapshot);
+    } else {
+      activeThread = emptyProjection(state);
+    }
+  } else {
+    activeThread = emptyProjection(state);
+  }
+
+  return {
+    threadsOverview: threadLines,
+    activeThread,
+  };
+}
+
+function emptyProjection(state: SessionState): TuiProjection {
+  return {
+    threadsPane: ["no active thread"],
+    episodeInspector: ["episode none"],
+    verificationPanel: [
+      `overall ${state.verification.overallStatus}`,
+    ],
+    workflowActivity: ["workflow none"],
+    footer: [
+      `session ${state.alignment.sessionCwd}`,
+      `worktree ${state.alignment.activeWorktreePath ?? state.alignment.sessionCwd}`,
+      state.alignment.aligned ? "aligned" : "not aligned",
+    ],
+  };
+}
+
 export function renderProjection(projection: TuiProjection): string[] {
   return [
     "[threads]",
@@ -73,6 +151,17 @@ export function renderProjection(projection: TuiProjection): string[] {
   ];
 }
 
+export function renderMultiThreadProjection(
+  projection: MultiThreadTuiProjection,
+): string[] {
+  return [
+    "[threads-overview]",
+    ...projection.threadsOverview,
+    "",
+    ...renderProjection(projection.activeThread),
+  ];
+}
+
 export const projectTui = projectThreadSnapshot;
 
 export function renderTuiFrame(
@@ -80,6 +169,17 @@ export function renderTuiFrame(
   input: { width: number; height: number },
 ): string[] {
   return renderProjection(projection)
+    .slice(0, input.height)
+    .map((line) =>
+      line.length <= input.width ? line : `${line.slice(0, Math.max(input.width - 3, 0))}...`
+    );
+}
+
+export function renderMultiThreadTuiFrame(
+  projection: MultiThreadTuiProjection,
+  input: { width: number; height: number },
+): string[] {
+  return renderMultiThreadProjection(projection)
     .slice(0, input.height)
     .map((line) =>
       line.length <= input.width ? line : `${line.slice(0, Math.max(input.width - 3, 0))}...`

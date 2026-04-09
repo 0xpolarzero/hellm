@@ -3,7 +3,9 @@ import {
   createSmithersWorkflowBridge,
 } from "@hellm/smithers-bridge";
 
-const bridge = createSmithersWorkflowBridge();
+const bridge = createSmithersWorkflowBridge({
+  smithersBinary: "nonexistent-smithers-binary-for-testing",
+});
 const thread = {
   id: "process-smoke-thread",
   kind: "smithers-workflow" as const,
@@ -21,45 +23,52 @@ const workflow = authorWorkflow({
 });
 
 const errors: string[] = [];
-const capture = async (op: () => Promise<unknown>): Promise<void> => {
-  try {
-    await op();
-  } catch (error) {
-    errors.push(error instanceof Error ? error.message : String(error));
-  }
-};
 
-await capture(() =>
-  bridge.runWorkflow({
+let runStatus = "unknown";
+let resumeStatus = "unknown";
+
+try {
+  const runResult = await bridge.runWorkflow({
     path: "smithers-workflow",
     thread,
     objective: thread.objective,
     cwd: process.cwd(),
     workflow,
-  }),
-);
-await capture(() =>
-  bridge.resumeWorkflow({
+  });
+  runStatus = runResult.status;
+} catch (error) {
+  errors.push(error instanceof Error ? error.message : String(error));
+}
+
+try {
+  const resumeResult = await bridge.resumeWorkflow({
     runId: "process-smoke-run",
     thread,
     objective: thread.objective,
-  }),
-);
-await capture(() =>
-  bridge.approveRun("process-smoke-run", {
-    approved: true,
-  }),
-);
-await capture(() =>
-  bridge.denyRun("process-smoke-run", {
-    approved: false,
-  }),
-);
+  });
+  resumeStatus = resumeResult.status;
+} catch (error) {
+  errors.push(error instanceof Error ? error.message : String(error));
+}
+
+try {
+  await bridge.approveRun("process-smoke-run", { approved: true });
+} catch (error) {
+  errors.push(error instanceof Error ? error.message : String(error));
+}
+
+try {
+  await bridge.denyRun("process-smoke-run", { approved: false });
+} catch (error) {
+  errors.push(error instanceof Error ? error.message : String(error));
+}
 
 console.log(
   JSON.stringify({
     enabled: bridge.enabled,
     engine: bridge.engine,
+    runStatus,
+    resumeStatus,
     errors,
   }),
 );

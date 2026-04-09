@@ -14,11 +14,11 @@ import {
 type HasDedicatedCompletionConditionField =
   "completionCondition" extends keyof WorkflowTaskSpec ? true : false;
 
-function assertFalse<T extends false>(_value: T): void {}
+function assertTrue<T extends true>(_value: T): void {}
 
 describe("@hellm/smithers-bridge pi-agent task completion-condition contract", () => {
-  test("documents the current task contract gap: no dedicated completion-condition field", () => {
-    assertFalse<HasDedicatedCompletionConditionField>(false);
+  test("adds a typed completion-condition field for pi-agent workflow tasks so episode handoff boundaries are explicit and machine-checkable", () => {
+    assertTrue<HasDedicatedCompletionConditionField>(true);
 
     const task: WorkflowTaskSpec = {
       id: "pi-task",
@@ -27,6 +27,10 @@ describe("@hellm/smithers-bridge pi-agent task completion-condition contract", (
         "Implement the change and stop once an episode can be handed back to the orchestrator.",
       agent: "pi",
       retryLimit: 1,
+      completionCondition: {
+        type: "episode-produced",
+        maxTurns: 2,
+      },
     };
     const workflow = authorWorkflow({
       thread: createThreadFixture({
@@ -40,12 +44,16 @@ describe("@hellm/smithers-bridge pi-agent task completion-condition contract", (
     const authoredTask = workflow.tasks[0];
 
     expect(authoredTask).toBeDefined();
-    expect("completionCondition" in (authoredTask as object)).toBe(false);
+    expect("completionCondition" in (authoredTask as object)).toBe(true);
+    expect(authoredTask?.completionCondition).toEqual({
+      type: "episode-produced",
+      maxTurns: 2,
+    });
     expect("completion" in (authoredTask as object)).toBe(false);
     expect(authoredTask?.outputKey).toBe("episode-handoff");
   });
 
-  test("preserves prompt-level handoff boundaries through bridge requests until dedicated completion conditions exist", async () => {
+  test("preserves typed completion conditions through bridge requests for bounded task handoff", async () => {
     await withTempWorkspace(async (workspace) => {
       const worktreePath = await workspace.createWorktree("completion-boundary");
       const thread = createThreadFixture({
@@ -66,6 +74,10 @@ describe("@hellm/smithers-bridge pi-agent task completion-condition contract", (
             prompt: handoffPrompt,
             agent: "pi",
             worktreePath,
+            completionCondition: {
+              type: "episode-produced",
+              maxTurns: 1,
+            },
           },
         ],
       });
@@ -112,13 +124,11 @@ describe("@hellm/smithers-bridge pi-agent task completion-condition contract", (
       const capturedTask = bridge.runRequests[0]?.workflow.tasks[0];
       expect(capturedTask).toBeDefined();
       expect(capturedTask?.prompt).toBe(handoffPrompt);
-      expect("completionCondition" in (capturedTask as object)).toBe(false);
+      expect(capturedTask?.completionCondition).toEqual({
+        type: "episode-produced",
+        maxTurns: 1,
+      });
       expect(capturedTask?.outputKey).toBe("episode-handoff");
     });
   });
-
-  test.todo(
-    "adds a typed completion-condition field for pi-agent workflow tasks so episode handoff boundaries are explicit and machine-checkable",
-    () => {},
-  );
 });

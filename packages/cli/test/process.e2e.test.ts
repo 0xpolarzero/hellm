@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "bun:test";
@@ -19,6 +20,30 @@ const TEST_SUPPORT_ENTRY = fileURLToPath(
 const WORKFLOW_SEED_ENTRY = fileURLToPath(
   new URL("./fixtures/workflow-seed-process.ts", import.meta.url),
 );
+const DIRECT_DEFAULT_ENTRY = fileURLToPath(
+  new URL("./fixtures/direct-default-process-entry.ts", import.meta.url),
+);
+const VERIFICATION_PROCESS_ENTRY = fileURLToPath(
+  new URL("./fixtures/verification-process-entry.ts", import.meta.url),
+);
+const APPROVAL_PROCESS_ENTRY = fileURLToPath(
+  new URL("./fixtures/approval-process-entry.ts", import.meta.url),
+);
+const PI_WORKER_PROCESS_ENTRY = fileURLToPath(
+  new URL("./fixtures/pi-worker-process-entry.ts", import.meta.url),
+);
+const SMITHERS_PROCESS_ENTRY = fileURLToPath(
+  new URL("./fixtures/smithers-workflow-process.ts", import.meta.url),
+);
+const PATH_ROUTING_PROCESS_FIXTURE = fileURLToPath(
+  new URL("./fixtures/path-routing-process-runner.ts", import.meta.url),
+);
+const HEADLESS_REQUEST_RUNNER = fileURLToPath(
+  new URL("./fixtures/run-headless-request.ts", import.meta.url),
+);
+const APPROVAL_DECISION_FLAGS_PROCESS_RUNNER = fileURLToPath(
+  new URL("./fixtures/approval-decision-flags-process-runner.ts", import.meta.url),
+);
 const REPO_ROOT = resolve(import.meta.dir, "../../../");
 
 interface ProcessJsonlEvent {
@@ -37,6 +62,7 @@ describe("@hellm/cli process boundary", () => {
     const result = runBunModule({
       entryPath: CLI_ENTRY,
       cwd: REPO_ROOT,
+      args: ["Describe the current workspace contract surface.", "--hint", "direct"],
     });
 
     expect(result.exitCode).toBe(0);
@@ -48,7 +74,6 @@ describe("@hellm/cli process boundary", () => {
     expect(events[0]).toMatchObject({
       type: "run.started",
       orchestratorId: "main",
-      threadId: "cli",
     });
     expect(events[1]).toMatchObject({
       type: "run.classified",
@@ -62,10 +87,12 @@ describe("@hellm/cli process boundary", () => {
     const first = runBunModule({
       entryPath: CLI_ENTRY,
       cwd: REPO_ROOT,
+      args: ["First prompt", "--hint", "direct"],
     });
     const second = runBunModule({
       entryPath: CLI_ENTRY,
       cwd: REPO_ROOT,
+      args: ["Second prompt", "--hint", "direct"],
     });
 
     expect(first.exitCode).toBe(0);
@@ -77,8 +104,6 @@ describe("@hellm/cli process boundary", () => {
     const secondEvents = parseJsonlEvents(second.stdout);
     expectHeadlessOneShotEventOrder(firstEvents);
     expectHeadlessOneShotEventOrder(secondEvents);
-    expect(firstEvents[0]?.threadId).toBe("cli");
-    expect(secondEvents[0]?.threadId).toBe("cli");
     expect(firstEvents[1]?.path).toBe("direct");
     expect(secondEvents[1]?.path).toBe("direct");
 
@@ -118,6 +143,75 @@ describe("@hellm/cli process boundary", () => {
     );
     expect(parsed.output.summary.length).toBeGreaterThan(0);
     expect(parsed.output.workflowRunIds).toEqual([]);
+  });
+
+  it("accepts --input-file on the real CLI entrypoint for structured workflow seed input", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const inputPath = await workspace.write(
+        "cli-input.json",
+        JSON.stringify(
+          {
+            threadId: "process-cli-input-file",
+            prompt: "Fallback prompt from file",
+            cwd: workspace.root,
+            routeHint: "direct",
+            workflowSeedInput: {
+              objective: "Objective loaded from --input-file",
+              metadata: {
+                source: "cli-input-file",
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runBunModule({
+        entryPath: CLI_ENTRY,
+        cwd: REPO_ROOT,
+        args: ["--input-file", inputPath],
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.trim()).toBe("");
+      const events = parseJsonlEvents(result.stdout);
+      expectHeadlessOneShotEventOrder(events);
+      expect(events[1]).toMatchObject({
+        type: "run.classified",
+        path: "direct",
+        reason: "Explicit route hint supplied by caller.",
+      });
+
+      const sessionFile = workspace.path(
+        ".hellm/sessions/process-cli-input-file.jsonl",
+      );
+      const lines = readFileSync(sessionFile, "utf8")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      const episodeEntries = lines
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter(
+          (entry) =>
+            entry.type === "message" &&
+            (entry.message as { customType?: string } | undefined)?.customType ===
+              "hellm/episode",
+        );
+      expect(episodeEntries.length).toBeGreaterThan(0);
+      const latestEpisode = episodeEntries.at(-1) as {
+        message: {
+          details: {
+            data: {
+              objective: string;
+            };
+          };
+        };
+      };
+      expect(latestEpisode.message.details.data.objective).toBe(
+        "Objective loaded from --input-file",
+      );
+    });
   });
 
   it("loads structured workflow seed input from a JSON file through a real process boundary", async () => {
@@ -336,7 +430,7 @@ describe("@hellm/cli process boundary", () => {
     expect(events[1]).toMatchObject({
       type: "run.classified",
       path: "direct",
-      reason: "Defaulted to direct execution for a small local request.",
+      reason: "Short question or explanation request classified as small local work.",
     });
     expect(events.at(-1)?.status).toBe("completed");
   });
@@ -752,7 +846,7 @@ describe("@hellm/cli process boundary", () => {
           },
           expectedClassification: {
             path: "direct",
-            reason: "Defaulted to direct execution for a small local request.",
+            reason: "Short question or explanation request classified as small local work.",
           },
           expectedCompletion: {
             type: "run.completed",
@@ -790,6 +884,224 @@ describe("@hellm/cli process boundary", () => {
       }
     });
   });
+
+  it("forwards --approve-run decision flags through subprocess CLI parsing into smithers resume and completed JSONL outcomes", async () => {
+    const threadId = "process-approval-flags-approve";
+    const runId = "process-approval-flags-approve-run";
+    const result = runBunModule({
+      entryPath: APPROVAL_DECISION_FLAGS_PROCESS_RUNNER,
+      cwd: REPO_ROOT,
+      args: [
+        "Resume approved smithers run",
+        "--hint",
+        "smithers-workflow",
+        "--session",
+        threadId,
+        "--resume-run-id",
+        runId,
+        "--approve-run",
+        runId,
+        "--approval-note",
+        "Looks good",
+        "--approval-by",
+        "ci-reviewer",
+      ],
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.trim()).toBe("");
+
+    const lines = result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    const jsonlEvents = parseJsonlEvents(
+      lines
+        .filter((line) => !line.includes('"type":"approval-flags.assertions"'))
+        .join("\n"),
+    );
+    expect(jsonlEvents.map((event) => event.type)).toEqual([
+      "run.started",
+      "run.classified",
+      "run.episode",
+      "run.completed",
+    ]);
+    expect(jsonlEvents.at(-1)).toMatchObject({
+      type: "run.completed",
+      status: "completed",
+      threadId,
+    });
+
+    const assertions = JSON.parse(
+      lines.find((line) => line.includes('"type":"approval-flags.assertions"'))!,
+    ) as {
+      request: {
+        resumeRunId?: string;
+        approvalDecision?: {
+          runId: string;
+          approved: boolean;
+          note?: string;
+          decidedBy?: string;
+        };
+      };
+      approvals: Array<{
+        runId: string;
+        decision: {
+          approved: boolean;
+          note?: string;
+          decidedBy?: string;
+        };
+      }>;
+      denials: Array<unknown>;
+      resumeRequests: Array<{ runId: string }>;
+      latestEpisodeConclusions: string[];
+      latestEpisodeStatus: string;
+    };
+
+    expect(assertions.request.resumeRunId).toBe(runId);
+    expect(assertions.request.approvalDecision).toEqual({
+      runId,
+      approved: true,
+      note: "Looks good",
+      decidedBy: "ci-reviewer",
+    });
+    expect(assertions.approvals).toEqual([
+      {
+        runId,
+        decision: {
+          approved: true,
+          note: "Looks good",
+          decidedBy: "ci-reviewer",
+        },
+      },
+    ]);
+    expect(assertions.denials).toEqual([]);
+    expect(assertions.resumeRequests.map((request) => request.runId)).toEqual([
+      runId,
+    ]);
+    expect(assertions.latestEpisodeStatus).toBe("completed");
+    expect(assertions.latestEpisodeConclusions[0]).toContain("approved");
+  });
+
+  it("forwards --deny-run decision flags into smithers resume and deterministic waiting JSONL outcomes", async () => {
+    const threadId = "process-approval-flags-deny";
+    const runId = "process-approval-flags-deny-run";
+    const result = runBunModule({
+      entryPath: APPROVAL_DECISION_FLAGS_PROCESS_RUNNER,
+      cwd: REPO_ROOT,
+      args: [
+        "Resume denied smithers run",
+        "--hint",
+        "smithers-workflow",
+        "--session",
+        threadId,
+        "--resume-run-id",
+        runId,
+        "--deny-run",
+        runId,
+        "--approval-note",
+        "Needs changes",
+        "--approval-by",
+        "qa-reviewer",
+      ],
+      env: {
+        HELLM_APPROVAL_FIXTURE_OUTCOME: "waiting",
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.trim()).toBe("");
+
+    const lines = result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    const jsonlEvents = parseJsonlEvents(
+      lines
+        .filter((line) => !line.includes('"type":"approval-flags.assertions"'))
+        .join("\n"),
+    );
+    expect(jsonlEvents.map((event) => event.type)).toEqual([
+      "run.started",
+      "run.classified",
+      "run.episode",
+      "run.waiting",
+    ]);
+    expect(jsonlEvents.at(-1)).toMatchObject({
+      type: "run.waiting",
+      status: "waiting_approval",
+      threadId,
+    });
+
+    const assertions = JSON.parse(
+      lines.find((line) => line.includes('"type":"approval-flags.assertions"'))!,
+    ) as {
+      request: {
+        resumeRunId?: string;
+        approvalDecision?: {
+          runId: string;
+          approved: boolean;
+          note?: string;
+          decidedBy?: string;
+        };
+      };
+      approvals: Array<unknown>;
+      denials: Array<{
+        runId: string;
+        decision: {
+          approved: boolean;
+          note?: string;
+          decidedBy?: string;
+        };
+      }>;
+      resumeRequests: Array<{ runId: string }>;
+      latestEpisodeConclusions: string[];
+      latestEpisodeStatus: string;
+    };
+
+    expect(assertions.request.resumeRunId).toBe(runId);
+    expect(assertions.request.approvalDecision).toEqual({
+      runId,
+      approved: false,
+      note: "Needs changes",
+      decidedBy: "qa-reviewer",
+    });
+    expect(assertions.approvals).toEqual([]);
+    expect(assertions.denials).toEqual([
+      {
+        runId,
+        decision: {
+          approved: false,
+          note: "Needs changes",
+          decidedBy: "qa-reviewer",
+        },
+      },
+    ]);
+    expect(assertions.resumeRequests.map((request) => request.runId)).toEqual([
+      runId,
+    ]);
+    expect(assertions.latestEpisodeStatus).toBe("waiting_approval");
+    expect(assertions.latestEpisodeConclusions[0]).toContain("denied");
+  });
+
+  it("fails fast on invalid CLI approval flag combinations in a real subprocess", async () => {
+    const result = runBunModule({
+      entryPath: CLI_ENTRY,
+      cwd: REPO_ROOT,
+      args: [
+        "Invalid approval flag combination",
+        "--approve-run",
+        "same-run",
+        "--deny-run",
+        "same-run",
+      ],
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain(
+      "Specify only one of --approve-run or --deny-run.",
+    );
+  });
 });
 
 function parseJsonlEvents(stdout: string): ProcessJsonlEvent[] {
@@ -809,3 +1121,5 @@ function expectHeadlessOneShotEventOrder(events: ProcessJsonlEvent[]): void {
     "run.completed",
   ]);
 }
+
+const parseEvents = parseJsonlEvents;

@@ -1,0 +1,4 @@
+{"type":"RunStarted","runId":"c69b9279-aaec-4830-8439-667b1962539a","timestampMs":1775739708987}
+{"type":"FrameCommitted","runId":"c69b9279-aaec-4830-8439-667b1962539a","frameNo":1,"xmlHash":"c90168ed1d64e586edc2010fff436377eeaa592d79c4671640929be5996e521a","timestampMs":1775739708996}
+{"type":"SnapshotCaptured","runId":"c69b9279-aaec-4830-8439-667b1962539a","frameNo":1,"contentHash":"2ddd3be599df4bc1b3fc4663661a4d8006d2dd4f0ea3f75d672609dc779909e0","timestampMs":1775739709000}
+{"type":"RunFinished","runId":"c69b9279-aaec-4830-8439-667b1962539a","timestampMs":1775739709002}

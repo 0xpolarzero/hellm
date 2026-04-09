@@ -329,7 +329,7 @@ describe("@hellm/cli headless execution", () => {
         },
         expected: {
           path: "direct" as const,
-          reason: "Defaulted to direct execution for a small local request.",
+          reason: "Short question or explanation request classified as small local work.",
         },
       },
     ];
@@ -431,7 +431,28 @@ describe("@hellm/cli headless execution", () => {
     expect(smithersBridge.runRequests[0]?.objective).toBe(seededObjective);
     expect(smithersBridge.runRequests[0]?.workflow.objective).toBe(seededObjective);
     expect(smithersBridge.runRequests[0]?.workflow.name).toBe(seededObjective);
-    expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual(seededTasks);
+    expect(smithersBridge.runRequests[0]?.workflow.tasks).toEqual([
+      {
+        ...seededTasks[0],
+        scopedContext: {
+          sessionHistory: [],
+          relevantPaths: ["/repo"],
+          agentsInstructions: [],
+          relevantSkills: [],
+          priorEpisodeIds: [],
+        },
+        toolScope: {
+          allow: ["read", "edit", "bash"],
+          writeRoots: ["/repo"],
+          readOnly: false,
+        },
+        completionCondition: {
+          type: "episode-produced",
+          maxTurns: 1,
+        },
+      },
+      seededTasks[1],
+    ]);
   });
 
   it("uses prompt-driven verification classification when routeHint is omitted or auto and emits run.classified", async () => {

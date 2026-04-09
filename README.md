@@ -26,5 +26,6 @@ Start with [docs/context-discipline.md](docs/context-discipline.md) for the conc
 ## Commands
 
 - `bun install`
+- `bun run prepare:references`
 - `bun run dev`
 - `bun run check`

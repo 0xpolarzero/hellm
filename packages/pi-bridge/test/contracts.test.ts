@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { readFile } from "node:fs/promises";
 import {
   createPiRuntimeBridge,
   createPiWorkerRequest,
@@ -47,30 +48,22 @@ function createWorkerRequest(input: {
 }
 
 describe("@hellm/pi-bridge contract surface", () => {
-  it("ships a default bridge that is explicit about missing implementation", async () => {
+  it("ships a default bridge that reports pi as its runtime and is connected by default", () => {
     const bridge = createPiRuntimeBridge();
     expect(bridge.runtime).toBe("pi");
-    expect(bridge.connected).toBe(false);
+    expect(bridge.connected).toBe(true);
+  });
 
+  it("allows runtime transitions through the default bridge", async () => {
+    const bridge = createPiRuntimeBridge();
     const transition: PiRuntimeTransition = {
       reason: "new",
       toSessionId: "session-a",
       aligned: true,
     };
 
-    await expect(
-      bridge.runWorker(
-        createWorkerRequest({
-          threadId: "thread-default-bridge",
-          cwd: "/repo",
-          relevantPaths: ["/repo"],
-          runtimeTransition: transition,
-        }),
-      ),
-    ).rejects.toThrow("Not implemented");
-    await expect(bridge.switchRuntime(transition)).rejects.toThrow(
-      "Not implemented",
-    );
+    const result = await bridge.switchRuntime(transition);
+    expect(result).toEqual(transition);
   });
 
   it("captures scoped context, tool scoping, completion conditions, and runtime transitions in the fake bridge", async () => {
@@ -178,6 +171,95 @@ describe("@hellm/pi-bridge contract surface", () => {
         expect(bridge.transitions[0]).toEqual(transition);
         expect(switched).toEqual(transition);
       }
+    });
+  });
+
+  it("uses runtime session replacement semantics for worktree-aware transitions through the sdk bridge", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const capturePath = workspace.path("pi-sdk-transitions.json");
+      await workspace.write(
+        "pi-sdk-runtime.ts",
+        `
+import { writeFileSync } from "node:fs";
+const CAPTURE_PATH = ${JSON.stringify(capturePath)};
+const events = [];
+
+function flush() {
+  writeFileSync(CAPTURE_PATH, JSON.stringify(events));
+}
+
+export class AgentSessionRuntime {
+  async replaceSession(payload) {
+    events.push({ type: "replaceSession", payload });
+    flush();
+  }
+}
+
+export function createPiWorkerRuntime() {
+  return {
+    async runWorker(request) {
+      events.push({ type: "runWorker", request: {
+        cwd: request.cwd,
+        runtimeTransition: request.runtimeTransition ?? null,
+      }});
+      flush();
+      return {
+        status: "completed",
+        outputSummary: "sdk-run-worker-ok",
+      };
+    },
+  };
+}
+`,
+      );
+
+      const bridge = createPiRuntimeBridge({
+        sdkModule: workspace.path("pi-sdk-runtime.ts"),
+      });
+      const request = createWorkerRequest({
+        threadId: "thread-runtime-switch",
+        cwd: workspace.root,
+        relevantPaths: [workspace.root],
+        runtimeTransition: {
+          reason: "resume",
+          fromSessionId: "session-old",
+          toSessionId: "session-new",
+          aligned: false,
+          fromWorktreePath: workspace.path("worktrees/source"),
+          toWorktreePath: workspace.path("worktrees/target"),
+        },
+      });
+
+      await bridge.runWorker(request);
+      await bridge.switchRuntime({
+        reason: "fork",
+        fromSessionId: "session-new",
+        toSessionId: "session-fork",
+        aligned: false,
+        fromWorktreePath: workspace.path("worktrees/target"),
+        toWorktreePath: workspace.path("worktrees/fork"),
+      });
+
+      const events = JSON.parse(await readFile(capturePath, "utf8")) as Array<{
+        type: string;
+        payload?: Record<string, unknown>;
+        request?: {
+          cwd?: string;
+          runtimeTransition?: Record<string, unknown> | null;
+        };
+      }>;
+
+      expect(events[0]?.type).toBe("replaceSession");
+      expect(events[0]?.payload?.["toSessionId"]).toBe("session-new");
+      expect(events[1]?.type).toBe("runWorker");
+      expect(events[1]?.request?.runtimeTransition?.["toSessionId"]).toBe(
+        "session-new",
+      );
+      expect(events[2]?.type).toBe("replaceSession");
+      expect(events[2]?.payload?.["toSessionId"]).toBe("session-fork");
+      expect(events[2]?.payload?.["toWorktreePath"]).toBe(
+        workspace.path("worktrees/fork"),
+      );
     });
   });
 

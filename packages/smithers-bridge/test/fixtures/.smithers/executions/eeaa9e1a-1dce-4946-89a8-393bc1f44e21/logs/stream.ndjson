@@ -1,0 +1,4 @@
+{"type":"RunStarted","runId":"eeaa9e1a-1dce-4946-89a8-393bc1f44e21","timestampMs":1775739790659}
+{"type":"FrameCommitted","runId":"eeaa9e1a-1dce-4946-89a8-393bc1f44e21","frameNo":1,"xmlHash":"c90168ed1d64e586edc2010fff436377eeaa592d79c4671640929be5996e521a","timestampMs":1775739790667}
+{"type":"SnapshotCaptured","runId":"eeaa9e1a-1dce-4946-89a8-393bc1f44e21","frameNo":1,"contentHash":"f5adee569f54077936f9ad8eabc3b716d202b2d8d9ac80b47a698272de618228","timestampMs":1775739790670}
+{"type":"RunFinished","runId":"eeaa9e1a-1dce-4946-89a8-393bc1f44e21","timestampMs":1775739790672}

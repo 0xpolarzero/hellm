@@ -91,7 +91,7 @@ export class FileBackedSessionJsonlHarness {
 
     const entries = this.lines();
     const lastStructuredEntry = [...entries]
-      .reverse()
+      .toReversed()
       .find(
         (entry): entry is StructuredSessionEntry =>
           typeof entry === "object" &&
