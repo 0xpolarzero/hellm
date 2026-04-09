@@ -62,6 +62,14 @@ export enum HellmFeature {
   SmithersWorkflowEpisodeNormalization = "path.smithersWorkflow.episodeNormalization",
   VerificationEpisodeNormalization = "path.verification.episodeNormalization",
   RawPiExecutionPrimitive = "path.internal.rawPiExecutionPrimitive",
+  CodeModeExecutionPrimitive = "path.internal.codeModeExecutionPrimitive",
+  CodeModeTanStackStyleContract = "path.internal.codeModeExecutionPrimitive.tanstackStyleContract",
+  CodeModeQuickJsRuntime = "path.internal.codeModeExecutionPrimitive.quickjsRuntime",
+  CodeModeFlatExternalCapabilities = "path.internal.codeModeExecutionPrimitive.flatExternalCapabilities",
+  CodeModeGeneratedTypeStubs = "path.internal.codeModeExecutionPrimitive.generatedTypeStubs",
+  CodeModeExecutionEvents = "path.internal.codeModeExecutionPrimitive.executionEvents",
+  DirectPathCodeModeUse = "path.direct.codeMode",
+  SmithersWorkflowCodeModeUse = "path.smithersWorkflow.codeMode",
 
   // Smithers-backed delegated workflow features
   ProgrammaticSmithersRunAdapter = "smithers.programmaticRunAdapter",

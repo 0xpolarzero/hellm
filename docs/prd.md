@@ -6,8 +6,8 @@ Build a pi-derived coding agent and TUI that reproduces Slate's public architect
 
 ## Status
 
-- Date: 2026-04-08
-- Status: Architecture direction clarified and initial Bun monorepo scaffold created
+- Date: 2026-04-09
+- Status: Architecture direction clarified, initial Bun monorepo scaffold created, and `execute_typescript` adopted as an internal execution primitive
 - Repository purpose: Bun monorepo scaffold for `hellm`, a pi-first, Slate-like coding agent
 
 ## Document Purpose
@@ -628,6 +628,36 @@ The orchestrator must always reason over compact structured state first:
 
 It must not depend on replaying the full transcript for every decision.
 
+### Code Mode Execution Primitive
+
+The product adopts one internal code-composition primitive:
+
+- a TanStack-style `execute_typescript` tool contract
+- generated TypeScript stubs for the exposed host tools
+- a flat in-sandbox `external_*` capability surface
+- QuickJS as the initial runtime
+
+This primitive is not a top-level user-facing path.
+
+It is an internal execution substrate that the orchestrator may use:
+
+- on the direct path when typed capability composition is the best fit
+- inside Smithers-backed delegated work when a worker task benefits from typed capability composition
+
+Important scope decision:
+
+- sandbox work is not part of the initial `execute_typescript` adoption
+
+The initial implementation should control access by:
+
+- curating which host tools are injected into each `execute_typescript` call
+
+not by:
+
+- a separate outer sandbox
+- a built-in capability approval layer inside code mode
+- a namespaced capability API
+
 ### Direct Path
 
 The direct path exists for work that does not justify a worker run.
@@ -640,6 +670,13 @@ Examples:
 - carry out a tiny single-step action
 
 The direct path still emits an episode so the orchestrator loop stays uniform.
+
+The direct path may use `execute_typescript` internally when the work is still small enough to stay on the direct path but benefits from:
+
+- typed capability composition
+- data transformation
+- filtering or aggregation
+- parallel tool usage inside one execution step
 
 ### Smithers Workflow Path
 
@@ -677,6 +714,8 @@ Typical lifecycle:
 Smithers runs are invoked programmatically and translated back into our product's episode model.
 
 Smithers run state is internal workflow state, not the top-level user session model.
+
+Smithers-backed tasks may also use the same `execute_typescript` primitive internally when typed capability composition is useful inside the delegated workflow.
 
 ### Raw pi Execution Primitive
 
