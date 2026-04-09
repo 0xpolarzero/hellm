@@ -1,26 +1,136 @@
+@import "@fontsource-variable/familjen-grotesk";
+@import "@fontsource/ibm-plex-mono";
+
 * {
 	box-sizing: border-box;
 }
 
 :root {
-	color-scheme: light;
-	font-family: "Avenir Next", "SF Pro Text", "Segoe UI", sans-serif;
-	--ui-surface: rgba(255, 255, 255, 0.82);
-	--ui-border-soft: rgba(203, 213, 225, 0.78);
-	--ui-border-strong: rgba(148, 163, 184, 0.56);
-	--ui-text-primary: #0f172a;
-	--ui-text-secondary: #475569;
-	--ui-text-inverse: #f8fafc;
-	--ui-accent: #0284c7;
-	--ui-accent-strong: #0f766e;
-	--ui-radius-md: 0.82rem;
-	--ui-radius-xl: 1.25rem;
-	--ui-shadow-soft: 0 26px 65px rgba(15, 23, 42, 0.1);
-	--ui-focus-ring: 0 0 0 3px rgba(14, 165, 233, 0.18);
-	background:
-		radial-gradient(circle at top left, rgba(45, 212, 191, 0.18), transparent 28%),
-		radial-gradient(circle at top right, rgba(56, 189, 248, 0.18), transparent 30%),
-		linear-gradient(180deg, #f8fbff 0%, #eef4fb 52%, #f8fafc 100%);
+	color-scheme: light dark;
+	font-family: var(--font-sans);
+	font-kerning: normal;
+	text-rendering: optimizeLegibility;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+
+	--font-sans: "Familjen Grotesk Variable", "Avenir Next", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+	--font-mono: "IBM Plex Mono", "SF Mono", "Menlo", monospace;
+
+	--space-2xs: 0.35rem;
+	--space-xs: 0.55rem;
+	--space-sm: 0.8rem;
+	--space-md: 1rem;
+	--space-lg: 1.35rem;
+	--space-xl: 1.8rem;
+	--space-2xl: clamp(2.1rem, 2vw + 1.5rem, 3.4rem);
+
+	--ui-radius-sm: 0.38rem;
+	--ui-radius-md: 0.62rem;
+	--ui-radius-lg: 0.9rem;
+	--ui-radius-xl: 1.15rem;
+
+	--ui-z-sticky: 20;
+	--ui-z-overlay: 40;
+	--ui-z-dialog: 1000;
+
+	--ui-bg: oklch(0.973 0.01 74);
+	--ui-bg-elevated: oklch(0.992 0.004 70);
+	--ui-surface: oklch(0.986 0.006 72 / 0.9);
+	--ui-surface-subtle: oklch(0.965 0.012 72 / 0.94);
+	--ui-surface-muted: oklch(0.944 0.017 74 / 0.96);
+	--ui-surface-strong: oklch(0.905 0.026 72 / 0.98);
+	--ui-panel: oklch(0.905 0.024 72 / 0.75);
+	--ui-panel-accent: oklch(0.91 0.06 72 / 0.3);
+
+	--ui-text-primary: oklch(0.22 0.014 60);
+	--ui-text-secondary: oklch(0.41 0.018 62);
+	--ui-text-tertiary: oklch(0.56 0.018 64);
+	--ui-text-inverse: oklch(0.985 0.004 70);
+
+	--ui-border-soft: oklch(0.8 0.018 68 / 0.58);
+	--ui-border-strong: oklch(0.67 0.026 64 / 0.75);
+	--ui-border-accent: oklch(0.74 0.14 55 / 0.56);
+
+	--ui-accent: oklch(0.76 0.18 52);
+	--ui-accent-strong: oklch(0.65 0.19 46);
+	--ui-accent-soft: oklch(0.93 0.048 74);
+	--ui-accent-ink: oklch(0.26 0.022 48);
+
+	--ui-success: oklch(0.68 0.15 151);
+	--ui-success-soft: oklch(0.93 0.045 151);
+	--ui-warning: oklch(0.79 0.13 78);
+	--ui-warning-soft: oklch(0.95 0.04 83);
+	--ui-danger: oklch(0.62 0.21 29);
+	--ui-danger-soft: oklch(0.94 0.04 27);
+	--ui-info: oklch(0.58 0.09 238);
+	--ui-info-soft: oklch(0.93 0.03 240);
+
+	--ui-shadow-soft: 0 10px 26px color-mix(in oklab, black 8%, transparent);
+	--ui-shadow-strong: 0 20px 48px color-mix(in oklab, black 12%, transparent);
+	--ui-focus-ring:
+		0 0 0 1px color-mix(in oklab, var(--ui-accent) 70%, white 30%),
+		0 0 0 4px color-mix(in oklab, var(--ui-accent) 26%, transparent);
+
+	--ui-backdrop:
+		radial-gradient(circle at top left, color-mix(in oklab, var(--ui-accent) 18%, transparent) 0, transparent 32%),
+		radial-gradient(circle at top right, color-mix(in oklab, var(--ui-warning) 14%, transparent) 0, transparent 28%),
+		linear-gradient(180deg, oklch(0.985 0.005 72), oklch(0.952 0.012 70) 48%, oklch(0.938 0.015 66));
+	--ui-grid-lines:
+		repeating-linear-gradient(
+			90deg,
+			transparent 0,
+			transparent 47px,
+			color-mix(in oklab, var(--ui-border-soft) 42%, transparent) 47px,
+			color-mix(in oklab, var(--ui-border-soft) 42%, transparent) 48px
+		);
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--ui-bg: oklch(0.165 0.012 54);
+		--ui-bg-elevated: oklch(0.19 0.012 56);
+		--ui-surface: oklch(0.23 0.015 58 / 0.94);
+		--ui-surface-subtle: oklch(0.205 0.015 58 / 0.98);
+		--ui-surface-muted: oklch(0.27 0.018 58 / 0.98);
+		--ui-surface-strong: oklch(0.31 0.022 58 / 0.98);
+		--ui-panel: oklch(0.34 0.028 58 / 0.82);
+		--ui-panel-accent: oklch(0.68 0.08 58 / 0.22);
+
+		--ui-text-primary: oklch(0.94 0.006 78);
+		--ui-text-secondary: oklch(0.79 0.012 72);
+		--ui-text-tertiary: oklch(0.62 0.012 72);
+		--ui-text-inverse: oklch(0.18 0.012 54);
+
+		--ui-border-soft: oklch(0.4 0.02 60 / 0.6);
+		--ui-border-strong: oklch(0.56 0.03 62 / 0.78);
+		--ui-border-accent: oklch(0.76 0.12 54 / 0.62);
+
+		--ui-accent: oklch(0.8 0.16 54);
+		--ui-accent-strong: oklch(0.71 0.17 49);
+		--ui-accent-soft: oklch(0.31 0.05 53);
+		--ui-accent-ink: oklch(0.96 0.01 78);
+
+		--ui-success-soft: oklch(0.28 0.05 151);
+		--ui-warning-soft: oklch(0.3 0.05 82);
+		--ui-danger-soft: oklch(0.28 0.06 28);
+		--ui-info-soft: oklch(0.29 0.03 240);
+
+		--ui-shadow-soft: 0 12px 34px color-mix(in oklab, black 28%, transparent);
+		--ui-shadow-strong: 0 20px 56px color-mix(in oklab, black 36%, transparent);
+
+		--ui-backdrop:
+			radial-gradient(circle at top left, color-mix(in oklab, var(--ui-accent) 20%, transparent) 0, transparent 28%),
+			radial-gradient(circle at top right, color-mix(in oklab, var(--ui-warning) 14%, transparent) 0, transparent 24%),
+			linear-gradient(180deg, oklch(0.195 0.012 58), oklch(0.17 0.012 56) 55%, oklch(0.155 0.012 54));
+		--ui-grid-lines:
+			repeating-linear-gradient(
+				90deg,
+				transparent 0,
+				transparent 47px,
+				color-mix(in oklab, var(--ui-border-soft) 36%, transparent) 47px,
+				color-mix(in oklab, var(--ui-border-soft) 36%, transparent) 48px
+			);
+	}
 }
 
 html,
@@ -30,19 +140,56 @@ body,
 	margin: 0;
 }
 
+html {
+	background: var(--ui-bg);
+}
+
 body {
 	color: var(--ui-text-primary);
-	background:
-		radial-gradient(circle at top left, rgba(45, 212, 191, 0.1), transparent 30%),
-		radial-gradient(circle at top right, rgba(56, 189, 248, 0.1), transparent 34%),
-		linear-gradient(180deg, #f8fbff 0%, #eef4fb 52%, #f8fafc 100%);
+	background: var(--ui-backdrop);
+	background-color: var(--ui-bg);
+}
+
+body::before {
+	content: "";
+	position: fixed;
+	inset: 0;
+	z-index: -1;
+	background: var(--ui-grid-lines);
+	opacity: 0.38;
+	pointer-events: none;
+}
+
+#app {
+	isolation: isolate;
 }
 
 button,
-input {
+input,
+select,
+textarea {
 	font: inherit;
 }
 
+button,
+input,
+select,
+textarea,
+summary {
+	-webkit-tap-highlight-color: transparent;
+}
+
 ::selection {
-	background: rgba(8, 145, 178, 0.18);
+	background: color-mix(in oklab, var(--ui-accent) 26%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		scroll-behavior: auto !important;
+		transition-duration: 0.01ms !important;
+	}
 }

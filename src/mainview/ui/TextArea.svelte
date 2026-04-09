@@ -14,32 +14,34 @@
 <style>
 	.ui-textarea {
 		width: 100%;
-		min-height: 7.2rem;
-		padding: 0.82rem 0.95rem;
-		border-radius: calc(var(--ui-radius-md) + 0.16rem);
-		border: 1px solid rgba(148, 163, 184, 0.34);
-		background: rgba(255, 255, 255, 0.92);
+		min-height: 8.4rem;
+		padding: 0.95rem 1rem;
+		border-radius: calc(var(--ui-radius-md) + 0.08rem);
+		border: 1px solid var(--ui-border-soft);
+		background: color-mix(in oklab, var(--ui-bg-elevated) 96%, transparent);
 		color: var(--ui-text-primary);
-		line-height: 1.6;
+		font-size: 0.98rem;
+		line-height: 1.65;
+		box-shadow: inset 0 1px 0 color-mix(in oklab, white 44%, transparent);
 		transition:
-			border-color 140ms ease,
-			box-shadow 140ms ease,
-			background-color 140ms ease;
+			border-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
+			box-shadow 170ms cubic-bezier(0.19, 1, 0.22, 1),
+			background-color 170ms cubic-bezier(0.19, 1, 0.22, 1);
 	}
 
 	.ui-textarea::placeholder {
-		color: rgba(71, 85, 105, 0.68);
+		color: var(--ui-text-tertiary);
 	}
 
 	.ui-textarea:hover {
-		border-color: rgba(14, 116, 144, 0.28);
+		border-color: color-mix(in oklab, var(--ui-accent) 22%, var(--ui-border-strong));
 	}
 
 	.ui-textarea:focus-visible {
 		outline: none;
-		border-color: rgba(14, 116, 144, 0.46);
+		border-color: color-mix(in oklab, var(--ui-accent) 58%, var(--ui-border-strong));
 		box-shadow: var(--ui-focus-ring);
-		background: rgba(255, 255, 255, 0.98);
+		background: var(--ui-bg-elevated);
 	}
 
 	.resize-none {

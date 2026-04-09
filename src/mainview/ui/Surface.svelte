@@ -28,25 +28,35 @@
 
 <style>
 	.ui-surface {
-		border-radius: var(--ui-radius-xl);
-		border: 1px solid var(--ui-border-soft);
+		position: relative;
+		border-radius: var(--ui-radius-lg);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 72%, transparent);
 		background: var(--ui-surface);
-		box-shadow: var(--ui-shadow-soft);
+		box-shadow: none;
+		overflow: hidden;
+	}
+
+	.ui-surface::before {
+		content: "";
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		background: linear-gradient(180deg, color-mix(in oklab, white 24%, transparent), transparent 30%);
+		opacity: 0.28;
 	}
 
 	.tone-subtle {
-		background: rgba(255, 255, 255, 0.76);
+		background: var(--ui-surface-subtle);
 	}
 
 	.tone-muted {
-		background: rgba(248, 250, 252, 0.86);
+		background: var(--ui-surface-muted);
 	}
 
 	.tone-danger {
 		background:
-			radial-gradient(circle at top, rgba(254, 226, 226, 0.82), transparent 46%),
-			rgba(255, 255, 255, 0.92);
-		border-color: rgba(248, 113, 113, 0.34);
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-danger-soft) 90%, transparent), var(--ui-surface));
+		border-color: color-mix(in oklab, var(--ui-danger) 22%, var(--ui-border-soft));
 	}
 
 	.padding-none {

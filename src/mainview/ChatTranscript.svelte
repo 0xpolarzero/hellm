@@ -98,6 +98,12 @@
 				<p class="empty-eyebrow">Workspace Ready</p>
 				<h2>Start a task</h2>
 				<p>Ask for a code change, a review, or a verification run. The Bun-side pi host is already connected.</p>
+				<div class="empty-prompts" aria-hidden="true">
+					<span>Inspect the repository</span>
+					<span>Implement a change</span>
+					<span>Run verification</span>
+					<span>Review a diff</span>
+				</div>
 			</div>
 		{/if}
 
@@ -247,15 +253,17 @@
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
+		background:
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-panel-accent) 34%, transparent), transparent 8rem);
 	}
 
 	.chat-thread {
 		display: flex;
 		flex-direction: column;
-		gap: 0.9rem;
-		max-width: 56rem;
-		margin: 0 auto;
-		padding: 1rem 1rem 0.9rem;
+		gap: 1rem;
+		max-width: 60rem;
+		margin: 0 auto 0 0;
+		padding: 1.15rem 1.1rem 1rem;
 	}
 
 	.message-row {
@@ -273,24 +281,38 @@
 
 	.message-bubble,
 	.tool-result {
-		width: min(100%, 44rem);
-		padding: 0.9rem 1rem;
-		border-radius: calc(var(--ui-radius-xl) - 0.1rem);
-		border: 1px solid rgba(203, 213, 225, 0.82);
-		box-shadow: 0 18px 34px rgba(15, 23, 42, 0.05);
+		position: relative;
+		width: min(100%, 48rem);
+		padding: 1rem 1.05rem;
+		border-radius: var(--ui-radius-md);
+		border: none;
+		box-shadow: none;
+		overflow: visible;
 	}
 
 	.user-bubble {
-		background: linear-gradient(135deg, rgba(14, 116, 144, 0.1), rgba(20, 184, 166, 0.08)), rgba(255, 255, 255, 0.92);
+		width: min(100%, 39rem);
+		background:
+			linear-gradient(135deg, color-mix(in oklab, var(--ui-accent-soft) 92%, transparent), color-mix(in oklab, var(--ui-bg-elevated) 96%, transparent));
 	}
 
-	.assistant-bubble,
+	.assistant-bubble {
+		padding-left: 1.1rem;
+		border-left: 2px solid color-mix(in oklab, var(--ui-border-strong) 70%, transparent);
+		background: transparent;
+		border-radius: 0;
+	}
+
 	.tool-result {
-		background: rgba(255, 255, 255, 0.88);
+		padding-left: 1.1rem;
+		border-left: 2px solid color-mix(in oklab, var(--ui-accent) 82%, var(--ui-accent-strong));
+		background: color-mix(in oklab, var(--ui-surface-subtle) 74%, transparent);
+		border-radius: 0;
 	}
 
 	.streaming {
-		border-style: dashed;
+		border-left-style: dashed;
+		animation: streamPulse 1.9s ease-out infinite;
 	}
 
 	.message-bubble header,
@@ -298,22 +320,25 @@
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
-		gap: 0.8rem;
-		margin-bottom: 0.72rem;
+		gap: 0.9rem;
+		margin-bottom: 0.8rem;
 	}
 
 	.message-bubble header span,
 	.tool-result-header strong {
-		font-size: 0.88rem;
-		font-weight: 740;
+		font-size: 0.82rem;
+		font-weight: 760;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
 		color: var(--ui-text-primary);
 	}
 
 	.message-bubble header small,
 	.tool-result-header span,
 	time {
-		font-size: 0.75rem;
+		font-size: 0.74rem;
 		color: var(--ui-text-secondary);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.message-meta,
@@ -330,24 +355,27 @@
 		white-space: pre-wrap;
 		word-break: break-word;
 		font-family: inherit;
-		font-size: 0.9rem;
+		font-size: 0.96rem;
 		line-height: 1.65;
 		color: var(--ui-text-primary);
 	}
 
 	.thinking-block,
 	.result-details {
-		margin-top: 0.7rem;
-		padding: 0.75rem 0.82rem;
-		border-radius: calc(var(--ui-radius-md) + 0.06rem);
-		background: rgba(248, 250, 252, 0.92);
+		margin-top: 0.8rem;
+		padding: 0.85rem 0.9rem;
+		border-radius: 0;
+		border: none;
+		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-muted) 58%, transparent);
 	}
 
 	.thinking-block summary,
 	.result-details summary {
 		cursor: pointer;
 		font-size: 0.78rem;
-		font-weight: 680;
+		font-weight: 720;
+		letter-spacing: 0.05em;
 		color: var(--ui-text-secondary);
 	}
 
@@ -355,25 +383,37 @@
 	.result-details pre {
 		margin-top: 0.65rem;
 		font-size: 0.82rem;
-		color: #1e293b;
+		color: var(--ui-text-secondary);
 	}
 
 	.tool-card {
+		position: relative;
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: 0.8rem;
-		margin-top: 0.7rem;
-		padding: 0.78rem 0.86rem;
-		border-radius: calc(var(--ui-radius-md) + 0.06rem);
-		border: 1px solid rgba(203, 213, 225, 0.76);
-		background: rgba(248, 250, 252, 0.9);
+		margin-top: 0.8rem;
+		padding: 0.85rem 0.92rem;
+		border-radius: 0;
+		border: none;
+		border-left: 2px solid color-mix(in oklab, var(--ui-accent) 84%, var(--ui-accent-strong));
+		background: color-mix(in oklab, var(--ui-surface-muted) 62%, transparent);
+		overflow: visible;
+	}
+
+	.tool-card::before,
+	.tool-result::before {
+		content: none;
 	}
 
 	.tool-card.error,
 	.tool-result.error {
-		border-color: rgba(248, 113, 113, 0.34);
-		background: rgba(254, 242, 242, 0.94);
+		background: var(--ui-danger-soft);
+	}
+
+	.tool-card.error,
+	.tool-result.error {
+		border-left-color: var(--ui-danger);
 	}
 
 	.tool-card-copy,
@@ -389,43 +429,74 @@
 	}
 
 	.tool-card-copy strong {
-		font-size: 0.85rem;
-		font-weight: 720;
+		font-size: 0.86rem;
+		font-weight: 700;
 		color: var(--ui-text-primary);
 	}
 
 	.tool-card-copy span {
-		font-family: "SF Mono", "Menlo", monospace;
+		font-family: var(--font-mono);
 		font-size: 0.76rem;
 		color: var(--ui-text-secondary);
 	}
 
 	.empty-state {
-		padding: 3.4rem 1rem 2.8rem;
-		text-align: center;
+		padding: clamp(3.5rem, 10vw, 6rem) 0 3rem;
+		max-width: 38rem;
 		color: var(--ui-text-secondary);
 	}
 
 	.empty-eyebrow {
 		margin: 0 0 0.3rem;
-		font-size: 0.72rem;
+		font-size: 0.68rem;
 		font-weight: 760;
-		letter-spacing: 0.12em;
+		letter-spacing: 0.18em;
 		text-transform: uppercase;
 		color: var(--ui-accent-strong);
 	}
 
 	.empty-state h2 {
 		margin: 0;
-		font-size: 1.18rem;
+		font-size: clamp(1.6rem, 3vw, 2.4rem);
 		font-weight: 730;
+		letter-spacing: -0.045em;
 		color: var(--ui-text-primary);
 	}
 
 	.empty-state p:last-child {
 		max-width: 32rem;
-		margin: 0.45rem auto 0;
+		margin: 0.55rem 0 0;
+		font-size: 0.96rem;
 		line-height: 1.6;
+	}
+
+	.empty-prompts {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.55rem;
+		margin-top: 1rem;
+	}
+
+	.empty-prompts span {
+		padding: 0.52rem 0.72rem;
+		border-radius: var(--ui-radius-sm);
+		border: none;
+		background: color-mix(in oklab, var(--ui-surface-subtle) 72%, transparent);
+		font-size: 0.76rem;
+		font-weight: 650;
+		letter-spacing: 0.03em;
+		color: var(--ui-text-secondary);
+	}
+
+	@keyframes streamPulse {
+		0%,
+		100% {
+			box-shadow: 0 12px 28px color-mix(in oklab, black 6%, transparent);
+		}
+
+		50% {
+			box-shadow: 0 16px 34px color-mix(in oklab, var(--ui-accent) 12%, transparent);
+		}
 	}
 
 	@media (max-width: 720px) {
@@ -443,6 +514,10 @@
 		.message-meta,
 		.tool-result-actions {
 			justify-content: flex-start;
+		}
+
+		.empty-state {
+			padding-top: 3rem;
 		}
 	}
 </style>

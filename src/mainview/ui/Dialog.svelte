@@ -86,26 +86,37 @@
 	.ui-dialog-overlay {
 		position: fixed;
 		inset: 0;
-		z-index: 1000;
+		z-index: var(--ui-z-dialog);
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		padding: 1.25rem;
-		background: rgba(12, 18, 28, 0.42);
-		backdrop-filter: blur(14px);
+		padding: clamp(1rem, 3vw, 2rem);
+		background:
+			linear-gradient(180deg, color-mix(in oklab, black 40%, transparent), color-mix(in oklab, black 54%, transparent)),
+			radial-gradient(circle at top, color-mix(in oklab, var(--ui-accent) 12%, transparent), transparent 38%);
+		backdrop-filter: blur(6px);
 	}
 
 	.ui-dialog-panel {
-		width: min(92vw, 780px);
-		max-height: 82vh;
+		position: relative;
+		width: min(94vw, 780px);
+		max-height: min(88vh, 58rem);
 		display: flex;
 		flex-direction: column;
-		border-radius: calc(var(--ui-radius-xl) + 0.15rem);
+		border-radius: var(--ui-radius-xl);
 		border: 1px solid var(--ui-border-soft);
 		background:
-			radial-gradient(circle at top, rgba(226, 232, 240, 0.7), transparent 46%),
-			rgba(255, 255, 255, 0.95);
-		box-shadow: 0 34px 90px rgba(12, 18, 28, 0.22);
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-bg-elevated) 94%, transparent), var(--ui-surface));
+		box-shadow: var(--ui-shadow-strong);
+		overflow: hidden;
+	}
+
+	.ui-dialog-panel::before {
+		content: "";
+		position: absolute;
+		inset: 0 0 auto;
+		height: 0.3rem;
+		background: linear-gradient(90deg, var(--ui-accent-strong), color-mix(in oklab, var(--ui-accent) 72%, white 28%));
 	}
 
 	.width-md {
@@ -120,45 +131,69 @@
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
-		gap: 1rem;
-		padding: 1.2rem 1.35rem 1rem;
-		border-bottom: 1px solid rgba(226, 232, 240, 0.92);
+		gap: 1.2rem;
+		padding: 1.4rem 1.45rem 1rem;
+		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
+		background:
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-panel-accent) 58%, transparent), transparent 110%);
 	}
 
 	.ui-dialog-copy h2 {
 		margin: 0;
-		font-size: 1.12rem;
-		font-weight: 680;
+		font-size: 1.28rem;
+		font-weight: 700;
+		letter-spacing: -0.03em;
 		color: var(--ui-text-primary);
 	}
 
 	.ui-dialog-eyebrow {
 		margin: 0 0 0.24rem;
-		font-size: 0.72rem;
-		font-weight: 750;
-		letter-spacing: 0.14em;
+		font-size: 0.71rem;
+		font-weight: 760;
+		letter-spacing: 0.16em;
 		text-transform: uppercase;
-		color: var(--ui-accent-strong);
+		color: color-mix(in oklab, var(--ui-accent-strong) 86%, var(--ui-text-primary));
 	}
 
 	.ui-dialog-description {
-		margin: 0.38rem 0 0;
-		max-width: 42rem;
-		font-size: 0.85rem;
-		line-height: 1.55;
+		margin: 0.45rem 0 0;
+		max-width: 44rem;
+		font-size: 0.9rem;
+		line-height: 1.6;
 		color: var(--ui-text-secondary);
 	}
 
 	.ui-dialog-close {
-		padding-inline: 0.72rem;
-		font-size: 1.25rem;
+		flex-shrink: 0;
+		inline-size: 2.4rem;
+		padding: 0;
+		font-size: 1.2rem;
 		line-height: 1;
 	}
 
 	.ui-dialog-body {
 		flex: 1;
 		min-height: 0;
-		padding: 1.1rem 1.35rem 1.35rem;
+		padding: 1.15rem 1.45rem 1.45rem;
 		overflow: auto;
+	}
+
+	@media (max-width: 720px) {
+		.ui-dialog-overlay {
+			align-items: flex-end;
+			padding: 0.75rem;
+		}
+
+		.ui-dialog-panel {
+			width: 100%;
+			max-height: 92vh;
+			border-bottom-right-radius: 0.9rem;
+			border-bottom-left-radius: 0.9rem;
+		}
+
+		.ui-dialog-header,
+		.ui-dialog-body {
+			padding-inline: 1rem;
+		}
 	}
 </style>

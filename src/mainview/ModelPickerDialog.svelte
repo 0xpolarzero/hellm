@@ -141,7 +141,7 @@
 	onClose={onClose}
 >
 	<div class="picker-header">
-		<Input bind:value={searchQuery} placeholder="Search providers and models" />
+		<Input bind:value={searchQuery} placeholder="Search model families, providers, or ids" />
 		<div class="picker-filters">
 			<Button
 				size="sm"
@@ -155,6 +155,7 @@
 			</Button>
 		</div>
 	</div>
+	<p class="picker-summary">{filteredModels.length} match{filteredModels.length === 1 ? "" : "es"}</p>
 
 	{#if loadingCustomProviders}
 		<p class="picker-status">Loading custom providers...</p>
@@ -195,8 +196,13 @@
 <style>
 	.picker-header {
 		display: grid;
-		gap: 0.75rem;
-		margin-bottom: 1rem;
+		gap: 0.8rem;
+		padding: 0.9rem;
+		margin-bottom: 0.8rem;
+		border-radius: var(--ui-radius-md);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+		background:
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-subtle) 92%, transparent), color-mix(in oklab, var(--ui-surface) 94%, transparent));
 	}
 
 	.picker-filters {
@@ -205,34 +211,45 @@
 		gap: 0.55rem;
 	}
 
+	.picker-summary {
+		margin: 0 0 0.8rem;
+		font-size: 0.74rem;
+		font-weight: 650;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--ui-text-secondary);
+	}
+
 	.model-list {
 		display: flex;
 		flex-direction: column;
-		gap: 0.65rem;
+		gap: 0.72rem;
 	}
 
 	.model-row {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) auto;
 		gap: 1rem;
-		padding: 0.95rem 1rem;
-		border-radius: calc(var(--ui-radius-md) + 0.12rem);
-		border: 1px solid rgba(203, 213, 225, 0.9);
-		background: rgba(255, 255, 255, 0.82);
+		padding: 0.95rem 0.2rem 0.95rem 1rem;
+		border-radius: 0;
+		border: none;
+		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+		border-left: 2px solid transparent;
+		background: transparent;
 		text-align: left;
 		cursor: pointer;
 		transition:
-			transform 140ms ease,
-			border-color 140ms ease,
-			background-color 140ms ease,
-			box-shadow 140ms ease;
+			transform 170ms cubic-bezier(0.19, 1, 0.22, 1),
+			border-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
+			background-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
+			box-shadow 170ms cubic-bezier(0.19, 1, 0.22, 1);
 	}
 
 	.model-row:hover {
-		transform: translateY(-1px);
-		border-color: rgba(14, 116, 144, 0.32);
-		background: rgba(255, 255, 255, 0.94);
-		box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
+		transform: none;
+		border-left-color: color-mix(in oklab, var(--ui-border-strong) 72%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-subtle) 56%, transparent);
+		box-shadow: none;
 	}
 
 	.model-row:focus-visible {
@@ -241,10 +258,9 @@
 	}
 
 	.current {
-		border-color: rgba(20, 184, 166, 0.34);
+		border-left-color: color-mix(in oklab, var(--ui-accent) 72%, var(--ui-accent-strong));
 		background:
-			radial-gradient(circle at top right, rgba(20, 184, 166, 0.1), transparent 42%),
-			rgba(255, 255, 255, 0.94);
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-accent-soft) 54%, transparent), transparent);
 	}
 
 	.model-copy {
@@ -259,26 +275,29 @@
 	}
 
 	.model-title strong {
-		font-size: 0.96rem;
-		font-weight: 730;
+		font-size: 1rem;
+		font-weight: 710;
+		letter-spacing: -0.025em;
 		color: var(--ui-text-primary);
 	}
 
 	.model-copy p,
 	.picker-status {
-		margin: 0.34rem 0 0;
-		font-size: 0.82rem;
+		margin: 0.38rem 0 0;
+		font-size: 0.8rem;
 		line-height: 1.5;
 		color: var(--ui-text-secondary);
+		font-family: var(--font-mono);
 	}
 
 	.model-metrics {
 		display: grid;
-		gap: 0.24rem;
+		gap: 0.32rem;
 		justify-items: end;
-		font-size: 0.77rem;
+		font-size: 0.76rem;
 		font-weight: 620;
 		color: var(--ui-text-secondary);
+		font-variant-numeric: tabular-nums;
 	}
 
 	@media (max-width: 720px) {

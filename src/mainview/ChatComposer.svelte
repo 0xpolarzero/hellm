@@ -74,7 +74,7 @@
 		</label>
 
 		<div class="context-chip">
-			<span class="toolbar-label">Window</span>
+			<span class="toolbar-label">Context</span>
 			<strong>{formatTokenCount(currentModel.contextWindow)}</strong>
 		</div>
 	</div>
@@ -87,12 +87,12 @@
 		bind:value={draft}
 		resize="vertical"
 		rows={5}
-		placeholder="Ask hellm to inspect, change, or verify the project."
+		placeholder="Ask hellm to inspect the repo, make a change, or run verification."
 		onkeydown={handleKeydown}
 	/>
 
 	<div class="composer-footer">
-		<p>{usageText || "Enter sends. Shift+Enter keeps writing."}</p>
+		<p>{usageText ? `Session ${usageText}` : "Enter sends. Shift+Enter keeps writing."}</p>
 		<div class="composer-actions">
 			{#if isStreaming}
 				<Button variant="danger" onclick={onAbort}>Stop</Button>
@@ -105,44 +105,48 @@
 
 <style>
 	.composer-shell {
+		container-type: inline-size;
 		padding: 1rem 1.1rem 1.1rem;
-		border-top: 1px solid rgba(203, 213, 225, 0.82);
+		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
 		background:
-			linear-gradient(180deg, rgba(248, 250, 252, 0.84), rgba(255, 255, 255, 0.96)),
-			radial-gradient(circle at bottom left, rgba(45, 212, 191, 0.08), transparent 35%);
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-subtle) 84%, transparent), var(--ui-surface)),
+			radial-gradient(circle at bottom left, color-mix(in oklab, var(--ui-accent) 10%, transparent), transparent 38%);
 	}
 
 	.composer-toolbar {
 		display: grid;
-		grid-template-columns: minmax(0, 1.5fr) minmax(11rem, 0.8fr) auto;
+		grid-template-columns: minmax(0, 1.35fr) minmax(11rem, 0.82fr) minmax(8rem, auto);
 		gap: 0.75rem;
-		margin-bottom: 0.85rem;
+		margin-bottom: 0.95rem;
 	}
 
 	.model-pill,
 	.thinking-field,
 	.context-chip {
 		display: grid;
-		gap: 0.2rem;
-		padding: 0.7rem 0.85rem;
-		border-radius: calc(var(--ui-radius-md) + 0.12rem);
-		border: 1px solid rgba(148, 163, 184, 0.28);
-		background: rgba(255, 255, 255, 0.78);
+		gap: 0.24rem;
+		padding: 0.2rem 0 0.7rem;
+		border-radius: 0;
+		border: none;
+		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
+		background: transparent;
 	}
 
 	.model-pill {
 		text-align: left;
 		cursor: pointer;
 		transition:
-			transform 140ms ease,
-			border-color 140ms ease,
-			background-color 140ms ease;
+			transform 170ms cubic-bezier(0.19, 1, 0.22, 1),
+			border-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
+			background-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
+			box-shadow 170ms cubic-bezier(0.19, 1, 0.22, 1);
 	}
 
 	.model-pill:hover {
-		transform: translateY(-1px);
-		border-color: rgba(14, 116, 144, 0.34);
-		background: rgba(255, 255, 255, 0.94);
+		transform: none;
+		border-color: color-mix(in oklab, var(--ui-accent) 28%, var(--ui-border-strong));
+		background: transparent;
+		box-shadow: none;
 	}
 
 	.model-pill:focus-visible {
@@ -153,21 +157,23 @@
 	.toolbar-label {
 		font-size: 0.68rem;
 		font-weight: 760;
-		letter-spacing: 0.12em;
+		letter-spacing: 0.16em;
 		text-transform: uppercase;
 		color: var(--ui-accent-strong);
 	}
 
 	.model-pill strong,
 	.context-chip strong {
-		font-size: 0.93rem;
-		font-weight: 730;
+		font-size: 0.98rem;
+		font-weight: 710;
+		letter-spacing: -0.025em;
 		color: var(--ui-text-primary);
 	}
 
 	.toolbar-meta {
-		font-size: 0.78rem;
+		font-size: 0.79rem;
 		color: var(--ui-text-secondary);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.thinking-field {
@@ -176,10 +182,14 @@
 
 	.thinking-field select {
 		min-width: 0;
+		padding: 0;
 		border: none;
 		background: transparent;
 		font: inherit;
 		color: var(--ui-text-primary);
+		font-weight: 650;
+		appearance: none;
+		cursor: pointer;
 	}
 
 	.thinking-field select:focus-visible {
@@ -189,16 +199,23 @@
 	.context-chip {
 		align-content: center;
 		min-width: 0;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.composer-error {
 		margin: 0 0 0.75rem;
-		padding: 0.72rem 0.86rem;
-		border-radius: calc(var(--ui-radius-md) + 0.08rem);
-		background: rgba(254, 242, 242, 0.94);
-		color: #b91c1c;
+		padding: 0.78rem 0.9rem;
+		border-radius: 0;
+		border: none;
+		border-left: 2px solid var(--ui-danger);
+		background: color-mix(in oklab, var(--ui-danger-soft) 76%, transparent);
+		color: color-mix(in oklab, var(--ui-danger) 82%, var(--ui-text-primary));
 		font-size: 0.84rem;
 		line-height: 1.5;
+	}
+
+	:global(.composer-shell .ui-textarea) {
+		min-height: 9rem;
 	}
 
 	.composer-footer {
@@ -206,13 +223,18 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.8rem;
-		margin-top: 0.8rem;
+		margin-top: 0.9rem;
+		padding-top: 0.85rem;
+		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 56%, transparent);
 	}
 
 	.composer-footer p {
 		margin: 0;
-		font-size: 0.78rem;
+		font-size: 0.79rem;
+		font-weight: 600;
+		letter-spacing: 0.02em;
 		color: var(--ui-text-secondary);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.composer-actions {
@@ -221,7 +243,7 @@
 		gap: 0.55rem;
 	}
 
-	@media (max-width: 900px) {
+	@container (max-width: 44rem) {
 		.composer-toolbar {
 			grid-template-columns: 1fr;
 		}

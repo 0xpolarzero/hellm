@@ -191,84 +191,98 @@
 <style>
 	.loading,
 	.error {
+		margin: 0;
 		font-size: 0.9rem;
 		color: var(--ui-text-secondary);
 	}
 
 	.error {
-		color: #b91c1c;
+		color: color-mix(in oklab, var(--ui-danger) 84%, var(--ui-text-primary));
 	}
 
 	.provider-list {
 		display: flex;
 		flex-direction: column;
-		gap: 0.7rem;
+		gap: 0.8rem;
 	}
 
 	:global(.provider-row) {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		padding: 0.95rem 1rem;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: center;
+		padding: 1rem 1.05rem;
 		gap: 1rem;
-		flex-wrap: wrap;
+		border: none;
+		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+		border-radius: 0;
+		box-shadow: none;
+		background: transparent;
 	}
 
 	.provider-main {
 		display: grid;
-		gap: 0.32rem;
+		gap: 0.38rem;
 		min-width: 0;
 	}
 
 	.provider-info {
 		display: flex;
 		align-items: center;
-		gap: 0.55rem;
+		gap: 0.6rem;
 		flex-wrap: wrap;
 		min-width: 0;
 	}
 
 	.provider-name {
-		font-size: 0.94rem;
-		font-weight: 700;
+		font-size: 1rem;
+		font-weight: 710;
+		letter-spacing: -0.02em;
 		white-space: nowrap;
 	}
 
 	.provider-meta {
 		margin: 0;
+		max-width: 38rem;
 		font-size: 0.82rem;
 		line-height: 1.5;
 		color: var(--ui-text-secondary);
 	}
 
 	.save-msg {
-		font-size: 0.74rem;
+		font-size: 0.73rem;
+		font-weight: 680;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
 		color: var(--ui-accent-strong);
-		font-weight: 600;
 	}
 
 	.provider-actions {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		justify-content: flex-end;
-		gap: 0.5rem;
+		gap: 0.55rem;
 		flex-shrink: 0;
 		flex-wrap: wrap;
 	}
 
 	.key-input-row {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		gap: 0.5rem;
 		flex-wrap: wrap;
 	}
 
 	:global(.key-input-row .ui-input) {
 		font-size: 0.84rem;
-		width: min(320px, 70vw);
+		width: min(340px, 70vw);
 	}
 
 	@media (max-width: 720px) {
+		:global(.provider-row) {
+			grid-template-columns: 1fr;
+			align-items: start;
+		}
+
 		.provider-actions {
 			width: 100%;
 			justify-content: flex-start;

@@ -14,31 +14,34 @@
 <style>
 	.ui-input {
 		width: 100%;
-		min-height: 2.4rem;
-		padding: 0.58rem 0.78rem;
-		border-radius: calc(var(--ui-radius-md) + 0.08rem);
-		border: 1px solid rgba(148, 163, 184, 0.34);
-		background: rgba(255, 255, 255, 0.9);
+		min-height: 2.8rem;
+		padding: 0.68rem 0.82rem;
+		border-radius: calc(var(--ui-radius-sm) + 0.08rem);
+		border: 1px solid var(--ui-border-soft);
+		background: color-mix(in oklab, var(--ui-bg-elevated) 94%, transparent);
 		color: var(--ui-text-primary);
+		font-size: 0.92rem;
+		line-height: 1.4;
+		box-shadow: inset 0 1px 0 color-mix(in oklab, white 40%, transparent);
 		transition:
-			border-color 140ms ease,
-			box-shadow 140ms ease,
-			background-color 140ms ease;
+			border-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
+			box-shadow 170ms cubic-bezier(0.19, 1, 0.22, 1),
+			background-color 170ms cubic-bezier(0.19, 1, 0.22, 1);
 	}
 
 	.ui-input::placeholder {
-		color: rgba(71, 85, 105, 0.68);
+		color: var(--ui-text-tertiary);
 	}
 
 	.ui-input:hover {
-		border-color: rgba(14, 116, 144, 0.28);
+		border-color: color-mix(in oklab, var(--ui-accent) 22%, var(--ui-border-strong));
 	}
 
 	.ui-input:focus-visible {
 		outline: none;
-		border-color: rgba(14, 116, 144, 0.46);
+		border-color: color-mix(in oklab, var(--ui-accent) 58%, var(--ui-border-strong));
 		box-shadow: var(--ui-focus-ring);
-		background: rgba(255, 255, 255, 0.96);
+		background: var(--ui-bg-elevated);
 	}
 
 	.ui-input:disabled {
@@ -47,7 +50,7 @@
 	}
 
 	.mono {
-		font-family: "SF Mono", "Menlo", monospace;
+		font-family: var(--font-mono);
 		font-size: 0.85rem;
 	}
 </style>
