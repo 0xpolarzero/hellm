@@ -1,5 +1,0 @@
-preload = ["./workflows/preload.ts"]
-
-[test]
-root = "packages"
-pathIgnorePatterns = ["docs/**", ".worktrees/**", "workflows/.worktrees/**"]

@@ -2,13 +2,13 @@
 
 ## Title
 
-Build a pi-owned interactive shell and coding agent that extends pi with Slate-like orchestration, using Smithers internally for complex durable workflows.
+Build `hellm` as a pi-backed desktop coding app, starting from an Electrobun shell with a Bun-side pi host and room for orchestration above it.
 
 ## Status
 
 - Date: 2026-04-09
-- Status: Architecture direction clarified, initial Bun monorepo scaffold created, and `execute_typescript` adopted as an internal execution primitive
-- Repository purpose: Bun monorepo scaffold for `hellm`, a pi-first, Slate-like coding agent that must run inside pi's interactive shell
+- Status: Repository reset in progress; the current codebase now boots from an Electrobun desktop app scaffold with pi connected through a Bun-side host
+- Repository purpose: desktop-app bootstrap for `hellm` that ports the minimal Electrobun + pi integration from `../acai` so product work can restart from a working native shell
 
 ## Document Purpose
 
@@ -24,6 +24,19 @@ It is intentionally explicit about:
 - which features are in scope now, later, or not at all
 
 When reference docs and reference code disagree, reference code wins.
+
+## Implementation Reset Note
+
+The repository has been reset away from the earlier Bun monorepo scaffold and now starts from a working Electrobun desktop app.
+
+Current implementation truth:
+
+- Electrobun owns the native desktop window and packaging
+- the Bun process hosts pi through a direct `pi-coding-agent` SDK session host
+- the renderer uses `@mariozechner/pi-web-ui` as the initial chat surface
+- provider auth, prompt dispatch, streamed response projection, and session mutation are wired end-to-end
+
+The remaining sections below still capture valuable product intent, but they predate this reset and should be treated as directional rather than perfectly aligned implementation guidance until the PRD rewrite is completed under direct user steering.
 
 ## Executive Decision
 

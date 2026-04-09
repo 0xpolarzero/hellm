@@ -1,21 +1,21 @@
 # hellm
 
-`hellm` is a pi-first, context-disciplined coding harness that extends pi's interactive shell instead of replacing it.
+`hellm` is now bootstrapped as an Electrobun desktop app with a Bun-side `pi` host and a Svelte renderer.
 
-The core idea is simple: context is the scarce resource. The main orchestrator should keep strategic context and decision authority, bounded work should be pushed into short-lived workflows or workers, useful outputs should be compressed into episodes and artifacts, and repeatable or compositional work should be externalized into code when that is more efficient than another long tool loop.
+The current starting point ports the minimal `pi` desktop integration from `../acai` into this repo:
 
-The interactive contract is non-negotiable: pi owns the terminal loop, `hellm` loads into that shell through pi's extension/runtime seam, and any snapshot-only or stdout-only path is a helper for tests or automation, not the product shell.
+- Electrobun owns the native window and desktop packaging
+- the Bun process hosts `pi` through a direct `pi-coding-agent` SDK session host
+- the renderer uses `@mariozechner/pi-web-ui` for the initial chat surface
+- provider auth, prompt dispatch, streamed response projection, model changes, and thinking-level changes are wired end-to-end
 
-In practice, that means `hellm` interleaves agentic reasoning and scripting instead of forcing everything through one transcript or one rigid workflow system. It uses:
-
-- one orchestrator to preserve high-level context
-- Smithers workflows for bounded delegated work
-- episodes to reuse outcomes without dragging full transcripts forward
-- `execute_typescript` to let the model write short typed programs when that is the better execution mode
-
-Start with [docs/context-discipline.md](docs/context-discipline.md) for the concise design note, then read [docs/prd.md](docs/prd.md) for the source-of-truth product spec.
+This is a bootstrap, not the finished product. The long-term product architecture is still tracked in [docs/prd.md](docs/prd.md), but the code in `src/` is now the source of truth for the desktop-app starting point.
 
 ## Commands
 
 - `bun install`
 - `bun run dev`
+- `bun run dev:hmr`
+- `bun run build`
+- `bun run run`
+- `bun run typecheck`

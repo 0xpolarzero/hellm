@@ -1,5 +1,23 @@
 {
   "extends": "./tsconfig.base.json",
-  "include": ["docs/features.ts"],
-  "exclude": ["node_modules", "dist", "build"],
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "useDefineForClassFields": true,
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "checkJs": true,
+    "isolatedModules": true,
+    "exactOptionalPropertyTypes": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": [
+    "docs/features.ts",
+    "electrobun.config.ts",
+    "scripts/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.ts",
+    "vite.config.ts"
+  ],
+  "exclude": ["node_modules", "dist", "build", ".electrobun"]
 }

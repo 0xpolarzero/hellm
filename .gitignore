@@ -2,6 +2,11 @@ node_modules/
 dist/
 build/
 coverage/
+.electrobun/
+.svelte-kit/
+.vite/
+artifacts/
+test-results/
 .idea/
 .vscode/
 .DS_Store
@@ -14,3 +19,5 @@ workflows/run-*.log
 .worktrees/
 .pi/
 .hellm/
+.env
+.env.*

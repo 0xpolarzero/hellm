@@ -1,0 +1,28 @@
+* {
+	box-sizing: border-box;
+}
+
+:root {
+	color-scheme: light;
+	font-family: "SF Pro Display", "Inter", "Helvetica Neue", sans-serif;
+	background:
+		radial-gradient(circle at top left, rgba(94, 234, 212, 0.18), transparent 32%),
+		radial-gradient(circle at top right, rgba(147, 197, 253, 0.2), transparent 30%),
+		linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+}
+
+html,
+body,
+#app {
+	min-height: 100vh;
+	margin: 0;
+}
+
+body {
+	color: #0f172a;
+}
+
+button,
+input {
+	font: inherit;
+}
