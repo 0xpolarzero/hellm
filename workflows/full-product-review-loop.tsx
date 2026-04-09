@@ -1,7 +1,6 @@
 /** @jsxImportSource smithers-orchestrator */
 
 import {
-  ClaudeCodeAgent,
   CodexAgent,
   Loop,
   Sequence,
@@ -143,11 +142,18 @@ type ReviewResult = z.infer<typeof reviewSchema>;
 type AddressResult = z.infer<typeof addressSchema>;
 
 const IMPLEMENT_MODEL =
-  process.env.HELLM_FULL_PRODUCT_IMPLEMENT_MODEL ?? "glm-5.1";
+  process.env.HELLM_FULL_PRODUCT_IMPLEMENT_MODEL ?? "gpt-5.3-codex";
+const IMPLEMENT_REASONING_EFFORT =
+  process.env.HELLM_FULL_PRODUCT_IMPLEMENT_REASONING_EFFORT ?? "medium";
 const ADDRESS_MODEL =
   process.env.HELLM_FULL_PRODUCT_ADDRESS_MODEL ?? IMPLEMENT_MODEL;
+const ADDRESS_REASONING_EFFORT =
+  process.env.HELLM_FULL_PRODUCT_ADDRESS_REASONING_EFFORT ??
+  IMPLEMENT_REASONING_EFFORT;
 const REVIEW_MODEL =
   process.env.HELLM_FULL_PRODUCT_REVIEW_MODEL ?? "gpt-5.3-codex";
+const REVIEW_REASONING_EFFORT =
+  process.env.HELLM_FULL_PRODUCT_REVIEW_REASONING_EFFORT ?? "high";
 
 const IMPLEMENT_SYSTEM_PROMPT = `You are implementing the hellm product from this repository's docs.
 
@@ -211,40 +217,42 @@ Execution style:
 - set continueLoop=false only when the work is done or a human decision is required
 - return structured JSON matching the review schema`;
 
-const implementAgent = new ClaudeCodeAgent({
+const implementAgent = createFullProductCodexAgent({
+  taskSlug: "implement",
   model: IMPLEMENT_MODEL,
-  yolo: true,
+  reasoningEffort: IMPLEMENT_REASONING_EFFORT,
   timeoutMs: DEFAULT_IMPLEMENT_TIMEOUT_MS,
-  idleTimeoutMs: DEFAULT_HEARTBEAT_TIMEOUT_MS,
   maxOutputBytes: 4_000_000,
+  sandbox: resolveCodexSandbox(
+    process.env.HELLM_FULL_PRODUCT_IMPLEMENT_SANDBOX,
+    "workspace-write",
+  ),
+  fullAuto: process.env.HELLM_FULL_PRODUCT_IMPLEMENT_FULL_AUTO !== "0",
   systemPrompt: IMPLEMENT_SYSTEM_PROMPT,
 });
 
-const addressAgent = new ClaudeCodeAgent({
+const addressAgent = createFullProductCodexAgent({
+  taskSlug: "address-review",
   model: ADDRESS_MODEL,
-  yolo: true,
+  reasoningEffort: ADDRESS_REASONING_EFFORT,
   timeoutMs: DEFAULT_ADDRESS_TIMEOUT_MS,
-  idleTimeoutMs: DEFAULT_HEARTBEAT_TIMEOUT_MS,
   maxOutputBytes: 4_000_000,
+  sandbox: resolveCodexSandbox(
+    process.env.HELLM_FULL_PRODUCT_ADDRESS_SANDBOX,
+    "workspace-write",
+  ),
+  fullAuto: process.env.HELLM_FULL_PRODUCT_ADDRESS_FULL_AUTO !== "0",
   systemPrompt: ADDRESS_SYSTEM_PROMPT,
 });
 
-const reviewAgent = new CodexAgent({
+const reviewAgent = createFullProductCodexAgent({
+  taskSlug: "review",
   model: REVIEW_MODEL,
-  env: createIsolatedCodexEnv("full-product-review-loop"),
-  extraArgs: ["--ephemeral"],
-  maxOutputBytes: 2_000_000,
-  skipGitRepoCheck: true,
-  yolo: false,
-  sandbox: "read-only",
+  reasoningEffort: REVIEW_REASONING_EFFORT,
   timeoutMs: DEFAULT_REVIEW_TIMEOUT_MS,
-  idleTimeoutMs: DEFAULT_HEARTBEAT_TIMEOUT_MS,
-  config: {
-    model_reasoning_effort:
-      process.env.HELLM_FULL_PRODUCT_REVIEW_REASONING_EFFORT ?? "high",
-    "features.multi_agent": false,
-    "agents.max_threads": 1,
-  },
+  maxOutputBytes: 2_000_000,
+  sandbox: "read-only",
+  fullAuto: false,
   systemPrompt: REVIEW_SYSTEM_PROMPT,
 });
 
@@ -470,6 +478,49 @@ function createIsolatedCodexEnv(taskSlug: string): Record<string, string> {
   return {
     CODEX_HOME: codexHome,
   };
+}
+
+function createFullProductCodexAgent(input: {
+  taskSlug: string;
+  model: string;
+  reasoningEffort: string;
+  timeoutMs: number;
+  maxOutputBytes: number;
+  sandbox: "read-only" | "workspace-write" | "danger-full-access";
+  fullAuto: boolean;
+  systemPrompt: string;
+}) {
+  return new CodexAgent({
+    model: input.model,
+    env: createIsolatedCodexEnv(`full-product-review-loop-${input.taskSlug}`),
+    extraArgs: ["--ephemeral"],
+    maxOutputBytes: input.maxOutputBytes,
+    skipGitRepoCheck: true,
+    sandbox: input.sandbox,
+    fullAuto: input.fullAuto,
+    timeoutMs: input.timeoutMs,
+    idleTimeoutMs: DEFAULT_HEARTBEAT_TIMEOUT_MS,
+    config: {
+      model_reasoning_effort: input.reasoningEffort,
+      "features.multi_agent": false,
+      "agents.max_threads": 1,
+    },
+    systemPrompt: input.systemPrompt,
+  });
+}
+
+function resolveCodexSandbox(
+  value: string | undefined,
+  fallback: "read-only" | "workspace-write" | "danger-full-access",
+) {
+  switch (value) {
+    case "read-only":
+    case "workspace-write":
+    case "danger-full-access":
+      return value;
+    default:
+      return fallback;
+  }
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number) {
