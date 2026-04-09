@@ -21,13 +21,10 @@
     "bun": ">=1.3.10"
   },
   "dependencies": {
-    "@mariozechner/mini-lit": "^0.2.0",
     "@mariozechner/pi-agent-core": "^0.64.0",
     "@mariozechner/pi-ai": "^0.64.0",
     "@mariozechner/pi-coding-agent": "^0.64.0",
-    "@mariozechner/pi-web-ui": "^0.64.0",
     "electrobun": "1.16.0",
-    "lit": "^3.3.1",
     "svelte": "^5.55.1"
   },
   "devDependencies": {

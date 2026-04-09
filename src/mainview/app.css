@@ -4,11 +4,23 @@
 
 :root {
 	color-scheme: light;
-	font-family: "SF Pro Display", "Inter", "Helvetica Neue", sans-serif;
+	font-family: "Avenir Next", "SF Pro Text", "Segoe UI", sans-serif;
+	--ui-surface: rgba(255, 255, 255, 0.82);
+	--ui-border-soft: rgba(203, 213, 225, 0.78);
+	--ui-border-strong: rgba(148, 163, 184, 0.56);
+	--ui-text-primary: #0f172a;
+	--ui-text-secondary: #475569;
+	--ui-text-inverse: #f8fafc;
+	--ui-accent: #0284c7;
+	--ui-accent-strong: #0f766e;
+	--ui-radius-md: 0.82rem;
+	--ui-radius-xl: 1.25rem;
+	--ui-shadow-soft: 0 26px 65px rgba(15, 23, 42, 0.1);
+	--ui-focus-ring: 0 0 0 3px rgba(14, 165, 233, 0.18);
 	background:
-		radial-gradient(circle at top left, rgba(94, 234, 212, 0.18), transparent 32%),
-		radial-gradient(circle at top right, rgba(147, 197, 253, 0.2), transparent 30%),
-		linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+		radial-gradient(circle at top left, rgba(45, 212, 191, 0.18), transparent 28%),
+		radial-gradient(circle at top right, rgba(56, 189, 248, 0.18), transparent 30%),
+		linear-gradient(180deg, #f8fbff 0%, #eef4fb 52%, #f8fafc 100%);
 }
 
 html,
@@ -19,10 +31,18 @@ body,
 }
 
 body {
-	color: #0f172a;
+	color: var(--ui-text-primary);
+	background:
+		radial-gradient(circle at top left, rgba(45, 212, 191, 0.1), transparent 30%),
+		radial-gradient(circle at top right, rgba(56, 189, 248, 0.1), transparent 34%),
+		linear-gradient(180deg, #f8fbff 0%, #eef4fb 52%, #f8fafc 100%);
 }
 
 button,
 input {
 	font: inherit;
+}
+
+::selection {
+	background: rgba(8, 145, 178, 0.18);
 }
