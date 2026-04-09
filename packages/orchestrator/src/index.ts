@@ -634,21 +634,66 @@ async function executePath(input: {
   smithersIsolation?: SessionState["smithersIsolations"][number];
 }> {
   switch (input.classification.path) {
-    case "direct":
+    case "direct": {
       const directWorktreePath =
         input.thread.worktreePath ?? input.context.repoAndWorktree.worktreePath;
+      const directResult = await input.piBridge.runWorker(
+        createPiWorkerRequest({
+          path: "pi-worker",
+          thread: input.thread,
+          objective: input.thread.objective,
+          cwd: input.context.repoAndWorktree.cwd,
+          inputEpisodeIds: input.inputEpisodeIds,
+          scopedContext: {
+            sessionHistory: input.context.sessionHistory.map((entry) =>
+              JSON.stringify(entry),
+            ),
+            relevantPaths: [
+              input.context.repoAndWorktree.cwd,
+              ...(directWorktreePath ? [directWorktreePath] : []),
+            ],
+            agentsInstructions: input.context.agentsInstructions,
+            relevantSkills: input.context.relevantSkills,
+            priorEpisodeIds: input.inputEpisodeIds,
+          },
+          toolScope: {
+            allow: ["read", "bash", "edit", "write"],
+            writeRoots: [directWorktreePath ?? input.context.repoAndWorktree.cwd],
+          },
+          completion: {
+            type: "episode-produced",
+            maxTurns: 1,
+          },
+          runtimeTransition: {
+            reason: input.request.resumeRunId ? "resume" : "new",
+            toSessionId: `${input.thread.id}:direct`,
+            aligned: !directWorktreePath ||
+              directWorktreePath === input.context.repoAndWorktree.cwd,
+            ...(directWorktreePath
+              ? { toWorktreePath: directWorktreePath }
+              : {}),
+          },
+        }),
+      );
+      const directEpisode = normalizePiWorkerResult(directResult);
+
       return {
         episode: createEpisode({
           id: `${input.thread.id}:direct:${input.now}`,
           threadId: input.thread.id,
           source: "orchestrator",
           objective: input.thread.objective,
-          status: "completed",
-          conclusions: [input.request.prompt],
+          status: directEpisode.status,
+          conclusions: directEpisode.conclusions,
+          changedFiles: directEpisode.changedFiles,
+          artifacts: directEpisode.artifacts,
+          verification: directEpisode.verification,
+          unresolvedIssues: directEpisode.unresolvedIssues,
+          followUpSuggestions: directEpisode.followUpSuggestions,
           provenance: {
             executionPath: "direct",
             actor: "orchestrator",
-            notes: "Direct path normalized into an episode.",
+            notes: "Direct path executed via the pi runtime bridge.",
           },
           startedAt: input.now,
           completedAt: input.now,
@@ -656,6 +701,7 @@ async function executePath(input: {
           ...(directWorktreePath ? { worktreePath: directWorktreePath } : {}),
         }),
       };
+    }
     case "approval":
       return {
         episode: createEpisode({

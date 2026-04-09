@@ -14,7 +14,7 @@ import {
   FileBackedSessionJsonlHarness,
   VirtualTerminalHarness,
   withTempWorkspace,
-} from "@hellm/test-support";
+} from "../../../test-support/index.ts";
 
 const TIMESTAMP = "2026-04-08T09:00:00.000Z";
 

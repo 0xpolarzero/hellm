@@ -10,7 +10,7 @@ import {
   VirtualTerminalHarness,
   createTempGitWorkspace,
   hasGit,
-} from "@hellm/test-support";
+} from "../../../test-support/index.ts";
 
 describe("@hellm/tui advanced worktree switching UX contracts", () => {
   it("keeps orchestration projection deterministic when switching between real linked git worktrees", async () => {
@@ -27,7 +27,7 @@ describe("@hellm/tui advanced worktree switching UX contracts", () => {
         id: "thread-worktree-switch",
         kind: "smithers-workflow",
         objective: "Switch active worktrees while preserving orchestration context",
-        status: "in_progress",
+        status: "running",
         worktreePath: primaryWorktree,
         createdAt: timestamp,
       });
@@ -36,7 +36,7 @@ describe("@hellm/tui advanced worktree switching UX contracts", () => {
         threadId: thread.id,
         source: "smithers",
         objective: thread.objective,
-        status: "in_progress",
+        status: "blocked",
         conclusions: ["Workflow is running in the selected worktree."],
         artifacts: [],
         provenance: {
@@ -63,7 +63,7 @@ describe("@hellm/tui advanced worktree switching UX contracts", () => {
               runId,
               threadId: thread.id,
               workflowId: `workflow:${thread.id}`,
-              status: "in_progress",
+              status: "running",
               updatedAt: timestamp,
               worktreePath,
             },

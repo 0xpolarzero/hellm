@@ -260,6 +260,19 @@ export interface PiSdkRuntimeConfig {
   piSessionDir?: string;
 }
 
+export interface PromptingPiRuntimeConfig {
+  timeoutMs?: number;
+  runWorker: (
+    request: PiWorkerRequest,
+  ) =>
+    | Promise<PiSdkWorkerExecution | string>
+    | PiSdkWorkerExecution
+    | string;
+  switchRuntime?: (
+    transition: PiRuntimeTransition,
+  ) => Promise<PiRuntimeTransition | void> | PiRuntimeTransition | void;
+}
+
 export function createSdkPiRuntimeBridge(
   config: PiSdkRuntimeConfig = {},
 ): PiRuntimeBridge {
@@ -267,7 +280,7 @@ export function createSdkPiRuntimeBridge(
   const sdkModuleId =
     config.sdkModule ??
     process.env.HELLM_PI_SDK_MODULE ??
-    "@mariozechner/pi-agent-core";
+    "@mariozechner/pi-coding-agent";
   let connected = true;
 
   let loadedSdkModule: Promise<PiSdkModule | undefined> | undefined;
@@ -582,6 +595,117 @@ export function createSubprocessPiRuntimeBridge(
       }
     },
     async switchRuntime(transition) {
+      return transition;
+    },
+  };
+}
+
+export function createPromptingPiRuntimeBridge(
+  config: PromptingPiRuntimeConfig,
+): PiRuntimeBridge {
+  const timeoutMs = config.timeoutMs ?? 30_000;
+
+  return {
+    get connected() {
+      return true;
+    },
+    runtime: "pi",
+    async runWorker(request) {
+      const now = new Date().toISOString();
+
+      try {
+        const execution = await withTimeout(
+          Promise.resolve(config.runWorker(request)),
+          timeoutMs,
+          "embedded pi worker execution",
+        );
+        const normalized =
+          typeof execution === "string"
+            ? {
+                status: "completed" as const,
+                outputSummary: execution,
+                conclusions: execution.trim()
+                  ? execution.trim().split("\n").slice(0, 5)
+                  : [],
+              }
+            : execution;
+
+        const status = readPiWorkerStatus(normalized.status);
+        const conclusions =
+          normalized.conclusions && normalized.conclusions.length > 0
+            ? normalized.conclusions
+            : normalized.outputSummary?.trim()
+              ? normalized.outputSummary.trim().split("\n").slice(0, 5)
+              : status === "completed"
+                ? ["Pi runtime worker completed."]
+                : ["Pi runtime worker did not complete successfully."];
+
+        return {
+          status,
+          episode: createEpisode({
+            id: `${request.thread.id}:pi-worker:${now}`,
+            threadId: request.thread.id,
+            source: "pi-worker",
+            objective: request.objective,
+            status,
+            conclusions,
+            unresolvedIssues:
+              status === "failed" || status === "blocked"
+                ? normalized.unresolvedIssues ?? []
+                : [],
+            provenance: {
+              executionPath: "pi-worker",
+              actor: "pi-worker",
+              notes: "Embedded pi runtime worker execution.",
+            },
+            startedAt: now,
+            completedAt: now,
+            inputEpisodeIds: request.inputEpisodeIds,
+            ...(request.thread.worktreePath
+              ? { worktreePath: request.thread.worktreePath }
+              : {}),
+          }),
+          ...(normalized.outputSummary !== undefined
+            ? { outputSummary: normalized.outputSummary }
+            : {}),
+          ...(request.runtimeTransition
+            ? { runtimeTransition: request.runtimeTransition }
+            : {}),
+        };
+      } catch (error) {
+        return {
+          status: "failed",
+          episode: createEpisode({
+            id: `${request.thread.id}:pi-worker:${now}`,
+            threadId: request.thread.id,
+            source: "pi-worker",
+            objective: request.objective,
+            status: "failed",
+            conclusions: ["Embedded pi runtime worker execution failed."],
+            unresolvedIssues: [error instanceof Error ? error.message : String(error)],
+            provenance: {
+              executionPath: "pi-worker",
+              actor: "pi-worker",
+              notes: "Embedded pi runtime worker invocation failed.",
+            },
+            startedAt: now,
+            completedAt: now,
+            inputEpisodeIds: request.inputEpisodeIds,
+            ...(request.thread.worktreePath
+              ? { worktreePath: request.thread.worktreePath }
+              : {}),
+          }),
+          ...(request.runtimeTransition
+            ? { runtimeTransition: request.runtimeTransition }
+            : {}),
+        };
+      }
+    },
+    async switchRuntime(transition) {
+      const result = await Promise.resolve(config.switchRuntime?.(transition));
+      if (result && typeof result === "object") {
+        return result;
+      }
       return transition;
     },
   };

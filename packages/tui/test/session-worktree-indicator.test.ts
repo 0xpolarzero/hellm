@@ -1,5 +1,3 @@
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "bun:test";
 import {
   createSessionWorktreeAlignment,
@@ -13,11 +11,8 @@ import {
   createTempGitWorkspace,
   createTempWorkspace,
   hasGit,
-  runBunModule,
-} from "@hellm/test-support";
+} from "../../../test-support/index.ts";
 
-const TUI_ENTRY = fileURLToPath(new URL("../src/main.ts", import.meta.url));
-const REPO_ROOT = resolve(import.meta.dir, "../../../");
 const TIMESTAMP = "2026-04-08T09:00:00.000Z";
 
 function projectFromFileBackedSession(input: {
@@ -107,18 +102,5 @@ describe("@hellm/tui session worktree indicator", () => {
     } finally {
       await workspace.cleanup();
     }
-  });
-
-  it("prints session/worktree footer lines from the real TUI process entrypoint", () => {
-    const result = runBunModule({
-      entryPath: TUI_ENTRY,
-      cwd: REPO_ROOT,
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr.trim()).toBe("");
-    expect(result.stdout).toContain(`[hellm/tui] session ${REPO_ROOT}`);
-    expect(result.stdout).toContain(`[hellm/tui] worktree ${REPO_ROOT}`);
-    expect(result.stdout).toContain("[hellm/tui] aligned");
   });
 });

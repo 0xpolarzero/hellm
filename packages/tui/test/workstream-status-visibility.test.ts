@@ -9,7 +9,7 @@ import {
   type WorkflowRunReference,
 } from "@hellm/session-model";
 import { projectThreadSnapshot } from "@hellm/tui";
-import { VirtualTerminalHarness } from "@hellm/test-support";
+import { VirtualTerminalHarness } from "../../../test-support/index.ts";
 
 const TIMESTAMP = "2026-04-08T09:00:00.000Z";
 const THREAD_STATUSES = Object.keys(THREAD_STATUS_TRANSITIONS) as ThreadStatus[];

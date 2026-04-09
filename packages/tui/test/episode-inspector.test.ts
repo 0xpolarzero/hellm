@@ -7,7 +7,7 @@ import {
   createThread,
 } from "@hellm/session-model";
 import { projectThreadSnapshot } from "@hellm/tui";
-import { VirtualTerminalHarness } from "@hellm/test-support";
+import { VirtualTerminalHarness } from "../../../test-support/index.ts";
 
 describe("@hellm/tui episode inspector", () => {
   it("renders an explicit empty state when no episodes exist", () => {

@@ -10,7 +10,7 @@ import {
   FileBackedSessionJsonlHarness,
   VirtualTerminalHarness,
   withTempWorkspace,
-} from "@hellm/test-support";
+} from "../../../test-support/index.ts";
 
 describe("@hellm/tui workflow activity view", () => {
   it("shows an explicit empty workflow state when a thread has no workflow runs", () => {

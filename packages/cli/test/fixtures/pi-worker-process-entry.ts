@@ -80,7 +80,6 @@ const harness = new FileBackedSessionJsonlHarness({
   sessionId: "process-pi-worker",
   cwd,
 });
-harness.appendEntries(result.raw.sessionEntries);
 
 const workerRequest = piBridge.workerRequests[0];
 if (!workerRequest) {

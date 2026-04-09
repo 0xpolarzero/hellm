@@ -12,7 +12,7 @@ import {
   VirtualTerminalHarness,
   createTempGitWorkspace,
   hasGit,
-} from "@hellm/test-support";
+} from "../../../test-support/index.ts";
 
 function createWorktreeSnapshot(input: {
   threadWorktreePath: string;

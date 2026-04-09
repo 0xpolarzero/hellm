@@ -1,0 +1,19 @@
+{
+  "name": "@hellm/test-support",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./*": "./*"
+  },
+  "dependencies": {
+    "@hellm/cli": "workspace:*",
+    "@hellm/orchestrator": "workspace:*",
+    "@hellm/pi-bridge": "workspace:*",
+    "@hellm/session-model": "workspace:*",
+    "@hellm/smithers-bridge": "workspace:*",
+    "@hellm/tui": "workspace:*",
+    "@hellm/verification": "workspace:*"
+  }
+}

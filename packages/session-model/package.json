@@ -11,5 +11,8 @@
     "test": "bun test",
     "test:watch": "bun test --watch",
     "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@hellm/test-support": "workspace:*"
   }
 }

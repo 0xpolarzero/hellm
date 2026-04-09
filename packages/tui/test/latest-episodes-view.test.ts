@@ -10,7 +10,7 @@ import {
   FileBackedSessionJsonlHarness,
   VirtualTerminalHarness,
   withTempWorkspace,
-} from "@hellm/test-support";
+} from "../../../test-support/index.ts";
 import { projectThreadSnapshot } from "@hellm/tui";
 
 describe("@hellm/tui latest episodes view", () => {

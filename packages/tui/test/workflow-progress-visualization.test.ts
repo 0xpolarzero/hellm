@@ -14,7 +14,7 @@ import {
   runBunModule,
   VirtualTerminalHarness,
   withTempWorkspace,
-} from "@hellm/test-support";
+} from "../../../test-support/index.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "../../../");
 const WORKFLOW_PROGRESS_ENTRY = fileURLToPath(
@@ -180,7 +180,7 @@ describe("@hellm/tui workflow progress visualization", () => {
     expect(workflowLine?.endsWith("...")).toBe(true);
   });
 
-  it("renders workflow progress from a real Bun process boundary", () => {
+  it("renders workflow progress from the projection-helper process boundary", () => {
     const result = runBunModule({
       entryPath: WORKFLOW_PROGRESS_ENTRY,
       cwd: REPO_ROOT,

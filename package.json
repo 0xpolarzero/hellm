@@ -4,15 +4,16 @@
   "type": "module",
   "packageManager": "bun@1.3.10",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "test-support"
   ],
   "scripts": {
     "prepare:references": "git submodule update --init --recursive",
     "validate:references": "bun scripts/validate-references.ts",
     "validate:references:strict": "HELLM_REQUIRE_REFERENCES=1 bun test packages/orchestrator/test/reference-guard.test.ts",
     "build": "bun run --filter '@hellm/*' --if-present build",
-    "dev": "bun run --filter @hellm/tui dev",
-    "start": "bun run --filter @hellm/tui start",
+    "dev": "bun --watch packages/tui/src/main.ts",
+    "start": "bun packages/tui/src/main.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",
     "typecheck": "bun run --filter '@hellm/*' typecheck",

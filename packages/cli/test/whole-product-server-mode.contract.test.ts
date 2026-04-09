@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, test } from "bun:test";
 
-const CLI_ENTRY = fileURLToPath(new URL("../src/index.ts", import.meta.url));
+const CLI_PROCESS_ENTRY = fileURLToPath(
+  new URL("./fixtures/cli-process-entry.ts", import.meta.url),
+);
 const REPO_ROOT = resolve(import.meta.dir, "../../../");
 
 interface JsonlEventRecord {
@@ -60,11 +62,15 @@ function runCliProcess(input: {
   timedOut: boolean;
 } {
   const bunBinary = Bun.which("bun") ?? process.execPath;
-  const result = spawnSync(bunBinary, [CLI_ENTRY], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-    timeout: input.timeoutMs,
-  });
+  const result = spawnSync(
+    bunBinary,
+    [CLI_PROCESS_ENTRY, "Whole product server mode remains deferred.", "--hint", "direct"],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      timeout: input.timeoutMs,
+    },
+  );
 
   const error = result.error as NodeJS.ErrnoException | undefined;
   return {

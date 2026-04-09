@@ -8,6 +8,7 @@ import { createEmptySessionState, createArtifact,
   reconstructSessionState } from "@hellm/session-model";
 import {
   createTempGitWorkspace,
+  EchoPiRuntimeBridge,
   FakePiRuntimeBridge,
   FakeSmithersWorkflowBridge,
   FakeVerificationRunner,
@@ -29,6 +30,7 @@ function createBaseOrchestrator(
   return createOrchestrator({
     ...dependencies,
     clock: fixedClock(),
+    piBridge: dependencies.piBridge ?? new EchoPiRuntimeBridge(),
     contextLoader: {
       async load(request) {
         return {
@@ -202,6 +204,7 @@ describe("golden path headless specs", () => {
       });
       const orchestrator = createOrchestrator({
         clock: fixedClock(),
+        piBridge: new EchoPiRuntimeBridge(),
         contextLoader: {
           async load(request) {
             const state = harness.reconstruct();

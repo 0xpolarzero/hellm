@@ -17,5 +17,8 @@
     "@hellm/session-model": "workspace:*",
     "@hellm/smithers-bridge": "workspace:*",
     "@hellm/verification": "workspace:*"
+  },
+  "devDependencies": {
+    "@hellm/test-support": "workspace:*"
   }
 }

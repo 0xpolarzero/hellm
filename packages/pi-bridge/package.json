@@ -14,5 +14,8 @@
   },
   "dependencies": {
     "@hellm/session-model": "workspace:*"
+  },
+  "devDependencies": {
+    "@hellm/test-support": "workspace:*"
   }
 }

@@ -18,16 +18,19 @@ import {
   type Episode,
 } from "@hellm/session-model";
 import {
+  EchoPiRuntimeBridge,
   FakePiRuntimeBridge,
   FakeSmithersWorkflowBridge,
   FakeVerificationRunner,
   FileBackedSessionJsonlHarness,
+  createFakePiSdkEnv,
   createTempGitWorkspace,
   createEpisodeFixture,
   createVerificationFixture,
   fixedClock,
   hasGit,
   runHeadlessHarness,
+  withProcessEnv,
   withTempWorkspace,
 } from "@hellm/test-support";
 
@@ -35,6 +38,7 @@ describe("@hellm/cli headless execution", () => {
   it("returns structured output and JSONL events for one-shot execution", async () => {
     const orchestrator = createOrchestrator({
       clock: fixedClock(),
+      piBridge: new EchoPiRuntimeBridge(),
       contextLoader: {
         async load(request) {
           return {
@@ -80,37 +84,39 @@ describe("@hellm/cli headless execution", () => {
   });
 
   it("creates isolated one-shot runs when no orchestrator is injected", async () => {
-    const first = await executeHeadlessRun({
-      threadId: "thread-default-one-shot",
-      prompt: "first one-shot prompt",
-      cwd: "/repo",
-      routeHint: "direct",
-    });
-    const second = await executeHeadlessRun({
-      threadId: "thread-default-one-shot",
-      prompt: "second one-shot prompt",
-      cwd: "/repo",
-      routeHint: "direct",
-    });
+    await withProcessEnv(createFakePiSdkEnv(), async () => {
+      const first = await executeHeadlessRun({
+        threadId: "thread-default-one-shot",
+        prompt: "first one-shot prompt",
+        cwd: "/repo",
+        routeHint: "direct",
+      });
+      const second = await executeHeadlessRun({
+        threadId: "thread-default-one-shot",
+        prompt: "second one-shot prompt",
+        cwd: "/repo",
+        routeHint: "direct",
+      });
 
-    expect(first.orchestratorId).toBe("main");
-    expect(second.orchestratorId).toBe("main");
-    expect(first.threadSnapshot.episodes).toHaveLength(1);
-    expect(second.threadSnapshot.episodes).toHaveLength(1);
-    expect(first.output.summary).toBe("first one-shot prompt");
-    expect(second.output.summary).toBe("second one-shot prompt");
-    expect(first.events.map((event) => event.type)).toEqual([
-      "run.started",
-      "run.classified",
-      "run.episode",
-      "run.completed",
-    ]);
-    expect(second.events.map((event) => event.type)).toEqual([
-      "run.started",
-      "run.classified",
-      "run.episode",
-      "run.completed",
-    ]);
+      expect(first.orchestratorId).toBe("main");
+      expect(second.orchestratorId).toBe("main");
+      expect(first.threadSnapshot.episodes).toHaveLength(1);
+      expect(second.threadSnapshot.episodes).toHaveLength(1);
+      expect(first.output.summary).toBe("first one-shot prompt");
+      expect(second.output.summary).toBe("second one-shot prompt");
+      expect(first.events.map((event) => event.type)).toEqual([
+        "run.started",
+        "run.classified",
+        "run.episode",
+        "run.completed",
+      ]);
+      expect(second.events.map((event) => event.type)).toEqual([
+        "run.started",
+        "run.classified",
+        "run.episode",
+        "run.completed",
+      ]);
+    });
   });
 
   it("supports one-shot execution against a real linked git worktree", async () => {
@@ -123,20 +129,22 @@ describe("@hellm/cli headless execution", () => {
       const worktreePath = await workspace.createLinkedWorktree(
         "feature-headless-one-shot",
       );
-      const result = await executeHeadlessRun({
-        threadId: "thread-real-worktree",
-        prompt: "Summarize this worktree.",
-        cwd: worktreePath,
-        worktreePath,
-        routeHint: "direct",
-      });
+      await withProcessEnv(createFakePiSdkEnv(), async () => {
+        const result = await executeHeadlessRun({
+          threadId: "thread-real-worktree",
+          prompt: "Summarize this worktree.",
+          cwd: worktreePath,
+          worktreePath,
+          routeHint: "direct",
+        });
 
-      expect(result.output.status).toBe("completed");
-      expect(result.threadSnapshot.episodes).toHaveLength(1);
-      expect(result.events.at(-1)?.type).toBe("run.completed");
-      expect(result.events[0]).toMatchObject({
-        type: "run.started",
-        threadId: "thread-real-worktree",
+        expect(result.output.status).toBe("completed");
+        expect(result.threadSnapshot.episodes).toHaveLength(1);
+        expect(result.events.at(-1)?.type).toBe("run.completed");
+        expect(result.events[0]).toMatchObject({
+          type: "run.started",
+          threadId: "thread-real-worktree",
+        });
       });
     } finally {
       await workspace.cleanup();
@@ -166,6 +174,7 @@ describe("@hellm/cli headless execution", () => {
 
     const orchestrator = createOrchestrator({
       clock: fixedClock(),
+      piBridge: new EchoPiRuntimeBridge(),
       smithersBridge,
       contextLoader: {
         async load(request) {
@@ -271,6 +280,7 @@ describe("@hellm/cli headless execution", () => {
   it("keeps explicit route hints authoritative over workflow seed preferredPath in headless mode", async () => {
     const orchestrator = createOrchestrator({
       clock: fixedClock(),
+      piBridge: new EchoPiRuntimeBridge(),
       contextLoader: createDefaultHeadlessContextLoader(),
     });
 
@@ -343,6 +353,7 @@ describe("@hellm/cli headless execution", () => {
       });
       const orchestrator = createOrchestrator({
         clock: fixedClock(),
+        piBridge: new EchoPiRuntimeBridge(),
         verificationRunner,
         contextLoader: createDefaultHeadlessContextLoader(),
       });
@@ -408,6 +419,7 @@ describe("@hellm/cli headless execution", () => {
 
     const orchestrator = createOrchestrator({
       clock: fixedClock(),
+      piBridge: new EchoPiRuntimeBridge(),
       smithersBridge,
       contextLoader: createDefaultHeadlessContextLoader(),
     });
@@ -471,6 +483,7 @@ describe("@hellm/cli headless execution", () => {
 
       const orchestrator = createOrchestrator({
         clock: fixedClock(),
+        piBridge: new EchoPiRuntimeBridge(),
         verificationRunner,
         contextLoader: {
           async load(request) {
@@ -512,6 +525,7 @@ describe("@hellm/cli headless execution", () => {
   it("reuses the same orchestrator instance across repeated entry-surface calls when one is provided", async () => {
     const orchestrator = createOrchestrator({
       clock: fixedClock(),
+      piBridge: new EchoPiRuntimeBridge(),
       contextLoader: {
         async load(request) {
           return {

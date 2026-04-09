@@ -15,7 +15,13 @@
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@hellm/pi-bridge": "workspace:*",
     "@hellm/orchestrator": "workspace:*",
-    "@hellm/session-model": "workspace:*"
+    "@hellm/session-model": "workspace:*",
+    "@mariozechner/pi-agent-core": "0.65.2",
+    "@mariozechner/pi-coding-agent": "0.65.2"
+  },
+  "devDependencies": {
+    "@hellm/test-support": "workspace:*"
   }
 }

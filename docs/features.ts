@@ -2,6 +2,7 @@
  * Exhaustive feature inventory for the product delta over stock `pi`.
  *
  * This file is meant to drive test planning. It includes:
+ * - pi-owned interactive shell / launcher integration
  * - product features built on top of `pi`
  * - Smithers-backed delegated workflow features
  * - deferred-but-positive features explicitly called out in the PRD
@@ -97,7 +98,11 @@ export enum HellmFeature {
   VerificationArtifacts = "verification.artifacts",
   VerificationAwareReconciliation = "verification.awareReconciliation",
 
-  // Orchestration-aware TUI
+  // pi-owned interactive shell, launcher, and orchestration-aware UI
+  PiInteractiveShellBootstrap = "ui.piInteractiveShellBootstrap",
+  PiInteractiveModeLauncher = "ui.piInteractiveModeLauncher",
+  PiInitOnlyBootstrapProbe = "ui.piInitOnlyBootstrapProbe",
+  BaselineSlashCommands = "ui.baselineSlashCommands",
   OrchestrationAwareTui = "ui.orchestrationAwareTui",
   OrchestratorStateProjection = "ui.orchestratorStateProjection",
   ThreadsPane = "ui.threadsPane",

@@ -1,6 +1,8 @@
 import { describe, expect, it, test } from "bun:test";
 import {
   createSessionWorktreeAlignment,
+  createPiCustomMessageSessionEntry,
+  createPiCustomSessionEntry,
   createStructuredSessionEntry,
   createThreadSnapshot,
   createVerificationRecord,
@@ -78,6 +80,117 @@ describe("@hellm/session-model reconstruction", () => {
       "Waiting for flaky test fix",
     ]);
     expect(snapshot.alignment.activeWorktreePath).toBe("/repo/worktrees/feature");
+  });
+
+  it("reconstructs structured state from pi-native custom and custom_message entries alongside legacy custom messages", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-pi-native-structured",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const thread = createThreadFixture({
+      id: "thread-pi-native-structured",
+      objective: "Reconstruct from pi-native entries",
+      worktreePath: "/repo/worktrees/feature",
+    });
+    const episode = createEpisodeFixture({
+      id: "episode-pi-native-structured",
+      threadId: thread.id,
+      source: "orchestrator",
+      objective: thread.objective,
+      status: "completed",
+      conclusions: ["Pi-native custom message parsed."],
+      provenance: {
+        executionPath: "direct",
+        actor: "orchestrator",
+      },
+      startedAt: "2026-04-08T09:00:01.000Z",
+      completedAt: "2026-04-08T09:00:02.000Z",
+      inputEpisodeIds: ["episode-input"],
+    });
+    const verification = createVerificationFixture({
+      id: "verification-pi-native-structured",
+      kind: "build",
+      status: "passed",
+      summary: "Build passed from pi-native custom entry",
+    });
+    const alignment = createSessionWorktreeAlignment({
+      sessionCwd: "/repo",
+      activeWorktreePath: "/repo/worktrees/feature",
+    });
+    const [header] = harness.lines();
+
+    const state = reconstructSessionState([
+      header,
+      createPiCustomSessionEntry({
+        id: "entry-thread",
+        parentId: null,
+        timestamp: "2026-04-08T09:00:01.000Z",
+        customType: "hellm/thread",
+        data: thread,
+      }),
+      createPiCustomMessageSessionEntry({
+        id: "entry-episode",
+        parentId: "entry-thread",
+        timestamp: "2026-04-08T09:00:02.000Z",
+        customType: "hellm/episode",
+        content: "hellm:episode",
+        display: false,
+        details: episode,
+      }),
+      createPiCustomSessionEntry({
+        id: "entry-verification",
+        parentId: "entry-episode",
+        timestamp: "2026-04-08T09:00:03.000Z",
+        customType: "hellm/verification",
+        data: verification,
+      }),
+      createStructuredSessionEntry({
+        id: "entry-alignment",
+        parentId: "entry-verification",
+        timestamp: "2026-04-08T09:00:04.000Z",
+        payload: {
+          kind: "alignment",
+          data: alignment,
+        },
+      }),
+    ]);
+
+    expect(state.sessionId).toBe("session-pi-native-structured");
+    expect(state.threads).toEqual([thread]);
+    expect(state.episodes).toEqual([episode]);
+    expect(state.verification.byKind.build?.id).toBe(verification.id);
+    expect(state.verification.overallStatus).toBe("passed");
+    expect(state.alignment.activeWorktreePath).toBe("/repo/worktrees/feature");
+  });
+
+  it("treats pi-native raw custom data as payload data even when the record itself has a kind field", () => {
+    const harness = new InMemorySessionJsonlHarness({
+      sessionId: "session-pi-native-raw-kind-collision",
+      cwd: "/repo",
+      timestamp: "2026-04-08T09:00:00.000Z",
+    });
+    const thread = createThreadFixture({
+      id: "thread-pi-native-raw-kind-collision",
+      kind: "verification",
+      objective: "Do not confuse thread.kind with structured payload.kind",
+    });
+    const [header] = harness.lines();
+
+    const state = reconstructSessionState([
+      header,
+      {
+        type: "custom",
+        id: "entry-thread",
+        parentId: null,
+        timestamp: "2026-04-08T09:00:01.000Z",
+        customType: "hellm/thread",
+        data: thread,
+      },
+    ]);
+
+    expect(state.threads).toEqual([thread]);
+    expect(state.episodes).toEqual([]);
   });
 
   it("falls back to default session metadata when the JSONL stream has no header", () => {

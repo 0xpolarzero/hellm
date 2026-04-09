@@ -5,6 +5,7 @@ import {
   createTempGitWorkspace,
   hasGit,
   runBunModule,
+  withTempWorkspace,
 } from "@hellm/test-support";
 
 type ProcessScenario =
@@ -19,52 +20,64 @@ const PROCESS_DRIVER = fileURLToPath(
 const REPO_ROOT = resolve(import.meta.dir, "../../../");
 
 describe("@hellm/cli automation-friendly execution process contracts", () => {
-  it("emits machine-parseable waiting JSONL events with a zero exit code", () => {
-    const result = runProcessScenario("approval-waiting");
-    const events = parseJsonl(result.stdout);
+  it("emits machine-parseable waiting JSONL events with a zero exit code", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const result = runProcessScenario("approval-waiting", {
+        requestCwd: workspace.root,
+      });
+      const events = parseJsonl(result.stdout);
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr.trim()).toBe("");
-    expect(events.map((event) => event.type)).toEqual([
-      "run.started",
-      "run.classified",
-      "run.episode",
-      "run.waiting",
-    ]);
-    expect(events[0]).toMatchObject({
-      type: "run.started",
-      orchestratorId: "main",
-      threadId: "process-approval-waiting",
-    });
-    expect(events.at(-1)).toMatchObject({
-      type: "run.waiting",
-      status: "waiting_approval",
-    });
-  });
-
-  it("represents blocked worker outcomes as waiting events so automation can retry", () => {
-    const result = runProcessScenario("pi-blocked");
-    const events = parseJsonl(result.stdout);
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr.trim()).toBe("");
-    expect(events.find((event) => event.type === "run.episode")).toMatchObject({
-      source: "pi-worker",
-      status: "blocked",
-    });
-    expect(events.at(-1)).toMatchObject({
-      type: "run.waiting",
-      status: "blocked",
-      threadId: "process-pi-blocked",
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.trim()).toBe("");
+      expect(events.map((event) => event.type)).toEqual([
+        "run.started",
+        "run.classified",
+        "run.episode",
+        "run.waiting",
+      ]);
+      expect(events[0]).toMatchObject({
+        type: "run.started",
+        orchestratorId: "main",
+        threadId: "process-approval-waiting",
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "run.waiting",
+        status: "waiting_approval",
+      });
     });
   });
 
-  it("returns non-zero and deterministic diagnostics when JSONL cannot be produced", () => {
-    const result = runProcessScenario("missing-episode");
+  it("represents blocked worker outcomes as waiting events so automation can retry", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const result = runProcessScenario("pi-blocked", {
+        requestCwd: workspace.root,
+      });
+      const events = parseJsonl(result.stdout);
 
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stdout.trim()).toBe("");
-    expect(result.stderr).toContain("Cannot build JSONL events without an episode.");
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.trim()).toBe("");
+      expect(events.find((event) => event.type === "run.episode")).toMatchObject({
+        source: "pi-worker",
+        status: "blocked",
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "run.waiting",
+        status: "blocked",
+        threadId: "process-pi-blocked",
+      });
+    });
+  });
+
+  it("returns non-zero and deterministic diagnostics when JSONL cannot be produced", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const result = runProcessScenario("missing-episode", {
+        requestCwd: workspace.root,
+      });
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stdout.trim()).toBe("");
+      expect(result.stderr).toContain("Cannot build JSONL events without an episode.");
+    });
   });
 
   it("preserves the JSONL automation contract inside a real linked git worktree", async () => {

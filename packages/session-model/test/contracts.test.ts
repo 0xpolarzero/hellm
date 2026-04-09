@@ -7,6 +7,8 @@ import {
   createEpisode,
   createGlobalVerificationState,
   createSessionWorktreeAlignment,
+  createPiCustomMessageSessionEntry,
+  createPiCustomSessionEntry,
   createStructuredSessionEntry,
   createThread,
   createVerificationRecord,
@@ -324,6 +326,62 @@ describe("@hellm/session-model contract surface", () => {
     expect(entry.message.details.kind).toBe("thread");
   });
 
+  it("creates pi-native custom and custom_message session entries with the expected wire shape", () => {
+    const customEntry = createPiCustomSessionEntry({
+      id: "entry-native-thread",
+      parentId: null,
+      timestamp: "2026-04-08T09:00:01.000Z",
+      customType: "hellm/thread",
+      data: { id: "thread-native" },
+    });
+    const customMessageEntry = createPiCustomMessageSessionEntry({
+      id: "entry-native-message",
+      parentId: "entry-native-thread",
+      timestamp: "2026-04-08T09:00:02.000Z",
+      customType: "hellm/episode",
+      content: "hellm:episode",
+      display: false,
+      details: { id: "episode-native" },
+    });
+
+    expect(customEntry).toEqual({
+      type: "custom",
+      id: "entry-native-thread",
+      parentId: null,
+      timestamp: "2026-04-08T09:00:01.000Z",
+      customType: "hellm/thread",
+      data: { id: "thread-native" },
+    });
+    expect(customMessageEntry).toEqual({
+      type: "custom_message",
+      id: "entry-native-message",
+      parentId: "entry-native-thread",
+      timestamp: "2026-04-08T09:00:02.000Z",
+      customType: "hellm/episode",
+      content: "hellm:episode",
+      display: false,
+      details: { id: "episode-native" },
+    });
+    expect(
+      createPiCustomSessionEntry({
+        id: "entry-native-empty",
+        parentId: null,
+        timestamp: "2026-04-08T09:00:03.000Z",
+        customType: "hellm/artifact",
+      }),
+    ).not.toHaveProperty("data");
+    expect(
+      createPiCustomMessageSessionEntry({
+        id: "entry-native-message-empty",
+        parentId: "entry-native-empty",
+        timestamp: "2026-04-08T09:00:04.000Z",
+        customType: "hellm/verification",
+        content: "hellm:verification",
+        display: true,
+      }),
+    ).not.toHaveProperty("details");
+  });
+
   it("round-trips structured entries through serializer/parser helpers and ignores foreign custom payloads", () => {
     const thread = createThread({
       id: "thread-parser",
@@ -355,6 +413,61 @@ describe("@hellm/session-model contract surface", () => {
     expect(parseStructuredEntry("{not-json")).toBeNull();
     expect(parseStructuredEntry({ type: "session", id: "session-1" })).toBeNull();
     expect(foreignCustom).toBeNull();
+  });
+
+  it("parses pi-native custom and custom_message entries into structured payloads", () => {
+    const thread = createThread({
+      id: "thread-pi-custom",
+      kind: "direct",
+      objective: "Persist pi-native custom entries",
+      createdAt: "2026-04-08T09:00:00.000Z",
+    });
+    const episode = createEpisode({
+      id: "episode-pi-custom",
+      threadId: thread.id,
+      source: "orchestrator",
+      objective: thread.objective,
+      status: "completed",
+      provenance: {
+        executionPath: "direct",
+        actor: "orchestrator",
+      },
+      startedAt: "2026-04-08T09:00:01.000Z",
+      completedAt: "2026-04-08T09:00:02.000Z",
+    });
+    const customEntry = createPiCustomSessionEntry({
+      id: "entry-pi-custom-thread",
+      parentId: null,
+      timestamp: "2026-04-08T09:00:03.000Z",
+      customType: "hellm/thread",
+      data: thread,
+    });
+    const customMessageEntry = createPiCustomMessageSessionEntry({
+      id: "entry-pi-custom-message-episode",
+      parentId: "entry-pi-custom-thread",
+      timestamp: "2026-04-08T09:00:04.000Z",
+      customType: "hellm/episode",
+      content: "hellm:episode",
+      display: false,
+      details: episode,
+    });
+
+    expect(parseStructuredSessionEntry(customEntry)).toEqual({
+      kind: "thread",
+      data: thread,
+    });
+    expect(parseStructuredSessionEntry(customMessageEntry)).toEqual({
+      kind: "episode",
+      data: episode,
+    });
+    expect(
+      parseStructuredSessionEntry({
+        ...customEntry,
+        customType: "other/thread",
+      }),
+    ).toBeNull();
+    expect(parseStructuredEntry(customEntry)).toBeNull();
+    expect(parseStructuredEntry(customMessageEntry)).toBeNull();
   });
 
   it("rejects malformed hellm custom payload details and non-custom parse inputs", () => {

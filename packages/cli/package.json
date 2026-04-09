@@ -17,5 +17,9 @@
     "@hellm/orchestrator": "workspace:*",
     "@hellm/session-model": "workspace:*",
     "@hellm/verification": "workspace:*"
+  },
+  "devDependencies": {
+    "@hellm/smithers-bridge": "workspace:*",
+    "@hellm/test-support": "workspace:*"
   }
 }

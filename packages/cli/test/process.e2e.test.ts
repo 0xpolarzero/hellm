@@ -4,7 +4,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "bun:test";
 import { runBunModule, withTempWorkspace } from "@hellm/test-support";
 
-const CLI_ENTRY = fileURLToPath(new URL("../src/index.ts", import.meta.url));
+const CLI_SOURCE_ENTRY = fileURLToPath(new URL("../src/index.ts", import.meta.url));
+const CLI_PROCESS_ENTRY = fileURLToPath(
+  new URL("./fixtures/cli-process-entry.ts", import.meta.url),
+);
 const STRUCTURED_OUTPUT_FIXTURE = fileURLToPath(
   new URL("./fixtures/structured-output.process.ts", import.meta.url),
 );
@@ -58,94 +61,125 @@ interface ProcessJsonlEvent {
 }
 
 describe("@hellm/cli process boundary", () => {
-  it("executes the headless entrypoint as a real process and emits JSONL events", async () => {
-    const result = runBunModule({
-      entryPath: CLI_ENTRY,
-      cwd: REPO_ROOT,
-      args: ["Describe the current workspace contract surface.", "--hint", "direct"],
-    });
+  it("executes the CLI parsing process entry and emits JSONL events", async () => {
+    await withTempWorkspace(async (workspace) => {
+      const result = runBunModule({
+        entryPath: CLI_PROCESS_ENTRY,
+        cwd: REPO_ROOT,
+        args: [
+          "Describe the current workspace contract surface.",
+          "--hint",
+          "direct",
+          "--cwd",
+          workspace.root,
+        ],
+      });
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr.trim()).toBe("");
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.trim()).toBe("");
 
-    const events = parseJsonlEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
 
-    expectHeadlessOneShotEventOrder(events);
-    expect(events[0]).toMatchObject({
-      type: "run.started",
-      orchestratorId: "main",
+      expectHeadlessOneShotEventOrder(events);
+      expect(events[0]).toMatchObject({
+        type: "run.started",
+        orchestratorId: "main",
+      });
+      expect(events[1]).toMatchObject({
+        type: "run.classified",
+        path: "direct",
+        reason: "Explicit route hint supplied by caller.",
+      });
+      expect(events.at(-1)?.status).toBe("completed");
     });
-    expect(events[1]).toMatchObject({
-      type: "run.classified",
-      path: "direct",
-      reason: "Explicit route hint supplied by caller.",
-    });
-    expect(events.at(-1)?.status).toBe("completed");
   });
 
   it("supports repeated one-shot process invocations without carrying prior process state", async () => {
-    const first = runBunModule({
-      entryPath: CLI_ENTRY,
-      cwd: REPO_ROOT,
-      args: ["First prompt", "--hint", "direct"],
+    await withTempWorkspace(async (workspace) => {
+      const first = runBunModule({
+        entryPath: CLI_PROCESS_ENTRY,
+        cwd: REPO_ROOT,
+        args: [
+          "First prompt",
+          "--hint",
+          "direct",
+          "--cwd",
+          workspace.root,
+          "--session",
+          "process-first",
+        ],
+      });
+      const second = runBunModule({
+        entryPath: CLI_PROCESS_ENTRY,
+        cwd: REPO_ROOT,
+        args: [
+          "Second prompt",
+          "--hint",
+          "direct",
+          "--cwd",
+          workspace.root,
+          "--session",
+          "process-second",
+        ],
+      });
+
+      expect(first.exitCode).toBe(0);
+      expect(first.stderr.trim()).toBe("");
+      expect(second.exitCode).toBe(0);
+      expect(second.stderr.trim()).toBe("");
+
+      const firstEvents = parseJsonlEvents(first.stdout);
+      const secondEvents = parseJsonlEvents(second.stdout);
+      expectHeadlessOneShotEventOrder(firstEvents);
+      expectHeadlessOneShotEventOrder(secondEvents);
+      expect(firstEvents[1]?.path).toBe("direct");
+      expect(secondEvents[1]?.path).toBe("direct");
+
+      const firstEpisode = firstEvents.find((event) => event.type === "run.episode");
+      const firstTerminal = firstEvents.at(-1);
+      expect(firstEpisode?.episodeId).toBe(firstTerminal?.latestEpisodeId);
+
+      const secondEpisode = secondEvents.find((event) => event.type === "run.episode");
+      const secondTerminal = secondEvents.at(-1);
+      expect(secondEpisode?.episodeId).toBe(secondTerminal?.latestEpisodeId);
     });
-    const second = runBunModule({
-      entryPath: CLI_ENTRY,
-      cwd: REPO_ROOT,
-      args: ["Second prompt", "--hint", "direct"],
-    });
-
-    expect(first.exitCode).toBe(0);
-    expect(first.stderr.trim()).toBe("");
-    expect(second.exitCode).toBe(0);
-    expect(second.stderr.trim()).toBe("");
-
-    const firstEvents = parseJsonlEvents(first.stdout);
-    const secondEvents = parseJsonlEvents(second.stdout);
-    expectHeadlessOneShotEventOrder(firstEvents);
-    expectHeadlessOneShotEventOrder(secondEvents);
-    expect(firstEvents[1]?.path).toBe("direct");
-    expect(secondEvents[1]?.path).toBe("direct");
-
-    const firstEpisode = firstEvents.find((event) => event.type === "run.episode");
-    const firstTerminal = firstEvents.at(-1);
-    expect(firstEpisode?.episodeId).toBe(firstTerminal?.latestEpisodeId);
-
-    const secondEpisode = secondEvents.find((event) => event.type === "run.episode");
-    const secondTerminal = secondEvents.at(-1);
-    expect(secondEpisode?.episodeId).toBe(secondTerminal?.latestEpisodeId);
   });
 
   it("executes structured headless output over a real process boundary", async () => {
-    const result = runBunModule({
-      entryPath: STRUCTURED_OUTPUT_FIXTURE,
-      cwd: REPO_ROOT,
-    });
+    await withTempWorkspace(async (workspace) => {
+      const result = runBunModule({
+        entryPath: STRUCTURED_OUTPUT_FIXTURE,
+        cwd: REPO_ROOT,
+        env: {
+          HELLM_PROCESS_TEST_CWD: workspace.root,
+        },
+      });
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr.trim()).toBe("");
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.trim()).toBe("");
 
-    const parsed = JSON.parse(result.stdout.trim()) as {
-      output: {
-        threadId: string;
-        status: string;
-        latestEpisodeId: string;
-        summary: string;
-        workflowRunIds: string[];
+      const parsed = JSON.parse(result.stdout.trim()) as {
+        output: {
+          threadId: string;
+          status: string;
+          latestEpisodeId: string;
+          summary: string;
+          workflowRunIds: string[];
+        };
+        latestEpisodeIdFromSnapshot?: string;
       };
-      latestEpisodeIdFromSnapshot?: string;
-    };
 
-    expect(parsed.output.threadId).toBe("process-structured-output");
-    expect(parsed.output.status).toBe("completed");
-    expect(parsed.output.latestEpisodeId).toBe(
-      parsed.latestEpisodeIdFromSnapshot,
-    );
-    expect(parsed.output.summary.length).toBeGreaterThan(0);
-    expect(parsed.output.workflowRunIds).toEqual([]);
+      expect(parsed.output.threadId).toBe("process-structured-output");
+      expect(parsed.output.status).toBe("completed");
+      expect(parsed.output.latestEpisodeId).toBe(
+        parsed.latestEpisodeIdFromSnapshot,
+      );
+      expect(parsed.output.summary.length).toBeGreaterThan(0);
+      expect(parsed.output.workflowRunIds).toEqual([]);
+    });
   });
 
-  it("accepts --input-file on the real CLI entrypoint for structured workflow seed input", async () => {
+  it("accepts --input-file on the CLI parsing process entry for structured workflow seed input", async () => {
     await withTempWorkspace(async (workspace) => {
       const inputPath = await workspace.write(
         "cli-input.json",
@@ -168,7 +202,7 @@ describe("@hellm/cli process boundary", () => {
       );
 
       const result = runBunModule({
-        entryPath: CLI_ENTRY,
+        entryPath: CLI_PROCESS_ENTRY,
         cwd: REPO_ROOT,
         args: ["--input-file", inputPath],
       });
@@ -184,7 +218,7 @@ describe("@hellm/cli process boundary", () => {
       });
 
       const sessionFile = workspace.path(
-        ".hellm/sessions/process-cli-input-file.jsonl",
+        ".pi/sessions/process-cli-input-file.jsonl",
       );
       const lines = readFileSync(sessionFile, "utf8")
         .split("\n")
@@ -249,7 +283,7 @@ describe("@hellm/cli process boundary", () => {
         "run-seeded-headless.ts",
         [
           'import { readFileSync } from "node:fs";',
-          `import { executeHeadlessRun } from ${JSON.stringify(pathToFileURL(CLI_ENTRY).href)};`,
+          `import { executeHeadlessRun } from ${JSON.stringify(pathToFileURL(CLI_SOURCE_ENTRY).href)};`,
           `import { createOrchestrator } from ${JSON.stringify(pathToFileURL(ORCHESTRATOR_ENTRY).href)};`,
           `import { createEmptySessionState } from ${JSON.stringify(pathToFileURL(SESSION_MODEL_ENTRY).href)};`,
           `import { FakeSmithersWorkflowBridge, createEpisodeFixture, fixedClock } from ${JSON.stringify(pathToFileURL(TEST_SUPPORT_ENTRY).href)};`,
@@ -398,41 +432,46 @@ describe("@hellm/cli process boundary", () => {
   });
 
   it("defaults to the direct path in a real process when no route hint or other routing signals are provided", async () => {
-    const result = runBunModule({
-      entryPath: DIRECT_DEFAULT_ENTRY,
-      cwd: REPO_ROOT,
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr.trim()).toBe("");
-
-    const lines = result.stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-    const events = lines.map(
-      (line) =>
-        JSON.parse(line) as {
-          type: string;
-          path?: string;
-          reason?: string;
-          status?: string;
-          source?: string;
+    await withTempWorkspace(async (workspace) => {
+      const result = runBunModule({
+        entryPath: DIRECT_DEFAULT_ENTRY,
+        cwd: REPO_ROOT,
+        env: {
+          HELLM_PROCESS_TEST_CWD: workspace.root,
         },
-    );
+      });
 
-    expect(events.map((event) => event.type)).toEqual([
-      "run.started",
-      "run.classified",
-      "run.episode",
-      "run.completed",
-    ]);
-    expect(events[1]).toMatchObject({
-      type: "run.classified",
-      path: "direct",
-      reason: "Short question or explanation request classified as small local work.",
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.trim()).toBe("");
+
+      const lines = result.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      const events = lines.map(
+        (line) =>
+          JSON.parse(line) as {
+            type: string;
+            path?: string;
+            reason?: string;
+            status?: string;
+            source?: string;
+          },
+      );
+
+      expect(events.map((event) => event.type)).toEqual([
+        "run.started",
+        "run.classified",
+        "run.episode",
+        "run.completed",
+      ]);
+      expect(events[1]).toMatchObject({
+        type: "run.classified",
+        path: "direct",
+        reason: "Short question or explanation request classified as small local work.",
+      });
+      expect(events.at(-1)?.status).toBe("completed");
     });
-    expect(events.at(-1)?.status).toBe("completed");
   });
 
   it("executes a verification run across the process boundary and emits normalized JSONL status", async () => {
@@ -1086,7 +1125,7 @@ describe("@hellm/cli process boundary", () => {
 
   it("fails fast on invalid CLI approval flag combinations in a real subprocess", async () => {
     const result = runBunModule({
-      entryPath: CLI_ENTRY,
+      entryPath: CLI_PROCESS_ENTRY,
       cwd: REPO_ROOT,
       args: [
         "Invalid approval flag combination",

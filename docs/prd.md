@@ -2,13 +2,13 @@
 
 ## Title
 
-Build a pi-derived coding agent and TUI that reproduces Slate's public architectural strengths, using Smithers internally for complex durable workflows.
+Build a pi-owned interactive shell and coding agent that extends pi with Slate-like orchestration, using Smithers internally for complex durable workflows.
 
 ## Status
 
 - Date: 2026-04-09
 - Status: Architecture direction clarified, initial Bun monorepo scaffold created, and `execute_typescript` adopted as an internal execution primitive
-- Repository purpose: Bun monorepo scaffold for `hellm`, a pi-first, Slate-like coding agent
+- Repository purpose: Bun monorepo scaffold for `hellm`, a pi-first, Slate-like coding agent that must run inside pi's interactive shell
 
 ## Document Purpose
 
@@ -29,20 +29,22 @@ When reference docs and reference code disagree, reference code wins.
 
 We are adopting a pi-first hybrid architecture.
 
-- `pi` is the substrate and user-facing shell:
+- `pi` is the only user-facing interactive shell and terminal host:
   - core agent runtime
   - tool loop
   - sessions
   - TUI foundation
   - SDK / RPC / headless integration
   - skills, prompt templates, AGENTS loading, extensions
-- our product layer sits above pi:
+  - the interactive loop, keyboard handling, and visual shell must remain pi-owned
+- our product layer sits inside and above pi:
   - main orchestrator
   - thread model
   - episode model
   - reconciliation loop
   - routing decisions
   - orchestration-aware UI projection
+  - launcher and extension code that boots pi with hellm behavior loaded
 - `smithers` is used selectively under the orchestrator as an internal executor for complex jobs:
   - short-lived authored workflows for complex requests
   - durable multi-step workflows
@@ -55,12 +57,80 @@ The orchestrator is the only strategic source of truth.
 
 Smithers is not the top-level product shell.
 Smithers is not the main TUI foundation.
-Pi is not enough on its own.
+hellm does not get to replace pi with a separate shell.
 The product is the combination:
 
-- pi substrate and interactive shell
+- pi-owned interactive shell and session runtime
 - our orchestrator and data model
+- launcher and extension code that projects hellm into pi
 - Smithers-backed delegated execution paths whenever work needs explicit subagent boundaries
+
+## Hard Invariant
+
+The interactive product must start inside pi's interactive shell.
+
+- We do not build a standalone custom terminal shell, readline loop, or bespoke TUI engine.
+- We do not treat `packages/tui` as an independent shell implementation.
+- Any launcher code may prepare environment, load extensions, seed sessions, or choose modes, but it must hand control to pi.
+- Any feature that needs keyboard input, raw terminal control, session navigation, slash commands, widgets, status lines, or prompt submission must be implemented through pi's extension/runtime APIs or existing pi internals.
+- If a future change can be described as "hellm starts its own shell", that change is wrong.
+
+## Non-Negotiable Runtime Invariants
+
+The following requirements are mandatory and are not optional implementation preferences.
+
+### 1. Pi Owns The Interactive Shell
+
+- the interactive terminal application must start from `pi` coding agent runtime and `InteractiveMode`
+- the top-level TUI entrypoint must be a pi-based shell adapter, not a standalone renderer
+- `packages/tui` may extend pi, compose pi, or preconfigure pi, but it must not replace pi with a separate homegrown terminal app
+- any custom interface chrome must be implemented through pi-supported extension seams such as widgets, custom header/footer components, custom message rendering, commands, shortcuts, or other pi runtime hooks
+
+### 2. Hellm Extends Pi, It Does Not Emulate Pi
+
+- we are building a pi-first product, not a mock of pi behavior
+- it is unacceptable to satisfy TUI requirements with code that only prints static lines, demo frames, or one-shot projections to stdout
+- it is unacceptable to treat a projection helper or snapshot renderer as the product shell
+- it is unacceptable for `bun run start` to succeed by printing a demo state and exiting when attached to an interactive terminal
+
+### 3. Structured Product State Lives In Pi Sessions
+
+- threads, episodes, artifacts, workflow references, verification state, and other hellm product state must persist through pi session storage
+- a separate sidecar session system must not become the primary durable state for the interactive product
+- temporary caches and bridge-specific runtime state are allowed, but the canonical interactive-session history must remain pi-backed
+
+### 4. One Shared Product Runtime Across Entry Surfaces
+
+- the pi interactive shell and headless entrypoints must share the same orchestrator and product state model
+- the interactive path is primary, and headless mode is an alternate surface over the same product
+- the headless path must not become the real implementation while the interactive path degenerates into a demo wrapper
+
+### 5. Tests Must Defend The Real Shell Contract
+
+- tests must not define success for the TUI entrypoint as "prints some lines and exits"
+- tests for startup may use init-only or harnessed interactive boot flows, but they must still exercise the real pi-based shell path
+- init-only startup is allowed only as a bootstrap probe that still creates the real pi session runtime, loads the hellm extension bundle, and registers the live slash-command surface before exiting
+- tests may validate projection helpers separately, but projection tests are not evidence that the product TUI exists
+- if a test fixture uses a fake shell, it must be labeled as a helper, not the product entrypoint
+
+For test seams below the shell, we follow the same split used in the vendored pi tests.
+
+- default package and process tests must keep the real hellm and pi runtime objects above the external seam, but replace the external pi/model boundary with deterministic faux providers, fake SDK modules, or fake bridges
+- ambient real pi subprocess execution, ambient real model calls, and machine-dependent CLI behavior are forbidden in the default test suite
+- true external-runtime tests are allowed only when they are explicitly gated by environment checks and clearly labeled as real-environment coverage
+- if a test is not explicitly gated, it must be deterministic on a clean machine with no API keys, no globally installed `pi`, and no pre-existing repo state
+
+The local pi reference demonstrates this split directly:
+
+- deterministic harness and faux-provider tests in `docs/references/pi-mono/packages/coding-agent/test/test-harness.ts`
+- real runtime object tests with deterministic providers in `docs/references/pi-mono/packages/coding-agent/test/extensions-input-event.test.ts` and `docs/references/pi-mono/packages/coding-agent/test/agent-session-runtime-events.test.ts`
+- explicitly gated real-LLM coverage in `docs/references/pi-mono/packages/coding-agent/test/agent-session-compaction.test.ts`
+
+### 6. Baseline Interactive Surface Is Part Of The Product
+
+- the minimum acceptable hellm interactive surface includes a pi-hosted launcher plus baseline slash commands for `/threads`, `/reconcile`, and `/verify`
+- those commands must be registered through pi's command system, not simulated by projection helpers or stdout snapshots
+- richer command discovery, richer help, and more advanced command UX may be deferred, but the baseline command surface is not optional
 
 ## Simple Product Picture
 
@@ -72,12 +142,12 @@ The simplest correct mental model is:
 
 In practice that means:
 
-- we keep the `pi` TUI and extend it
+- we keep pi's interactive shell and extend it
 - we do not build a separate top-level Smithers UI
 - for simple work, the orchestrator answers directly or does a tiny action itself
 - for delegated work, even if it only needs one subagent, the orchestrator should usually author a short-lived Smithers workflow
 - those workflows can be as small as one `PiAgent` task or as large as a multi-step graph
-- the `pi`-based TUI shows workflow state while that delegated work runs
+- the pi-based shell shows workflow state while that delegated work runs
 - when the workflow finishes, pauses, or fails, the orchestrator takes control back
 
 ## How Slate-Like Subagents Map Here
@@ -103,12 +173,19 @@ Instead:
 
 The build order should be easy to explain:
 
-1. Start from `pi` as-is, including its TUI, runtime, sessions, skills, and prompts.
+1. Start from `pi` as-is, including its TUI, runtime, sessions, skills, prompts, and extension system.
 2. Add one orchestrator above `pi` so requests stop behaving like one long transcript-only chat loop.
 3. Add threads, episodes, artifacts, and reconciliation as structured product state stored through `pi` sessions.
 4. Add verification as a first-class path so builds, tests, and lint results shape the next decision.
 5. Add the Smithers bridge early as the default delegated-work path so the orchestrator can author and run short-lived workflows instead of inventing separate subagent machinery.
-6. Upgrade the `pi` TUI to show orchestrator state, including active Smithers-backed workflow progress, instead of only raw chat and tool output.
+6. Load hellm into pi's interactive shell through a thin launcher and extension surface so orchestrator state, active Smithers-backed workflow progress, and verification results appear inside pi instead of in a separate custom shell.
+
+The build order above is literal.
+
+- step 1 is not "recreate a minimal TUI inspired by pi"
+- step 1 is not "ship headless first and add a fake TUI later"
+- step 1 is not "use pi only as a subprocess worker while a new shell is built elsewhere"
+- if the implementation does not start from a real pi interactive shell, then step 1 has failed and downstream work is built on the wrong foundation
 
 ## Mission
 
@@ -143,6 +220,7 @@ This project is not trying to:
 - visually clone Slate
 - claim private knowledge of Slate internals
 - turn the repo into a generic multi-agent playground
+- build or preserve a standalone custom interactive shell, readline loop, or alternate TUI framework outside pi
 - make Smithers the top-level chat or TUI runtime
 - replace pi's session and UI substrate with Smithers storage
 - force all tasks through predeclared workflows
@@ -187,6 +265,20 @@ We have two vendored local references under `docs/references/`:
 - `docs/references/smithers`
 
 These are the implementation references for what we can reuse, depend on, or adapt.
+
+### 4. Pi Extension and Launcher Facts
+
+The vendored `pi` reference also exposes the supported interactive seam we should build on:
+
+- extensions can register commands, tools, widgets, footers, headers, message renderers, and session persistence
+- extensions can use `ctx.ui` and `pi.sendMessage()` / `pi.sendUserMessage()` to project state into the interactive shell
+- `createAgentSessionRuntime()` and `InteractiveMode` are the supported launcher/runtime layer when a thin wrapper is needed around pi
+
+Relevant references:
+
+- `docs/references/pi-mono/packages/coding-agent/docs/extensions.md`
+- `docs/references/pi-mono/packages/coding-agent/docs/sdk.md`
+- `docs/references/pi-mono/packages/coding-agent/src/main.ts`
 
 ## Reference Facts: pi
 
@@ -271,7 +363,7 @@ Relevant references:
 - tree navigation
 - session selectors
 
-This is the right substrate for our UI, but it is not yet orchestration-aware.
+This is the right substrate for our UI, and the product must remain pi-hosted rather than replacing it with a standalone shell. Our job is to make it orchestration-aware through extensions and launcher code. Any implementation that reaches for a new shell loop, custom terminal renderer, or stdout-only snapshot path is a regression unless this PRD explicitly labels it as a test helper.
 
 ## Reference Facts: Smithers
 
@@ -429,6 +521,16 @@ Trying to make pi do all durable workflow orchestration inside ad hoc extensions
 
 Trying to make Smithers the top-level chat, session, and TUI runtime would discard the strongest parts of pi and create two competing user models.
 
+### Concrete Anti-Patterns
+
+The following are explicit implementation failures:
+
+- a `tui` package whose main entrypoint just prints a textual snapshot or demo frame instead of starting pi's interactive shell
+- a start script that exits immediately after rendering static orchestration lines
+- storing the real interactive product state primarily in a parallel `.hellm/sessions` store instead of pi sessions
+- defining the product TUI as pure render helpers with no pi interactive runtime behind them
+- shipping tests that prove only that a demo renderer prints expected strings
+
 ### Delegated Work Policy
 
 We should be explicit about how delegated jobs work.
@@ -437,7 +539,7 @@ We should be explicit about how delegated jobs work.
 - if the orchestrator decides work needs even one bounded subagent, it should usually express that work as a Smithers workflow
 - a Smithers workflow may be as small as one `PiAgent` task or as large as a multi-step graph with approvals, loops, and worktrees
 - the orchestrator may author that workflow dynamically from the current request and state
-- while the workflow runs, the user should see workflow state through the product TUI
+- while the workflow runs, the user should see workflow state through the pi shell
 - when the workflow finishes, fails, or pauses, control returns to the orchestrator for reconciliation and next-step decisions
 - raw top-level chaining of `pi` workers should not be the main product model; if we need subagent boundaries, Smithers should usually be the thing that represents them
 
@@ -601,7 +703,7 @@ flowchart TD
 
 The product should have three request entry surfaces:
 
-- interactive TUI built on pi's shell
+- interactive TUI built on pi's shell and loaded with hellm extensions
 - headless CLI / JSONL / workflow input
 - later server surface
 
@@ -707,7 +809,7 @@ Typical lifecycle:
 1. the orchestrator decides the task needs delegated work or explicit workflow structure
 2. the orchestrator authors a short-lived Smithers workflow from the current request, constraints, and prior episodes
 3. Smithers runs that workflow and persists its internal state
-4. the TUI shows workflow progress as part of the thread state, not as a separate top-level app
+4. the pi shell shows workflow progress as part of the thread state, not as a separate top-level app
 5. when the workflow finishes, blocks, or pauses, the result is normalized into episodes
 6. the orchestrator resumes control and decides the next step
 
@@ -725,7 +827,7 @@ That is useful for:
 
 - direct-path actions performed by the orchestrator itself
 - `PiAgent`-backed tasks inside Smithers workflows
-- rare implementation or fallback cases where a standalone runtime invocation is useful internally
+- rare internal implementation or automation cases where the pi runtime must be invoked without the interactive shell, such as tests or headless execution
 
 But this is an implementation primitive, not the primary user-facing delegated-work model.
 
@@ -977,7 +1079,7 @@ At minimum:
 | `/tree` and branching semantics | keep | useful for user-facing branch navigation |
 | extensions | keep | useful for UI surfaces, hooks, custom tools, safety, integration |
 | skills / prompts / AGENTS | keep | inherited context system |
-| TUI primitives | keep | base for orchestration-aware UI |
+| TUI primitives | keep | base for the pi-hosted orchestration-aware UI |
 | compaction | keep but demote | not the main memory strategy once episodes exist |
 
 ## How We Will Use Smithers
@@ -1021,13 +1123,13 @@ That means:
 - raw top-level chaining of `pi` workers should not be the main architecture
 - Smithers still should not become the top-level shell for every request
 
-### pi Extensions Are Not the Product Architecture
+### pi Extensions Are The Interactive Seam
 
-Pi extensions are useful integration points, but the core orchestrator must be a first-class product layer, not a pile of extensions pretending to be a runtime.
+Pi extensions are the supported way to project hellm into pi's shell. They are not the whole product architecture, and they must never be treated as a replacement for the orchestrator or the interactive host.
 
 ## TUI Requirements
 
-The TUI should become orchestration-aware without throwing away pi's foundation.
+The TUI should become orchestration-aware without throwing away pi's foundation or replacing its shell.
 
 Minimum required views:
 
@@ -1107,7 +1209,7 @@ Recommended initial shape:
 
 - parallel independent workers as a default execution mode
 - broad multi-slot model routing beyond simple `main` and `worker`
-- rich slash-command surface such as `/threads` or `/reconcile`
+- richer slash-command discovery and UX beyond the baseline `/threads`, `/reconcile`, and `/verify` surface
 - full server mode for the whole product
 - advanced worktree switching UX
 - separate artifact database or sidecar store
@@ -1199,7 +1301,7 @@ Deliverables:
 - episode inspection
 - verification state display
 - session / worktree context display
-- active Smithers workflow visualization inside the pi-based TUI
+- active Smithers workflow visualization inside the pi-based shell
 
 Success condition:
 

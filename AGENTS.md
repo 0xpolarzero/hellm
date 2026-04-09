@@ -2,7 +2,10 @@
 
 - Read `docs/prd.md` before doing any work.
 - Read `docs/features.ts` before doing any work that affects product scope, feature behavior, or test planning.
-- This repo exists to turn pi coding agent into a Slate-like orchestrated coding agent and TUI.
+- This repo exists to turn pi coding agent into a Slate-like orchestrated coding agent and pi-owned interactive shell.
+- Do not introduce or preserve a standalone custom shell, readline loop, or alternate TUI stack outside pi; interactive work must go through pi's extension/runtime seam.
+- Treat any proposed demo renderer, stdout snapshot, or non-pi terminal loop as a regression unless the PRD explicitly labels it as a test helper.
+- If a change implies that hellm owns the interactive terminal instead of pi, stop and rewrite the design around pi's runtime and extension APIs.
 - Use `docs/references/pi-mono` as the default local reference when reasoning about pi code, APIs, architecture, or behavior.
 - Use `docs/references/smithers` as the default local reference when reasoning about Smithers code, APIs, architecture, or behavior.
 - Prefer these local references over memory or vague external summaries when questions involve these tools or libraries.

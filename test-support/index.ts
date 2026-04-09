@@ -4,6 +4,7 @@ export * from "./fake-smithers-bridge";
 export * from "./fake-verification-runner";
 export * from "./fixtures";
 export * from "./git-workspace";
+export * from "./interactive-tui-session-harness";
 export * from "./process-harness";
 export * from "./reference-guard";
 export * from "./session-jsonl";

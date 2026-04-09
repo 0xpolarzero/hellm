@@ -239,6 +239,12 @@ export interface SessionHeader {
   parentSession?: string;
 }
 
+export interface SessionEntryBase {
+  id: string;
+  parentId: string | null;
+  timestamp: string;
+}
+
 export interface StructuredSessionEntry {
   type: "message";
   id: string;
@@ -254,7 +260,38 @@ export interface StructuredSessionEntry {
   };
 }
 
-export type SessionJsonlEntry = SessionHeader | StructuredSessionEntry | Record<string, unknown>;
+export interface PiCustomSessionEntry extends SessionEntryBase {
+  type: "custom";
+  customType: string;
+  data?: unknown;
+}
+
+export interface PiCustomMessageSessionEntry extends SessionEntryBase {
+  type: "custom_message";
+  customType: string;
+  content: unknown;
+  display: boolean;
+  details?: unknown;
+}
+
+export interface CreatePiCustomSessionEntryInput extends SessionEntryBase {
+  customType: string;
+  data?: unknown;
+}
+
+export interface CreatePiCustomMessageSessionEntryInput extends SessionEntryBase {
+  customType: string;
+  content: unknown;
+  display: boolean;
+  details?: unknown;
+}
+
+export type SessionJsonlEntry =
+  | SessionHeader
+  | StructuredSessionEntry
+  | PiCustomSessionEntry
+  | PiCustomMessageSessionEntry
+  | Record<string, unknown>;
 
 export const THREAD_STATUS_TRANSITIONS: Readonly<
   Record<ThreadStatus, readonly ThreadStatus[]>
@@ -491,6 +528,34 @@ export function createStructuredSessionEntry(input: {
   };
 }
 
+export function createPiCustomSessionEntry(
+  input: CreatePiCustomSessionEntryInput,
+): PiCustomSessionEntry {
+  return {
+    type: "custom",
+    id: input.id,
+    parentId: input.parentId,
+    timestamp: input.timestamp,
+    customType: input.customType,
+    ...(input.data !== undefined ? { data: input.data } : {}),
+  };
+}
+
+export function createPiCustomMessageSessionEntry(
+  input: CreatePiCustomMessageSessionEntryInput,
+): PiCustomMessageSessionEntry {
+  return {
+    type: "custom_message",
+    id: input.id,
+    parentId: input.parentId,
+    timestamp: input.timestamp,
+    customType: input.customType,
+    content: input.content,
+    display: input.display,
+    ...(input.details !== undefined ? { details: input.details } : {}),
+  };
+}
+
 export function serializeStructuredEntry(entry: StructuredSessionEntry): string {
   return JSON.stringify(entry);
 }
@@ -516,23 +581,42 @@ export function parseStructuredEntry(
 export function parseStructuredSessionEntry(
   entry: SessionJsonlEntry,
 ): StructuredPayload | null {
-  if (
-    !isRecord(entry) ||
-    entry.type !== "message" ||
-    !isRecord(entry.message) ||
-    entry.message.role !== "custom" ||
-    typeof entry.message.customType !== "string" ||
-    !entry.message.customType.startsWith("hellm/")
-  ) {
+  if (!isRecord(entry)) {
     return null;
   }
 
-  const details = entry.message.details;
-  if (!isRecord(details) || typeof details.kind !== "string" || !("data" in details)) {
-    return null;
+  if (entry.type === "message") {
+    if (
+      !isRecord(entry.message) ||
+      entry.message.role !== "custom" ||
+      typeof entry.message.customType !== "string"
+    ) {
+      return null;
+    }
+
+    return parseHellmStructuredPayload(
+      entry.message.customType,
+      entry.message.details,
+    );
   }
 
-  return details as StructuredPayload;
+  if (entry.type === "custom") {
+    if (typeof entry.customType !== "string") {
+      return null;
+    }
+
+    return parseHellmStructuredPayload(entry.customType, entry.data);
+  }
+
+  if (entry.type === "custom_message") {
+    if (typeof entry.customType !== "string") {
+      return null;
+    }
+
+    return parseHellmStructuredPayload(entry.customType, entry.details);
+  }
+
+  return null;
 }
 
 export function reconstructSessionState(
@@ -650,6 +734,87 @@ function safeParseJson(value: string): unknown {
   } catch {
     return null;
   }
+}
+
+function parseHellmStructuredPayload(
+  customType: string,
+  value: unknown,
+): StructuredPayload | null {
+  const kind = parseHellmStructuredPayloadKind(customType);
+  if (!kind) {
+    return null;
+  }
+
+  return parseHellmStructuredPayloadValue(kind, value);
+}
+
+function parseHellmStructuredPayloadKind(
+  customType: string,
+): StructuredPayload["kind"] | null {
+  if (!customType.startsWith("hellm/")) {
+    return null;
+  }
+
+  const kind = customType.slice("hellm/".length);
+  if (
+    kind === "thread" ||
+    kind === "episode" ||
+    kind === "artifact" ||
+    kind === "verification" ||
+    kind === "alignment" ||
+    kind === "workflow-run" ||
+    kind === "smithers-isolation"
+  ) {
+    return kind;
+  }
+
+  return null;
+}
+
+function parseHellmStructuredPayloadValue(
+  kind: StructuredPayload["kind"],
+  value: unknown,
+): StructuredPayload | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (
+    "kind" in value &&
+    typeof value.kind === "string" &&
+    isStructuredPayloadKind(value.kind)
+  ) {
+    if ("data" in value) {
+      if (value.kind !== kind) {
+        return null;
+      }
+
+      return value as StructuredPayload;
+    }
+
+    if (value.kind === kind) {
+      return null;
+    }
+  }
+
+  return {
+    kind,
+    data: value,
+  } as unknown as StructuredPayload;
+}
+
+function isStructuredPayloadKind(
+  kind: string,
+): kind is StructuredPayload["kind"] {
+  return (
+    kind === "thread" ||
+    kind === "episode" ||
+    kind === "artifact" ||
+    kind === "verification" ||
+    kind === "alignment" ||
+    kind === "workflow-run" ||
+    kind === "smithers-isolation"
+  );
 }
 
 function upsertById<T extends { id: string }>(items: T[], value: T): void {

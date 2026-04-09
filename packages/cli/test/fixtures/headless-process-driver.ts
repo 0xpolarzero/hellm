@@ -6,6 +6,7 @@ import {
 import { createOrchestrator } from "@hellm/orchestrator";
 import { createEmptySessionState } from "@hellm/session-model";
 import {
+  EchoPiRuntimeBridge,
   FakePiRuntimeBridge,
   createEpisodeFixture,
   fixedClock,
@@ -46,6 +47,7 @@ const baseRequest: Pick<HeadlessRequest, "threadId" | "cwd"> = {
 let request: HeadlessRequest;
 let orchestrator = createOrchestrator({
   clock: fixedClock(),
+  piBridge: new EchoPiRuntimeBridge(),
   contextLoader,
 });
 

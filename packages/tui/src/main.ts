@@ -1,101 +1,75 @@
-import { existsSync, mkdirSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
-import {
-  createGlobalVerificationState,
-  createSessionWorktreeAlignment,
-  createThread,
-  createSessionHeader,
-  serializeStructuredEntry,
-  type ThreadSnapshot,
-} from "@hellm/session-model";
-import {
-  createOrchestrator,
-  createFilesystemContextLoader,
-} from "@hellm/orchestrator";
-import { projectSessionState, renderMultiThreadProjection, projectThreadSnapshot, renderProjection } from "./index.ts";
+import { startHellmTui } from "./runtime.ts";
 
-function ensureSessionFile(filePath: string, sessionId: string, cwd: string): void {
-  if (existsSync(filePath)) {
-    return;
-  }
-
-  const dir = join(filePath, "..");
-  mkdirSync(dir, { recursive: true });
-
-  const header = createSessionHeader({
-    id: sessionId,
-    timestamp: new Date().toISOString(),
-    cwd,
-  });
-  appendFileSync(filePath, `${JSON.stringify(header)}\n`, "utf8");
+interface ParsedCliOptions {
+  cwd?: string;
+  initOnly?: boolean;
+  initialMessage?: string;
 }
 
-async function main() {
-  const args = process.argv.slice(2);
-  const prompt = args.find((arg) => !arg.startsWith("--")) ?? args[args.length - 1];
+function parseCliOptions(args: readonly string[]): ParsedCliOptions {
+  let cwd: string | undefined;
+  let initOnly = false;
+  const initialMessageParts: string[] = [];
 
-  if (!prompt) {
-    const timestamp = new Date().toISOString();
-    const snapshot: ThreadSnapshot = {
-      thread: createThread({
-        id: "demo",
-        kind: "direct",
-        objective: "Idle. Awaiting request.",
-        status: "completed",
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }),
-      episodes: [],
-      artifacts: [],
-      verification: createGlobalVerificationState(),
-      alignment: createSessionWorktreeAlignment({ sessionCwd: process.cwd() }),
-      workflowRuns: [],
-    };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
 
-    for (const line of renderProjection(projectThreadSnapshot(snapshot))) {
-      console.log(`[hellm/tui] ${line}`);
+    if (arg === "--") {
+      initialMessageParts.push(...args.slice(index + 1));
+      break;
     }
-    return;
+
+    if (arg === "--init-only") {
+      initOnly = true;
+      continue;
+    }
+
+    if (arg === "--cwd") {
+      cwd = args[index + 1];
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--cwd=")) {
+      cwd = arg.slice("--cwd=".length);
+      continue;
+    }
+
+    if (arg === "--message") {
+      const message = args[index + 1];
+      if (message) {
+        initialMessageParts.push(message);
+      }
+      index += 1;
+      continue;
+    }
+
+    if (!arg.startsWith("--")) {
+      initialMessageParts.push(arg);
+    }
   }
 
-  const cwd = process.cwd();
-  const threadId = `tui-${Date.now()}`;
-  const sessionDir = join(cwd, ".hellm", "sessions");
-  const sessionFile = join(sessionDir, `${threadId}.jsonl`);
+  const initialMessage = initialMessageParts
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .join(" ");
 
-  ensureSessionFile(sessionFile, threadId, cwd);
-
-  const contextLoader = createFilesystemContextLoader({
-    sessionFile,
-    ...(existsSync(join(cwd, "AGENTS.md"))
-      ? { agentsFile: join(cwd, "AGENTS.md") }
-      : {}),
-    skillsRoot: join(cwd, ".hellm", "skills"),
-  });
-
-  const orchestrator = createOrchestrator({ contextLoader });
-  const result = await orchestrator.run({
-    threadId,
-    prompt,
-    cwd,
-  });
-
-  for (const entry of result.sessionEntries) {
-    appendFileSync(sessionFile, `${serializeStructuredEntry(entry)}\n`, "utf8");
-  }
-
-  const multiProjection = projectSessionState(result.sessionState, result.threadSnapshot.thread.id);
-  for (const line of renderMultiThreadProjection(multiProjection)) {
-    console.log(`[hellm/tui] ${line}`);
-  }
-
-  console.log(`[hellm/tui] classification: ${result.classification.path} (${result.classification.confidence})`);
-  console.log(`[hellm/tui] status: ${result.state.visibleSummary}`);
-  console.log(`[hellm/tui] completion: ${result.completion.isComplete ? "complete" : "waiting"} (${result.completion.reason})`);
-  console.log(`[hellm/tui] session: ${sessionFile}`);
+  return {
+    ...(cwd ? { cwd } : {}),
+    ...(initOnly ? { initOnly } : {}),
+    ...(initialMessage.length > 0 ? { initialMessage } : {}),
+  };
 }
 
-main().catch((error) => {
-  console.error("[hellm/tui] fatal:", error);
-  process.exit(1);
+const parsed = parseCliOptions(process.argv.slice(2));
+const cwd =
+  parsed.cwd ??
+  process.env.HELLM_CWD ??
+  process.env.INIT_CWD ??
+  process.env.npm_config_local_prefix ??
+  process.cwd();
+
+await startHellmTui({
+  ...parsed,
+  cwd,
 });

@@ -108,7 +108,8 @@ export async function executeHeadlessRun(
     sessionConfig?: HeadlessSessionConfig;
   } = {},
 ): Promise<HeadlessResult> {
-  const sessionDir = options.sessionConfig?.sessionDir ?? join(request.cwd, ".hellm", "sessions");
+  const sessionDir =
+    options.sessionConfig?.sessionDir ?? join(request.cwd, ".pi", "sessions");
   const sessionFile = resolveSessionFile(sessionDir, request.threadId);
 
   const sessionWritable = ensureSessionHeader(sessionFile, request.threadId, request.cwd);
