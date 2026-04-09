@@ -15,19 +15,7 @@ In practice, that means `hellm` interleaves agentic reasoning and scripting inst
 
 Start with [docs/context-discipline.md](docs/context-discipline.md) for the concise design note, then read [docs/prd.md](docs/prd.md) for the source-of-truth product spec.
 
-## Workspace
-
-- `packages/cli`: headless CLI entrypoint.
-- `packages/tui`: pi-based launcher and interactive extension bundle. This package must boot pi's real interactive runtime, enter `InteractiveMode`, and extend it with hellm state and UX instead of owning a separate shell.
-- `packages/orchestrator`: main orchestration boundary.
-- `packages/session-model`: shared thread and episode primitives.
-- `packages/pi-bridge`: pi worker/runtime bridge utilities used under the orchestrator, not a replacement for the top-level shell.
-- `packages/smithers-bridge`: placeholder Smithers integration boundary.
-- `packages/verification`: verification primitives.
-
 ## Commands
 
 - `bun install`
-- `bun run prepare:references`
 - `bun run dev`
-- `bun run check`

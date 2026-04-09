@@ -1,4 +1,0 @@
-{"type":"RunStarted","runId":"hellm-verbose-demo","timestampMs":1775739727420}
-{"type":"FrameCommitted","runId":"hellm-verbose-demo","frameNo":1,"xmlHash":"c90168ed1d64e586edc2010fff436377eeaa592d79c4671640929be5996e521a","timestampMs":1775739727429}
-{"type":"SnapshotCaptured","runId":"hellm-verbose-demo","frameNo":1,"contentHash":"5757c97153b4eccc1bd46c47301bee261bcc80e5207701fd95f015192081222f","timestampMs":1775739727433}
-{"type":"RunFinished","runId":"hellm-verbose-demo","timestampMs":1775739727434}
