@@ -56,6 +56,8 @@ const DEFAULT_SYSTEM_PROMPT =
 const ENV_FILES = [".env.local", ".env"];
 const PREFERRED_PROVIDERS = ["zai", "openai", "anthropic", "google"];
 const PREFERRED_MODEL_FRAGMENTS = [
+	"glm-5-turbo",
+	"glm-4.7-flashx",
 	"glm-4.7-flash",
 	"gpt-5.4-mini",
 	"gpt-5.4",

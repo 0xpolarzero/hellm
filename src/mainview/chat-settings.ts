@@ -10,6 +10,6 @@ export interface ChatDefaults {
 
 export const DEFAULT_CHAT_SETTINGS: ChatDefaults = {
 	provider: "zai",
-	model: "glm-4.7-flash",
+	model: "glm-5-turbo",
 	reasoningEffort: "medium",
 };
