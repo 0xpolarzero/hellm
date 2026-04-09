@@ -14,15 +14,15 @@
 <style>
 	.ui-textarea {
 		width: 100%;
-		min-height: 8.4rem;
-		padding: 0.95rem 1rem;
+		min-height: 7.2rem;
+		padding: 0.72rem 0.8rem;
 		border-radius: calc(var(--ui-radius-md) + 0.08rem);
 		border: 1px solid var(--ui-border-soft);
-		background: color-mix(in oklab, var(--ui-bg-elevated) 96%, transparent);
+		background: color-mix(in oklab, var(--ui-bg-elevated) 90%, transparent);
 		color: var(--ui-text-primary);
-		font-size: 0.98rem;
-		line-height: 1.65;
-		box-shadow: inset 0 1px 0 color-mix(in oklab, white 44%, transparent);
+		font-size: 0.88rem;
+		line-height: 1.6;
+		box-shadow: none;
 		transition:
 			border-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
 			box-shadow 170ms cubic-bezier(0.19, 1, 0.22, 1),

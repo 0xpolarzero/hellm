@@ -6,7 +6,6 @@
 	import Button from "./ui/Button.svelte";
 	import Dialog from "./ui/Dialog.svelte";
 	import Input from "./ui/Input.svelte";
-	import Surface from "./ui/Surface.svelte";
 
 	type Props = {
 		onClose: () => void;
@@ -116,7 +115,7 @@
 			{#each providers as info (info.provider)}
 				{@const badge = statusBadge(info)}
 				{@const isEditing = editingProvider === info.provider}
-				<Surface tone="muted" padding="none" class="provider-row">
+				<article class="provider-row">
 					<div class="provider-main">
 						<div class="provider-info">
 							<span class="provider-name">{info.provider}</span>
@@ -180,9 +179,9 @@
 									{oauthLoading[info.provider] ? "Waiting..." : "Login with OAuth"}
 								</Button>
 							{/if}
-						{/if}
-					</div>
-				</Surface>
+							{/if}
+						</div>
+				</article>
 			{/each}
 		</div>
 	{/if}
@@ -203,15 +202,15 @@
 	.provider-list {
 		display: flex;
 		flex-direction: column;
-		gap: 0.8rem;
+		gap: 0.25rem;
 	}
 
-	:global(.provider-row) {
+	.provider-row {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
-		align-items: center;
-		padding: 1rem 1.05rem;
-		gap: 1rem;
+		grid-template-columns: minmax(0, 1fr) minmax(13rem, auto);
+		align-items: start;
+		padding: 1.15rem 1rem 1.15rem 1.15rem;
+		gap: 1.2rem 1.35rem;
 		border: none;
 		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
 		border-radius: 0;
@@ -221,7 +220,7 @@
 
 	.provider-main {
 		display: grid;
-		gap: 0.38rem;
+		gap: 0.46rem;
 		min-width: 0;
 	}
 
@@ -243,8 +242,8 @@
 	.provider-meta {
 		margin: 0;
 		max-width: 38rem;
-		font-size: 0.82rem;
-		line-height: 1.5;
+		font-size: 0.84rem;
+		line-height: 1.6;
 		color: var(--ui-text-secondary);
 	}
 
@@ -260,9 +259,13 @@
 		display: flex;
 		align-items: center;
 		justify-content: flex-end;
-		gap: 0.55rem;
+		gap: 0.65rem;
+		min-width: 13rem;
+		padding-left: 1rem;
+		border-left: 1px solid color-mix(in oklab, var(--ui-border-soft) 72%, transparent);
 		flex-shrink: 0;
 		flex-wrap: wrap;
+		padding-top: 0.08rem;
 	}
 
 	.key-input-row {
@@ -278,14 +281,18 @@
 	}
 
 	@media (max-width: 720px) {
-		:global(.provider-row) {
+		.provider-row {
 			grid-template-columns: 1fr;
 			align-items: start;
+			padding-right: 0.9rem;
 		}
 
 		.provider-actions {
 			width: 100%;
 			justify-content: flex-start;
+			min-width: 0;
+			padding-left: 0;
+			border-left: none;
 		}
 
 		.key-input-row {

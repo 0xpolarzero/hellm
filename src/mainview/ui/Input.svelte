@@ -14,15 +14,15 @@
 <style>
 	.ui-input {
 		width: 100%;
-		min-height: 2.8rem;
-		padding: 0.68rem 0.82rem;
+		min-height: 2rem;
+		padding: 0.34rem 0.58rem;
 		border-radius: calc(var(--ui-radius-sm) + 0.08rem);
 		border: 1px solid var(--ui-border-soft);
-		background: color-mix(in oklab, var(--ui-bg-elevated) 94%, transparent);
+		background: color-mix(in oklab, var(--ui-bg-elevated) 88%, transparent);
 		color: var(--ui-text-primary);
-		font-size: 0.92rem;
+		font-size: 0.82rem;
 		line-height: 1.4;
-		box-shadow: inset 0 1px 0 color-mix(in oklab, white 40%, transparent);
+		box-shadow: none;
 		transition:
 			border-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
 			box-shadow 170ms cubic-bezier(0.19, 1, 0.22, 1),

@@ -201,8 +201,7 @@
 		margin-bottom: 0.8rem;
 		border-radius: var(--ui-radius-md);
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-subtle) 92%, transparent), color-mix(in oklab, var(--ui-surface) 94%, transparent));
+		background: color-mix(in oklab, var(--ui-surface-subtle) 72%, transparent);
 	}
 
 	.picker-filters {
@@ -223,14 +222,15 @@
 	.model-list {
 		display: flex;
 		flex-direction: column;
-		gap: 0.72rem;
+		gap: 0.2rem;
 	}
 
 	.model-row {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
-		gap: 1rem;
-		padding: 0.95rem 0.2rem 0.95rem 1rem;
+		grid-template-columns: minmax(0, 1fr) minmax(8rem, auto);
+		align-items: center;
+		gap: 1.25rem;
+		padding: 1.05rem 1rem 1.05rem 1.15rem;
 		border-radius: 0;
 		border: none;
 		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
@@ -259,8 +259,7 @@
 
 	.current {
 		border-left-color: color-mix(in oklab, var(--ui-accent) 72%, var(--ui-accent-strong));
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-accent-soft) 54%, transparent), transparent);
+		background: color-mix(in oklab, var(--ui-accent-soft) 42%, transparent);
 	}
 
 	.model-copy {
@@ -292,20 +291,31 @@
 
 	.model-metrics {
 		display: grid;
-		gap: 0.32rem;
+		gap: 0.36rem;
+		align-content: center;
 		justify-items: end;
+		min-width: 8rem;
+		padding-left: 1rem;
+		padding-right: 0.15rem;
+		border-left: 1px solid color-mix(in oklab, var(--ui-border-soft) 72%, transparent);
 		font-size: 0.76rem;
 		font-weight: 620;
 		color: var(--ui-text-secondary);
+		font-family: var(--font-mono);
 		font-variant-numeric: tabular-nums;
 	}
 
 	@media (max-width: 720px) {
 		.model-row {
 			grid-template-columns: 1fr;
+			padding-right: 0.85rem;
 		}
 
 		.model-metrics {
+			min-width: 0;
+			padding-left: 0;
+			padding-right: 0;
+			border-left: none;
 			justify-items: start;
 		}
 	}

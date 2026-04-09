@@ -163,17 +163,14 @@
 
 <div class={`chat-workspace ${showDesktopSplit ? "split" : ""}`.trim()}>
 	<section class="workspace-main">
-		<header class="workspace-header">
-			<div class="workspace-heading">
-				<p class="workspace-eyebrow">Session Surface</p>
-				<h2>Conversation</h2>
-				<p class="workspace-summary">Inspect, change, verify, and keep the working thread visible.</p>
-			</div>
-			<div class="workspace-controls">
+		<header class="workspace-rail">
+			<div class="workspace-meta">
 				<Badge tone={workspaceStatusTone}>{workspaceStatusText}</Badge>
 				{#if usageText}
-					<p class="workspace-usage">Total {usageText}</p>
+					<p class="workspace-usage">usage {usageText}</p>
 				{/if}
+			</div>
+			<div class="workspace-controls">
 				{#if hasArtifacts}
 					<Button
 						variant={showArtifactsPanel ? "secondary" : "ghost"}
@@ -257,9 +254,7 @@
 		grid-template-columns: minmax(0, 1fr);
 		height: 100%;
 		min-height: 0;
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-panel-accent) 48%, transparent), transparent 8rem),
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-bg-elevated) 96%, transparent), var(--ui-surface));
+		background: var(--ui-bg-elevated);
 	}
 
 	.workspace-main {
@@ -269,62 +264,40 @@
 		min-height: 0;
 	}
 
-	.workspace-header {
+	.workspace-rail {
 		display: flex;
-		align-items: flex-end;
+		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
-		padding: 1rem 1.15rem 0.95rem;
+		padding: 0.55rem 0.8rem;
 		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-subtle) 92%, transparent), transparent);
+		background: transparent;
 	}
 
-	.workspace-heading {
-		display: grid;
-		gap: 0.2rem;
+	.workspace-meta {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+		flex-wrap: wrap;
 		min-width: 0;
-	}
-
-	.workspace-eyebrow {
-		margin: 0;
-		font-size: 0.66rem;
-		font-weight: 760;
-		letter-spacing: 0.17em;
-		text-transform: uppercase;
-		color: var(--ui-accent-strong);
-	}
-
-	.workspace-heading h2 {
-		margin: 0;
-		font-size: 1.12rem;
-		font-weight: 720;
-		letter-spacing: -0.03em;
-		color: var(--ui-text-primary);
-	}
-
-	.workspace-summary {
-		margin: 0;
-		font-size: 0.84rem;
-		line-height: 1.5;
-		color: var(--ui-text-secondary);
 	}
 
 	.workspace-controls {
 		display: flex;
 		align-items: center;
 		justify-content: flex-end;
-		gap: 0.7rem;
+		gap: 0.45rem;
 		flex-wrap: wrap;
 	}
 
 	.workspace-usage {
 		margin: 0;
-		font-size: 0.77rem;
+		font-size: 0.74rem;
 		font-weight: 600;
 		letter-spacing: 0.04em;
 		color: var(--ui-text-secondary);
 		white-space: nowrap;
+		font-family: var(--font-mono);
 		font-variant-numeric: tabular-nums;
 	}
 
@@ -353,8 +326,7 @@
 		display: block;
 		min-width: 0;
 		border-left: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-subtle) 95%, transparent), var(--ui-surface));
+		background: var(--ui-surface);
 	}
 
 	.mobile-slot {
@@ -374,7 +346,7 @@
 	}
 
 	@media (max-width: 960px) {
-		.workspace-header {
+		.workspace-rail {
 			align-items: start;
 			flex-direction: column;
 		}
@@ -385,12 +357,8 @@
 	}
 
 	@media (max-width: 720px) {
-		.workspace-header {
-			padding-inline: 0.9rem;
-		}
-
-		.workspace-summary {
-			font-size: 0.82rem;
+		.workspace-rail {
+			padding-inline: 0.65rem;
 		}
 
 		.mobile-overlay {

@@ -106,18 +106,16 @@
 <style>
 	.composer-shell {
 		container-type: inline-size;
-		padding: 1rem 1.1rem 1.1rem;
+		padding: 0.7rem 0.8rem 0.8rem;
 		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-subtle) 84%, transparent), var(--ui-surface)),
-			radial-gradient(circle at bottom left, color-mix(in oklab, var(--ui-accent) 10%, transparent), transparent 38%);
+		background: var(--ui-surface);
 	}
 
 	.composer-toolbar {
 		display: grid;
 		grid-template-columns: minmax(0, 1.35fr) minmax(11rem, 0.82fr) minmax(8rem, auto);
 		gap: 0.75rem;
-		margin-bottom: 0.95rem;
+		margin-bottom: 0.7rem;
 	}
 
 	.model-pill,
@@ -125,7 +123,7 @@
 	.context-chip {
 		display: grid;
 		gap: 0.24rem;
-		padding: 0.2rem 0 0.7rem;
+		padding: 0.1rem 0 0.55rem;
 		border-radius: 0;
 		border: none;
 		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
@@ -136,10 +134,8 @@
 		text-align: left;
 		cursor: pointer;
 		transition:
-			transform 170ms cubic-bezier(0.19, 1, 0.22, 1),
 			border-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
-			background-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
-			box-shadow 170ms cubic-bezier(0.19, 1, 0.22, 1);
+			background-color 170ms cubic-bezier(0.19, 1, 0.22, 1);
 	}
 
 	.model-pill:hover {
@@ -155,7 +151,7 @@
 	}
 
 	.toolbar-label {
-		font-size: 0.68rem;
+		font-size: 0.62rem;
 		font-weight: 760;
 		letter-spacing: 0.16em;
 		text-transform: uppercase;
@@ -164,14 +160,14 @@
 
 	.model-pill strong,
 	.context-chip strong {
-		font-size: 0.98rem;
+		font-size: 0.88rem;
 		font-weight: 710;
 		letter-spacing: -0.025em;
 		color: var(--ui-text-primary);
 	}
 
 	.toolbar-meta {
-		font-size: 0.79rem;
+		font-size: 0.72rem;
 		color: var(--ui-text-secondary);
 		font-variant-numeric: tabular-nums;
 	}
@@ -204,7 +200,7 @@
 
 	.composer-error {
 		margin: 0 0 0.75rem;
-		padding: 0.78rem 0.9rem;
+		padding: 0.65rem 0.75rem;
 		border-radius: 0;
 		border: none;
 		border-left: 2px solid var(--ui-danger);
@@ -215,7 +211,7 @@
 	}
 
 	:global(.composer-shell .ui-textarea) {
-		min-height: 9rem;
+		min-height: 7.25rem;
 	}
 
 	.composer-footer {
@@ -223,14 +219,14 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.8rem;
-		margin-top: 0.9rem;
-		padding-top: 0.85rem;
+		margin-top: 0.65rem;
+		padding-top: 0.65rem;
 		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 56%, transparent);
 	}
 
 	.composer-footer p {
 		margin: 0;
-		font-size: 0.79rem;
+		font-size: 0.72rem;
 		font-weight: 600;
 		letter-spacing: 0.02em;
 		color: var(--ui-text-secondary);
@@ -255,7 +251,7 @@
 
 	@media (max-width: 640px) {
 		.composer-shell {
-			padding: 0.9rem;
+			padding: 0.65rem;
 		}
 
 		.composer-footer {

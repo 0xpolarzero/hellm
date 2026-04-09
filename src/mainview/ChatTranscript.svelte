@@ -95,14 +95,12 @@
 	<div class="chat-thread">
 		{#if visibleMessages.length === 0 && !streamingAssistant}
 			<div class="empty-state">
-				<p class="empty-eyebrow">Workspace Ready</p>
-				<h2>Start a task</h2>
-				<p>Ask for a code change, a review, or a verification run. The Bun-side pi host is already connected.</p>
-				<div class="empty-prompts" aria-hidden="true">
-					<span>Inspect the repository</span>
-					<span>Implement a change</span>
-					<span>Run verification</span>
-					<span>Review a diff</span>
+				<p class="empty-eyebrow">Ready</p>
+				<h2>Ask hellm to inspect the repository, make a change, or run verification.</h2>
+				<div class="empty-list" aria-hidden="true">
+					<p>Review the repo and summarize the architecture.</p>
+					<p>Implement a change and explain the diff.</p>
+					<p>Run the relevant checks and report failures.</p>
 				</div>
 			</div>
 		{/if}
@@ -253,17 +251,16 @@
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-panel-accent) 34%, transparent), transparent 8rem);
+		background: transparent;
 	}
 
 	.chat-thread {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: 0.85rem;
 		max-width: 60rem;
 		margin: 0 auto 0 0;
-		padding: 1.15rem 1.1rem 1rem;
+		padding: 0.85rem 0.8rem 0.75rem;
 	}
 
 	.message-row {
@@ -283,7 +280,7 @@
 	.tool-result {
 		position: relative;
 		width: min(100%, 48rem);
-		padding: 1rem 1.05rem;
+		padding: 0.82rem 0.9rem;
 		border-radius: var(--ui-radius-md);
 		border: none;
 		box-shadow: none;
@@ -292,8 +289,7 @@
 
 	.user-bubble {
 		width: min(100%, 39rem);
-		background:
-			linear-gradient(135deg, color-mix(in oklab, var(--ui-accent-soft) 92%, transparent), color-mix(in oklab, var(--ui-bg-elevated) 96%, transparent));
+		background: color-mix(in oklab, var(--ui-accent-soft) 76%, var(--ui-bg-elevated));
 	}
 
 	.assistant-bubble {
@@ -306,13 +302,13 @@
 	.tool-result {
 		padding-left: 1.1rem;
 		border-left: 2px solid color-mix(in oklab, var(--ui-accent) 82%, var(--ui-accent-strong));
-		background: color-mix(in oklab, var(--ui-surface-subtle) 74%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-subtle) 58%, transparent);
 		border-radius: 0;
 	}
 
 	.streaming {
 		border-left-style: dashed;
-		animation: streamPulse 1.9s ease-out infinite;
+		animation: none;
 	}
 
 	.message-bubble header,
@@ -321,7 +317,7 @@
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: 0.9rem;
-		margin-bottom: 0.8rem;
+		margin-bottom: 0.65rem;
 	}
 
 	.message-bubble header span,
@@ -355,15 +351,15 @@
 		white-space: pre-wrap;
 		word-break: break-word;
 		font-family: inherit;
-		font-size: 0.96rem;
-		line-height: 1.65;
+		font-size: 0.9rem;
+		line-height: 1.6;
 		color: var(--ui-text-primary);
 	}
 
 	.thinking-block,
 	.result-details {
-		margin-top: 0.8rem;
-		padding: 0.85rem 0.9rem;
+		margin-top: 0.65rem;
+		padding: 0.7rem 0.8rem;
 		border-radius: 0;
 		border: none;
 		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
@@ -392,8 +388,8 @@
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: 0.8rem;
-		margin-top: 0.8rem;
-		padding: 0.85rem 0.92rem;
+		margin-top: 0.65rem;
+		padding: 0.72rem 0.8rem;
 		border-radius: 0;
 		border: none;
 		border-left: 2px solid color-mix(in oklab, var(--ui-accent) 84%, var(--ui-accent-strong));
@@ -441,8 +437,8 @@
 	}
 
 	.empty-state {
-		padding: clamp(3.5rem, 10vw, 6rem) 0 3rem;
-		max-width: 38rem;
+		padding: clamp(2.1rem, 7vw, 3.6rem) 0 2rem;
+		max-width: 44rem;
 		color: var(--ui-text-secondary);
 	}
 
@@ -457,51 +453,31 @@
 
 	.empty-state h2 {
 		margin: 0;
-		font-size: clamp(1.6rem, 3vw, 2.4rem);
-		font-weight: 730;
+		max-width: 38rem;
+		font-size: clamp(1.2rem, 2vw, 1.65rem);
+		font-weight: 680;
 		letter-spacing: -0.045em;
 		color: var(--ui-text-primary);
 	}
 
-	.empty-state p:last-child {
-		max-width: 32rem;
-		margin: 0.55rem 0 0;
-		font-size: 0.96rem;
-		line-height: 1.6;
+	.empty-list {
+		display: grid;
+		gap: 0.45rem;
+		margin-top: 0.75rem;
+		padding-left: 1rem;
+		border-left: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
 	}
 
-	.empty-prompts {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.55rem;
-		margin-top: 1rem;
-	}
-
-	.empty-prompts span {
-		padding: 0.52rem 0.72rem;
-		border-radius: var(--ui-radius-sm);
-		border: none;
-		background: color-mix(in oklab, var(--ui-surface-subtle) 72%, transparent);
-		font-size: 0.76rem;
-		font-weight: 650;
-		letter-spacing: 0.03em;
+	.empty-list p {
+		margin: 0;
+		font-size: 0.88rem;
+		line-height: 1.55;
 		color: var(--ui-text-secondary);
-	}
-
-	@keyframes streamPulse {
-		0%,
-		100% {
-			box-shadow: 0 12px 28px color-mix(in oklab, black 6%, transparent);
-		}
-
-		50% {
-			box-shadow: 0 16px 34px color-mix(in oklab, var(--ui-accent) 12%, transparent);
-		}
 	}
 
 	@media (max-width: 720px) {
 		.chat-thread {
-			padding-inline: 0.85rem;
+			padding-inline: 0.65rem;
 		}
 
 		.message-bubble header,

@@ -105,9 +105,7 @@
 		display: flex;
 		flex-direction: column;
 		height: 100%;
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-panel-accent) 48%, transparent), transparent 7rem),
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-bg-elevated) 96%, transparent), var(--ui-surface));
+		background: var(--ui-surface);
 	}
 
 	.overlay {
@@ -185,8 +183,7 @@
 
 	.tab.active {
 		border-color: color-mix(in oklab, var(--ui-accent) 34%, var(--ui-border-strong));
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-accent-soft) 68%, transparent), transparent);
+		background: color-mix(in oklab, var(--ui-accent-soft) 48%, transparent);
 	}
 
 	.tab strong {
@@ -248,7 +245,7 @@
 
 	.artifact-kind {
 		padding: 0.36rem 0.62rem;
-		border-radius: 999px;
+		border-radius: var(--ui-radius-sm);
 		border: 1px solid color-mix(in oklab, var(--ui-accent) 22%, var(--ui-border-soft));
 		background: color-mix(in oklab, var(--ui-accent-soft) 88%, transparent);
 		font-size: 0.68rem;

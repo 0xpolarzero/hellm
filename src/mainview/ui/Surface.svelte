@@ -37,12 +37,7 @@
 	}
 
 	.ui-surface::before {
-		content: "";
-		position: absolute;
-		inset: 0;
-		pointer-events: none;
-		background: linear-gradient(180deg, color-mix(in oklab, white 24%, transparent), transparent 30%);
-		opacity: 0.28;
+		content: none;
 	}
 
 	.tone-subtle {

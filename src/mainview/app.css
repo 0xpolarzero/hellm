@@ -24,10 +24,10 @@
 	--space-xl: 1.8rem;
 	--space-2xl: clamp(2.1rem, 2vw + 1.5rem, 3.4rem);
 
-	--ui-radius-sm: 0.38rem;
-	--ui-radius-md: 0.62rem;
-	--ui-radius-lg: 0.9rem;
-	--ui-radius-xl: 1.15rem;
+	--ui-radius-sm: 0.18rem;
+	--ui-radius-md: 0.3rem;
+	--ui-radius-lg: 0.42rem;
+	--ui-radius-xl: 0.6rem;
 
 	--ui-z-sticky: 20;
 	--ui-z-overlay: 40;
@@ -65,16 +65,14 @@
 	--ui-info: oklch(0.58 0.09 238);
 	--ui-info-soft: oklch(0.93 0.03 240);
 
-	--ui-shadow-soft: 0 10px 26px color-mix(in oklab, black 8%, transparent);
-	--ui-shadow-strong: 0 20px 48px color-mix(in oklab, black 12%, transparent);
+	--ui-shadow-soft: 0 0 0 transparent;
+	--ui-shadow-strong: 0 0 0 transparent;
 	--ui-focus-ring:
-		0 0 0 1px color-mix(in oklab, var(--ui-accent) 70%, white 30%),
-		0 0 0 4px color-mix(in oklab, var(--ui-accent) 26%, transparent);
+		0 0 0 1px color-mix(in oklab, var(--ui-accent) 72%, white 28%),
+		0 0 0 2px color-mix(in oklab, var(--ui-accent) 12%, transparent);
 
 	--ui-backdrop:
-		radial-gradient(circle at top left, color-mix(in oklab, var(--ui-accent) 18%, transparent) 0, transparent 32%),
-		radial-gradient(circle at top right, color-mix(in oklab, var(--ui-warning) 14%, transparent) 0, transparent 28%),
-		linear-gradient(180deg, oklch(0.985 0.005 72), oklch(0.952 0.012 70) 48%, oklch(0.938 0.015 66));
+		linear-gradient(180deg, oklch(0.985 0.005 72), oklch(0.956 0.01 70) 48%, oklch(0.942 0.012 66));
 	--ui-grid-lines:
 		repeating-linear-gradient(
 			90deg,
@@ -115,12 +113,10 @@
 		--ui-danger-soft: oklch(0.28 0.06 28);
 		--ui-info-soft: oklch(0.29 0.03 240);
 
-		--ui-shadow-soft: 0 12px 34px color-mix(in oklab, black 28%, transparent);
-		--ui-shadow-strong: 0 20px 56px color-mix(in oklab, black 36%, transparent);
+		--ui-shadow-soft: 0 0 0 transparent;
+		--ui-shadow-strong: 0 0 0 transparent;
 
 		--ui-backdrop:
-			radial-gradient(circle at top left, color-mix(in oklab, var(--ui-accent) 20%, transparent) 0, transparent 28%),
-			radial-gradient(circle at top right, color-mix(in oklab, var(--ui-warning) 14%, transparent) 0, transparent 24%),
 			linear-gradient(180deg, oklch(0.195 0.012 58), oklch(0.17 0.012 56) 55%, oklch(0.155 0.012 54));
 		--ui-grid-lines:
 			repeating-linear-gradient(
@@ -156,7 +152,7 @@ body::before {
 	inset: 0;
 	z-index: -1;
 	background: var(--ui-grid-lines);
-	opacity: 0.38;
+	opacity: 0.32;
 	pointer-events: none;
 }
 

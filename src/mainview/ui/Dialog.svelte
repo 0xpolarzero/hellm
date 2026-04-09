@@ -91,10 +91,8 @@
 		align-items: center;
 		justify-content: center;
 		padding: clamp(1rem, 3vw, 2rem);
-		background:
-			linear-gradient(180deg, color-mix(in oklab, black 40%, transparent), color-mix(in oklab, black 54%, transparent)),
-			radial-gradient(circle at top, color-mix(in oklab, var(--ui-accent) 12%, transparent), transparent 38%);
-		backdrop-filter: blur(6px);
+		background: color-mix(in oklab, black 42%, transparent);
+		backdrop-filter: none;
 	}
 
 	.ui-dialog-panel {
@@ -105,18 +103,13 @@
 		flex-direction: column;
 		border-radius: var(--ui-radius-xl);
 		border: 1px solid var(--ui-border-soft);
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-bg-elevated) 94%, transparent), var(--ui-surface));
+		background: var(--ui-bg-elevated);
 		box-shadow: var(--ui-shadow-strong);
 		overflow: hidden;
 	}
 
 	.ui-dialog-panel::before {
-		content: "";
-		position: absolute;
-		inset: 0 0 auto;
-		height: 0.3rem;
-		background: linear-gradient(90deg, var(--ui-accent-strong), color-mix(in oklab, var(--ui-accent) 72%, white 28%));
+		content: none;
 	}
 
 	.width-md {
@@ -132,16 +125,15 @@
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: 1.2rem;
-		padding: 1.4rem 1.45rem 1rem;
+		padding: 1rem 1rem 0.8rem;
 		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-panel-accent) 58%, transparent), transparent 110%);
+		background: transparent;
 	}
 
 	.ui-dialog-copy h2 {
 		margin: 0;
-		font-size: 1.28rem;
-		font-weight: 700;
+		font-size: 1.02rem;
+		font-weight: 680;
 		letter-spacing: -0.03em;
 		color: var(--ui-text-primary);
 	}
@@ -156,25 +148,25 @@
 	}
 
 	.ui-dialog-description {
-		margin: 0.45rem 0 0;
+		margin: 0.28rem 0 0;
 		max-width: 44rem;
-		font-size: 0.9rem;
-		line-height: 1.6;
+		font-size: 0.82rem;
+		line-height: 1.5;
 		color: var(--ui-text-secondary);
 	}
 
 	.ui-dialog-close {
 		flex-shrink: 0;
-		inline-size: 2.4rem;
+		inline-size: 1.9rem;
 		padding: 0;
-		font-size: 1.2rem;
+		font-size: 1rem;
 		line-height: 1;
 	}
 
 	.ui-dialog-body {
 		flex: 1;
 		min-height: 0;
-		padding: 1.15rem 1.45rem 1.45rem;
+		padding: 0.85rem 1rem 1rem;
 		overflow: auto;
 	}
 
