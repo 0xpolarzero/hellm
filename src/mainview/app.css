@@ -2,169 +2,188 @@
 @import "@fontsource/ibm-plex-mono";
 
 * {
-	box-sizing: border-box;
+  box-sizing: border-box;
 }
 
 :root {
-	color-scheme: light dark;
-	font-family: var(--font-sans);
-	font-kerning: normal;
-	text-rendering: optimizeLegibility;
-	-webkit-font-smoothing: antialiased;
-	-moz-osx-font-smoothing: grayscale;
+  color-scheme: light dark;
+  font-family: var(--font-sans);
+  font-kerning: normal;
+  font-optical-sizing: auto;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 
-	--font-sans: "Familjen Grotesk Variable", "Avenir Next", "Segoe UI Variable Text", "Segoe UI", sans-serif;
-	--font-mono: "IBM Plex Mono", "SF Mono", "Menlo", monospace;
+  --font-sans:
+    "Familjen Grotesk Variable", "Familjen Grotesk", "Avenir Next", "Segoe UI Variable Text",
+    "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", "Menlo", monospace;
 
-	--space-2xs: 0.35rem;
-	--space-xs: 0.55rem;
-	--space-sm: 0.8rem;
-	--space-md: 1rem;
-	--space-lg: 1.35rem;
-	--space-xl: 1.8rem;
-	--space-2xl: clamp(2.1rem, 2vw + 1.5rem, 3.4rem);
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.45rem;
+  --space-xs: 0.65rem;
+  --space-sm: 0.9rem;
+  --space-md: 1.15rem;
+  --space-lg: 1.55rem;
+  --space-xl: clamp(1.95rem, 1.4vw + 1.55rem, 2.7rem);
+  --space-2xl: clamp(2.5rem, 3vw + 1.8rem, 4.1rem);
 
-	--ui-radius-sm: 0.18rem;
-	--ui-radius-md: 0.3rem;
-	--ui-radius-lg: 0.42rem;
-	--ui-radius-xl: 0.6rem;
+	--ui-radius-sm: 0.22rem;
+	--ui-radius-md: 0.38rem;
+	--ui-radius-lg: 0.56rem;
+	--ui-radius-xl: 0.84rem;
 
-	--ui-z-sticky: 20;
-	--ui-z-overlay: 40;
-	--ui-z-dialog: 1000;
+  --ui-z-sticky: 20;
+  --ui-z-overlay: 40;
+  --ui-z-dialog: 1000;
 
-	--ui-bg: oklch(0.973 0.01 74);
-	--ui-bg-elevated: oklch(0.992 0.004 70);
-	--ui-surface: oklch(0.986 0.006 72 / 0.9);
-	--ui-surface-subtle: oklch(0.965 0.012 72 / 0.94);
-	--ui-surface-muted: oklch(0.944 0.017 74 / 0.96);
-	--ui-surface-strong: oklch(0.905 0.026 72 / 0.98);
-	--ui-panel: oklch(0.905 0.024 72 / 0.75);
-	--ui-panel-accent: oklch(0.91 0.06 72 / 0.3);
+  --ui-bg: oklch(0.978 0.004 85);
+  --ui-bg-elevated: oklch(0.992 0.002 85);
+  --ui-shell: oklch(0.955 0.004 85 / 0.84);
+  --ui-shell-edge: oklch(0.83 0.008 85 / 0.58);
+  --ui-surface: oklch(0.992 0.002 85 / 0.94);
+  --ui-surface-subtle: oklch(0.972 0.004 85 / 0.96);
+  --ui-surface-muted: oklch(0.956 0.006 85 / 0.98);
+  --ui-surface-raised: oklch(0.998 0.001 85 / 0.98);
+  --ui-surface-strong: oklch(0.23 0.01 78 / 0.94);
+  --ui-panel: oklch(0.942 0.006 85 / 0.78);
+  --ui-panel-strong: oklch(0.922 0.007 85 / 0.94);
+  --ui-code: oklch(0.965 0.006 84 / 0.98);
 
-	--ui-text-primary: oklch(0.22 0.014 60);
-	--ui-text-secondary: oklch(0.41 0.018 62);
-	--ui-text-tertiary: oklch(0.56 0.018 64);
-	--ui-text-inverse: oklch(0.985 0.004 70);
+  --ui-text-primary: oklch(0.24 0.01 82);
+  --ui-text-secondary: oklch(0.45 0.012 82);
+  --ui-text-tertiary: oklch(0.6 0.01 82);
+  --ui-text-inverse: oklch(0.97 0.004 85);
 
-	--ui-border-soft: oklch(0.8 0.018 68 / 0.58);
-	--ui-border-strong: oklch(0.67 0.026 64 / 0.75);
-	--ui-border-accent: oklch(0.74 0.14 55 / 0.56);
+  --ui-border-soft: oklch(0.85 0.008 84 / 0.66);
+  --ui-border-strong: oklch(0.7 0.012 84 / 0.82);
+  --ui-border-accent: oklch(0.73 0.11 50 / 0.34);
 
-	--ui-accent: oklch(0.76 0.18 52);
-	--ui-accent-strong: oklch(0.65 0.19 46);
-	--ui-accent-soft: oklch(0.93 0.048 74);
-	--ui-accent-ink: oklch(0.26 0.022 48);
+  --ui-accent: oklch(0.74 0.18 50);
+  --ui-accent-strong: oklch(0.67 0.18 46);
+  --ui-accent-soft: oklch(0.95 0.02 70);
+  --ui-accent-ink: oklch(0.28 0.03 48);
 
-	--ui-success: oklch(0.68 0.15 151);
-	--ui-success-soft: oklch(0.93 0.045 151);
-	--ui-warning: oklch(0.79 0.13 78);
-	--ui-warning-soft: oklch(0.95 0.04 83);
-	--ui-danger: oklch(0.62 0.21 29);
-	--ui-danger-soft: oklch(0.94 0.04 27);
-	--ui-info: oklch(0.58 0.09 238);
-	--ui-info-soft: oklch(0.93 0.03 240);
+  --ui-success: oklch(0.66 0.15 154);
+  --ui-success-soft: oklch(0.94 0.035 154);
+  --ui-warning: oklch(0.8 0.14 78);
+  --ui-warning-soft: oklch(0.95 0.04 83);
+  --ui-danger: oklch(0.63 0.2 28);
+  --ui-danger-soft: oklch(0.95 0.035 28);
+  --ui-info: oklch(0.58 0.06 245);
+  --ui-info-soft: oklch(0.95 0.018 245);
 
-	--ui-shadow-soft: 0 0 0 transparent;
-	--ui-shadow-strong: 0 0 0 transparent;
-	--ui-focus-ring:
-		0 0 0 1px color-mix(in oklab, var(--ui-accent) 72%, white 28%),
-		0 0 0 2px color-mix(in oklab, var(--ui-accent) 12%, transparent);
+  --ui-shadow-soft: 0 1px 2px hsl(32 30% 14% / 0.04), 0 8px 24px -18px hsl(32 30% 14% / 0.16);
+  --ui-shadow-strong:
+    0 0 0 1px color-mix(in oklab, var(--ui-shell-edge) 52%, transparent),
+    0 24px 80px -40px hsl(26 35% 12% / 0.34), 0 12px 34px -18px hsl(26 35% 12% / 0.18);
+  --ui-focus-ring:
+    0 0 0 1px color-mix(in oklab, var(--ui-accent) 72%, white 28%),
+    0 0 0 4px color-mix(in oklab, var(--ui-accent) 16%, transparent);
 
-	--ui-backdrop:
-		linear-gradient(180deg, oklch(0.985 0.005 72), oklch(0.956 0.01 70) 48%, oklch(0.942 0.012 66));
-	--ui-grid-lines:
-		repeating-linear-gradient(
-			90deg,
-			transparent 0,
-			transparent 47px,
-			color-mix(in oklab, var(--ui-border-soft) 42%, transparent) 47px,
-			color-mix(in oklab, var(--ui-border-soft) 42%, transparent) 48px
-		);
+  --ui-backdrop:
+    radial-gradient(
+      circle at top left,
+      color-mix(in oklab, var(--ui-accent) 10%, transparent),
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at top right,
+      color-mix(in oklab, var(--ui-text-secondary) 4%, transparent),
+      transparent 32%
+    ),
+    linear-gradient(180deg, oklch(0.991 0.002 85), oklch(0.972 0.004 85) 50%, oklch(0.958 0.005 85));
 }
 
 @media (prefers-color-scheme: dark) {
-	:root {
-		--ui-bg: oklch(0.165 0.012 54);
-		--ui-bg-elevated: oklch(0.19 0.012 56);
-		--ui-surface: oklch(0.23 0.015 58 / 0.94);
-		--ui-surface-subtle: oklch(0.205 0.015 58 / 0.98);
-		--ui-surface-muted: oklch(0.27 0.018 58 / 0.98);
-		--ui-surface-strong: oklch(0.31 0.022 58 / 0.98);
-		--ui-panel: oklch(0.34 0.028 58 / 0.82);
-		--ui-panel-accent: oklch(0.68 0.08 58 / 0.22);
+  :root {
+    --ui-bg: oklch(0.17 0.006 82);
+    --ui-bg-elevated: oklch(0.2 0.007 82);
+    --ui-shell: oklch(0.215 0.007 82 / 0.86);
+    --ui-shell-edge: oklch(0.34 0.012 82 / 0.84);
+    --ui-surface: oklch(0.224 0.007 82 / 0.92);
+    --ui-surface-subtle: oklch(0.208 0.007 82 / 0.98);
+    --ui-surface-muted: oklch(0.245 0.009 82 / 0.98);
+    --ui-surface-raised: oklch(0.25 0.008 82 / 0.98);
+    --ui-surface-strong: oklch(0.88 0.004 85 / 0.96);
+    --ui-panel: oklch(0.262 0.008 82 / 0.84);
+    --ui-panel-strong: oklch(0.286 0.01 82 / 0.92);
+    --ui-code: oklch(0.205 0.008 82 / 0.98);
 
-		--ui-text-primary: oklch(0.94 0.006 78);
-		--ui-text-secondary: oklch(0.79 0.012 72);
-		--ui-text-tertiary: oklch(0.62 0.012 72);
-		--ui-text-inverse: oklch(0.18 0.012 54);
+    --ui-text-primary: oklch(0.94 0.004 85);
+    --ui-text-secondary: oklch(0.77 0.008 85);
+    --ui-text-tertiary: oklch(0.61 0.008 85);
+    --ui-text-inverse: oklch(0.19 0.007 82);
 
-		--ui-border-soft: oklch(0.4 0.02 60 / 0.6);
-		--ui-border-strong: oklch(0.56 0.03 62 / 0.78);
-		--ui-border-accent: oklch(0.76 0.12 54 / 0.62);
+    --ui-border-soft: oklch(0.36 0.012 82 / 0.72);
+    --ui-border-strong: oklch(0.51 0.014 82 / 0.82);
+    --ui-border-accent: oklch(0.78 0.12 52 / 0.46);
 
-		--ui-accent: oklch(0.8 0.16 54);
-		--ui-accent-strong: oklch(0.71 0.17 49);
-		--ui-accent-soft: oklch(0.31 0.05 53);
-		--ui-accent-ink: oklch(0.96 0.01 78);
+    --ui-accent: oklch(0.79 0.16 53);
+    --ui-accent-strong: oklch(0.72 0.16 49);
+    --ui-accent-soft: oklch(0.31 0.03 53);
+    --ui-accent-ink: oklch(0.97 0.01 78);
 
-		--ui-success-soft: oklch(0.28 0.05 151);
-		--ui-warning-soft: oklch(0.3 0.05 82);
-		--ui-danger-soft: oklch(0.28 0.06 28);
-		--ui-info-soft: oklch(0.29 0.03 240);
+    --ui-success-soft: oklch(0.3 0.05 154);
+    --ui-warning-soft: oklch(0.31 0.05 82);
+    --ui-danger-soft: oklch(0.3 0.05 28);
+    --ui-info-soft: oklch(0.3 0.02 245);
 
-		--ui-shadow-soft: 0 0 0 transparent;
-		--ui-shadow-strong: 0 0 0 transparent;
+    --ui-shadow-soft: 0 1px 2px hsl(0 0% 0% / 0.12), 0 14px 30px -20px hsl(0 0% 0% / 0.46);
+    --ui-shadow-strong:
+      0 0 0 1px color-mix(in oklab, var(--ui-shell-edge) 64%, transparent),
+      0 32px 80px -36px hsl(0 0% 0% / 0.72), 0 12px 28px -16px hsl(0 0% 0% / 0.56);
 
-		--ui-backdrop:
-			linear-gradient(180deg, oklch(0.195 0.012 58), oklch(0.17 0.012 56) 55%, oklch(0.155 0.012 54));
-		--ui-grid-lines:
-			repeating-linear-gradient(
-				90deg,
-				transparent 0,
-				transparent 47px,
-				color-mix(in oklab, var(--ui-border-soft) 36%, transparent) 47px,
-				color-mix(in oklab, var(--ui-border-soft) 36%, transparent) 48px
-			);
-	}
+    --ui-backdrop:
+      radial-gradient(
+        circle at top left,
+        color-mix(in oklab, var(--ui-accent) 12%, transparent),
+        transparent 34%
+      ),
+      radial-gradient(
+        circle at top right,
+        color-mix(in oklab, white 4%, transparent),
+        transparent 28%
+      ),
+      linear-gradient(
+        180deg,
+        oklch(0.205 0.007 82),
+        oklch(0.178 0.006 82) 48%,
+        oklch(0.162 0.006 82)
+      );
+  }
 }
 
 html,
 body,
 #app {
-	min-height: 100vh;
-	margin: 0;
+  height: 100%;
+  margin: 0;
 }
 
 html {
-	background: var(--ui-bg);
+  background: var(--ui-bg);
 }
 
 body {
-	color: var(--ui-text-primary);
-	background: var(--ui-backdrop);
-	background-color: var(--ui-bg);
-}
-
-body::before {
-	content: "";
-	position: fixed;
-	inset: 0;
-	z-index: -1;
-	background: var(--ui-grid-lines);
-	opacity: 0.32;
-	pointer-events: none;
+  color: var(--ui-text-primary);
+  background: var(--ui-backdrop);
+  background-color: var(--ui-bg);
+  overflow: hidden;
 }
 
 #app {
-	isolation: isolate;
+  isolation: isolate;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 button,
 input,
 select,
 textarea {
-	font: inherit;
+  font: inherit;
 }
 
 button,
@@ -172,20 +191,36 @@ input,
 select,
 textarea,
 summary {
-	-webkit-tap-highlight-color: transparent;
+  -webkit-tap-highlight-color: transparent;
 }
 
 ::selection {
-	background: color-mix(in oklab, var(--ui-accent) 26%, transparent);
+  background: color-mix(in oklab, var(--ui-accent) 26%, transparent);
+}
+
+::-webkit-scrollbar {
+  width: 0.72rem;
+  height: 0.72rem;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 0.2rem solid transparent;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--ui-border-strong) 64%, transparent);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {
-	*,
-	*::before,
-	*::after {
-		animation-duration: 0.01ms !important;
-		animation-iteration-count: 1 !important;
-		scroll-behavior: auto !important;
-		transition-duration: 0.01ms !important;
-	}
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

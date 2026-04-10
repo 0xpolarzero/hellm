@@ -14,15 +14,15 @@
 <style>
 	.ui-input {
 		width: 100%;
-		min-height: 2rem;
-		padding: 0.34rem 0.58rem;
-		border-radius: calc(var(--ui-radius-sm) + 0.08rem);
-		border: 1px solid var(--ui-border-soft);
-		background: color-mix(in oklab, var(--ui-bg-elevated) 88%, transparent);
+		min-height: 2.2rem;
+		padding: 0.36rem 0.72rem;
+		border-radius: var(--ui-radius-md);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-raised) 88%, transparent);
 		color: var(--ui-text-primary);
-		font-size: 0.82rem;
+		font-size: 0.81rem;
 		line-height: 1.4;
-		box-shadow: none;
+		box-shadow: var(--ui-shadow-soft);
 		transition:
 			border-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
 			box-shadow 170ms cubic-bezier(0.19, 1, 0.22, 1),
@@ -51,6 +51,6 @@
 
 	.mono {
 		font-family: var(--font-mono);
-		font-size: 0.85rem;
+		font-size: 0.82rem;
 	}
 </style>

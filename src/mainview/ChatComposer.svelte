@@ -1,7 +1,8 @@
 <script lang="ts">
+	import { onMount } from "svelte";
 	import { supportsXhigh, type Model } from "@mariozechner/pi-ai";
 	import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-	import { formatModelCost, formatTokenCount } from "./chat-format";
+	import { formatModelCost } from "./chat-format";
 	import Button from "./ui/Button.svelte";
 	import TextArea from "./ui/TextArea.svelte";
 
@@ -12,7 +13,7 @@
 		errorMessage?: string;
 		usageText?: string;
 		onAbort: () => void;
-		onOpenModelPicker: () => void | Promise<void>;
+		onOpenModelPicker: () => void;
 		onSend: (input: string) => Promise<boolean> | boolean;
 		onThinkingChange: (level: ThinkingLevel) => void;
 	};
@@ -32,17 +33,54 @@
 	}: Props = $props();
 
 	let draft = $state("");
+	let isSubmitting = $state(false);
+	let showThinkingMenu = $state(false);
+	let thinkingMenuRoot = $state<HTMLDivElement | null>(null);
 
 	const availableThinkingLevels = $derived(
 		supportsXhigh(currentModel) ? [...BASE_LEVELS, "xhigh"] : BASE_LEVELS,
 	);
 
+	onMount(() => {
+		const handlePointerDown = (event: PointerEvent) => {
+			const target = event.target;
+			if (!(target instanceof Node)) return;
+			if (thinkingMenuRoot?.contains(target)) return;
+			showThinkingMenu = false;
+		};
+
+		const handleKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape") {
+				showThinkingMenu = false;
+			}
+		};
+
+		window.addEventListener("pointerdown", handlePointerDown);
+		window.addEventListener("keydown", handleKeyDown);
+
+		return () => {
+			window.removeEventListener("pointerdown", handlePointerDown);
+			window.removeEventListener("keydown", handleKeyDown);
+		};
+	});
+
 	async function submit() {
-		if (!draft.trim() || isStreaming) return;
+		if (!draft.trim() || isStreaming || isSubmitting) return;
 		const nextDraft = draft;
-		const sent = await onSend(nextDraft);
-		if (sent) {
-			draft = "";
+		draft = "";
+		isSubmitting = true;
+
+		try {
+			const sent = await onSend(nextDraft);
+			if (!sent && draft === "") {
+				draft = nextDraft;
+			}
+		} catch {
+			if (draft === "") {
+				draft = nextDraft;
+			}
+		} finally {
+			isSubmitting = false;
 		}
 	}
 
@@ -51,54 +89,80 @@
 		event.preventDefault();
 		void submit();
 	}
+
+	function selectThinkingLevel(level: ThinkingLevel) {
+		onThinkingChange(level);
+		showThinkingMenu = false;
+	}
 </script>
 
 <div class="composer-shell">
-	<div class="composer-toolbar">
-		<button class="model-pill" type="button" onclick={() => onOpenModelPicker()}>
-			<span class="toolbar-label">Model</span>
-			<strong>{currentModel.name}</strong>
-			<span class="toolbar-meta">{currentModel.provider} · {formatModelCost(currentModel)}</span>
-		</button>
+	<div class="composer-frame">
+		{#if errorMessage}
+			<p class="composer-error">{errorMessage}</p>
+		{/if}
 
-		<label class="thinking-field">
-			<span class="toolbar-label">Thinking</span>
-			<select
-				value={thinkingLevel}
-				onchange={(event) => onThinkingChange((event.currentTarget as HTMLSelectElement).value as ThinkingLevel)}
-			>
-				{#each availableThinkingLevels as level}
-					<option value={level}>{level}</option>
-				{/each}
-			</select>
-		</label>
+		<TextArea
+			bind:value={draft}
+			resize="vertical"
+			rows={5}
+			placeholder="Ask hellm to inspect the repo, make a change, or run verification."
+			onkeydown={handleKeydown}
+		/>
 
-		<div class="context-chip">
-			<span class="toolbar-label">Context</span>
-			<strong>{formatTokenCount(currentModel.contextWindow)}</strong>
-		</div>
-	</div>
-
-	{#if errorMessage}
-		<p class="composer-error">{errorMessage}</p>
-	{/if}
-
-	<TextArea
-		bind:value={draft}
-		resize="vertical"
-		rows={5}
-		placeholder="Ask hellm to inspect the repo, make a change, or run verification."
-		onkeydown={handleKeydown}
-	/>
-
-	<div class="composer-footer">
-		<p>{usageText ? `Session ${usageText}` : "Enter sends. Shift+Enter keeps writing."}</p>
-		<div class="composer-actions">
-			{#if isStreaming}
-				<Button variant="danger" onclick={onAbort}>Stop</Button>
-			{:else}
-				<Button variant="primary" onclick={() => void submit()} disabled={!draft.trim()}>Send</Button>
-			{/if}
+		<div class="composer-foot">
+			<div class="composer-controls">
+				<button class="composer-control model-control" type="button" onclick={() => onOpenModelPicker()}>
+					<span class="composer-control-label">Model</span>
+					<strong>{currentModel.name}</strong>
+				</button>
+				<div bind:this={thinkingMenuRoot} class="thinking-wrap">
+					<button
+						class="composer-control thinking-field"
+						type="button"
+						aria-haspopup="listbox"
+						aria-expanded={showThinkingMenu}
+						aria-label="Thinking level"
+						onclick={() => (showThinkingMenu = !showThinkingMenu)}
+					>
+						<span class="composer-control-label">Reasoning</span>
+						<strong>{thinkingLevel}</strong>
+						<span class="thinking-chevron" aria-hidden="true"></span>
+					</button>
+					{#if showThinkingMenu}
+						<div class="thinking-menu" role="listbox" aria-label="Thinking level options">
+							{#each availableThinkingLevels as level}
+								<button
+									class={`thinking-option ${level === thinkingLevel ? "active" : ""}`.trim()}
+									type="button"
+									role="option"
+									aria-selected={level === thinkingLevel}
+									onclick={() => selectThinkingLevel(level)}
+								>
+									<span>{level}</span>
+									{#if level === thinkingLevel}
+										<span class="thinking-option-state">Current</span>
+									{/if}
+								</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
+			</div>
+			<div class="composer-meta">
+				{#if usageText}
+					<p class="composer-usage">usage {usageText}</p>
+				{/if}
+				<div class="composer-actions">
+					{#if isStreaming}
+						<Button variant="danger" size="sm" onclick={onAbort}>Stop</Button>
+					{:else}
+						<Button variant="primary" size="sm" onclick={() => void submit()} disabled={!draft.trim() || isSubmitting}>
+							Send
+						</Button>
+					{/if}
+				</div>
+			</div>
 		</div>
 	</div>
 </div>
@@ -106,161 +170,185 @@
 <style>
 	.composer-shell {
 		container-type: inline-size;
-		padding: 0.7rem 0.8rem 0.8rem;
+		padding: 0.95rem;
 		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
-		background: var(--ui-surface);
+		background:
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-subtle) 78%, transparent), transparent),
+			color-mix(in oklab, var(--ui-surface) 72%, transparent);
 	}
 
-	.composer-toolbar {
+	.composer-frame {
 		display: grid;
-		grid-template-columns: minmax(0, 1.35fr) minmax(11rem, 0.82fr) minmax(8rem, auto);
-		gap: 0.75rem;
-		margin-bottom: 0.7rem;
+		gap: 0.7rem;
 	}
 
-	.model-pill,
-	.thinking-field,
-	.context-chip {
-		display: grid;
-		gap: 0.24rem;
-		padding: 0.1rem 0 0.55rem;
-		border-radius: 0;
-		border: none;
-		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
+	.thinking-wrap {
+		position: relative;
+	}
+
+	.composer-controls,
+	.composer-meta,
+	.composer-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+
+	.composer-foot {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem 1rem;
+		flex-wrap: wrap;
+	}
+
+	.composer-meta {
+		justify-content: flex-end;
+		margin-left: auto;
+		min-width: 0;
+	}
+
+	.composer-control {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.42rem;
+		min-height: 1.8rem;
+		padding: 0.22rem 0.52rem;
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 74%, transparent);
+		border-radius: var(--ui-radius-sm);
 		background: transparent;
-	}
-
-	.model-pill {
+		color: var(--ui-text-primary);
+		font: inherit;
 		text-align: left;
 		cursor: pointer;
-		transition:
-			border-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
-			background-color 170ms cubic-bezier(0.19, 1, 0.22, 1);
-	}
-
-	.model-pill:hover {
-		transform: none;
-		border-color: color-mix(in oklab, var(--ui-accent) 28%, var(--ui-border-strong));
-		background: transparent;
-		box-shadow: none;
-	}
-
-	.model-pill:focus-visible {
-		outline: none;
-		box-shadow: var(--ui-focus-ring);
-	}
-
-	.toolbar-label {
-		font-size: 0.62rem;
-		font-weight: 760;
-		letter-spacing: 0.16em;
-		text-transform: uppercase;
-		color: var(--ui-accent-strong);
-	}
-
-	.model-pill strong,
-	.context-chip strong {
-		font-size: 0.88rem;
-		font-weight: 710;
-		letter-spacing: -0.025em;
-		color: var(--ui-text-primary);
-	}
-
-	.toolbar-meta {
-		font-size: 0.72rem;
-		color: var(--ui-text-secondary);
-		font-variant-numeric: tabular-nums;
 	}
 
 	.thinking-field {
-		min-width: 0;
+		position: relative;
+		padding-right: 1.55rem;
 	}
 
-	.thinking-field select {
-		min-width: 0;
-		padding: 0;
-		border: none;
-		background: transparent;
-		font: inherit;
-		color: var(--ui-text-primary);
+	.composer-control-label {
+		font-size: 0.62rem;
+		font-family: var(--font-mono);
+		letter-spacing: 0.04em;
+		color: var(--ui-text-secondary);
+	}
+
+	.composer-control strong {
+		font-size: 0.72rem;
 		font-weight: 650;
-		appearance: none;
-		cursor: pointer;
+		letter-spacing: -0.01em;
 	}
 
-	.thinking-field select:focus-visible {
+	.thinking-chevron {
+		position: absolute;
+		right: 0.56rem;
+		top: 50%;
+		width: 0.42rem;
+		height: 0.42rem;
+		border-right: 1.25px solid var(--ui-text-secondary);
+		border-bottom: 1.25px solid var(--ui-text-secondary);
+		transform: translateY(-65%) rotate(45deg);
+		pointer-events: none;
+	}
+
+	.composer-control:hover,
+	.composer-control:focus-visible {
 		outline: none;
+		border-color: color-mix(in oklab, var(--ui-accent) 58%, var(--ui-border-strong));
+		background: color-mix(in oklab, var(--ui-surface-subtle) 54%, transparent);
 	}
 
-	.context-chip {
-		align-content: center;
-		min-width: 0;
-		font-variant-numeric: tabular-nums;
+	.thinking-menu {
+		position: absolute;
+		right: 0;
+		bottom: calc(100% + 0.35rem);
+		z-index: var(--ui-z-overlay);
+		display: grid;
+		min-width: max(11rem, 100%);
+		max-width: min(14rem, calc(100vw - 2rem));
+		padding: 0.28rem;
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
+		border-radius: var(--ui-radius-md);
+		background:
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-raised) 86%, transparent), transparent),
+			var(--ui-surface-raised);
+		box-shadow: var(--ui-shadow-strong);
+		transform-origin: bottom right;
 	}
 
-	.composer-error {
-		margin: 0 0 0.75rem;
-		padding: 0.65rem 0.75rem;
-		border-radius: 0;
-		border: none;
-		border-left: 2px solid var(--ui-danger);
-		background: color-mix(in oklab, var(--ui-danger-soft) 76%, transparent);
-		color: color-mix(in oklab, var(--ui-danger) 82%, var(--ui-text-primary));
-		font-size: 0.84rem;
-		line-height: 1.5;
-	}
-
-	:global(.composer-shell .ui-textarea) {
-		min-height: 7.25rem;
-	}
-
-	.composer-footer {
+	.thinking-option {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.8rem;
-		margin-top: 0.65rem;
-		padding-top: 0.65rem;
-		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 56%, transparent);
+		padding: 0.55rem 0.6rem;
+		border: 1px solid transparent;
+		border-radius: var(--ui-radius-sm);
+		background: transparent;
+		color: var(--ui-text-primary);
+		font: inherit;
+		font-size: 0.74rem;
+		font-weight: 600;
+		text-transform: lowercase;
+		text-align: left;
+		cursor: pointer;
 	}
 
-	.composer-footer p {
-		margin: 0;
-		font-size: 0.72rem;
-		font-weight: 600;
-		letter-spacing: 0.02em;
+	.thinking-option:hover,
+	.thinking-option:focus-visible,
+	.thinking-option.active {
+		outline: none;
+		border-color: color-mix(in oklab, var(--ui-border-accent) 72%, var(--ui-border-soft));
+		background: color-mix(in oklab, var(--ui-accent-soft) 68%, var(--ui-surface-raised));
+	}
+
+	.thinking-option-state {
+		font-size: 0.64rem;
+		font-family: var(--font-mono);
 		color: var(--ui-text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+	}
+
+	.composer-error {
+		margin: 0;
+		padding: 0.72rem 0.8rem;
+		border-radius: var(--ui-radius-md);
+		border: 1px solid color-mix(in oklab, var(--ui-danger) 22%, var(--ui-border-soft));
+		background: color-mix(in oklab, var(--ui-danger-soft) 74%, transparent);
+		color: color-mix(in oklab, var(--ui-danger) 82%, var(--ui-text-primary));
+		font-size: 0.78rem;
+		line-height: 1.5;
+	}
+
+	:global(.composer-shell .ui-textarea) {
+		min-height: 6.8rem;
+	}
+
+	.composer-usage {
+		margin: 0;
+		font-size: 0.66rem;
+		font-family: var(--font-mono);
+		color: var(--ui-text-tertiary);
 		font-variant-numeric: tabular-nums;
 	}
 
-	.composer-actions {
-		display: flex;
-		align-items: center;
-		gap: 0.55rem;
-	}
-
-	@container (max-width: 44rem) {
-		.composer-toolbar {
-			grid-template-columns: 1fr;
-		}
-
-		.context-chip {
-			width: fit-content;
-		}
-	}
-
-	@media (max-width: 640px) {
+	@media (max-width: 760px) {
 		.composer-shell {
-			padding: 0.65rem;
+			padding: 0.75rem;
 		}
 
-		.composer-footer {
-			flex-direction: column;
-			align-items: stretch;
+		.composer-foot,
+		.composer-meta {
+			align-items: flex-start;
+			justify-content: flex-start;
 		}
 
 		.composer-actions {
-			justify-content: flex-end;
+			justify-content: flex-start;
 		}
 	}
 </style>

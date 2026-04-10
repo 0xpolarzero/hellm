@@ -1,18 +1,18 @@
 <script lang="ts">
 	import { onMount } from "svelte";
-	import type { AssistantMessage, Usage } from "@mariozechner/pi-ai";
+	import type { AssistantMessage, Model, Usage } from "@mariozechner/pi-ai";
 	import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 	import ArtifactsPanel from "./ArtifactsPanel.svelte";
 	import { ArtifactsController, type ArtifactsSnapshot } from "./artifacts";
 	import ChatComposer from "./ChatComposer.svelte";
-	import { formatUsage } from "./chat-format";
+	import { formatTimestamp, formatUsage } from "./chat-format";
 	import ChatTranscript from "./ChatTranscript.svelte";
 	import type { ChatRuntime } from "./chat-runtime";
 	import ModelPickerDialog from "./ModelPickerDialog.svelte";
-	import Button from "./ui/Button.svelte";
 	import Badge from "./ui/Badge.svelte";
 
-	const ARTIFACTS_BREAKPOINT = 800;
+	const DESKTOP_SPLIT_BREAKPOINT = 1220;
+	const STACKED_SIDEBAR_BREAKPOINT = 940;
 
 	type Props = {
 		runtime: ChatRuntime;
@@ -41,7 +41,8 @@
 	let pendingToolCalls = $state(new Set<string>());
 	let isStreaming = $state(false);
 	let errorMessage = $state<string | undefined>(undefined);
-	let agentRevision = $state(0);
+	let currentModel = $state<Model<any> | null>(null);
+	let currentThinkingLevel = $state<ThinkingLevel>("off");
 	let artifactsSnapshot = $state<ArtifactsSnapshot>({
 		activeFilename: null,
 		artifacts: [],
@@ -52,20 +53,13 @@
 	let allowedProviders = $state<string[]>([]);
 	let windowWidth = $state(0);
 
-	const isMobile = $derived(windowWidth < ARTIFACTS_BREAKPOINT);
 	const artifactCount = $derived(artifactsSnapshot.artifacts.length);
 	const hasArtifacts = $derived(artifactCount > 0);
-	const showDesktopSplit = $derived(!isMobile && showArtifactsPanel && hasArtifacts);
+	const showDesktopSplit = $derived(windowWidth >= DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts);
+	const showOverlayArtifacts = $derived(windowWidth < DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts);
+	const stackSidebar = $derived(windowWidth < STACKED_SIDEBAR_BREAKPOINT);
 	const workspaceStatusText = $derived(errorMessage ? "Attention" : isStreaming ? "Streaming" : "Ready");
 	const workspaceStatusTone = $derived(errorMessage ? "danger" : isStreaming ? "warning" : "neutral");
-	const currentModel = $derived.by(() => {
-		agentRevision;
-		return runtime.agent.state.model;
-	});
-	const thinkingLevel = $derived.by(() => {
-		agentRevision;
-		return runtime.agent.state.thinkingLevel as ThinkingLevel;
-	});
 	const totalUsage = $derived.by(() =>
 		messages
 			.filter((message): message is AssistantMessage => message.role === "assistant")
@@ -88,11 +82,40 @@
 			),
 	);
 	const usageText = $derived(formatUsage(totalUsage));
+	const messageCount = $derived(
+		messages.filter((message) => message.role === "user" || message.role === "assistant").length + (streamingMessage ? 1 : 0),
+	);
+	const toolCallCount = $derived.by(() => {
+		let count = 0;
+		for (const message of messages) {
+			if (message.role !== "assistant") continue;
+			count += message.content.filter((block) => block.type === "toolCall").length;
+		}
+		if (streamingMessage) {
+			count += streamingMessage.content.filter((block) => block.type === "toolCall").length;
+		}
+		return count;
+	});
+	const lastActivity = $derived.by(() => {
+		for (let index = messages.length - 1; index >= 0; index -= 1) {
+			const message = messages[index];
+			if (message.role === "user" || message.role === "assistant" || message.role === "toolResult") {
+				return message.timestamp;
+			}
+		}
+		return null;
+	});
+	const lastActivityLabel = $derived(lastActivity ? `Last activity ${formatTimestamp(lastActivity)}` : "Waiting for first turn");
 
 	async function openModelSelector() {
-		const configuredProviders = await runtime.listConfiguredProviders();
-		allowedProviders = Array.from(new Set([runtime.agent.state.model.provider, ...configuredProviders]));
 		showModelPicker = true;
+		allowedProviders = [currentModel.provider];
+		try {
+			const configuredProviders = await runtime.listConfiguredProviders();
+			allowedProviders = Array.from(new Set([currentModel.provider, ...configuredProviders]));
+		} catch {
+			allowedProviders = [currentModel.provider];
+		}
 	}
 
 	function syncAgentState() {
@@ -101,7 +124,8 @@
 		pendingToolCalls = new Set(runtime.agent.state.pendingToolCalls);
 		isStreaming = runtime.agent.state.isStreaming;
 		errorMessage = runtime.agent.state.errorMessage;
-		agentRevision += 1;
+		currentModel = runtime.agent.state.model;
+		currentThinkingLevel = runtime.agent.state.thinkingLevel as ThinkingLevel;
 	}
 
 	function syncArtifacts(snapshot: ArtifactsSnapshot) {
@@ -130,6 +154,8 @@
 		controller?.selectArtifact(filename);
 		showArtifactsPanel = true;
 	}
+
+	syncAgentState();
 
 	onMount(() => {
 		windowWidth = window.innerWidth;
@@ -161,49 +187,86 @@
 	});
 </script>
 
-<div class={`chat-workspace ${showDesktopSplit ? "split" : ""}`.trim()}>
-	<section class="workspace-main">
-		<header class="workspace-rail">
-			<div class="workspace-meta">
-				<Badge tone={workspaceStatusTone}>{workspaceStatusText}</Badge>
-				{#if usageText}
-					<p class="workspace-usage">usage {usageText}</p>
-				{/if}
+<div class={`chat-workspace ${showDesktopSplit ? "split" : ""} ${stackSidebar ? "stacked" : ""}`.trim()}>
+	<aside class="workspace-sidebar">
+		<div class="sidebar-surface">
+			<div class="sidebar-copy">
+				<p class="sidebar-eyebrow">Session Shell</p>
+				<h2>Local orchestration</h2>
+				<p>
+					One strategic thread, one pi-backed runtime, and a docked inspector for generated artifacts and
+					verification output.
+				</p>
 			</div>
-			<div class="workspace-controls">
-				{#if hasArtifacts}
-					<Button
-						variant={showArtifactsPanel ? "secondary" : "ghost"}
-						size="sm"
+
+			<section class="sidebar-section">
+				<p class="sidebar-section-label">Navigate</p>
+				<div class="sidebar-nav">
+					<a class="sidebar-link current" href="#conversation">
+						<span>Conversation</span>
+						<span>{messageCount}</span>
+					</a>
+					<button
+						class={`sidebar-link ${showArtifactsPanel ? "current" : ""}`.trim()}
+						type="button"
+						disabled={!hasArtifacts}
 						onclick={() => (showArtifactsPanel = !showArtifactsPanel)}
 					>
-						Artifacts
-						<Badge tone="info">{artifactCount}</Badge>
-					</Button>
-				{/if}
-			</div>
-		</header>
+						<span>Artifacts</span>
+						<span>{artifactCount}</span>
+					</button>
+				</div>
+			</section>
 
-		<section class="chat-pane">
+			<section class="sidebar-section">
+				<p class="sidebar-section-label">Runtime</p>
+				<dl class="sidebar-metrics">
+					<div>
+						<dt>Status</dt>
+						<dd><Badge tone={workspaceStatusTone}>{workspaceStatusText}</Badge></dd>
+					</div>
+					<div>
+						<dt>Turns</dt>
+						<dd>{messageCount}</dd>
+					</div>
+					<div>
+						<dt>Tool runs</dt>
+						<dd>{toolCallCount}</dd>
+					</div>
+				</dl>
+			</section>
+
+			<section class="sidebar-note">
+				<p class="sidebar-section-label">Pulse</p>
+				<p>{lastActivityLabel}</p>
+			</section>
+		</div>
+	</aside>
+
+	<section class="workspace-main">
+		<section class="chat-pane" id="conversation">
 			<div class="chat-pane-shell">
-			<ChatTranscript
-				{messages}
-				streamingMessage={streamingMessage ?? undefined}
-				{pendingToolCalls}
-				{isStreaming}
-				onOpenArtifact={handleOpenArtifact}
-			/>
-			<ChatComposer
-				{currentModel}
-				{thinkingLevel}
-				{isStreaming}
-				{errorMessage}
-				usageText={usageText || undefined}
-				onAbort={() => runtime.agent.abort()}
-				onOpenModelPicker={() => void openModelSelector()}
-				onSend={handleSend}
-				onThinkingChange={(level) => runtime.agent.setThinkingLevel(level)}
-			/>
+				<ChatTranscript
+					{messages}
+					streamingMessage={streamingMessage ?? undefined}
+					{pendingToolCalls}
+					{isStreaming}
+					onOpenArtifact={handleOpenArtifact}
+				/>
+				<ChatComposer
+					currentModel={currentModel ?? runtime.agent.state.model}
+					thinkingLevel={currentThinkingLevel}
+					{isStreaming}
+					{errorMessage}
+					usageText={usageText || undefined}
+					onAbort={() => runtime.agent.abort()}
+					onOpenModelPicker={() => void openModelSelector()}
+					onSend={handleSend}
+					onThinkingChange={(level) => {
+						currentThinkingLevel = level;
+						runtime.agent.setThinkingLevel(level);
+					}}
+				/>
 			</div>
 		</section>
 	</section>
@@ -219,7 +282,7 @@
 			</aside>
 		{/if}
 
-		{#if isMobile && showArtifactsPanel}
+		{#if showOverlayArtifacts}
 			<aside class="artifacts-slot mobile-slot">
 				<div class="mobile-overlay">
 					<ArtifactsPanel
@@ -236,11 +299,12 @@
 
 {#if showModelPicker}
 	<ModelPickerDialog
-		currentModel={currentModel}
+		currentModel={currentModel ?? runtime.agent.state.model}
 		allowedProviders={allowedProviders}
 		storage={runtime.storage}
 		onClose={() => (showModelPicker = false)}
 		onSelect={(model) => {
+			currentModel = model;
 			runtime.agent.setModel(model);
 			showModelPicker = false;
 		}}
@@ -251,60 +315,178 @@
 	.chat-workspace {
 		position: relative;
 		display: grid;
-		grid-template-columns: minmax(0, 1fr);
+		grid-template-columns: clamp(15rem, 18vw, 17.5rem) minmax(0, 1fr);
+		gap: 1rem;
 		height: 100%;
 		min-height: 0;
-		background: var(--ui-bg-elevated);
+		padding: 1rem;
+		background: transparent;
+		overflow: hidden;
+	}
+
+	.stacked {
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: auto minmax(0, 1fr);
+	}
+
+	.split {
+		grid-template-columns: clamp(15rem, 18vw, 17.5rem) minmax(0, 1fr) clamp(21rem, 29vw, 31rem);
+	}
+
+	.workspace-sidebar,
+	.workspace-main,
+	.artifacts-slot {
+		min-width: 0;
+		min-height: 0;
+	}
+
+	.workspace-sidebar,
+	.workspace-main {
+		overflow: hidden;
+	}
+
+	.sidebar-surface {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		height: 100%;
+		padding: 0.95rem;
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
+		border-radius: var(--ui-radius-lg);
+		background:
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-panel) 88%, transparent), color-mix(in oklab, var(--ui-surface-subtle) 82%, transparent)),
+			var(--ui-panel);
+		box-shadow: var(--ui-shadow-soft);
+	}
+
+	.sidebar-copy,
+	.sidebar-section,
+	.sidebar-note {
+		display: grid;
+		gap: 0.5rem;
+	}
+
+	.sidebar-eyebrow,
+	.sidebar-section-label {
+		margin: 0;
+		font-size: 0.67rem;
+		font-family: var(--font-mono);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ui-text-tertiary);
+	}
+
+	.sidebar-copy h2 {
+		margin: 0;
+		font-size: clamp(1.05rem, 1vw + 0.95rem, 1.35rem);
+		font-weight: 670;
+		letter-spacing: -0.04em;
+		color: var(--ui-text-primary);
+	}
+
+	.sidebar-copy p:last-child,
+	.sidebar-note p:last-child {
+		margin: 0;
+		font-size: 0.8rem;
+		line-height: 1.6;
+		color: var(--ui-text-secondary);
+	}
+
+	.sidebar-nav {
+		display: grid;
+		gap: 0.4rem;
+	}
+
+	.sidebar-link {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 0.8rem;
+		padding: 0.72rem 0.8rem;
+		border: 1px solid transparent;
+		border-radius: var(--ui-radius-md);
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		text-align: left;
+		text-decoration: none;
+		cursor: pointer;
+		transition:
+			border-color 180ms cubic-bezier(0.19, 1, 0.22, 1),
+			background-color 180ms cubic-bezier(0.19, 1, 0.22, 1),
+			color 180ms cubic-bezier(0.19, 1, 0.22, 1);
+	}
+
+	.sidebar-link:hover:not(:disabled),
+	.sidebar-link:focus-visible {
+		outline: none;
+		border-color: color-mix(in oklab, var(--ui-border-strong) 76%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-raised) 72%, transparent);
+	}
+
+	.sidebar-link.current {
+		border-color: color-mix(in oklab, var(--ui-border-accent) 78%, var(--ui-border-soft));
+		background: color-mix(in oklab, var(--ui-accent-soft) 72%, var(--ui-surface-raised));
+	}
+
+	.sidebar-link:disabled {
+		opacity: 0.48;
+		cursor: not-allowed;
+	}
+
+	.sidebar-link span:first-child {
+		font-size: 0.8rem;
+		font-weight: 620;
+		color: var(--ui-text-primary);
+	}
+
+	.sidebar-link span:last-child {
+		font-size: 0.68rem;
+		font-family: var(--font-mono);
+		color: var(--ui-text-secondary);
+	}
+
+	.sidebar-metrics {
+		display: grid;
+		gap: 0.55rem;
+		margin: 0;
+	}
+
+	.sidebar-metrics div {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 0.7rem;
+		align-items: center;
+		padding: 0.1rem 0;
+	}
+
+	.sidebar-metrics dt,
+	.sidebar-metrics dd {
+		margin: 0;
+	}
+
+	.sidebar-metrics dt {
+		font-size: 0.72rem;
+		color: var(--ui-text-secondary);
+	}
+
+	.sidebar-metrics dd {
+		font-size: 0.74rem;
+		font-weight: 600;
+		text-align: right;
+		color: var(--ui-text-primary);
 	}
 
 	.workspace-main {
 		display: flex;
 		flex-direction: column;
-		min-width: 0;
 		min-height: 0;
-	}
-
-	.workspace-rail {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		padding: 0.55rem 0.8rem;
-		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
-		background: transparent;
-	}
-
-	.workspace-meta {
-		display: flex;
-		align-items: center;
-		gap: 0.65rem;
-		flex-wrap: wrap;
-		min-width: 0;
-	}
-
-	.workspace-controls {
-		display: flex;
-		align-items: center;
-		justify-content: flex-end;
-		gap: 0.45rem;
-		flex-wrap: wrap;
-	}
-
-	.workspace-usage {
-		margin: 0;
-		font-size: 0.74rem;
-		font-weight: 600;
-		letter-spacing: 0.04em;
-		color: var(--ui-text-secondary);
-		white-space: nowrap;
-		font-family: var(--font-mono);
-		font-variant-numeric: tabular-nums;
 	}
 
 	.chat-pane {
 		flex: 1 1 auto;
-		min-width: 0;
 		min-height: 0;
+		overflow: hidden;
 	}
 
 	.chat-pane-shell {
@@ -312,21 +494,22 @@
 		flex-direction: column;
 		height: 100%;
 		min-height: 0;
-	}
-
-	.split {
-		grid-template-columns: minmax(0, 1fr) clamp(22rem, 31vw, 34rem);
-	}
-
-	.artifacts-slot {
-		min-height: 0;
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 94%, transparent);
+		border-radius: var(--ui-radius-lg);
+		background:
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-raised) 74%, transparent), transparent 14%),
+			var(--ui-surface);
+		box-shadow: var(--ui-shadow-soft);
+		overflow: hidden;
 	}
 
 	.desktop-open {
 		display: block;
-		min-width: 0;
-		border-left: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
+		border-radius: var(--ui-radius-lg);
 		background: var(--ui-surface);
+		box-shadow: var(--ui-shadow-soft);
+		overflow: hidden;
 	}
 
 	.mobile-slot {
@@ -340,25 +523,34 @@
 		align-items: flex-end;
 		justify-content: stretch;
 		height: 100%;
-		padding: 0.7rem;
+		padding: 0.9rem;
 		background:
-			linear-gradient(180deg, color-mix(in oklab, black 8%, transparent), color-mix(in oklab, black 28%, transparent));
+			linear-gradient(180deg, color-mix(in oklab, black 8%, transparent), color-mix(in oklab, black 32%, transparent));
 	}
 
-	@media (max-width: 960px) {
-		.workspace-rail {
-			align-items: start;
-			flex-direction: column;
-		}
-
-		.workspace-controls {
-			justify-content: flex-start;
+	@media (max-width: 1220px) {
+		.chat-workspace {
+			padding: 0.9rem;
 		}
 	}
 
-	@media (max-width: 720px) {
-		.workspace-rail {
-			padding-inline: 0.65rem;
+	@media (max-width: 940px) {
+		.chat-workspace {
+			grid-template-columns: minmax(0, 1fr);
+			grid-template-rows: auto minmax(0, 1fr);
+		}
+	}
+
+	@media (max-width: 760px) {
+		.chat-workspace {
+			gap: 0.75rem;
+			padding: 0.75rem;
+		}
+
+		.sidebar-surface,
+		.desktop-open,
+		.chat-pane-shell {
+			border-radius: var(--ui-radius-lg);
 		}
 
 		.mobile-overlay {

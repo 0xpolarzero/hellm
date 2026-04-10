@@ -10,7 +10,6 @@
 	} from "./artifacts";
 	import { formatTimestamp, formatUsage } from "./chat-format";
 	import Button from "./ui/Button.svelte";
-	import Badge from "./ui/Badge.svelte";
 
 	type Props = {
 		messages: AgentMessage[];
@@ -93,18 +92,6 @@
 
 <div bind:this={scroller} class="chat-transcript" onscroll={handleScroll}>
 	<div class="chat-thread">
-		{#if visibleMessages.length === 0 && !streamingAssistant}
-			<div class="empty-state">
-				<p class="empty-eyebrow">Ready</p>
-				<h2>Ask hellm to inspect the repository, make a change, or run verification.</h2>
-				<div class="empty-list" aria-hidden="true">
-					<p>Review the repo and summarize the architecture.</p>
-					<p>Implement a change and explain the diff.</p>
-					<p>Run the relevant checks and report failures.</p>
-				</div>
-			</div>
-		{/if}
-
 		{#each visibleMessages as message, index (`${message.role}:${message.timestamp}:${index}`)}
 			{#if message.role === "user"}
 				<article class="message-row user-row">
@@ -114,7 +101,7 @@
 							<time>{formatTimestamp(message.timestamp)}</time>
 						</header>
 						{#each userLines(message) as line, lineIndex (`${message.timestamp}:line:${lineIndex}`)}
-							<pre>{line}</pre>
+							<p class="message-text">{line}</p>
 						{/each}
 					</div>
 				</article>
@@ -128,7 +115,7 @@
 							</div>
 							<div class="message-meta">
 								{#if formatUsage(message.usage)}
-									<Badge>{formatUsage(message.usage)}</Badge>
+									<span class="message-usage">{formatUsage(message.usage)}</span>
 								{/if}
 								<time>{formatTimestamp(message.timestamp)}</time>
 							</div>
@@ -136,7 +123,7 @@
 
 						{#each message.content as block, blockIndex (`${message.timestamp}:block:${blockIndex}`)}
 							{#if block.type === "text"}
-								<pre>{block.text}</pre>
+								<div class="message-text">{block.text}</div>
 							{:else if block.type === "thinking"}
 								<details class="thinking-block">
 									<summary>Reasoning trace</summary>
@@ -157,9 +144,9 @@
 										{/if}
 									</div>
 									<div class="tool-card-actions">
-										<Badge tone={status === "error" ? "danger" : status === "done" ? "success" : "warning"}>
+										<span class={`tool-status tone-${status === "error" ? "danger" : status === "done" ? "success" : "warning"}`.trim()}>
 											{status}
-										</Badge>
+										</span>
 										{#if params}
 											<Button size="sm" variant="ghost" onclick={() => onOpenArtifact(params.filename)}>
 												Open
@@ -185,9 +172,9 @@
 								{/if}
 							</div>
 							<div class="tool-result-actions">
-								<Badge tone={message.isError ? "danger" : "success"}>
+								<span class={`tool-status tone-${message.isError ? "danger" : "success"}`.trim()}>
 									{message.isError ? "Error" : "Complete"}
-								</Badge>
+								</span>
 								{#if params}
 									<Button size="sm" variant="ghost" onclick={() => onOpenArtifact(params.filename)}>Open</Button>
 								{/if}
@@ -212,12 +199,12 @@
 							<span>hellm</span>
 							<small>{streamingAssistant.provider} · {streamingAssistant.model}</small>
 						</div>
-						<Badge tone="warning">Streaming</Badge>
+						<span class="tool-status tone-warning">Streaming</span>
 					</header>
 
 					{#each streamingAssistant.content as block, blockIndex (`streaming:${blockIndex}`)}
 						{#if block.type === "text"}
-							<pre>{block.text}</pre>
+							<div class="message-text">{block.text}</div>
 						{:else if block.type === "thinking"}
 							<details class="thinking-block" open>
 								<summary>Reasoning trace</summary>
@@ -236,7 +223,7 @@
 										<span>{block.name}</span>
 									{/if}
 								</div>
-								<Badge tone="warning">pending</Badge>
+								<span class="tool-status tone-warning">pending</span>
 							</div>
 						{/if}
 					{/each}
@@ -257,14 +244,15 @@
 	.chat-thread {
 		display: flex;
 		flex-direction: column;
-		gap: 0.85rem;
-		max-width: 60rem;
-		margin: 0 auto 0 0;
-		padding: 0.85rem 0.8rem 0.75rem;
+		gap: 1rem;
+		width: min(100%, 72rem);
+		margin: 0 auto;
+		padding: 1.15rem clamp(1rem, 3vw, 2rem) 1.35rem;
 	}
 
 	.message-row {
 		display: flex;
+		width: 100%;
 	}
 
 	.user-row {
@@ -279,36 +267,38 @@
 	.message-bubble,
 	.tool-result {
 		position: relative;
-		width: min(100%, 48rem);
-		padding: 0.82rem 0.9rem;
-		border-radius: var(--ui-radius-md);
-		border: none;
-		box-shadow: none;
+		width: min(100%, 58rem);
+		padding: 0.95rem 1rem;
+		border-radius: var(--ui-radius-lg);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+		background: var(--ui-surface-raised);
+		box-shadow: var(--ui-shadow-soft);
 		overflow: visible;
 	}
 
 	.user-bubble {
-		width: min(100%, 39rem);
-		background: color-mix(in oklab, var(--ui-accent-soft) 76%, var(--ui-bg-elevated));
+		width: min(100%, 44rem);
+		border-color: color-mix(in oklab, var(--ui-border-accent) 68%, var(--ui-border-soft));
+		background:
+			linear-gradient(180deg, color-mix(in oklab, white 18%, transparent), transparent),
+			color-mix(in oklab, var(--ui-accent-soft) 78%, var(--ui-surface-raised));
 	}
 
 	.assistant-bubble {
-		padding-left: 1.1rem;
-		border-left: 2px solid color-mix(in oklab, var(--ui-border-strong) 70%, transparent);
-		background: transparent;
-		border-radius: 0;
+		background:
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-raised) 72%, transparent), transparent),
+			var(--ui-surface);
 	}
 
 	.tool-result {
-		padding-left: 1.1rem;
-		border-left: 2px solid color-mix(in oklab, var(--ui-accent) 82%, var(--ui-accent-strong));
-		background: color-mix(in oklab, var(--ui-surface-subtle) 58%, transparent);
-		border-radius: 0;
+		border-color: color-mix(in oklab, var(--ui-border-accent) 72%, var(--ui-border-soft));
+		background:
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-accent-soft) 36%, transparent), transparent),
+			var(--ui-surface-raised);
 	}
 
 	.streaming {
-		border-left-style: dashed;
-		animation: none;
+		border-style: dashed;
 	}
 
 	.message-bubble header,
@@ -317,22 +307,21 @@
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: 0.9rem;
-		margin-bottom: 0.65rem;
+		margin-bottom: 0.55rem;
 	}
 
 	.message-bubble header span,
 	.tool-result-header strong {
-		font-size: 0.82rem;
-		font-weight: 760;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
+		font-size: 0.74rem;
+		font-weight: 650;
+		letter-spacing: 0.01em;
 		color: var(--ui-text-primary);
 	}
 
 	.message-bubble header small,
 	.tool-result-header span,
 	time {
-		font-size: 0.74rem;
+		font-size: 0.66rem;
 		color: var(--ui-text-secondary);
 		font-variant-numeric: tabular-nums;
 	}
@@ -341,44 +330,73 @@
 	.tool-result-actions {
 		display: flex;
 		align-items: center;
-		gap: 0.45rem;
+		gap: 0.4rem;
 		flex-wrap: wrap;
 		justify-content: flex-end;
 	}
 
-	pre {
+	.message-usage,
+	.tool-status {
+		font-size: 0.66rem;
+		font-family: var(--font-mono);
+		font-variant-numeric: tabular-nums;
+		color: var(--ui-text-secondary);
+	}
+
+	.tool-status.tone-success {
+		color: color-mix(in oklab, var(--ui-success) 78%, var(--ui-text-primary));
+	}
+
+	.tool-status.tone-warning {
+		color: color-mix(in oklab, var(--ui-warning) 82%, var(--ui-text-primary));
+	}
+
+	.tool-status.tone-danger {
+		color: color-mix(in oklab, var(--ui-danger) 82%, var(--ui-text-primary));
+	}
+
+	.message-text {
 		margin: 0;
 		white-space: pre-wrap;
 		word-break: break-word;
-		font-family: inherit;
 		font-size: 0.9rem;
-		line-height: 1.6;
+		line-height: 1.64;
 		color: var(--ui-text-primary);
+	}
+
+	.message-text + .message-text {
+		margin-top: 0.72rem;
 	}
 
 	.thinking-block,
 	.result-details {
-		margin-top: 0.65rem;
-		padding: 0.7rem 0.8rem;
+		margin-top: 0.8rem;
+		min-width: 0;
+		padding: 0.78rem 0 0;
 		border-radius: 0;
 		border: none;
 		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
-		background: color-mix(in oklab, var(--ui-surface-muted) 58%, transparent);
+		background: transparent;
 	}
 
 	.thinking-block summary,
 	.result-details summary {
 		cursor: pointer;
-		font-size: 0.78rem;
-		font-weight: 720;
-		letter-spacing: 0.05em;
+		font-size: 0.73rem;
+		font-weight: 620;
+		letter-spacing: 0.01em;
 		color: var(--ui-text-secondary);
 	}
 
 	.thinking-block pre,
 	.result-details pre {
-		margin-top: 0.65rem;
+		margin-top: 0.55rem;
+		max-width: 100%;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		word-break: break-word;
 		font-size: 0.82rem;
+		line-height: 1.6;
 		color: var(--ui-text-secondary);
 	}
 
@@ -388,12 +406,11 @@
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: 0.8rem;
-		margin-top: 0.65rem;
-		padding: 0.72rem 0.8rem;
-		border-radius: 0;
-		border: none;
-		border-left: 2px solid color-mix(in oklab, var(--ui-accent) 84%, var(--ui-accent-strong));
-		background: color-mix(in oklab, var(--ui-surface-muted) 62%, transparent);
+		margin-top: 0.8rem;
+		padding: 0.75rem 0.85rem;
+		border-radius: var(--ui-radius-md);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 84%, transparent);
+		background: color-mix(in oklab, var(--ui-code) 94%, transparent);
 		overflow: visible;
 	}
 
@@ -404,12 +421,16 @@
 
 	.tool-card.error,
 	.tool-result.error {
-		background: var(--ui-danger-soft);
+		background: color-mix(in oklab, var(--ui-danger-soft) 56%, transparent);
 	}
 
 	.tool-card.error,
 	.tool-result.error {
-		border-left-color: var(--ui-danger);
+		border-color: color-mix(in oklab, var(--ui-danger) 36%, var(--ui-border-soft));
+	}
+
+	.tool-result.error {
+		border-color: color-mix(in oklab, var(--ui-danger) 42%, var(--ui-border-soft));
 	}
 
 	.tool-card-copy,
@@ -425,59 +446,20 @@
 	}
 
 	.tool-card-copy strong {
-		font-size: 0.86rem;
-		font-weight: 700;
+		font-size: 0.82rem;
+		font-weight: 640;
 		color: var(--ui-text-primary);
 	}
 
 	.tool-card-copy span {
 		font-family: var(--font-mono);
-		font-size: 0.76rem;
+		font-size: 0.72rem;
 		color: var(--ui-text-secondary);
 	}
 
-	.empty-state {
-		padding: clamp(2.1rem, 7vw, 3.6rem) 0 2rem;
-		max-width: 44rem;
-		color: var(--ui-text-secondary);
-	}
-
-	.empty-eyebrow {
-		margin: 0 0 0.3rem;
-		font-size: 0.68rem;
-		font-weight: 760;
-		letter-spacing: 0.18em;
-		text-transform: uppercase;
-		color: var(--ui-accent-strong);
-	}
-
-	.empty-state h2 {
-		margin: 0;
-		max-width: 38rem;
-		font-size: clamp(1.2rem, 2vw, 1.65rem);
-		font-weight: 680;
-		letter-spacing: -0.045em;
-		color: var(--ui-text-primary);
-	}
-
-	.empty-list {
-		display: grid;
-		gap: 0.45rem;
-		margin-top: 0.75rem;
-		padding-left: 1rem;
-		border-left: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
-	}
-
-	.empty-list p {
-		margin: 0;
-		font-size: 0.88rem;
-		line-height: 1.55;
-		color: var(--ui-text-secondary);
-	}
-
-	@media (max-width: 720px) {
+	@media (max-width: 760px) {
 		.chat-thread {
-			padding-inline: 0.65rem;
+			padding-inline: 0.9rem;
 		}
 
 		.message-bubble header,
@@ -490,10 +472,6 @@
 		.message-meta,
 		.tool-result-actions {
 			justify-content: flex-start;
-		}
-
-		.empty-state {
-			padding-top: 3rem;
 		}
 	}
 </style>

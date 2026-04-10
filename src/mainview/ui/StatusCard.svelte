@@ -37,35 +37,38 @@
 		height: 100%;
 		min-height: 18rem;
 		text-align: left;
+		border: none;
+		background:
+			radial-gradient(circle at top left, color-mix(in oklab, var(--ui-accent) 10%, transparent), transparent 30%),
+			transparent;
 	}
 
 	.ui-status-copy {
-		max-width: 38rem;
-		padding: clamp(1rem, 2vw, 1.4rem);
+		max-width: 34rem;
+		padding: clamp(1rem, 2vw, 1.3rem);
 	}
 
 	.ui-status-eyebrow {
 		margin: 0 0 0.32rem;
-		font-size: 0.7rem;
-		font-weight: 780;
-		letter-spacing: 0.18em;
-		text-transform: uppercase;
+		font-size: 0.66rem;
+		font-weight: 620;
+		letter-spacing: 0.04em;
 		color: color-mix(in oklab, var(--ui-accent-strong) 86%, var(--ui-text-primary));
 	}
 
 	h2 {
 		margin: 0;
-		font-size: 1.45rem;
-		font-weight: 720;
-		letter-spacing: -0.03em;
+		font-size: 1.32rem;
+		font-weight: 680;
+		letter-spacing: -0.035em;
 		color: var(--ui-text-primary);
 	}
 
 	p {
-		margin: 0.6rem 0 0;
-		max-width: 34rem;
-		font-size: 0.95rem;
-		line-height: 1.65;
+		margin: 0.55rem 0 0;
+		max-width: 31rem;
+		font-size: 0.9rem;
+		line-height: 1.6;
 		color: var(--ui-text-secondary);
 	}
 

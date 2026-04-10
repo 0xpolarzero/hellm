@@ -42,8 +42,8 @@
 <section class={`artifacts-panel ${overlay ? "overlay" : ""}`.trim()}>
 	<div class="artifacts-header">
 		<div class="artifacts-heading">
-			<p class="eyebrow">Artifact Deck</p>
-			<h2>{snapshot.artifacts.length} output{snapshot.artifacts.length === 1 ? "" : "s"}</h2>
+			<h2>Artifacts</h2>
+			<p class="artifact-count">{snapshot.artifacts.length} output{snapshot.artifacts.length === 1 ? "" : "s"}</p>
 		</div>
 		<Button size="sm" variant="ghost" onclick={onClose}>Close</Button>
 	</div>
@@ -105,45 +105,51 @@
 		display: flex;
 		flex-direction: column;
 		height: 100%;
-		background: var(--ui-surface);
+		background:
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-raised) 78%, transparent), transparent),
+			var(--ui-surface);
 	}
 
 	.overlay {
 		height: min(82vh, 44rem);
-		border: 1px solid var(--ui-border-soft);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
 		border-radius: var(--ui-radius-lg);
 		box-shadow: var(--ui-shadow-strong);
 	}
 
 	.artifacts-header {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		justify-content: space-between;
 		gap: 0.8rem;
-		padding: 1rem 1rem 0.9rem;
+		padding: 0.82rem 0.9rem;
 		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-subtle) 92%, transparent);
 	}
 
-	.eyebrow {
-		margin: 0 0 0.22rem;
-		font-size: 0.68rem;
-		font-weight: 760;
-		letter-spacing: 0.16em;
-		text-transform: uppercase;
-		color: var(--ui-accent-strong);
+	.artifacts-heading {
+		display: grid;
+		gap: 0.16rem;
 	}
 
 	h2 {
 		margin: 0;
-		font-size: 1.08rem;
-		font-weight: 720;
-		letter-spacing: -0.025em;
+		font-size: 0.92rem;
+		font-weight: 660;
+		letter-spacing: -0.03em;
 		color: var(--ui-text-primary);
+	}
+
+	.artifact-count {
+		margin: 0;
+		font-size: 0.68rem;
+		font-family: var(--font-mono);
+		color: var(--ui-text-secondary);
 	}
 
 	.artifacts-body {
 		display: grid;
-		grid-template-columns: minmax(12rem, 15.5rem) minmax(0, 1fr);
+		grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr);
 		flex: 1;
 		min-height: 0;
 	}
@@ -151,50 +157,46 @@
 	.artifact-list {
 		display: flex;
 		flex-direction: column;
-		gap: 0.45rem;
-		padding: 0.8rem;
+		gap: 0.4rem;
+		padding: 0.7rem;
 		border-right: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
 		overflow: auto;
+		background: color-mix(in oklab, var(--ui-surface-subtle) 84%, transparent);
 	}
 
 	.tab {
 		display: grid;
-		gap: 0.18rem;
-		padding: 0.72rem 0.82rem 0.72rem 0.9rem;
-		border-radius: 0;
-		border: none;
-		border-left: 2px solid transparent;
+		gap: 0.22rem;
+		padding: 0.68rem 0.82rem;
+		border-radius: var(--ui-radius-md);
+		border: 1px solid transparent;
 		background: transparent;
 		text-align: left;
 		cursor: pointer;
 		transition:
 			border-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
-			background-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
-			transform 170ms cubic-bezier(0.19, 1, 0.22, 1),
-			box-shadow 170ms cubic-bezier(0.19, 1, 0.22, 1);
+			background-color 170ms cubic-bezier(0.19, 1, 0.22, 1);
 	}
 
 	.tab:hover {
-		transform: none;
 		border-color: color-mix(in oklab, var(--ui-border-strong) 72%, transparent);
-		background: color-mix(in oklab, var(--ui-surface-subtle) 68%, transparent);
-		box-shadow: none;
+		background: color-mix(in oklab, var(--ui-surface-raised) 82%, transparent);
 	}
 
 	.tab.active {
-		border-color: color-mix(in oklab, var(--ui-accent) 34%, var(--ui-border-strong));
-		background: color-mix(in oklab, var(--ui-accent-soft) 48%, transparent);
+		border-color: color-mix(in oklab, var(--ui-border-accent) 76%, var(--ui-border-soft));
+		background: color-mix(in oklab, var(--ui-accent-soft) 72%, var(--ui-surface-raised));
 	}
 
 	.tab strong {
-		font-size: 0.8rem;
-		font-weight: 700;
+		font-size: 0.78rem;
+		font-weight: 640;
 		color: var(--ui-text-primary);
 		word-break: break-word;
 	}
 
 	.tab span {
-		font-size: 0.72rem;
+		font-size: 0.69rem;
 		font-family: var(--font-mono);
 		line-height: 1.45;
 		color: var(--ui-text-secondary);
@@ -207,7 +209,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.85rem;
-		padding: 0.9rem 1rem 1rem;
+		padding: 0.9rem;
 	}
 
 	.artifact-meta {
@@ -215,11 +217,10 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.8rem;
-		padding: 0.2rem 0 0.9rem;
-		border-radius: 0;
-		background: transparent;
-		border: none;
-		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+		padding: 0.82rem 0.88rem;
+		border-radius: var(--ui-radius-md);
+		background: color-mix(in oklab, var(--ui-surface-subtle) 88%, transparent);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 	}
 
 	.artifact-name,
@@ -229,8 +230,8 @@
 	}
 
 	.artifact-name {
-		font-size: 0.96rem;
-		font-weight: 710;
+		font-size: 0.94rem;
+		font-weight: 660;
 		letter-spacing: -0.02em;
 		color: var(--ui-text-primary);
 	}
@@ -238,30 +239,28 @@
 	.artifact-updated,
 	.artifact-logs p {
 		margin-top: 0.2rem;
-		font-size: 0.74rem;
+		font-size: 0.68rem;
 		color: var(--ui-text-secondary);
 		font-family: var(--font-mono);
 	}
 
 	.artifact-kind {
-		padding: 0.36rem 0.62rem;
-		border-radius: var(--ui-radius-sm);
-		border: 1px solid color-mix(in oklab, var(--ui-accent) 22%, var(--ui-border-soft));
-		background: color-mix(in oklab, var(--ui-accent-soft) 88%, transparent);
 		font-size: 0.68rem;
-		font-weight: 740;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: color-mix(in oklab, var(--ui-accent-strong) 84%, var(--ui-text-primary));
+		font-family: var(--font-mono);
+		padding: 0.3rem 0.55rem;
+		border-radius: var(--ui-radius-sm);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-raised) 82%, transparent);
+		color: var(--ui-text-secondary);
 	}
 
 	.artifact-preview,
 	.artifact-code,
 	.artifact-media-shell,
 	.artifact-logs {
-		border-radius: var(--ui-radius-sm);
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
-		background: color-mix(in oklab, var(--ui-bg-elevated) 96%, transparent);
+		border-radius: var(--ui-radius-md);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+		background: color-mix(in oklab, var(--ui-code) 94%, transparent);
 	}
 
 	.html-preview {
@@ -277,7 +276,7 @@
 		padding: 1rem 1.05rem;
 		overflow: auto;
 		font-family: var(--font-mono);
-		font-size: 0.8rem;
+		font-size: 0.76rem;
 		line-height: 1.65;
 		color: var(--ui-text-primary);
 		white-space: pre-wrap;
@@ -314,7 +313,7 @@
 		}
 	}
 
-	@media (max-width: 720px) {
+	@media (max-width: 760px) {
 		.artifact-stage {
 			padding-inline: 0.8rem;
 		}
