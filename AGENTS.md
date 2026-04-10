@@ -8,6 +8,8 @@
 - If a change implies that hellm owns the interactive terminal instead of pi, stop and rewrite the design around pi's runtime and extension APIs.
 - Use `docs/references/pi-mono` as the default local reference when reasoning about pi code, APIs, architecture, or behavior.
 - Use `docs/references/smithers` as the default local reference when reasoning about Smithers code, APIs, architecture, or behavior.
+- Use `docs/references/opencode/packages/ui` as the default local reference when reasoning about opencode desktop app layouts, basic components, or UI patterns.
+- When this repo references opencode, treat it as the desktop app UI in `docs/references/opencode/packages/ui/`, which we use as a reference for basic layout and components in our app.
 - Prefer these local references over memory or vague external summaries when questions involve these tools or libraries.
 - Keep one main orchestrator responsible for strategy, integration, and final decisions.
 - Use subagents heavily for bounded, independent work; default to delegating concrete side tasks when they can run in parallel or reduce main-thread load.
