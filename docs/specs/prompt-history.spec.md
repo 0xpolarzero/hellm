@@ -140,7 +140,7 @@ This strongly supports the `hellm` direction:
 - boundary-aware arrow navigation in the composer
 - project or workspace-scoped persistence rather than global persistence
 
-`hellm` uses a multiline composer, so the single-line Gemini rule becomes a multiline boundary rule instead of being copied literally.
+`hellm` uses a multiline composer, so the activation boundary is the start or end of the draft buffer rather than merely the first or last logical line.
 
 ## fish shell
 
@@ -221,7 +221,7 @@ If a user sends the same prompt twice, both sends remain recallable in order.
 
 - the composer has focus
 - there is no active text selection
-- the caret is on the first line of the draft
+- the caret is at the first character position in the draft
 - no higher-priority UI surface is consuming arrows, such as an open picker or dialog
 
 Otherwise `Up` keeps its normal caret movement behavior.
@@ -232,16 +232,14 @@ Otherwise `Up` keeps its normal caret movement behavior.
 
 - the composer has focus
 - there is no active text selection
-- the caret is on the last line of the draft
+- the caret is at the last character position in the draft
 - no higher-priority UI surface is consuming arrows
 
 Otherwise `Down` keeps its normal caret movement behavior.
 
 ### Decision
 
-The boundary test should be based on actual caret position in the text content, not on visual wrapping.
-
-A long wrapped line is still one logical line.
+The boundary test should be based on the absolute caret position in the text content, not on visual wrapping or logical line boundaries.
 
 ## Entering History Navigation
 

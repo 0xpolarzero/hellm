@@ -1,151 +1,178 @@
 import type { Model } from "@mariozechner/pi-ai";
+import type { PromptHistoryEntry } from "./prompt-history";
 
 const DB_NAME = "hellm-desktop-chat";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const PROVIDER_KEYS_STORE = "provider-keys";
 const CUSTOM_PROVIDERS_STORE = "custom-providers";
+const PROMPT_HISTORY_STORE = "prompt-history";
 
 export type AutoDiscoveryProviderType = "ollama" | "llama.cpp" | "vllm" | "lmstudio";
 
 export type CustomProviderType =
-	| AutoDiscoveryProviderType
-	| "openai-completions"
-	| "openai-responses"
-	| "anthropic-messages";
+  | AutoDiscoveryProviderType
+  | "openai-completions"
+  | "openai-responses"
+  | "anthropic-messages";
 
 export interface CustomProvider {
-	id: string;
-	name: string;
-	type: CustomProviderType;
-	baseUrl: string;
-	apiKey?: string;
-	models?: Model<any>[];
+  id: string;
+  name: string;
+  type: CustomProviderType;
+  baseUrl: string;
+  apiKey?: string;
+  models?: Model<any>[];
 }
 
 class IndexedDbKeyValueStore {
-	private dbPromise: Promise<IDBDatabase> | null = null;
+  private dbPromise: Promise<IDBDatabase> | null = null;
 
-	private async getDb(): Promise<IDBDatabase> {
-		if (!this.dbPromise) {
-			this.dbPromise = new Promise((resolve, reject) => {
-				const request = indexedDB.open(DB_NAME, DB_VERSION);
+  private async getDb(): Promise<IDBDatabase> {
+    if (!this.dbPromise) {
+      this.dbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-				request.onerror = () => reject(request.error);
-				request.onsuccess = () => resolve(request.result);
-				request.onupgradeneeded = () => {
-					const db = request.result;
-					if (!db.objectStoreNames.contains(PROVIDER_KEYS_STORE)) {
-						db.createObjectStore(PROVIDER_KEYS_STORE);
-					}
-					if (!db.objectStoreNames.contains(CUSTOM_PROVIDERS_STORE)) {
-						db.createObjectStore(CUSTOM_PROVIDERS_STORE);
-					}
-				};
-			});
-		}
+        request.addEventListener("error", () => reject(request.error), { once: true });
+        request.addEventListener("success", () => resolve(request.result), { once: true });
+        request.addEventListener("upgradeneeded", () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains(PROVIDER_KEYS_STORE)) {
+            db.createObjectStore(PROVIDER_KEYS_STORE);
+          }
+          if (!db.objectStoreNames.contains(CUSTOM_PROVIDERS_STORE)) {
+            db.createObjectStore(CUSTOM_PROVIDERS_STORE);
+          }
+          if (!db.objectStoreNames.contains(PROMPT_HISTORY_STORE)) {
+            db.createObjectStore(PROMPT_HISTORY_STORE);
+          }
+        });
+      });
+    }
 
-		return this.dbPromise;
-	}
+    return this.dbPromise;
+  }
 
-	private async execute<T>(
-		storeName: string,
-		mode: IDBTransactionMode,
-		operation: (store: IDBObjectStore) => IDBRequest<T>,
-	): Promise<T> {
-		const db = await this.getDb();
-		const transaction = db.transaction(storeName, mode);
-		const store = transaction.objectStore(storeName);
-		const request = operation(store);
+  private async execute<T>(
+    storeName: string,
+    mode: IDBTransactionMode,
+    operation: (store: IDBObjectStore) => IDBRequest<T>,
+  ): Promise<T> {
+    const db = await this.getDb();
+    const transaction = db.transaction(storeName, mode);
+    const store = transaction.objectStore(storeName);
+    const request = operation(store);
 
-		return await new Promise<T>((resolve, reject) => {
-			request.onsuccess = () => resolve(request.result);
-			request.onerror = () => reject(request.error);
-		});
-	}
+    return await new Promise<T>((resolve, reject) => {
+      request.addEventListener("success", () => resolve(request.result), { once: true });
+      request.addEventListener("error", () => reject(request.error), { once: true });
+    });
+  }
 
-	async get<T>(storeName: string, key: string): Promise<T | null> {
-		const result = await this.execute<T | undefined>(storeName, "readonly", (store) => store.get(key));
-		return result ?? null;
-	}
+  async get<T>(storeName: string, key: string): Promise<T | null> {
+    const result = await this.execute<T | undefined>(storeName, "readonly", (store) =>
+      store.get(key),
+    );
+    return result ?? null;
+  }
 
-	async set<T>(storeName: string, key: string, value: T): Promise<void> {
-		await this.execute(storeName, "readwrite", (store) => store.put(value, key));
-	}
+  async set<T>(storeName: string, key: string, value: T): Promise<void> {
+    await this.execute(storeName, "readwrite", (store) => store.put(value, key));
+  }
 
-	async delete(storeName: string, key: string): Promise<void> {
-		await this.execute(storeName, "readwrite", (store) => store.delete(key));
-	}
+  async delete(storeName: string, key: string): Promise<void> {
+    await this.execute(storeName, "readwrite", (store) => store.delete(key));
+  }
 
-	async keys(storeName: string): Promise<string[]> {
-		const keys = await this.execute<IDBValidKey[]>(storeName, "readonly", (store) => store.getAllKeys());
-		return keys.map((key) => String(key));
-	}
+  async keys(storeName: string): Promise<string[]> {
+    const keys = await this.execute<IDBValidKey[]>(storeName, "readonly", (store) =>
+      store.getAllKeys(),
+    );
+    return keys.map((key) => String(key));
+  }
 
-	async has(storeName: string, key: string): Promise<boolean> {
-		const result = await this.execute<IDBValidKey | undefined>(storeName, "readonly", (store) => store.getKey(key));
-		return result !== undefined;
-	}
+  async has(storeName: string, key: string): Promise<boolean> {
+    const result = await this.execute<IDBValidKey | undefined>(storeName, "readonly", (store) =>
+      store.getKey(key),
+    );
+    return result !== undefined;
+  }
 }
 
 export class ProviderKeysStore {
-	constructor(private backend: IndexedDbKeyValueStore) {}
+  constructor(private backend: IndexedDbKeyValueStore) {}
 
-	async get(provider: string): Promise<string | null> {
-		return this.backend.get<string>(PROVIDER_KEYS_STORE, provider);
-	}
+  async get(provider: string): Promise<string | null> {
+    return this.backend.get<string>(PROVIDER_KEYS_STORE, provider);
+  }
 
-	async set(provider: string, key: string): Promise<void> {
-		await this.backend.set(PROVIDER_KEYS_STORE, provider, key);
-	}
+  async set(provider: string, key: string): Promise<void> {
+    await this.backend.set(PROVIDER_KEYS_STORE, provider, key);
+  }
 
-	async delete(provider: string): Promise<void> {
-		await this.backend.delete(PROVIDER_KEYS_STORE, provider);
-	}
+  async delete(provider: string): Promise<void> {
+    await this.backend.delete(PROVIDER_KEYS_STORE, provider);
+  }
 
-	async list(): Promise<string[]> {
-		return this.backend.keys(PROVIDER_KEYS_STORE);
-	}
+  async list(): Promise<string[]> {
+    return this.backend.keys(PROVIDER_KEYS_STORE);
+  }
 
-	async has(provider: string): Promise<boolean> {
-		return this.backend.has(PROVIDER_KEYS_STORE, provider);
-	}
+  async has(provider: string): Promise<boolean> {
+    return this.backend.has(PROVIDER_KEYS_STORE, provider);
+  }
 }
 
 export class CustomProvidersStore {
-	constructor(private backend: IndexedDbKeyValueStore) {}
+  constructor(private backend: IndexedDbKeyValueStore) {}
 
-	async get(id: string): Promise<CustomProvider | null> {
-		return this.backend.get<CustomProvider>(CUSTOM_PROVIDERS_STORE, id);
-	}
+  async get(id: string): Promise<CustomProvider | null> {
+    return this.backend.get<CustomProvider>(CUSTOM_PROVIDERS_STORE, id);
+  }
 
-	async set(provider: CustomProvider): Promise<void> {
-		await this.backend.set(CUSTOM_PROVIDERS_STORE, provider.id, provider);
-	}
+  async set(provider: CustomProvider): Promise<void> {
+    await this.backend.set(CUSTOM_PROVIDERS_STORE, provider.id, provider);
+  }
 
-	async delete(id: string): Promise<void> {
-		await this.backend.delete(CUSTOM_PROVIDERS_STORE, id);
-	}
+  async delete(id: string): Promise<void> {
+    await this.backend.delete(CUSTOM_PROVIDERS_STORE, id);
+  }
 
-	async getAll(): Promise<CustomProvider[]> {
-		const keys = await this.backend.keys(CUSTOM_PROVIDERS_STORE);
-		const providers = await Promise.all(keys.map((key) => this.get(key)));
-		return providers.filter((provider): provider is CustomProvider => provider !== null);
-	}
+  async getAll(): Promise<CustomProvider[]> {
+    const keys = await this.backend.keys(CUSTOM_PROVIDERS_STORE);
+    const providers = await Promise.all(keys.map((key) => this.get(key)));
+    return providers.filter((provider): provider is CustomProvider => provider !== null);
+  }
 
-	async has(id: string): Promise<boolean> {
-		return this.backend.has(CUSTOM_PROVIDERS_STORE, id);
-	}
+  async has(id: string): Promise<boolean> {
+    return this.backend.has(CUSTOM_PROVIDERS_STORE, id);
+  }
+}
+
+export class PromptHistoryStore {
+  constructor(private backend: IndexedDbKeyValueStore) {}
+
+  async list(workspaceId: string): Promise<PromptHistoryEntry[]> {
+    return (await this.backend.get<PromptHistoryEntry[]>(PROMPT_HISTORY_STORE, workspaceId)) ?? [];
+  }
+
+  async append(entry: PromptHistoryEntry): Promise<PromptHistoryEntry> {
+    const existingEntries = await this.list(entry.workspaceId);
+    await this.backend.set(PROMPT_HISTORY_STORE, entry.workspaceId, [...existingEntries, entry]);
+    return entry;
+  }
 }
 
 export interface ChatStorage {
-	providerKeys: ProviderKeysStore;
-	customProviders: CustomProvidersStore;
+  providerKeys: ProviderKeysStore;
+  customProviders: CustomProvidersStore;
+  promptHistory: PromptHistoryStore;
 }
 
 export function createChatStorage(): ChatStorage {
-	const backend = new IndexedDbKeyValueStore();
-	return {
-		providerKeys: new ProviderKeysStore(backend),
-		customProviders: new CustomProvidersStore(backend),
-	};
+  const backend = new IndexedDbKeyValueStore();
+  return {
+    providerKeys: new ProviderKeysStore(backend),
+    customProviders: new CustomProvidersStore(backend),
+    promptHistory: new PromptHistoryStore(backend),
+  };
 }

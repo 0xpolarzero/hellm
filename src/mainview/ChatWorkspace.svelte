@@ -6,6 +6,7 @@
 	import { ArtifactsController, type ArtifactsSnapshot } from "./artifacts";
 	import ChatComposer from "./ChatComposer.svelte";
 	import { formatTimestamp, formatUsage } from "./chat-format";
+	import type { PromptHistoryEntry } from "./prompt-history";
 	import ChatTranscript from "./ChatTranscript.svelte";
 	import type { ChatRuntime } from "./chat-runtime";
 	import ModelPickerDialog from "./ModelPickerDialog.svelte";
@@ -51,6 +52,7 @@
 	let showArtifactsPanel = $state(false);
 	let showModelPicker = $state(false);
 	let allowedProviders = $state<string[]>([]);
+	let promptHistory = $state<PromptHistoryEntry[]>([]);
 	let windowWidth = $state(0);
 
 	const artifactCount = $derived(artifactsSnapshot.artifacts.length);
@@ -147,6 +149,17 @@
 		if (!hasProviderAccess) return false;
 
 		await runtime.agent.prompt(input);
+		try {
+			const entry = await runtime.storage.promptHistory.append({
+				text: input,
+				sentAt: Date.now(),
+				workspaceId: runtime.workspaceId,
+				sessionId: runtime.agent.sessionId ?? undefined,
+			});
+			promptHistory = [...promptHistory, entry];
+		} catch (error) {
+			console.error("Failed to persist prompt history:", error);
+		}
 		return true;
 	}
 
@@ -168,6 +181,14 @@
 
 		runtime.agent.state.tools = [nextController.tool];
 		syncAgentState();
+		void runtime.storage.promptHistory
+			.list(runtime.workspaceId)
+			.then((entries) => {
+				promptHistory = entries;
+			})
+			.catch((error) => {
+				console.error("Failed to load prompt history:", error);
+			});
 
 		const unsubscribeAgent = runtime.agent.subscribe(() => {
 			syncAgentState();
@@ -258,6 +279,7 @@
 					thinkingLevel={currentThinkingLevel}
 					{isStreaming}
 					{errorMessage}
+					{promptHistory}
 					usageText={usageText || undefined}
 					onAbort={() => runtime.agent.abort()}
 					onOpenModelPicker={() => void openModelSelector()}

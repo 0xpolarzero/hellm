@@ -1,8 +1,15 @@
 <script lang="ts">
-	import { onMount } from "svelte";
+	import { onMount, tick } from "svelte";
 	import { supportsXhigh, type Model } from "@mariozechner/pi-ai";
 	import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-	import { formatModelCost } from "./chat-format";
+	import {
+		createPromptHistoryNavigationState,
+		navigatePromptHistory,
+		shouldActivatePromptHistoryNavigation,
+		type PromptHistoryDirection,
+		type PromptHistoryEntry,
+		type PromptHistoryNavigationState,
+	} from "./prompt-history";
 	import Button from "./ui/Button.svelte";
 	import TextArea from "./ui/TextArea.svelte";
 
@@ -10,6 +17,7 @@
 		currentModel: Model<any>;
 		thinkingLevel: ThinkingLevel;
 		isStreaming: boolean;
+		promptHistory: PromptHistoryEntry[];
 		errorMessage?: string;
 		usageText?: string;
 		onAbort: () => void;
@@ -24,6 +32,7 @@
 		currentModel,
 		thinkingLevel,
 		isStreaming,
+		promptHistory,
 		errorMessage,
 		usageText,
 		onAbort,
@@ -35,7 +44,9 @@
 	let draft = $state("");
 	let isSubmitting = $state(false);
 	let showThinkingMenu = $state(false);
+	let draftElement = $state<HTMLTextAreaElement | null>(null);
 	let thinkingMenuRoot = $state<HTMLDivElement | null>(null);
+	let historyNavigation = $state<PromptHistoryNavigationState>(createPromptHistoryNavigationState());
 
 	const availableThinkingLevels = $derived(
 		supportsXhigh(currentModel) ? [...BASE_LEVELS, "xhigh"] : BASE_LEVELS,
@@ -64,6 +75,32 @@
 		};
 	});
 
+	async function restoreDraftBuffer(nextDraft: string) {
+		if (draft !== "") return;
+		draft = nextDraft;
+		await tick();
+		moveCaretToDraftEnd(nextDraft);
+	}
+
+	function resetHistoryNavigation() {
+		historyNavigation = createPromptHistoryNavigationState();
+	}
+
+	function moveCaretToDraftEnd(value: string) {
+		draftElement?.focus();
+		draftElement?.setSelectionRange(value.length, value.length);
+	}
+
+	async function applyPromptHistoryNavigation(direction: PromptHistoryDirection) {
+		const navigation = navigatePromptHistory(promptHistory, historyNavigation, draft, direction);
+		if (!navigation.changed) return;
+
+		historyNavigation = navigation.nextState;
+		draft = navigation.nextDraft;
+		await tick();
+		moveCaretToDraftEnd(navigation.nextDraft);
+	}
+
 	async function submit() {
 		if (!draft.trim() || isStreaming || isSubmitting) return;
 		const nextDraft = draft;
@@ -72,19 +109,44 @@
 
 		try {
 			const sent = await onSend(nextDraft);
-			if (!sent && draft === "") {
-				draft = nextDraft;
+			if (sent) {
+				resetHistoryNavigation();
+			} else {
+				await restoreDraftBuffer(nextDraft);
 			}
 		} catch {
-			if (draft === "") {
-				draft = nextDraft;
-			}
+			await restoreDraftBuffer(nextDraft);
 		} finally {
 			isSubmitting = false;
 		}
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
+		const target = event.currentTarget;
+		if (
+			target instanceof HTMLTextAreaElement &&
+			!event.shiftKey &&
+			!event.metaKey &&
+			!event.ctrlKey &&
+			!event.altKey &&
+			(event.key === "ArrowUp" || event.key === "ArrowDown")
+		) {
+			const direction: PromptHistoryDirection = event.key === "ArrowUp" ? "older" : "newer";
+			const shouldNavigateHistory = shouldActivatePromptHistoryNavigation({
+				direction,
+				value: target.value,
+				selectionStart: target.selectionStart,
+				selectionEnd: target.selectionEnd,
+				higherPriorityUiActive: showThinkingMenu,
+			});
+
+			if (shouldNavigateHistory) {
+				event.preventDefault();
+				void applyPromptHistoryNavigation(direction);
+				return;
+			}
+		}
+
 		if (event.key !== "Enter" || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
 		event.preventDefault();
 		void submit();
@@ -104,6 +166,7 @@
 
 		<TextArea
 			bind:value={draft}
+			bind:element={draftElement}
 			resize="vertical"
 			rows={5}
 			placeholder="Ask hellm to inspect the repo, make a change, or run verification."

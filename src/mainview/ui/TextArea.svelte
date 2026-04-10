@@ -4,12 +4,19 @@
 	type Props = HTMLTextareaAttributes & {
 		value?: string;
 		resize?: "none" | "vertical";
+		element?: HTMLTextAreaElement | null;
 	};
 
-	let { value = $bindable(""), resize = "vertical", class: className = "", ...rest }: Props = $props();
+	let {
+		value = $bindable(""),
+		resize = "vertical",
+		element = $bindable(null),
+		class: className = "",
+		...rest
+	}: Props = $props();
 </script>
 
-<textarea {...rest} bind:value class={`ui-textarea resize-${resize} ${className}`.trim()}></textarea>
+<textarea {...rest} bind:this={element} bind:value class={`ui-textarea resize-${resize} ${className}`.trim()}></textarea>
 
 <style>
 	.ui-textarea {
