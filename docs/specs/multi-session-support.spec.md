@@ -70,7 +70,7 @@ The result is a mismatch between:
 The adopted direction for multi-session support is:
 
 - keep pi session files as the durable source of truth for session history
-- keep one fully hydrated, interactive session runtime active in the main pane at a time
+- support a persisted fixed pane layout that can host multiple interactive session surfaces in one workspace window
 - add a session catalog layer that projects lightweight metadata for all sessions in the current workspace
 - turn the left sidebar into a real session navigator
 - support session creation, switching, resume, rename, fork, and delete before adding more advanced library features
@@ -145,8 +145,8 @@ The first implementation should preserve the current mental model:
 
 - one desktop window is attached to one workspace
 - that workspace can contain many sessions
-- one session is selected at a time
-- the selected session owns the main pane, composer, artifacts pane, and right-side detail projection
+- one workspace window may show multiple interactive surfaces in a persisted pane layout
+- any pane may host a session surface, subagent session, or workflow surface
 
 This is simpler and better aligned with the current app than copying a multi-project icon rail immediately.
 
@@ -196,7 +196,7 @@ Optional but recommended fields:
 
 The row should not try to show thread and episode detail in full.
 
-That detail belongs in the main pane and inspector once the session is selected.
+That detail belongs in the active pane surface and inspector once the session is opened.
 
 ## Session Row Actions
 
@@ -406,7 +406,7 @@ type ForkSessionRequest = {
 
 ### Decision
 
-`openSession` should return enough state for the main pane to render immediately after a switch.
+`openSession` should return enough state for the targeted pane surface to render immediately after a switch.
 
 That response should include:
 
@@ -576,7 +576,7 @@ Files likely touched:
 Exit criteria:
 
 - the left nav is session-centric
-- switching sessions updates the main pane correctly
+- switching sessions updates the targeted pane correctly
 - no full-page reset is needed
 
 ## Phase 3: Session Mutation Operations
@@ -755,7 +755,7 @@ The recommended plan is straightforward:
 - keep pi in charge of durable sessions
 - give `hellm` a real session catalog and session-aware RPC surface
 - replace the static left sidebar with workspace-scoped session navigation
-- keep one selected interactive session in the main pane
+- let the workspace shell grow into a persisted multi-pane layout with exact pane occupancy indicators
 - add mutation operations in phases instead of shipping an overbuilt chat library all at once
 
 That gets `hellm` to the PRD's session-centric product model without violating the pi runtime boundary.

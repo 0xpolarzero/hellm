@@ -225,6 +225,8 @@ It includes:
 - available worktrees
 - repo-local `AGENTS.md` and `.hellm/` configuration
 - recent session history for that workspace
+- flat folder labels used to organize sessions in the sidebar
+- a persisted pane layout for that workspace window
 
 ### Session
 
@@ -318,7 +320,7 @@ The shipped desktop app should present one coherent workspace, not a loose colle
 The default shell includes:
 
 - a left navigation rail for workspace and session navigation
-- a main work area for conversation and live orchestration state
+- a main work area for conversation and live orchestration state that can expand into a fixed pane layout up to `3x3`
 - a right-side inspector for selected details
 - a bottom composer and status strip for prompt entry and current runtime context
 
@@ -354,6 +356,10 @@ The app must support:
 - creating a new quick session
 - session switching
 - session resume
+- grouping sessions with flat manual folder labels in the sidebar
+- opening sessions and expanded work surfaces into exact pane slots in a fixed layout up to `3x3`
+- opening the same interactive surface in more than one pane slot when the user wants multiple views of it
+- exact pane-position indicators in the sidebar for open surfaces, including surfaces that span multiple cells
 - session branch or tree navigation
 - thread selection within a session
 - jumps from messages to episodes, artifacts, verification, and workflow details
@@ -395,10 +401,24 @@ It must support:
 
 - opening a selected subagent card in the right pane as a fully interactive surface
 - opening a selected workflow in the right pane as a fully interactive workflow surface
-- dragging a subagent or workflow into a split pane
+- placing a subagent or workflow into a targeted pane slot by drag or explicit split/open actions
 - expanded subagent panes behaving like normal interactive session surfaces
 - expanded workflow panes representing the workflow as a whole, with drill-down into internal workflow boxes or agents
-- keeping the main session, expanded pane, and split-pane views aligned as one coherent tree of work
+- allowing the same surface to be opened in more than one pane when the user wants multiple views
+- keeping the main session, expanded pane, and multi-pane views aligned as one coherent tree of work
+
+### Pane Layout And Sidebar Organization
+
+The workspace shell should support a persisted fixed pane layout up to `3x3`.
+
+It must support:
+
+- panes occupying one or more cells in that `3x3` layout
+- exact pane-position indicators for open surfaces in the sidebar, including multi-cell spans
+- a clear focus highlight for the currently active pane
+- flat manual folder labels for organizing sessions in the sidebar
+- folder membership remaining separate from pane placement
+- restoring pane layout and pane occupancy across app restarts
 
 ### Context Budget Observability
 
@@ -508,6 +528,7 @@ The app must support:
 - remembering recent workspaces
 - showing repository identity and status in the UI
 - preserving workspace-scoped session history
+- preserving workspace-scoped pane layout and sidebar organization
 - surfacing worktree context clearly
 
 ### 2. Provider Authentication and Model Configuration
@@ -534,6 +555,8 @@ The app must support:
 - deterministic task-based titles for delegated subagents and workflows instead of a separate naming pass
 - branching or forking session history
 - listing and filtering sessions
+- grouping sessions with flat folder labels
+- restoring persisted pane layout and pane occupancy from durable workspace state
 - preserving durable session state across app restarts
 - reconstructing visible product state and session runtime profile overrides from durable session data
 
@@ -544,6 +567,7 @@ The app must show, within a single session surface:
 - the conversation
 - active and completed threads
 - compact subagent and workflow surfaces that can be expanded or split
+- exact pane placement and focus when the workspace is using a multi-pane layout
 - latest episodes
 - verification summaries
 - blocked or waiting work

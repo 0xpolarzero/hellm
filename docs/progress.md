@@ -37,6 +37,9 @@ How to use this file:
 ## 2. Session Navigation And Core Projection
 
 - [ ] Drive the session sidebar entirely from durable session summaries.
+- [ ] Define the stored shape for flat folder labels on sessions.
+- [ ] Persist session folder membership.
+- [ ] Render flat folder groupings in the session sidebar.
 - [ ] Build a POC threads-and-episodes projection from structured state in the main session view.
 - [ ] Render the selected thread list from structured `ThreadRecord` data.
 - [ ] Show thread objective, status, executor, and blocked reason in the main session view.
@@ -48,7 +51,19 @@ How to use this file:
 - [ ] Show current workspace, session, and worktree context in the status strip.
 - [ ] Restore selected session, selected thread, and inspector selection after restart.
 
-## 3. Session Modes And Runtime Profiles
+## 3. Pane Layout And Sidebar Organization
+
+- [ ] Define the stored shape for a fixed pane layout up to `3x3`, including multi-cell spans.
+- [ ] Build a POC exact slot-position icon system for pane occupancy, including spanned surfaces.
+- [ ] Build a POC workspace pane grid that opens one session surface in a targeted slot.
+- [ ] Support click-split or drag placement into a chosen pane slot.
+- [ ] Allow the same interactive surface to be opened in more than one pane slot at once.
+- [ ] Persist pane occupancy and pane geometry across app restart.
+- [ ] Restore the focused pane on app restart.
+- [ ] Show exact pane-position indicators in the sidebar for open surfaces.
+- [ ] Show a clear highlight for the currently focused pane surface.
+
+## 4. Session Modes And Runtime Profiles
 
 - [ ] Define the runtime profile ids and stored shape for orchestrator, quick, explorer, implementer, reviewer, and workflow-writer.
 - [ ] Seed initial app-wide default values for those runtime profiles.
@@ -63,7 +78,7 @@ How to use this file:
 - [ ] Route delegated subagents and Smithers workflow agents through explorer, implementer, reviewer, and workflow-writer runtime profiles.
 - [ ] Prove that quick sessions only change the main-session profile by default, unless other per-session overrides are set.
 
-## 4. Session Titles
+## 5. Session Titles
 
 - [ ] Define the stored title states for top-level sessions, delegated subagents, and workflows.
 - [ ] Add the hidden `namer` system agent for one-shot top-level session naming.
@@ -73,7 +88,7 @@ How to use this file:
 - [ ] Freeze auto-titling after manual rename.
 - [ ] Generate deterministic task-based titles for delegated subagents and workflows without using the `namer`.
 
-## 5. Composer Mention Targets
+## 6. Composer Mention Targets
 
 - [ ] Define the stored shape for symbolic file and folder mention targets in the composer.
 - [ ] Build a POC `@` autocomplete picker over workspace files and folders.
@@ -82,22 +97,21 @@ How to use this file:
 - [ ] Resolve file and folder mentions into symbolic context targets for the orchestrator.
 - [ ] Keep folder mentions symbolic by default instead of eagerly pasting or expanding contents in the composer.
 
-## 6. Expanded Work Surfaces
+## 7. Expanded Work Surfaces
 
 - [ ] Define the stored shape for compact subagent and workflow surfaces inside the main session.
 - [ ] Build a POC inline subagent card with headline, status, and lightweight live state.
 - [ ] Render compact subagent cards in the main session timeline.
 - [ ] Build a POC inline workflow card with minimal workflow progress.
 - [ ] Render compact workflow cards in the main session timeline.
-- [ ] Open a selected subagent surface in the right pane.
-- [ ] Open a selected workflow surface in the right pane.
-- [ ] Build a POC split-pane container that can host one expanded delegated-work surface.
-- [ ] Drag a subagent or workflow surface into a split pane.
+- [ ] Open a selected subagent surface in a pane slot as a fully interactive surface.
+- [ ] Open a selected workflow surface in a pane slot as a fully interactive workflow surface.
 - [ ] Make expanded subagent panes fully interactive.
 - [ ] Make expanded workflow panes fully interactive as workflow-level surfaces.
 - [ ] Support drill-down from an expanded workflow into internal workflow boxes or agents.
+- [ ] Keep duplicated views of the same surface synchronized while allowing independent scroll position.
 
-## 7. Context Budget Observability
+## 8. Context Budget Observability
 
 - [ ] Define the context-budget metric as an explicit percentage of the active model's max context.
 - [ ] Define neutral, orange, and red thresholds for that metric.
@@ -109,7 +123,7 @@ How to use this file:
 - [ ] Render full-width context bars on expanded workflow panes.
 - [ ] Surface workflow-internal agent context usage when drilling down inside an expanded workflow.
 
-## 8. Direct Path And Reconciliation
+## 9. Direct Path And Reconciliation
 
 - [ ] Persist a per-request routing or classification result for the orchestrator.
 - [ ] Build a POC direct-path request flow from classification to episode normalization.
@@ -119,7 +133,7 @@ How to use this file:
 - [ ] Store unresolved issues and follow-up suggestions on direct episodes.
 - [ ] Re-enter the orchestrator from the latest durable episode and state instead of raw transcript scanning.
 
-## 9. Verification As First-Class State
+## 10. Verification As First-Class State
 
 - [ ] Build a POC verification event model covering build, test, lint, and manual checks.
 - [ ] Add explicit verification-run creation from orchestrator decisions.
@@ -130,7 +144,7 @@ How to use this file:
 - [ ] Surface failed or incomplete verification as routing input for the next orchestrator step.
 - [ ] Show latest verification outcome inline in the session timeline and inspector.
 
-## 10. Layered Workflow Knowledge
+## 11. Layered Workflow Knowledge
 
 - [ ] Inventory the workflow-related prompt, skill, and knowledge assets the product needs.
 - [ ] Build a POC repo layout for workflow knowledge with separate orchestrator-facing and worker-facing assets.
@@ -140,7 +154,7 @@ How to use this file:
 - [ ] Build a POC delegated workflow that receives extended workflow knowledge without expanding orchestrator context.
 - [ ] Prove that workflow results still fold back into threads, episodes, and artifacts in the main session view.
 
-## 11. Delegated Workflow Foundations
+## 12. Delegated Workflow Foundations
 
 - [ ] Build a POC workflow request/response envelope between the orchestrator and Smithers.
 - [ ] Define the workflow request envelope from the orchestrator to Smithers.
@@ -157,7 +171,7 @@ How to use this file:
 - [ ] Build a POC retry/loop provenance model before exposing richer workflow branching.
 - [ ] Capture retry and loop branches in workflow provenance.
 
-## 12. Worktree-Aware Execution
+## 13. Worktree-Aware Execution
 
 - [ ] Build a POC thread-to-worktree binding model and inspect how it should appear in the UI.
 - [ ] Persist worktree binding on threads.
@@ -168,7 +182,7 @@ How to use this file:
 - [ ] Let delegated workflows declare or acquire an isolated worktree when needed.
 - [ ] Show which thread or workflow owns each worktree-backed run.
 
-## 13. `execute_typescript`
+## 14. `execute_typescript`
 
 - [ ] Build a POC `execute_typescript` runtime with the adopted TypeScript input/output contract.
 - [ ] Expose a minimal `execute_typescript` tool with the adopted input and output contract.
@@ -181,7 +195,7 @@ How to use this file:
 - [ ] Allow delegated Smithers tasks to call `execute_typescript`.
 - [ ] Limit day-one capabilities to the curated non-shell surface defined by the spec.
 
-## 14. Repo-Local Workflow Hooks
+## 15. Repo-Local Workflow Hooks
 
 - [ ] Discover `.hellm/` config for the current workspace.
 - [ ] Build a POC preflight hook flow for one consequential delegated workflow.
@@ -194,7 +208,7 @@ How to use this file:
 - [ ] Convert validation failure into structured workflow outcome and state.
 - [ ] Persist hook artifacts and outputs for later inspection.
 
-## 15. Headless Surface
+## 16. Headless Surface
 
 - [ ] Build a POC one-shot headless entrypoint that reuses desktop orchestration code.
 - [ ] Define the headless one-shot input contract.
@@ -205,7 +219,7 @@ How to use this file:
 - [ ] Emit workflow, episode, and artifact references in headless results.
 - [ ] Reuse the same orchestrator and state model as desktop execution.
 
-## 16. Recovery And Test Coverage
+## 17. Recovery And Test Coverage
 
 - [ ] Build a POC restart/resume flow that restores one active thread from durable state.
 - [ ] Restore active direct-path state after app restart.
