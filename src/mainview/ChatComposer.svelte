@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
 	import { onMount, tick } from "svelte";
 	import { supportsXhigh, type Model } from "@mariozechner/pi-ai";
 	import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
@@ -190,7 +191,12 @@
 					>
 						<span class="composer-control-label">Reasoning</span>
 						<strong>{thinkingLevel}</strong>
-						<span class="thinking-chevron" aria-hidden="true"></span>
+						<ChevronDownIcon
+							class={`thinking-chevron ${showThinkingMenu ? "open" : ""}`.trim()}
+							aria-hidden="true"
+							size={14}
+							strokeWidth={1.9}
+						/>
 					</button>
 					{#if showThinkingMenu}
 						<div class="thinking-menu" role="listbox" aria-label="Thinking level options">
@@ -305,16 +311,17 @@
 		letter-spacing: -0.01em;
 	}
 
-	.thinking-chevron {
+	:global(.thinking-chevron) {
 		position: absolute;
 		right: 0.56rem;
 		top: 50%;
-		width: 0.42rem;
-		height: 0.42rem;
-		border-right: 1.25px solid var(--ui-text-secondary);
-		border-bottom: 1.25px solid var(--ui-text-secondary);
-		transform: translateY(-65%) rotate(45deg);
+		transform: translateY(-50%);
 		pointer-events: none;
+		transition: transform 150ms cubic-bezier(0.19, 1, 0.22, 1);
+	}
+
+	:global(.thinking-chevron.open) {
+		transform: translateY(-50%) rotate(180deg);
 	}
 
 	.composer-control:hover,

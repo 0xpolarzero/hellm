@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EllipsisVerticalIcon from "@lucide/svelte/icons/ellipsis-vertical";
   import type { WorkspaceSessionSummary } from "./chat-rpc";
   import { formatRelativeSessionTime } from "./session-format";
   import Button from "./ui/Button.svelte";
@@ -107,7 +108,7 @@
         menuOpen = !menuOpen;
       }}
     >
-      ⋯
+      <EllipsisVerticalIcon aria-hidden="true" size={15} strokeWidth={1.9} />
     </Button>
 
     {#if menuOpen}

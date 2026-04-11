@@ -1,4 +1,5 @@
 <script lang="ts">
+	import XIcon from "@lucide/svelte/icons/x";
 	import type { Snippet } from "svelte";
 	import Button from "./Button.svelte";
 
@@ -70,7 +71,7 @@
 				{/if}
 			</div>
 			<Button variant="ghost" size="sm" class="ui-dialog-close" onclick={close} aria-label="Close dialog">
-				×
+				<XIcon aria-hidden="true" size={16} strokeWidth={1.9} />
 			</Button>
 		</header>
 

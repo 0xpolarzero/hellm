@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PlusIcon from "@lucide/svelte/icons/plus";
   import type { WorkspaceSessionSummary } from "./chat-rpc";
   import SessionListItem from "./SessionListItem.svelte";
   import Button from "./ui/Button.svelte";
@@ -54,10 +55,7 @@
       aria-label="Create a new session"
       title="New Session"
     >
-      <svg viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M8 3.25V12.75" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-        <path d="M3.25 8H12.75" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-      </svg>
+      <PlusIcon aria-hidden="true" size={15} strokeWidth={1.85} />
       New
     </Button>
   </header>
@@ -138,11 +136,6 @@
     min-width: auto;
     padding-inline: 0.5rem;
     color: var(--ui-text-secondary);
-  }
-
-  :global(button.new-session svg) {
-    width: 0.85rem;
-    height: 0.85rem;
   }
 
   .sidebar-error {

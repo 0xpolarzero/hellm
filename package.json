@@ -22,11 +22,12 @@
     "@fontsource-variable/familjen-grotesk": "^5.2.8",
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@lucide/svelte": "^1.8.0",
     "@mariozechner/pi-agent-core": "^0.64.0",
     "@mariozechner/pi-ai": "^0.64.0",
     "@mariozechner/pi-coding-agent": "^0.64.0",
-    "electrobun-browser-tools": "file:../electrobun-browser-tools",
     "electrobun": "1.16.0",
+    "electrobun-browser-tools": "file:../electrobun-browser-tools",
     "svelte": "^5.55.1"
   },
   "devDependencies": {

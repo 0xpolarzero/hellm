@@ -1,5 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
+  import PanelLeftOpenIcon from "@lucide/svelte/icons/panel-left-open";
+  import SettingsIcon from "@lucide/svelte/icons/settings";
   import type { AssistantMessage, Model, Usage } from "@mariozechner/pi-ai";
   import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
   import ArtifactsPanel from "./ArtifactsPanel.svelte";
@@ -376,10 +379,11 @@
         title={sidebarHidden ? "Show sidebar (Cmd/Ctrl+B)" : "Hide sidebar (Cmd/Ctrl+B)"}
         onclick={toggleSidebarVisibility}
       >
-        <svg viewBox="0 0 20 20" aria-hidden="true">
-          <path d="M2.75 3.5H17.25V16.5H2.75Z" fill="none" stroke="currentColor" stroke-width="1.4" />
-          <path d={sidebarHidden ? "M5.5 3.5V16.5" : "M7.5 3.5V16.5"} fill="none" stroke="currentColor" stroke-width="1.4" />
-        </svg>
+        {#if sidebarHidden}
+          <PanelLeftOpenIcon aria-hidden="true" size={16} strokeWidth={1.8} />
+        {:else}
+          <PanelLeftCloseIcon aria-hidden="true" size={16} strokeWidth={1.8} />
+        {/if}
       </button>
       <p class="workspace-titlebar-title">hellm</p>
     </div>
@@ -511,12 +515,7 @@
           title="Settings"
           onclick={onOpenSettings}
         >
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path
-              d="M6.52 1.39a1 1 0 0 1 1.96 0l.18 1.08c.23.08.45.17.66.28l.95-.55a1 1 0 0 1 1.34.37l.98 1.69a1 1 0 0 1-.37 1.35l-.95.55c.02.12.03.25.03.38s-.01.26-.03.38l.95.55a1 1 0 0 1 .37 1.35l-.98 1.69a1 1 0 0 1-1.34.37l-.95-.55c-.21.11-.43.2-.66.28l-.18 1.08a1 1 0 0 1-1.96 0l-.18-1.08a4.78 4.78 0 0 1-.66-.28l-.95.55a1 1 0 0 1-1.34-.37l-.98-1.69a1 1 0 0 1 .37-1.35l.95-.55A3.3 3.3 0 0 1 4.3 8c0-.13.01-.26.03-.38l-.95-.55a1 1 0 0 1-.37-1.35l.98-1.69a1 1 0 0 1 1.34-.37l.95.55c.21-.11.43-.2.66-.28l.18-1.08ZM8 10.12A2.12 2.12 0 1 0 8 5.88a2.12 2.12 0 0 0 0 4.24Z"
-              fill="currentColor"
-            />
-          </svg>
+          <SettingsIcon aria-hidden="true" size={15} strokeWidth={1.85} />
         </button>
       {/if}
     </div>
@@ -846,7 +845,7 @@
     color: var(--ui-text-primary);
   }
 
-  .titlebar-icon[aria-pressed="true"] svg {
+  .titlebar-icon[aria-pressed="true"] {
     color: color-mix(in oklab, var(--ui-accent) 64%, var(--ui-text-primary));
   }
 
@@ -854,16 +853,6 @@
   .statusbar-icon:focus-visible {
     outline: none;
     box-shadow: var(--ui-focus-ring);
-  }
-
-  .titlebar-icon svg {
-    width: 0.8rem;
-    height: 0.8rem;
-  }
-
-  .statusbar-icon svg {
-    width: 0.76rem;
-    height: 0.76rem;
   }
 
   :global(body.sidebar-resizing) {
