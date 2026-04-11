@@ -31,7 +31,7 @@ flowchart TD
         DelegatedStart["Use delegated path"]
         Preflight["Run repo-local preflight hook when configured"]
         Author["Author short-lived Smithers workflow"]
-        WorkflowRun["Execute Smithers workflow with bounded pi-backed agent tasks, execute_typescript steps, approvals, loops, retries, and worktrees"]
+        WorkflowRun["Execute Smithers workflow with bounded pi-backed agent tasks, execute_typescript steps, loops, retries, and worktrees"]
         WorkflowState{"Workflow state"}
         Resume["Resume persisted workflow run"]
         Validation["Run repo-local validation hook when configured"]
@@ -44,9 +44,9 @@ flowchart TD
         VerificationEpisode["Normalize verification into episode and artifacts"]
     end
 
-    subgraph Pause["Approval / Clarification Path"]
+    subgraph Pause["Clarification / Pause Path"]
         PauseStart["Use pause path"]
-        Wait["Record waiting state and pause for user approval or clarification"]
+        Wait["Record waiting state and pause for clarification or resumable waiting conditions"]
         PauseProject["Project waiting state into the desktop UI and structured headless output"]
         ResumeAfterInput["Resume after user input arrives"]
     end
@@ -65,7 +65,7 @@ flowchart TD
     Route -->|Direct action| DirectStart
     Route -->|Delegated or subagent work| DelegatedStart
     Route -->|Verification is next| VerificationStart
-    Route -->|Approval or clarification needed| PauseStart
+    Route -->|Clarification or pause needed| PauseStart
 
     DirectStart --> DirectChoice
     DirectChoice -->|Reasoning is enough| DirectReason
@@ -77,7 +77,7 @@ flowchart TD
     Preflight --> Author
     Author --> WorkflowRun
     WorkflowRun --> WorkflowState
-    WorkflowState -->|Waiting approval| Wait
+    WorkflowState -->|Waiting on clarification or prerequisite| Wait
     WorkflowState -->|Interrupted, then resumed| Resume
     Resume --> WorkflowRun
     WorkflowState -->|Reached terminal state| Validation

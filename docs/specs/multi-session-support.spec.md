@@ -252,7 +252,7 @@ For v1, `hellm` should project sessions into one of these UI states:
 Guidelines:
 
 - `running`: currently selected session with an active prompt stream
-- `waiting`: session explicitly blocked on user input or approval once those states exist in the product model
+- `waiting`: session explicitly blocked on user input, clarification, or another resumable waiting condition
 - `error`: last terminal result was an error and there is no newer successful activity
 - `idle`: default stable state
 

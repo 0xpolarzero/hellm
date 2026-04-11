@@ -1,6 +1,3 @@
-- context progress bar at the bottom of a session that goes orange as we approach and red as we enter dumb zone
-- ideally we have good enough observability and UX to show this intuitively for subagents and agents that are part of smithers workflows as well
-
 - @ to mention files/folders
 
 - ability to split panes easily to follow multiple sessions (by dragging or click split); in addition to highlighted active threads in the nav would show a small icon that indicates where this tab is (left, right, top, bottom, top-left, etc; probably 4 is enough to start); currently focused one would have a clear highlight

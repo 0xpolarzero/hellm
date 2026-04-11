@@ -55,7 +55,7 @@ The current PRD defines:
 - one orchestrator above `pi`
 - `pi` as the interactive substrate and shell
 - Smithers as the internal executor for bounded, durable delegated workflows
-- direct, Smithers-workflow, verification, and approval paths as the top-level execution paths
+- direct, Smithers-workflow, verification, and clarification or pause paths as the top-level execution paths
 
 Source:
 

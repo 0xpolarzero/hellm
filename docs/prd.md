@@ -20,7 +20,7 @@ The product combines:
 - a pi-backed interactive runtime and session substrate
 - a `hellm` orchestrator that owns routing, reconciliation, and final decisions
 - Smithers-backed delegated workflows for bounded subagent work
-- first-class episodes, artifacts, verification, approvals, and worktree awareness
+- first-class episodes, artifacts, verification, and worktree awareness
 
 The result should feel closer to Slate than to stock pi:
 
@@ -73,7 +73,7 @@ A session is the durable user-facing container for:
 - artifacts
 - verification state
 - workflow references
-- approvals and waiting states
+- blocked and waiting states
 
 ### 4. Episodes Are the Main Reusable Output
 
@@ -91,7 +91,7 @@ The user must be able to see:
 - what finished
 - what is blocked
 - what was verified
-- what needs approval
+- what needs clarification
 - which worktree and session are currently in play
 
 ### 7. Context Is a Scarce Resource
@@ -127,6 +127,16 @@ In practice that means:
 - the exact content and file format of those prompt or knowledge assets may evolve over time, but the separation of concerns should remain stable
 
 This keeps workflow capability available without bloating orchestrator context.
+
+### 9. Full Approvals By Default
+
+`hellm` runs with full approvals by default.
+
+In practice that means:
+
+- the product does not expose approval objects or approval gates as first-class user-facing behavior
+- ambiguity is handled through clarification and waiting states rather than approval prompts
+- delegated workflows may pause for missing information or resumable waiting conditions, but not for product-level approval requests
 
 ## Product Ownership Boundaries
 
@@ -170,7 +180,6 @@ Smithers owns:
 
 - delegated workflow execution
 - durable multi-step runs
-- approvals inside delegated work
 - loops, retries, and branches when a delegated workflow needs them
 - worktree-isolated execution when delegated work requires it
 
@@ -240,7 +249,7 @@ Examples:
 - direct answer or small action
 - delegated Smithers workflow
 - verification run
-- approval wait
+- clarification or waiting state
 
 Threads must expose:
 
@@ -297,16 +306,6 @@ It must include status, summary, and linked artifacts.
 
 A workflow run is the durable record of delegated Smithers-backed work associated with a thread and its episodes.
 
-### Approval State
-
-An approval state represents explicit user gating rather than silent guessing.
-
-The system should surface:
-
-- what decision is needed
-- why it is needed
-- what is waiting on it
-
 ## Desktop Experience
 
 The desktop experience is the primary user-facing surface for the product.
@@ -330,15 +329,18 @@ It must show more than a transcript. The session UI combines:
 
 - the conversation timeline
 - visible thread state
+- compact subagent cards with a short live headline
+- compact workflow cards with a minimal progress overview
 - episode summaries
 - workflow progress
 - verification summaries
-- approval prompts
 - artifact access
 
 The user should be able to understand the current state of work at a glance without opening raw logs.
 
-Workflow runs remain subordinate to the main session model. The primary view should still be threads, episodes, verification, approvals, and artifacts, even when a delegated workflow is active.
+Workflow runs remain subordinate to the main session model. The primary view should still be threads, episodes, verification, and artifacts, even when a delegated workflow is active.
+
+Subagents and workflows may expand into the right pane or into split panes without becoming separate top-level products views.
 
 ### Navigation
 
@@ -365,6 +367,7 @@ The composer area must support:
 - a visible summary of the current session's main runtime profile
 - expandable inspection of per-agent runtime profiles for the session
 - per-session override controls for agent runtime profiles rather than raw global model or reasoning selectors
+- an explicit context-budget progress bar for the current interactive surface
 - explicit context cues for active workspace, session, and worktree
 
 ### Inspector Surfaces
@@ -379,6 +382,30 @@ The inspector area must support focused inspection of:
 - unresolved issues and follow-up suggestions
 
 Secondary workflow inspection surfaces may expose deeper live workflow detail without replacing the session-centric main view.
+
+### Expanded Work Surfaces
+
+The product should let the user inspect delegated work without leaving the main session.
+
+It must support:
+
+- opening a selected subagent card in the right pane as a fully interactive surface
+- opening a selected workflow in the right pane as a fully interactive workflow surface
+- dragging a subagent or workflow into a split pane
+- expanded subagent panes behaving like normal interactive session surfaces
+- expanded workflow panes representing the workflow as a whole, with drill-down into internal workflow boxes or agents
+- keeping the main session, expanded pane, and split-pane views aligned as one coherent tree of work
+
+### Context Budget Observability
+
+Context pressure should be visible as explicit percentages against the active model's maximum context window.
+
+The product must support:
+
+- a full-width main-session context bar below the text input
+- compact bottom-edge context indicators on collapsed subagent and workflow surfaces
+- full-width context bars on expanded subagent and workflow panes
+- the same neutral, orange, and red states across all surfaces, driven by explicit percentage thresholds rather than vague heuristics
 
 ### Settings and Auth
 
@@ -423,7 +450,6 @@ Use the delegated path when work benefits from:
 - an explicit bounded subagent
 - multi-step structure
 - durable resume
-- approvals
 - loops or retries
 - worktree isolation
 - explicit workflow state in the UI
@@ -436,16 +462,16 @@ Use the verification path when the main next step is to check reality rather tha
 
 Verification results must feed back into routing and reconciliation.
 
-### Approval or Clarification Path
+### Clarification or Pause Path
 
 Use the pause path when:
 
 - the user must make a product choice
 - the next action is ambiguous
-- a destructive step should be gated
-- a delegated workflow is waiting on approval
+- required information or an external prerequisite is missing
+- a delegated workflow is paused on a resumable waiting condition
 
-Waiting is an explicit product state, not an implementation detail.
+`hellm` runs with full approvals by default. Waiting is for clarification or resumable pause conditions, not approval gating.
 
 ## Slate-Inspired Subagent Model
 
@@ -508,11 +534,13 @@ The app must show, within a single session surface:
 
 - the conversation
 - active and completed threads
+- compact subagent and workflow surfaces that can be expanded or split
 - latest episodes
 - verification summaries
 - blocked or waiting work
 - workflow activity
 - the current main runtime profile with expandable per-agent profile detail
+- explicit context-budget indicators for the current surface and delegated work surfaces
 - current workspace and worktree context
 
 This is a core product requirement, not a stretch goal.
@@ -527,6 +555,7 @@ The orchestrator must:
 - reconcile all path outputs into the same product model
 - make final user-facing decisions after delegated work completes or pauses
 - support both orchestrator-session and quick-session entry modes, with different main-session prompts and default main runtime profiles
+- treat clarification and resumable waiting as the only pause states surfaced by the product
 
 ### 6. Delegated Workflows and Smithers Integration
 
@@ -536,13 +565,14 @@ The product must support:
 
 - short-lived delegated workflows for bounded work
 - workflows as small as one explicit bounded agent task
-- larger workflows with approvals, retries, loops, and worktrees when needed
+- larger workflows with retries, loops, and worktrees when needed
 - durable workflow pause and resume
 - workflow progress projected into the desktop UI
 - workflow results translated into episodes and artifacts
 - structured workflow knowledge assets split between minimal orchestrator-facing summaries and richer worker-facing prompts or examples
 - delegated workers loading the rich workflow context they need without expanding orchestrator context to match
 - delegated Smithers agents using runtime profiles such as explorer, implementer, reviewer, and workflow-writer when the workflow authoring or execution path requires them
+- workflow runs being inspectable as whole interactive surfaces, with drill-down into internal workflow nodes
 
 ### 7. Episodes, Artifacts, and Reconciliation
 
@@ -651,7 +681,7 @@ The desktop app is primary, but headless execution is a real product surface, no
 - the user must be able to recover meaningful state after app restart or workflow interruption
 - direct work, delegated work, and verification must normalize into one coherent product model
 - active, blocked, and completed work must be legible in the UI
-- approvals must be explicit
+- clarification and waiting states must be explicit
 - product behavior must stay adaptive rather than collapsing into a rigid workflow tree
 - tests for interactive behavior must exercise the real pi-backed runtime seam, not a fake shell presented as the product
 
