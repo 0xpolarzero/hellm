@@ -236,6 +236,7 @@ A session must support:
 - resume
 - branch or fork navigation
 - durable history
+- a stable user-visible title
 - structured product state in addition to chat messages
 - session-level runtime profile overrides above app-wide defaults
 - session-level view of active and completed work
@@ -489,6 +490,7 @@ The adopted subagent model is:
 - the system re-enters cheaply after each meaningful unit of work
 - the orchestrator keeps only lightweight workflow knowledge while richer workflow context stays local to delegated work
 - runtime profiles such as explorer, implementer, reviewer, and workflow-writer are bounded-task presets, not persistent always-on agents
+- hidden system agents may exist for narrow product tasks such as one-shot session naming without becoming user-facing persistent roles
 
 This means the product should not optimize for:
 
@@ -518,6 +520,7 @@ The app must support:
 - app-wide default runtime profiles for orchestrator, quick, explorer, implementer, reviewer, and workflow-writer
 - each runtime profile carrying a provider, model, and reasoning-effort configuration
 - per-session overrides of those runtime profiles
+- a hidden `namer` system agent seeded initially to `gpt-5.4-mini` with low reasoning effort for one-shot top-level session naming
 
 ### 3. Session Lifecycle and Navigation
 
@@ -526,6 +529,9 @@ The app must support:
 - creating a new orchestrator session
 - creating a new quick session
 - resuming an existing session
+- one-shot automatic naming of top-level sessions after the first real user turn
+- no silent re-titling after the first real user turn has passed or after manual rename
+- deterministic task-based titles for delegated subagents and workflows instead of a separate naming pass
 - branching or forking session history
 - listing and filtering sessions
 - preserving durable session state across app restarts

@@ -63,7 +63,17 @@ How to use this file:
 - [ ] Route delegated subagents and Smithers workflow agents through explorer, implementer, reviewer, and workflow-writer runtime profiles.
 - [ ] Prove that quick sessions only change the main-session profile by default, unless other per-session overrides are set.
 
-## 4. Composer Mention Targets
+## 4. Session Titles
+
+- [ ] Define the stored title states for top-level sessions, delegated subagents, and workflows.
+- [ ] Add the hidden `namer` system agent for one-shot top-level session naming.
+- [ ] Seed the `namer` agent to `gpt-5.4-mini` with low reasoning effort.
+- [ ] Build a POC one-shot title generation after the first real user turn for a top-level session.
+- [ ] Persist generated top-level session titles and stop silent auto-retitling after the first real user turn has passed.
+- [ ] Freeze auto-titling after manual rename.
+- [ ] Generate deterministic task-based titles for delegated subagents and workflows without using the `namer`.
+
+## 5. Composer Mention Targets
 
 - [ ] Define the stored shape for symbolic file and folder mention targets in the composer.
 - [ ] Build a POC `@` autocomplete picker over workspace files and folders.
@@ -72,7 +82,7 @@ How to use this file:
 - [ ] Resolve file and folder mentions into symbolic context targets for the orchestrator.
 - [ ] Keep folder mentions symbolic by default instead of eagerly pasting or expanding contents in the composer.
 
-## 5. Expanded Work Surfaces
+## 6. Expanded Work Surfaces
 
 - [ ] Define the stored shape for compact subagent and workflow surfaces inside the main session.
 - [ ] Build a POC inline subagent card with headline, status, and lightweight live state.
@@ -87,7 +97,7 @@ How to use this file:
 - [ ] Make expanded workflow panes fully interactive as workflow-level surfaces.
 - [ ] Support drill-down from an expanded workflow into internal workflow boxes or agents.
 
-## 6. Context Budget Observability
+## 7. Context Budget Observability
 
 - [ ] Define the context-budget metric as an explicit percentage of the active model's max context.
 - [ ] Define neutral, orange, and red thresholds for that metric.
@@ -99,7 +109,7 @@ How to use this file:
 - [ ] Render full-width context bars on expanded workflow panes.
 - [ ] Surface workflow-internal agent context usage when drilling down inside an expanded workflow.
 
-## 7. Direct Path And Reconciliation
+## 8. Direct Path And Reconciliation
 
 - [ ] Persist a per-request routing or classification result for the orchestrator.
 - [ ] Build a POC direct-path request flow from classification to episode normalization.
@@ -109,7 +119,7 @@ How to use this file:
 - [ ] Store unresolved issues and follow-up suggestions on direct episodes.
 - [ ] Re-enter the orchestrator from the latest durable episode and state instead of raw transcript scanning.
 
-## 8. Verification As First-Class State
+## 9. Verification As First-Class State
 
 - [ ] Build a POC verification event model covering build, test, lint, and manual checks.
 - [ ] Add explicit verification-run creation from orchestrator decisions.
@@ -120,7 +130,7 @@ How to use this file:
 - [ ] Surface failed or incomplete verification as routing input for the next orchestrator step.
 - [ ] Show latest verification outcome inline in the session timeline and inspector.
 
-## 9. Layered Workflow Knowledge
+## 10. Layered Workflow Knowledge
 
 - [ ] Inventory the workflow-related prompt, skill, and knowledge assets the product needs.
 - [ ] Build a POC repo layout for workflow knowledge with separate orchestrator-facing and worker-facing assets.
@@ -130,7 +140,7 @@ How to use this file:
 - [ ] Build a POC delegated workflow that receives extended workflow knowledge without expanding orchestrator context.
 - [ ] Prove that workflow results still fold back into threads, episodes, and artifacts in the main session view.
 
-## 10. Delegated Workflow Foundations
+## 11. Delegated Workflow Foundations
 
 - [ ] Build a POC workflow request/response envelope between the orchestrator and Smithers.
 - [ ] Define the workflow request envelope from the orchestrator to Smithers.
@@ -147,7 +157,7 @@ How to use this file:
 - [ ] Build a POC retry/loop provenance model before exposing richer workflow branching.
 - [ ] Capture retry and loop branches in workflow provenance.
 
-## 11. Worktree-Aware Execution
+## 12. Worktree-Aware Execution
 
 - [ ] Build a POC thread-to-worktree binding model and inspect how it should appear in the UI.
 - [ ] Persist worktree binding on threads.
@@ -158,7 +168,7 @@ How to use this file:
 - [ ] Let delegated workflows declare or acquire an isolated worktree when needed.
 - [ ] Show which thread or workflow owns each worktree-backed run.
 
-## 12. `execute_typescript`
+## 13. `execute_typescript`
 
 - [ ] Build a POC `execute_typescript` runtime with the adopted TypeScript input/output contract.
 - [ ] Expose a minimal `execute_typescript` tool with the adopted input and output contract.
@@ -171,7 +181,7 @@ How to use this file:
 - [ ] Allow delegated Smithers tasks to call `execute_typescript`.
 - [ ] Limit day-one capabilities to the curated non-shell surface defined by the spec.
 
-## 13. Repo-Local Workflow Hooks
+## 14. Repo-Local Workflow Hooks
 
 - [ ] Discover `.hellm/` config for the current workspace.
 - [ ] Build a POC preflight hook flow for one consequential delegated workflow.
@@ -184,7 +194,7 @@ How to use this file:
 - [ ] Convert validation failure into structured workflow outcome and state.
 - [ ] Persist hook artifacts and outputs for later inspection.
 
-## 14. Headless Surface
+## 15. Headless Surface
 
 - [ ] Build a POC one-shot headless entrypoint that reuses desktop orchestration code.
 - [ ] Define the headless one-shot input contract.
@@ -195,7 +205,7 @@ How to use this file:
 - [ ] Emit workflow, episode, and artifact references in headless results.
 - [ ] Reuse the same orchestrator and state model as desktop execution.
 
-## 15. Recovery And Test Coverage
+## 16. Recovery And Test Coverage
 
 - [ ] Build a POC restart/resume flow that restores one active thread from durable state.
 - [ ] Restore active direct-path state after app restart.
