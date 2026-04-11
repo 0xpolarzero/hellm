@@ -12,12 +12,6 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "baseUrl": ".",
-    "paths": {
-      "electrobun-browser-tools": ["./node_modules/electrobun-browser-tools/dist/index.d.ts"],
-      "electrobun-browser-tools/bridge": [
-        "./node_modules/electrobun-browser-tools/dist/bridge.d.ts"
-      ]
-    }
   },
   "include": [
     "docs/features.ts",
@@ -25,7 +19,7 @@
     "scripts/**/*.ts",
     "src/**/*.d.ts",
     "src/**/*.ts",
-    "vite.config.ts"
+    "vite.config.ts",
   ],
-  "exclude": ["node_modules", "dist", "build", ".electrobun"]
+  "exclude": ["node_modules", "dist", "build", ".electrobun"],
 }

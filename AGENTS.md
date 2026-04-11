@@ -11,6 +11,7 @@
 - Use `docs/references/opencode/packages/ui` as the default local reference when reasoning about opencode desktop app layouts, basic components, or UI patterns.
 - When this repo references opencode, treat it as the desktop app UI in `docs/references/opencode/packages/ui/`, which we use as a reference for basic layout and components in our app.
 - Prefer these local references over memory or vague external summaries when questions involve these tools or libraries.
+- To inspect a running `hellm` app, use the published `electrobun-browser-tools` CLI (`--app <appId>` or `--url <bridgeUrl>`); the bridge is mounted in `src/bun/tool-bridge.ts`, and `src/bun/index.ts` logs the resolved `appId` and `bridgeUrl` when it starts.
 - Keep one main orchestrator responsible for strategy, integration, and final decisions.
 - Use subagents heavily for bounded, independent work; default to delegating concrete side tasks when they can run in parallel or reduce main-thread load.
 - Use subagents as short-lived general workers, not persistent role-based agents.

@@ -24,7 +24,7 @@
     "@mariozechner/pi-ai": "^0.64.0",
     "@mariozechner/pi-coding-agent": "^0.64.0",
     "electrobun": "1.16.0",
-    "electrobun-browser-tools": "file:../electrobun-browser-tools",
+    "electrobun-browser-tools": "^0.0.1",
     "svelte": "^5.55.1"
   },
   "devDependencies": {

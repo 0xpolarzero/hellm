@@ -1,13 +1,5 @@
-import {
-  ApplicationMenu,
-  BrowserView,
-  BrowserWindow,
-  BuildConfig,
-  Updater,
-  defineElectrobunRPC,
-} from "electrobun/bun";
+import { ApplicationMenu, BrowserWindow, Updater, defineElectrobunRPC } from "electrobun/bun";
 import { getModel, getModels, getProviders } from "@mariozechner/pi-ai";
-import * as electrobunBrowserToolsBridge from "electrobun-browser-tools/bridge";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -45,6 +37,7 @@ import {
   setSessionThoughtLevel,
 } from "./pi-host";
 import type { SessionDefaults } from "./session-catalog";
+import { createHellmToolBridge } from "./tool-bridge";
 
 type SessionMutationResponse = {
   ok: boolean;
@@ -73,54 +66,8 @@ const PREFERRED_MODEL_FRAGMENTS = [
   "glm-4.7",
   "glm-4.5",
 ];
-const TOOL_BRIDGE_APP_ID = process.env.ELECTROBUN_BROWSER_TOOLS_APP_ID ?? "hellm";
-const TOOL_STATE_NAMESPACES = ["workspace", "defaults", "providers", "sessions"];
-
 let resolvedDefaults: ChatDefaults | null = null;
-let bridgeWarnings = 0;
-let bridgeErrors = 0;
 let mainWindow: BrowserWindow | null = null;
-let toolBridge: ToolBridge | null = null;
-
-type LogLevel = "debug" | "info" | "warn" | "error";
-type ErrorKind = "app" | "rpc" | "provider" | "tool-bridge" | "session" | "runtime";
-
-type ToolBridgeView = {
-  active: boolean;
-  closeDevTools: () => void;
-  evaluateJavascript?: (script: string) => Promise<unknown>;
-  frame: { x: number; y: number; width: number; height: number };
-  hostWebviewId: number | null;
-  inspectability: "dom" | "events-only";
-  openDevTools: () => void;
-  sandbox: boolean;
-  title?: string;
-  toggleDevTools: () => void;
-  url?: string | null;
-  viewId: number;
-  windowId: number;
-};
-
-type ToolBridgeWindow = {
-  active: boolean;
-  focus: () => void;
-  getFrame: () => { x: number; y: number; width: number; height: number };
-  title?: string;
-  viewIds: number[];
-  windowId: number;
-};
-
-type ToolBridge = {
-  url?: string;
-  recordEvent: (input: Record<string, unknown>) => void;
-  recordLog: (input: Record<string, unknown>) => void;
-  recordError: (input: Record<string, unknown>) => void;
-};
-
-const mountToolBridge = (
-  electrobunBrowserToolsBridge as { mountToolBridge: Function }
-).mountToolBridge as
-  (options: Record<string, unknown>) => Promise<ToolBridge>;
 
 function loadEnvFile(filePath: string): void {
   if (!existsSync(filePath)) return;
@@ -325,211 +272,18 @@ function listProviderAuthSummaries(): ProviderAuthInfo[] {
   });
 }
 
-function getBridgeContext(): { viewId?: number; windowId?: number } {
-  return {
-    windowId: mainWindow?.id,
-    viewId: mainWindow?.webviewId,
-  };
-}
-
-function recordBridgeEvent(eventName: string, payload?: Record<string, unknown>): void {
-  toolBridge?.recordEvent({
-    eventName,
-    payload,
-    ...getBridgeContext(),
-  });
-}
-
-function recordBridgeLog(
-  level: LogLevel,
-  message: string,
-  source: string,
-  context?: Record<string, unknown>,
-): void {
-  if (level === "warn") {
-    bridgeWarnings += 1;
-  }
-  if (level === "error") {
-    bridgeErrors += 1;
-  }
-
-  toolBridge?.recordLog({
-    level,
-    message,
-    source,
-    context,
-    ...getBridgeContext(),
-  });
-}
-
-function recordBridgeError(
-  kind: ErrorKind,
-  message: string,
-  source: string,
-  details?: Record<string, unknown>,
-  error?: unknown,
-): void {
-  bridgeErrors += 1;
-  toolBridge?.recordError({
-    kind,
-    message,
-    source,
-    details,
-    stack: error instanceof Error ? error.stack : undefined,
-    ...getBridgeContext(),
-  });
-}
-
-async function buildToolState(): Promise<Record<string, Record<string, unknown>>> {
-  const cwd = process.cwd();
-  const defaults = getDefaultChatSettings();
-  const sessions = await listWorkspaceSessions();
-  const activeSession = await getActiveWorkspaceSession();
-  const providerAuths = listProviderAuthSummaries();
-
-  return {
-    workspace: {
-      workspaceId: cwd,
-      cwd,
-      label: basename(cwd),
-      branch: getWorkspaceBranch(cwd),
-    },
-    defaults: {
-      ...defaults,
-      systemPrompt: DEFAULT_SYSTEM_PROMPT,
-    },
-    providers: {
-      connected: providerAuths.filter((provider) => provider.hasKey).length,
-      items: providerAuths,
-      total: providerAuths.length,
-    },
-    sessions: {
-      active: activeSession
-        ? {
-            messageCount: activeSession.messages.length,
-            model: activeSession.model,
-            provider: activeSession.provider,
-            reasoningEffort: activeSession.reasoningEffort,
-            session: activeSession.session,
-            systemPrompt: activeSession.systemPrompt,
-          }
-        : null,
-      activeSessionId: sessions.activeSessionId ?? null,
-      summaries: sessions.sessions,
-      total: sessions.sessions.length,
-    },
-  };
-}
-
-async function buildToolStateSummary(): Promise<Record<string, unknown>> {
-  const cwd = process.cwd();
-  const defaults = getDefaultChatSettings();
-  const sessions = await listWorkspaceSessions();
-  const activeSession = await getActiveWorkspaceSession();
-  const providerAuths = listProviderAuthSummaries();
-
-  return {
-    branch: getWorkspaceBranch(cwd),
-    defaults,
-    providers: {
-      connected: providerAuths.filter((provider) => provider.hasKey).length,
-      total: providerAuths.length,
-    },
-    sessions: {
-      activeSessionId: sessions.activeSessionId ?? null,
-      activeStatus: activeSession?.session.status ?? null,
-      total: sessions.sessions.length,
-    },
-    workspaceId: cwd,
-    workspaceLabel: basename(cwd),
-  };
-}
-
-async function buildToolBuildInfo() {
-  const build = await BuildConfig.get();
-  return {
-    availableRenderers: build.availableRenderers,
-    bunVersion: build.bunVersion,
-    cefVersion: build.cefVersion,
-    defaultRenderer: build.defaultRenderer,
-  };
-}
-
-function getViewEvaluator(view: BrowserView): ((script: string) => Promise<unknown>) | undefined {
-  if (view.sandbox) {
-    return undefined;
-  }
-
-  const request = (
-    view.rpc as
-      | {
-          request?: {
-            evaluateJavascriptWithResponse?: (input: { script: string }) => Promise<unknown>;
-          };
-        }
-      | undefined
-  )?.request;
-
-  if (typeof request?.evaluateJavascriptWithResponse !== "function") {
-    return undefined;
-  }
-
-  const evaluateJavascriptWithResponse = request.evaluateJavascriptWithResponse!;
-  return async (script: string) => {
-    const result = await evaluateJavascriptWithResponse({
-      script: script.trimStart().startsWith("return ") ? script : `return ${script}`,
-    });
-    if (typeof result !== "string") {
-      return result;
-    }
-
-    try {
-      return JSON.parse(result) as unknown;
-    } catch {
-      return result;
-    }
-  };
-}
-
-function listToolBridgeViews(): ToolBridgeView[] {
-  return BrowserView.getAll().map((view) => {
-    const evaluateJavascript = getViewEvaluator(view);
-    return {
-      active: view.id === mainWindow?.webviewId,
-      closeDevTools: () => view.closeDevTools(),
-      evaluateJavascript,
-      frame: view.frame,
-      hostWebviewId: view.hostWebviewId ?? null,
-      inspectability: evaluateJavascript ? "dom" : "events-only",
-      openDevTools: () => view.openDevTools(),
-      sandbox: view.sandbox,
-      title: view.id === mainWindow?.webviewId ? mainWindow?.title : undefined,
-      toggleDevTools: () => view.toggleDevTools(),
-      url: view.url,
-      viewId: view.id,
-      windowId: view.windowId,
-    };
-  });
-}
-
-function listToolBridgeWindows(): ToolBridgeWindow[] {
-  if (!mainWindow) {
-    return [];
-  }
-
-  return [
-    {
-      active: true,
-      focus: () => mainWindow?.focus(),
-      getFrame: () => mainWindow?.getFrame() ?? { x: 0, y: 0, width: 0, height: 0 },
-      title: mainWindow.title,
-      viewIds: BrowserView.getAll()
-        .filter((view) => view.windowId === mainWindow?.id)
-        .map((view) => view.id),
-      windowId: mainWindow.id,
-    },
-  ];
-}
+const hellmToolBridge = createHellmToolBridge({
+  defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
+  getActiveWorkspaceSession,
+  getDefaultChatSettings,
+  getMainWindow: () => mainWindow,
+  getWorkspaceBranch,
+  listProviderAuthSummaries,
+  listWorkspaceSessions,
+});
+const recordBridgeEvent = hellmToolBridge.recordEvent;
+const recordBridgeLog = hellmToolBridge.recordLog;
+const recordBridgeError = hellmToolBridge.recordError;
 
 const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
   maxRequestTime: getRpcRequestTimeoutMs(),
@@ -583,13 +337,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return session;
       },
-      renameSession: async ({
-        sessionId,
-        title,
-      }: {
-        sessionId: string;
-        title: string;
-      }) => {
+      renameSession: async ({ sessionId, title }: { sessionId: string; title: string }) => {
         const result = await renameWorkspaceSession(sessionId, title);
         recordBridgeEvent("session.renamed", {
           sessionId,
@@ -597,17 +345,8 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return result;
       },
-      forkSession: async ({
-        sessionId,
-        title,
-      }: {
-        sessionId: string;
-        title?: string;
-      }) => {
-        const session = await forkWorkspaceSession(
-          { sessionId, title },
-          getSessionDefaults(),
-        );
+      forkSession: async ({ sessionId, title }: { sessionId: string; title?: string }) => {
+        const session = await forkWorkspaceSession({ sessionId, title }, getSessionDefaults());
         recordBridgeEvent("session.forked", {
           sessionId,
           targetSessionId: session.session.id,
@@ -715,10 +454,15 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         if (result.ok) {
           recordBridgeEvent("session.model.changed", { model, sessionId });
         } else {
-          recordBridgeError("rpc", `Session ${sessionId} was not found for model update.`, "bun.session", {
-            model,
-            sessionId,
-          });
+          recordBridgeError(
+            "rpc",
+            `Session ${sessionId} was not found for model update.`,
+            "bun.session",
+            {
+              model,
+              sessionId,
+            },
+          );
         }
         return { ok: result.ok, sessionId: result.sessionId };
       },
@@ -852,31 +596,16 @@ mainWindow = new BrowserWindow({
   rpc,
 });
 
-toolBridge = await mountToolBridge({
-  appId: TOOL_BRIDGE_APP_ID,
-  appName: "hellm",
-  appVersion: process.env.npm_package_version ?? "0.0.1",
-  getBuildInfo: () => buildToolBuildInfo(),
-  getRecent: () => ({
-    errors: bridgeErrors,
-    warnings: bridgeWarnings,
-  }),
-  getState: () => buildToolState(),
-  getStateSummary: () => buildToolStateSummary(),
-  getViews: () => listToolBridgeViews(),
-  getWindows: () => listToolBridgeWindows(),
-  log: (message: string) => console.log(message),
-  stateNamespaces: TOOL_STATE_NAMESPACES,
-});
+const mountedToolBridge = await hellmToolBridge.mount(mainWindow);
 
 recordBridgeEvent("app.ready", {
-  bridgeUrl: toolBridge.url ?? null,
+  bridgeUrl: mountedToolBridge.url ?? null,
   url,
   workspaceId: process.cwd(),
 });
 recordBridgeLog("info", "hellm tool bridge mounted.", "tool-bridge", {
-  appId: TOOL_BRIDGE_APP_ID,
-  bridgeUrl: toolBridge.url ?? null,
+  appId: mountedToolBridge.appId,
+  bridgeUrl: mountedToolBridge.url ?? null,
 });
 
 void mainWindow;
