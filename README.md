@@ -14,9 +14,7 @@ This is a bootstrap, not the finished product. The long-term product architectur
 ## Commands
 
 - `bun install`
-- `bun run dev` for the default HMR loop
-- `bun run dev:hmr` for the explicit HMR loop
-- `bun run dev:watch` for the reload-only Electrobun watcher
+- `bun run dev`
 - `bun run build`
 - `bun run run`
 - `bun run typecheck`

@@ -171,14 +171,10 @@ function getRpcRequestTimeoutMs(): number {
   return Math.trunc(parsed);
 }
 
-type DevServerMode = "auto" | "off" | "wait";
+type DevServerMode = "auto" | "wait";
 
 function getDevServerMode(): DevServerMode {
-  const value = process.env.HELLM_VITE_DEV_SERVER;
-  if (value === "off" || value === "wait") {
-    return value;
-  }
-  return "auto";
+  return process.env.HELLM_VITE_DEV_SERVER === "wait" ? "wait" : "auto";
 }
 
 async function isDevServerReady(): Promise<boolean> {
@@ -218,18 +214,16 @@ async function getMainViewUrl(): Promise<string> {
   if (channel === "dev") {
     const mode = getDevServerMode();
     const ready =
-      mode === "off"
-        ? false
-        : mode === "wait"
-          ? await waitForDevServer(DEV_SERVER_WAIT_TIMEOUT_MS)
-          : await isDevServerReady();
+      mode === "wait"
+        ? await waitForDevServer(DEV_SERVER_WAIT_TIMEOUT_MS)
+        : await isDevServerReady();
 
     if (ready) {
       console.log(`HMR enabled: using Vite dev server at ${DEV_SERVER_URL}`);
       return DEV_SERVER_URL;
     }
 
-    console.log("Vite dev server not running. Run `bun run dev` for HMR or `bun run dev:watch` for reload-only mode.");
+    console.log("Vite dev server not running. Run `bun run dev`.");
   }
   return "views://mainview/index.html";
 }
