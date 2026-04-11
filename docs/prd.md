@@ -364,6 +364,9 @@ The composer area must support:
 
 - prompt entry
 - prompt cancellation while streaming
+- `@`-triggered autocomplete over workspace files and folders
+- rendering selected file and folder mentions as removable composer chips
+- preserving mentions as symbolic context targets with resolved workspace paths rather than pasting raw file contents into the draft
 - a visible summary of the current session's main runtime profile
 - expandable inspection of per-agent runtime profiles for the session
 - per-session override controls for agent runtime profiles rather than raw global model or reasoning selectors
@@ -551,6 +554,7 @@ The orchestrator must:
 
 - classify requests against current context
 - choose between direct, delegated, verification, and pause paths
+- resolve symbolic file and folder mentions from the composer into request context
 - author delegated workflow requests when appropriate
 - reconcile all path outputs into the same product model
 - make final user-facing decisions after delegated work completes or pauses
