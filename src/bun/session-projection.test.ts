@@ -76,7 +76,9 @@ describe("session projection", () => {
   });
 
   it("derives status from the active stream or latest failure", () => {
-    expect(deriveSessionStatus({ messages: [], isActive: true, isStreaming: true })).toBe("running");
+    expect(deriveSessionStatus({ messages: [], isActive: true, isStreaming: true })).toBe(
+      "running",
+    );
     expect(
       deriveSessionStatus({
         messages: [userMessage("hi"), assistantMessage("failed", "error")],
@@ -87,7 +89,9 @@ describe("session projection", () => {
   });
 
   it("projects parent session ids from persisted paths", () => {
-    expect(getSessionParentId("/tmp/sessions/2026-04-10T10-00-00.000Z_abcd-1234.jsonl")).toBe("abcd-1234");
+    expect(getSessionParentId("/tmp/sessions/2026-04-10T10-00-00.000Z_abcd-1234.jsonl")).toBe(
+      "abcd-1234",
+    );
   });
 
   it("builds summaries with stable metadata", () => {
@@ -98,7 +102,10 @@ describe("session projection", () => {
       createdAt: new Date("2026-04-10T10:00:00.000Z"),
       updatedAt: new Date("2026-04-10T10:05:00.000Z"),
       messageCount: 2,
-      messages: [userMessage("Investigate"), assistantMessage("Done", "stop", Date.parse("2026-04-10T10:06:00.000Z"))],
+      messages: [
+        userMessage("Investigate"),
+        assistantMessage("Done", "stop", Date.parse("2026-04-10T10:06:00.000Z")),
+      ],
       sessionFile: "/tmp/session-1.jsonl",
       parentSessionFile: "/tmp/session-0.jsonl",
       provider: "openai",

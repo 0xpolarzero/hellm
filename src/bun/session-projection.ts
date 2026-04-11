@@ -84,11 +84,7 @@ function getLatestVisibleMessage(messages: AgentMessage[]): AgentMessage | undef
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (!message) continue;
-    if (
-      message.role === "user" ||
-      message.role === "assistant" ||
-      message.role === "toolResult"
-    ) {
+    if (message.role === "user" || message.role === "assistant" || message.role === "toolResult") {
       return message;
     }
   }
@@ -111,7 +107,9 @@ export function getSessionParentId(parentSessionFile: string | undefined): strin
   return match?.[1];
 }
 
-export function getSessionTitle(source: Pick<SessionProjectionSource, "name" | "firstMessage" | "messages">): string {
+export function getSessionTitle(
+  source: Pick<SessionProjectionSource, "name" | "firstMessage" | "messages">,
+): string {
   const explicitName = normalizeText(source.name, TITLE_LIMIT);
   if (explicitName) {
     return explicitName;
@@ -128,8 +126,13 @@ export function getSessionTitle(source: Pick<SessionProjectionSource, "name" | "
   return NEW_SESSION_TITLE;
 }
 
-export function getSessionPreview(source: Pick<SessionProjectionSource, "firstMessage" | "messages">): string {
-  const latestText = normalizeText(flattenMessageText(getLatestVisibleMessage(source.messages)), PREVIEW_LIMIT);
+export function getSessionPreview(
+  source: Pick<SessionProjectionSource, "firstMessage" | "messages">,
+): string {
+  const latestText = normalizeText(
+    flattenMessageText(getLatestVisibleMessage(source.messages)),
+    PREVIEW_LIMIT,
+  );
   if (latestText) {
     return latestText;
   }
@@ -142,7 +145,9 @@ export function getSessionPreview(source: Pick<SessionProjectionSource, "firstMe
   return "Waiting for first turn";
 }
 
-export function deriveSessionStatus(source: Pick<SessionProjectionSource, "messages" | "isActive" | "isStreaming">): SessionStatus {
+export function deriveSessionStatus(
+  source: Pick<SessionProjectionSource, "messages" | "isActive" | "isStreaming">,
+): SessionStatus {
   if (source.isActive && source.isStreaming) {
     return "running";
   }
@@ -152,7 +157,10 @@ export function deriveSessionStatus(source: Pick<SessionProjectionSource, "messa
     return "idle";
   }
 
-  if (latest.role === "assistant" && (latest.stopReason === "error" || latest.stopReason === "aborted")) {
+  if (
+    latest.role === "assistant" &&
+    (latest.stopReason === "error" || latest.stopReason === "aborted")
+  ) {
     return "error";
   }
 
@@ -163,7 +171,9 @@ export function deriveSessionStatus(source: Pick<SessionProjectionSource, "messa
   return "idle";
 }
 
-export function projectWorkspaceSessionSummary(source: SessionProjectionSource): WorkspaceSessionSummary {
+export function projectWorkspaceSessionSummary(
+  source: SessionProjectionSource,
+): WorkspaceSessionSummary {
   const createdAt = new Date(source.createdAt);
   const updatedAt = new Date(source.updatedAt);
   const latestMessageTimestamp = getLatestMessageTimestamp(source.messages);

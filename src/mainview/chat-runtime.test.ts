@@ -11,17 +11,20 @@ import type { PromptHistoryEntry } from "./prompt-history";
 import type { ChatRuntimeRpcClient } from "./chat-runtime";
 
 mock.module("electrobun/view", () => {
-  class MockElectroview {
-    static defineRPC() {
-      return {
-        request: {},
-        addMessageListener() {},
-        removeMessageListener() {},
-      };
-    }
-
-    constructor() {}
-  }
+  const MockElectroview = Object.assign(
+    function MockElectroview() {
+      return undefined;
+    },
+    {
+      defineRPC() {
+        return {
+          request: {},
+          addMessageListener() {},
+          removeMessageListener() {},
+        };
+      },
+    },
+  );
 
   return {
     Electroview: MockElectroview,
@@ -85,7 +88,10 @@ function createActiveSession(
   const lastMessage = messages.at(-1);
   const preview =
     lastMessage && lastMessage.role === "assistant"
-      ? lastMessage.content.filter((block) => block.type === "text").map((block) => block.text).join(" ")
+      ? lastMessage.content
+          .filter((block) => block.type === "text")
+          .map((block) => block.text)
+          .join(" ")
       : "";
 
   return {
@@ -106,8 +112,12 @@ function createFakeRpc(initialSessions: ActiveSessionState[]): {
   client: ChatRuntimeRpcClient;
   sentPromptSessions: string[];
 } {
-  const listeners = new Set<(payload: { streamId: string; event: AssistantMessageEvent }) => void>();
-  const sessionsById = new Map(initialSessions.map((session) => [session.session.id, cloneActiveSession(session)]));
+  const listeners = new Set<
+    (payload: { streamId: string; event: AssistantMessageEvent }) => void
+  >();
+  const sessionsById = new Map(
+    initialSessions.map((session) => [session.session.id, cloneActiveSession(session)]),
+  );
   let activeSessionId = initialSessions[0]?.session.id;
   const sentPromptSessions: string[] = [];
 
@@ -123,7 +133,7 @@ function createFakeRpc(initialSessions: ActiveSessionState[]): {
   const mutation = (activeSession?: ActiveSessionState | null): SessionMutationResponse => ({
     ok: true,
     activeSessionId,
-    activeSession: activeSession ? cloneActiveSession(activeSession) : activeSession ?? undefined,
+    activeSession: activeSession ? cloneActiveSession(activeSession) : (activeSession ?? undefined),
   });
 
   const client: ChatRuntimeRpcClient = {
@@ -172,7 +182,11 @@ function createFakeRpc(initialSessions: ActiveSessionState[]): {
         }
         return mutation();
       },
-      sendPrompt: async (request: { sessionId?: string; streamId: string; messages: AgentMessage[] }) => {
+      sendPrompt: async (request: {
+        sessionId?: string;
+        streamId: string;
+        messages: AgentMessage[];
+      }) => {
         sentPromptSessions.push(request.sessionId ?? "");
         const assistant = assistantMessage("Session-specific reply");
         const session = sessionsById.get(request.sessionId!)!;
@@ -183,14 +197,27 @@ function createFakeRpc(initialSessions: ActiveSessionState[]): {
           const partial = assistantMessage("");
           for (const listener of listeners) {
             listener({ streamId: request.streamId, event: { type: "start", partial } });
-            listener({ streamId: request.streamId, event: { type: "text_start", contentIndex: 0, partial } });
             listener({
               streamId: request.streamId,
-              event: { type: "text_delta", contentIndex: 0, delta: "Session-specific reply", partial },
+              event: { type: "text_start", contentIndex: 0, partial },
             });
             listener({
               streamId: request.streamId,
-              event: { type: "text_end", contentIndex: 0, content: "Session-specific reply", partial },
+              event: {
+                type: "text_delta",
+                contentIndex: 0,
+                delta: "Session-specific reply",
+                partial,
+              },
+            });
+            listener({
+              streamId: request.streamId,
+              event: {
+                type: "text_end",
+                contentIndex: 0,
+                content: "Session-specific reply",
+                partial,
+              },
             });
             listener({
               streamId: request.streamId,
@@ -200,8 +227,14 @@ function createFakeRpc(initialSessions: ActiveSessionState[]): {
         });
         return { sessionId: request.sessionId! };
       },
-      setSessionModel: async ({ sessionId }: { sessionId: string; model: string }) => ({ ok: true, sessionId }),
-      setSessionThoughtLevel: async ({ sessionId }: { sessionId: string; level: string }) => ({ ok: true, sessionId }),
+      setSessionModel: async ({ sessionId }: { sessionId: string; model: string }) => ({
+        ok: true,
+        sessionId,
+      }),
+      setSessionThoughtLevel: async ({ sessionId }: { sessionId: string; level: string }) => ({
+        ok: true,
+        sessionId,
+      }),
       cancelPrompt: async () => ({ ok: true }),
       listProviderAuths: async () => [
         { provider: "openai", hasKey: true, keyType: "oauth", supportsOAuth: true },
@@ -211,10 +244,14 @@ function createFakeRpc(initialSessions: ActiveSessionState[]): {
       removeProviderAuth: async () => ({ ok: true }),
     },
     addMessageListener: (_messageName: string, listener: unknown) => {
-      listeners.add(listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void);
+      listeners.add(
+        listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+      );
     },
     removeMessageListener: (_messageName: string, listener: unknown) => {
-      listeners.delete(listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void);
+      listeners.delete(
+        listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+      );
     },
   };
 
@@ -265,8 +302,18 @@ describe("createChatRuntime", () => {
   it("hydrates sessions, switches the active transcript, and keeps prompts scoped to the selected session", async () => {
     const { createChatRuntime } = await import("./chat-runtime");
     const { client, sentPromptSessions } = createFakeRpc([
-      createActiveSession("session-1", "First", [userMessage("first"), assistantMessage("first reply")], "medium"),
-      createActiveSession("session-2", "Second", [userMessage("second"), assistantMessage("second reply")], "high"),
+      createActiveSession(
+        "session-1",
+        "First",
+        [userMessage("first"), assistantMessage("first reply")],
+        "medium",
+      ),
+      createActiveSession(
+        "session-2",
+        "Second",
+        [userMessage("second"), assistantMessage("second reply")],
+        "high",
+      ),
     ]);
 
     const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
@@ -277,7 +324,14 @@ describe("createChatRuntime", () => {
     await runtime.openSession("session-2");
     expect(runtime.activeSessionId).toBe("session-2");
     expect(runtime.agent.state.thinkingLevel).toBe("high");
-    expect(runtime.agent.state.messages.some((message) => message.role === "assistant" && message.content[0]?.type === "text" && message.content[0].text === "second reply")).toBe(true);
+    expect(
+      runtime.agent.state.messages.some(
+        (message) =>
+          message.role === "assistant" &&
+          message.content[0]?.type === "text" &&
+          message.content[0].text === "second reply",
+      ),
+    ).toBe(true);
 
     await runtime.agent.prompt("continue");
     await runtime.agent.waitForIdle();
@@ -288,7 +342,14 @@ describe("createChatRuntime", () => {
 
     await runtime.deleteSession("session-2");
     expect(runtime.activeSessionId).toBe("session-1");
-    expect(runtime.agent.state.messages.some((message) => message.role === "assistant" && message.content[0]?.type === "text" && message.content[0].text === "first reply")).toBe(true);
+    expect(
+      runtime.agent.state.messages.some(
+        (message) =>
+          message.role === "assistant" &&
+          message.content[0]?.type === "text" &&
+          message.content[0].text === "first reply",
+      ),
+    ).toBe(true);
 
     runtime.dispose();
   });

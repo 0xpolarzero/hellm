@@ -5,7 +5,11 @@ import type {
   ListSessionsResponse,
   SessionMutationResponse,
 } from "../mainview/chat-rpc";
-import { WorkspaceSessionCatalog, type SendAgentPromptOptions, type SessionDefaults } from "./session-catalog";
+import {
+  WorkspaceSessionCatalog,
+  type SendAgentPromptOptions,
+  type SessionDefaults,
+} from "./session-catalog";
 
 const workspaceSessionCatalog = new WorkspaceSessionCatalog();
 
@@ -58,7 +62,9 @@ export async function deleteWorkspaceSession(
   return workspaceSessionCatalog.deleteSession(sessionId, defaults);
 }
 
-export async function sendAgentPrompt(options: SendAgentPromptOptions): Promise<{ sessionId: string }> {
+export async function sendAgentPrompt(
+  options: SendAgentPromptOptions,
+): Promise<{ sessionId: string }> {
   return workspaceSessionCatalog.sendPrompt(options);
 }
 

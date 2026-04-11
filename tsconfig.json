@@ -14,7 +14,9 @@
     "baseUrl": ".",
     "paths": {
       "electrobun-browser-tools": ["./node_modules/electrobun-browser-tools/dist/index.d.ts"],
-      "electrobun-browser-tools/bridge": ["./node_modules/electrobun-browser-tools/dist/bridge.d.ts"]
+      "electrobun-browser-tools/bridge": [
+        "./node_modules/electrobun-browser-tools/dist/bridge.d.ts"
+      ]
     }
   },
   "include": [

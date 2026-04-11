@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
-import { getHellmSessionDir, WorkspaceSessionCatalog, type SessionDefaults } from "./session-catalog";
+import {
+  getHellmSessionDir,
+  WorkspaceSessionCatalog,
+  type SessionDefaults,
+} from "./session-catalog";
 
 const tempDirs: string[] = [];
 
@@ -106,7 +110,9 @@ describe("WorkspaceSessionCatalog", () => {
 
     expect(sessions.sessions).toHaveLength(2);
     expect(sessions.sessions.map((session) => session.id)).toEqual([second.id, first.id]);
-    expect(sessions.sessions.find((session) => session.id === first.id)?.title).toBe("Investigate parser");
+    expect(sessions.sessions.find((session) => session.id === first.id)?.title).toBe(
+      "Investigate parser",
+    );
   });
 
   it("creates, opens, renames, forks, and restores sessions across catalog restarts", async () => {
@@ -124,14 +130,19 @@ describe("WorkspaceSessionCatalog", () => {
 
     await catalog.renameSession(created.session.id, "Renamed Session");
     const renamedList = await catalog.listSessions();
-    expect(renamedList.sessions.find((session) => session.id === created.session.id)?.title).toBe("Renamed Session");
+    expect(renamedList.sessions.find((session) => session.id === created.session.id)?.title).toBe(
+      "Renamed Session",
+    );
 
     const opened = await catalog.openSession(existing.id, DEFAULTS.systemPrompt);
     expect(opened.session.title).toBe("Existing");
     expect(opened.messages.some((message) => message.role === "assistant")).toBe(true);
     expect(opened.reasoningEffort).toBe("high");
 
-    const forked = await catalog.forkSession({ sessionId: existing.id, title: "Forked Session" }, DEFAULTS);
+    const forked = await catalog.forkSession(
+      { sessionId: existing.id, title: "Forked Session" },
+      DEFAULTS,
+    );
     expect(forked.session.title).toBe("Forked Session");
     expect(forked.session.parentSessionId).toBe(existing.id);
     expect(forked.messages.length).toBe(opened.messages.length);
@@ -149,7 +160,9 @@ describe("WorkspaceSessionCatalog", () => {
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const created = await catalog.createSession({ title: "Streaming" }, DEFAULTS);
 
-    ((catalog as unknown) as { activeSession?: { activePrompt: boolean } }).activeSession!.activePrompt = true;
+    (
+      catalog as unknown as { activeSession?: { activePrompt: boolean } }
+    ).activeSession!.activePrompt = true;
 
     await expect(catalog.deleteSession(created.session.id, DEFAULTS)).rejects.toThrow(
       "Cannot delete a session while it is streaming.",

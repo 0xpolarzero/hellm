@@ -3,20 +3,17 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.3.10",
   "scripts": {
     "start": "vite build && electrobun dev",
     "dev": "bun scripts/dev.ts",
     "build": "vite build && electrobun build",
     "run": "electrobun run",
+    "test": "bun test $(rg --files src -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts')",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint . --import-plugin --node-plugin --deny-warnings --fix --fix-suggestions",
     "lint:check": "oxlint . --import-plugin --node-plugin --deny-warnings",
     "format": "oxfmt",
     "format:check": "oxfmt --check"
-  },
-  "engines": {
-    "bun": ">=1.3.10"
   },
   "dependencies": {
     "@fontsource-variable/familjen-grotesk": "^5.2.8",
@@ -33,8 +30,13 @@
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@types/bun": "^1.3.11",
+    "oxfmt": "0.44.0",
     "oxlint": "1.59.0",
     "typescript": "^6.0.2",
     "vite": "^8.0.3"
-  }
+  },
+  "engines": {
+    "bun": ">=1.3.10"
+  },
+  "packageManager": "bun@1.3.10"
 }

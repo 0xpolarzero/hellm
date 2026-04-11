@@ -216,7 +216,10 @@ Cloudflare's generic core is:
 
 ```ts
 interface Executor {
-  execute(code, providersOrFns): Promise<{
+  execute(
+    code,
+    providersOrFns,
+  ): Promise<{
     result: unknown;
     error?: string;
     logs?: string[];
@@ -752,7 +755,7 @@ type ExecuteTypescriptResult = {
 Tool name:
 
 ```ts
-execute_typescript
+execute_typescript;
 ```
 
 Rationale:

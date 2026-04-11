@@ -5,6 +5,7 @@
     "correctness": "error",
     "suspicious": "error"
   },
+  "ignorePatterns": ["docs/references/**"],
   "rules": {
     "func-style": "off",
     "import/group-exports": "off",

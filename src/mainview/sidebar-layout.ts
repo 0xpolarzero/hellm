@@ -8,7 +8,10 @@ type SidebarShortcutEvent = Pick<
 >;
 
 export function getMaxSidebarWidth(viewportWidth: number): number {
-  const viewportCap = Math.max(MIN_SIDEBAR_WIDTH, Math.floor(viewportWidth * SIDEBAR_VIEWPORT_RATIO));
+  const viewportCap = Math.max(
+    MIN_SIDEBAR_WIDTH,
+    Math.floor(viewportWidth * SIDEBAR_VIEWPORT_RATIO),
+  );
   return Math.min(MAX_SIDEBAR_WIDTH, viewportCap);
 }
 

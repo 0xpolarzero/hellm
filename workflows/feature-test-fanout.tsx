@@ -20,10 +20,7 @@ import { z } from "zod";
 import { ALL_HELLM_FEATURES } from "../docs/features.ts";
 import WorkerPrompt from "./prompts/feature-test-fanout/worker.mdx";
 
-const DEFAULT_MAX_CONCURRENCY = parsePositiveInt(
-  process.env.HELLM_FEATURE_TEST_MAX_CONCURRENCY,
-  6,
-);
+const DEFAULT_MAX_CONCURRENCY = parsePositiveInt(process.env.HELLM_FEATURE_TEST_MAX_CONCURRENCY, 6);
 const DEFAULT_BATCH_SIZE = parsePositiveInt(
   process.env.HELLM_FEATURE_TEST_BATCH_SIZE,
   DEFAULT_MAX_CONCURRENCY,
@@ -41,9 +38,7 @@ const inputSchema = z.object({
   repoRoot: z.string().default("."),
   worktreeRoot: z.string().default(".worktrees/feature-tests"),
   branchPrefix: z.string().default("workflow/feature-tests"),
-  baseBranch: z.string().default(
-    process.env.HELLM_FEATURE_TEST_BASE_BRANCH ?? "main",
-  ),
+  baseBranch: z.string().default(process.env.HELLM_FEATURE_TEST_BASE_BRANCH ?? "main"),
   deleteMergedBranches: z.boolean().default(true),
   cleanupBlockedWorktrees: z.boolean().default(false),
 });
@@ -226,7 +221,8 @@ export default smithers((ctx) => {
                         task: taskSpec,
                         feature: featureResult,
                         verification: verificationResult,
-                      })}
+                      })
+                    }
                   </Task>
                 );
               })}
@@ -252,7 +248,8 @@ export default smithers((ctx) => {
                         repoRoot: input.repoRoot,
                         task: taskSpec,
                         commit: commitResult,
-                      })}
+                      })
+                    }
                   </Task>
                 );
               })}
@@ -280,7 +277,8 @@ export default smithers((ctx) => {
                         merge: mergeResult,
                         deleteMergedBranches: input.deleteMergedBranches,
                         cleanupBlockedWorktrees: input.cleanupBlockedWorktrees,
-                      })}
+                      })
+                    }
                   </Task>
                 );
               })}
@@ -316,13 +314,11 @@ function createWorkerAgent(taskSpec?: { slug: string }) {
       });
     case "claude":
       return new ClaudeCodeAgent({
-        model:
-          process.env.HELLM_FEATURE_TEST_CLAUDE_MODEL ?? "claude-sonnet-4-20250514",
+        model: process.env.HELLM_FEATURE_TEST_CLAUDE_MODEL ?? "claude-sonnet-4-20250514",
         timeoutMs: DEFAULT_TIMEOUT_MS,
       });
-    default:
-      {
-        const codexEnv = createIsolatedCodexWorkerEnv(taskSpec?.slug ?? "shared");
+    default: {
+      const codexEnv = createIsolatedCodexWorkerEnv(taskSpec?.slug ?? "shared");
       return new CodexAgent({
         model: process.env.HELLM_FEATURE_TEST_CODEX_MODEL ?? "gpt-5.3-codex",
         sandbox:
@@ -336,8 +332,7 @@ function createWorkerAgent(taskSpec?: { slug: string }) {
         env: codexEnv,
         extraArgs: ["--ephemeral"],
         config: {
-          model_reasoning_effort:
-            process.env.HELLM_FEATURE_TEST_REASONING_EFFORT ?? "high",
+          model_reasoning_effort: process.env.HELLM_FEATURE_TEST_REASONING_EFFORT ?? "high",
           "features.multi_agent": false,
           "agents.max_threads": 1,
         },
@@ -349,13 +344,9 @@ function createWorkerAgent(taskSpec?: { slug: string }) {
 function createIsolatedCodexWorkerEnv(taskSlug: string): Record<string, string> {
   const configuredHome = process.env.HELLM_FEATURE_TEST_CODEX_HOME?.trim();
   const codexHomeRoot =
-    configuredHome && configuredHome.length > 0
-      ? resolve(configuredHome)
-      : tmpdir();
+    configuredHome && configuredHome.length > 0 ? resolve(configuredHome) : tmpdir();
   mkdirSync(codexHomeRoot, { recursive: true });
-  const codexHome = mkdtempSync(
-    resolve(codexHomeRoot, `hellm-codex-home-${taskSlug}-`),
-  );
+  const codexHome = mkdtempSync(resolve(codexHomeRoot, `hellm-codex-home-${taskSlug}-`));
 
   mkdirSync(codexHome, { recursive: true });
 
@@ -384,9 +375,7 @@ function selectFeatures(requested?: string[]): string[] {
   const unknown = deduped.filter((feature) => !known.has(feature));
 
   if (unknown.length > 0) {
-    throw new Error(
-      `Unknown feature ids requested: ${unknown.join(", ")}.`,
-    );
+    throw new Error(`Unknown feature ids requested: ${unknown.join(", ")}.`);
   }
 
   return deduped;
@@ -400,10 +389,7 @@ function featureSlug(featureId: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-function createTaskSpec(
-  featureId: string,
-  input: z.infer<typeof inputSchema>,
-) {
+function createTaskSpec(featureId: string, input: z.infer<typeof inputSchema>) {
   const slug = featureSlug(featureId);
   const repoRoot = resolve(input.repoRoot);
   return {
@@ -483,9 +469,7 @@ async function verifyFeature(
     executedCommands.push(command);
     if (result.status !== 0) {
       failedCommands.push(command);
-      summaries.push(
-        `${command}: failed (${truncateOutput(commandFailureOutput(result))})`,
-      );
+      summaries.push(`${command}: failed (${truncateOutput(commandFailureOutput(result))})`);
       return {
         featureId: feature.featureId,
         branch: task.branch,
@@ -508,10 +492,7 @@ async function verifyFeature(
     status: executedCommands.length > 0 ? "passed" : "skipped",
     executedCommands,
     failedCommands,
-    summaries:
-      summaries.length > 0
-        ? summaries
-        : ["No verification commands were required."],
+    summaries: summaries.length > 0 ? summaries : ["No verification commands were required."],
     shouldMerge: worktreeState.dirty || feature.committed,
   };
 }
@@ -634,9 +615,7 @@ async function mergeFeature(input: {
       worktreePath: input.task.worktreePath,
       status: input.commit.status === "blocked" ? "blocked" : "skipped",
       summary:
-        input.commit.status === "blocked"
-          ? input.commit.summary
-          : "No committed changes to merge.",
+        input.commit.status === "blocked" ? input.commit.summary : "No committed changes to merge.",
     };
   }
 
@@ -760,9 +739,7 @@ async function cleanupFeature(input: {
     status: "cleaned",
     removedWorktree: true,
     deletedBranch,
-    summary: deletedBranch
-      ? "Removed worktree and deleted merged branch."
-      : "Removed worktree.",
+    summary: deletedBranch ? "Removed worktree and deleted merged branch." : "Removed worktree.",
   };
 }
 
@@ -785,9 +762,7 @@ function buildReport(input: {
   }
 
   const reported = new Set(input.featureResults.map((result) => result.featureId));
-  const missingFeatureIds = input.selectedFeatures.filter(
-    (feature) => !reported.has(feature),
-  );
+  const missingFeatureIds = input.selectedFeatures.filter((feature) => !reported.has(feature));
   const retainedFeatureIds = input.cleanupResults
     .filter((result) => result.status !== "cleaned")
     .map((result) => result.featureId);

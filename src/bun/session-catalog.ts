@@ -2,7 +2,13 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
-import { getModel, getProviders, type AssistantMessage, type AssistantMessageEvent, type Message } from "@mariozechner/pi-ai";
+import {
+  getModel,
+  getProviders,
+  type AssistantMessage,
+  type AssistantMessageEvent,
+  type Message,
+} from "@mariozechner/pi-ai";
 import {
   AuthStorage,
   createAgentSession,
@@ -108,14 +114,16 @@ export class WorkspaceSessionCatalog {
     }
 
     if (this.activeSession && !summaries.has(this.activeSession.sessionId)) {
-      summaries.set(this.activeSession.sessionId, this.buildSummaryFromManagedSession(this.activeSession));
+      summaries.set(
+        this.activeSession.sessionId,
+        this.buildSummaryFromManagedSession(this.activeSession),
+      );
     }
 
     return {
       activeSessionId: this.activeSession?.sessionId,
-      sessions: Array.from(summaries.values()).sort(
-        (left, right) =>
-          new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
+      sessions: Array.from(summaries.values()).toSorted(
+        (left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
       ),
     };
   }
@@ -157,7 +165,10 @@ export class WorkspaceSessionCatalog {
   }
 
   async openSession(sessionId: string, systemPrompt?: string): Promise<ActiveSessionState> {
-    const session = await this.openSessionInternal(sessionId, systemPrompt ?? this.activeSession?.systemPrompt);
+    const session = await this.openSessionInternal(
+      sessionId,
+      systemPrompt ?? this.activeSession?.systemPrompt,
+    );
     return this.buildActiveSessionState(session);
   }
 
@@ -200,7 +211,11 @@ export class WorkspaceSessionCatalog {
       return this.createSession({ title: request.title }, fallbackDefaults);
     }
 
-    const forkedSessionManager = SessionManager.forkFrom(sourceSessionFile, this.cwd, this.sessionDir);
+    const forkedSessionManager = SessionManager.forkFrom(
+      sourceSessionFile,
+      this.cwd,
+      this.sessionDir,
+    );
     if (request.title?.trim()) {
       forkedSessionManager.appendSessionInfo(request.title);
     }
@@ -282,7 +297,11 @@ export class WorkspaceSessionCatalog {
   }
 
   async cancelPrompt(sessionId: string): Promise<void> {
-    if (!this.activeSession || this.activeSession.sessionId !== sessionId || !this.activeSession.activePrompt) {
+    if (
+      !this.activeSession ||
+      this.activeSession.sessionId !== sessionId ||
+      !this.activeSession.activePrompt
+    ) {
       return;
     }
 
@@ -386,7 +405,10 @@ export class WorkspaceSessionCatalog {
 
   private async prepareManagedSession(
     session: ManagedSession,
-    options: Pick<SendAgentPromptOptions, "provider" | "model" | "thinkingLevel" | "systemPrompt" | "messages">,
+    options: Pick<
+      SendAgentPromptOptions,
+      "provider" | "model" | "thinkingLevel" | "systemPrompt" | "messages"
+    >,
   ): Promise<ManagedSession> {
     if (
       session.provider !== options.provider ||
@@ -419,7 +441,9 @@ export class WorkspaceSessionCatalog {
 
   private async recreateActiveSession(
     session: ManagedSession,
-    overrides: Partial<Pick<ManagedSession, "provider" | "model" | "thinkingLevel" | "systemPrompt">>,
+    overrides: Partial<
+      Pick<ManagedSession, "provider" | "model" | "thinkingLevel" | "systemPrompt">
+    >,
   ): Promise<ManagedSession> {
     const sessionManager = session.session.sessionManager;
     const provider = overrides.provider ?? session.provider;
@@ -440,7 +464,9 @@ export class WorkspaceSessionCatalog {
     return nextSession;
   }
 
-  private async activateManagedSession(options: CreateManagedSessionOptions): Promise<ManagedSession> {
+  private async activateManagedSession(
+    options: CreateManagedSessionOptions,
+  ): Promise<ManagedSession> {
     this.activeSession?.session.dispose();
     const session = await createManagedSession({
       ...options,
@@ -450,9 +476,7 @@ export class WorkspaceSessionCatalog {
     return session;
   }
 
-  private buildSummaryFromManagedSession(
-    session: ManagedSession,
-  ): WorkspaceSessionSummary {
+  private buildSummaryFromManagedSession(session: ManagedSession): WorkspaceSessionSummary {
     const header = session.session.sessionManager.getHeader();
     return projectWorkspaceSessionSummary({
       id: session.sessionId,
@@ -504,7 +528,10 @@ export class WorkspaceSessionCatalog {
     };
   }
 
-  private async getSessionFileForId(sessionId: string, required = true): Promise<string | undefined> {
+  private async getSessionFileForId(
+    sessionId: string,
+    required = true,
+  ): Promise<string | undefined> {
     if (this.activeSession?.sessionId === sessionId) {
       return this.activeSession.session.sessionManager.getSessionFile();
     }
@@ -548,8 +575,9 @@ export class WorkspaceSessionCatalog {
       finishOpenVisibleBlocks(streamState, options.onEvent);
 
       const emittedMessage =
-        getLatestAssistantMessage(session.session.agent.state.messages.slice(previousMessageCount)) ??
-        getLatestAssistantMessage(session.session.agent.state.messages);
+        getLatestAssistantMessage(
+          session.session.agent.state.messages.slice(previousMessageCount),
+        ) ?? getLatestAssistantMessage(session.session.agent.state.messages);
 
       if (!emittedMessage) {
         throw new Error("The pi session finished without producing an assistant message.");
@@ -632,13 +660,12 @@ async function createManagedSession(
   const authStorage = AuthStorage.inMemory();
   syncAuthStorage(authStorage);
   const modelRegistry = ModelRegistry.create(authStorage, join(options.agentDir, "models.json"));
-  const settingsManager = SettingsManager.create(
-    options.sessionManager.getCwd(),
-    options.agentDir,
-  );
+  const settingsManager = SettingsManager.create(options.sessionManager.getCwd(), options.agentDir);
 
   const resolvedModel =
-    options.provider && options.model ? getResolvedModel(options.provider, options.model) : undefined;
+    options.provider && options.model
+      ? getResolvedModel(options.provider, options.model)
+      : undefined;
   if (options.provider && options.model && !resolvedModel) {
     throw new Error(`Model not found: ${options.provider}/${options.model}`);
   }
@@ -673,19 +700,13 @@ async function createManagedSession(
 function countVisibleMessages(messages: AgentMessage[]): number {
   return messages.filter(
     (message) =>
-      message.role === "user" ||
-      message.role === "assistant" ||
-      message.role === "toolResult",
+      message.role === "user" || message.role === "assistant" || message.role === "toolResult",
   ).length;
 }
 
 function convertToLlmMessages(messages: AgentMessage[]): Message[] {
   return messages.filter((message): message is Message => {
-    return (
-      message.role === "user" ||
-      message.role === "assistant" ||
-      message.role === "toolResult"
-    );
+    return message.role === "user" || message.role === "assistant" || message.role === "toolResult";
   });
 }
 
@@ -701,7 +722,10 @@ function syncAuthStorage(authStorage: AuthStorage): void {
 }
 
 function getResolvedModel(provider: string, model: string) {
-  return getModel(provider as Parameters<typeof getModel>[0], model as Parameters<typeof getModel>[1]);
+  return getModel(
+    provider as Parameters<typeof getModel>[0],
+    model as Parameters<typeof getModel>[1],
+  );
 }
 
 function getHellmAgentDir(): string {
@@ -927,7 +951,10 @@ function buildPromptText(
   messages: Message[],
   systemPrompt?: string,
 ): string {
-  if (session.syncedMessages.length === 0 || !canAppendLatestUserTurn(session.syncedMessages, messages)) {
+  if (
+    session.syncedMessages.length === 0 ||
+    !canAppendLatestUserTurn(session.syncedMessages, messages)
+  ) {
     return buildTranscript(systemPrompt, messages);
   }
 
@@ -963,7 +990,9 @@ function buildTranscript(systemPrompt: string | undefined, messages: Message[]):
     parts.push("");
   }
 
-  parts.push("Continue the conversation from the latest user message. Respond only as the assistant.");
+  parts.push(
+    "Continue the conversation from the latest user message. Respond only as the assistant.",
+  );
   return parts.join("\n").trim();
 }
 

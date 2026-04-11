@@ -13,7 +13,8 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     id: "desktop-shell",
     name: "Electrobun Desktop Shell",
     status: "shipped",
-    summary: "Runs hellm as a native desktop coding app with a Bun-side pi host and renderer shell.",
+    summary:
+      "Runs hellm as a native desktop coding app with a Bun-side pi host and renderer shell.",
     sourceSpecs: ["/Users/polarzero/code/projects/hellm/docs/prd.md"],
   },
   {
@@ -27,21 +28,24 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     id: "artifacts-panel",
     name: "Artifacts Projection",
     status: "shipped",
-    summary: "Reconstructs generated artifacts from the transcript and presents them in a docked preview panel.",
+    summary:
+      "Reconstructs generated artifacts from the transcript and presents them in a docked preview panel.",
     sourceSpecs: ["/Users/polarzero/code/projects/hellm/docs/prd.md"],
   },
   {
     id: "prompt-history",
     name: "Workspace Prompt History",
     status: "shipped",
-    summary: "Stores successful user prompts per workspace and exposes shell-like recall in the composer.",
+    summary:
+      "Stores successful user prompts per workspace and exposes shell-like recall in the composer.",
     sourceSpecs: ["/Users/polarzero/code/projects/hellm/docs/specs/prompt-history.spec.md"],
   },
   {
     id: "multi-session-support",
     name: "Multi-Session Workspace Navigation",
     status: "shipped",
-    summary: "Supports creating, listing, switching, renaming, forking, and deleting multiple pi-backed sessions from one workspace window.",
+    summary:
+      "Supports creating, listing, switching, renaming, forking, and deleting multiple pi-backed sessions from one workspace window.",
     sourceSpecs: ["/Users/polarzero/code/projects/hellm/docs/specs/multi-session-support.spec.md"],
   },
 ];

@@ -29,10 +29,7 @@ const DEFAULT_ADDRESS_TIMEOUT_MS = parsePositiveInt(
   process.env.HELLM_FULL_PRODUCT_ADDRESS_TIMEOUT_MS,
   90 * 60 * 1000,
 );
-const DEFAULT_MAX_ITERATIONS = parsePositiveInt(
-  process.env.HELLM_FULL_PRODUCT_MAX_ITERATIONS,
-  8,
-);
+const DEFAULT_MAX_ITERATIONS = parsePositiveInt(process.env.HELLM_FULL_PRODUCT_MAX_ITERATIONS, 8);
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = parsePositiveInt(
   process.env.HELLM_FULL_PRODUCT_HEARTBEAT_TIMEOUT_MS,
   20 * 60 * 1000,
@@ -46,32 +43,14 @@ const inputSchema = z.object({
     ),
   repoRoot: z.string().default("."),
   worktreePath: z.string().default(".worktrees/full-product-review-loop"),
-  branch: z.string().default(
-    process.env.HELLM_FULL_PRODUCT_BRANCH ?? "workflow/full-product-review-loop",
-  ),
-  baseBranch: z.string().default(
-    process.env.HELLM_FULL_PRODUCT_BASE_BRANCH ?? "main",
-  ),
-  implementTimeoutMs: z
-    .number()
-    .int()
-    .positive()
-    .default(DEFAULT_IMPLEMENT_TIMEOUT_MS),
-  reviewTimeoutMs: z
-    .number()
-    .int()
-    .positive()
-    .default(DEFAULT_REVIEW_TIMEOUT_MS),
-  addressTimeoutMs: z
-    .number()
-    .int()
-    .positive()
-    .default(DEFAULT_ADDRESS_TIMEOUT_MS),
-  maxIterations: z
-    .number()
-    .int()
-    .positive()
-    .default(DEFAULT_MAX_ITERATIONS),
+  branch: z
+    .string()
+    .default(process.env.HELLM_FULL_PRODUCT_BRANCH ?? "workflow/full-product-review-loop"),
+  baseBranch: z.string().default(process.env.HELLM_FULL_PRODUCT_BASE_BRANCH ?? "main"),
+  implementTimeoutMs: z.number().int().positive().default(DEFAULT_IMPLEMENT_TIMEOUT_MS),
+  reviewTimeoutMs: z.number().int().positive().default(DEFAULT_REVIEW_TIMEOUT_MS),
+  addressTimeoutMs: z.number().int().positive().default(DEFAULT_ADDRESS_TIMEOUT_MS),
+  maxIterations: z.number().int().positive().default(DEFAULT_MAX_ITERATIONS),
   onMaxReached: z.enum(["return-last", "fail"]).default("return-last"),
 });
 
@@ -104,12 +83,7 @@ const reviewSchema = z.object({
 });
 
 const addressSchema = z.object({
-  status: z.enum([
-    "READY_FOR_REVIEW",
-    "PARTIAL",
-    "BLOCKED",
-    "NEEDS_HUMAN_DECISION",
-  ]),
+  status: z.enum(["READY_FOR_REVIEW", "PARTIAL", "BLOCKED", "NEEDS_HUMAN_DECISION"]),
   summary: z.string(),
   filesChanged: z.array(z.string()),
   validationRan: z.array(z.string()),
@@ -141,19 +115,14 @@ type ImplementResult = z.infer<typeof implementSchema>;
 type ReviewResult = z.infer<typeof reviewSchema>;
 type AddressResult = z.infer<typeof addressSchema>;
 
-const IMPLEMENT_MODEL =
-  process.env.HELLM_FULL_PRODUCT_IMPLEMENT_MODEL ?? "gpt-5.3-codex";
+const IMPLEMENT_MODEL = process.env.HELLM_FULL_PRODUCT_IMPLEMENT_MODEL ?? "gpt-5.3-codex";
 const IMPLEMENT_REASONING_EFFORT =
   process.env.HELLM_FULL_PRODUCT_IMPLEMENT_REASONING_EFFORT ?? "medium";
-const ADDRESS_MODEL =
-  process.env.HELLM_FULL_PRODUCT_ADDRESS_MODEL ?? IMPLEMENT_MODEL;
+const ADDRESS_MODEL = process.env.HELLM_FULL_PRODUCT_ADDRESS_MODEL ?? IMPLEMENT_MODEL;
 const ADDRESS_REASONING_EFFORT =
-  process.env.HELLM_FULL_PRODUCT_ADDRESS_REASONING_EFFORT ??
-  IMPLEMENT_REASONING_EFFORT;
-const REVIEW_MODEL =
-  process.env.HELLM_FULL_PRODUCT_REVIEW_MODEL ?? "gpt-5.3-codex";
-const REVIEW_REASONING_EFFORT =
-  process.env.HELLM_FULL_PRODUCT_REVIEW_REASONING_EFFORT ?? "high";
+  process.env.HELLM_FULL_PRODUCT_ADDRESS_REASONING_EFFORT ?? IMPLEMENT_REASONING_EFFORT;
+const REVIEW_MODEL = process.env.HELLM_FULL_PRODUCT_REVIEW_MODEL ?? "gpt-5.3-codex";
+const REVIEW_REASONING_EFFORT = process.env.HELLM_FULL_PRODUCT_REVIEW_REASONING_EFFORT ?? "high";
 
 const IMPLEMENT_SYSTEM_PROMPT = `You are implementing the hellm product from this repository's docs.
 
@@ -223,10 +192,7 @@ const implementAgent = createFullProductCodexAgent({
   reasoningEffort: IMPLEMENT_REASONING_EFFORT,
   timeoutMs: DEFAULT_IMPLEMENT_TIMEOUT_MS,
   maxOutputBytes: 4_000_000,
-  sandbox: resolveCodexSandbox(
-    process.env.HELLM_FULL_PRODUCT_IMPLEMENT_SANDBOX,
-    "workspace-write",
-  ),
+  sandbox: resolveCodexSandbox(process.env.HELLM_FULL_PRODUCT_IMPLEMENT_SANDBOX, "workspace-write"),
   fullAuto: process.env.HELLM_FULL_PRODUCT_IMPLEMENT_FULL_AUTO !== "0",
   systemPrompt: IMPLEMENT_SYSTEM_PROMPT,
 });
@@ -237,10 +203,7 @@ const addressAgent = createFullProductCodexAgent({
   reasoningEffort: ADDRESS_REASONING_EFFORT,
   timeoutMs: DEFAULT_ADDRESS_TIMEOUT_MS,
   maxOutputBytes: 4_000_000,
-  sandbox: resolveCodexSandbox(
-    process.env.HELLM_FULL_PRODUCT_ADDRESS_SANDBOX,
-    "workspace-write",
-  ),
+  sandbox: resolveCodexSandbox(process.env.HELLM_FULL_PRODUCT_ADDRESS_SANDBOX, "workspace-write"),
   fullAuto: process.env.HELLM_FULL_PRODUCT_ADDRESS_FULL_AUTO !== "0",
   systemPrompt: ADDRESS_SYSTEM_PROMPT,
 });
@@ -264,8 +227,7 @@ export default smithers((ctx) => {
   const latestImplement = ctx.latest("implement", "implement");
   const latestAddress = ctx.latest("address", "address-review");
   const reviewIterations = reviewPasses.length;
-  const stopLoop =
-    latestReview?.approved === true || latestReview?.continueLoop === false;
+  const stopLoop = latestReview?.approved === true || latestReview?.continueLoop === false;
 
   return (
     <Workflow name="hellm-full-product-review-loop" cache={false}>
@@ -311,21 +273,15 @@ export default smithers((ctx) => {
                     worktreePath={worktreePath}
                     reviewRound={reviewIterations}
                     reviewVerdict={latestReview?.verdict ?? "CHANGES_REQUIRED"}
-                    reviewSummary={
-                      latestReview?.summary ?? "No prior review summary was captured."
-                    }
+                    reviewSummary={latestReview?.summary ?? "No prior review summary was captured."}
                     formattedFindings={formatFindings(latestReview)}
                     formattedBlockers={formatList(latestReview?.blockers)}
-                    formattedResidualRisks={formatList(
-                      latestReview?.residualRisks,
-                    )}
+                    formattedResidualRisks={formatList(latestReview?.residualRisks)}
                     latestImplementSummary={
-                      latestImplement?.summary ??
-                      "No earlier implementation summary was captured."
+                      latestImplement?.summary ?? "No earlier implementation summary was captured."
                     }
                     latestAddressSummary={
-                      latestAddress?.summary ??
-                      "No earlier address-review summary was captured."
+                      latestAddress?.summary ?? "No earlier address-review summary was captured."
                     }
                   />
                 </Task>
@@ -399,9 +355,7 @@ function buildResult(input: {
   }
 
   for (const finding of input.latestReview?.findings ?? []) {
-    unresolvedIssues.add(
-      `${finding.severity} ${finding.location}: ${finding.problem}`,
-    );
+    unresolvedIssues.add(`${finding.severity} ${finding.location}: ${finding.problem}`);
   }
 
   const approved = input.latestReview?.approved ?? false;
@@ -453,19 +407,14 @@ function formatList(items?: string[]) {
 function createIsolatedCodexEnv(taskSlug: string): Record<string, string> {
   const configuredHome = process.env.HELLM_FULL_PRODUCT_CODEX_HOME?.trim();
   const codexHomeRoot =
-    configuredHome && configuredHome.length > 0
-      ? resolve(configuredHome)
-      : tmpdir();
+    configuredHome && configuredHome.length > 0 ? resolve(configuredHome) : tmpdir();
   mkdirSync(codexHomeRoot, { recursive: true });
 
-  const codexHome = mkdtempSync(
-    resolve(codexHomeRoot, `hellm-codex-home-${taskSlug}-`),
-  );
+  const codexHome = mkdtempSync(resolve(codexHomeRoot, `hellm-codex-home-${taskSlug}-`));
   mkdirSync(codexHome, { recursive: true });
 
   const sourceCodexHome =
-    process.env.CODEX_HOME?.trim() ||
-    resolve(process.env.HOME ?? homedir(), ".codex");
+    process.env.CODEX_HOME?.trim() || resolve(process.env.HOME ?? homedir(), ".codex");
 
   for (const filename of ["auth.json", "config.toml"]) {
     const source = resolve(sourceCodexHome, filename);

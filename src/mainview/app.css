@@ -28,10 +28,10 @@
   --space-xl: clamp(1.95rem, 1.4vw + 1.55rem, 2.7rem);
   --space-2xl: clamp(2.5rem, 3vw + 1.8rem, 4.1rem);
 
-	--ui-radius-sm: 0.22rem;
-	--ui-radius-md: 0.38rem;
-	--ui-radius-lg: 0.56rem;
-	--ui-radius-xl: 0.84rem;
+  --ui-radius-sm: 0.22rem;
+  --ui-radius-md: 0.38rem;
+  --ui-radius-lg: 0.56rem;
+  --ui-radius-xl: 0.84rem;
 
   --ui-z-sticky: 20;
   --ui-z-overlay: 40;

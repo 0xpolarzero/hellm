@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { sortVisibleSessionsByRecency } from "./session-state";
 import type { WorkspaceSessionSummary } from "./chat-rpc";
 
-function session(overrides: Partial<WorkspaceSessionSummary> & Pick<WorkspaceSessionSummary, "id" | "title">): WorkspaceSessionSummary {
+function session(
+  overrides: Partial<WorkspaceSessionSummary> & Pick<WorkspaceSessionSummary, "id" | "title">,
+): WorkspaceSessionSummary {
   return {
     id: overrides.id,
     title: overrides.title,
