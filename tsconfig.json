@@ -6,10 +6,16 @@
     "resolveJsonModule": true,
     "allowJs": true,
     "checkJs": true,
+    "ignoreDeprecations": "6.0",
     "isolatedModules": true,
     "exactOptionalPropertyTypes": false,
     "noUnusedLocals": true,
-    "noUnusedParameters": true
+    "noUnusedParameters": true,
+    "baseUrl": ".",
+    "paths": {
+      "electrobun-browser-tools": ["./node_modules/electrobun-browser-tools/dist/index.d.ts"],
+      "electrobun-browser-tools/bridge": ["./node_modules/electrobun-browser-tools/dist/bridge.d.ts"]
+    }
   },
   "include": [
     "docs/features.ts",

@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessageEvent, Message } from "@mariozechner/pi-ai";
 import type { ChatDefaults, ReasoningEffort } from "./chat-settings";
 
@@ -48,6 +49,8 @@ export interface AuthStateResponse {
 
 export interface WorkspaceInfoResponse {
   workspaceId: string;
+  workspaceLabel: string;
+  branch?: string;
 }
 
 export interface ProviderAuthInfo {
@@ -55,6 +58,63 @@ export interface ProviderAuthInfo {
   hasKey: boolean;
   keyType: AuthKeyType;
   supportsOAuth: boolean;
+}
+
+export type SessionStatus = "idle" | "running" | "waiting" | "error";
+
+export interface WorkspaceSessionSummary {
+  id: string;
+  title: string;
+  preview: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  status: SessionStatus;
+  sessionFile?: string;
+  parentSessionId?: string;
+  parentSessionFile?: string;
+  modelId?: string;
+  provider?: string;
+  thinkingLevel?: string;
+}
+
+export interface ActiveSessionState {
+  session: WorkspaceSessionSummary;
+  messages: AgentMessage[];
+  provider: string;
+  model: string;
+  reasoningEffort: ReasoningEffort;
+  systemPrompt: string;
+}
+
+export interface ListSessionsResponse {
+  activeSessionId?: string;
+  sessions: WorkspaceSessionSummary[];
+}
+
+export interface CreateSessionRequest {
+  title?: string;
+  parentSessionId?: string;
+}
+
+export interface OpenSessionRequest {
+  sessionId: string;
+}
+
+export interface RenameSessionRequest {
+  sessionId: string;
+  title: string;
+}
+
+export interface ForkSessionRequest {
+  sessionId: string;
+  title?: string;
+}
+
+export interface SessionMutationResponse {
+  ok: boolean;
+  activeSessionId?: string;
+  activeSession?: ActiveSessionState | null;
 }
 
 export interface ChatRPCSchema {
@@ -71,6 +131,34 @@ export interface ChatRPCSchema {
       getWorkspaceInfo: {
         params: undefined;
         response: WorkspaceInfoResponse;
+      };
+      listSessions: {
+        params: undefined;
+        response: ListSessionsResponse;
+      };
+      getActiveSession: {
+        params: undefined;
+        response: ActiveSessionState | null;
+      };
+      createSession: {
+        params: CreateSessionRequest;
+        response: ActiveSessionState;
+      };
+      openSession: {
+        params: OpenSessionRequest;
+        response: ActiveSessionState;
+      };
+      renameSession: {
+        params: RenameSessionRequest;
+        response: SessionMutationResponse;
+      };
+      forkSession: {
+        params: ForkSessionRequest;
+        response: ActiveSessionState;
+      };
+      deleteSession: {
+        params: { sessionId: string };
+        response: SessionMutationResponse;
       };
       sendPrompt: {
         params: SendPromptRequest;

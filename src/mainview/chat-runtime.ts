@@ -6,7 +6,14 @@ import {
   type AssistantMessageEvent,
   type Message,
 } from "@mariozechner/pi-ai";
-import type { SendPromptRequest } from "./chat-rpc";
+import type {
+  ActiveSessionState,
+  CreateSessionRequest,
+  ListSessionsResponse,
+  SendPromptRequest,
+  SessionMutationResponse,
+  WorkspaceSessionSummary,
+} from "./chat-rpc";
 import { createChatStorage, type ChatStorage } from "./chat-storage";
 import { DEFAULT_CHAT_SETTINGS, type ReasoningEffort } from "./chat-settings";
 import { rpc } from "./rpc";
@@ -41,6 +48,35 @@ const ZERO_USAGE: UsageStats = {
   },
 };
 
+type ChatRuntimeListener = () => void;
+
+export interface ChatRuntimeRpcClient {
+  request: {
+    getDefaults: typeof rpc.request.getDefaults;
+    getProviderAuthState: typeof rpc.request.getProviderAuthState;
+    getWorkspaceInfo: typeof rpc.request.getWorkspaceInfo;
+    listSessions: typeof rpc.request.listSessions;
+    getActiveSession: typeof rpc.request.getActiveSession;
+    createSession: typeof rpc.request.createSession;
+    openSession: typeof rpc.request.openSession;
+    renameSession: typeof rpc.request.renameSession;
+    forkSession: typeof rpc.request.forkSession;
+    deleteSession: typeof rpc.request.deleteSession;
+    sendPrompt: typeof rpc.request.sendPrompt;
+    setSessionModel: typeof rpc.request.setSessionModel;
+    setSessionThoughtLevel: typeof rpc.request.setSessionThoughtLevel;
+    cancelPrompt: typeof rpc.request.cancelPrompt;
+    listProviderAuths: typeof rpc.request.listProviderAuths;
+    setProviderApiKey: typeof rpc.request.setProviderApiKey;
+    startOAuth: typeof rpc.request.startOAuth;
+    removeProviderAuth: typeof rpc.request.removeProviderAuth;
+  };
+  addMessageListener: typeof rpc.addMessageListener;
+  removeMessageListener: typeof rpc.removeMessageListener;
+}
+
+const DEFAULT_RPC_CLIENT: ChatRuntimeRpcClient = rpc;
+
 export interface ChatRuntimeOptions {
   onMissingProviderAccess?: (provider: string) => void;
 }
@@ -49,7 +85,18 @@ export interface ChatRuntime {
   agent: Agent;
   storage: ChatStorage;
   workspaceId: string;
+  workspaceLabel: string;
+  branch?: string;
+  activeSessionId?: string;
+  sessions: WorkspaceSessionSummary[];
   dispose: () => void;
+  subscribe: (listener: ChatRuntimeListener) => () => void;
+  listSessions: () => Promise<WorkspaceSessionSummary[]>;
+  createSession: (request?: CreateSessionRequest) => Promise<void>;
+  openSession: (sessionId: string) => Promise<void>;
+  renameSession: (sessionId: string, title: string) => Promise<void>;
+  forkSession: (sessionId: string, title?: string) => Promise<void>;
+  deleteSession: (sessionId: string) => Promise<void>;
   syncProviderAuth: (providerId: string) => Promise<boolean>;
   requireProviderAccess: (providerId: string) => Promise<boolean>;
   listConfiguredProviders: () => Promise<string[]>;
@@ -92,12 +139,53 @@ function convertToLlm(messages: AgentMessage[]): Message[] {
   });
 }
 
-export async function createChatRuntime(options: ChatRuntimeOptions = {}): Promise<ChatRuntime> {
-  const storage = initializeStorage();
-  let agent: Agent | null = null;
+function updateSessionCatalogState(
+  target: {
+    activeSessionId?: string;
+    sessions: WorkspaceSessionSummary[];
+  },
+  response: ListSessionsResponse,
+): void {
+  target.activeSessionId = response.activeSessionId;
+  target.sessions = response.sessions;
+}
+
+function applyActiveSessionState(agent: Agent, payload: ActiveSessionState): void {
+  const currentTools = [...agent.state.tools];
+  agent.reset();
+  agent.sessionId = payload.session.id;
+  agent.setSystemPrompt(payload.systemPrompt);
+  agent.setModel(
+    getModel(
+      payload.provider as Parameters<typeof getModel>[0],
+      payload.model as Parameters<typeof getModel>[1],
+    ),
+  );
+  agent.setThinkingLevel(payload.reasoningEffort);
+  agent.replaceMessages(payload.messages);
+  agent.setTools(currentTools);
+}
+
+export async function createChatRuntime(
+  options: ChatRuntimeOptions = {},
+  rpcClient: ChatRuntimeRpcClient = DEFAULT_RPC_CLIENT,
+  storageOverride?: ChatStorage,
+): Promise<ChatRuntime> {
+  const storage = storageOverride ?? initializeStorage();
+  const listeners = new Set<ChatRuntimeListener>();
+  let sessions: WorkspaceSessionSummary[] = [];
+  let activeSessionId: string | undefined;
+  let disposed = false;
+
+  const emit = () => {
+    if (disposed) return;
+    for (const listener of listeners) {
+      listener();
+    }
+  };
 
   const syncProviderAuth = async (providerId: string): Promise<boolean> => {
-    const auth = await rpc.request.getProviderAuthState({ providerId });
+    const auth = await rpcClient.request.getProviderAuthState({ providerId });
     if (auth.connected) {
       await storage.providerKeys.set(providerId, auth.accountId || "oauth");
       return true;
@@ -116,25 +204,25 @@ export async function createChatRuntime(options: ChatRuntimeOptions = {}): Promi
   };
 
   const listConfiguredProviders = async (): Promise<string[]> => {
-    const auths = await rpc.request.listProviderAuths();
+    const auths = await rpcClient.request.listProviderAuths();
     return auths.filter((authInfo) => authInfo.hasKey).map((authInfo) => authInfo.provider);
   };
 
   const cancelPrompt = async (sessionId?: string): Promise<void> => {
     if (!sessionId) return;
     try {
-      await rpc.request.cancelPrompt({ sessionId });
+      await rpcClient.request.cancelPrompt({ sessionId });
     } catch (error) {
       console.error("Failed to cancel prompt:", error);
     }
   };
 
   const syncSessionModel = async (modelId: string): Promise<void> => {
-    const sessionId = agent?.sessionId;
-    if (!agent || !sessionId) return;
+    const sessionId = agent.sessionId;
+    if (!sessionId) return;
 
     try {
-      const response = await rpc.request.setSessionModel({ sessionId, model: modelId });
+      const response = await rpcClient.request.setSessionModel({ sessionId, model: modelId });
       if (response.ok) {
         agent.sessionId = response.sessionId;
       }
@@ -144,17 +232,46 @@ export async function createChatRuntime(options: ChatRuntimeOptions = {}): Promi
   };
 
   const syncSessionThoughtLevel = async (level: ReasoningEffort): Promise<void> => {
-    const sessionId = agent?.sessionId;
-    if (!agent || !sessionId) return;
+    const sessionId = agent.sessionId;
+    if (!sessionId) return;
 
     try {
-      const response = await rpc.request.setSessionThoughtLevel({ sessionId, level });
+      const response = await rpcClient.request.setSessionThoughtLevel({ sessionId, level });
       if (response.ok) {
         agent.sessionId = response.sessionId;
       }
     } catch (error) {
       console.error("Failed to sync session thought level:", error);
     }
+  };
+
+  const refreshSessions = async (): Promise<WorkspaceSessionSummary[]> => {
+    const response = await rpcClient.request.listSessions();
+    updateSessionCatalogState({ activeSessionId, sessions }, response);
+    activeSessionId = response.activeSessionId;
+    sessions = response.sessions;
+    emit();
+    return sessions;
+  };
+
+  const applySessionMutation = async (response: SessionMutationResponse): Promise<void> => {
+    if (response.activeSession) {
+      applyActiveSessionState(agent, response.activeSession);
+      activeSessionId = response.activeSession.session.id;
+    } else if (response.activeSessionId && response.activeSessionId !== activeSessionId) {
+      const nextActive = await rpcClient.request.getActiveSession();
+      if (nextActive) {
+        applyActiveSessionState(agent, nextActive);
+        activeSessionId = nextActive.session.id;
+      }
+    }
+    await refreshSessions();
+  };
+
+  const openActiveSession = async (payload: ActiveSessionState): Promise<void> => {
+    applyActiveSessionState(agent, payload);
+    activeSessionId = payload.session.id;
+    await refreshSessions();
   };
 
   const streamFromRpc: StreamFn = async (model, context, streamOptions) => {
@@ -168,17 +285,17 @@ export async function createChatRuntime(options: ChatRuntimeOptions = {}): Promi
       provider: model.provider,
       model: model.id,
       reasoningEffort,
-      sessionId: agent?.sessionId,
+      sessionId: agent.sessionId,
       systemPrompt: context.systemPrompt,
     };
     const provider = request.provider ?? DEFAULT_CHAT_SETTINGS.provider;
     const modelId = request.model ?? DEFAULT_CHAT_SETTINGS.model;
     const activeStreamId = request.streamId;
-    let activeSessionId = request.sessionId ?? agent?.sessionId;
+    let streamSessionId = request.sessionId ?? agent.sessionId;
     let completed = false;
 
     const cleanup = () => {
-      rpc.removeMessageListener("sendStreamEvent", streamListener);
+      rpcClient.removeMessageListener("sendStreamEvent", streamListener);
       if (streamOptions?.signal) {
         streamOptions.signal.removeEventListener("abort", abort);
       }
@@ -193,6 +310,7 @@ export async function createChatRuntime(options: ChatRuntimeOptions = {}): Promi
         reason: stopReason,
         error: createFailureMessage(error, provider, modelId, stopReason),
       });
+      void refreshSessions();
     };
 
     const handleStreamPayload = (payload: { streamId: string; event: AssistantMessageEvent }) => {
@@ -202,6 +320,7 @@ export async function createChatRuntime(options: ChatRuntimeOptions = {}): Promi
       if (payload.event.type === "done" || payload.event.type === "error") {
         completed = true;
         cleanup();
+        void refreshSessions();
       }
     };
 
@@ -211,11 +330,11 @@ export async function createChatRuntime(options: ChatRuntimeOptions = {}): Promi
 
     const abort = (): void => {
       if (completed) return;
-      void cancelPrompt(activeSessionId);
+      void cancelPrompt(streamSessionId);
       finishWithError("aborted", new Error("Request aborted by user"));
     };
 
-    rpc.addMessageListener("sendStreamEvent", streamListener);
+    rpcClient.addMessageListener("sendStreamEvent", streamListener);
     if (streamOptions?.signal) {
       streamOptions.signal.addEventListener("abort", abort, { once: true });
       if (streamOptions.signal.aborted) {
@@ -225,11 +344,11 @@ export async function createChatRuntime(options: ChatRuntimeOptions = {}): Promi
 
     void (async () => {
       try {
-        const response = await rpc.request.sendPrompt(request);
+        const response = await rpcClient.request.sendPrompt(request);
+        streamSessionId = response.sessionId;
+        agent.sessionId = response.sessionId;
         activeSessionId = response.sessionId;
-        if (agent) {
-          agent.sessionId = response.sessionId;
-        }
+        emit();
 
         if (streamOptions?.signal?.aborted) {
           abort();
@@ -242,13 +361,14 @@ export async function createChatRuntime(options: ChatRuntimeOptions = {}): Promi
     return stream;
   };
 
-  const [defaults, workspaceInfo] = await Promise.all([
-    rpc.request.getDefaults(),
-    rpc.request.getWorkspaceInfo(),
+  const [defaults, workspaceInfo, initialCatalog] = await Promise.all([
+    rpcClient.request.getDefaults(),
+    rpcClient.request.getWorkspaceInfo(),
+    rpcClient.request.listSessions(),
   ]);
   await syncProviderAuth(defaults.provider);
 
-  agent = new Agent({
+  const agent = new Agent({
     initialState: {
       systemPrompt: "You are hellm, a pragmatic software engineering assistant.",
       model: getModel(
@@ -263,28 +383,91 @@ export async function createChatRuntime(options: ChatRuntimeOptions = {}): Promi
     streamFn: streamFromRpc,
   });
 
-  const currentAgent = agent;
-  const originalSetModel = currentAgent.setModel.bind(currentAgent);
-  currentAgent.setModel = (nextModel) => {
+  const originalSetModel = agent.setModel.bind(agent);
+  agent.setModel = (nextModel) => {
     originalSetModel(nextModel);
     void syncSessionModel(nextModel.id);
   };
 
-  const originalSetThinkingLevel = currentAgent.setThinkingLevel.bind(currentAgent);
-  currentAgent.setThinkingLevel = (level) => {
+  const originalSetThinkingLevel = agent.setThinkingLevel.bind(agent);
+  agent.setThinkingLevel = (level) => {
     originalSetThinkingLevel(level);
     void syncSessionThoughtLevel(level);
   };
 
-  return {
-    agent: currentAgent,
+  updateSessionCatalogState({ activeSessionId, sessions }, initialCatalog);
+  activeSessionId = initialCatalog.activeSessionId;
+  sessions = initialCatalog.sessions;
+
+  const currentActiveSession = await rpcClient.request.getActiveSession();
+  if (currentActiveSession) {
+    applyActiveSessionState(agent, currentActiveSession);
+    activeSessionId = currentActiveSession.session.id;
+  } else if (initialCatalog.sessions.length > 0) {
+    const [firstSession] = initialCatalog.sessions;
+    if (!firstSession) {
+      throw new Error("Expected an initial session to open.");
+    }
+    const initialSession = await rpcClient.request.openSession({ sessionId: firstSession.id });
+    applyActiveSessionState(agent, initialSession);
+    activeSessionId = initialSession.session.id;
+  } else {
+    const createdSession = await rpcClient.request.createSession({});
+    applyActiveSessionState(agent, createdSession);
+    activeSessionId = createdSession.session.id;
+  }
+
+  await refreshSessions();
+
+  const runtime: ChatRuntime = {
+    agent,
     storage,
     workspaceId: workspaceInfo.workspaceId,
+    workspaceLabel: workspaceInfo.workspaceLabel,
+    branch: workspaceInfo.branch,
+    get activeSessionId() {
+      return activeSessionId;
+    },
+    get sessions() {
+      return sessions;
+    },
     dispose: () => {
-      agent = null;
+      disposed = true;
+      listeners.clear();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      listener();
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    listSessions: refreshSessions,
+    createSession: async (request = {}) => {
+      const session = await rpcClient.request.createSession(request);
+      await openActiveSession(session);
+    },
+    openSession: async (sessionId) => {
+      if (activeSessionId === sessionId) return;
+      const session = await rpcClient.request.openSession({ sessionId });
+      await openActiveSession(session);
+    },
+    renameSession: async (sessionId, title) => {
+      const response = await rpcClient.request.renameSession({ sessionId, title });
+      await applySessionMutation(response);
+    },
+    forkSession: async (sessionId, title) => {
+      const session = await rpcClient.request.forkSession({ sessionId, title });
+      await openActiveSession(session);
+    },
+    deleteSession: async (sessionId) => {
+      const response = await rpcClient.request.deleteSession({ sessionId });
+      await applySessionMutation(response);
     },
     syncProviderAuth,
     requireProviderAccess,
     listConfiguredProviders,
   };
+
+  return runtime;
 }

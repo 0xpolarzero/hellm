@@ -6,8 +6,11 @@
   "packageManager": "bun@1.3.10",
   "scripts": {
     "start": "vite build && electrobun dev",
-    "dev": "vite build && electrobun dev --watch",
-    "dev:hmr": "concurrently \"bun run hmr\" \"bun run dev\"",
+    "dev": "bun run dev:hmr",
+    "dev:watch:base": "vite build && electrobun dev --watch",
+    "dev:watch": "bun scripts/dev-app.ts --mode=watch",
+    "dev:hmr": "concurrently -k --names vite,app \"bun run hmr\" \"bun run dev:hmr:app\"",
+    "dev:hmr:app": "bun scripts/dev-app.ts --mode=hmr",
     "hmr": "vite --port 5173",
     "build": "vite build && electrobun build",
     "run": "electrobun run",
@@ -27,6 +30,7 @@
     "@mariozechner/pi-agent-core": "^0.64.0",
     "@mariozechner/pi-ai": "^0.64.0",
     "@mariozechner/pi-coding-agent": "^0.64.0",
+    "electrobun-browser-tools": "file:../electrobun-browser-tools",
     "electrobun": "1.16.0",
     "svelte": "^5.55.1"
   },

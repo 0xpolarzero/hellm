@@ -10,4 +10,6 @@ export const rpc = Electroview.defineRPC<ChatRPCSchema>({
 	maxRequestTime: rpcRequestTimeoutMs,
 });
 
-new Electroview({ rpc });
+if (typeof window !== "undefined") {
+	new Electroview({ rpc });
+}
