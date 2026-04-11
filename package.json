@@ -16,7 +16,6 @@
     "format:check": "oxfmt --check"
   },
   "dependencies": {
-    "@fontsource-variable/familjen-grotesk": "^5.2.8",
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@lucide/svelte": "^1.8.0",
