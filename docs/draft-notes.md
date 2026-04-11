@@ -1,6 +1,3 @@
-- don't expose usual model and reasoning selectors; rather select model+reasoning for various agents (orchestrator, explorer, implementer, reviewer)
-- add a few ways to create a chat with normal chat (orchestrator is best model) or quick chat (uses codex-spark or like quick and dumb model)
-
 - context progress bar at the bottom of a session that goes orange as we approach and red as we enter dumb zone
 - ideally we have good enough observability and UX to show this intuitively for subagents and agents that are part of smithers workflows as well
 

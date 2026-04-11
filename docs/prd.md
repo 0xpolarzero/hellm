@@ -228,7 +228,7 @@ A session must support:
 - branch or fork navigation
 - durable history
 - structured product state in addition to chat messages
-- session-level model and provider settings
+- session-level runtime profile overrides above app-wide defaults
 - session-level view of active and completed work
 
 ### Thread
@@ -347,7 +347,8 @@ Navigation must be session-centric and workspace-aware.
 The app must support:
 
 - recent workspace selection
-- session creation
+- creating a new orchestrator session
+- creating a new quick session
 - session switching
 - session resume
 - session branch or tree navigation
@@ -361,9 +362,9 @@ The composer area must support:
 
 - prompt entry
 - prompt cancellation while streaming
-- provider selection
-- model selection
-- thinking-level or equivalent reasoning control
+- a visible summary of the current session's main runtime profile
+- expandable inspection of per-agent runtime profiles for the session
+- per-session override controls for agent runtime profiles rather than raw global model or reasoning selectors
 - explicit context cues for active workspace, session, and worktree
 
 ### Inspector Surfaces
@@ -384,7 +385,7 @@ Secondary workflow inspection surfaces may expose deeper live workflow detail wi
 The app must include settings surfaces for:
 
 - provider authentication
-- model preferences
+- app-wide default runtime profiles for orchestrator, quick, explorer, implementer, reviewer, and workflow-writer
 - local key management and environment-backed credentials
 - repo-local product behavior where relevant
 
@@ -458,6 +459,7 @@ The adopted subagent model is:
 - synchronization happens frequently through episodes
 - the system re-enters cheaply after each meaningful unit of work
 - the orchestrator keeps only lightweight workflow knowledge while richer workflow context stays local to delegated work
+- runtime profiles such as explorer, implementer, reviewer, and workflow-writer are bounded-task presets, not persistent always-on agents
 
 This means the product should not optimize for:
 
@@ -484,20 +486,21 @@ The app must support:
 - provider login and key configuration
 - local persistence of auth state
 - environment-backed provider keys
-- model selection
-- per-session model changes
-- per-session reasoning or thought-level changes
+- app-wide default runtime profiles for orchestrator, quick, explorer, implementer, reviewer, and workflow-writer
+- each runtime profile carrying a provider, model, and reasoning-effort configuration
+- per-session overrides of those runtime profiles
 
 ### 3. Session Lifecycle and Navigation
 
 The app must support:
 
-- creating a new session
+- creating a new orchestrator session
+- creating a new quick session
 - resuming an existing session
 - branching or forking session history
 - listing and filtering sessions
 - preserving durable session state across app restarts
-- reconstructing visible product state from durable session data
+- reconstructing visible product state and session runtime profile overrides from durable session data
 
 ### 4. Session-Centric Orchestration UI
 
@@ -509,6 +512,7 @@ The app must show, within a single session surface:
 - verification summaries
 - blocked or waiting work
 - workflow activity
+- the current main runtime profile with expandable per-agent profile detail
 - current workspace and worktree context
 
 This is a core product requirement, not a stretch goal.
@@ -522,6 +526,7 @@ The orchestrator must:
 - author delegated workflow requests when appropriate
 - reconcile all path outputs into the same product model
 - make final user-facing decisions after delegated work completes or pauses
+- support both orchestrator-session and quick-session entry modes, with different main-session prompts and default main runtime profiles
 
 ### 6. Delegated Workflows and Smithers Integration
 
@@ -537,6 +542,7 @@ The product must support:
 - workflow results translated into episodes and artifacts
 - structured workflow knowledge assets split between minimal orchestrator-facing summaries and richer worker-facing prompts or examples
 - delegated workers loading the rich workflow context they need without expanding orchestrator context to match
+- delegated Smithers agents using runtime profiles such as explorer, implementer, reviewer, and workflow-writer when the workflow authoring or execution path requires them
 
 ### 7. Episodes, Artifacts, and Reconciliation
 
