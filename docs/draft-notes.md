@@ -12,5 +12,3 @@
 - small model to name session on first message
 
 - bigger lift but would be nice to have a dedicated workflows panel where we can visualize workflows in a graph-like interface + modify them + create workflows with AI with dedicated smithers skills and reference workflows pulled into context
-
-- needs to be very clear that the slate subagents (episodes) thing is always valid, e.g. when creating smithers workflow it spans subagent with smithers “skill” (roughly skill, a ton of excellent workflow examples); we always load such context only inside dedicated subagent for which we can be looser on context; orchestrator only has the system prompt and knows about workflows; kinda the skill premise but we never bloat orchestrator with that

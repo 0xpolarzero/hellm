@@ -116,6 +116,18 @@ This is the intended middle path between two failure modes:
 - use code and workflow structure where repetition, composition, or verification matter
 - move information across that boundary in compressed, reusable forms
 
+### 8. Layered Workflow Knowledge
+
+Workflow-related prompt and knowledge assets should be layered by who needs them.
+
+In practice that means:
+
+- the orchestrator may load minimal workflow-facing knowledge that fits prompt-scale routing and authoring needs
+- richer workflow examples, Smithers-specific guidance, and extended operational context should load only inside the bounded delegated worker or workflow run that needs them
+- the exact content and file format of those prompt or knowledge assets may evolve over time, but the separation of concerns should remain stable
+
+This keeps workflow capability available without bloating orchestrator context.
+
 ## Product Ownership Boundaries
 
 ### Electrobun
@@ -326,6 +338,8 @@ It must show more than a transcript. The session UI combines:
 
 The user should be able to understand the current state of work at a glance without opening raw logs.
 
+Workflow runs remain subordinate to the main session model. The primary view should still be threads, episodes, verification, approvals, and artifacts, even when a delegated workflow is active.
+
 ### Navigation
 
 Navigation must be session-centric and workspace-aware.
@@ -362,6 +376,8 @@ The inspector area must support focused inspection of:
 - workflow progress
 - artifact previews when available
 - unresolved issues and follow-up suggestions
+
+Secondary workflow inspection surfaces may expose deeper live workflow detail without replacing the session-centric main view.
 
 ### Settings and Auth
 
@@ -441,6 +457,7 @@ The adopted subagent model is:
 - subagents return durable outputs instead of long private side conversations
 - synchronization happens frequently through episodes
 - the system re-enters cheaply after each meaningful unit of work
+- the orchestrator keeps only lightweight workflow knowledge while richer workflow context stays local to delegated work
 
 This means the product should not optimize for:
 
@@ -518,6 +535,8 @@ The product must support:
 - durable workflow pause and resume
 - workflow progress projected into the desktop UI
 - workflow results translated into episodes and artifacts
+- structured workflow knowledge assets split between minimal orchestrator-facing summaries and richer worker-facing prompts or examples
+- delegated workers loading the rich workflow context they need without expanding orchestrator context to match
 
 ### 7. Episodes, Artifacts, and Reconciliation
 

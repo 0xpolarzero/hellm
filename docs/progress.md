@@ -69,7 +69,17 @@ How to use this file:
 - [ ] Surface failed or incomplete verification as routing input for the next orchestrator step.
 - [ ] Show latest verification outcome inline in the session timeline and inspector.
 
-## 5. Delegated Workflow Foundations
+## 5. Layered Workflow Knowledge
+
+- [ ] Inventory the workflow-related prompt, skill, and knowledge assets the product needs.
+- [ ] Build a POC repo layout for workflow knowledge with separate orchestrator-facing and worker-facing assets.
+- [ ] Define the first minimal orchestrator-facing workflow summary shape.
+- [ ] Define the first richer worker-facing workflow prompt or example shape.
+- [ ] Load only minimal workflow summaries into orchestrator routing context.
+- [ ] Build a POC delegated workflow that receives extended workflow knowledge without expanding orchestrator context.
+- [ ] Prove that workflow results still fold back into threads, episodes, and artifacts in the main session view.
+
+## 6. Delegated Workflow Foundations
 
 - [ ] Build a POC workflow request/response envelope between the orchestrator and Smithers.
 - [ ] Define the workflow request envelope from the orchestrator to Smithers.
@@ -86,7 +96,7 @@ How to use this file:
 - [ ] Build a POC retry/loop provenance model before exposing richer workflow branching.
 - [ ] Capture retry and loop branches in workflow provenance.
 
-## 6. Worktree-Aware Execution
+## 7. Worktree-Aware Execution
 
 - [ ] Build a POC thread-to-worktree binding model and inspect how it should appear in the UI.
 - [ ] Persist worktree binding on threads.
@@ -97,7 +107,7 @@ How to use this file:
 - [ ] Let delegated workflows declare or acquire an isolated worktree when needed.
 - [ ] Show which thread or workflow owns each worktree-backed run.
 
-## 7. `execute_typescript`
+## 8. `execute_typescript`
 
 - [ ] Build a POC `execute_typescript` runtime with the adopted TypeScript input/output contract.
 - [ ] Expose a minimal `execute_typescript` tool with the adopted input and output contract.
@@ -110,7 +120,7 @@ How to use this file:
 - [ ] Allow delegated Smithers tasks to call `execute_typescript`.
 - [ ] Limit day-one capabilities to the curated non-shell surface defined by the spec.
 
-## 8. Repo-Local Workflow Hooks
+## 9. Repo-Local Workflow Hooks
 
 - [ ] Discover `.hellm/` config for the current workspace.
 - [ ] Build a POC preflight hook flow for one consequential delegated workflow.
@@ -123,7 +133,7 @@ How to use this file:
 - [ ] Convert validation failure into structured workflow outcome and state.
 - [ ] Persist hook artifacts and outputs for later inspection.
 
-## 9. Headless Surface
+## 10. Headless Surface
 
 - [ ] Build a POC one-shot headless entrypoint that reuses desktop orchestration code.
 - [ ] Define the headless one-shot input contract.
@@ -134,7 +144,7 @@ How to use this file:
 - [ ] Emit workflow, episode, and artifact references in headless results.
 - [ ] Reuse the same orchestrator and state model as desktop execution.
 
-## 10. Recovery And Test Coverage
+## 11. Recovery And Test Coverage
 
 - [ ] Build a POC restart/resume flow that restores one active thread from durable state.
 - [ ] Restore active direct-path state after app restart.
