@@ -133,14 +133,14 @@
     color: var(--ui-text-tertiary);
   }
 
-  .new-session {
+  :global(button.new-session) {
     flex-shrink: 0;
     min-width: auto;
     padding-inline: 0.5rem;
     color: var(--ui-text-secondary);
   }
 
-  .new-session svg {
+  :global(button.new-session svg) {
     width: 0.85rem;
     height: 0.85rem;
   }
