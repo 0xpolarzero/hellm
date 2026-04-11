@@ -23,5 +23,5 @@
 - Treat explicit public Slate facts and PRD inferences separately.
 - Do not treat Smithers source as evidence of Slate internals; keep public Slate facts, PRD inferences, and Smithers-derived ideas clearly separated.
 - Update `docs/prd.md` whenever architecture, scope, or priorities change materially.
-- Treat `docs/features.ts` as the exhaustive feature inventory for the product delta over stock `pi`.
+- Treat `docs/features.ts` as the exhaustive feature inventory for the product delta`.
 - Update `docs/features.ts` whenever features are added, removed, renamed, split, merged, or materially revamped so it stays in sync with the real product surface.
