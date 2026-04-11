@@ -393,6 +393,29 @@ The inspector area must support focused inspection of:
 
 Secondary workflow inspection surfaces may expose deeper live workflow detail without replacing the session-centric main view.
 
+### Dedicated Workflow Inspector
+
+When a delegated workflow needs deeper inspection, the product should expose a dedicated workflow inspector surface for that workflow run.
+
+The day-one workflow inspector is read-only at the workflow-structure level.
+
+It must support:
+
+- a live graph view of the workflow run as a whole
+- distinct node types for agent tasks, scripts, verification steps, wait states, retries, and terminal results
+- clear active, completed, failed, and waiting visual states
+- selecting a node to inspect its current or latest details
+- a node detail view showing the node objective, status, latest output, related artifacts, runtime profile, worktree, and model or reasoning details when relevant
+- live updates while the workflow is running
+- durable inspection of the completed workflow after it finishes
+- opening an inspectable child agent or child surface into another pane when deeper drill-down is needed
+
+It must not support:
+
+- editing workflow structure from the inspector
+- rewiring graph edges manually
+- treating the inspector as a workflow authoring surface
+
 ### Expanded Work Surfaces
 
 The product should let the user inspect delegated work without leaving the main session.
@@ -400,10 +423,10 @@ The product should let the user inspect delegated work without leaving the main 
 It must support:
 
 - opening a selected subagent card in the right pane as a fully interactive surface
-- opening a selected workflow in the right pane as a fully interactive workflow surface
+- opening a selected workflow in the right pane as a fully interactive workflow inspector surface
 - placing a subagent or workflow into a targeted pane slot by drag or explicit split/open actions
 - expanded subagent panes behaving like normal interactive session surfaces
-- expanded workflow panes representing the workflow as a whole, with drill-down into internal workflow boxes or agents
+- expanded workflow panes representing the workflow as a whole through a live graph view, with drill-down into internal workflow boxes or agents
 - allowing the same surface to be opened in more than one pane when the user wants multiple views
 - keeping the main session, expanded pane, and multi-pane views aligned as one coherent tree of work
 
@@ -567,6 +590,7 @@ The app must show, within a single session surface:
 - the conversation
 - active and completed threads
 - compact subagent and workflow surfaces that can be expanded or split
+- dedicated read-only workflow inspector surfaces when deeper workflow inspection is needed
 - exact pane placement and focus when the workspace is using a multi-pane layout
 - latest episodes
 - verification summaries
@@ -606,7 +630,7 @@ The product must support:
 - structured workflow knowledge assets split between minimal orchestrator-facing summaries and richer worker-facing prompts or examples
 - delegated workers loading the rich workflow context they need without expanding orchestrator context to match
 - delegated Smithers agents using runtime profiles such as explorer, implementer, reviewer, and workflow-writer when the workflow authoring or execution path requires them
-- workflow runs being inspectable as whole interactive surfaces, with drill-down into internal workflow nodes
+- workflow runs being inspectable as dedicated read-only graph surfaces, with drill-down into internal workflow nodes and child agent surfaces
 
 ### 7. Episodes, Artifacts, and Reconciliation
 

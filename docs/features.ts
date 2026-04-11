@@ -48,4 +48,12 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
       "Supports creating, listing, switching, renaming, forking, and deleting multiple pi-backed sessions from one workspace window.",
     sourceSpecs: ["/Users/polarzero/code/projects/hellm/docs/specs/multi-session-support.spec.md"],
   },
+  {
+    id: "workflow-inspector",
+    name: "Workflow Inspector Surface",
+    status: "in-progress",
+    summary:
+      "Provides a read-only live graph inspector for delegated workflow runs, with node drill-down and pane-based inspection.",
+    sourceSpecs: ["/Users/polarzero/code/projects/hellm/docs/prd.md"],
+  },
 ];

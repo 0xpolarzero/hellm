@@ -1,1 +1,0 @@
-- bigger lift but would be nice to have a dedicated workflows panel where we can visualize workflows in a graph-like interface + modify them + create workflows with AI with dedicated smithers skills and reference workflows pulled into context

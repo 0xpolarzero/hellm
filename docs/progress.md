@@ -105,13 +105,27 @@ How to use this file:
 - [ ] Build a POC inline workflow card with minimal workflow progress.
 - [ ] Render compact workflow cards in the main session timeline.
 - [ ] Open a selected subagent surface in a pane slot as a fully interactive surface.
-- [ ] Open a selected workflow surface in a pane slot as a fully interactive workflow surface.
+- [ ] Open a selected workflow surface in a pane slot as a workflow inspector surface.
 - [ ] Make expanded subagent panes fully interactive.
-- [ ] Make expanded workflow panes fully interactive as workflow-level surfaces.
+- [ ] Make expanded workflow panes fully interactive as workflow-level inspector surfaces.
 - [ ] Support drill-down from an expanded workflow into internal workflow boxes or agents.
 - [ ] Keep duplicated views of the same surface synchronized while allowing independent scroll position.
 
-## 8. Context Budget Observability
+## 8. Dedicated Workflow Inspector
+
+- [ ] Define the projected graph shape for a workflow inspector surface.
+- [ ] Build a POC static graph view for one completed workflow run.
+- [ ] Distinguish agent-task, script, verification, wait, retry, and terminal-result nodes in that graph.
+- [ ] Render active, completed, failed, and waiting node states clearly.
+- [ ] Add selectable workflow nodes.
+- [ ] Show a detail panel for the selected workflow node.
+- [ ] Surface node objective, latest output, related artifacts, runtime profile, and worktree in that detail panel.
+- [ ] Stream live workflow status changes into the graph while a workflow is running.
+- [ ] Render retry or loop edges without making the main path hard to read.
+- [ ] Open a selected child agent surface from the workflow inspector into another pane slot.
+- [ ] Keep the completed workflow inspector available as a durable historical surface after workflow completion.
+
+## 9. Context Budget Observability
 
 - [ ] Define the context-budget metric as an explicit percentage of the active model's max context.
 - [ ] Define neutral, orange, and red thresholds for that metric.
@@ -123,7 +137,7 @@ How to use this file:
 - [ ] Render full-width context bars on expanded workflow panes.
 - [ ] Surface workflow-internal agent context usage when drilling down inside an expanded workflow.
 
-## 9. Direct Path And Reconciliation
+## 10. Direct Path And Reconciliation
 
 - [ ] Persist a per-request routing or classification result for the orchestrator.
 - [ ] Build a POC direct-path request flow from classification to episode normalization.
@@ -133,7 +147,7 @@ How to use this file:
 - [ ] Store unresolved issues and follow-up suggestions on direct episodes.
 - [ ] Re-enter the orchestrator from the latest durable episode and state instead of raw transcript scanning.
 
-## 10. Verification As First-Class State
+## 11. Verification As First-Class State
 
 - [ ] Build a POC verification event model covering build, test, lint, and manual checks.
 - [ ] Add explicit verification-run creation from orchestrator decisions.
@@ -144,7 +158,7 @@ How to use this file:
 - [ ] Surface failed or incomplete verification as routing input for the next orchestrator step.
 - [ ] Show latest verification outcome inline in the session timeline and inspector.
 
-## 11. Layered Workflow Knowledge
+## 12. Layered Workflow Knowledge
 
 - [ ] Inventory the workflow-related prompt, skill, and knowledge assets the product needs.
 - [ ] Build a POC repo layout for workflow knowledge with separate orchestrator-facing and worker-facing assets.
@@ -154,7 +168,7 @@ How to use this file:
 - [ ] Build a POC delegated workflow that receives extended workflow knowledge without expanding orchestrator context.
 - [ ] Prove that workflow results still fold back into threads, episodes, and artifacts in the main session view.
 
-## 12. Delegated Workflow Foundations
+## 13. Delegated Workflow Foundations
 
 - [ ] Build a POC workflow request/response envelope between the orchestrator and Smithers.
 - [ ] Define the workflow request envelope from the orchestrator to Smithers.
@@ -171,7 +185,7 @@ How to use this file:
 - [ ] Build a POC retry/loop provenance model before exposing richer workflow branching.
 - [ ] Capture retry and loop branches in workflow provenance.
 
-## 13. Worktree-Aware Execution
+## 14. Worktree-Aware Execution
 
 - [ ] Build a POC thread-to-worktree binding model and inspect how it should appear in the UI.
 - [ ] Persist worktree binding on threads.
@@ -182,7 +196,7 @@ How to use this file:
 - [ ] Let delegated workflows declare or acquire an isolated worktree when needed.
 - [ ] Show which thread or workflow owns each worktree-backed run.
 
-## 14. `execute_typescript`
+## 15. `execute_typescript`
 
 - [ ] Build a POC `execute_typescript` runtime with the adopted TypeScript input/output contract.
 - [ ] Expose a minimal `execute_typescript` tool with the adopted input and output contract.
@@ -195,7 +209,7 @@ How to use this file:
 - [ ] Allow delegated Smithers tasks to call `execute_typescript`.
 - [ ] Limit day-one capabilities to the curated non-shell surface defined by the spec.
 
-## 15. Repo-Local Workflow Hooks
+## 16. Repo-Local Workflow Hooks
 
 - [ ] Discover `.hellm/` config for the current workspace.
 - [ ] Build a POC preflight hook flow for one consequential delegated workflow.
@@ -208,7 +222,7 @@ How to use this file:
 - [ ] Convert validation failure into structured workflow outcome and state.
 - [ ] Persist hook artifacts and outputs for later inspection.
 
-## 16. Headless Surface
+## 17. Headless Surface
 
 - [ ] Build a POC one-shot headless entrypoint that reuses desktop orchestration code.
 - [ ] Define the headless one-shot input contract.
@@ -219,7 +233,7 @@ How to use this file:
 - [ ] Emit workflow, episode, and artifact references in headless results.
 - [ ] Reuse the same orchestrator and state model as desktop execution.
 
-## 17. Recovery And Test Coverage
+## 18. Recovery And Test Coverage
 
 - [ ] Build a POC restart/resume flow that restores one active thread from durable state.
 - [ ] Restore active direct-path state after app restart.
