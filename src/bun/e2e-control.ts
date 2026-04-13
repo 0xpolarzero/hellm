@@ -60,6 +60,7 @@ export interface E2ePromptScenario {
 }
 
 export interface HellmE2eControl {
+  bootstrapDelayMs?: number;
   bootstrapError?: string;
   mutations?: Partial<Record<E2eSessionMutationKind, E2eMutationBehavior>>;
   oauth?: Record<string, E2eOAuthBehavior>;
@@ -105,6 +106,20 @@ export async function applyE2eMutationBehavior(
 export function getE2eBootstrapError(): string | null {
   const value = readHellmE2eControl()?.bootstrapError?.trim();
   return value ? value : null;
+}
+
+let bootstrapDelayConsumed = false;
+
+export async function applyE2eBootstrapDelayOnce(): Promise<void> {
+  if (bootstrapDelayConsumed) {
+    return;
+  }
+  bootstrapDelayConsumed = true;
+
+  const delayMs = readHellmE2eControl()?.bootstrapDelayMs;
+  if (typeof delayMs === "number" && delayMs > 0) {
+    await Bun.sleep(delayMs);
+  }
 }
 
 export function getE2eOAuthBehavior(providerId: string): E2eOAuthBehavior | null {

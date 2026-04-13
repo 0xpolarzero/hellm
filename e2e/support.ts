@@ -1,4 +1,3 @@
-import { existsSync, readdirSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -21,22 +20,10 @@ import type {
 import type { CustomProvider } from "../src/mainview/chat-storage";
 import { DEFAULT_CHAT_SETTINGS } from "../src/mainview/chat-settings";
 import type { PromptHistoryEntry } from "../src/mainview/prompt-history";
+import { resolveElectrobunWorkspaceDir } from "../scripts/electrobun-paths";
 
 export function resolveAppWorkspaceDir(rootDir = process.cwd()): string {
-  const buildDir = join(rootDir, "build");
-  if (!existsSync(buildDir)) {
-    return rootDir;
-  }
-
-  for (const entry of readdirSync(buildDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const candidate = join(buildDir, entry.name, "hellm-dev.app", "Contents", "MacOS");
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return rootDir;
+  return resolveElectrobunWorkspaceDir(rootDir);
 }
 
 export const ROOT_WORKSPACE_DIR = resolveAppWorkspaceDir();

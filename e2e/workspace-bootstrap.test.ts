@@ -1,12 +1,13 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { connect, type Driver, type Page } from "electrobun-browser-tools";
+import { resolveElectrobunLauncherPath } from "../scripts/electrobun-paths";
 import { DEFAULT_CHAT_SETTINGS } from "../src/mainview/chat-settings";
 import { createHomeDir, ensureBuilt, launchHellmApp, type HellmApp } from "./harness";
+import { withTransientLinuxLaunchRetries } from "./launch-retry";
 import { assistantTextMessage, seedSessions, userMessage, writeE2eControl } from "./support";
 
 setDefaultTimeout(60_000);
@@ -69,29 +70,7 @@ async function withWorkspaceDir<T>(
 }
 
 function resolveLauncherPath(): string {
-  const launcherName = process.platform === "win32" ? "launcher.exe" : "launcher";
-  const platform = process.platform === "darwin" ? "macos" : process.platform;
-  const buildTargetDir = join(process.cwd(), "build", `dev-${platform}-${process.arch}`);
-  const pending = [buildTargetDir];
-
-  while (pending.length > 0) {
-    const currentDir = pending.pop();
-    if (!currentDir || !existsSync(currentDir)) {
-      continue;
-    }
-
-    for (const entry of readdirSync(currentDir, { withFileTypes: true })) {
-      const entryPath = join(currentDir, entry.name);
-      if (entry.isFile() && entry.name === launcherName) {
-        return entryPath;
-      }
-      if (entry.isDirectory()) {
-        pending.push(entryPath);
-      }
-    }
-  }
-
-  throw new Error(`Could not find ${launcherName} under ${buildTargetDir}.`);
+  return resolveElectrobunLauncherPath(process.cwd());
 }
 
 function createRuntimeEnv(
@@ -186,6 +165,7 @@ async function waitForBridgeMetadata(
 }
 
 async function launchObservedApp(options: {
+  bootstrapDelayMs?: number;
   bootstrapError?: string;
   beforeLaunch?: (context: {
     homeDir: string;
@@ -196,7 +176,31 @@ async function launchObservedApp(options: {
 }): Promise<LaunchableApp> {
   await ensureBuilt();
 
-  const homeDir = await createHomeDir();
+  return await withTransientLinuxLaunchRetries("launchObservedApp", async () => {
+    const homeDir = await createHomeDir();
+
+    try {
+      return await launchObservedAppOnce(options, homeDir);
+    } catch (error) {
+      await rm(homeDir, { force: true, recursive: true });
+      throw error;
+    }
+  });
+}
+
+async function launchObservedAppOnce(
+  options: {
+    bootstrapDelayMs?: number;
+    bootstrapError?: string;
+    beforeLaunch?: (context: {
+      homeDir: string;
+      runtimeEnv: NodeJS.ProcessEnv;
+      workspaceDir: string;
+    }) => Promise<void> | void;
+    workspaceDir: string;
+  },
+  homeDir: string,
+): Promise<LaunchableApp> {
   const launcherPath = resolveLauncherPath();
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -213,6 +217,9 @@ async function launchObservedApp(options: {
   ]);
 
   const controlFile = await writeE2eControl(homeDir, {
+    ...(typeof options.bootstrapDelayMs === "number"
+      ? { bootstrapDelayMs: options.bootstrapDelayMs }
+      : {}),
     ...(options.bootstrapError ? { bootstrapError: options.bootstrapError } : {}),
     workspaceCwd: options.workspaceDir,
   });
@@ -264,7 +271,6 @@ async function launchObservedApp(options: {
       await terminateTrackedProcesses(buildTrackedPidList(proc.pid), proc);
     }
 
-    await rm(homeDir, { force: true, recursive: true });
     throw new Error(
       formatAppFailure(
         error instanceof Error ? error.message : String(error),
@@ -272,6 +278,7 @@ async function launchObservedApp(options: {
         stdout,
         stderr,
       ),
+      { cause: error },
     );
   }
 }
@@ -541,9 +548,10 @@ async function pumpLines(
   }
 }
 
-test("shows the loading card before the workspace shell mounts", async () => {
+test("shows the loading card during bootstrap and clears it once the shell is ready", async () => {
   await withWorkspaceDir(async (workspaceDir) => {
     const app = await launchObservedApp({
+      bootstrapDelayMs: 1_000,
       workspaceDir,
       beforeLaunch: async ({ homeDir, workspaceDir: launchWorkspaceDir }) => {
         const base = Date.now() - 10_000;
@@ -567,6 +575,7 @@ test("shows the loading card before the workspace shell mounts", async () => {
     });
     try {
       await waitForLoadingCard(app.page);
+      expect(await app.page.getByText("Starting hellm").isVisible()).toBe(true);
       expect(await app.page.getByRole("button", { name: "Open settings" }).isVisible()).toBe(false);
 
       await waitForWorkspaceChrome(app.page);

@@ -81,18 +81,30 @@ async function waitForEvent(
     timeout?: number;
   } = {},
 ) {
-  const result = await driver.eventsWait(eventName, {
-    match: options.match,
-    since: options.since,
-    timeout: options.timeout ?? 10_000,
-  });
+  const deadline = Date.now() + (options.timeout ?? 10_000);
+  let lastResult:
+    | Awaited<ReturnType<HellmApp["driver"]["eventsWait"]>>
+    | null = null;
 
-  expect(result.matched).toBe(true);
-  if (!result.event) {
-    throw new Error(`Expected event "${eventName}" but bridge returned no event.`);
+  while (Date.now() < deadline) {
+    lastResult = await driver.eventsWait(eventName, {
+      match: options.match,
+      since: options.since,
+      timeout: Math.min(2_000, Math.max(250, deadline - Date.now())),
+    });
+
+    if (lastResult.matched) {
+      if (!lastResult.event) {
+        throw new Error(`Expected event "${eventName}" but bridge returned no event.`);
+      }
+      return lastResult.event;
+    }
+
+    await Bun.sleep(100);
   }
 
-  return result.event;
+  expect(lastResult?.matched ?? false).toBe(true);
+  throw new Error(`Timed out waiting for bridge event "${eventName}".`);
 }
 
 function sinceNow(): string {

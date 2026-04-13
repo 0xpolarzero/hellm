@@ -17,12 +17,13 @@ import {
 } from "./support";
 import type { HellmE2eControl, E2ePromptScenario } from "../src/bun/e2e-control";
 
-setDefaultTimeout(45_000);
+const PROMPT_RUNTIME_TIMEOUT_MS = process.env.HELLM_E2E_LAUNCH_RETRIES ? 90_000 : 45_000;
+
+setDefaultTimeout(PROMPT_RUNTIME_TIMEOUT_MS);
 
 const TIMESTAMP = Date.parse("2026-04-10T12:00:00.000Z");
 const SUCCESS_PROMPT = "Store this prompt";
 const FAILURE_PROMPT = "Fail this prompt";
-const BLOCKED_PROMPT = "Blocked by auth";
 const MULTILINE_PROMPT = "first line\nsecond line";
 
 beforeAll(async () => {

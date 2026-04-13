@@ -9,7 +9,8 @@
     "build": "vite build && electrobun build",
     "run": "electrobun run",
     "test": "bun test $(rg --files src -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts')",
-    "test:e2e": "bun run build && bun test --max-concurrency=1 $(rg --files e2e -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts' | sed 's#^#./#')",
+    "setup:e2e": "bash scripts/setup-e2e-orbstack-machine.sh",
+    "test:e2e": "bash scripts/run-e2e-orbstack-machine.sh",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint . --import-plugin --node-plugin --deny-warnings --fix --fix-suggestions",
     "lint:check": "oxlint . --import-plugin --node-plugin --deny-warnings",
@@ -17,6 +18,7 @@
     "format:check": "oxfmt --check"
   },
   "dependencies": {
+    "@fontsource-variable/familjen-grotesk": "^5.2.8",
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@lucide/svelte": "^1.8.0",

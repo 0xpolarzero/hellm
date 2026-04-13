@@ -26,6 +26,7 @@ import {
 } from "./auth-store";
 import {
   applyE2eMutationBehavior,
+  applyE2eBootstrapDelayOnce,
   getE2eBootstrapError,
   getE2eOAuthBehavior,
 } from "./e2e-control";
@@ -343,7 +344,8 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
   maxRequestTime: getRpcRequestTimeoutMs(),
   handlers: {
     requests: {
-      getDefaults: () => {
+      getDefaults: async () => {
+        await applyE2eBootstrapDelayOnce();
         assertBootstrapReady();
         return getDefaultChatSettings();
       },

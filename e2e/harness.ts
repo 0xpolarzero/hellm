@@ -1,14 +1,18 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { connect, type Driver, type Page } from "electrobun-browser-tools";
-import { resolveAppWorkspaceDir } from "./support";
+import {
+  resolveElectrobunBuildTargetDir,
+  resolveElectrobunLauncherPath,
+  resolveElectrobunWorkspaceDir,
+} from "../scripts/electrobun-paths";
+import { withTransientLinuxLaunchRetries } from "./launch-retry";
 
 const PROJECT_DIR = process.cwd();
-const APP_WORKSPACE_DIR = resolveAppWorkspaceDir(PROJECT_DIR);
-const BUILD_DIR = join(PROJECT_DIR, "build");
+const APP_WORKSPACE_DIR = resolveElectrobunWorkspaceDir(PROJECT_DIR);
 const BUN = process.execPath;
 const APP_START_TIMEOUT_MS = 30_000;
 const DRIVER_CONNECT_TIMEOUT_MS = 20_000;
@@ -42,11 +46,17 @@ export interface HellmAppLaunchOptions {
 }
 
 export function ensureBuilt(): Promise<void> {
-  if (existsSync(BUILD_DIR)) {
+  if (buildPromise) {
+    return buildPromise;
+  }
+
+  if (existsSync(resolveElectrobunBuildTargetDir(PROJECT_DIR))) {
     return Promise.resolve();
   }
 
-  buildPromise ??= runCommand([BUN, "run", "build"], PROJECT_DIR);
+  buildPromise = runCommand([BUN, "run", "build"], PROJECT_DIR).finally(() => {
+    buildPromise = null;
+  });
   return buildPromise;
 }
 
@@ -80,37 +90,80 @@ export async function withHellmApp<T>(
 export async function launchHellmApp(options: HellmAppLaunchOptions = {}): Promise<HellmApp> {
   await ensureBuilt();
 
-  const ownsHomeDir = !options.homeDir;
-  const homeDir = options.homeDir ?? (await createHomeDir());
-  const launcherPath = resolveLauncherPath();
   const workspaceDir = options.workspaceDir ?? APP_WORKSPACE_DIR;
-  const runtimeEnv = createRuntimeEnv(homeDir, {
-    HELLM_E2E_WORKSPACE_CWD: workspaceDir,
-    ...options.env,
+  const providedHomeDir = options.homeDir;
+  const preparedRuntimeEnv = providedHomeDir
+    ? createRuntimeEnv(providedHomeDir, {
+        HELLM_E2E_WORKSPACE_CWD: workspaceDir,
+        ...options.env,
+      })
+    : null;
+
+  if (providedHomeDir && preparedRuntimeEnv) {
+    await ensureHomeDirLayout(providedHomeDir);
+    await options.beforeLaunch?.({
+      homeDir: providedHomeDir,
+      runtimeEnv: preparedRuntimeEnv,
+      workspaceDir,
+    });
+  }
+
+  return await withTransientLinuxLaunchRetries("launchHellmApp", async () => {
+    const ownsHomeDir = !providedHomeDir;
+    const homeDir = providedHomeDir ?? (await createHomeDir());
+    const runtimeEnv =
+      preparedRuntimeEnv ??
+      createRuntimeEnv(homeDir, {
+        HELLM_E2E_WORKSPACE_CWD: workspaceDir,
+        ...options.env,
+      });
+
+    try {
+      if (ownsHomeDir) {
+        await ensureHomeDirLayout(homeDir);
+        await options.beforeLaunch?.({
+          homeDir,
+          runtimeEnv,
+          workspaceDir,
+        });
+      }
+
+      return await launchHellmAppOnce({
+        homeDir,
+        ownsHomeDir,
+        runtimeEnv,
+        workspaceDir,
+      });
+    } catch (error) {
+      if (ownsHomeDir) {
+        await rm(homeDir, { force: true, recursive: true });
+      }
+      throw error;
+    }
   });
+}
+
+async function launchHellmAppOnce(
+  options: {
+    homeDir: string;
+    ownsHomeDir: boolean;
+    runtimeEnv: NodeJS.ProcessEnv;
+    workspaceDir: string;
+  },
+): Promise<HellmApp> {
+  const launcherPath = resolveLauncherPath();
   const stdout: string[] = [];
   const stderr: string[] = [];
   let proc: ReturnType<typeof Bun.spawn> | null = null;
   let driver: Driver | null = null;
   let appPid: number | null = null;
 
-  await Promise.all([
-    mkdir(join(homeDir, ".config"), { recursive: true }),
-    mkdir(join(homeDir, ".local"), { recursive: true }),
-    mkdir(join(homeDir, ".cache"), { recursive: true }),
-    mkdir(join(homeDir, ".state"), { recursive: true }),
-    mkdir(join(homeDir, ".tmp"), { recursive: true }),
-  ]);
-  await options.beforeLaunch?.({
-    homeDir,
-    runtimeEnv,
-    workspaceDir,
-  });
+  await ensureHomeDirLayout(options.homeDir);
 
   try {
     proc = Bun.spawn([launcherPath], {
       cwd: dirname(launcherPath),
-      env: runtimeEnv,
+      env: options.runtimeEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -129,14 +182,14 @@ export async function launchHellmApp(options: HellmAppLaunchOptions = {}): Promi
       bridgeUrl: bridge.bridgeUrl,
       driver,
       page,
-      homeDir,
-      workspaceDir,
+      homeDir: options.homeDir,
+      workspaceDir: options.workspaceDir,
       stdout,
       stderr,
       close: async () => {
         await closeApp(driver, proc, appPid);
-        if (ownsHomeDir) {
-          await rm(homeDir, { force: true, recursive: true });
+        if (options.ownsHomeDir) {
+          await rm(options.homeDir, { force: true, recursive: true });
         }
       },
     };
@@ -151,10 +204,6 @@ export async function launchHellmApp(options: HellmAppLaunchOptions = {}): Promi
       await terminateTrackedProcesses(buildTrackedPidList(proc.pid), proc);
     }
 
-    if (ownsHomeDir) {
-      await rm(homeDir, { force: true, recursive: true });
-    }
-
     throw new Error(
       formatAppFailure(
         error instanceof Error ? error.message : String(error),
@@ -162,8 +211,19 @@ export async function launchHellmApp(options: HellmAppLaunchOptions = {}): Promi
         stdout,
         stderr,
       ),
+      { cause: error },
     );
   }
+}
+
+async function ensureHomeDirLayout(homeDir: string): Promise<void> {
+  await Promise.all([
+    mkdir(join(homeDir, ".config"), { recursive: true }),
+    mkdir(join(homeDir, ".local"), { recursive: true }),
+    mkdir(join(homeDir, ".cache"), { recursive: true }),
+    mkdir(join(homeDir, ".state"), { recursive: true }),
+    mkdir(join(homeDir, ".tmp"), { recursive: true }),
+  ]);
 }
 
 function createRuntimeEnv(
@@ -175,13 +235,11 @@ function createRuntimeEnv(
   const xdgCacheHome = join(homeDir, ".cache");
   const xdgStateHome = join(homeDir, ".state");
   const tmpDir = join(homeDir, ".tmp");
-  const defaultHeadless = process.env.HELLM_E2E_HEADLESS ?? "1";
 
   return {
     ...process.env,
     CI: "1",
     HOME: homeDir,
-    HELLM_E2E_HEADLESS: defaultHeadless,
     TMPDIR: tmpDir,
     XDG_CACHE_HOME: xdgCacheHome,
     XDG_CONFIG_HOME: xdgConfigHome,
@@ -430,41 +488,7 @@ async function resolveAppPid(driver: Driver): Promise<number | null> {
 }
 
 function resolveLauncherPath(): string {
-  const launcherName = process.platform === "win32" ? "launcher.exe" : "launcher";
-  const buildTargetDir = join(BUILD_DIR, `dev-${resolveElectrobunPlatform()}-${process.arch}`);
-  const pending = [buildTargetDir];
-
-  while (pending.length > 0) {
-    const currentDir = pending.pop();
-    if (!currentDir || !existsSync(currentDir)) {
-      continue;
-    }
-
-    for (const entry of readdirSync(currentDir, { withFileTypes: true })) {
-      const entryPath = join(currentDir, entry.name);
-      if (entry.isFile() && entry.name === launcherName) {
-        return entryPath;
-      }
-      if (entry.isDirectory()) {
-        pending.push(entryPath);
-      }
-    }
-  }
-
-  throw new Error(`Could not find ${launcherName} under ${buildTargetDir}.`);
-}
-
-function resolveElectrobunPlatform(): string {
-  switch (process.platform) {
-    case "darwin":
-      return "macos";
-    case "linux":
-      return "linux";
-    case "win32":
-      return "win";
-    default:
-      throw new Error(`Unsupported platform: ${process.platform}`);
-  }
+  return resolveElectrobunLauncherPath(PROJECT_DIR);
 }
 
 async function waitForExit(

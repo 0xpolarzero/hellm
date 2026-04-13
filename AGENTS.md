@@ -2,6 +2,7 @@
 
 - Read `docs/prd.md` before doing any work.
 - Read `docs/features.ts` before doing any work that affects product scope, feature behavior, or test planning.
+- When running e2e tests, use the OrbStack machine lane via `bun run test:e2e`; keep e2e runs off the active desktop session and do not reintroduce a local visible-default or Docker-based path.
 - This repo exists to turn pi coding agent into a Slate-like orchestrated coding agent and pi-owned interactive shell.
 - Do not introduce or preserve a standalone custom shell, readline loop, or alternate TUI stack outside pi; interactive work must go through pi's extension/runtime seam.
 - Treat any proposed demo renderer, stdout snapshot, or non-pi terminal loop as a regression unless the PRD explicitly labels it as a test helper.

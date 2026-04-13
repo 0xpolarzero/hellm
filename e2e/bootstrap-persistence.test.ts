@@ -1,15 +1,14 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import { escapeForRegExp, launchHellmApp, createHomeDir } from "./harness";
+import { resolveElectrobunWorkspaceDir } from "../scripts/electrobun-paths";
 import { assistantTextMessage, seedSessions, userMessage } from "./support";
 
 setDefaultTimeout(45_000);
 
 function getAppWorkspaceDir(): string {
-  const platform = process.platform === "darwin" ? "macos" : process.platform;
-  return join(process.cwd(), "build", `dev-${platform}-${process.arch}`, "hellm-dev.app", "Contents", "MacOS");
+  return resolveElectrobunWorkspaceDir(process.cwd());
 }
 
 function currentGitBranch(): string {

@@ -73,24 +73,31 @@ async function withSessions<T>(
 
 async function readSessionTitles(page: HellmApp["page"]): Promise<string[]> {
   const titles: string[] = [];
-  const count = await page.locator(".session-main strong").count();
+  const titleLocator = page.locator(".sidebar-list .session-item .session-main strong");
+  const count = await titleLocator.count();
   for (let index = 0; index < count; index += 1) {
-    const title = await page.locator(".session-main strong").nth(index).textContent();
+    const title = await titleLocator.nth(index).textContent();
     titles.push(title?.trim() ?? "");
   }
   return titles;
 }
 
+function sessionItemByTitle(page: HellmApp["page"], title: string) {
+  return page.locator(".session-item").filter({
+    has: page.locator(".session-main strong").filter({ hasText: title }),
+  }).first();
+}
+
 async function openSessionActions(page: HellmApp["page"], title: string): Promise<void> {
-  const trigger = page.getByRole("button", { name: `Session actions for ${title}` });
+  const trigger = sessionItemByTitle(page, title)
+    .getByRole("button", { name: `Session actions for ${title}` })
+    .first();
   await trigger.waitFor({ state: "visible" });
   await trigger.click({ force: true });
 }
 
 function sessionMainByTitle(page: HellmApp["page"], title: string) {
-  return page.locator(".session-main").filter({
-    has: page.locator("strong").filter({ hasText: title }),
-  }).first();
+  return sessionItemByTitle(page, title).locator(".session-main").first();
 }
 
 async function clickSessionByTitle(page: HellmApp["page"], title: string): Promise<void> {

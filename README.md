@@ -17,4 +17,22 @@ This is a bootstrap, not the finished product. The long-term product architectur
 - `bun run dev`
 - `bun run build`
 - `bun run run`
+- `bun run setup:e2e`
+- `bun run test:e2e`
 - `bun run typecheck`
+
+## E2E Setup
+
+Set up the dedicated OrbStack Linux machine once:
+
+```bash
+bun run setup:e2e
+```
+
+Then run the e2e suite from macOS:
+
+```bash
+bun run test:e2e
+```
+
+That command syncs the latest repository state into the `hellm-e2e` OrbStack machine, installs dependencies there, builds the Linux Electrobun app, and runs the e2e suite under `dbus-run-session` plus `xvfb-run` so nothing appears on your active desktop session.

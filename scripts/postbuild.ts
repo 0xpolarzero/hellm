@@ -2,6 +2,7 @@
 
 import { cpSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { resolveElectrobunAppCodeDir } from "./electrobun-paths";
 
 const buildDir = process.env.ELECTROBUN_BUILD_DIR;
 const appName = process.env.ELECTROBUN_APP_NAME;
@@ -11,7 +12,7 @@ if (!buildDir || !appName) {
   process.exit(1);
 }
 
-const appCodeDir = join(buildDir, `${appName}.app`, "Contents", "Resources", "app");
+const appCodeDir = resolveElectrobunAppCodeDir(buildDir, appName);
 const nodeModulesDest = join(appCodeDir, "node_modules");
 const projectRoot = join(import.meta.dir, "..");
 const src = (rel: string) => join(projectRoot, "node_modules", rel);

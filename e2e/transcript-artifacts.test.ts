@@ -1,7 +1,6 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { ensureBuilt, escapeForRegExp, withHellmApp, type HellmApp } from "./harness";
+import { resolveElectrobunWorkspaceDir } from "../scripts/electrobun-paths";
 import {
   assistantTextMessage,
   seedSessions,
@@ -167,20 +166,7 @@ async function withPlainTranscriptApp(fn: (app: HellmApp) => Promise<void>) {
 }
 
 function resolveAppWorkspaceDir(): string {
-  const buildDir = join(process.cwd(), "build");
-  if (!existsSync(buildDir)) {
-    return process.cwd();
-  }
-
-  for (const entry of readdirSync(buildDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const candidate = join(buildDir, entry.name, "hellm-dev.app", "Contents", "MacOS");
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return process.cwd();
+  return resolveElectrobunWorkspaceDir(process.cwd());
 }
 
 async function openArtifactTab(page: HellmApp["page"], filename: string) {
