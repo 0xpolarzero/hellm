@@ -1,15 +1,17 @@
 # hellm
 
-`hellm` is now bootstrapped as an Electrobun desktop app with a Bun-side `pi` host and a Svelte renderer.
+`hellm` is a desktop coding agent for real repositories built around visible orchestration.
 
-The current starting point ports the minimal `pi` desktop integration from `../acai` into this repo:
+It keeps strategy in one orchestrator, delegates bounded work to subagents and workflows, and makes artifacts, verification, and resumable work state first-class instead of hiding everything inside one long chat loop.
 
-- Electrobun owns the native window and desktop packaging
-- the Bun process hosts `pi` through a direct `pi-coding-agent` SDK session host
-- the renderer uses `@mariozechner/pi-web-ui` for the initial chat surface
-- provider auth, prompt dispatch, streamed response projection, model changes, and thinking-level changes are wired end-to-end
+The intended product centers on:
 
-This is a bootstrap, not the finished product. The long-term product architecture is still tracked in [docs/prd.md](docs/prd.md), but the code in `src/` is now the source of truth for the desktop-app starting point.
+- one strategic brain that owns routing, reconciliation, and final decisions
+- bounded delegated work instead of persistent role agents
+- durable sessions, episodes, artifacts, and verification state
+- safe resume across interruptions, app restarts, and worktree changes
+
+Product intent lives in [docs/prd.md](docs/prd.md), and the shipped feature surface is tracked in [docs/features.ts](docs/features.ts).
 
 ## Commands
 
@@ -17,24 +19,18 @@ This is a bootstrap, not the finished product. The long-term product architectur
 - `bun run dev`
 - `bun run build`
 - `bun run run`
+- `bun run typecheck`
+- `bun run test`
 - `bun run setup:e2e`
 - `bun run test:e2e`
-- `bun run typecheck`
 
-## E2E Setup
+## E2E
 
-Set up the dedicated OrbStack Linux machine once:
+Use the OrbStack machine lane for end-to-end tests:
 
 ```bash
 bun run setup:e2e
-```
-
-Then run the e2e suite from macOS:
-
-```bash
 bun run test:e2e
 ```
 
-That command syncs the latest repository state into the `hellm-e2e` OrbStack machine, installs dependencies there, builds the Linux Electrobun app, and runs the e2e suite under `dbus-run-session` plus `xvfb-run` so nothing appears on your active desktop session.
-
-The shared OrbStack/Electrobun e2e infrastructure now lives in the sibling [`../electrobun-e2e`](../electrobun-e2e) package. `hellm` keeps only its app-specific harness behavior, control files, seeded fixtures, and assertions.
+That keeps e2e runs off the active desktop session while building and exercising the Electrobun app in the dedicated Linux machine.
