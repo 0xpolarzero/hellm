@@ -27,6 +27,13 @@ Before creating the POC, read these in order when they are relevant:
 
 If the request is tightly scoped and those files do not materially affect the behavior being proved, keep additional reading minimal.
 
+If there is an existing spec for the same work, treat the POC and spec as one artifact under active refinement:
+
+- keep the spec in sync whenever the POC changes materially
+- update the spec during refinement, not only at the end
+- make the spec describe the current adopted model directly
+- do not let the spec drift behind the POC
+
 ## Default Location
 
 Unless the user asks for a different location, place the POC in:
@@ -71,6 +78,8 @@ Avoid:
 - legacy or migration handling unless the user explicitly wants that covered
 - speculative completeness
 - placeholder code that does not really prove the flow
+- historical or comparative framing such as "removed", "old design", "previous version", or "we changed X to Y" in the POC or spec unless the user explicitly asks for migration history
+- changelog-style writing; write the current model, not the story of how it evolved
 
 ## Default File Structure
 
@@ -119,6 +128,8 @@ That means:
 - leave comments where the user is likely to challenge the model
 - keep the structure easy to edit during follow-up discussion
 - prefer explicit tradeoffs over hiding them
+- if the user refines the model, update the spec and POC together so they stay aligned
+- keep both artifacts written as the current truth, not as historical commentary about previous iterations
 
 ## Output Standard
 
@@ -143,3 +154,5 @@ Before finishing, verify:
 - the important types are close to where they are used
 - the runtime actually proves the design
 - the artifact is clearly a POC, not half-hidden production code
+- any related spec is in sync with the POC
+- neither the POC nor the spec reads like a changelog
