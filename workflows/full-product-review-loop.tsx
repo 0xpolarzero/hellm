@@ -18,20 +18,20 @@ import ImplementPrompt from "./prompts/full-product-review-loop/implement.mdx";
 import ReviewPrompt from "./prompts/full-product-review-loop/review.mdx";
 
 const DEFAULT_IMPLEMENT_TIMEOUT_MS = parsePositiveInt(
-  process.env.HELLM_FULL_PRODUCT_IMPLEMENT_TIMEOUT_MS,
+  process.env.SVVY_FULL_PRODUCT_IMPLEMENT_TIMEOUT_MS,
   90 * 60 * 1000,
 );
 const DEFAULT_REVIEW_TIMEOUT_MS = parsePositiveInt(
-  process.env.HELLM_FULL_PRODUCT_REVIEW_TIMEOUT_MS,
+  process.env.SVVY_FULL_PRODUCT_REVIEW_TIMEOUT_MS,
   60 * 60 * 1000,
 );
 const DEFAULT_ADDRESS_TIMEOUT_MS = parsePositiveInt(
-  process.env.HELLM_FULL_PRODUCT_ADDRESS_TIMEOUT_MS,
+  process.env.SVVY_FULL_PRODUCT_ADDRESS_TIMEOUT_MS,
   90 * 60 * 1000,
 );
-const DEFAULT_MAX_ITERATIONS = parsePositiveInt(process.env.HELLM_FULL_PRODUCT_MAX_ITERATIONS, 8);
+const DEFAULT_MAX_ITERATIONS = parsePositiveInt(process.env.SVVY_FULL_PRODUCT_MAX_ITERATIONS, 8);
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = parsePositiveInt(
-  process.env.HELLM_FULL_PRODUCT_HEARTBEAT_TIMEOUT_MS,
+  process.env.SVVY_FULL_PRODUCT_HEARTBEAT_TIMEOUT_MS,
   20 * 60 * 1000,
 );
 
@@ -39,14 +39,14 @@ const inputSchema = z.object({
   goal: z
     .string()
     .default(
-      "Implement the full hellm product described by docs/, get the test suite into a correct passing state, and adapt incorrect or incomplete tests when the real contract demands it.",
+      "Implement the full svvy product described by docs/, get the test suite into a correct passing state, and adapt incorrect or incomplete tests when the real contract demands it.",
     ),
   repoRoot: z.string().default("."),
   worktreePath: z.string().default(".worktrees/full-product-review-loop"),
   branch: z
     .string()
-    .default(process.env.HELLM_FULL_PRODUCT_BRANCH ?? "workflow/full-product-review-loop"),
-  baseBranch: z.string().default(process.env.HELLM_FULL_PRODUCT_BASE_BRANCH ?? "main"),
+    .default(process.env.SVVY_FULL_PRODUCT_BRANCH ?? "workflow/full-product-review-loop"),
+  baseBranch: z.string().default(process.env.SVVY_FULL_PRODUCT_BASE_BRANCH ?? "main"),
   implementTimeoutMs: z.number().int().positive().default(DEFAULT_IMPLEMENT_TIMEOUT_MS),
   reviewTimeoutMs: z.number().int().positive().default(DEFAULT_REVIEW_TIMEOUT_MS),
   addressTimeoutMs: z.number().int().positive().default(DEFAULT_ADDRESS_TIMEOUT_MS),
@@ -115,16 +115,16 @@ type ImplementResult = z.infer<typeof implementSchema>;
 type ReviewResult = z.infer<typeof reviewSchema>;
 type AddressResult = z.infer<typeof addressSchema>;
 
-const IMPLEMENT_MODEL = process.env.HELLM_FULL_PRODUCT_IMPLEMENT_MODEL ?? "gpt-5.3-codex";
+const IMPLEMENT_MODEL = process.env.SVVY_FULL_PRODUCT_IMPLEMENT_MODEL ?? "gpt-5.3-codex";
 const IMPLEMENT_REASONING_EFFORT =
-  process.env.HELLM_FULL_PRODUCT_IMPLEMENT_REASONING_EFFORT ?? "medium";
-const ADDRESS_MODEL = process.env.HELLM_FULL_PRODUCT_ADDRESS_MODEL ?? IMPLEMENT_MODEL;
+  process.env.SVVY_FULL_PRODUCT_IMPLEMENT_REASONING_EFFORT ?? "medium";
+const ADDRESS_MODEL = process.env.SVVY_FULL_PRODUCT_ADDRESS_MODEL ?? IMPLEMENT_MODEL;
 const ADDRESS_REASONING_EFFORT =
-  process.env.HELLM_FULL_PRODUCT_ADDRESS_REASONING_EFFORT ?? IMPLEMENT_REASONING_EFFORT;
-const REVIEW_MODEL = process.env.HELLM_FULL_PRODUCT_REVIEW_MODEL ?? "gpt-5.3-codex";
-const REVIEW_REASONING_EFFORT = process.env.HELLM_FULL_PRODUCT_REVIEW_REASONING_EFFORT ?? "high";
+  process.env.SVVY_FULL_PRODUCT_ADDRESS_REASONING_EFFORT ?? IMPLEMENT_REASONING_EFFORT;
+const REVIEW_MODEL = process.env.SVVY_FULL_PRODUCT_REVIEW_MODEL ?? "gpt-5.3-codex";
+const REVIEW_REASONING_EFFORT = process.env.SVVY_FULL_PRODUCT_REVIEW_REASONING_EFFORT ?? "high";
 
-const IMPLEMENT_SYSTEM_PROMPT = `You are implementing the hellm product from this repository's docs.
+const IMPLEMENT_SYSTEM_PROMPT = `You are implementing the svvy product from this repository's docs.
 
 Read and follow AGENTS.md strictly.
 Read docs/prd.md before acting.
@@ -146,7 +146,7 @@ Execution style:
 - do not run git commands
 - return structured JSON matching the implement schema`;
 
-const ADDRESS_SYSTEM_PROMPT = `You are addressing review findings in the hellm repository.
+const ADDRESS_SYSTEM_PROMPT = `You are addressing review findings in the svvy repository.
 
 Read and follow AGENTS.md strictly.
 Read docs/prd.md and docs/features.ts before changing product behavior or tests.
@@ -165,7 +165,7 @@ Execution style:
 - do not run git commands
 - return structured JSON matching the address schema`;
 
-const REVIEW_SYSTEM_PROMPT = `You are reviewing the hellm repository in read-only mode.
+const REVIEW_SYSTEM_PROMPT = `You are reviewing the svvy repository in read-only mode.
 
 Read and follow AGENTS.md strictly.
 Read docs/prd.md and docs/features.ts before deciding whether the current state is good enough.
@@ -192,8 +192,8 @@ const implementAgent = createFullProductCodexAgent({
   reasoningEffort: IMPLEMENT_REASONING_EFFORT,
   timeoutMs: DEFAULT_IMPLEMENT_TIMEOUT_MS,
   maxOutputBytes: 4_000_000,
-  sandbox: resolveCodexSandbox(process.env.HELLM_FULL_PRODUCT_IMPLEMENT_SANDBOX, "workspace-write"),
-  fullAuto: process.env.HELLM_FULL_PRODUCT_IMPLEMENT_FULL_AUTO !== "0",
+  sandbox: resolveCodexSandbox(process.env.SVVY_FULL_PRODUCT_IMPLEMENT_SANDBOX, "workspace-write"),
+  fullAuto: process.env.SVVY_FULL_PRODUCT_IMPLEMENT_FULL_AUTO !== "0",
   systemPrompt: IMPLEMENT_SYSTEM_PROMPT,
 });
 
@@ -203,8 +203,8 @@ const addressAgent = createFullProductCodexAgent({
   reasoningEffort: ADDRESS_REASONING_EFFORT,
   timeoutMs: DEFAULT_ADDRESS_TIMEOUT_MS,
   maxOutputBytes: 4_000_000,
-  sandbox: resolveCodexSandbox(process.env.HELLM_FULL_PRODUCT_ADDRESS_SANDBOX, "workspace-write"),
-  fullAuto: process.env.HELLM_FULL_PRODUCT_ADDRESS_FULL_AUTO !== "0",
+  sandbox: resolveCodexSandbox(process.env.SVVY_FULL_PRODUCT_ADDRESS_SANDBOX, "workspace-write"),
+  fullAuto: process.env.SVVY_FULL_PRODUCT_ADDRESS_FULL_AUTO !== "0",
   systemPrompt: ADDRESS_SYSTEM_PROMPT,
 });
 
@@ -230,7 +230,7 @@ export default smithers((ctx) => {
   const stopLoop = latestReview?.approved === true || latestReview?.continueLoop === false;
 
   return (
-    <Workflow name="hellm-full-product-review-loop" cache={false}>
+    <Workflow name="svvy-full-product-review-loop" cache={false}>
       <Worktree
         id="full-product-worktree"
         path={worktreePath}
@@ -405,12 +405,12 @@ function formatList(items?: string[]) {
 }
 
 function createIsolatedCodexEnv(taskSlug: string): Record<string, string> {
-  const configuredHome = process.env.HELLM_FULL_PRODUCT_CODEX_HOME?.trim();
+  const configuredHome = process.env.SVVY_FULL_PRODUCT_CODEX_HOME?.trim();
   const codexHomeRoot =
     configuredHome && configuredHome.length > 0 ? resolve(configuredHome) : tmpdir();
   mkdirSync(codexHomeRoot, { recursive: true });
 
-  const codexHome = mkdtempSync(resolve(codexHomeRoot, `hellm-codex-home-${taskSlug}-`));
+  const codexHome = mkdtempSync(resolve(codexHomeRoot, `svvy-codex-home-${taskSlug}-`));
   mkdirSync(codexHome, { recursive: true });
 
   const sourceCodexHome =

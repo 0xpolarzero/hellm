@@ -3,8 +3,8 @@ import { rm } from "node:fs/promises";
 import {
   createHomeDir,
   ensureBuilt,
-  withHellmApp,
-  type HellmApp,
+  withSvvyApp,
+  type SvvyApp,
 } from "./harness";
 import {
   assistantTextMessage,
@@ -23,9 +23,9 @@ beforeAll(async () => {
 
 async function launchWithSessions(
   sessions: SeedSessionInput[],
-  fn: (app: HellmApp) => Promise<void>,
+  fn: (app: SvvyApp) => Promise<void>,
 ): Promise<void> {
-  await withHellmApp(
+  await withSvvyApp(
     {
       beforeLaunch: async ({ homeDir, workspaceDir }) => {
         await seedSessions(homeDir, sessions, workspaceDir);
@@ -44,7 +44,7 @@ async function withPersistentHome<T>(fn: (homeDir: string) => Promise<T>): Promi
   }
 }
 
-async function readSessionTitles(page: HellmApp["page"]): Promise<string[]> {
+async function readSessionTitles(page: SvvyApp["page"]): Promise<string[]> {
   const titles: string[] = [];
   const count = await page.locator(".session-main strong").count();
   for (let index = 0; index < count; index += 1) {
@@ -54,13 +54,13 @@ async function readSessionTitles(page: HellmApp["page"]): Promise<string[]> {
   return titles;
 }
 
-async function openSessionActions(page: HellmApp["page"], title: string): Promise<void> {
+async function openSessionActions(page: SvvyApp["page"], title: string): Promise<void> {
   const trigger = page.getByRole("button", { name: `Session actions for ${title}` });
   await trigger.waitFor({ state: "visible" });
   await trigger.click({ force: true });
 }
 
-async function clickSessionByTitle(page: HellmApp["page"], title: string): Promise<void> {
+async function clickSessionByTitle(page: SvvyApp["page"], title: string): Promise<void> {
   const sessionButton = page.locator(".session-main").filter({
     has: page.locator("strong").filter({ hasText: title }),
   }).first();
@@ -68,7 +68,7 @@ async function clickSessionByTitle(page: HellmApp["page"], title: string): Promi
   await sessionButton.click({ force: true });
 }
 
-async function waitForSessionCount(page: HellmApp["page"], expectedCount: number, timeoutMs = 15_000): Promise<void> {
+async function waitForSessionCount(page: SvvyApp["page"], expectedCount: number, timeoutMs = 15_000): Promise<void> {
   const context = page.locator(".sidebar-context");
   const expectedLabel = `${expectedCount} sessions`;
   const deadline = Date.now() + timeoutMs;
@@ -85,7 +85,7 @@ async function waitForSessionCount(page: HellmApp["page"], expectedCount: number
 }
 
 async function waitForSessionRows(
-  page: HellmApp["page"],
+  page: SvvyApp["page"],
   expectedCount: number,
   timeoutMs = 15_000,
 ): Promise<void> {
@@ -102,25 +102,25 @@ async function waitForSessionRows(
   throw new Error(`Timed out waiting for ${expectedCount} session rows.`);
 }
 
-async function openRenameDialog(page: HellmApp["page"], title: string): Promise<void> {
+async function openRenameDialog(page: SvvyApp["page"], title: string): Promise<void> {
   await openSessionActions(page, title);
   await page.locator(".session-menu").getByRole("button", { name: "Rename" }).click({ force: true });
   await page.getByRole("dialog", { name: "Rename Session" }).waitFor({ state: "visible" });
 }
 
-async function openDeleteDialog(page: HellmApp["page"], title: string): Promise<void> {
+async function openDeleteDialog(page: SvvyApp["page"], title: string): Promise<void> {
   await openSessionActions(page, title);
   await page.locator(".session-menu").getByRole("button", { name: "Delete" }).click({ force: true });
   await page.getByRole("dialog", { name: "Delete Session" }).waitFor({ state: "visible" });
 }
 
-async function expectMainTitle(page: HellmApp["page"], expected: string): Promise<void> {
+async function expectMainTitle(page: SvvyApp["page"], expected: string): Promise<void> {
   const title = page.locator(".workspace-main-title");
   await waitForText(title, expected);
   expect((await title.textContent())?.trim()).toBe(expected);
 }
 
-async function expectActiveSessionTitle(page: HellmApp["page"], expected: string): Promise<void> {
+async function expectActiveSessionTitle(page: SvvyApp["page"], expected: string): Promise<void> {
   const activeTitle = page.locator('.session-main[aria-current="true"] strong');
   await waitForText(activeTitle, expected);
   expect((await activeTitle.textContent())?.trim()).toBe(expected);
@@ -229,7 +229,7 @@ test("switches the active session from the sidebar list", async () => {
 
 test("creates a new session, activates it, and keeps it after relaunch", async () => {
   await withPersistentHome(async (homeDir) => {
-    await withHellmApp(
+    await withSvvyApp(
       {
         homeDir,
         beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
@@ -256,7 +256,7 @@ test("creates a new session, activates it, and keeps it after relaunch", async (
       },
     );
 
-    await withHellmApp(
+    await withSvvyApp(
       {
         homeDir,
       },
@@ -271,7 +271,7 @@ test("creates a new session, activates it, and keeps it after relaunch", async (
 
 test("rejects an empty rename, then renames and persists the session title", async () => {
   await withPersistentHome(async (homeDir) => {
-    await withHellmApp(
+    await withSvvyApp(
       {
         homeDir,
         beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
@@ -309,7 +309,7 @@ test("rejects an empty rename, then renames and persists the session title", asy
       },
     );
 
-    await withHellmApp(
+    await withSvvyApp(
       {
         homeDir,
       },
@@ -324,7 +324,7 @@ test("rejects an empty rename, then renames and persists the session title", asy
 
 test("forks a session into a new active copy with a fork badge", async () => {
   await withPersistentHome(async (homeDir) => {
-    await withHellmApp(
+    await withSvvyApp(
       {
         homeDir,
         beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
@@ -352,7 +352,7 @@ test("forks a session into a new active copy with a fork badge", async () => {
       },
     );
 
-    await withHellmApp(
+    await withSvvyApp(
       {
         homeDir,
       },

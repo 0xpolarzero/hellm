@@ -98,8 +98,8 @@ export class WorkspaceSessionCatalog {
 
   constructor(
     private readonly cwd: string = resolveWorkspaceCwd(),
-    private readonly agentDir: string = getHellmAgentDir(),
-    private readonly sessionDir: string = getHellmSessionDir(resolveWorkspaceCwd(), getHellmAgentDir()),
+    private readonly agentDir: string = getSvvyAgentDir(),
+    private readonly sessionDir: string = getSvvySessionDir(resolveWorkspaceCwd(), getSvvyAgentDir()),
   ) {}
 
   async dispose(): Promise<void> {
@@ -944,13 +944,13 @@ function getResolvedModel(provider: string, model: string) {
   );
 }
 
-function getHellmAgentDir(): string {
+function getSvvyAgentDir(): string {
   return process.platform === "win32"
-    ? join(process.env.APPDATA ?? homedir(), "hellm", "pi-agent")
-    : join(homedir(), ".config", "hellm", "pi-agent");
+    ? join(process.env.APPDATA ?? homedir(), "svvy", "pi-agent")
+    : join(homedir(), ".config", "svvy", "pi-agent");
 }
 
-export function getHellmSessionDir(cwd: string, agentDir = getHellmAgentDir()): string {
+export function getSvvySessionDir(cwd: string, agentDir = getSvvyAgentDir()): string {
   return join(agentDir, "sessions", `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`);
 }
 

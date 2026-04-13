@@ -170,7 +170,7 @@
 			bind:element={draftElement}
 			resize="vertical"
 			rows={5}
-			placeholder="Ask hellm to inspect the repo, make a change, or run verification."
+			placeholder="Ask svvy to inspect the repo, make a change, or run verification."
 			onkeydown={handleKeydown}
 		/>
 

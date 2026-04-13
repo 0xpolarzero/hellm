@@ -2,8 +2,8 @@ import type { ElectrobunConfig } from "electrobun";
 
 export default {
   app: {
-    name: "hellm",
-    identifier: "dev.polarzero.hellm",
+    name: "svvy",
+    identifier: "dev.polarzero.svvy",
     version: "0.0.1",
   },
   scripts: {

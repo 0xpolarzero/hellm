@@ -2,7 +2,7 @@
 
 This document is a companion to the [PRD](./prd.md).
 
-It shows the intended product-level request flow for `hellm`. It is a behavioral model, not a package layout or implementation call graph.
+It shows the intended product-level request flow for `svvy`. It is a behavioral model, not a package layout or implementation call graph.
 
 ```mermaid
 flowchart TD
@@ -12,7 +12,7 @@ flowchart TD
     end
 
     subgraph Context["Context Load"]
-        Load["Load workspace, session, threads, episodes, artifacts, verification state, AGENTS.md, and .hellm config"]
+        Load["Load workspace, session, threads, episodes, artifacts, verification state, AGENTS.md, and .svvy config"]
     end
 
     subgraph Routing["Orchestrator Routing"]

@@ -2,7 +2,7 @@
 
 ## Title
 
-Ship `hellm` as an Electrobun desktop coding app with a pi-backed runtime, a visible `hellm` orchestrator, and Smithers-backed delegated workflows.
+Ship `svvy` as an Electrobun desktop coding app with a pi-backed runtime, a visible `svvy` orchestrator, and Smithers-backed delegated workflows.
 
 ## Status
 
@@ -12,13 +12,13 @@ Ship `hellm` as an Electrobun desktop coding app with a pi-backed runtime, a vis
 
 ## Product Summary
 
-`hellm` is a desktop coding agent for working inside real repositories with visible orchestration instead of a single opaque chat loop.
+`svvy` is a desktop coding agent for working inside real repositories with visible orchestration instead of a single opaque chat loop.
 
 The product combines:
 
 - an Electrobun desktop shell
 - a pi-backed interactive runtime and session substrate
-- a `hellm` orchestrator that owns routing, reconciliation, and final decisions
+- a `svvy` orchestrator that owns routing, reconciliation, and final decisions
 - Smithers-backed delegated workflows for bounded subagent work
 - first-class episodes, artifacts, verification, and worktree awareness
 
@@ -110,7 +110,7 @@ This is the intended middle path between two failure modes:
 - transcript-heavy agents that keep too much in context and lose focus
 - rigid workflow systems that over-script work and lose adaptability
 
-`hellm` should deliberately interleave agentic reasoning and executable structure:
+`svvy` should deliberately interleave agentic reasoning and executable structure:
 
 - use the model where judgment matters
 - use code and workflow structure where repetition, composition, or verification matter
@@ -130,7 +130,7 @@ This keeps workflow capability available without bloating orchestrator context.
 
 ### 9. Full Approvals By Default
 
-`hellm` runs with full approvals by default.
+`svvy` runs with full approvals by default.
 
 In practice that means:
 
@@ -160,11 +160,11 @@ Electrobun owns:
 - supported extension and runtime hooks
 - core provider-facing agent runtime behavior
 
-`hellm` must extend or project through pi's runtime and extension APIs. It must not replace pi with a second agent shell.
+`svvy` must extend or project through pi's runtime and extension APIs. It must not replace pi with a second agent shell.
 
-### hellm
+### svvy
 
-`hellm` owns:
+`svvy` owns:
 
 - product behavior above the pi seam
 - the orchestrator
@@ -223,7 +223,7 @@ It includes:
 - repository root
 - current branch or VCS state
 - available worktrees
-- repo-local `AGENTS.md` and `.hellm/` configuration
+- repo-local `AGENTS.md` and `.svvy/` configuration
 - recent session history for that workspace
 - flat folder labels used to organize sessions in the sidebar
 - a persisted pane layout for that workspace window
@@ -518,11 +518,11 @@ Use the pause path when:
 - required information or an external prerequisite is missing
 - a delegated workflow is paused on a resumable waiting condition
 
-`hellm` runs with full approvals by default. Waiting is for clarification or resumable pause conditions, not approval gating.
+`svvy` runs with full approvals by default. Waiting is for clarification or resumable pause conditions, not approval gating.
 
 ## Slate-Inspired Subagent Model
 
-`hellm` borrows product behavior from public Slate material and from defensible inferences about what makes that behavior effective.
+`svvy` borrows product behavior from public Slate material and from defensible inferences about what makes that behavior effective.
 
 The adopted subagent model is:
 
@@ -702,7 +702,7 @@ Out of scope for the first implementation:
 
 Companion spec: [Workflow Hooks](./specs/workflow-hooks.spec.md)
 
-The product should support repo-local workflow hooks under a `.hellm/` configuration surface.
+The product should support repo-local workflow hooks under a `.svvy/` configuration surface.
 
 Initial required hooks:
 
@@ -729,7 +729,7 @@ The desktop app is primary, but headless execution is a real product surface, no
 ## Persistence and State Requirements
 
 - pi-backed sessions remain the top-level user-facing session substrate
-- `hellm` extends that substrate with structured product state
+- `svvy` extends that substrate with structured product state
 - product state must not depend on replaying the raw transcript for every decision
 - artifacts may live on disk and be referenced from durable product state
 - Smithers may keep its own workflow-run state, but that state is subordinate to the top-level session and episode model
@@ -809,7 +809,7 @@ The product intentionally borrows these public ideas:
 - synchronization is frequent
 - worktrees and structured automation surfaces matter
 
-### Hellm Inferences From Slate
+### Svvy Inferences From Slate
 
 The product also adopts these explicit inferences:
 
@@ -818,4 +818,4 @@ The product also adopts these explicit inferences:
 - routing by task type improves reliability
 - the best balance is adaptive orchestration with bounded synchronization, not transcript sprawl and not rigid workflow bureaucracy
 
-These are `hellm` product choices, not claims about private Slate internals.
+These are `svvy` product choices, not claims about private Slate internals.

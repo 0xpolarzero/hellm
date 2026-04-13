@@ -141,7 +141,7 @@
 <Dialog
 	title="Settings"
 	eyebrow="Workbench"
-	description="Configure runtime integrations and account access. Credentials stay local in ~/.config/hellm/auth.json, and environment variables still take precedence."
+	description="Configure runtime integrations and account access. Credentials stay local in ~/.config/svvy/auth.json, and environment variables still take precedence."
 	width="lg"
 	onClose={onClose}
 >

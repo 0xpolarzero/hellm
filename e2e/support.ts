@@ -15,7 +15,7 @@ import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type {
   E2ePromptScenario,
   E2ePromptStep,
-  HellmE2eControl,
+  SvvyE2eControl,
 } from "../src/bun/e2e-control";
 import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
 import type { CustomProvider } from "../src/mainview/chat-storage";
@@ -60,7 +60,7 @@ export interface SeededSession {
 }
 
 export function getTestAgentDir(homeDir: string): string {
-  return join(homeDir, ".config", "hellm", "pi-agent");
+  return join(homeDir, ".config", "svvy", "pi-agent");
 }
 
 export function getTestSessionDir(
@@ -75,15 +75,15 @@ export function getTestSessionDir(
 }
 
 export function getTestAuthFile(homeDir: string): string {
-  return join(homeDir, ".config", "hellm", "auth.json");
+  return join(homeDir, ".config", "svvy", "auth.json");
 }
 
 export function getRendererSeedFile(homeDir: string): string {
-  return join(homeDir, ".config", "hellm", "renderer-seed.json");
+  return join(homeDir, ".config", "svvy", "renderer-seed.json");
 }
 
 export function getE2eControlFile(homeDir: string): string {
-  return join(homeDir, ".config", "hellm", "e2e-control.json");
+  return join(homeDir, ".config", "svvy", "e2e-control.json");
 }
 
 export async function seedProviderApiKeys(
@@ -91,7 +91,7 @@ export async function seedProviderApiKeys(
   apiKeys: Record<string, string>,
 ): Promise<void> {
   const authFile = getTestAuthFile(homeDir);
-  await mkdir(join(homeDir, ".config", "hellm"), { recursive: true });
+  await mkdir(join(homeDir, ".config", "svvy"), { recursive: true });
 
   const serialized = Object.fromEntries(
     Object.entries(apiKeys).map(([providerId, key]) => [providerId, { type: "apikey", key }]),
@@ -109,7 +109,7 @@ export async function writeRendererSeed(
   },
 ): Promise<string> {
   const seedFile = getRendererSeedFile(homeDir);
-  await mkdir(join(homeDir, ".config", "hellm"), { recursive: true });
+  await mkdir(join(homeDir, ".config", "svvy"), { recursive: true });
   await writeFile(seedFile, `${JSON.stringify(seed, null, 2)}\n`, {
     mode: 0o600,
   });
@@ -118,10 +118,10 @@ export async function writeRendererSeed(
 
 export async function writeE2eControl(
   homeDir: string,
-  control: HellmE2eControl,
+  control: SvvyE2eControl,
 ): Promise<string> {
   const controlFile = getE2eControlFile(homeDir);
-  await mkdir(join(homeDir, ".config", "hellm"), { recursive: true });
+  await mkdir(join(homeDir, ".config", "svvy"), { recursive: true });
   await writeFile(controlFile, `${JSON.stringify(control, null, 2)}\n`, {
     mode: 0o600,
   });

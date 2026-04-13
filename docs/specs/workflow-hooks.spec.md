@@ -11,7 +11,7 @@
 
 ## Purpose
 
-`hellm` needs a repo-local way to inject project-specific policy and context into consequential delegated work without turning the product into a rigid static workflow engine.
+`svvy` needs a repo-local way to inject project-specific policy and context into consequential delegated work without turning the product into a rigid static workflow engine.
 
 This document defines that initial direction.
 
@@ -20,7 +20,7 @@ This document defines that initial direction.
 The PRD defines:
 
 - delegated Smithers workflows as the default substrate for consequential delegated work
-- repo-local workflow hooks under `.hellm/`
+- repo-local workflow hooks under `.svvy/`
 - preflight hooks at the start of consequential workflows
 - validation hooks at the end of consequential workflows
 
@@ -31,9 +31,9 @@ Sources:
 
 ## Adopted Direction
 
-The adopted `hellm` direction is:
+The adopted `svvy` direction is:
 
-- repo-local workflow hooks live under a `.hellm/` configuration surface
+- repo-local workflow hooks live under a `.svvy/` configuration surface
 - consequential delegated workflows may be wrapped by two repo-local hooks:
   - `preflight`
   - `validation`
@@ -134,7 +134,7 @@ This feature is not trying to:
 
 These points are directionally important but still intentionally open:
 
-- the exact `.hellm/` file format
+- the exact `.svvy/` file format
 - whether hook authoring is prompt-first, script-first, or hybrid
 - how hook outputs are typed and passed into downstream workflow steps
 - the exact failure semantics for validation in partially successful workflows

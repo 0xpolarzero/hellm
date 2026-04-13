@@ -1,7 +1,7 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createHomeDir, ensureBuilt, type HellmApp, withHellmApp } from "./harness";
+import { createHomeDir, ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 import {
   assistantTextMessage,
   getTestSessionDir,
@@ -25,13 +25,13 @@ async function withHomeDir<T>(fn: (homeDir: string) => Promise<T>): Promise<T> {
   }
 }
 
-async function waitForShell(page: HellmApp["page"]): Promise<void> {
+async function waitForShell(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("button", { name: "Open settings" }).waitFor({ state: "visible" });
   await page.locator(".session-sidebar").waitFor({ state: "visible" });
   await page.locator(".workspace-main-title").waitFor({ state: "visible" });
 }
 
-async function sessionTitles(page: HellmApp["page"]): Promise<string[]> {
+async function sessionTitles(page: SvvyApp["page"]): Promise<string[]> {
   const rows = page.locator(".session-item strong");
   const count = await rows.count();
   const titles: string[] = [];
@@ -44,7 +44,7 @@ async function sessionTitles(page: HellmApp["page"]): Promise<string[]> {
 }
 
 async function expectBootState(
-  page: HellmApp["page"],
+  page: SvvyApp["page"],
   expected: {
     activeTitle: string;
     titles: string[];
@@ -59,11 +59,11 @@ async function expectBootState(
   );
 }
 
-async function openSessionActions(page: HellmApp["page"], title: string): Promise<void> {
+async function openSessionActions(page: SvvyApp["page"], title: string): Promise<void> {
   await page.getByRole("button", { name: `Session actions for ${title}` }).click({ force: true });
 }
 
-async function renameSession(page: HellmApp["page"], title: string, nextTitle: string): Promise<void> {
+async function renameSession(page: SvvyApp["page"], title: string, nextTitle: string): Promise<void> {
   await openSessionActions(page, title);
   await page.getByRole("button", { name: "Rename" }).click();
   await page.getByRole("dialog", { name: "Rename Session" }).waitFor({ state: "visible" });
@@ -86,7 +86,7 @@ async function writeCorruptedSessionFile(
 
 test("a corrupted session file does not crash boot and falls back to a fresh session", async () => {
   await withHomeDir(async (homeDir) => {
-    await withHellmApp(
+    await withSvvyApp(
       {
         homeDir,
         beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
@@ -102,7 +102,7 @@ test("a corrupted session file does not crash boot and falls back to a fresh ses
       },
     );
 
-    await withHellmApp({ homeDir }, async ({ page }) => {
+    await withSvvyApp({ homeDir }, async ({ page }) => {
       await expectBootState(page, {
         titles: ["New Session"],
         activeTitle: "New Session",
@@ -116,7 +116,7 @@ test("an orphaned forked session still opens, stays labeled as a fork, and remai
     const orphanTitle = "Orphaned Fork";
     const recoveredTitle = "Recovered Fork";
 
-    await withHellmApp(
+    await withSvvyApp(
       {
         homeDir,
         beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
@@ -163,7 +163,7 @@ test("an orphaned forked session still opens, stays labeled as a fork, and remai
       },
     );
 
-    await withHellmApp({ homeDir }, async ({ page }) => {
+    await withSvvyApp({ homeDir }, async ({ page }) => {
       await expectBootState(page, {
         titles: [recoveredTitle],
         activeTitle: recoveredTitle,
@@ -193,7 +193,7 @@ test("a workspace with many sessions still boots and the newest session is activ
     const expectedTitles = [...sessions].reverse().map((session) => session.title ?? "New Session");
     const newestTitle = expectedTitles[0] ?? "New Session";
 
-    await withHellmApp(
+    await withSvvyApp(
       {
         homeDir,
         beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
@@ -211,7 +211,7 @@ test("a workspace with many sessions still boots and the newest session is activ
       },
     );
 
-    await withHellmApp({ homeDir }, async ({ page }) => {
+    await withSvvyApp({ homeDir }, async ({ page }) => {
       await expectBootState(page, {
         titles: expectedTitles,
         activeTitle: newestTitle,

@@ -110,7 +110,7 @@
 					<div class="message-bubble assistant-bubble">
 						<header>
 							<div>
-								<span>hellm</span>
+								<span>svvy</span>
 								<small>{message.provider} · {message.model}</small>
 							</div>
 							<div class="message-meta">
@@ -196,7 +196,7 @@
 				<div class="message-bubble assistant-bubble streaming">
 					<header>
 						<div>
-							<span>hellm</span>
+							<span>svvy</span>
 							<small>{streamingAssistant.provider} · {streamingAssistant.model}</small>
 						</div>
 						<span class="tool-status tone-warning">Streaming</span>

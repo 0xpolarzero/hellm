@@ -46,7 +46,7 @@ import {
   setSessionThoughtLevel,
 } from "./pi-host";
 import type { SessionDefaults } from "./session-catalog";
-import { createHellmToolBridge } from "./tool-bridge";
+import { createSvvyToolBridge } from "./tool-bridge";
 import { resolveWorkspaceCwd } from "./workspace-context";
 
 type SessionMutationResponse = {
@@ -60,7 +60,7 @@ const DEV_SERVER_WAIT_TIMEOUT_MS = 15_000;
 const DEV_SERVER_POLL_INTERVAL_MS = 250;
 const DEFAULT_RPC_TIMEOUT_MS = 120000;
 const DEFAULT_SYSTEM_PROMPT =
-  "You are hellm, a pragmatic software engineering assistant running inside the hellm desktop app.";
+  "You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.";
 const ENV_FILES = [".env.local", ".env"];
 const PREFERRED_PROVIDERS = ["zai", "openai", "anthropic", "google"];
 const PREFERRED_MODEL_FRAGMENTS = [
@@ -131,7 +131,7 @@ function getRpcRequestTimeoutMs(): number {
 type DevServerMode = "auto" | "wait";
 
 function getDevServerMode(): DevServerMode {
-  return process.env.HELLM_VITE_DEV_SERVER === "wait" ? "wait" : "auto";
+  return process.env.SVVY_VITE_DEV_SERVER === "wait" ? "wait" : "auto";
 }
 
 function isEnvFlagEnabled(name: string): boolean {
@@ -291,7 +291,7 @@ function getE2eRendererSeed(): {
   customProviders: CustomProvider[];
   promptHistory: PromptHistoryEntry[];
 } | null {
-  const seedPath = process.env.HELLM_E2E_RENDERER_SEED_PATH?.trim();
+  const seedPath = process.env.SVVY_E2E_RENDERER_SEED_PATH?.trim();
   if (!seedPath) {
     return null;
   }
@@ -319,7 +319,7 @@ function getE2eRendererSeed(): {
   }
 }
 
-const hellmToolBridge = createHellmToolBridge({
+const svvyToolBridge = createSvvyToolBridge({
   defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
   getActiveWorkspaceSession,
   getDefaultChatSettings,
@@ -329,9 +329,9 @@ const hellmToolBridge = createHellmToolBridge({
   listProviderAuthSummaries,
   listWorkspaceSessions,
 });
-const recordBridgeEvent = hellmToolBridge.recordEvent;
-const recordBridgeLog = hellmToolBridge.recordLog;
-const recordBridgeError = hellmToolBridge.recordError;
+const recordBridgeEvent = svvyToolBridge.recordEvent;
+const recordBridgeLog = svvyToolBridge.recordLog;
+const recordBridgeError = svvyToolBridge.recordError;
 
 function assertBootstrapReady(): void {
   const bootstrapError = getE2eBootstrapError();
@@ -625,7 +625,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
 
 const appMenu: Parameters<typeof ApplicationMenu.setApplicationMenu>[0] = [
   {
-    label: "hellm",
+    label: "svvy",
     submenu: [
       { role: "about" },
       { type: "separator" },
@@ -670,10 +670,10 @@ loadRuntimeEnv();
 await initPiHost();
 
 const url = await getMainViewUrl();
-const e2eHeadless = isEnvFlagEnabled("HELLM_E2E_HEADLESS");
+const e2eHeadless = isEnvFlagEnabled("SVVY_E2E_HEADLESS");
 
 mainWindow = new BrowserWindow({
-  title: "hellm",
+  title: "svvy",
   frame: {
     x: e2eHeadless ? -20_000 : 0,
     y: e2eHeadless ? -20_000 : 0,
@@ -686,7 +686,7 @@ mainWindow = new BrowserWindow({
   rpc,
 });
 
-const mountedToolBridge = await hellmToolBridge.mount(mainWindow);
+const mountedToolBridge = await svvyToolBridge.mount(mainWindow);
 
 if (e2eHeadless) {
   mainWindow.show();
@@ -697,12 +697,12 @@ recordBridgeEvent("app.ready", {
   url,
   workspaceId: resolveWorkspaceCwd(),
 });
-recordBridgeLog("info", "hellm tool bridge mounted.", "tool-bridge", {
+recordBridgeLog("info", "svvy tool bridge mounted.", "tool-bridge", {
   appId: mountedToolBridge.appId,
   bridgeUrl: mountedToolBridge.url ?? null,
 });
 console.log(
-  `hellm bridge: ${JSON.stringify({
+  `svvy bridge: ${JSON.stringify({
     appId: mountedToolBridge.appId,
     bridgeUrl: mountedToolBridge.url ?? null,
   })}`,
@@ -710,4 +710,4 @@ console.log(
 
 void mainWindow;
 
-console.log("hellm desktop app started");
+console.log("svvy desktop app started");

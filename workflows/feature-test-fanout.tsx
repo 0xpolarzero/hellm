@@ -17,16 +17,16 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { z } from "zod";
-import { ALL_HELLM_FEATURES } from "../docs/features.ts";
+import { ALL_SVVY_FEATURES } from "../docs/features.ts";
 import WorkerPrompt from "./prompts/feature-test-fanout/worker.mdx";
 
-const DEFAULT_MAX_CONCURRENCY = parsePositiveInt(process.env.HELLM_FEATURE_TEST_MAX_CONCURRENCY, 6);
+const DEFAULT_MAX_CONCURRENCY = parsePositiveInt(process.env.SVVY_FEATURE_TEST_MAX_CONCURRENCY, 6);
 const DEFAULT_BATCH_SIZE = parsePositiveInt(
-  process.env.HELLM_FEATURE_TEST_BATCH_SIZE,
+  process.env.SVVY_FEATURE_TEST_BATCH_SIZE,
   DEFAULT_MAX_CONCURRENCY,
 );
 const DEFAULT_TIMEOUT_MS = parsePositiveInt(
-  process.env.HELLM_FEATURE_TEST_TIMEOUT_MS,
+  process.env.SVVY_FEATURE_TEST_TIMEOUT_MS,
   30 * 60 * 1000,
 );
 
@@ -38,7 +38,7 @@ const inputSchema = z.object({
   repoRoot: z.string().default("."),
   worktreeRoot: z.string().default(".worktrees/feature-tests"),
   branchPrefix: z.string().default("workflow/feature-tests"),
-  baseBranch: z.string().default(process.env.HELLM_FEATURE_TEST_BASE_BRANCH ?? "main"),
+  baseBranch: z.string().default(process.env.SVVY_FEATURE_TEST_BASE_BRANCH ?? "main"),
   deleteMergedBranches: z.boolean().default(true),
   cleanupBlockedWorktrees: z.boolean().default(false),
 });
@@ -121,7 +121,7 @@ const { smithers, outputs } = createSmithers({
   report: reportSchema,
 });
 
-const workerAgentKind = (process.env.HELLM_FEATURE_TEST_AGENT ?? "codex").toLowerCase();
+const workerAgentKind = (process.env.SVVY_FEATURE_TEST_AGENT ?? "codex").toLowerCase();
 const workerRetries = workerAgentKind === "codex" ? 0 : 1;
 type FeatureCoverageResult = z.infer<typeof featureCoverageSchema>;
 type VerificationResult = z.infer<typeof verificationResultSchema>;
@@ -144,7 +144,7 @@ export default smithers((ctx) => {
   const mergeById = byFeatureId(mergeResults);
 
   return (
-    <Workflow name="hellm-feature-test-fanout">
+    <Workflow name="svvy-feature-test-fanout">
       <Sequence>
         {batches.map((batch, batchIndex) => (
           <Sequence key={`batch-${batchIndex}`}>
@@ -306,33 +306,33 @@ function createWorkerAgent(taskSpec?: { slug: string }) {
   switch (agentKind) {
     case "pi":
       return new PiAgent({
-        provider: process.env.HELLM_FEATURE_TEST_PI_PROVIDER ?? "openai-codex",
-        model: process.env.HELLM_FEATURE_TEST_PI_MODEL ?? "gpt-5.4",
+        provider: process.env.SVVY_FEATURE_TEST_PI_PROVIDER ?? "openai-codex",
+        model: process.env.SVVY_FEATURE_TEST_PI_MODEL ?? "gpt-5.4",
         mode: "rpc",
         tools: ["read", "edit", "bash"],
         timeoutMs: DEFAULT_TIMEOUT_MS,
       });
     case "claude":
       return new ClaudeCodeAgent({
-        model: process.env.HELLM_FEATURE_TEST_CLAUDE_MODEL ?? "claude-sonnet-4-20250514",
+        model: process.env.SVVY_FEATURE_TEST_CLAUDE_MODEL ?? "claude-sonnet-4-20250514",
         timeoutMs: DEFAULT_TIMEOUT_MS,
       });
     default: {
       const codexEnv = createIsolatedCodexWorkerEnv(taskSpec?.slug ?? "shared");
       return new CodexAgent({
-        model: process.env.HELLM_FEATURE_TEST_CODEX_MODEL ?? "gpt-5.3-codex",
+        model: process.env.SVVY_FEATURE_TEST_CODEX_MODEL ?? "gpt-5.3-codex",
         sandbox:
-          (process.env.HELLM_FEATURE_TEST_SANDBOX as
+          (process.env.SVVY_FEATURE_TEST_SANDBOX as
             | "read-only"
             | "workspace-write"
             | "danger-full-access"
             | undefined) ?? "workspace-write",
-        fullAuto: process.env.HELLM_FEATURE_TEST_FULL_AUTO !== "0",
+        fullAuto: process.env.SVVY_FEATURE_TEST_FULL_AUTO !== "0",
         timeoutMs: DEFAULT_TIMEOUT_MS,
         env: codexEnv,
         extraArgs: ["--ephemeral"],
         config: {
-          model_reasoning_effort: process.env.HELLM_FEATURE_TEST_REASONING_EFFORT ?? "high",
+          model_reasoning_effort: process.env.SVVY_FEATURE_TEST_REASONING_EFFORT ?? "high",
           "features.multi_agent": false,
           "agents.max_threads": 1,
         },
@@ -342,11 +342,11 @@ function createWorkerAgent(taskSpec?: { slug: string }) {
 }
 
 function createIsolatedCodexWorkerEnv(taskSlug: string): Record<string, string> {
-  const configuredHome = process.env.HELLM_FEATURE_TEST_CODEX_HOME?.trim();
+  const configuredHome = process.env.SVVY_FEATURE_TEST_CODEX_HOME?.trim();
   const codexHomeRoot =
     configuredHome && configuredHome.length > 0 ? resolve(configuredHome) : tmpdir();
   mkdirSync(codexHomeRoot, { recursive: true });
-  const codexHome = mkdtempSync(resolve(codexHomeRoot, `hellm-codex-home-${taskSlug}-`));
+  const codexHome = mkdtempSync(resolve(codexHomeRoot, `svvy-codex-home-${taskSlug}-`));
 
   mkdirSync(codexHome, { recursive: true });
 
@@ -367,10 +367,10 @@ function createIsolatedCodexWorkerEnv(taskSlug: string): Record<string, string> 
 
 function selectFeatures(requested?: string[]): string[] {
   if (!requested || requested.length === 0) {
-    return [...ALL_HELLM_FEATURES];
+    return [...ALL_SVVY_FEATURES];
   }
 
-  const known = new Set(ALL_HELLM_FEATURES);
+  const known = new Set(ALL_SVVY_FEATURES);
   const deduped = [...new Set(requested)];
   const unknown = deduped.filter((feature) => !known.has(feature));
 

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "hellm",
+      "name": "svvy",
       "dependencies": {
         "@fontsource-variable/familjen-grotesk": "^5.2.8",
         "@fontsource-variable/inter": "^5.2.8",

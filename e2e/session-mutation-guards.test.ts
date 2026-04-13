@@ -1,7 +1,7 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { rm } from "node:fs/promises";
-import type { HellmE2eControl } from "../src/bun/e2e-control";
-import { ensureBuilt, createHomeDir, withHellmApp, type HellmApp } from "./harness";
+import type { SvvyE2eControl } from "../src/bun/e2e-control";
+import { ensureBuilt, createHomeDir, withSvvyApp, type SvvyApp } from "./harness";
 import {
   assistantTextMessage,
   seedProviderApiKeys,
@@ -29,22 +29,22 @@ beforeAll(async () => {
 
 type FixtureOptions = {
   auth?: Record<string, string>;
-  control?: HellmE2eControl;
+  control?: SvvyE2eControl;
   sessions: SeedSessionInput[];
 };
 
 async function withFixture<T>(
   options: FixtureOptions,
-  fn: (app: HellmApp) => Promise<T>,
+  fn: (app: SvvyApp) => Promise<T>,
 ): Promise<T> {
   const homeDir = await createHomeDir();
   try {
     const env: Record<string, string> = {};
     if (options.control) {
-      env.HELLM_E2E_CONTROL_PATH = await writeE2eControl(homeDir, options.control);
+      env.SVVY_E2E_CONTROL_PATH = await writeE2eControl(homeDir, options.control);
     }
 
-    return await withHellmApp(
+    return await withSvvyApp(
       {
         homeDir,
         env: Object.keys(env).length > 0 ? env : undefined,
@@ -66,12 +66,12 @@ async function withFixture<T>(
 
 async function withSessions<T>(
   sessions: SeedSessionInput[],
-  fn: (app: HellmApp) => Promise<T>,
+  fn: (app: SvvyApp) => Promise<T>,
 ): Promise<T> {
   return await withFixture({ sessions }, fn);
 }
 
-async function readSessionTitles(page: HellmApp["page"]): Promise<string[]> {
+async function readSessionTitles(page: SvvyApp["page"]): Promise<string[]> {
   const titles: string[] = [];
   const titleLocator = page.locator(".sidebar-list .session-item .session-main strong");
   const count = await titleLocator.count();
@@ -82,13 +82,13 @@ async function readSessionTitles(page: HellmApp["page"]): Promise<string[]> {
   return titles;
 }
 
-function sessionItemByTitle(page: HellmApp["page"], title: string) {
+function sessionItemByTitle(page: SvvyApp["page"], title: string) {
   return page.locator(".session-item").filter({
     has: page.locator(".session-main strong").filter({ hasText: title }),
   }).first();
 }
 
-async function openSessionActions(page: HellmApp["page"], title: string): Promise<void> {
+async function openSessionActions(page: SvvyApp["page"], title: string): Promise<void> {
   const trigger = sessionItemByTitle(page, title)
     .getByRole("button", { name: `Session actions for ${title}` })
     .first();
@@ -96,29 +96,29 @@ async function openSessionActions(page: HellmApp["page"], title: string): Promis
   await trigger.click({ force: true });
 }
 
-function sessionMainByTitle(page: HellmApp["page"], title: string) {
+function sessionMainByTitle(page: SvvyApp["page"], title: string) {
   return sessionItemByTitle(page, title).locator(".session-main").first();
 }
 
-async function clickSessionByTitle(page: HellmApp["page"], title: string): Promise<void> {
+async function clickSessionByTitle(page: SvvyApp["page"], title: string): Promise<void> {
   const sessionButton = sessionMainByTitle(page, title);
   await sessionButton.waitFor({ state: "visible" });
   await sessionButton.click({ force: true });
 }
 
-async function clickSessionByIndex(page: HellmApp["page"], index: number): Promise<void> {
+async function clickSessionByIndex(page: SvvyApp["page"], index: number): Promise<void> {
   const sessionButton = page.locator(".session-item").nth(index).locator(".session-main");
   await sessionButton.waitFor({ state: "visible" });
   await sessionButton.click({ force: true });
 }
 
-async function openRenameDialog(page: HellmApp["page"], title: string): Promise<void> {
+async function openRenameDialog(page: SvvyApp["page"], title: string): Promise<void> {
   await openSessionActions(page, title);
   await page.locator(".session-menu").getByRole("button", { name: "Rename" }).click({ force: true });
   await page.getByRole("dialog", { name: "Rename Session" }).waitFor({ state: "visible" });
 }
 
-async function openDeleteDialog(page: HellmApp["page"], title: string): Promise<void> {
+async function openDeleteDialog(page: SvvyApp["page"], title: string): Promise<void> {
   await openSessionActions(page, title);
   await page.locator(".session-menu").getByRole("button", { name: "Delete" }).click({ force: true });
   await page.getByRole("dialog", { name: "Delete Session" }).waitFor({ state: "visible" });
@@ -146,7 +146,7 @@ async function waitForText(
 }
 
 async function waitForSessionCount(
-  page: HellmApp["page"],
+  page: SvvyApp["page"],
   expectedCount: number,
   timeoutMs = 15_000,
 ): Promise<void> {
@@ -184,26 +184,26 @@ async function waitForLocatorCount(
   throw new Error(`Timed out waiting for locator count ${expectedCount}.`);
 }
 
-async function expectMainTitle(page: HellmApp["page"], expected: string): Promise<void> {
+async function expectMainTitle(page: SvvyApp["page"], expected: string): Promise<void> {
   const title = page.locator(".workspace-main-title");
   await waitForText(title, expected);
   expect((await title.textContent())?.trim()).toBe(expected);
 }
 
-async function expectActiveSessionTitle(page: HellmApp["page"], expected: string): Promise<void> {
+async function expectActiveSessionTitle(page: SvvyApp["page"], expected: string): Promise<void> {
   const activeTitle = page.locator('.session-main[aria-current="true"] strong');
   await waitForText(activeTitle, expected);
   expect((await activeTitle.textContent())?.trim()).toBe(expected);
 }
 
-async function expectSidebarError(page: HellmApp["page"], expected: string): Promise<void> {
+async function expectSidebarError(page: SvvyApp["page"], expected: string): Promise<void> {
   const error = page.locator(".sidebar-error");
   await waitForText(error, expected);
   expect((await error.textContent())?.trim()).toBe(expected);
 }
 
 async function expectDisabled(
-  locator: ReturnType<HellmApp["page"]["locator"]>,
+  locator: ReturnType<SvvyApp["page"]["locator"]>,
   expected: boolean,
   timeoutMs = 15_000,
 ): Promise<void> {
@@ -224,7 +224,7 @@ async function expectDisabled(
 
 async function launchMutationScenario<T>(
   options: FixtureOptions,
-  fn: (app: HellmApp) => Promise<T>,
+  fn: (app: SvvyApp) => Promise<T>,
 ): Promise<T> {
   return await withFixture(options, fn);
 }
@@ -501,7 +501,7 @@ test("disables non-active session rows while streaming and blocks deleting the a
       await expectMainTitle(page, "Streaming Session");
       await expectDisabled(page.getByRole("button", { name: "Create a new session" }), false);
 
-      const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
+      const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
       await textarea.fill("Stream while guarding the active session");
       await textarea.press("Enter");
       await page.getByRole("button", { name: "Stop" }).waitFor({ state: "visible" });

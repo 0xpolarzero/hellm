@@ -120,7 +120,7 @@ function createActiveSession(
     provider: "openai",
     model: "gpt-4o",
     reasoningEffort: reasoning,
-    systemPrompt: "You are hellm.",
+    systemPrompt: "You are svvy.",
   };
 }
 
@@ -161,8 +161,8 @@ function createFakeRpc(initialSessions: ActiveSessionState[]): {
       getDefaults: async () => ({ provider: "openai", model: "gpt-4o", reasoningEffort: "medium" }),
       getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
       getWorkspaceInfo: async () => ({
-        workspaceId: "/tmp/hellm",
-        workspaceLabel: "hellm",
+        workspaceId: "/tmp/svvy",
+        workspaceLabel: "svvy",
         branch: "main",
       }),
       listSessions: async () => listSessions(),
@@ -296,8 +296,8 @@ function createFakeRpcWithToolUse(initialSession: ActiveSessionState): ChatRunti
       getDefaults: async () => ({ provider: "openai", model: "gpt-4o", reasoningEffort: "medium" }),
       getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
       getWorkspaceInfo: async () => ({
-        workspaceId: "/tmp/hellm",
-        workspaceLabel: "hellm",
+        workspaceId: "/tmp/svvy",
+        workspaceLabel: "svvy",
         branch: "main",
       }),
       listSessions: async () => ({

@@ -1,7 +1,7 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { getProviders, type Model } from "@mariozechner/pi-ai";
-import { ensureBuilt, createHomeDir, type HellmApp, withHellmApp } from "./harness";
+import { ensureBuilt, createHomeDir, type SvvyApp, withSvvyApp } from "./harness";
 import { ROOT_WORKSPACE_DIR, writeRendererSeed } from "./support";
 import type { CustomProvider } from "../src/mainview/chat-storage";
 import type { PromptHistoryEntry } from "../src/mainview/prompt-history";
@@ -81,17 +81,17 @@ function createAuthFreeEnv(): Record<string, string> {
 }
 
 async function runSeededApp<T>(
-  fn: (app: HellmApp) => Promise<T>,
+  fn: (app: SvvyApp) => Promise<T>,
 ): Promise<T> {
   const homeDir = await createHomeDir();
   try {
     const seedFile = await writeRendererSeed(homeDir, buildRendererSeed());
-    return await withHellmApp(
+    return await withSvvyApp(
       {
         homeDir,
         env: {
           ...createAuthFreeEnv(),
-          HELLM_E2E_RENDERER_SEED_PATH: seedFile,
+          SVVY_E2E_RENDERER_SEED_PATH: seedFile,
         },
       },
       fn,
@@ -101,17 +101,17 @@ async function runSeededApp<T>(
   }
 }
 
-async function textareaValue(page: HellmApp["page"]): Promise<string> {
-  const snapshot = await page.locator('textarea[placeholder^="Ask hellm"]').resolve();
+async function textareaValue(page: SvvyApp["page"]): Promise<string> {
+  const snapshot = await page.locator('textarea[placeholder^="Ask svvy"]').resolve();
   return snapshot.first?.value ?? "";
 }
 
-async function textareaSnapshot(page: HellmApp["page"]) {
-  return (await page.locator('textarea[placeholder^="Ask hellm"]').resolve()).first;
+async function textareaSnapshot(page: SvvyApp["page"]) {
+  return (await page.locator('textarea[placeholder^="Ask svvy"]').resolve()).first;
 }
 
 async function waitForTextareaValue(
-  page: HellmApp["page"],
+  page: SvvyApp["page"],
   expected: string,
   timeoutMs = 5_000,
 ): Promise<void> {
@@ -125,12 +125,12 @@ async function waitForTextareaValue(
   expect(await textareaValue(page)).toBe(expected);
 }
 
-async function openModelPicker(page: HellmApp["page"]) {
+async function openModelPicker(page: SvvyApp["page"]) {
   await page.locator(".model-control").click();
   await page.getByRole("dialog", { name: "Select a model" }).waitFor({ state: "visible" });
 }
 
-async function openReasoningMenu(page: HellmApp["page"]) {
+async function openReasoningMenu(page: SvvyApp["page"]) {
   await page.getByRole("button", { name: "Thinking level" }).click();
   await page.locator(".thinking-menu").waitFor({ state: "visible" });
 }
@@ -229,7 +229,7 @@ test("reasoning selector opens, closes, and persists a selected level", async ()
 
 test("prompt history walks older and newer entries and restores the preserved draft", async () => {
   await runSeededApp(async ({ page }) => {
-    const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
+    const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
     await textarea.waitFor({ state: "visible" });
     await textarea.fill("Working live draft");
 
@@ -279,7 +279,7 @@ test("prompt history walks older and newer entries and restores the preserved dr
 
 test("prompt history ignores arrow keys when the caret is away from the absolute boundary", async () => {
   await runSeededApp(async ({ page }) => {
-    const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
+    const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
     await textarea.waitFor({ state: "visible" });
     await textarea.fill("alpha\nbeta");
 
@@ -297,7 +297,7 @@ test("prompt history ignores arrow keys when the caret is away from the absolute
 
 test("prompt history ignores arrow keys while another ui surface owns them", async () => {
   await runSeededApp(async ({ page }) => {
-    const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
+    const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
     await textarea.waitFor({ state: "visible" });
     await textarea.focus();
     await textarea.fill("boundary guard");
@@ -313,7 +313,7 @@ test("prompt history ignores arrow keys while another ui surface owns them", asy
 
 test("sending without provider auth opens settings instead of clearing the draft", async () => {
   await runSeededApp(async ({ page }) => {
-    const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
+    const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
     await textarea.waitFor({ state: "visible" });
     await textarea.fill("Need provider access");
     await page.getByRole("button", { name: "Send" }).click();

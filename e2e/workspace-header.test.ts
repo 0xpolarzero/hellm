@@ -1,5 +1,5 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { ensureBuilt, withHellmApp, type HellmApp } from "./harness";
+import { ensureBuilt, withSvvyApp, type SvvyApp } from "./harness";
 import {
   assistantTextMessage,
   seedSessions,
@@ -17,9 +17,9 @@ beforeAll(async () => {
 });
 
 async function launchWithSeededSessions(
-  fn: (app: HellmApp) => Promise<void>,
+  fn: (app: SvvyApp) => Promise<void>,
 ): Promise<void> {
-  await withHellmApp(
+  await withSvvyApp(
     {
       beforeLaunch: async ({ homeDir, workspaceDir }) => {
         const alphaToolCall = toolCall("run_command", { command: "echo alpha" });
@@ -60,7 +60,7 @@ async function launchWithSeededSessions(
   );
 }
 
-async function clickSessionByTitle(page: HellmApp["page"], title: string): Promise<void> {
+async function clickSessionByTitle(page: SvvyApp["page"], title: string): Promise<void> {
   const sessionButton = page.locator(".session-main").filter({
     has: page.locator("strong").filter({ hasText: title }),
   }).first();
@@ -68,12 +68,12 @@ async function clickSessionByTitle(page: HellmApp["page"], title: string): Promi
   await sessionButton.click({ force: true });
 }
 
-async function readLastActivityLabel(page: HellmApp["page"]): Promise<string> {
+async function readLastActivityLabel(page: SvvyApp["page"]): Promise<string> {
   const label = await page.locator(".workspace-main-meta > span:not(.ui-badge)").nth(2).textContent();
   return label?.trim() ?? "";
 }
 
-async function expectHeaderMeta(page: HellmApp["page"], expected: {
+async function expectHeaderMeta(page: SvvyApp["page"], expected: {
   activity: string;
   status: string;
   title: string;

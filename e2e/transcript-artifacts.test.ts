@@ -1,6 +1,6 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
-import { ensureBuilt, escapeForRegExp, withHellmApp, type HellmApp } from "./harness";
+import { ensureBuilt, escapeForRegExp, withSvvyApp, type SvvyApp } from "./harness";
 import {
   assistantTextMessage,
   seedSessions,
@@ -143,8 +143,8 @@ function plainTranscriptSession(): SeedSessionInput {
   };
 }
 
-async function withRichTranscriptApp(fn: (app: HellmApp) => Promise<void>) {
-  return await withHellmApp(
+async function withRichTranscriptApp(fn: (app: SvvyApp) => Promise<void>) {
+  return await withSvvyApp(
     {
       beforeLaunch: async ({ homeDir }) => {
         await seedSessions(homeDir, [richTranscriptSession()], resolveAppWorkspaceDir());
@@ -154,8 +154,8 @@ async function withRichTranscriptApp(fn: (app: HellmApp) => Promise<void>) {
   );
 }
 
-async function withPlainTranscriptApp(fn: (app: HellmApp) => Promise<void>) {
-  return await withHellmApp(
+async function withPlainTranscriptApp(fn: (app: SvvyApp) => Promise<void>) {
+  return await withSvvyApp(
     {
       beforeLaunch: async ({ homeDir }) => {
         await seedSessions(homeDir, [plainTranscriptSession()], resolveAppWorkspaceDir());
@@ -169,7 +169,7 @@ function resolveAppWorkspaceDir(): string {
   return resolveElectrobunWorkspaceDir(process.cwd());
 }
 
-async function openArtifactTab(page: HellmApp["page"], filename: string) {
+async function openArtifactTab(page: SvvyApp["page"], filename: string) {
   const tab = page.getByRole("tab", {
     name: new RegExp(escapeForRegExp(filename)),
   });
@@ -178,7 +178,7 @@ async function openArtifactTab(page: HellmApp["page"], filename: string) {
   expect(await page.locator(".artifact-name").textContent()).toBe(filename);
 }
 
-async function ensureArtifactsPanelOpen(page: HellmApp["page"], count: number) {
+async function ensureArtifactsPanelOpen(page: SvvyApp["page"], count: number) {
   const panel = page.locator(".artifacts-panel");
   if (await panel.isVisible()) {
     return;
@@ -188,7 +188,7 @@ async function ensureArtifactsPanelOpen(page: HellmApp["page"], count: number) {
   await panel.waitFor({ state: "visible" });
 }
 
-async function openSeededSession(page: HellmApp["page"], expectedTitle: string) {
+async function openSeededSession(page: SvvyApp["page"], expectedTitle: string) {
   await page.locator(".workspace-main-title").waitFor({ state: "visible" });
   const currentTitle = (await page.locator(".workspace-main-title").textContent())?.trim() ?? "";
   if (currentTitle === expectedTitle) {

@@ -1,7 +1,7 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import type { AssistantMessage, StopReason, ToolCall, Usage } from "@mariozechner/pi-ai";
-import { createHomeDir, ensureBuilt, type HellmApp, withHellmApp } from "./harness";
+import { createHomeDir, ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 import {
   e2eDelayStep,
   e2ePromptScenario,
@@ -15,7 +15,7 @@ import {
   writeE2eControl,
   type SeedSessionInput,
 } from "./support";
-import type { HellmE2eControl, E2ePromptScenario } from "../src/bun/e2e-control";
+import type { SvvyE2eControl, E2ePromptScenario } from "../src/bun/e2e-control";
 
 const PROMPT_RUNTIME_TIMEOUT_MS = process.env.ELECTROBUN_E2E_LAUNCH_RETRIES ? 90_000 : 45_000;
 
@@ -173,7 +173,7 @@ function failureScenario(): E2ePromptScenario {
   });
 }
 
-function promptControl(byText: Record<string, E2ePromptScenario>): HellmE2eControl {
+function promptControl(byText: Record<string, E2ePromptScenario>): SvvyE2eControl {
   return {
     prompts: {
       byText,
@@ -242,7 +242,7 @@ async function waitForVisible(
 }
 
 async function waitForActiveSessionToLeaveRunningState(
-  driver: HellmApp["driver"],
+  driver: SvvyApp["driver"],
   timeoutMs = 15_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -269,7 +269,7 @@ async function waitForActiveSessionToLeaveRunningState(
 }
 
 async function waitForActiveSessionSummary(
-  driver: HellmApp["driver"],
+  driver: SvvyApp["driver"],
   expected: {
     previewIncludes: string;
     status?: string;
@@ -313,13 +313,13 @@ async function waitForActiveSessionSummary(
   );
 }
 
-async function textareaValue(page: HellmApp["page"]): Promise<string> {
-  const resolved = await page.locator('textarea[placeholder^="Ask hellm"]').resolve();
+async function textareaValue(page: SvvyApp["page"]): Promise<string> {
+  const resolved = await page.locator('textarea[placeholder^="Ask svvy"]').resolve();
   return resolved.first?.value ?? "";
 }
 
 async function expectTextareaValue(
-  page: HellmApp["page"],
+  page: SvvyApp["page"],
   expected: string,
   timeoutMs = 15_000,
 ): Promise<void> {
@@ -337,8 +337,8 @@ async function expectTextareaValue(
   expect(lastValue.trimEnd()).toBe(expected);
 }
 
-async function submitPrompt(page: HellmApp["page"], text: string): Promise<void> {
-  const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
+async function submitPrompt(page: SvvyApp["page"], text: string): Promise<void> {
+  const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
   await textarea.fill(text);
   await textarea.press("Enter");
 }
@@ -346,27 +346,27 @@ async function submitPrompt(page: HellmApp["page"], text: string): Promise<void>
 async function launchPromptRuntimeApp<T>(
   options: {
     auth?: boolean;
-    control: HellmE2eControl;
+    control: SvvyE2eControl;
     env?: Record<string, string | undefined>;
     homeDir?: string;
     workspaceDir?: string;
     sessions?: SeedSessionInput[];
   },
-  fn: (app: HellmApp) => Promise<T>,
+  fn: (app: SvvyApp) => Promise<T>,
 ): Promise<T> {
   const ownsHomeDir = !options.homeDir;
   const homeDir = options.homeDir ?? (await createHomeDir());
 
   try {
     const controlFile = await writeE2eControl(homeDir, options.control);
-    return await withHellmApp(
+    return await withSvvyApp(
       {
         homeDir,
         workspaceDir: options.workspaceDir,
         env: {
           ...(options.auth === false ? { ZAI_API_KEY: "" } : { ZAI_API_KEY: "stub-key" }),
           ...options.env,
-          HELLM_E2E_CONTROL_PATH: controlFile,
+          SVVY_E2E_CONTROL_PATH: controlFile,
         },
         beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
           if (options.sessions?.length) {
@@ -383,15 +383,15 @@ async function launchPromptRuntimeApp<T>(
   }
 }
 
-async function openNewSession(page: HellmApp["page"]): Promise<void> {
+async function openNewSession(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("button", { name: "Create a new session" }).click();
   await waitForTextContent(page.locator(".workspace-main-title"), "New Session");
 }
 
 async function launchWithSameHome<T>(
   homeDir: string,
-  control: HellmE2eControl,
-  fn: (app: HellmApp) => Promise<T>,
+  control: SvvyE2eControl,
+  fn: (app: SvvyApp) => Promise<T>,
   options: {
     auth?: boolean;
     env?: Record<string, string | undefined>;
@@ -418,7 +418,7 @@ test("composer submit sends on Enter, accepts multiline drafts, and ignores an e
       }),
     },
     async ({ page }) => {
-      const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
+      const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
       const sendButton = page.getByRole("button", { name: "Send" });
 
       await textarea.waitFor({ state: "visible" });
@@ -472,7 +472,7 @@ test("composer stop aborts a streaming prompt and lets the user send again immed
       await Bun.sleep(250);
       const sendButton = page.getByRole("button", { name: "Send" });
       await waitForVisible(sendButton);
-      await page.locator('textarea[placeholder^="Ask hellm"]').fill("Follow up after stop");
+      await page.locator('textarea[placeholder^="Ask svvy"]').fill("Follow up after stop");
       await expectTextareaValue(page, "Follow up after stop");
       await Bun.sleep(250);
       await sendButton.click({ force: true });
@@ -522,14 +522,14 @@ test("prompt history stores successful sends, shares them across sessions, and s
       await page.getByText("Stored prompt reply b.").waitFor({ state: "visible" });
 
       await openNewSession(page);
-      const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
+      const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
       await textarea.focus();
       await textarea.press("ArrowUp");
       await expectTextareaValue(page, secondPrompt);
     });
 
     await launchWithSameHome(homeDir, control, async ({ page }) => {
-      const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
+      const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
       await textarea.waitFor({ state: "visible" });
       await textarea.focus();
       await textarea.press("ArrowUp");
@@ -555,7 +555,7 @@ test("prompt history also recalls failed sends as the newest entry", async () =>
       await submitPrompt(page, FAILURE_PROMPT);
       await page.getByText("Synthetic prompt failure.").waitFor({ state: "visible" });
 
-      const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
+      const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
       await textarea.focus();
       await textarea.press("ArrowUp");
       await expectTextareaValue(page, FAILURE_PROMPT);
@@ -567,7 +567,7 @@ test("prompt history also recalls failed sends as the newest entry", async () =>
 
 test("prompt history also recalls blocked sends after missing-provider gating", async () => {
   const homeDir = await createHomeDir();
-  const workspaceDir = await createHomeDir("hellm-e2e-workspace-");
+  const workspaceDir = await createHomeDir("svvy-e2e-workspace-");
   try {
     const control = promptControl({});
     const blockedPrompt = `Blocked by auth ${Date.now()}`;
@@ -587,7 +587,7 @@ test("prompt history also recalls blocked sends after missing-provider gating", 
         expect(await page.getByText("Not configured").isVisible()).toBe(true);
         await page.locator(".ui-dialog-close").click();
         await settings.waitFor({ state: "detached" });
-        const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
+        const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
         await textarea.fill("");
         await textarea.focus();
         await textarea.press("ArrowUp");

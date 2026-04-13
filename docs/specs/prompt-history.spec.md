@@ -5,13 +5,13 @@
 - Date: 2026-04-10
 - Status: adopted UX direction for prompt history recall
 - Scope of this document:
-  - define the expected prompt-history behavior for the `hellm` composer
+  - define the expected prompt-history behavior for the `svvy` composer
   - capture the external interaction patterns that informed the design
   - make explicit what is adopted now versus what is intentionally deferred
 
 ## Purpose
 
-`hellm` needs prompt recall that feels natural to developers coming from shells and coding-agent CLIs.
+`svvy` needs prompt recall that feels natural to developers coming from shells and coding-agent CLIs.
 
 The feature should let a user:
 
@@ -49,12 +49,12 @@ That means:
 This document uses three labels:
 
 - `Fact`: directly supported by a cited source
-- `Decision`: adopted `hellm` behavior
+- `Decision`: adopted `svvy` behavior
 - `Deferred`: intentionally not part of the first implementation
 
 ## Adopted Decisions
 
-The adopted `hellm` direction is:
+The adopted `svvy` direction is:
 
 - `Up` and `Down` recall previously sent prompts
 - history navigation activates only at multiline boundaries
@@ -86,7 +86,7 @@ Sources:
 
 ### Decision
 
-`hellm` should preserve the canonical history model:
+`svvy` should preserve the canonical history model:
 
 - `Up` means older entry
 - `Down` means newer entry
@@ -111,7 +111,7 @@ Sources:
 
 ### Decision
 
-For `hellm`, the relevant pattern is:
+For `svvy`, the relevant pattern is:
 
 - prompt recall belongs in the input surface itself
 - search is separate from basic recall
@@ -135,12 +135,12 @@ Sources:
 
 ### Decision
 
-This strongly supports the `hellm` direction:
+This strongly supports the `svvy` direction:
 
 - boundary-aware arrow navigation in the composer
 - project or workspace-scoped persistence rather than global persistence
 
-`hellm` uses a multiline composer, so the activation boundary is the start or end of the draft buffer rather than merely the first or last logical line.
+`svvy` uses a multiline composer, so the activation boundary is the start or end of the draft buffer rather than merely the first or last logical line.
 
 ## fish shell
 
@@ -158,14 +158,14 @@ Source:
 
 ### Decision
 
-The useful lesson from fish is not that plain arrow recall must do filtered search in `hellm`.
+The useful lesson from fish is not that plain arrow recall must do filtered search in `svvy`.
 
 The useful lesson is:
 
 - persistent history across sessions is expected
 - search and recall are related but separable behaviors
 
-For `hellm`, filtered search on plain arrows is not adopted in v1.
+For `svvy`, filtered search on plain arrows is not adopted in v1.
 
 ## Adopted Behavior
 
@@ -175,7 +175,7 @@ For `hellm`, filtered search on plain arrows is not adopted in v1.
 
 Prompt history is scoped to a workspace.
 
-A workspace is the effective repository root or equivalent workspace identity already used by `hellm`.
+A workspace is the effective repository root or equivalent workspace identity already used by `svvy`.
 
 Implications:
 

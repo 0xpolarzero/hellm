@@ -1,5 +1,5 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { ensureBuilt, escapeForRegExp, withHellmApp } from "./harness";
+import { ensureBuilt, escapeForRegExp, withSvvyApp } from "./harness";
 
 setDefaultTimeout(30_000);
 
@@ -8,23 +8,23 @@ beforeAll(async () => {
 });
 
 test("real app boots and renders the workspace shell", async () => {
-  await withHellmApp(async ({ page }) => {
+  await withSvvyApp(async ({ page }) => {
     await page.getByRole("button", { name: "Open settings" }).waitFor({ state: "visible" });
     await page.locator(".session-sidebar").waitFor({ state: "visible" });
 
-    expect(await page.locator(".workspace-titlebar-title").textContent()).toBe("hellm");
+    expect(await page.locator(".workspace-titlebar-title").textContent()).toBe("svvy");
   });
 });
 
 test("a fresh workspace starts with one session", async () => {
-  await withHellmApp(async ({ page }) => {
+  await withSvvyApp(async ({ page }) => {
     await page.getByText("1 sessions").waitFor({ state: "visible" });
     expect(await page.getByRole("button", { name: /Session actions for/ }).count()).toBe(1);
   });
 });
 
 test("rename session works on the real app", async () => {
-  await withHellmApp(async ({ page }) => {
+  await withSvvyApp(async ({ page }) => {
     const nextTitle = `Smoke Renamed ${Date.now()}`;
     const firstSession = page.locator(".session-item").first();
     await firstSession.getByRole("button", { name: /Session actions for/ }).click({ force: true });

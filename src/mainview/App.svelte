@@ -26,7 +26,7 @@
 			bootstrapError = null;
 		} catch (error) {
 			if (!disposed) {
-				bootstrapError = error instanceof Error ? error.message : "Unable to initialize hellm.";
+				bootstrapError = error instanceof Error ? error.message : "Unable to initialize svvy.";
 			}
 		}
 	}
@@ -63,7 +63,7 @@
 				{#if !runtime && !bootstrapError}
 					<StatusCard
 						eyebrow="Boot Sequence"
-						title="Starting hellm"
+						title="Starting svvy"
 						message="Booting the Bun-side pi host and initializing the desktop chat surface."
 					/>
 				{/if}

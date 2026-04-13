@@ -403,7 +403,7 @@ export async function createChatRuntime(
 
   const agent = new Agent({
     initialState: {
-      systemPrompt: "You are hellm, a pragmatic software engineering assistant.",
+      systemPrompt: "You are svvy, a pragmatic software engineering assistant.",
       model: getModel(
         defaults.provider as Parameters<typeof getModel>[0],
         defaults.model as Parameters<typeof getModel>[1],

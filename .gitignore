@@ -18,6 +18,6 @@ workflows/.worktrees/
 workflows/run-*.log
 .worktrees/
 .pi/
-.hellm/
+.svvy/
 .env
 .env.*

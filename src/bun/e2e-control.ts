@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import type { Message } from "@mariozechner/pi-ai";
 import type { OAuthCredentials } from "@mariozechner/pi-ai/oauth";
 
-const E2E_CONTROL_PATH_ENV = "HELLM_E2E_CONTROL_PATH";
+const E2E_CONTROL_PATH_ENV = "SVVY_E2E_CONTROL_PATH";
 
 export type E2eSessionMutationKind =
   | "createSession"
@@ -59,7 +59,7 @@ export interface E2ePromptScenario {
   waitForAbort?: boolean;
 }
 
-export interface HellmE2eControl {
+export interface SvvyE2eControl {
   bootstrapDelayMs?: number;
   bootstrapError?: string;
   mutations?: Partial<Record<E2eSessionMutationKind, E2eMutationBehavior>>;
@@ -76,20 +76,20 @@ function readConfiguredControlPath(): string | null {
   return configuredPath ? configuredPath : null;
 }
 
-export function readHellmE2eControl(): HellmE2eControl | null {
+export function readSvvyE2eControl(): SvvyE2eControl | null {
   const controlPath = readConfiguredControlPath();
   if (!controlPath || !existsSync(controlPath)) {
     return null;
   }
 
   const content = readFileSync(controlPath, "utf8");
-  return JSON.parse(content) as HellmE2eControl;
+  return JSON.parse(content) as SvvyE2eControl;
 }
 
 export async function applyE2eMutationBehavior(
   kind: E2eSessionMutationKind,
 ): Promise<void> {
-  const behavior = readHellmE2eControl()?.mutations?.[kind];
+  const behavior = readSvvyE2eControl()?.mutations?.[kind];
   if (!behavior) {
     return;
   }
@@ -104,7 +104,7 @@ export async function applyE2eMutationBehavior(
 }
 
 export function getE2eBootstrapError(): string | null {
-  const value = readHellmE2eControl()?.bootstrapError?.trim();
+  const value = readSvvyE2eControl()?.bootstrapError?.trim();
   return value ? value : null;
 }
 
@@ -116,20 +116,20 @@ export async function applyE2eBootstrapDelayOnce(): Promise<void> {
   }
   bootstrapDelayConsumed = true;
 
-  const delayMs = readHellmE2eControl()?.bootstrapDelayMs;
+  const delayMs = readSvvyE2eControl()?.bootstrapDelayMs;
   if (typeof delayMs === "number" && delayMs > 0) {
     await Bun.sleep(delayMs);
   }
 }
 
 export function getE2eOAuthBehavior(providerId: string): E2eOAuthBehavior | null {
-  return readHellmE2eControl()?.oauth?.[providerId] ?? null;
+  return readSvvyE2eControl()?.oauth?.[providerId] ?? null;
 }
 
 export function getE2ePromptScenario(
   messages: readonly Message[],
 ): E2ePromptScenario | null {
-  const prompts = readHellmE2eControl()?.prompts;
+  const prompts = readSvvyE2eControl()?.prompts;
   if (!prompts) {
     return null;
   }
@@ -146,7 +146,7 @@ export function getE2ePromptScenario(
 }
 
 export function getE2eWorkspaceCwdOverride(): string | null {
-  const value = readHellmE2eControl()?.workspaceCwd?.trim();
+  const value = readSvvyE2eControl()?.workspaceCwd?.trim();
   return value ? value : null;
 }
 

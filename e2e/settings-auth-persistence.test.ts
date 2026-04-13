@@ -1,6 +1,6 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { ensureBuilt, withHellmApp, type HellmApp } from "./harness";
+import { ensureBuilt, withSvvyApp, type SvvyApp } from "./harness";
 import { getTestAuthFile, writeE2eControl } from "./support";
 
 setDefaultTimeout(45_000);
@@ -36,28 +36,28 @@ function noAuthEnv(overrides: Record<string, string> = {}): Record<string, strin
   };
 }
 
-function providerRow(page: HellmApp["page"], providerId: string) {
+function providerRow(page: SvvyApp["page"], providerId: string) {
   return page.locator(".provider-row").filter({
     has: page.getByText(providerId, { exact: true }),
   });
 }
 
-async function openSettings(page: HellmApp["page"]): Promise<void> {
+async function openSettings(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("button", { name: "Open settings" }).first().click();
   await page.getByRole("dialog").waitFor({ state: "visible" });
 }
 
-async function closeSettings(page: HellmApp["page"]): Promise<void> {
+async function closeSettings(page: SvvyApp["page"]): Promise<void> {
   await page.locator(".ui-dialog-close").click();
   await page.getByRole("dialog").waitFor({ state: "detached" });
 }
 
-async function providerStatus(page: HellmApp["page"], providerId: string): Promise<string> {
+async function providerStatus(page: SvvyApp["page"], providerId: string): Promise<string> {
   return (await providerRow(page, providerId).locator(".provider-status").textContent())?.trim() ?? "";
 }
 
 test("saving an API key writes auth.json", async () => {
-  await withHellmApp({ env: noAuthEnv() }, async ({ homeDir, page }) => {
+  await withSvvyApp({ env: noAuthEnv() }, async ({ homeDir, page }) => {
     await openSettings(page);
     await page.locator(".provider-row").first().waitFor({ state: "visible" });
 
@@ -79,7 +79,7 @@ test("saving an API key writes auth.json", async () => {
 });
 
 test("successful OAuth writes auth.json and refreshes provider status", async () => {
-  await withHellmApp(
+  await withSvvyApp(
     {
       env: noAuthEnv(),
       beforeLaunch: async ({ homeDir, runtimeEnv }) => {
@@ -94,7 +94,7 @@ test("successful OAuth writes auth.json and refreshes provider status", async ()
             },
           },
         });
-        runtimeEnv.HELLM_E2E_CONTROL_PATH = controlFile;
+        runtimeEnv.SVVY_E2E_CONTROL_PATH = controlFile;
       },
     },
     async ({ homeDir, page }) => {
@@ -120,7 +120,7 @@ test("successful OAuth writes auth.json and refreshes provider status", async ()
 });
 
 test("failed OAuth shows an error and leaves auth state unchanged", async () => {
-  await withHellmApp(
+  await withSvvyApp(
     {
       env: noAuthEnv(),
       beforeLaunch: async ({ homeDir, runtimeEnv }) => {
@@ -131,7 +131,7 @@ test("failed OAuth shows an error and leaves auth state unchanged", async () => 
             },
           },
         });
-        runtimeEnv.HELLM_E2E_CONTROL_PATH = controlFile;
+        runtimeEnv.SVVY_E2E_CONTROL_PATH = controlFile;
       },
     },
     async ({ homeDir, page }) => {
@@ -149,7 +149,7 @@ test("failed OAuth shows an error and leaves auth state unchanged", async () => 
 });
 
 test("env-backed auth shows as connected without writing auth.json", async () => {
-  await withHellmApp(
+  await withSvvyApp(
     {
       env: noAuthEnv({
         ZAI_API_KEY: "env-zai-key",

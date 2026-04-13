@@ -2,7 +2,7 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
-import { escapeForRegExp, launchHellmApp, createHomeDir } from "./harness";
+import { escapeForRegExp, launchSvvyApp, createHomeDir } from "./harness";
 import { assistantTextMessage, seedSessions, userMessage } from "./support";
 
 setDefaultTimeout(45_000);
@@ -33,11 +33,11 @@ async function withHomeDir<T>(fn: (homeDir: string) => Promise<T>): Promise<T> {
   }
 }
 
-async function text(page: Awaited<ReturnType<typeof launchHellmApp>>["page"], selector: string) {
+async function text(page: Awaited<ReturnType<typeof launchSvvyApp>>["page"], selector: string) {
   return (await page.locator(selector).textContent())?.trim() ?? "";
 }
 
-async function sessionTitles(page: Awaited<ReturnType<typeof launchHellmApp>>["page"]) {
+async function sessionTitles(page: Awaited<ReturnType<typeof launchSvvyApp>>["page"]) {
   const rows = page.locator(".session-item");
   const count = await rows.count();
   const titles: string[] = [];
@@ -49,11 +49,11 @@ async function sessionTitles(page: Awaited<ReturnType<typeof launchHellmApp>>["p
   return titles;
 }
 
-async function expectWorkspaceChrome(page: Awaited<ReturnType<typeof launchHellmApp>>["page"]) {
+async function expectWorkspaceChrome(page: Awaited<ReturnType<typeof launchSvvyApp>>["page"]) {
   const branch = currentGitBranch();
   const workspaceLabel = await text(page, ".sidebar-header-copy h2");
 
-  expect(await text(page, ".workspace-titlebar-title")).toBe("hellm");
+  expect(await text(page, ".workspace-titlebar-title")).toBe("svvy");
   expect(workspaceLabel).not.toBe("");
 
   const sidebarContext = await text(page, ".sidebar-context");
@@ -65,7 +65,7 @@ async function expectWorkspaceChrome(page: Awaited<ReturnType<typeof launchHellm
   return { branch, workspaceLabel };
 }
 
-async function expectBootState(page: Awaited<ReturnType<typeof launchHellmApp>>["page"], expected: {
+async function expectBootState(page: Awaited<ReturnType<typeof launchSvvyApp>>["page"], expected: {
   titles: string[];
   activeTitle: string;
 }) {
@@ -77,7 +77,7 @@ async function expectBootState(page: Awaited<ReturnType<typeof launchHellmApp>>[
 
 test("a clean isolated home dir boots the shell and creates one session", async () => {
   await withHomeDir(async (homeDir) => {
-    const app = await launchHellmApp({ homeDir });
+    const app = await launchSvvyApp({ homeDir });
     try {
       const chrome = await expectWorkspaceChrome(app.page);
       expect(chrome.workspaceLabel).not.toBe("");
@@ -129,7 +129,7 @@ test("seeded sessions are hydrated on boot and the newest one opens first", asyn
       },
     ], getAppWorkspaceDir());
 
-    const app = await launchHellmApp({ homeDir });
+    const app = await launchSvvyApp({ homeDir });
     try {
       const chrome = await expectWorkspaceChrome(app.page);
       expect(chrome.workspaceLabel).not.toBe("");
@@ -170,7 +170,7 @@ test("renaming a session persists across relaunch on the same home dir", async (
 
     const renamedTitle = `Renamed for persistence ${Date.now()}`;
 
-    const firstLaunch = await launchHellmApp({ homeDir });
+    const firstLaunch = await launchSvvyApp({ homeDir });
     try {
       const chrome = await expectWorkspaceChrome(firstLaunch.page);
       expect(chrome.workspaceLabel).not.toBe("");
@@ -198,7 +198,7 @@ test("renaming a session persists across relaunch on the same home dir", async (
       await firstLaunch.close();
     }
 
-    const secondLaunch = await launchHellmApp({ homeDir });
+    const secondLaunch = await launchSvvyApp({ homeDir });
     try {
       const chrome = await expectWorkspaceChrome(secondLaunch.page);
       expect(chrome.workspaceLabel).not.toBe("");
@@ -249,7 +249,7 @@ test("relaunching the same seeded home dir keeps session data stable", async () 
     const expectedTitles = ["Forked child", "Failed session", "Older session"];
 
     let firstChrome: Awaited<ReturnType<typeof expectWorkspaceChrome>> | undefined;
-    const firstLaunch = await launchHellmApp({ homeDir });
+    const firstLaunch = await launchSvvyApp({ homeDir });
     try {
       firstChrome = await expectWorkspaceChrome(firstLaunch.page);
       await expectBootState(firstLaunch.page, {
@@ -260,7 +260,7 @@ test("relaunching the same seeded home dir keeps session data stable", async () 
       await firstLaunch.close();
     }
 
-    const secondLaunch = await launchHellmApp({ homeDir });
+    const secondLaunch = await launchSvvyApp({ homeDir });
     try {
       const secondChrome = await expectWorkspaceChrome(secondLaunch.page);
       expect(firstChrome).toBeDefined();

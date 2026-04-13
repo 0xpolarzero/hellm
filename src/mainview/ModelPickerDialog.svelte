@@ -182,7 +182,7 @@
 <Dialog
 	title="Select a model"
 	eyebrow="Runtime Model"
-	description="Choose the model hellm should use for future turns. Provider availability comes from Bun-side auth state plus any saved custom providers."
+	description="Choose the model svvy should use for future turns. Provider availability comes from Bun-side auth state plus any saved custom providers."
 	width="lg"
 	onClose={onClose}
 >

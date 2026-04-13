@@ -2,7 +2,7 @@ import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { basename } from "node:path";
 import type { OAuthCredentials } from "@mariozechner/pi-ai";
-import { ensureBuilt, type HellmApp, withHellmApp } from "./harness";
+import { ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 import {
   assistantTextMessage,
   e2ePromptScenario,
@@ -73,7 +73,7 @@ function stateValue<T extends Record<string, unknown>>(state: {
 }
 
 async function waitForEvent(
-  driver: HellmApp["driver"],
+  driver: SvvyApp["driver"],
   eventName: string,
   options: {
     match?: Record<string, string>;
@@ -83,7 +83,7 @@ async function waitForEvent(
 ) {
   const deadline = Date.now() + (options.timeout ?? 10_000);
   let lastResult:
-    | Awaited<ReturnType<HellmApp["driver"]["eventsWait"]>>
+    | Awaited<ReturnType<SvvyApp["driver"]["eventsWait"]>>
     | null = null;
 
   while (Date.now() < deadline) {
@@ -111,7 +111,7 @@ function sinceNow(): string {
   return new Date(Date.now() - 1_000).toISOString();
 }
 
-function sessionMenuTrigger(page: HellmApp["page"], title?: string) {
+function sessionMenuTrigger(page: SvvyApp["page"], title?: string) {
   if (title) {
     return page.locator(".session-item").filter({
       has: page.getByText(title, { exact: true }),
@@ -121,27 +121,27 @@ function sessionMenuTrigger(page: HellmApp["page"], title?: string) {
   return page.locator(".session-menu-trigger").first();
 }
 
-function sessionRow(page: HellmApp["page"], index = 0) {
+function sessionRow(page: SvvyApp["page"], index = 0) {
   return page.locator(".session-item").nth(index);
 }
 
-async function openSettings(page: HellmApp["page"]): Promise<void> {
+async function openSettings(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("button", { name: "Open settings" }).click();
   await page.getByRole("dialog", { name: "Settings" }).waitFor({ state: "visible" });
 }
 
-async function closeSettings(page: HellmApp["page"]): Promise<void> {
+async function closeSettings(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("dialog", { name: "Settings" }).locator(".ui-dialog-close").click({ force: true });
   await page.getByRole("dialog", { name: "Settings" }).waitFor({ state: "detached" });
 }
 
-async function openActiveSessionMenu(page: HellmApp["page"]): Promise<void> {
+async function openActiveSessionMenu(page: SvvyApp["page"]): Promise<void> {
   const trigger = sessionMenuTrigger(page);
   await trigger.click({ force: true });
   await page.locator(".session-menu").waitFor({ state: "visible" });
 }
 
-async function openSessionMenuByTitle(page: HellmApp["page"], title: string): Promise<void> {
+async function openSessionMenuByTitle(page: SvvyApp["page"], title: string): Promise<void> {
   const item = page.locator(".session-item").filter({
     has: page.getByText(title, { exact: true }),
   });
@@ -152,35 +152,35 @@ async function openSessionMenuByTitle(page: HellmApp["page"], title: string): Pr
   await page.locator(".session-menu").waitFor({ state: "visible" });
 }
 
-async function openRenameDialogForActiveSession(page: HellmApp["page"]): Promise<void> {
+async function openRenameDialogForActiveSession(page: SvvyApp["page"]): Promise<void> {
   await openActiveSessionMenu(page);
   await page.locator(".session-menu").getByRole("button", { name: "Rename" }).click({ force: true });
   await page.getByRole("dialog", { name: "Rename Session" }).waitFor({ state: "visible" });
 }
 
-async function openDeleteDialogForActiveSession(page: HellmApp["page"]): Promise<void> {
+async function openDeleteDialogForActiveSession(page: SvvyApp["page"]): Promise<void> {
   await openActiveSessionMenu(page);
   await page.locator(".session-menu").getByRole("button", { name: "Delete" }).click({ force: true });
   await page.getByRole("dialog", { name: "Delete Session" }).waitFor({ state: "visible" });
 }
 
-async function openModelPicker(page: HellmApp["page"]): Promise<void> {
+async function openModelPicker(page: SvvyApp["page"]): Promise<void> {
   await page.locator(".model-control").click();
   await page.getByRole("dialog", { name: "Select a model" }).waitFor({ state: "visible" });
 }
 
-async function openReasoningMenu(page: HellmApp["page"]): Promise<void> {
+async function openReasoningMenu(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("button", { name: "Thinking level" }).click();
   await page.locator(".thinking-menu").waitFor({ state: "visible" });
 }
 
-async function submitPrompt(page: HellmApp["page"], text: string): Promise<void> {
-  const textarea = page.locator('textarea[placeholder="Ask hellm to inspect the repo, make a change, or run verification."]');
+async function submitPrompt(page: SvvyApp["page"], text: string): Promise<void> {
+  const textarea = page.locator('textarea[placeholder="Ask svvy to inspect the repo, make a change, or run verification."]');
   await textarea.fill(text);
   await textarea.press("Enter");
 }
 
-async function selectModel(page: HellmApp["page"], modelName: string): Promise<void> {
+async function selectModel(page: SvvyApp["page"], modelName: string): Promise<void> {
   const picker = page.getByRole("dialog", { name: "Select a model" });
   await picker
     .locator('input[placeholder="Search model families, providers, or ids"]')
@@ -189,13 +189,13 @@ async function selectModel(page: HellmApp["page"], modelName: string): Promise<v
   await picker.waitFor({ state: "hidden" });
 }
 
-async function selectReasoningLevel(page: HellmApp["page"], level: string): Promise<void> {
+async function selectReasoningLevel(page: SvvyApp["page"], level: string): Promise<void> {
   const menu = page.locator(".thinking-menu");
   await menu.getByRole("option", { name: new RegExp(`^${level}$`, "i") }).click();
   await menu.waitFor({ state: "hidden" });
 }
 
-async function stateSnapshot(driver: HellmApp["driver"]) {
+async function stateSnapshot(driver: SvvyApp["driver"]) {
   return {
     workspace: stateValue(await driver.stateGet("workspace")),
     defaults: stateValue(await driver.stateGet("defaults")),
@@ -205,9 +205,9 @@ async function stateSnapshot(driver: HellmApp["driver"]) {
 }
 
 async function providerRowByName(
-  page: HellmApp["page"],
+  page: SvvyApp["page"],
   providerName: string,
-): Promise<ReturnType<HellmApp["page"]["locator"]>> {
+): Promise<ReturnType<SvvyApp["page"]["locator"]>> {
   const rows = page.locator(".provider-row");
   const count = await rows.count();
 
@@ -223,11 +223,11 @@ async function providerRowByName(
 }
 
 test("bridge state snapshot and app.ready expose the workspace/default/provider/session metadata", async () => {
-  await withHellmApp({ env: noAuthEnv({ ZAI_API_KEY: "stub-key" }) }, async ({ driver }) => {
+  await withSvvyApp({ env: noAuthEnv({ ZAI_API_KEY: "stub-key" }) }, async ({ driver }) => {
     const ready = await waitForEvent(driver, "app.ready");
     const snapshot = await stateSnapshot(driver);
     const namespaces = await driver.stateList();
-    const logRecords = await driver.logsSearch("hellm tool bridge mounted.");
+    const logRecords = await driver.logsSearch("svvy tool bridge mounted.");
     const eventSummary = await driver.eventsSummary({ groupBy: "event" });
 
     expect(ready.payload?.workspaceId).toBe(snapshot.workspace.cwd);
@@ -252,7 +252,7 @@ test("bridge state snapshot and app.ready expose the workspace/default/provider/
       provider: PROMPT_PROVIDER,
       model: PROMPT_MODEL,
       reasoningEffort: "medium",
-      systemPrompt: "You are hellm, a pragmatic software engineering assistant running inside the hellm desktop app.",
+      systemPrompt: "You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.",
     });
     expect(snapshot.providers.total).toBeGreaterThan(10);
     expect(snapshot.providers.connected).toBe(1);
@@ -290,7 +290,7 @@ test("bridge state snapshot and app.ready expose the workspace/default/provider/
 
 test("session lifecycle bridge events are emitted for create, open, rename, fork, and delete", async () => {
   const seededAt = Date.now() - 10_000;
-  await withHellmApp(
+  await withSvvyApp(
     {
       env: noAuthEnv({ ZAI_API_KEY: "stub-key" }),
       beforeLaunch: async ({ homeDir, workspaceDir }) => {
@@ -381,7 +381,7 @@ test("session lifecycle bridge events are emitted for create, open, rename, fork
 });
 
 test("composer controls emit session.model.changed and session.reasoning.changed with the active session id", async () => {
-  await withHellmApp({ env: noAuthEnv({ ZAI_API_KEY: "stub-key" }) }, async ({ driver, page }) => {
+  await withSvvyApp({ env: noAuthEnv({ ZAI_API_KEY: "stub-key" }) }, async ({ driver, page }) => {
     const initial = await stateSnapshot(driver);
     const activeSessionId = initial.sessions.activeSessionId;
     if (!activeSessionId) {
@@ -419,11 +419,11 @@ test("composer controls emit session.model.changed and session.reasoning.changed
 });
 
 test("successful prompts emit requested/start/finish events and write bridge logs", async () => {
-  await withHellmApp(
+  await withSvvyApp(
     {
       env: noAuthEnv({ ZAI_API_KEY: "stub-key" }),
       beforeLaunch: async ({ homeDir, runtimeEnv }) => {
-        runtimeEnv.HELLM_E2E_CONTROL_PATH = await writeE2eControl(homeDir, {
+        runtimeEnv.SVVY_E2E_CONTROL_PATH = await writeE2eControl(homeDir, {
           prompts: {
             byText: {
               [PROMPT_SUCCESS_TEXT]: e2ePromptScenario({
@@ -480,11 +480,11 @@ test("successful prompts emit requested/start/finish events and write bridge log
 });
 
 test("prompt failures and cancels surface bridge errors and cancel-request events", async () => {
-  await withHellmApp(
+  await withSvvyApp(
     {
       env: noAuthEnv({ ZAI_API_KEY: "stub-key" }),
       beforeLaunch: async ({ homeDir, runtimeEnv }) => {
-        runtimeEnv.HELLM_E2E_CONTROL_PATH = await writeE2eControl(homeDir, {
+        runtimeEnv.SVVY_E2E_CONTROL_PATH = await writeE2eControl(homeDir, {
           prompts: {
             byText: {
               [PROMPT_FAILURE_TEXT]: e2ePromptScenario({
@@ -550,7 +550,7 @@ test("prompt failures and cancels surface bridge errors and cancel-request event
 });
 
 test("provider auth.updated is emitted when saving an api key from settings", async () => {
-  await withHellmApp(
+  await withSvvyApp(
     {
       env: noAuthEnv(),
       beforeLaunch: async ({ homeDir }) => {
@@ -584,7 +584,7 @@ test("provider auth.updated is emitted when saving an api key from settings", as
 });
 
 test("provider auth.removed is emitted when removing an api key from settings", async () => {
-  await withHellmApp(
+  await withSvvyApp(
     {
       env: noAuthEnv(),
       beforeLaunch: async ({ homeDir }) => {
@@ -613,11 +613,11 @@ test("provider auth.removed is emitted when removing an api key from settings", 
 });
 
 test("provider oauth.started is emitted when starting OAuth from settings", async () => {
-  await withHellmApp(
+  await withSvvyApp(
     {
       env: noAuthEnv(),
       beforeLaunch: async ({ homeDir, runtimeEnv }) => {
-        runtimeEnv.HELLM_E2E_CONTROL_PATH = await writeE2eControl(homeDir, {
+        runtimeEnv.SVVY_E2E_CONTROL_PATH = await writeE2eControl(homeDir, {
           oauth: {
             [OAUTH_PROVIDER]: {
               credentials: {
@@ -649,11 +649,11 @@ test("provider oauth.started is emitted when starting OAuth from settings", asyn
 });
 
 test("oauth failures are recorded as bridge errors", async () => {
-  await withHellmApp(
+  await withSvvyApp(
     {
       env: noAuthEnv(),
       beforeLaunch: async ({ homeDir, runtimeEnv }) => {
-        runtimeEnv.HELLM_E2E_CONTROL_PATH = await writeE2eControl(homeDir, {
+        runtimeEnv.SVVY_E2E_CONTROL_PATH = await writeE2eControl(homeDir, {
           oauth: {
             [OAUTH_PROVIDER]: {
               error: "Bridge contract OAuth failed.",

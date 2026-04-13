@@ -5,14 +5,14 @@
 - Date: 2026-04-10
 - Status: proposed implementation plan for multi-session desktop support
 - Scope of this document:
-  - define the intended `hellm` product behavior for multiple sessions in one workspace window
+  - define the intended `svvy` product behavior for multiple sessions in one workspace window
   - specify the backend and frontend architecture needed to support session creation, listing, switching, and branching
   - recommend a phased implementation plan that stays aligned with the current pi-backed runtime seam
   - identify what is in scope for v1 versus what should be deferred
 
 ## Purpose
 
-`hellm` currently behaves like a single open chat surface with one active runtime and a static left sidebar.
+`svvy` currently behaves like a single open chat surface with one active runtime and a static left sidebar.
 
 That is below the product bar set by the PRD.
 
@@ -21,7 +21,7 @@ The product needs a real session model where:
 - a workspace can contain many durable sessions
 - the left side of the app is true session navigation rather than a decorative shell
 - users can create, switch, resume, fork, and inspect sessions without losing their place
-- session persistence continues to flow through pi's session substrate instead of a second `hellm`-owned transcript system
+- session persistence continues to flow through pi's session substrate instead of a second `svvy`-owned transcript system
 
 This document defines the recommended implementation direction.
 
@@ -48,7 +48,7 @@ The current implementation only partially satisfies that model:
 
 The gap is not that pi lacks sessions.
 
-The gap is that `hellm` does not yet project those sessions into desktop product behavior.
+The gap is that `svvy` does not yet project those sessions into desktop product behavior.
 
 ## Problem Statement
 
@@ -76,7 +76,7 @@ The adopted direction for multi-session support is:
 - support session creation, switching, resume, rename, fork, and delete before adding more advanced library features
 - keep workspace-scoped prompt history exactly as already defined in `docs/specs/prompt-history.spec.md`
 - avoid storing full conversation copies in frontend IndexedDB
-- keep `hellm` above the pi seam rather than replacing pi's runtime or session model
+- keep `svvy` above the pi seam rather than replacing pi's runtime or session model
 
 Nothing below should be read as recommending a second transcript engine or a custom shell outside pi.
 
@@ -85,7 +85,7 @@ Nothing below should be read as recommending a second transcript engine or a cus
 This document uses three labels:
 
 - `Fact`: directly supported by local source references in this repo
-- `Decision`: adopted implementation direction for `hellm`
+- `Decision`: adopted implementation direction for `svvy`
 - `Deferred`: intentionally not in the first implementation slice
 
 ## Ground Truth and Ownership
@@ -94,7 +94,7 @@ This document uses three labels:
 
 ### Fact
 
-pi already provides durable session primitives that `hellm` should build on:
+pi already provides durable session primitives that `svvy` should build on:
 
 - `SessionManager` persists append-only session trees as JSONL files
 - `SessionManager.list()` returns workspace-scoped session metadata
@@ -108,16 +108,16 @@ Sources:
 
 ### Decision
 
-`hellm` should treat pi session files and pi session runtime APIs as the source of truth for:
+`svvy` should treat pi session files and pi session runtime APIs as the source of truth for:
 
 - conversation persistence
 - session identity
 - session branching lineage
 - restored model and thinking state
 
-`hellm` should add product projection and navigation around those primitives, not replace them.
+`svvy` should add product projection and navigation around those primitives, not replace them.
 
-## Current `hellm` Storage Split
+## Current `svvy` Storage Split
 
 ### Fact
 
@@ -242,7 +242,7 @@ The current stacked sidebar layout in `ChatWorkspace.svelte` can be a transition
 
 ### Decision
 
-For v1, `hellm` should project sessions into one of these UI states:
+For v1, `svvy` should project sessions into one of these UI states:
 
 - `idle`
 - `running`
@@ -266,7 +266,7 @@ For non-selected sessions, status may be derived from durable metadata and the l
 
 ### Decision
 
-`hellm` should split session handling into two layers:
+`svvy` should split session handling into two layers:
 
 - durable session truth in pi-managed session files and runtime
 - lightweight desktop session projection for navigation and selection
@@ -274,7 +274,7 @@ For non-selected sessions, status may be derived from durable metadata and the l
 This yields a clean boundary:
 
 - pi owns persisted session history and resume semantics
-- `hellm` owns desktop navigation, metadata projection, and active-session coordination
+- `svvy` owns desktop navigation, metadata projection, and active-session coordination
 
 ## Recommended Backend Shape
 
@@ -358,7 +358,7 @@ Delete is the only destructive list-management action in v1.
   - destructive removal with confirmation
   - only allowed when the session is not actively streaming
 
-Archive or hide semantics are deferred until pi or `hellm` has a durable product need for them.
+Archive or hide semantics are deferred until pi or `svvy` has a durable product need for them.
 
 ## RPC Plan
 
@@ -679,11 +679,11 @@ Manual QA should include:
 
 ## Risk: Two Session Systems
 
-If `hellm` stores transcripts separately from pi, the product will drift into double persistence and unreliable resume behavior.
+If `svvy` stores transcripts separately from pi, the product will drift into double persistence and unreliable resume behavior.
 
 ### Mitigation
 
-Use pi session files as the transcript source of truth and limit `hellm` overlays to UI-only metadata.
+Use pi session files as the transcript source of truth and limit `svvy` overlays to UI-only metadata.
 
 ## Risk: Manual Runtime Replay Logic
 
@@ -753,9 +753,9 @@ This sequencing keeps the system debuggable while the product surface changes.
 The recommended plan is straightforward:
 
 - keep pi in charge of durable sessions
-- give `hellm` a real session catalog and session-aware RPC surface
+- give `svvy` a real session catalog and session-aware RPC surface
 - replace the static left sidebar with workspace-scoped session navigation
 - let the workspace shell grow into a persisted multi-pane layout with exact pane occupancy indicators
 - add mutation operations in phases instead of shipping an overbuilt chat library all at once
 
-That gets `hellm` to the PRD's session-centric product model without violating the pi runtime boundary.
+That gets `svvy` to the PRD's session-centric product model without violating the pi runtime boundary.

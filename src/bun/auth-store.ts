@@ -11,8 +11,8 @@ export type AuthStoreData = Record<string, StoredCredential>;
 
 const CONFIG_DIR =
   process.platform === "win32"
-    ? join(process.env.APPDATA ?? homedir(), "hellm")
-    : join(homedir(), ".config", "hellm");
+    ? join(process.env.APPDATA ?? homedir(), "svvy")
+    : join(homedir(), ".config", "svvy");
 
 const AUTH_FILE = join(CONFIG_DIR, "auth.json");
 const AUTH_TMP = join(CONFIG_DIR, "auth.json.tmp");

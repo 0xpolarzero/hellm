@@ -1,6 +1,6 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { rm } from "node:fs/promises";
-import { createHomeDir, ensureBuilt, escapeForRegExp, launchHellmApp, type HellmApp } from "./harness";
+import { createHomeDir, ensureBuilt, escapeForRegExp, launchSvvyApp, type SvvyApp } from "./harness";
 import {
 	assistantTextMessage,
 	seedSessions,
@@ -60,12 +60,12 @@ function seededArtifactsSession(): SeedSessionInput {
 	};
 }
 
-async function waitForWorkspace(page: HellmApp["page"]): Promise<void> {
+async function waitForWorkspace(page: SvvyApp["page"]): Promise<void> {
 	await page.locator(".workspace-titlebar").waitFor({ state: "visible" });
 	await page.locator(".workspace-footer").waitFor({ state: "visible" });
 }
 
-async function ensureArtifactsOpen(page: HellmApp["page"], count: number): Promise<void> {
+async function ensureArtifactsOpen(page: SvvyApp["page"], count: number): Promise<void> {
 	const panel = page.locator(".artifacts-panel");
 	if (await panel.isVisible()) {
 		return;
@@ -75,13 +75,13 @@ async function ensureArtifactsOpen(page: HellmApp["page"], count: number): Promi
 	await panel.waitFor({ state: "visible", timeout: 15_000 });
 }
 
-async function selectArtifact(page: HellmApp["page"], filename: string): Promise<void> {
+async function selectArtifact(page: SvvyApp["page"], filename: string): Promise<void> {
 	await page.getByRole("tab", { name: new RegExp(escapeForRegExp(filename)) }).click({ force: true });
 	await page.locator(".artifact-name").waitFor({ state: "visible" });
 	expect((await page.locator(".artifact-name").textContent())?.trim()).toBe(filename);
 }
 
-async function assertLayoutMode(app: HellmApp, page: HellmApp["page"]): Promise<void> {
+async function assertLayoutMode(app: SvvyApp, page: SvvyApp["page"]): Promise<void> {
 	const frame = (await app.driver.window("active").info()).frame;
 	if (frame.width >= DESKTOP_SPLIT_BREAKPOINT) {
 		await page.locator(".artifacts-slot.desktop-open").waitFor({
@@ -101,7 +101,7 @@ async function assertLayoutMode(app: HellmApp, page: HellmApp["page"]): Promise<
 test("auto-opens the artifacts panel for seeded artifacts, supports close/reopen and tab switching, and matches the current layout mode", async () => {
 	const homeDir = await createHomeDir();
 	try {
-		const app = await launchHellmApp({
+		const app = await launchSvvyApp({
 			homeDir,
 			env: { ZAI_API_KEY: "stub-key" },
 			beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
@@ -146,7 +146,7 @@ test("auto-opens the artifacts panel for seeded artifacts, supports close/reopen
 test("reconstructs the artifacts panel after relaunch on the same home dir", async () => {
 	const homeDir = await createHomeDir();
 	try {
-		const firstLaunch = await launchHellmApp({
+		const firstLaunch = await launchSvvyApp({
 			homeDir,
 			env: { ZAI_API_KEY: "stub-key" },
 			beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
@@ -163,7 +163,7 @@ test("reconstructs the artifacts panel after relaunch on the same home dir", asy
 			await firstLaunch.close();
 		}
 
-		const secondLaunch = await launchHellmApp({
+		const secondLaunch = await launchSvvyApp({
 			homeDir,
 			env: { ZAI_API_KEY: "stub-key" },
 		});

@@ -410,7 +410,7 @@
           <PanelLeftCloseIcon aria-hidden="true" size={16} strokeWidth={1.8} />
         {/if}
       </button>
-      <p class="workspace-titlebar-title">hellm</p>
+      <p class="workspace-titlebar-title">svvy</p>
     </div>
   </header>
 

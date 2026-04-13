@@ -2,7 +2,7 @@ import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { OAuthCredentials } from "@mariozechner/pi-ai";
-import { ensureBuilt, type HellmApp, withHellmApp } from "./harness";
+import { ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 import { getTestAuthFile } from "./support";
 
 setDefaultTimeout(45_000);
@@ -61,13 +61,13 @@ async function seedAuthState(
 		{ type: "apikey"; key: string } | { type: "oauth"; credentials: OAuthCredentials }
 	>,
 ): Promise<void> {
-	await mkdir(join(homeDir, ".config", "hellm"), { recursive: true });
+	await mkdir(join(homeDir, ".config", "svvy"), { recursive: true });
 	await writeFile(getTestAuthFile(homeDir), `${JSON.stringify(authState, null, 2)}\n`, {
 		mode: 0o600,
 	});
 }
 
-async function providerRow(page: HellmApp["page"], providerId: string) {
+async function providerRow(page: SvvyApp["page"], providerId: string) {
 	const rows = page.locator(".provider-row");
 	const count = await rows.count();
 
@@ -82,17 +82,17 @@ async function providerRow(page: HellmApp["page"], providerId: string) {
 	throw new Error(`Could not find provider row for "${providerId}".`);
 }
 
-async function openSettings(page: HellmApp["page"]): Promise<void> {
+async function openSettings(page: SvvyApp["page"]): Promise<void> {
 	await page.getByRole("button", { name: "Open settings" }).click();
 	await page.getByRole("dialog").waitFor({ state: "visible" });
 }
 
-async function closeSettings(page: HellmApp["page"]): Promise<void> {
+async function closeSettings(page: SvvyApp["page"]): Promise<void> {
 	await page.locator(".ui-dialog-close").click();
 	await page.getByRole("dialog").waitFor({ state: "detached" });
 }
 
-async function providerNames(page: HellmApp["page"]): Promise<string[]> {
+async function providerNames(page: SvvyApp["page"]): Promise<string[]> {
 	const namesLocator = page.locator(".provider-name");
 	const count = await namesLocator.count();
 	const names: string[] = [];
@@ -103,7 +103,7 @@ async function providerNames(page: HellmApp["page"]): Promise<string[]> {
 }
 
 async function waitForProviderNames(
-	page: HellmApp["page"],
+	page: SvvyApp["page"],
 	expected: string[],
 	timeoutMs = 5_000,
 ): Promise<void> {
@@ -122,7 +122,7 @@ async function waitForProviderNames(
 	throw new Error(`Timed out waiting for provider names ${JSON.stringify(expected)}. Last names: ${JSON.stringify(lastNames)}`);
 }
 
-async function providerStatus(page: HellmApp["page"], providerId: string): Promise<string> {
+async function providerStatus(page: SvvyApp["page"], providerId: string): Promise<string> {
 	return (await (await providerRow(page, providerId)).locator(".provider-status").textContent())?.trim() ?? "";
 }
 
@@ -134,7 +134,7 @@ function noAuthEnv(overrides: Record<string, string> = {}): Record<string, strin
 }
 
 test("settings opens and closes from the workspace shell", async () => {
-	await withHellmApp({ env: noAuthEnv() }, async ({ page }) => {
+	await withSvvyApp({ env: noAuthEnv() }, async ({ page }) => {
 		await openSettings(page);
 		await closeSettings(page);
 		await openSettings(page);
@@ -143,7 +143,7 @@ test("settings opens and closes from the workspace shell", async () => {
 });
 
 test("provider list loads all real provider auth summaries", async () => {
-	await withHellmApp({ env: noAuthEnv() }, async ({ page }) => {
+	await withSvvyApp({ env: noAuthEnv() }, async ({ page }) => {
 		await openSettings(page);
 		await page.locator(".provider-row").first().waitFor({ state: "visible" });
 
@@ -157,7 +157,7 @@ test("provider list loads all real provider auth summaries", async () => {
 });
 
 test("configured providers sort ahead of unconfigured ones", async () => {
-	await withHellmApp(
+	await withSvvyApp(
 		{
 			env: noAuthEnv({
 				ZAI_API_KEY: "zai-env-key",
@@ -178,7 +178,7 @@ test("configured providers sort ahead of unconfigured ones", async () => {
 });
 
 test("provider search matches OAuth capability and access state", async () => {
-	await withHellmApp({ env: noAuthEnv({ ZAI_API_KEY: "zai-env-key" }) }, async ({ page }) => {
+	await withSvvyApp({ env: noAuthEnv({ ZAI_API_KEY: "zai-env-key" }) }, async ({ page }) => {
 		await openSettings(page);
 		await page.locator(".provider-row").first().waitFor({ state: "visible" });
 
@@ -192,7 +192,7 @@ test("provider search matches OAuth capability and access state", async () => {
 });
 
 test("provider status labels render for api key, oauth, env var, and unconfigured states", async () => {
-	await withHellmApp(
+	await withSvvyApp(
 		{
 			env: noAuthEnv({
 				ZAI_API_KEY: "zai-env-key",
@@ -214,7 +214,7 @@ test("provider status labels render for api key, oauth, env var, and unconfigure
 });
 
 test("API key editor supports cancel and save flows", async () => {
-	await withHellmApp({ env: noAuthEnv() }, async ({ page }) => {
+	await withSvvyApp({ env: noAuthEnv() }, async ({ page }) => {
 		await openSettings(page);
 		await page.locator(".provider-row").first().waitFor({ state: "visible" });
 
@@ -244,7 +244,7 @@ test("API key editor supports cancel and save flows", async () => {
 });
 
 test("removing provider auth clears the status and shows feedback", async () => {
-	await withHellmApp(
+	await withSvvyApp(
 		{
 			env: noAuthEnv(),
 			beforeLaunch: async ({ homeDir }) => {
@@ -274,7 +274,7 @@ test("removing provider auth clears the status and shows feedback", async () => 
 });
 
 test("supported providers show OAuth actions while unsupported ones do not", async () => {
-	await withHellmApp({ env: noAuthEnv() }, async ({ page }) => {
+	await withSvvyApp({ env: noAuthEnv() }, async ({ page }) => {
 		await openSettings(page);
 		await page.locator(".provider-row").first().waitFor({ state: "visible" });
 
@@ -288,8 +288,8 @@ test("supported providers show OAuth actions while unsupported ones do not", asy
 });
 
 test("missing provider access opens settings when trying to send a prompt", async () => {
-	await withHellmApp({ env: noAuthEnv() }, async ({ page }) => {
-		const prompt = page.locator('textarea[placeholder="Ask hellm to inspect the repo, make a change, or run verification."]');
+	await withSvvyApp({ env: noAuthEnv() }, async ({ page }) => {
+		const prompt = page.locator('textarea[placeholder="Ask svvy to inspect the repo, make a change, or run verification."]');
 		await prompt.fill("Check auth gating.");
 		await page.getByRole("button", { name: "Send" }).click();
 

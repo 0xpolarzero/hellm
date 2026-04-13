@@ -1,7 +1,7 @@
 import type { Model } from "@mariozechner/pi-ai";
 import type { PromptHistoryEntry } from "./prompt-history";
 
-const DB_NAME = "hellm-desktop-chat";
+const DB_NAME = "svvy-desktop-chat";
 const DB_VERSION = 3;
 const PROVIDER_KEYS_STORE = "provider-keys";
 const CUSTOM_PROVIDERS_STORE = "custom-providers";

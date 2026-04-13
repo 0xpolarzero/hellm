@@ -1,6 +1,6 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import type { AssistantMessage, Usage } from "@mariozechner/pi-ai";
-import { ensureBuilt, withHellmApp, type HellmApp } from "./harness";
+import { ensureBuilt, withSvvyApp, type SvvyApp } from "./harness";
 import {
 	assistantTextMessage,
 	seedSessions,
@@ -71,8 +71,8 @@ function edgeCaseSession(): SeedSessionInput {
 	};
 }
 
-async function launchEdgeCaseApp<T>(fn: (app: HellmApp) => Promise<T>): Promise<T> {
-	return await withHellmApp(
+async function launchEdgeCaseApp<T>(fn: (app: SvvyApp) => Promise<T>): Promise<T> {
+	return await withSvvyApp(
 		{
 			env: {
 				ZAI_API_KEY: "stub-key",

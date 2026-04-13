@@ -50,7 +50,7 @@ type WorkspaceSessionsState = {
 
 type ToolBridgeState = Record<string, Record<string, unknown>>;
 
-type CreateHellmToolBridgeOptions = {
+type CreateSvvyToolBridgeOptions = {
   defaultSystemPrompt: string;
   getActiveWorkspaceSession: () => Promise<ActiveWorkspaceSession>;
   getDefaultChatSettings: () => ChatDefaults;
@@ -61,7 +61,7 @@ type CreateHellmToolBridgeOptions = {
   listWorkspaceSessions: () => Promise<WorkspaceSessionsState>;
 };
 
-export function createHellmToolBridge(options: CreateHellmToolBridgeOptions) {
+export function createSvvyToolBridge(options: CreateSvvyToolBridgeOptions) {
   let toolBridge: ToolBridgeInstance | null = null;
 
   function getBridgeContext(): { viewId?: number; windowId?: number } {

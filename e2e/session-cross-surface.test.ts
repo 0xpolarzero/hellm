@@ -1,5 +1,5 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { ensureBuilt, escapeForRegExp, withHellmApp, type HellmApp } from "./harness";
+import { ensureBuilt, escapeForRegExp, withSvvyApp, type SvvyApp } from "./harness";
 import {
 	artifactCreateConversation,
 	assistantTextMessage,
@@ -16,11 +16,11 @@ beforeAll(async () => {
 	await ensureBuilt();
 });
 
-function sessionButton(page: HellmApp["page"], title: string) {
+function sessionButton(page: SvvyApp["page"], title: string) {
 	return page.getByRole("button", { name: new RegExp(escapeForRegExp(title)) }).first();
 }
 
-async function text(page: HellmApp["page"], selector: string): Promise<string> {
+async function text(page: SvvyApp["page"], selector: string): Promise<string> {
 	return (await page.locator(selector).textContent())?.trim() ?? "";
 }
 
@@ -45,16 +45,16 @@ async function waitForText(
 	throw new Error(`Timed out waiting for text "${expected}". Last text was "${lastText}".`);
 }
 
-async function openSession(page: HellmApp["page"], title: string): Promise<void> {
+async function openSession(page: SvvyApp["page"], title: string): Promise<void> {
 	await sessionButton(page, title).click({ force: true });
 	await waitForText(page.locator(".workspace-main-title"), title);
 }
 
 async function seedApp(
 	sessions: SeedSessionInput[],
-	fn: (app: HellmApp) => Promise<void>,
+	fn: (app: SvvyApp) => Promise<void>,
 ): Promise<void> {
-	await withHellmApp(
+	await withSvvyApp(
 		{
 			beforeLaunch: async ({ homeDir, workspaceDir }) => {
 				await seedSessions(homeDir, sessions, workspaceDir);

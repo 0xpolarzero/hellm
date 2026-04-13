@@ -5,14 +5,14 @@
 - Date: 2026-04-09
 - Status: adopted architecture direction for the `execute_typescript` primitive
 - Scope of this document:
-  - specify an `execute_typescript` execution primitive for `hellm`
+  - specify an `execute_typescript` execution primitive for `svvy`
   - record only source-backed facts from existing implementations
-  - make explicit `hellm` decisions derived from those facts
+  - make explicit `svvy` decisions derived from those facts
   - avoid undocumented assumptions
 
 ## Purpose
 
-`hellm` needs a source-backed answer to one question:
+`svvy` needs a source-backed answer to one question:
 
 Should we add a single code-execution tool that lets the model compose typed capabilities in TypeScript, instead of forcing it through many low-level tool round trips?
 
@@ -21,17 +21,17 @@ This document answers that question end to end:
 - what existing systems actually implement
 - what their exact APIs and sandbox models are
 - what `pi` and Smithers already give us locally
-- what `hellm` should borrow
-- what `hellm` should explicitly not borrow
+- what `svvy` should borrow
+- what `svvy` should explicitly not borrow
 
 ## Adopted Decisions
 
-The adopted `hellm` direction is:
+The adopted `svvy` direction is:
 
 - one TanStack-style `execute_typescript` tool
 - one TypeScript-first prompt and generated type-stub layer
 - one flat in-sandbox capability surface using global async `external_*` functions
-- QuickJS as the first runtime shipped by `hellm`
+- QuickJS as the first runtime shipped by `svvy`
 - no code-mode-specific outer sandbox in scope for the first implementation
 - capability control by curated tool injection per invocation, not by a built-in namespace or approval system inside code mode
 - availability on both the direct path and inside Smithers-backed delegated work
@@ -43,7 +43,7 @@ Nothing in the rest of this document should be read as leaving those points open
 This document uses three labels:
 
 - `Fact`: directly supported by a cited source
-- `Decision`: the adopted `hellm` design choice derived from the facts
+- `Decision`: the adopted `svvy` design choice derived from the facts
 - `Not Adopted`: explicitly out of scope for the adopted first implementation
 
 ## Product Fit
@@ -496,7 +496,7 @@ Sources:
 
 ### Decision
 
-`pi` does not currently give `hellm` a built-in, first-class, source-backed `execute_typescript` sandbox to adopt directly.
+`pi` does not currently give `svvy` a built-in, first-class, source-backed `execute_typescript` sandbox to adopt directly.
 
 It does give us:
 
@@ -565,12 +565,12 @@ Sources:
 
 ### Decision
 
-Smithers is highly relevant to `hellm` in two ways:
+Smithers is highly relevant to `svvy` in two ways:
 
 - its existing tool sandbox semantics are worth borrowing for host-side repo and shell operations
 - its workflow engine is the correct durable execution layer around delegated code-mode work
 
-But the current vendored Smithers `Sandbox` implementation should not be treated as `hellm`'s primary outer sandbox until it is materially more complete.
+But the current vendored Smithers `Sandbox` implementation should not be treated as `svvy`'s primary outer sandbox until it is materially more complete.
 
 ## Deferred Sandbox Notes
 
@@ -578,7 +578,7 @@ This section is retained only as research context.
 
 It does not change the adopted design above.
 
-`hellm` is not adopting an outer sandbox as part of the initial `execute_typescript` implementation.
+`svvy` is not adopting an outer sandbox as part of the initial `execute_typescript` implementation.
 
 ## `@anthropic-ai/sandbox-runtime`
 
@@ -600,7 +600,7 @@ Sources:
 
 ### Decision
 
-This is relevant to `hellm` as an outer sandbox for host-side process execution, especially because:
+This is relevant to `svvy` as an outer sandbox for host-side process execution, especially because:
 
 - `pi` already has a source-backed example using it
 - it is light enough for local development
@@ -622,7 +622,7 @@ Sources:
 
 ### Decision
 
-`isolated-vm` remains relevant as an optional high-performance Node-only runner, but it should not be the default `hellm` runtime.
+`isolated-vm` remains relevant as an optional high-performance Node-only runner, but it should not be the default `svvy` runtime.
 
 ## QuickJS
 
@@ -644,7 +644,7 @@ Sources:
 
 ### Decision
 
-QuickJS is the best default inner runtime for `hellm`'s first implementation.
+QuickJS is the best default inner runtime for `svvy`'s first implementation.
 
 ## `workerd`
 
@@ -661,7 +661,7 @@ Sources:
 
 ### Decision
 
-`workerd` is not a suitable sole isolation boundary for local `hellm` code execution.
+`workerd` is not a suitable sole isolation boundary for local `svvy` code execution.
 
 ## `bubblewrap`
 
@@ -699,7 +699,7 @@ Sources:
 
 ### Decision
 
-NsJail is a credible Linux-only outer sandbox option if we need stronger kernel-level policy control than `sandbox-runtime` exposes, but it is not the best cross-platform default for `hellm`.
+NsJail is a credible Linux-only outer sandbox option if we need stronger kernel-level policy control than `sandbox-runtime` exposes, but it is not the best cross-platform default for `svvy`.
 
 ## gVisor
 
@@ -713,7 +713,7 @@ Sources:
 
 ### Decision
 
-gVisor is relevant only if `hellm` evolves into a multi-tenant remote execution service. It is too heavy and too infrastructure-oriented for the initial local-first harness.
+gVisor is relevant only if `svvy` evolves into a multi-tenant remote execution service. It is too heavy and too infrastructure-oriented for the initial local-first harness.
 
 ## Firecracker
 
@@ -727,13 +727,13 @@ Sources:
 
 ### Decision
 
-Firecracker is the strongest future option for high-assurance remote execution, but it is not the right first implementation for a local `hellm` code-mode primitive.
+Firecracker is the strongest future option for high-assurance remote execution, but it is not the right first implementation for a local `svvy` code-mode primitive.
 
-## `hellm` Decisions
+## `svvy` Decisions
 
 ## Decision: one tool, TypeScript-first
 
-`hellm` should add exactly one code-composition tool:
+`svvy` should add exactly one code-composition tool:
 
 ```ts
 type ExecuteTypescriptInput = {
@@ -767,7 +767,7 @@ Rationale:
 
 ## Decision: flat `external_*` capability surface
 
-`hellm` should follow TanStack here directly.
+`svvy` should follow TanStack here directly.
 
 Inside the sandbox, capabilities are exposed as flat global async functions named `external_*`.
 
@@ -790,7 +790,7 @@ Rationale:
 
 ## Decision: borrow Cloudflare Shell semantics, but flatten the host tool names
 
-For repo and filesystem operations, `hellm` should borrow Cloudflare Shell semantics almost verbatim, but flatten them into explicit host tool names that become `external_*` functions in the sandbox.
+For repo and filesystem operations, `svvy` should borrow Cloudflare Shell semantics almost verbatim, but flatten them into explicit host tool names that become `external_*` functions in the sandbox.
 
 Day 1 repo and filesystem capability set:
 
@@ -914,7 +914,7 @@ Artifacts created through code mode must become first-class episode artifacts, n
 
 ## Decision: large external APIs use discovery plus execution
 
-For large MCP or OpenAPI surfaces, `hellm` should not dump every endpoint or tool into the main `execute_typescript` prompt.
+For large MCP or OpenAPI surfaces, `svvy` should not dump every endpoint or tool into the main `execute_typescript` prompt.
 
 Instead it should borrow Cloudflare's pattern:
 
@@ -929,7 +929,7 @@ This can be implemented later as:
 
 ## Decision: QuickJS is the initial and only in-scope runtime
 
-The initial `hellm` implementation ships one runtime:
+The initial `svvy` implementation ships one runtime:
 
 - QuickJS via WASM
 
@@ -944,11 +944,11 @@ Future runtimes such as Node plus `isolated-vm` are possible later, but they are
 
 ## Decision: no outer sandbox work in scope
 
-`hellm` is not adopting any code-mode-specific outer process or OS sandbox in the initial design.
+`svvy` is not adopting any code-mode-specific outer process or OS sandbox in the initial design.
 
 That means:
 
-- host-side tool implementations run in the normal `hellm` process context
+- host-side tool implementations run in the normal `svvy` process context
 - the initial spec does not depend on `@anthropic-ai/sandbox-runtime`
 - the initial spec does not depend on Smithers `Sandbox`
 - the initial spec does not standardize on `bubblewrap`, `nsjail`, `gVisor`, `Firecracker`, or any other outer runtime
@@ -970,7 +970,7 @@ Reason:
 
 ## Decision: event model follows TanStack
 
-`hellm` should emit and store these execution events:
+`svvy` should emit and store these execution events:
 
 - `code_mode:execution_started`
 - `code_mode:console`
@@ -984,20 +984,20 @@ These should be captured in:
 - episode traces
 - machine-readable artifacts
 
-## `hellm` End-to-End Flow
+## `svvy` End-to-End Flow
 
 1. The orchestrator decides to use code mode.
 2. It chooses the exact host tools to expose for the task.
 3. It constructs the flat `external_*` capability registry and generated type stubs.
 4. The model receives the normal system prompt plus the code-mode prompt and capability typings.
 5. The model calls `execute_typescript({ typescriptCode })`.
-6. `hellm` strips TypeScript syntax before execution.
-7. `hellm` creates a fresh QuickJS context for this call.
-8. `hellm` injects only the chosen `external_*` functions.
+6. `svvy` strips TypeScript syntax before execution.
+7. `svvy` creates a fresh QuickJS context for this call.
+8. `svvy` injects only the chosen `external_*` functions.
 9. The code runs in the sandbox.
 10. Capability calls bridge back to host implementations.
-11. Host implementations run in the normal `hellm` process context.
-12. `hellm` captures:
+11. Host implementations run in the normal `svvy` process context.
+12. `svvy` captures:
     - result
     - logs
     - call trace

@@ -10,7 +10,7 @@ import {
   type LaunchedElectrobunApp,
 } from "electrobun-e2e";
 import { DEFAULT_CHAT_SETTINGS } from "../src/mainview/chat-settings";
-import { createHomeDir, ensureBuilt, launchHellmApp, type HellmApp } from "./harness";
+import { createHomeDir, ensureBuilt, launchSvvyApp, type SvvyApp } from "./harness";
 import { assistantTextMessage, seedSessions, userMessage, writeE2eControl } from "./support";
 
 setDefaultTimeout(60_000);
@@ -18,9 +18,9 @@ setDefaultTimeout(60_000);
 const INITIAL_BRANCH = "bootstrap-main";
 const UPDATED_BRANCH = "bootstrap-updated";
 const BRIDGE_METADATA = {
-  metadataLabel: "hellm bridge metadata",
-  parseLine: createJsonBridgeMetadataParser("hellm bridge:"),
-  processLabel: "hellm",
+  metadataLabel: "svvy bridge metadata",
+  parseLine: createJsonBridgeMetadataParser("svvy bridge:"),
+  processLabel: "svvy",
 } as const;
 
 type LaunchableApp = LaunchedElectrobunApp;
@@ -58,7 +58,7 @@ async function withHomeDir<T>(fn: (homeDir: string) => Promise<T>): Promise<T> {
 
 async function withWorkspaceDir<T>(
   fn: (workspaceDir: string) => Promise<T>,
-  prefix = "hellm-e2e-workspace-",
+  prefix = "svvy-e2e-workspace-",
 ): Promise<T> {
   const workspaceDir = await createWorkspaceDir(prefix);
   try {
@@ -89,12 +89,12 @@ async function launchObservedApp(options: {
           ...(options.bootstrapError ? { bootstrapError: options.bootstrapError } : {}),
           workspaceCwd: workspaceDir,
         });
-        runtimeEnv.HELLM_E2E_CONTROL_PATH = controlFile;
+        runtimeEnv.SVVY_E2E_CONTROL_PATH = controlFile;
         await options.beforeLaunch?.({ homeDir, runtimeEnv, workspaceDir });
       },
       bridgeMetadata: BRIDGE_METADATA,
       env: {
-        HELLM_E2E_HEADLESS: "1",
+        SVVY_E2E_HEADLESS: "1",
       },
       homeDir,
       projectRoot: process.cwd(),
@@ -119,15 +119,15 @@ async function launchObservedApp(options: {
 async function launchWorkspaceApp(options: {
   homeDir?: string;
   workspaceDir: string;
-}): Promise<HellmApp> {
-  return await launchHellmApp({
+}): Promise<SvvyApp> {
+  return await launchSvvyApp({
     homeDir: options.homeDir,
     workspaceDir: options.workspaceDir,
     beforeLaunch: async ({ homeDir, runtimeEnv }) => {
       const controlFile = await writeE2eControl(homeDir, {
         workspaceCwd: options.workspaceDir,
       });
-      runtimeEnv.HELLM_E2E_CONTROL_PATH = controlFile;
+      runtimeEnv.SVVY_E2E_CONTROL_PATH = controlFile;
     },
   });
 }
@@ -149,7 +149,7 @@ async function waitForWorkspaceChrome(page: Page): Promise<void> {
 }
 
 async function waitForLoadingCard(page: Page): Promise<void> {
-  await page.getByText("Starting hellm").waitFor({ state: "visible" });
+  await page.getByText("Starting svvy").waitFor({ state: "visible" });
 }
 
 async function waitForStartupErrorCard(page: Page, message: string): Promise<void> {
@@ -192,12 +192,12 @@ test("shows the loading card during bootstrap and clears it once the shell is re
     });
     try {
       await waitForLoadingCard(app.page);
-      expect(await app.page.getByText("Starting hellm").isVisible()).toBe(true);
+      expect(await app.page.getByText("Starting svvy").isVisible()).toBe(true);
       expect(await app.page.getByRole("button", { name: "Open settings" }).isVisible()).toBe(false);
 
       await waitForWorkspaceChrome(app.page);
       expect(await app.page.getByRole("button", { name: "Open settings" }).isVisible()).toBe(true);
-      expect(await app.page.getByText("Starting hellm").isVisible()).toBe(false);
+      expect(await app.page.getByText("Starting svvy").isVisible()).toBe(false);
     } finally {
       await app.close();
     }
@@ -215,7 +215,7 @@ test("shows the startup error card when Bun bootstrap is forced to fail", async 
     try {
       await waitForStartupErrorCard(app.page, bootstrapError);
       expect(await app.page.getByRole("button", { name: "Open settings" }).count()).toBe(0);
-      expect(await app.page.getByText("Starting hellm").count()).toBe(0);
+      expect(await app.page.getByText("Starting svvy").count()).toBe(0);
     } finally {
       await app.close();
     }
@@ -227,8 +227,8 @@ test("workspace identity follows the cwd override and git branch", async () => {
     runGit(workspaceDir, ["init"]);
     runGit(workspaceDir, ["checkout", "-b", INITIAL_BRANCH]);
     await writeFile(join(workspaceDir, "README.md"), "bootstrap identity\n", "utf8");
-    runGit(workspaceDir, ["config", "user.name", "Hellm E2E"]);
-    runGit(workspaceDir, ["config", "user.email", "hellm-e2e@example.com"]);
+    runGit(workspaceDir, ["config", "user.name", "Svvy E2E"]);
+    runGit(workspaceDir, ["config", "user.email", "svvy-e2e@example.com"]);
     runGit(workspaceDir, ["add", "."]);
     runGit(workspaceDir, ["commit", "-m", "initial"]);
 
@@ -236,7 +236,7 @@ test("workspace identity follows the cwd override and git branch", async () => {
     try {
       await waitForWorkspaceChrome(app.page);
 
-      expect(await currentText(app.page, ".workspace-titlebar-title")).toBe("hellm");
+      expect(await currentText(app.page, ".workspace-titlebar-title")).toBe("svvy");
       expect(await currentText(app.page, ".sidebar-header-copy h2")).toBe(basename(workspaceDir));
       expect(await sessionCountText(app.page)).toContain(INITIAL_BRANCH);
       expect(await sessionCountText(app.page)).toContain("1 sessions");
@@ -285,8 +285,8 @@ test("branch refreshes on relaunch when the git branch changes", async () => {
       runGit(workspaceDir, ["init"]);
       runGit(workspaceDir, ["checkout", "-b", INITIAL_BRANCH]);
       await writeFile(join(workspaceDir, "README.md"), "branch refresh\n", "utf8");
-      runGit(workspaceDir, ["config", "user.name", "Hellm E2E"]);
-      runGit(workspaceDir, ["config", "user.email", "hellm-e2e@example.com"]);
+      runGit(workspaceDir, ["config", "user.name", "Svvy E2E"]);
+      runGit(workspaceDir, ["config", "user.email", "svvy-e2e@example.com"]);
       runGit(workspaceDir, ["add", "."]);
       runGit(workspaceDir, ["commit", "-m", "initial"]);
 

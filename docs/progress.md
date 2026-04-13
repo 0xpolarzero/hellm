@@ -211,7 +211,7 @@ How to use this file:
 
 ## 16. Repo-Local Workflow Hooks
 
-- [ ] Discover `.hellm/` config for the current workspace.
+- [ ] Discover `.svvy/` config for the current workspace.
 - [ ] Build a POC preflight hook flow for one consequential delegated workflow.
 - [ ] Define a first preflight hook declaration format.
 - [ ] Run preflight hooks before consequential delegated workflows.

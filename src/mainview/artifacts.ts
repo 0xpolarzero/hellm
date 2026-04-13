@@ -504,7 +504,7 @@ export class ArtifactsController {
 					const channelToken = ${JSON.stringify(token ?? null)};
 					const send = (type, payload) => {
 						if (!channelToken) return;
-						parent.postMessage({ source: "hellm-artifact", token: channelToken, type, payload }, "*");
+						parent.postMessage({ source: "svvy-artifact", token: channelToken, type, payload }, "*");
 					};
 					const formatValue = (value) => {
 						if (typeof value === "string") return value;
@@ -516,8 +516,8 @@ export class ArtifactsController {
 					};
 					const writeLog = (level, args) => {
 						const entry = \`[\${level}] \${args.map(formatValue).join(" ")}\`;
-						window.__hellmLogs = window.__hellmLogs || [];
-						window.__hellmLogs.push(entry);
+						window.__svvyLogs = window.__svvyLogs || [];
+						window.__svvyLogs.push(entry);
 						send("console", { entry });
 					};
 					window.artifacts = artifactSnapshot;
@@ -551,7 +551,7 @@ export class ArtifactsController {
 						const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
 						writeLog("rejection", [reason]);
 					});
-					window.__hellmGetLogs = () => (window.__hellmLogs || []).join("\\n");
+					window.__svvyGetLogs = () => (window.__svvyLogs || []).join("\\n");
 					send("ready", {});
 				})();
 			</script>
@@ -597,7 +597,7 @@ export class ArtifactsController {
         const payload = event.data as
           | { source?: string; token?: string; type?: string; payload?: { entry?: string } }
           | undefined;
-        if (!payload || payload.source !== "hellm-artifact" || payload.token !== token) return;
+        if (!payload || payload.source !== "svvy-artifact" || payload.token !== token) return;
         if (payload.type === "console" && typeof payload.payload?.entry === "string") {
           logs.push(payload.payload.entry);
         }

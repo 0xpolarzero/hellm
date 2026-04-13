@@ -1,4 +1,4 @@
-const DEV_SERVER_URL = process.env.HELLM_VITE_DEV_SERVER_URL ?? "http://localhost:5173";
+const DEV_SERVER_URL = process.env.SVVY_VITE_DEV_SERVER_URL ?? "http://localhost:5173";
 const DEV_SERVER_WAIT_TIMEOUT_MS = 15_000;
 const DEV_SERVER_POLL_INTERVAL_MS = 250;
 
@@ -86,7 +86,7 @@ try {
     cwd: process.cwd(),
     env: {
       ...process.env,
-      HELLM_VITE_DEV_SERVER: "wait",
+      SVVY_VITE_DEV_SERVER: "wait",
     },
     stdio: ["inherit", "inherit", "inherit"],
   });

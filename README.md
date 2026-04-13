@@ -1,6 +1,6 @@
-# hellm
+# svvy
 
-`hellm` is a desktop coding agent for real repositories built around visible orchestration.
+`svvy` is a desktop coding agent for real repositories built around visible orchestration.
 
 It keeps strategy in one orchestrator, delegates bounded work to subagents and workflows, and makes artifacts, verification, and resumable work state first-class instead of hiding everything inside one long chat loop.
 

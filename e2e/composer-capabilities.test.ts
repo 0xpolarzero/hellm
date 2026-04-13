@@ -1,6 +1,6 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { rm } from "node:fs/promises";
-import { createHomeDir, ensureBuilt, type HellmApp, withHellmApp } from "./harness";
+import { createHomeDir, ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 
 setDefaultTimeout(45_000);
 
@@ -33,11 +33,11 @@ function createEnv(overrides: Record<string, string> = {}): Record<string, strin
 
 async function runApp<T>(
   env: Record<string, string>,
-  fn: (app: HellmApp) => Promise<T>,
+  fn: (app: SvvyApp) => Promise<T>,
 ): Promise<T> {
   const homeDir = await createHomeDir();
   try {
-    return await withHellmApp(
+    return await withSvvyApp(
       {
         homeDir,
         env,
@@ -49,17 +49,17 @@ async function runApp<T>(
   }
 }
 
-async function openModelPicker(page: HellmApp["page"]): Promise<void> {
+async function openModelPicker(page: SvvyApp["page"]): Promise<void> {
   await page.locator(".model-control").click();
   await page.getByRole("dialog", { name: "Select a model" }).waitFor({ state: "visible" });
 }
 
-async function openReasoningMenu(page: HellmApp["page"]): Promise<void> {
+async function openReasoningMenu(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("button", { name: "Thinking level" }).click();
   await page.locator(".thinking-menu").waitFor({ state: "visible" });
 }
 
-async function providerHeadings(page: HellmApp["page"]): Promise<string[]> {
+async function providerHeadings(page: SvvyApp["page"]): Promise<string[]> {
   const headings = page.locator(".model-group h3");
   const count = await headings.count();
   const names: string[] = [];
@@ -71,7 +71,7 @@ async function providerHeadings(page: HellmApp["page"]): Promise<string[]> {
   return names;
 }
 
-async function selectModelBySearch(page: HellmApp["page"], query: string): Promise<void> {
+async function selectModelBySearch(page: SvvyApp["page"], query: string): Promise<void> {
   const picker = page.getByRole("dialog", { name: "Select a model" });
   await picker.locator('input[placeholder="Search model families, providers, or ids"]').fill(query);
   await picker.locator(".model-row").first().click({ force: true });

@@ -6,7 +6,7 @@ import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
 import {
-  getHellmSessionDir,
+  getSvvySessionDir,
   WorkspaceSessionCatalog,
   type SessionDefaults,
 } from "./session-catalog";
@@ -17,7 +17,7 @@ const DEFAULTS: SessionDefaults = {
   provider: "openai",
   model: "gpt-4o",
   thinkingLevel: "medium",
-  systemPrompt: "You are hellm.",
+  systemPrompt: "You are svvy.",
 };
 
 afterEach(() => {
@@ -30,11 +30,11 @@ afterEach(() => {
 });
 
 function createWorkspaceFixture() {
-  const root = mkdtempSync(join(tmpdir(), "hellm-sessions-"));
+  const root = mkdtempSync(join(tmpdir(), "svvy-sessions-"));
   tempDirs.push(root);
   const cwd = join(root, "workspace");
   const agentDir = join(root, "agent");
-  const sessionDir = getHellmSessionDir(cwd, agentDir);
+  const sessionDir = getSvvySessionDir(cwd, agentDir);
   return { cwd, agentDir, sessionDir };
 }
 

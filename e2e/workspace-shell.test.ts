@@ -1,5 +1,5 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { ensureBuilt, type HellmApp, withHellmApp } from "./harness";
+import { ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 import {
   assistantTextMessage,
   seedSessions,
@@ -40,7 +40,7 @@ beforeAll(async () => {
   await ensureBuilt();
 });
 
-type Page = HellmApp["page"];
+type Page = SvvyApp["page"];
 
 function workspaceShellArtifactSession(): SeedSessionInput {
   const reportCall = toolCall("artifacts", {
@@ -126,19 +126,19 @@ async function waitForShellChrome(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open settings" }).waitFor({ state: "visible" });
 }
 
-async function currentWindowFrame(app: HellmApp): Promise<{ width: number; height: number }> {
+async function currentWindowFrame(app: SvvyApp): Promise<{ width: number; height: number }> {
   return (await app.driver.window("active").info()).frame;
 }
 
 test("keeps the workspace chrome visible while the sidebar toggles from the titlebar", async () => {
-  await withHellmApp(async (app) => {
+  await withSvvyApp(async (app) => {
     const frame = await currentWindowFrame(app);
     expect(frame.width).toBeGreaterThan(MOBILE_OVERLAY_BREAKPOINT);
     expect(frame.width).toBeLessThan(DESKTOP_SPLIT_BREAKPOINT);
 
     await waitForShellChrome(app.page);
     expect((await app.page.locator(".workspace-titlebar-title").textContent())?.trim()).toBe(
-      "hellm",
+      "svvy",
     );
     expect((await app.page.locator(".workspace-main-meta").textContent()) ?? "").toContain("Ready");
     expect((await app.page.locator(".workspace-main-meta").textContent()) ?? "").toContain(
@@ -162,7 +162,7 @@ test("keeps the workspace chrome visible while the sidebar toggles from the titl
 });
 
 test("settings dialog coexists with the shell chrome and preserves sidebar state", async () => {
-  await withHellmApp(async (app) => {
+  await withSvvyApp(async (app) => {
     await waitForShellChrome(app.page);
 
     await app.page.getByRole("button", { name: "Hide sidebar" }).click();
@@ -188,7 +188,7 @@ test("settings dialog coexists with the shell chrome and preserves sidebar state
 });
 
 test("renders artifact output as a mobile overlay at the app's narrow shell width", async () => {
-  await withHellmApp(
+  await withSvvyApp(
     {
       beforeLaunch: async ({ homeDir, workspaceDir }) => {
         await seedSessions(homeDir, [workspaceShellArtifactSession()], workspaceDir);
