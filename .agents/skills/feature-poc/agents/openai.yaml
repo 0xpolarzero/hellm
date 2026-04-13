@@ -1,0 +1,4 @@
+interface:
+  display_name: "Feature POC"
+  short_description: "Create a single-file executable feature POC"
+  default_prompt: "Use $feature-poc to turn this proposed feature or architecture change into a single-file executable POC we can review and refine together."
