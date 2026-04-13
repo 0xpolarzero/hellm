@@ -9,7 +9,7 @@
     "build": "vite build && electrobun build",
     "run": "electrobun run",
     "test": "bun test $(rg --files src -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts')",
-    "test:e2e": "bun run build && bun test $(rg --files e2e -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts' | sed 's#^#./#')",
+    "test:e2e": "bun run build && bun test --max-concurrency=1 $(rg --files e2e -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts' | sed 's#^#./#')",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint . --import-plugin --node-plugin --deny-warnings --fix --fix-suggestions",
     "lint:check": "oxlint . --import-plugin --node-plugin --deny-warnings",
@@ -24,7 +24,7 @@
     "@mariozechner/pi-ai": "^0.64.0",
     "@mariozechner/pi-coding-agent": "^0.64.0",
     "electrobun": "1.16.0",
-    "electrobun-browser-tools": "^1.0.0",
+    "electrobun-browser-tools": "1.0.1",
     "svelte": "^5.55.1"
   },
   "devDependencies": {

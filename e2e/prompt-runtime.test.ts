@@ -339,7 +339,7 @@ async function expectTextareaValue(
 async function submitPrompt(page: HellmApp["page"], text: string): Promise<void> {
   const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
   await textarea.fill(text);
-  await page.getByRole("button", { name: "Send" }).click();
+  await textarea.press("Enter");
 }
 
 async function launchPromptRuntimeApp<T>(

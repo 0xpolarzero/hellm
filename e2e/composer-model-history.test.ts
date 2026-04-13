@@ -106,6 +106,10 @@ async function textareaValue(page: HellmApp["page"]): Promise<string> {
   return snapshot.first?.value ?? "";
 }
 
+async function textareaSnapshot(page: HellmApp["page"]) {
+  return (await page.locator('textarea[placeholder^="Ask hellm"]').resolve()).first;
+}
+
 async function waitForTextareaValue(
   page: HellmApp["page"],
   expected: string,
@@ -223,17 +227,71 @@ test("reasoning selector opens, closes, and persists a selected level", async ()
   });
 });
 
-test("prompt history recalls seeded workspace entries and returns to the empty draft", async () => {
+test("prompt history walks older and newer entries and restores the preserved draft", async () => {
   await runSeededApp(async ({ page }) => {
     const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
     await textarea.waitFor({ state: "visible" });
-    await textarea.focus();
+    await textarea.fill("Working live draft");
+
+    await textarea.press("ArrowUp");
+    await waitForTextareaValue(page, "Working live draft");
+
+    await textarea.press("Home");
+    expect((await textareaSnapshot(page))?.selectionStart).toBe(0);
+
+    await textarea.press("ArrowUp");
+    await waitForTextareaValue(page, "Seeded history newest");
+    expect((await textareaSnapshot(page))?.selectionStart).toBe("Seeded history newest".length);
 
     await textarea.press("ArrowUp");
     await waitForTextareaValue(page, "Seeded history newest");
 
+    await textarea.press("Home");
+    expect((await textareaSnapshot(page))?.selectionStart).toBe(0);
+
+    await textarea.press("ArrowUp");
+    await waitForTextareaValue(page, "Seeded history middle");
+
+    await textarea.press("Home");
+    await textarea.press("ArrowUp");
+    await waitForTextareaValue(page, "Seeded history oldest");
+
+    await textarea.press("Home");
+    await textarea.press("ArrowUp");
+    await waitForTextareaValue(page, "Seeded history oldest");
+
+    await textarea.press("End");
     await textarea.press("ArrowDown");
-    await waitForTextareaValue(page, "");
+    await waitForTextareaValue(page, "Seeded history middle");
+
+    await textarea.press("ArrowDown");
+    await waitForTextareaValue(page, "Seeded history newest");
+
+    await textarea.press("Home");
+    await textarea.press("ArrowDown");
+    await waitForTextareaValue(page, "Seeded history newest");
+
+    await textarea.press("End");
+    await textarea.press("ArrowDown");
+    await waitForTextareaValue(page, "Working live draft");
+  });
+});
+
+test("prompt history ignores arrow keys when the caret is away from the absolute boundary", async () => {
+  await runSeededApp(async ({ page }) => {
+    const textarea = page.locator('textarea[placeholder^="Ask hellm"]');
+    await textarea.waitFor({ state: "visible" });
+    await textarea.fill("alpha\nbeta");
+
+    await textarea.press("ArrowLeft");
+    await textarea.press("ArrowLeft");
+
+    const middleSnapshot = await textareaSnapshot(page);
+    expect(middleSnapshot?.selectionStart).toBe("alpha\nbeta".length - 2);
+    expect(middleSnapshot?.selectionStart).toBe(middleSnapshot?.selectionEnd);
+
+    await textarea.press("ArrowUp");
+    expect(await textareaValue(page)).toBe("alpha\nbeta");
   });
 });
 
