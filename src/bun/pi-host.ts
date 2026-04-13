@@ -10,8 +10,9 @@ import {
   type SendAgentPromptOptions,
   type SessionDefaults,
 } from "./session-catalog";
+import { resolveWorkspaceCwd } from "./workspace-context";
 
-const workspaceSessionCatalog = new WorkspaceSessionCatalog();
+const workspaceSessionCatalog = new WorkspaceSessionCatalog(resolveWorkspaceCwd());
 
 export async function initPiHost(): Promise<void> {}
 

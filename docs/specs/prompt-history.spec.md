@@ -61,7 +61,7 @@ The adopted `hellm` direction is:
 - the composer preserves the user's unsent draft while browsing history
 - history is shared across sessions within the same workspace
 - history is not shared across different workspaces by default
-- only successfully sent non-empty user prompts are recorded
+- non-empty user prompts are recorded when the user explicitly submits them, including failed and provider-blocked attempts
 - explicit history search is a separate capability and should not be overloaded onto plain arrow navigation
 
 Nothing below should be read as leaving those points open.
@@ -191,7 +191,7 @@ Implications:
 The first implementation stores only prompts that are:
 
 - user-authored
-- successfully sent
+- explicitly submitted
 - non-empty after trimming for submit validation
 
 The stored value is the exact submitted text.
@@ -205,7 +205,7 @@ Recommended metadata:
 
 ### Decision
 
-Failed sends should not create history entries.
+Failed sends and provider-blocked sends should still create history entries.
 
 ### Decision
 

@@ -155,6 +155,10 @@ export class PromptHistoryStore {
     return (await this.backend.get<PromptHistoryEntry[]>(PROMPT_HISTORY_STORE, workspaceId)) ?? [];
   }
 
+  async replace(workspaceId: string, entries: PromptHistoryEntry[]): Promise<void> {
+    await this.backend.set(PROMPT_HISTORY_STORE, workspaceId, entries);
+  }
+
   async append(entry: PromptHistoryEntry): Promise<PromptHistoryEntry> {
     const existingEntries = await this.list(entry.workspaceId);
     await this.backend.set(PROMPT_HISTORY_STORE, entry.workspaceId, [...existingEntries, entry]);

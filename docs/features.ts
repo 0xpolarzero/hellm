@@ -37,7 +37,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workspace Prompt History",
     status: "shipped",
     summary:
-      "Stores successful user prompts per workspace and exposes shell-like recall in the composer.",
+      "Stores non-empty submitted prompts per workspace, including failed and provider-blocked attempts, and exposes shell-like recall in the composer.",
     sourceSpecs: ["/Users/polarzero/code/projects/hellm/docs/specs/prompt-history.spec.md"],
   },
   {

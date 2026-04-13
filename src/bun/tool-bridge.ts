@@ -55,6 +55,7 @@ type CreateHellmToolBridgeOptions = {
   getActiveWorkspaceSession: () => Promise<ActiveWorkspaceSession>;
   getDefaultChatSettings: () => ChatDefaults;
   getMainWindow: () => BrowserWindow | null;
+  getWorkspaceCwd: () => string;
   getWorkspaceBranch: (cwd: string) => string | undefined;
   listProviderAuthSummaries: () => ProviderAuthInfo[];
   listWorkspaceSessions: () => Promise<WorkspaceSessionsState>;
@@ -72,7 +73,7 @@ export function createHellmToolBridge(options: CreateHellmToolBridgeOptions) {
   }
 
   async function buildState(): Promise<ToolBridgeState> {
-    const cwd = process.cwd();
+    const cwd = options.getWorkspaceCwd();
     const defaults = options.getDefaultChatSettings();
     const sessions = await options.listWorkspaceSessions();
     const activeSession = await options.getActiveWorkspaceSession();

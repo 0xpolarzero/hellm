@@ -70,6 +70,7 @@ export interface ChatRuntimeRpcClient {
     setProviderApiKey: typeof rpc.request.setProviderApiKey;
     startOAuth: typeof rpc.request.startOAuth;
     removeProviderAuth: typeof rpc.request.removeProviderAuth;
+    getE2eRendererSeed: typeof rpc.request.getE2eRendererSeed;
   };
   addMessageListener: typeof rpc.addMessageListener;
   removeMessageListener: typeof rpc.removeMessageListener;
@@ -274,6 +275,24 @@ export async function createChatRuntime(
     await refreshSessions();
   };
 
+  const syncActiveSessionState = async (sessionId?: string): Promise<void> => {
+    const nextActive = await rpcClient.request.getActiveSession();
+    if (!nextActive) {
+      await refreshSessions();
+      return;
+    }
+
+    if (sessionId && nextActive.session.id !== sessionId) {
+      await refreshSessions();
+      return;
+    }
+
+    applyActiveSessionState(agent, nextActive);
+    activeSessionId = nextActive.session.id;
+    emit();
+    await refreshSessions();
+  };
+
   const streamFromRpc: StreamFn = async (model, context, streamOptions) => {
     const stream = createAssistantMessageEventStream();
     const reasoningEffort =
@@ -305,10 +324,12 @@ export async function createChatRuntime(
       if (completed) return;
       completed = true;
       cleanup();
+      const failure = createFailureMessage(error, provider, modelId, stopReason);
+      agent.state.error = failure.errorMessage;
       stream.push({
         type: "error",
         reason: stopReason,
-        error: createFailureMessage(error, provider, modelId, stopReason),
+        error: failure,
       });
       void refreshSessions();
     };
@@ -320,7 +341,7 @@ export async function createChatRuntime(
       if (payload.event.type === "done" || payload.event.type === "error") {
         completed = true;
         cleanup();
-        void refreshSessions();
+        void syncActiveSessionState(streamSessionId);
       }
     };
 
@@ -366,7 +387,19 @@ export async function createChatRuntime(
     rpcClient.request.getWorkspaceInfo(),
     rpcClient.request.listSessions(),
   ]);
+  const e2eRendererSeed = await rpcClient.request.getE2eRendererSeed();
   await syncProviderAuth(defaults.provider);
+
+  if (e2eRendererSeed) {
+    if (e2eRendererSeed.customProviders.length > 0) {
+      for (const provider of e2eRendererSeed.customProviders) {
+        await storage.customProviders.set(provider);
+      }
+    }
+    if (e2eRendererSeed.promptHistory.length > 0) {
+      await storage.promptHistory.replace(workspaceInfo.workspaceId, e2eRendererSeed.promptHistory);
+    }
+  }
 
   const agent = new Agent({
     initialState: {

@@ -13,13 +13,13 @@
 
 	type Props = {
 		messages: AgentMessage[];
-		streamingMessage?: AgentMessage;
+		streamMessage?: AgentMessage;
 		pendingToolCalls: ReadonlySet<string>;
 		isStreaming: boolean;
 		onOpenArtifact: (filename: string) => void;
 	};
 
-	let { messages, streamingMessage, pendingToolCalls, isStreaming, onOpenArtifact }: Props = $props();
+	let { messages, streamMessage, pendingToolCalls, isStreaming, onOpenArtifact }: Props = $props();
 
 	let scroller = $state<HTMLDivElement | null>(null);
 	let autoScroll = $state(true);
@@ -68,7 +68,7 @@
 		}
 		return results;
 	});
-	const streamingAssistant = $derived(isAssistantMessage(streamingMessage) ? streamingMessage : null);
+	const streamingAssistant = $derived(isAssistantMessage(streamMessage) ? streamMessage : null);
 
 	function handleScroll() {
 		if (!scroller) return;

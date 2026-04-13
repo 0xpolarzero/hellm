@@ -54,7 +54,7 @@
 
   let controller = $state<ArtifactsController | null>(null);
   let messages = $state<ChatRuntime["agent"]["state"]["messages"]>([]);
-  let streamingMessage = $state<AssistantMessage | null>(null);
+  let streamMessage = $state<AssistantMessage | null>(null);
   let pendingToolCalls = $state(new Set<string>());
   let isStreaming = $state(false);
   let errorMessage = $state<string | undefined>(undefined);
@@ -91,8 +91,6 @@
   const showDesktopSplit = $derived(windowWidth >= DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts);
   const showOverlayArtifacts = $derived(windowWidth < DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts);
   const effectiveSidebarWidth = $derived(clampSidebarWidth(sidebarWidth, windowWidth));
-  const workspaceStatusText = $derived(errorMessage ? "Attention" : isStreaming ? "Streaming" : "Ready");
-  const workspaceStatusTone = $derived(errorMessage ? "danger" : isStreaming ? "warning" : "neutral");
   const visibleSessions = $derived(sortVisibleSessionsByRecency(sessions));
   const currentSession = $derived(sessions.find((session) => session.id === activeSessionId) ?? null);
   const totalUsage = $derived.by(() =>
@@ -118,7 +116,7 @@
   );
   const usageText = $derived(formatUsage(totalUsage));
   const messageCount = $derived(
-    messages.filter((message) => message.role === "user" || message.role === "assistant").length + (streamingMessage ? 1 : 0),
+    messages.filter((message) => message.role === "user" || message.role === "assistant").length + (streamMessage ? 1 : 0),
   );
   const toolCallCount = $derived.by(() => {
     let count = 0;
@@ -126,8 +124,8 @@
       if (message.role !== "assistant") continue;
       count += message.content.filter((block) => block.type === "toolCall").length;
     }
-    if (streamingMessage) {
-      count += streamingMessage.content.filter((block) => block.type === "toolCall").length;
+    if (streamMessage) {
+      count += streamMessage.content.filter((block) => block.type === "toolCall").length;
     }
     return count;
   });
@@ -141,6 +139,11 @@
     return null;
   });
   const lastActivityLabel = $derived(lastActivity ? `Last activity ${formatTimestamp(lastActivity)}` : "Waiting for first turn");
+  const composerErrorMessage = $derived(
+    errorMessage ?? (currentSession?.status === "error" ? currentSession.preview : undefined),
+  );
+  const workspaceStatusText = $derived(composerErrorMessage ? "Attention" : isStreaming ? "Streaming" : "Ready");
+  const workspaceStatusTone = $derived(composerErrorMessage ? "danger" : isStreaming ? "warning" : "neutral");
 
   async function openModelSelector() {
     showModelPicker = true;
@@ -153,12 +156,29 @@
     }
   }
 
+  function getLatestAssistantFailureMessage(messagesSnapshot: ChatRuntime["agent"]["state"]["messages"]): string | undefined {
+    const lastMessage = messagesSnapshot[messagesSnapshot.length - 1];
+    if (!lastMessage || lastMessage.role !== "assistant") return undefined;
+    if (lastMessage.stopReason !== "error" && lastMessage.stopReason !== "aborted") return undefined;
+
+    const message =
+      lastMessage.errorMessage ??
+      lastMessage.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("\n")
+        .trim();
+
+    return message || undefined;
+  }
+
   function syncAgentState() {
-    messages = [...runtime.agent.state.messages];
-    streamingMessage = runtime.agent.state.streamingMessage?.role === "assistant" ? runtime.agent.state.streamingMessage : null;
+    const nextMessages = [...runtime.agent.state.messages];
+    messages = nextMessages;
+    streamMessage = runtime.agent.state.streamMessage?.role === "assistant" ? runtime.agent.state.streamMessage : null;
     pendingToolCalls = new Set(runtime.agent.state.pendingToolCalls);
     isStreaming = runtime.agent.state.isStreaming;
-    errorMessage = runtime.agent.state.errorMessage;
+    errorMessage = runtime.agent.state.error ?? getLatestAssistantFailureMessage(nextMessages);
     currentModel = runtime.agent.state.model;
     currentThinkingLevel = runtime.agent.state.thinkingLevel as ThinkingLevel;
   }
@@ -286,13 +306,7 @@
     });
   }
 
-  async function handleSend(input: string): Promise<boolean> {
-    if (!input.trim() || runtime.agent.state.isStreaming) return false;
-
-    const hasProviderAccess = await runtime.requireProviderAccess(runtime.agent.state.model.provider);
-    if (!hasProviderAccess) return false;
-
-    await runtime.agent.prompt(input);
+  async function persistPromptHistoryEntry(input: string) {
     try {
       const entry = await runtime.storage.promptHistory.append({
         text: input,
@@ -304,6 +318,17 @@
     } catch (error) {
       console.error("Failed to persist prompt history:", error);
     }
+  }
+
+  async function handleSend(input: string): Promise<boolean> {
+    if (!input.trim() || runtime.agent.state.isStreaming) return false;
+
+    await persistPromptHistoryEntry(input);
+
+    const hasProviderAccess = await runtime.requireProviderAccess(runtime.agent.state.model.provider);
+    if (!hasProviderAccess) return false;
+
+    await runtime.agent.prompt(input);
     return true;
   }
 
@@ -454,7 +479,7 @@
         <div class="chat-pane-shell">
           <ChatTranscript
             {messages}
-            streamingMessage={streamingMessage ?? undefined}
+            streamMessage={streamMessage ?? undefined}
             {pendingToolCalls}
             {isStreaming}
             onOpenArtifact={handleOpenArtifact}
@@ -463,7 +488,7 @@
             currentModel={currentModel ?? runtime.agent.state.model}
             thinkingLevel={currentThinkingLevel}
             {isStreaming}
-            {errorMessage}
+            errorMessage={composerErrorMessage}
             {promptHistory}
             usageText={usageText || undefined}
             onAbort={() => runtime.agent.abort()}

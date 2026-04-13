@@ -1,0 +1,171 @@
+import { existsSync, readFileSync } from "node:fs";
+import type { Message } from "@mariozechner/pi-ai";
+import type { OAuthCredentials } from "@mariozechner/pi-ai/oauth";
+
+const E2E_CONTROL_PATH_ENV = "HELLM_E2E_CONTROL_PATH";
+
+export type E2eSessionMutationKind =
+  | "createSession"
+  | "openSession"
+  | "renameSession"
+  | "forkSession"
+  | "deleteSession";
+
+export interface E2eMutationBehavior {
+  delayMs?: number;
+  error?: string;
+}
+
+export interface E2eOAuthBehavior {
+  credentials?: OAuthCredentials;
+  delayMs?: number;
+  error?: string;
+}
+
+export type E2ePromptStep =
+  | {
+      type: "delay";
+      ms: number;
+    }
+  | {
+      type: "text";
+      text: string;
+      chunkDelayMs?: number;
+      chunks?: string[];
+    }
+  | {
+      type: "thinking";
+      text: string;
+      chunkDelayMs?: number;
+      chunks?: string[];
+    }
+  | {
+      type: "toolCall";
+      arguments: Record<string, unknown>;
+      chunkDelayMs?: number;
+      chunks?: string[];
+      id?: string;
+      name: string;
+    };
+
+export interface E2ePromptScenario {
+  abortFallbackMessage?: string;
+  abortTimeoutMs?: number;
+  delayBeforeStartMs?: number;
+  error?: string;
+  errorReason?: "aborted" | "error";
+  persistedMessages?: Message[];
+  stream?: E2ePromptStep[];
+  waitForAbort?: boolean;
+}
+
+export interface HellmE2eControl {
+  bootstrapError?: string;
+  mutations?: Partial<Record<E2eSessionMutationKind, E2eMutationBehavior>>;
+  oauth?: Record<string, E2eOAuthBehavior>;
+  prompts?: {
+    byText?: Record<string, E2ePromptScenario>;
+    defaultScenario?: E2ePromptScenario;
+  };
+  workspaceCwd?: string;
+}
+
+function readConfiguredControlPath(): string | null {
+  const configuredPath = process.env[E2E_CONTROL_PATH_ENV]?.trim();
+  return configuredPath ? configuredPath : null;
+}
+
+export function readHellmE2eControl(): HellmE2eControl | null {
+  const controlPath = readConfiguredControlPath();
+  if (!controlPath || !existsSync(controlPath)) {
+    return null;
+  }
+
+  const content = readFileSync(controlPath, "utf8");
+  return JSON.parse(content) as HellmE2eControl;
+}
+
+export async function applyE2eMutationBehavior(
+  kind: E2eSessionMutationKind,
+): Promise<void> {
+  const behavior = readHellmE2eControl()?.mutations?.[kind];
+  if (!behavior) {
+    return;
+  }
+
+  if (behavior.delayMs && behavior.delayMs > 0) {
+    await Bun.sleep(behavior.delayMs);
+  }
+
+  if (behavior.error?.trim()) {
+    throw new Error(behavior.error.trim());
+  }
+}
+
+export function getE2eBootstrapError(): string | null {
+  const value = readHellmE2eControl()?.bootstrapError?.trim();
+  return value ? value : null;
+}
+
+export function getE2eOAuthBehavior(providerId: string): E2eOAuthBehavior | null {
+  return readHellmE2eControl()?.oauth?.[providerId] ?? null;
+}
+
+export function getE2ePromptScenario(
+  messages: readonly Message[],
+): E2ePromptScenario | null {
+  const prompts = readHellmE2eControl()?.prompts;
+  if (!prompts) {
+    return null;
+  }
+
+  const latestUserText = getLatestUserText(messages);
+  if (latestUserText) {
+    const matchedScenario = prompts.byText?.[latestUserText];
+    if (matchedScenario) {
+      return matchedScenario;
+    }
+  }
+
+  return prompts.defaultScenario ?? null;
+}
+
+export function getE2eWorkspaceCwdOverride(): string | null {
+  const value = readHellmE2eControl()?.workspaceCwd?.trim();
+  return value ? value : null;
+}
+
+function getLatestUserText(messages: readonly Message[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "user") {
+      continue;
+    }
+
+    const text = flattenUserContent(message.content).trim();
+    if (text) {
+      return text;
+    }
+  }
+
+  return null;
+}
+
+function flattenUserContent(content: Message["content"]): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  return content
+    .map((block) => {
+      if (block.type === "text") {
+        return block.text;
+      }
+      if (block.type === "image") {
+        return "[image]";
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}

@@ -163,6 +163,7 @@ export class ArtifactsController {
   private activeFilename: string | null = null;
   private listeners = new Set<ArtifactsListener>();
   private refreshGeneration = 0;
+  private htmlLogsRefreshPromise: Promise<void> | null = null;
   private disposed = false;
 
   subscribe(listener: ArtifactsListener): () => void {
@@ -214,6 +215,8 @@ export class ArtifactsController {
   async reconstructFromMessages(messages: AgentMessage[]): Promise<void> {
     const toolCalls = new Map<string, ArtifactsParams>();
     const operations: ArtifactsParams[] = [];
+    const previousArtifacts = new Map(this.artifacts.entries());
+    const previousLogs = new Map(this.logsByFilename.entries());
 
     for (const message of messages) {
       if (message.role !== "assistant") continue;
@@ -274,6 +277,26 @@ export class ArtifactsController {
 
     this.activeFilename =
       this.artifacts.size > 0 ? (Array.from(this.artifacts.keys())[0] ?? null) : null;
+
+    let needsHtmlRefresh = false;
+    for (const artifact of this.artifacts.values()) {
+      if (getArtifactKind(artifact.filename) !== "html") continue;
+
+      const previousArtifact = previousArtifacts.get(artifact.filename);
+      const previousLog = previousLogs.get(artifact.filename);
+      if (previousArtifact?.content === artifact.content && previousLog !== undefined) {
+        this.logsByFilename.set(artifact.filename, previousLog);
+        continue;
+      }
+
+      needsHtmlRefresh = true;
+    }
+
+    if (needsHtmlRefresh) {
+      await this.ensureHtmlLogsRefreshed();
+      return;
+    }
+
     this.emit();
   }
 
@@ -429,7 +452,21 @@ export class ArtifactsController {
   }
 
   private queueHtmlRefresh(excludeFilename?: string): void {
-    void this.refreshHtmlArtifacts(excludeFilename);
+    void this.ensureHtmlLogsRefreshed(excludeFilename);
+  }
+
+  private ensureHtmlLogsRefreshed(excludeFilename?: string): Promise<void> {
+    if (this.htmlLogsRefreshPromise) {
+      return this.htmlLogsRefreshPromise;
+    }
+
+    const refreshPromise = this.refreshHtmlArtifacts(excludeFilename).finally(() => {
+      if (this.htmlLogsRefreshPromise === refreshPromise) {
+        this.htmlLogsRefreshPromise = null;
+      }
+    });
+    this.htmlLogsRefreshPromise = refreshPromise;
+    return refreshPromise;
   }
 
   private async refreshHtmlArtifacts(excludeFilename?: string): Promise<void> {
@@ -459,7 +496,7 @@ export class ArtifactsController {
           artifact.content,
         ]),
       ),
-    );
+    ).replace(/</g, "\\u003c");
     const runtimeScript = `
 			<script>
 				(() => {

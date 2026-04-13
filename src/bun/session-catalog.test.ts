@@ -155,6 +155,24 @@ describe("WorkspaceSessionCatalog", () => {
     expect(reopened.reasoningEffort).toBe("high");
   });
 
+  it("persists a blank created session before the first assistant message", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    const created = await catalog.createSession({}, DEFAULTS);
+    expect(created.session.title).toBe("New Session");
+
+    await catalog.dispose();
+
+    const reopenedCatalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const sessions = await reopenedCatalog.listSessions();
+
+    expect(sessions.sessions).toHaveLength(1);
+    expect(sessions.sessions[0]?.id).toBe(created.session.id);
+    expect(sessions.sessions[0]?.title).toBe("New Session");
+    expect(sessions.sessions[0]?.messageCount).toBe(0);
+  });
+
   it("blocks deleting the active session while a prompt is streaming", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);

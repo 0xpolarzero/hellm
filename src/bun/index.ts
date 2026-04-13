@@ -9,18 +9,26 @@ import type {
   ProviderAuthInfo,
   SendPromptRequest,
 } from "../mainview/chat-rpc";
+import type { CustomProvider } from "../mainview/chat-storage";
 import {
   DEFAULT_CHAT_SETTINGS,
   type ChatDefaults,
   type ReasoningEffort,
 } from "../mainview/chat-settings";
+import type { PromptHistoryEntry } from "../mainview/prompt-history";
 import {
   getProviderEnvVar,
   removeCredential,
   resolveApiKey,
   resolveAuthState,
   setApiKey as storeApiKey,
+  setOAuthCredentials,
 } from "./auth-store";
+import {
+  applyE2eMutationBehavior,
+  getE2eBootstrapError,
+  getE2eOAuthBehavior,
+} from "./e2e-control";
 import { refreshIfNeeded, startOAuthLogin, supportsOAuth } from "./oauth-login";
 import {
   cancelAgentSession,
@@ -38,6 +46,7 @@ import {
 } from "./pi-host";
 import type { SessionDefaults } from "./session-catalog";
 import { createHellmToolBridge } from "./tool-bridge";
+import { resolveWorkspaceCwd } from "./workspace-context";
 
 type SessionMutationResponse = {
   ok: boolean;
@@ -122,6 +131,11 @@ type DevServerMode = "auto" | "wait";
 
 function getDevServerMode(): DevServerMode {
   return process.env.HELLM_VITE_DEV_SERVER === "wait" ? "wait" : "auto";
+}
+
+function isEnvFlagEnabled(name: string): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
 }
 
 async function isDevServerReady(): Promise<boolean> {
@@ -272,11 +286,44 @@ function listProviderAuthSummaries(): ProviderAuthInfo[] {
   });
 }
 
+function getE2eRendererSeed(): {
+  customProviders: CustomProvider[];
+  promptHistory: PromptHistoryEntry[];
+} | null {
+  const seedPath = process.env.HELLM_E2E_RENDERER_SEED_PATH?.trim();
+  if (!seedPath) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(seedPath, "utf8")) as {
+      customProviders?: CustomProvider[];
+      promptHistory?: PromptHistoryEntry[];
+    };
+    return {
+      customProviders: Array.isArray(parsed.customProviders) ? parsed.customProviders : [],
+      promptHistory: Array.isArray(parsed.promptHistory) ? parsed.promptHistory : [],
+    };
+  } catch (error) {
+    recordBridgeError(
+      "rpc",
+      error instanceof Error ? error.message : "Failed to read e2e renderer seed.",
+      "bun.e2e",
+      {
+        seedPath,
+      },
+      error,
+    );
+    return null;
+  }
+}
+
 const hellmToolBridge = createHellmToolBridge({
   defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
   getActiveWorkspaceSession,
   getDefaultChatSettings,
   getMainWindow: () => mainWindow,
+  getWorkspaceCwd: resolveWorkspaceCwd,
   getWorkspaceBranch,
   listProviderAuthSummaries,
   listWorkspaceSessions,
@@ -285,29 +332,47 @@ const recordBridgeEvent = hellmToolBridge.recordEvent;
 const recordBridgeLog = hellmToolBridge.recordLog;
 const recordBridgeError = hellmToolBridge.recordError;
 
+function assertBootstrapReady(): void {
+  const bootstrapError = getE2eBootstrapError();
+  if (bootstrapError) {
+    throw new Error(bootstrapError);
+  }
+}
+
 const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
   maxRequestTime: getRpcRequestTimeoutMs(),
   handlers: {
     requests: {
-      getDefaults: () => getDefaultChatSettings(),
+      getDefaults: () => {
+        assertBootstrapReady();
+        return getDefaultChatSettings();
+      },
       getProviderAuthState: async ({
         providerId,
       }: {
         providerId?: string;
       }): Promise<AuthStateResponse> => {
+        assertBootstrapReady();
         const defaults = getDefaultChatSettings();
         return createAuthState(providerId || defaults.provider);
       },
       getWorkspaceInfo: () => {
-        const cwd = process.cwd();
+        assertBootstrapReady();
+        const cwd = resolveWorkspaceCwd();
         return {
           workspaceId: cwd,
           workspaceLabel: basename(cwd),
           branch: getWorkspaceBranch(cwd),
         };
       },
-      listSessions: async () => listWorkspaceSessions(),
-      getActiveSession: async () => getActiveWorkspaceSession(),
+      listSessions: async () => {
+        assertBootstrapReady();
+        return await listWorkspaceSessions();
+      },
+      getActiveSession: async () => {
+        assertBootstrapReady();
+        return await getActiveWorkspaceSession();
+      },
       createSession: async ({
         title,
         parentSessionId,
@@ -315,6 +380,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         parentSessionId?: string;
         title?: string;
       }) => {
+        await applyE2eMutationBehavior("createSession");
         const session = await createWorkspaceSession(
           { title, parentSessionId },
           getSessionDefaults(),
@@ -331,6 +397,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return session;
       },
       openSession: async ({ sessionId }: { sessionId: string }) => {
+        await applyE2eMutationBehavior("openSession");
         const session = await openWorkspaceSession(sessionId, DEFAULT_SYSTEM_PROMPT);
         recordBridgeEvent("session.opened", {
           sessionId,
@@ -338,6 +405,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return session;
       },
       renameSession: async ({ sessionId, title }: { sessionId: string; title: string }) => {
+        await applyE2eMutationBehavior("renameSession");
         const result = await renameWorkspaceSession(sessionId, title);
         recordBridgeEvent("session.renamed", {
           sessionId,
@@ -346,6 +414,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return result;
       },
       forkSession: async ({ sessionId, title }: { sessionId: string; title?: string }) => {
+        await applyE2eMutationBehavior("forkSession");
         const session = await forkWorkspaceSession({ sessionId, title }, getSessionDefaults());
         recordBridgeEvent("session.forked", {
           sessionId,
@@ -355,7 +424,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return session;
       },
       deleteSession: async ({ sessionId }: { sessionId: string }) =>
-        deleteWorkspaceSession(sessionId, getSessionDefaults()).then((result) => {
+        applyE2eMutationBehavior("deleteSession")
+          .then(() => deleteWorkspaceSession(sessionId, getSessionDefaults()))
+          .then((result) => {
           recordBridgeEvent("session.deleted", { sessionId });
           return result;
         }),
@@ -510,7 +581,21 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         providerId: string;
       }): Promise<{ ok: boolean; error?: string }> => {
         try {
+          const oauthBehavior = getE2eOAuthBehavior(providerId);
+          if (oauthBehavior) {
+            if (oauthBehavior.delayMs && oauthBehavior.delayMs > 0) {
+              await Bun.sleep(oauthBehavior.delayMs);
+            }
+            if (oauthBehavior.error?.trim()) {
+              throw new Error(oauthBehavior.error.trim());
+            }
+
+            if (oauthBehavior.credentials) {
+              setOAuthCredentials(providerId, oauthBehavior.credentials);
+            }
+          } else {
           await startOAuthLogin(providerId);
+          }
           recordBridgeEvent("provider.oauth.started", { providerId });
           return { ok: true };
         } catch (error) {
@@ -531,6 +616,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         recordBridgeEvent("provider.auth.removed", { providerId });
         return { ok: true };
       },
+      getE2eRendererSeed: async () => getE2eRendererSeed(),
     },
   },
 });
@@ -582,15 +668,17 @@ loadRuntimeEnv();
 await initPiHost();
 
 const url = await getMainViewUrl();
+const e2eHeadless = isEnvFlagEnabled("HELLM_E2E_HEADLESS");
 
 mainWindow = new BrowserWindow({
   title: "hellm",
   frame: {
-    x: 0,
-    y: 0,
+    x: e2eHeadless ? -20_000 : 0,
+    y: e2eHeadless ? -20_000 : 0,
     width: 1180,
     height: 820,
   },
+  hidden: e2eHeadless,
   titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
   url,
   rpc,
@@ -598,15 +686,25 @@ mainWindow = new BrowserWindow({
 
 const mountedToolBridge = await hellmToolBridge.mount(mainWindow);
 
+if (e2eHeadless) {
+  mainWindow.show();
+}
+
 recordBridgeEvent("app.ready", {
   bridgeUrl: mountedToolBridge.url ?? null,
   url,
-  workspaceId: process.cwd(),
+  workspaceId: resolveWorkspaceCwd(),
 });
 recordBridgeLog("info", "hellm tool bridge mounted.", "tool-bridge", {
   appId: mountedToolBridge.appId,
   bridgeUrl: mountedToolBridge.url ?? null,
 });
+console.log(
+  `hellm bridge: ${JSON.stringify({
+    appId: mountedToolBridge.appId,
+    bridgeUrl: mountedToolBridge.url ?? null,
+  })}`,
+);
 
 void mainWindow;
 

@@ -1,5 +1,7 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessageEvent, Message } from "@mariozechner/pi-ai";
+import type { PromptHistoryEntry } from "./prompt-history";
+import type { CustomProvider } from "./chat-storage";
 import type { ChatDefaults, ReasoningEffort } from "./chat-settings";
 
 export type AuthKeyType = "apikey" | "oauth" | "env" | "none";
@@ -191,6 +193,13 @@ export interface ChatRPCSchema {
       removeProviderAuth: {
         params: { providerId: string };
         response: { ok: boolean };
+      };
+      getE2eRendererSeed: {
+        params: undefined;
+        response: {
+          customProviders: CustomProvider[];
+          promptHistory: PromptHistoryEntry[];
+        } | null;
       };
     };
     messages: Record<string, never>;

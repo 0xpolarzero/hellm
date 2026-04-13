@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, AssistantMessageEvent } from "@mariozechner/pi-ai";
+import type { AssistantMessage, AssistantMessageEvent, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import type { ChatStorage, CustomProvider } from "./chat-storage";
 import type {
   ActiveSessionState,
@@ -55,6 +55,26 @@ function assistantMessage(text: string): AssistantMessage {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
     stopReason: "stop",
+    content: [{ type: "text", text }],
+  };
+}
+
+function toolCall(name: string, argumentsValue: Record<string, unknown>): ToolCall {
+  return {
+    type: "toolCall",
+    id: "tool-call-1",
+    name,
+    arguments: argumentsValue,
+  };
+}
+
+function toolResultMessage(text: string): ToolResultMessage {
+  return {
+    role: "toolResult",
+    toolCallId: "tool-call-1",
+    toolName: "artifacts",
+    timestamp: Date.now(),
+    isError: false,
     content: [{ type: "text", text }],
   };
 }
@@ -242,6 +262,7 @@ function createFakeRpc(initialSessions: ActiveSessionState[]): {
       setProviderApiKey: async () => ({ ok: true }),
       startOAuth: async () => ({ ok: true }),
       removeProviderAuth: async () => ({ ok: true }),
+      getE2eRendererSeed: async () => null,
     },
     addMessageListener: (_messageName: string, listener: unknown) => {
       listeners.add(
@@ -256,6 +277,108 @@ function createFakeRpc(initialSessions: ActiveSessionState[]): {
   };
 
   return { client, sentPromptSessions };
+}
+
+function createFakeRpcWithToolUse(initialSession: ActiveSessionState): ChatRuntimeRpcClient {
+  const listeners = new Set<
+    (payload: { streamId: string; event: AssistantMessageEvent }) => void
+  >();
+  const toolUse = toolCall("artifacts", {
+    command: "create",
+    filename: "tool-use.txt",
+    content: "tool use artifact",
+  });
+  const finalAssistant = assistantMessage("Tool use finished.");
+  const session = cloneActiveSession(initialSession);
+
+  return {
+    request: {
+      getDefaults: async () => ({ provider: "openai", model: "gpt-4o", reasoningEffort: "medium" }),
+      getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
+      getWorkspaceInfo: async () => ({
+        workspaceId: "/tmp/hellm",
+        workspaceLabel: "hellm",
+        branch: "main",
+      }),
+      listSessions: async () => ({
+        activeSessionId: session.session.id,
+        sessions: [structuredClone(session.session)],
+      }),
+      getActiveSession: async () => cloneActiveSession(session),
+      createSession: async () => cloneActiveSession(session),
+      openSession: async () => cloneActiveSession(session),
+      renameSession: async () => ({
+        ok: true,
+        activeSessionId: session.session.id,
+      }),
+      forkSession: async () => cloneActiveSession(session),
+      deleteSession: async () => ({
+        ok: true,
+        activeSessionId: session.session.id,
+      }),
+      sendPrompt: async (request: {
+        sessionId?: string;
+        streamId: string;
+        messages: AgentMessage[];
+      }) => {
+        const toolAssistant: AssistantMessage = {
+          ...assistantMessage("Using the artifacts tool."),
+          stopReason: "toolUse",
+          content: [
+            { type: "text", text: "Using the artifacts tool." },
+            toolUse,
+          ],
+        };
+        session.messages = [
+          ...request.messages,
+          toolAssistant,
+          toolResultMessage("Created file tool-use.txt"),
+          finalAssistant,
+        ];
+        session.session.preview = "Tool use finished.";
+        session.session.messageCount = session.messages.length;
+
+        queueMicrotask(() => {
+          const partial = assistantMessage("");
+          for (const listener of listeners) {
+            listener({ streamId: request.streamId, event: { type: "start", partial } });
+            listener({
+              streamId: request.streamId,
+              event: { type: "done", reason: "stop", message: finalAssistant },
+            });
+          }
+        });
+
+        return { sessionId: request.sessionId ?? session.session.id };
+      },
+      setSessionModel: async ({ sessionId }: { sessionId: string; model: string }) => ({
+        ok: true,
+        sessionId,
+      }),
+      setSessionThoughtLevel: async ({ sessionId }: { sessionId: string; level: string }) => ({
+        ok: true,
+        sessionId,
+      }),
+      cancelPrompt: async () => ({ ok: true }),
+      listProviderAuths: async () => [
+        { provider: "openai", hasKey: true, keyType: "oauth", supportsOAuth: true },
+      ],
+      setProviderApiKey: async () => ({ ok: true }),
+      startOAuth: async () => ({ ok: true }),
+      removeProviderAuth: async () => ({ ok: true }),
+      getE2eRendererSeed: async () => null,
+    },
+    addMessageListener: (_messageName: string, listener: unknown) => {
+      listeners.add(
+        listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+      );
+    },
+    removeMessageListener: (_messageName: string, listener: unknown) => {
+      listeners.delete(
+        listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+      );
+    },
+  };
 }
 
 function createMemoryStorage(): ChatStorage {
@@ -348,6 +471,32 @@ describe("createChatRuntime", () => {
           message.role === "assistant" &&
           message.content[0]?.type === "text" &&
           message.content[0].text === "first reply",
+      ),
+    ).toBe(true);
+
+    runtime.dispose();
+  });
+
+  it("refreshes the active session after a prompt settles so tool results appear in local state", async () => {
+    const { createChatRuntime } = await import("./chat-runtime");
+    const client = createFakeRpcWithToolUse(
+      createActiveSession("session-1", "First", [userMessage("first")], "medium"),
+    );
+
+    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
+    await runtime.agent.prompt("use a tool");
+    await runtime.agent.waitForIdle();
+
+    expect(
+      runtime.agent.state.messages.some(
+        (message) => message.role === "toolResult" && message.toolName === "artifacts",
+      ),
+    ).toBe(true);
+    expect(
+      runtime.agent.state.messages.some(
+        (message) =>
+          message.role === "assistant" &&
+          message.content.some((block) => block.type === "toolCall"),
       ),
     ).toBe(true);
 

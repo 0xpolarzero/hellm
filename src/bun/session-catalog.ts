@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
@@ -26,8 +26,15 @@ import type {
   SessionMutationResponse,
   WorkspaceSessionSummary,
 } from "../mainview/chat-rpc";
+import { DEFAULT_CHAT_SETTINGS } from "../mainview/chat-settings";
+import {
+  getE2ePromptScenario,
+  type E2ePromptScenario,
+  type E2ePromptStep,
+} from "./e2e-control";
 import { projectWorkspaceSessionSummary } from "./session-projection";
 import { resolveApiKey } from "./auth-store";
+import { resolveWorkspaceCwd } from "./workspace-context";
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
   input: 0,
@@ -90,9 +97,9 @@ export class WorkspaceSessionCatalog {
   private activeSession: ManagedSession | null = null;
 
   constructor(
-    private readonly cwd: string = process.cwd(),
+    private readonly cwd: string = resolveWorkspaceCwd(),
     private readonly agentDir: string = getHellmAgentDir(),
-    private readonly sessionDir: string = getHellmSessionDir(process.cwd(), getHellmAgentDir()),
+    private readonly sessionDir: string = getHellmSessionDir(resolveWorkspaceCwd(), getHellmAgentDir()),
   ) {}
 
   async dispose(): Promise<void> {
@@ -149,9 +156,7 @@ export class WorkspaceSessionCatalog {
     if (parentSessionFile) {
       sessionManager.newSession({ parentSession: parentSessionFile });
     }
-    if (request.title?.trim()) {
-      sessionManager.appendSessionInfo(request.title);
-    }
+    sessionManager.appendSessionInfo(request.title?.trim() || "New Session");
 
     const session = await this.activateManagedSession({
       sessionManager,
@@ -160,6 +165,7 @@ export class WorkspaceSessionCatalog {
       thinkingLevel: defaults.thinkingLevel,
       systemPrompt: defaults.systemPrompt,
     });
+    this.persistManagedSessionSnapshot(session);
 
     return this.buildActiveSessionState(session);
   }
@@ -553,6 +559,12 @@ export class WorkspaceSessionCatalog {
     session: ManagedSession,
     options: SendAgentPromptOptions,
   ): Promise<void> {
+    const e2eScenario = getE2ePromptScenario(options.messages);
+    if (e2eScenario) {
+      await this.runE2ePromptScenario(session, options, e2eScenario);
+      return;
+    }
+
     const streamState = createVisibleStreamState(options.provider, options.model);
     options.onEvent({ type: "start", partial: streamState.partial });
     const unsubscribe = session.session.subscribe((event) => {
@@ -644,11 +656,189 @@ export class WorkspaceSessionCatalog {
     }
   }
 
+  private async runE2ePromptScenario(
+    session: ManagedSession,
+    options: SendAgentPromptOptions,
+    scenario: E2ePromptScenario,
+  ): Promise<void> {
+    const streamState = createVisibleStreamState(options.provider, options.model);
+
+    try {
+      appendMessagesToSession(
+        session,
+        options.messages.slice(session.syncedMessages.length),
+      );
+
+      if (scenario.delayBeforeStartMs && scenario.delayBeforeStartMs > 0) {
+        await Bun.sleep(scenario.delayBeforeStartMs);
+      }
+
+      options.onEvent({ type: "start", partial: streamState.partial });
+
+      for (const step of scenario.stream ?? []) {
+        if (session.abortRequested && !scenario.waitForAbort) {
+          break;
+        }
+        await runE2ePromptStep(step, streamState, options.onEvent);
+      }
+
+      if (scenario.waitForAbort) {
+        const aborted = await waitForE2eAbort(session, scenario.abortTimeoutMs ?? 10_000);
+        const failure = finalizeVisibleAssistantMessage(
+          streamState,
+          createErrorMessage(
+            options.provider,
+            options.model,
+            scenario.abortFallbackMessage ?? "Request aborted by user",
+            aborted ? "aborted" : "error",
+          ),
+          options.provider,
+          options.model,
+        );
+        appendMessagesToSession(session, [failure]);
+        options.onEvent({
+          type: "error",
+          reason: aborted ? "aborted" : "error",
+          error: failure,
+        });
+        session.syncedMessages = cloneMessages([...options.messages, failure]);
+        session.provider = options.provider;
+        session.model = options.model;
+        session.thinkingLevel = options.thinkingLevel;
+        session.systemPrompt = options.systemPrompt;
+        session.recreateOnNextPrompt = false;
+        return;
+      }
+
+      if (scenario.error?.trim()) {
+        finishOpenVisibleBlocks(streamState, options.onEvent);
+        const failure = finalizeVisibleAssistantMessage(
+          streamState,
+          createErrorMessage(
+            options.provider,
+            options.model,
+            scenario.error.trim(),
+            scenario.errorReason ?? "error",
+          ),
+          options.provider,
+          options.model,
+        );
+        appendMessagesToSession(session, [failure]);
+        options.onEvent({
+          type: "error",
+          reason: scenario.errorReason ?? "error",
+          error: failure,
+        });
+        session.syncedMessages = cloneMessages([...options.messages, failure]);
+        session.provider = options.provider;
+        session.model = options.model;
+        session.thinkingLevel = options.thinkingLevel;
+        session.systemPrompt = options.systemPrompt;
+        session.recreateOnNextPrompt = false;
+        return;
+      }
+
+      finishOpenVisibleBlocks(streamState, options.onEvent);
+      const persistedMessages =
+        scenario.persistedMessages && scenario.persistedMessages.length > 0
+          ? scenario.persistedMessages
+          : [
+              finalizeVisibleAssistantMessage(
+                streamState,
+                createPartialAssistantMessage(options.provider, options.model),
+                options.provider,
+                options.model,
+              ),
+            ];
+
+      appendMessagesToSession(session, persistedMessages);
+
+      const emittedMessage = getLatestAssistantMessage(persistedMessages);
+      if (!emittedMessage) {
+        throw new Error("The e2e prompt scenario finished without an assistant message.");
+      }
+
+      options.onEvent({
+        type: "done",
+        reason:
+          emittedMessage.stopReason === "length"
+            ? "length"
+            : emittedMessage.stopReason === "toolUse"
+              ? "stop"
+              : "stop",
+        message: emittedMessage,
+      });
+
+      session.syncedMessages = cloneMessages([...options.messages, ...persistedMessages]);
+      session.provider = options.provider;
+      session.model = options.model;
+      session.thinkingLevel = options.thinkingLevel;
+      session.systemPrompt = options.systemPrompt;
+      session.recreateOnNextPrompt = false;
+    } catch (error) {
+      const reason = session.abortRequested ? "aborted" : "error";
+      finishOpenVisibleBlocks(streamState, options.onEvent);
+      const failure = finalizeVisibleAssistantMessage(
+        streamState,
+        createErrorMessage(
+          options.provider,
+          options.model,
+          error instanceof Error ? error.message : "e2e prompt failed.",
+          reason,
+        ),
+        options.provider,
+        options.model,
+      );
+
+      appendMessagesToSession(session, [failure]);
+      options.onEvent({
+        type: "error",
+        reason,
+        error: failure,
+      });
+
+      session.syncedMessages = cloneMessages([...options.messages, failure]);
+      session.provider = options.provider;
+      session.model = options.model;
+      session.thinkingLevel = options.thinkingLevel;
+      session.systemPrompt = options.systemPrompt;
+    } finally {
+      session.abortRequested = false;
+      session.activePrompt = false;
+      this.syncManagedState(session);
+    }
+  }
+
   private syncManagedState(session: ManagedSession): void {
-    session.provider = session.session.agent.state.model.provider;
-    session.model = session.session.agent.state.model.id;
-    session.thinkingLevel = session.session.agent.state.thinkingLevel as ThinkingLevel;
+    const restoredDefaults = resolveRestoredSessionDefaults(session.session.sessionManager, {
+      provider: session.provider,
+      model: session.model,
+      thinkingLevel: session.thinkingLevel,
+    });
+    const activeModel =
+      session.session.agent.state.model ??
+      getResolvedModel(restoredDefaults.provider, restoredDefaults.model);
+
+    session.provider = activeModel?.provider ?? restoredDefaults.provider;
+    session.model = activeModel?.id ?? restoredDefaults.model;
+    session.thinkingLevel = restoredDefaults.thinkingLevel;
     session.syncedMessages = convertToLlmMessages(session.session.agent.state.messages);
+  }
+
+  private persistManagedSessionSnapshot(session: ManagedSession): void {
+    const sessionFile = session.session.sessionManager.getSessionFile();
+    if (!sessionFile) {
+      return;
+    }
+
+    const header = session.session.sessionManager.getHeader();
+    if (!header) {
+      return;
+    }
+
+    const entries = session.session.sessionManager.getEntries();
+    const lines = [header, ...entries].map((entry) => JSON.stringify(entry));
+    writeFileSync(sessionFile, `${lines.join("\n")}\n`);
   }
 }
 
@@ -661,13 +851,14 @@ async function createManagedSession(
   syncAuthStorage(authStorage);
   const modelRegistry = ModelRegistry.create(authStorage, join(options.agentDir, "models.json"));
   const settingsManager = SettingsManager.create(options.sessionManager.getCwd(), options.agentDir);
-
-  const resolvedModel =
-    options.provider && options.model
-      ? getResolvedModel(options.provider, options.model)
-      : undefined;
-  if (options.provider && options.model && !resolvedModel) {
-    throw new Error(`Model not found: ${options.provider}/${options.model}`);
+  const restoredDefaults = resolveRestoredSessionDefaults(options.sessionManager, {
+    provider: options.provider,
+    model: options.model,
+    thinkingLevel: options.thinkingLevel,
+  });
+  const resolvedModel = getResolvedModel(restoredDefaults.provider, restoredDefaults.model);
+  if (!resolvedModel) {
+    throw new Error(`Model not found: ${restoredDefaults.provider}/${restoredDefaults.model}`);
   }
 
   const { session } = await createAgentSession({
@@ -678,14 +869,15 @@ async function createManagedSession(
     sessionManager: options.sessionManager,
     settingsManager,
     model: resolvedModel,
-    thinkingLevel: options.thinkingLevel,
+    thinkingLevel: restoredDefaults.thinkingLevel,
   });
+  const activeModel = session.agent.state.model ?? resolvedModel;
 
   return {
     sessionId: session.sessionManager.getSessionId(),
-    provider: session.agent.state.model.provider,
-    model: session.agent.state.model.id,
-    thinkingLevel: session.agent.state.thinkingLevel as ThinkingLevel,
+    provider: activeModel.provider,
+    model: activeModel.id,
+    thinkingLevel: restoredDefaults.thinkingLevel,
     systemPrompt: options.systemPrompt,
     syncedMessages: convertToLlmMessages(session.agent.state.messages),
     session,
@@ -719,6 +911,30 @@ function syncAuthStorage(authStorage: AuthStorage): void {
       authStorage.removeRuntimeApiKey(provider);
     }
   }
+}
+
+function resolveRestoredSessionDefaults(
+  sessionManager: SessionManager,
+  overrides: {
+    provider?: string;
+    model?: string;
+    thinkingLevel?: ThinkingLevel;
+  },
+): {
+  provider: string;
+  model: string;
+  thinkingLevel: ThinkingLevel;
+} {
+  const context = sessionManager.buildSessionContext();
+
+  return {
+    provider: overrides.provider ?? context.model?.provider ?? DEFAULT_CHAT_SETTINGS.provider,
+    model: overrides.model ?? context.model?.modelId ?? DEFAULT_CHAT_SETTINGS.model,
+    thinkingLevel:
+      overrides.thinkingLevel ??
+      (context.thinkingLevel as ThinkingLevel | undefined) ??
+      (DEFAULT_CHAT_SETTINGS.reasoningEffort as ThinkingLevel),
+  };
 }
 
 function getResolvedModel(provider: string, model: string) {
@@ -1091,4 +1307,191 @@ function createErrorMessage(
     errorMessage: message,
     timestamp: Date.now(),
   };
+}
+
+function appendMessagesToSession(
+  session: ManagedSession,
+  messages: readonly Message[],
+): void {
+  for (const message of messages) {
+    session.session.sessionManager.appendMessage(message);
+    session.session.agent.appendMessage(message);
+  }
+}
+
+async function waitForE2eAbort(
+  session: ManagedSession,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (session.abortRequested) {
+      return true;
+    }
+    await Bun.sleep(20);
+  }
+
+  return session.abortRequested;
+}
+
+async function runE2ePromptStep(
+  step: E2ePromptStep,
+  streamState: VisibleStreamState,
+  onEvent: (event: AssistantMessageEvent) => void,
+): Promise<void> {
+  switch (step.type) {
+    case "delay":
+      if (step.ms > 0) {
+        await Bun.sleep(step.ms);
+      }
+      return;
+    case "text":
+      await runE2eTextLikeStep("text", step.text, step.chunks, step.chunkDelayMs, streamState, onEvent);
+      return;
+    case "thinking":
+      await runE2eTextLikeStep(
+        "thinking",
+        step.text,
+        step.chunks,
+        step.chunkDelayMs,
+        streamState,
+        onEvent,
+      );
+      return;
+    case "toolCall":
+      await runE2eToolCallStep(step, streamState, onEvent);
+      return;
+  }
+}
+
+async function runE2eTextLikeStep(
+  type: "text" | "thinking",
+  text: string,
+  chunks: string[] | undefined,
+  chunkDelayMs: number | undefined,
+  streamState: VisibleStreamState,
+  onEvent: (event: AssistantMessageEvent) => void,
+): Promise<void> {
+  const parts = resolveE2eChunks(text, chunks);
+  const startEvent =
+    type === "text"
+      ? ({
+          type: "text_start",
+          contentIndex: streamState.partial.content.length,
+          partial: streamState.partial,
+        } satisfies AssistantMessageEvent)
+      : ({
+          type: "thinking_start",
+          contentIndex: streamState.partial.content.length,
+          partial: streamState.partial,
+        } satisfies AssistantMessageEvent);
+
+  applyVisibleAssistantEvent(streamState, startEvent, onEvent);
+
+  for (const part of parts) {
+    if (chunkDelayMs && chunkDelayMs > 0) {
+      await Bun.sleep(chunkDelayMs);
+    }
+
+    const deltaEvent =
+      type === "text"
+        ? ({
+            type: "text_delta",
+            delta: part,
+            contentIndex: streamState.activeTextIndex ?? 0,
+            partial: streamState.partial,
+          } satisfies AssistantMessageEvent)
+        : ({
+            type: "thinking_delta",
+            delta: part,
+            contentIndex: streamState.activeThinkingIndex ?? 0,
+            partial: streamState.partial,
+          } satisfies AssistantMessageEvent);
+
+    applyVisibleAssistantEvent(streamState, deltaEvent, onEvent);
+  }
+}
+
+async function runE2eToolCallStep(
+  step: Extract<E2ePromptStep, { type: "toolCall" }>,
+  streamState: VisibleStreamState,
+  onEvent: (event: AssistantMessageEvent) => void,
+): Promise<void> {
+  finishOpenVisibleBlocks(streamState, onEvent);
+
+  const serializedArguments = JSON.stringify(step.arguments);
+  const deltaChunks = resolveE2eChunks(serializedArguments, step.chunks);
+  const toolCallId = step.id ?? crypto.randomUUID();
+  const contentIndex = streamState.partial.content.length;
+  let rawArguments = "";
+  let parsedArguments: Record<string, unknown> = {};
+
+  streamState.partial.content.push({
+    type: "toolCall",
+    id: toolCallId,
+    name: step.name,
+    arguments: {},
+  });
+
+  onEvent({
+    type: "toolcall_start",
+    contentIndex,
+    partial: streamState.partial,
+  } as AssistantMessageEvent);
+
+  for (const delta of deltaChunks) {
+    if (step.chunkDelayMs && step.chunkDelayMs > 0) {
+      await Bun.sleep(step.chunkDelayMs);
+    }
+
+    rawArguments += delta;
+    try {
+      parsedArguments = JSON.parse(rawArguments) as Record<string, unknown>;
+    } catch {
+      // Keep the last successfully parsed partial.
+    }
+
+    streamState.partial.content[contentIndex] = {
+      type: "toolCall",
+      id: toolCallId,
+      name: step.name,
+      arguments: parsedArguments,
+    };
+
+    onEvent({
+      type: "toolcall_delta",
+      contentIndex,
+      delta,
+      partial: streamState.partial,
+    } as AssistantMessageEvent);
+  }
+
+  const completedToolCall = {
+    type: "toolCall" as const,
+    id: toolCallId,
+    name: step.name,
+    arguments: step.arguments,
+  };
+  streamState.partial.content[contentIndex] = completedToolCall;
+
+  onEvent({
+    type: "toolcall_end",
+    contentIndex,
+    partial: streamState.partial,
+    toolCall: completedToolCall,
+  } as AssistantMessageEvent);
+}
+
+function resolveE2eChunks(text: string, chunks?: string[]): string[] {
+  if (chunks && chunks.length > 0) {
+    return chunks;
+  }
+
+  if (text.length <= 8) {
+    return [text];
+  }
+
+  const midpoint = Math.ceil(text.length / 2);
+  return [text.slice(0, midpoint), text.slice(midpoint)];
 }
