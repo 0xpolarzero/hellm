@@ -17,7 +17,7 @@ import {
 } from "./support";
 import type { HellmE2eControl, E2ePromptScenario } from "../src/bun/e2e-control";
 
-const PROMPT_RUNTIME_TIMEOUT_MS = process.env.HELLM_E2E_LAUNCH_RETRIES ? 90_000 : 45_000;
+const PROMPT_RUNTIME_TIMEOUT_MS = process.env.ELECTROBUN_E2E_LAUNCH_RETRIES ? 90_000 : 45_000;
 
 setDefaultTimeout(PROMPT_RUNTIME_TIMEOUT_MS);
 

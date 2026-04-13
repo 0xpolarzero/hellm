@@ -36,3 +36,5 @@ bun run test:e2e
 ```
 
 That command syncs the latest repository state into the `hellm-e2e` OrbStack machine, installs dependencies there, builds the Linux Electrobun app, and runs the e2e suite under `dbus-run-session` plus `xvfb-run` so nothing appears on your active desktop session.
+
+The shared OrbStack/Electrobun e2e infrastructure now lives in the sibling [`../electrobun-e2e`](../electrobun-e2e) package. `hellm` keeps only its app-specific harness behavior, control files, seeded fixtures, and assertions.

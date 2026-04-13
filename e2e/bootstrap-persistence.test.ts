@@ -1,8 +1,8 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { rm } from "node:fs/promises";
+import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
 import { escapeForRegExp, launchHellmApp, createHomeDir } from "./harness";
-import { resolveElectrobunWorkspaceDir } from "../scripts/electrobun-paths";
 import { assistantTextMessage, seedSessions, userMessage } from "./support";
 
 setDefaultTimeout(45_000);

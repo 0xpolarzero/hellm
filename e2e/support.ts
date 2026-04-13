@@ -17,10 +17,10 @@ import type {
   E2ePromptStep,
   HellmE2eControl,
 } from "../src/bun/e2e-control";
+import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
 import type { CustomProvider } from "../src/mainview/chat-storage";
 import { DEFAULT_CHAT_SETTINGS } from "../src/mainview/chat-settings";
 import type { PromptHistoryEntry } from "../src/mainview/prompt-history";
-import { resolveElectrobunWorkspaceDir } from "../scripts/electrobun-paths";
 
 export function resolveAppWorkspaceDir(rootDir = process.cwd()): string {
   return resolveElectrobunWorkspaceDir(rootDir);

@@ -2,7 +2,7 @@
 
 import { cpSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { resolveElectrobunAppCodeDir } from "./electrobun-paths";
+import { resolveElectrobunAppCodeDir } from "electrobun-e2e/electrobun-paths";
 
 const buildDir = process.env.ELECTROBUN_BUILD_DIR;
 const appName = process.env.ELECTROBUN_APP_NAME;

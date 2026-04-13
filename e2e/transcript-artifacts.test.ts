@@ -1,6 +1,6 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
 import { ensureBuilt, escapeForRegExp, withHellmApp, type HellmApp } from "./harness";
-import { resolveElectrobunWorkspaceDir } from "../scripts/electrobun-paths";
 import {
   assistantTextMessage,
   seedSessions,
