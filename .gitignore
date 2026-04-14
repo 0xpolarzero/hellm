@@ -13,10 +13,9 @@ test-results/
 smithers.db
 smithers.db-shm
 smithers.db-wal
-workflows/.smithers/
-workflows/.worktrees/
-workflows/run-*.log
+.smithers/
 .worktrees/
+run-*.log
 .pi/
 .svvy/
 .env
