@@ -16,8 +16,6 @@ Current workflows:
 
 - [`feature-test-fanout.tsx`](./feature-test-fanout.tsx)
   Imports `ALL_SVVY_FEATURES` from [`docs/features.ts`](../docs/features.ts), creates one isolated worktree-backed worker task per feature, verifies and workflow-commits each feature branch, serially merges successful branches back into the main checkout batch-by-batch, and only cleans up clean merged/no-op worktrees afterward.
-- [`full-product-review-loop.tsx`](./full-product-review-loop.tsx)
-  Creates one isolated worktree-backed branch for the whole repo, runs an initial Codex `gpt-5.3-codex` implementation pass, then Ralph-loops Codex review and Codex address-review passes until approval, manual stop, or max iterations. Write phases default to medium reasoning. Prompts live under [`workflows/prompts/full-product-review-loop/`](./prompts/full-product-review-loop).
 
 Notes:
 
