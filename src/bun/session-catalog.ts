@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
@@ -16,10 +17,10 @@ import {
   SessionManager,
   SettingsManager,
   type AgentSession,
-  type SessionInfo,
 } from "@mariozechner/pi-coding-agent";
 import type {
   ActiveSessionState,
+  ActiveSessionSummaryState,
   CreateSessionRequest,
   ForkSessionRequest,
   ListSessionsResponse,
@@ -32,7 +33,10 @@ import {
   type E2ePromptScenario,
   type E2ePromptStep,
 } from "./e2e-control";
-import { projectWorkspaceSessionSummary } from "./session-projection";
+import {
+  projectWorkspaceSessionSummary,
+  projectWorkspaceSessionSummaryFromInfo,
+} from "./session-projection";
 import { resolveApiKey } from "./auth-store";
 import { resolveWorkspaceCwd } from "./workspace-context";
 
@@ -57,7 +61,7 @@ interface ManagedSession {
   model: string;
   thinkingLevel: ThinkingLevel;
   systemPrompt: string;
-  syncedMessages: Message[];
+  promptSyncCursor: PromptSyncCursor;
   session: AgentSession;
   authStorage: AuthStorage;
   modelRegistry: ModelRegistry;
@@ -93,6 +97,11 @@ interface VisibleStreamState {
   activeThinkingIndex: number | null;
 }
 
+interface PromptSyncCursor {
+  messageCount: number;
+  boundarySignature: string;
+}
+
 export class WorkspaceSessionCatalog {
   private activeSession: ManagedSession | null = null;
 
@@ -117,7 +126,22 @@ export class WorkspaceSessionCatalog {
         continue;
       }
 
-      summaries.set(info.id, this.buildSummaryFromSessionInfo(info));
+      summaries.set(
+        info.id,
+        {
+          ...projectWorkspaceSessionSummaryFromInfo({
+            id: info.id,
+            name: info.name,
+            firstMessage: info.firstMessage,
+            created: info.created,
+            modified: info.modified,
+            messageCount: info.messageCount,
+            path: info.path,
+            parentSessionPath: info.parentSessionPath,
+          }),
+          status: getInactiveSessionStatus(info.path),
+        },
+      );
     }
 
     if (this.activeSession && !summaries.has(this.activeSession.sessionId)) {
@@ -141,6 +165,14 @@ export class WorkspaceSessionCatalog {
     }
 
     return this.buildActiveSessionState(this.activeSession);
+  }
+
+  async getActiveSessionSummary(): Promise<ActiveSessionSummaryState | null> {
+    if (!this.activeSession) {
+      return null;
+    }
+
+    return this.buildActiveSessionSummary(this.activeSession);
   }
 
   async createSession(
@@ -438,7 +470,10 @@ export class WorkspaceSessionCatalog {
       return this.recreateActiveSession(session, { systemPrompt: options.systemPrompt });
     }
 
-    if (!canAppendLatestUserTurn(session.syncedMessages, options.messages)) {
+    if (
+      session.promptSyncCursor.messageCount > 0 &&
+      !canAppendLatestUserTurn(session.promptSyncCursor, options.messages)
+    ) {
       return this.recreateActiveSession(session, { systemPrompt: options.systemPrompt });
     }
 
@@ -502,35 +537,20 @@ export class WorkspaceSessionCatalog {
     });
   }
 
-  private buildSummaryFromSessionInfo(info: SessionInfo): WorkspaceSessionSummary {
-    const sessionManager = SessionManager.open(info.path, this.sessionDir);
-    const context = sessionManager.buildSessionContext();
-    return projectWorkspaceSessionSummary({
-      id: info.id,
-      name: info.name,
-      firstMessage: info.firstMessage,
-      createdAt: info.created,
-      updatedAt: info.modified,
-      messageCount: countVisibleMessages(context.messages),
-      messages: context.messages,
-      sessionFile: info.path,
-      parentSessionFile: info.parentSessionPath,
-      provider: context.model?.provider,
-      modelId: context.model?.modelId,
-      thinkingLevel: context.thinkingLevel,
-      isActive: false,
-      isStreaming: false,
-    });
-  }
-
-  private async buildActiveSessionState(session: ManagedSession): Promise<ActiveSessionState> {
+  private buildActiveSessionSummary(session: ManagedSession): ActiveSessionSummaryState {
     return {
       session: this.buildSummaryFromManagedSession(session),
-      messages: structuredClone(session.session.agent.state.messages),
       provider: session.provider,
       model: session.model,
       reasoningEffort: session.thinkingLevel,
       systemPrompt: session.systemPrompt,
+    };
+  }
+
+  private async buildActiveSessionState(session: ManagedSession): Promise<ActiveSessionState> {
+    return {
+      ...this.buildActiveSessionSummary(session),
+      messages: structuredClone(session.session.agent.state.messages),
     };
   }
 
@@ -616,7 +636,7 @@ export class WorkspaceSessionCatalog {
         });
       }
 
-      session.syncedMessages = cloneMessages([...options.messages, visibleMessage]);
+      updatePromptSyncCursor(session, [...options.messages, visibleMessage]);
       session.provider = options.provider;
       session.model = options.model;
       session.thinkingLevel = options.thinkingLevel;
@@ -643,7 +663,7 @@ export class WorkspaceSessionCatalog {
         error: failure,
       });
 
-      session.syncedMessages = cloneMessages([...options.messages, failure]);
+      updatePromptSyncCursor(session, [...options.messages, failure]);
       session.provider = options.provider;
       session.model = options.model;
       session.thinkingLevel = options.thinkingLevel;
@@ -666,7 +686,7 @@ export class WorkspaceSessionCatalog {
     try {
       appendMessagesToSession(
         session,
-        options.messages.slice(session.syncedMessages.length),
+        options.messages.slice(session.promptSyncCursor.messageCount),
       );
 
       if (scenario.delayBeforeStartMs && scenario.delayBeforeStartMs > 0) {
@@ -701,7 +721,7 @@ export class WorkspaceSessionCatalog {
           reason: aborted ? "aborted" : "error",
           error: failure,
         });
-        session.syncedMessages = cloneMessages([...options.messages, failure]);
+        updatePromptSyncCursor(session, [...options.messages, failure]);
         session.provider = options.provider;
         session.model = options.model;
         session.thinkingLevel = options.thinkingLevel;
@@ -729,7 +749,7 @@ export class WorkspaceSessionCatalog {
           reason: scenario.errorReason ?? "error",
           error: failure,
         });
-        session.syncedMessages = cloneMessages([...options.messages, failure]);
+        updatePromptSyncCursor(session, [...options.messages, failure]);
         session.provider = options.provider;
         session.model = options.model;
         session.thinkingLevel = options.thinkingLevel;
@@ -769,7 +789,7 @@ export class WorkspaceSessionCatalog {
         message: emittedMessage,
       });
 
-      session.syncedMessages = cloneMessages([...options.messages, ...persistedMessages]);
+      updatePromptSyncCursor(session, [...options.messages, ...persistedMessages]);
       session.provider = options.provider;
       session.model = options.model;
       session.thinkingLevel = options.thinkingLevel;
@@ -797,7 +817,7 @@ export class WorkspaceSessionCatalog {
         error: failure,
       });
 
-      session.syncedMessages = cloneMessages([...options.messages, failure]);
+      updatePromptSyncCursor(session, [...options.messages, failure]);
       session.provider = options.provider;
       session.model = options.model;
       session.thinkingLevel = options.thinkingLevel;
@@ -822,7 +842,7 @@ export class WorkspaceSessionCatalog {
     session.provider = activeModel?.provider ?? restoredDefaults.provider;
     session.model = activeModel?.id ?? restoredDefaults.model;
     session.thinkingLevel = restoredDefaults.thinkingLevel;
-    session.syncedMessages = convertToLlmMessages(session.session.agent.state.messages);
+    updatePromptSyncCursor(session, convertToLlmMessages(session.session.agent.state.messages));
   }
 
   private persistManagedSessionSnapshot(session: ManagedSession): void {
@@ -879,7 +899,7 @@ async function createManagedSession(
     model: activeModel.id,
     thinkingLevel: restoredDefaults.thinkingLevel,
     systemPrompt: options.systemPrompt,
-    syncedMessages: convertToLlmMessages(session.agent.state.messages),
+    promptSyncCursor: createPromptSyncCursor(convertToLlmMessages(session.agent.state.messages)),
     session,
     authStorage,
     modelRegistry,
@@ -902,6 +922,77 @@ function convertToLlmMessages(messages: AgentMessage[]): Message[] {
   });
 }
 
+function getInactiveSessionStatus(
+  sessionFile: string | undefined,
+): WorkspaceSessionSummary["status"] {
+  if (!sessionFile || !existsSync(sessionFile)) {
+    return "idle";
+  }
+
+  try {
+    const content = readFileSync(sessionFile, "utf8");
+    const lines = content.trim().split("\n");
+
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index]?.trim();
+      if (!line) {
+        continue;
+      }
+
+      let entry: unknown;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      const status = getStatusFromSessionEntry(entry);
+      if (status) {
+        return status;
+      }
+    }
+  } catch {
+    return "idle";
+  }
+
+  return "idle";
+}
+
+function getStatusFromSessionEntry(
+  entry: unknown,
+): WorkspaceSessionSummary["status"] | undefined {
+  if (!entry || typeof entry !== "object" || !("type" in entry) || entry.type !== "message") {
+    return undefined;
+  }
+
+  const message = "message" in entry ? entry.message : undefined;
+  if (!message || typeof message !== "object" || !("role" in message)) {
+    return undefined;
+  }
+
+  if (
+    message.role === "assistant" &&
+    "stopReason" in message &&
+    (message.stopReason === "error" || message.stopReason === "aborted")
+  ) {
+    return "error";
+  }
+
+  if (message.role === "toolResult" && "isError" in message && message.isError === true) {
+    return "error";
+  }
+
+  if (
+    message.role === "user" ||
+    message.role === "assistant" ||
+    message.role === "toolResult"
+  ) {
+    return "idle";
+  }
+
+  return undefined;
+}
+
 function syncAuthStorage(authStorage: AuthStorage): void {
   for (const provider of getProviders()) {
     const apiKey = resolveApiKey(provider);
@@ -913,7 +1004,7 @@ function syncAuthStorage(authStorage: AuthStorage): void {
   }
 }
 
-function resolveRestoredSessionDefaults(
+export function resolveRestoredSessionDefaults(
   sessionManager: SessionManager,
   overrides: {
     provider?: string;
@@ -925,16 +1016,43 @@ function resolveRestoredSessionDefaults(
   model: string;
   thinkingLevel: ThinkingLevel;
 } {
-  const context = sessionManager.buildSessionContext();
+  const metadata = readRestoredSessionMetadata(sessionManager);
 
   return {
-    provider: overrides.provider ?? context.model?.provider ?? DEFAULT_CHAT_SETTINGS.provider,
-    model: overrides.model ?? context.model?.modelId ?? DEFAULT_CHAT_SETTINGS.model,
-    thinkingLevel:
-      overrides.thinkingLevel ??
-      (context.thinkingLevel as ThinkingLevel | undefined) ??
-      (DEFAULT_CHAT_SETTINGS.reasoningEffort as ThinkingLevel),
+    provider: overrides.provider ?? metadata.provider ?? DEFAULT_CHAT_SETTINGS.provider,
+    model: overrides.model ?? metadata.model ?? DEFAULT_CHAT_SETTINGS.model,
+    thinkingLevel: overrides.thinkingLevel ?? metadata.thinkingLevel ?? DEFAULT_CHAT_SETTINGS.reasoningEffort,
   };
+}
+
+function readRestoredSessionMetadata(sessionManager: SessionManager): {
+  provider?: string;
+  model?: string;
+  thinkingLevel?: ThinkingLevel;
+} {
+  let provider: string | undefined;
+  let model: string | undefined;
+  let thinkingLevel: ThinkingLevel | undefined;
+
+  for (const entry of sessionManager.getBranch()) {
+    if (entry.type === "thinking_level_change") {
+      thinkingLevel = entry.thinkingLevel as ThinkingLevel;
+      continue;
+    }
+
+    if (entry.type === "model_change") {
+      provider = entry.provider;
+      model = entry.modelId;
+      continue;
+    }
+
+    if (entry.type === "message" && entry.message.role === "assistant") {
+      provider = entry.message.provider;
+      model = entry.message.model;
+    }
+  }
+
+  return { provider, model, thinkingLevel };
 }
 
 function getResolvedModel(provider: string, model: string) {
@@ -1167,14 +1285,11 @@ function buildPromptText(
   messages: Message[],
   systemPrompt?: string,
 ): string {
-  if (
-    session.syncedMessages.length === 0 ||
-    !canAppendLatestUserTurn(session.syncedMessages, messages)
-  ) {
+  if (!canAppendLatestUserTurn(session.promptSyncCursor, messages)) {
     return buildTranscript(systemPrompt, messages);
   }
 
-  const nextMessage = messages[session.syncedMessages.length];
+  const nextMessage = messages[session.promptSyncCursor.messageCount];
   if (!nextMessage || nextMessage.role !== "user") {
     return buildTranscript(systemPrompt, messages);
   }
@@ -1212,28 +1327,48 @@ function buildTranscript(systemPrompt: string | undefined, messages: Message[]):
   return parts.join("\n").trim();
 }
 
-function canAppendLatestUserTurn(previousMessages: Message[], currentMessages: Message[]): boolean {
-  if (previousMessages.length >= currentMessages.length) {
+function canAppendLatestUserTurn(cursor: PromptSyncCursor, currentMessages: Message[]): boolean {
+  if (cursor.messageCount === 0 || cursor.messageCount >= currentMessages.length) {
     return false;
   }
 
-  for (let index = 0; index < previousMessages.length; index += 1) {
-    const previousMessage = previousMessages[index];
-    const currentMessage = currentMessages[index];
-    if (!previousMessage || !currentMessage || !messagesEqual(previousMessage, currentMessage)) {
-      return false;
-    }
+  return (
+    currentMessages.length === cursor.messageCount + 1 &&
+    currentMessages.at(-1)?.role === "user" &&
+    hashPromptMessageSequence(currentMessages, cursor.messageCount) === cursor.boundarySignature
+  );
+}
+
+function updatePromptSyncCursor(session: ManagedSession, messages: Message[]): void {
+  session.promptSyncCursor = createPromptSyncCursor(messages);
+}
+
+function createPromptSyncCursor(messages: Message[]): PromptSyncCursor {
+  return {
+    messageCount: messages.length,
+    boundarySignature: hashPromptMessageSequence(messages),
+  };
+}
+
+function hashPromptMessageSequence(messages: Message[], limit = messages.length): string {
+  const hash = createHash("sha256");
+  for (let index = 0; index < limit; index += 1) {
+    hashPromptMessage(hash, messages[index]!);
+    hash.update("\u001e");
+  }
+  return hash.digest("hex");
+}
+
+function hashPromptMessage(hash: ReturnType<typeof createHash>, message: Message): void {
+  hash.update(message.role);
+  hash.update("\u001f");
+
+  if (message.role === "toolResult") {
+    hash.update(message.toolName);
+    hash.update("\u001f");
   }
 
-  return currentMessages.at(-1)?.role === "user";
-}
-
-function messagesEqual(left: Message, right: Message): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function cloneMessages(messages: Message[]): Message[] {
-  return structuredClone(messages);
+  hash.update(messageToPlainText(message).trim());
 }
 
 function messageToPlainText(message: Message): string {

@@ -160,11 +160,13 @@ function getTextResult(content: Array<{ type: string }> | undefined): string {
 export class ArtifactsController {
   private artifacts = new Map<string, ArtifactRecord>();
   private logsByFilename = new Map<string, string>();
+  private toolCallsById = new Map<string, ArtifactsParams>();
   private activeFilename: string | null = null;
   private listeners = new Set<ArtifactsListener>();
   private refreshGeneration = 0;
   private htmlLogsRefreshPromise: Promise<void> | null = null;
   private disposed = false;
+  private syncedMessageCount = 0;
 
   subscribe(listener: ArtifactsListener): () => void {
     this.listeners.add(listener);
@@ -212,84 +214,59 @@ export class ArtifactsController {
     };
   }
 
-  async reconstructFromMessages(messages: AgentMessage[]): Promise<void> {
-    const toolCalls = new Map<string, ArtifactsParams>();
-    const operations: ArtifactsParams[] = [];
-    const previousArtifacts = new Map(this.artifacts.entries());
-    const previousLogs = new Map(this.logsByFilename.entries());
+  // Sync committed transcript messages from a cursor; steady-state runtime ticks can advance
+  // the cursor without replaying the full history.
+  async syncFromMessages(
+    messages: AgentMessage[],
+    options: { replace?: boolean } = {},
+  ): Promise<void> {
+    const shouldReset = options.replace || messages.length < this.syncedMessageCount;
+    if (shouldReset) {
+      this.resetProjection();
+    }
 
-    for (const message of messages) {
+    const startIndex = this.syncedMessageCount;
+    if (startIndex >= messages.length) {
+      if (shouldReset) {
+        this.emit();
+      }
+      return;
+    }
+
+    const batch = messages.slice(startIndex);
+    let mutated = false;
+    let needsHtmlRefresh = false;
+
+    for (const message of batch) {
       if (message.role !== "assistant") continue;
       for (const block of message.content) {
         if (block.type !== "toolCall" || block.name !== "artifacts") continue;
         const params = parseArtifactsParams(block.arguments);
         if (params) {
-          toolCalls.set(block.id, params);
+          this.toolCallsById.set(block.id, params);
         }
       }
     }
 
-    for (const message of messages) {
-      if (message.role !== "toolResult" || message.toolName !== "artifacts" || message.isError)
-        continue;
-      const params = toolCalls.get(message.toolCallId);
-      if (!params || params.command === "get" || params.command === "logs") continue;
-      operations.push(params);
-    }
-
-    this.artifacts.clear();
-    this.logsByFilename.clear();
-    this.activeFilename = null;
-
-    const now = Date.now();
-    for (const params of operations) {
-      const previous = this.artifacts.get(params.filename);
-      switch (params.command) {
-        case "create":
-        case "rewrite": {
-          if (!params.content) break;
-          this.artifacts.set(params.filename, {
-            filename: params.filename,
-            content: params.content,
-            createdAt: previous?.createdAt ?? now,
-            updatedAt: now,
-          });
-          break;
-        }
-        case "update": {
-          if (!previous || params.old_str === undefined || params.new_str === undefined) break;
-          this.artifacts.set(params.filename, {
-            ...previous,
-            content: previous.content.replace(params.old_str, params.new_str),
-            updatedAt: now,
-          });
-          break;
-        }
-        case "delete":
-          this.artifacts.delete(params.filename);
-          this.logsByFilename.delete(params.filename);
-          break;
-        case "get":
-        case "logs":
-          break;
-      }
-    }
-
-    this.activeFilename =
-      this.artifacts.size > 0 ? (Array.from(this.artifacts.keys())[0] ?? null) : null;
-
-    let needsHtmlRefresh = false;
-    for (const artifact of this.artifacts.values()) {
-      if (getArtifactKind(artifact.filename) !== "html") continue;
-
-      const previousArtifact = previousArtifacts.get(artifact.filename);
-      const previousLog = previousLogs.get(artifact.filename);
-      if (previousArtifact?.content === artifact.content && previousLog !== undefined) {
-        this.logsByFilename.set(artifact.filename, previousLog);
+    for (const message of batch) {
+      if (message.role !== "toolResult" || message.toolName !== "artifacts" || message.isError) {
         continue;
       }
 
-      needsHtmlRefresh = true;
+      const params = this.toolCallsById.get(message.toolCallId);
+      if (!params) continue;
+      this.toolCallsById.delete(message.toolCallId);
+      if (params.command === "get" || params.command === "logs") continue;
+
+      const result = this.applyArtifactOperation(params);
+      mutated ||= result.mutated;
+      needsHtmlRefresh ||= result.needsHtmlRefresh;
+    }
+
+    this.syncedMessageCount = messages.length;
+    if (shouldReset) {
+      this.activeFilename =
+        this.artifacts.size > 0 ? (Array.from(this.artifacts.keys())[0] ?? null) : null;
     }
 
     if (needsHtmlRefresh) {
@@ -297,7 +274,9 @@ export class ArtifactsController {
       return;
     }
 
-    this.emit();
+    if (mutated || shouldReset) {
+      this.emit();
+    }
   }
 
   private emit(): void {
@@ -339,6 +318,81 @@ export class ArtifactsController {
     this.artifacts.set(filename, record);
     this.activeFilename = filename;
     return record;
+  }
+
+  private resetProjection(): void {
+    this.artifacts.clear();
+    this.logsByFilename.clear();
+    this.toolCallsById.clear();
+    this.activeFilename = null;
+    this.syncedMessageCount = 0;
+  }
+
+  private applyArtifactOperation(params: ArtifactsParams): {
+    mutated: boolean;
+    needsHtmlRefresh: boolean;
+  } {
+    const kind = getArtifactKind(params.filename);
+    const previous = this.artifacts.get(params.filename);
+    const previousContent = previous?.content;
+    const now = Date.now();
+
+    switch (params.command) {
+      case "create":
+      case "rewrite": {
+        if (!params.content) {
+          return { mutated: false, needsHtmlRefresh: false };
+        }
+
+        this.artifacts.set(params.filename, {
+          filename: params.filename,
+          content: params.content,
+          createdAt: previous?.createdAt ?? now,
+          updatedAt: now,
+        });
+
+        return {
+          mutated: true,
+          needsHtmlRefresh:
+            kind === "html" && (previousContent === undefined || previousContent !== params.content),
+        };
+      }
+      case "update": {
+        if (!previous || params.old_str === undefined || params.new_str === undefined) {
+          return { mutated: false, needsHtmlRefresh: false };
+        }
+
+        const nextContent = previous.content.replace(params.old_str, params.new_str);
+        this.artifacts.set(params.filename, {
+          ...previous,
+          content: nextContent,
+          updatedAt: now,
+        });
+
+        return {
+          mutated: true,
+          needsHtmlRefresh: kind === "html" && previousContent !== nextContent,
+        };
+      }
+      case "delete": {
+        if (!previous) {
+          return { mutated: false, needsHtmlRefresh: false };
+        }
+
+        this.artifacts.delete(params.filename);
+        this.logsByFilename.delete(params.filename);
+        this.activeFilename =
+          this.artifacts.size > 0 ? (Array.from(this.artifacts.keys())[0] ?? null) : null;
+
+        return {
+          mutated: true,
+          needsHtmlRefresh: kind === "html",
+        };
+      }
+      case "get":
+      case "logs":
+        return { mutated: false, needsHtmlRefresh: false };
+    }
   }
 
   private async createArtifact(params: ArtifactsParams, options: ExecuteOptions): Promise<string> {

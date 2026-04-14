@@ -5,21 +5,35 @@ const PREVIEW_LIMIT = 140;
 const TITLE_LIMIT = 72;
 const NEW_SESSION_TITLE = "New Session";
 
-export interface SessionProjectionSource {
+interface SessionSummaryBase {
   id: string;
-  name?: string;
-  firstMessage?: string;
   createdAt: Date | string;
-  updatedAt: Date | string;
   messageCount: number;
-  messages: AgentMessage[];
   sessionFile?: string;
   parentSessionFile?: string;
+}
+
+export interface ActiveSessionProjectionSource extends SessionSummaryBase {
+  name?: string;
+  firstMessage?: string;
+  updatedAt: Date | string;
+  messages: AgentMessage[];
   provider?: string;
   modelId?: string;
   thinkingLevel?: string;
   isActive?: boolean;
   isStreaming?: boolean;
+}
+
+export interface SessionInfoProjectionSource {
+  id: string;
+  name?: string;
+  firstMessage?: string;
+  created: Date | string;
+  modified: Date | string;
+  messageCount: number;
+  path?: string;
+  parentSessionPath?: string;
 }
 
 function normalizeText(value: string | undefined, limit: number): string {
@@ -108,7 +122,11 @@ export function getSessionParentId(parentSessionFile: string | undefined): strin
 }
 
 export function getSessionTitle(
-  source: Pick<SessionProjectionSource, "name" | "firstMessage" | "messages">,
+  source: {
+    name?: string;
+    firstMessage?: string;
+    messages?: AgentMessage[];
+  },
 ): string {
   const explicitName = normalizeText(source.name, TITLE_LIMIT);
   if (explicitName) {
@@ -116,7 +134,7 @@ export function getSessionTitle(
   }
 
   const firstUserMessage = normalizeText(
-    getFirstUserMessage(source.messages) || source.firstMessage,
+    (source.messages ? getFirstUserMessage(source.messages) : "") || source.firstMessage,
     TITLE_LIMIT,
   );
   if (firstUserMessage) {
@@ -127,14 +145,19 @@ export function getSessionTitle(
 }
 
 export function getSessionPreview(
-  source: Pick<SessionProjectionSource, "firstMessage" | "messages">,
+  source: {
+    firstMessage?: string;
+    messages?: AgentMessage[];
+  },
 ): string {
-  const latestText = normalizeText(
-    flattenMessageText(getLatestVisibleMessage(source.messages)),
-    PREVIEW_LIMIT,
-  );
-  if (latestText) {
-    return latestText;
+  if (source.messages) {
+    const latestText = normalizeText(
+      flattenMessageText(getLatestVisibleMessage(source.messages)),
+      PREVIEW_LIMIT,
+    );
+    if (latestText) {
+      return latestText;
+    }
   }
 
   const firstMessage = normalizeText(source.firstMessage, PREVIEW_LIMIT);
@@ -145,8 +168,59 @@ export function getSessionPreview(
   return "Waiting for first turn";
 }
 
+function buildWorkspaceSessionSummary(
+  source: SessionSummaryBase,
+  options: {
+    title: string;
+    preview: string;
+    status: SessionStatus;
+    updatedAt: string;
+    provider?: string;
+    modelId?: string;
+    thinkingLevel?: string;
+  },
+): WorkspaceSessionSummary {
+  const createdAt = new Date(source.createdAt);
+
+  return {
+    id: source.id,
+    title: options.title,
+    preview: options.preview,
+    createdAt: createdAt.toISOString(),
+    updatedAt: options.updatedAt,
+    messageCount: source.messageCount,
+    status: options.status,
+    sessionFile: source.sessionFile,
+    parentSessionId: getSessionParentId(source.parentSessionFile),
+    parentSessionFile: source.parentSessionFile,
+    modelId: options.modelId,
+    provider: options.provider,
+    thinkingLevel: options.thinkingLevel,
+  };
+}
+
+export function projectWorkspaceSessionSummaryFromInfo(
+  source: SessionInfoProjectionSource,
+): WorkspaceSessionSummary {
+  return buildWorkspaceSessionSummary(
+    {
+      id: source.id,
+      createdAt: source.created,
+      messageCount: source.messageCount,
+      sessionFile: source.path,
+      parentSessionFile: source.parentSessionPath,
+    },
+    {
+      title: getSessionTitle(source),
+      preview: getSessionPreview(source),
+      status: "idle",
+      updatedAt: new Date(source.modified).toISOString(),
+    },
+  );
+}
+
 export function deriveSessionStatus(
-  source: Pick<SessionProjectionSource, "messages" | "isActive" | "isStreaming">,
+  source: Pick<ActiveSessionProjectionSource, "messages" | "isActive" | "isStreaming">,
 ): SessionStatus {
   if (source.isActive && source.isStreaming) {
     return "running";
@@ -172,9 +246,8 @@ export function deriveSessionStatus(
 }
 
 export function projectWorkspaceSessionSummary(
-  source: SessionProjectionSource,
+  source: ActiveSessionProjectionSource,
 ): WorkspaceSessionSummary {
-  const createdAt = new Date(source.createdAt);
   const updatedAt = new Date(source.updatedAt);
   const latestMessageTimestamp = getLatestMessageTimestamp(source.messages);
   const latestUpdatedAt =
@@ -182,19 +255,13 @@ export function projectWorkspaceSessionSummary(
       ? new Date(latestMessageTimestamp)
       : updatedAt;
 
-  return {
-    id: source.id,
+  return buildWorkspaceSessionSummary(source, {
     title: getSessionTitle(source),
     preview: getSessionPreview(source),
-    createdAt: createdAt.toISOString(),
-    updatedAt: latestUpdatedAt.toISOString(),
-    messageCount: source.messageCount,
     status: deriveSessionStatus(source),
-    sessionFile: source.sessionFile,
-    parentSessionId: getSessionParentId(source.parentSessionFile),
-    parentSessionFile: source.parentSessionFile,
-    modelId: source.modelId,
+    updatedAt: latestUpdatedAt.toISOString(),
     provider: source.provider,
+    modelId: source.modelId,
     thinkingLevel: source.thinkingLevel,
-  };
+  });
 }

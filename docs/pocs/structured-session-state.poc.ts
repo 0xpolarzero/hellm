@@ -16,6 +16,8 @@ import { basename, dirname, join } from "node:path";
  * What this file is trying to prove:
  * - `pi` should stay the source of truth for transcript history.
  * - `svvy` should own explicit product state above that transcript.
+ * - the session-summary selector should serve sidebar and list views from
+ *   structured metadata rather than transcript-derived convenience reads.
  * - that product state should make threads, results, verification, workflows,
  *   and waiting state directly queryable.
  * - the lifecycle should survive save + reload.
@@ -160,10 +162,12 @@ type VerificationRecord = StructuredSessionState["verifications"][number];
 type WorkflowRecord = StructuredSessionState["workflows"][number];
 
 /**
- * These are selector-style reads, not raw storage reads.
+ * These are selector-style reads for sidebar/session-summary surfaces, not raw
+ * storage reads.
  *
- * This matters because the real product should query "what the UI needs" rather
- * than forcing the UI to understand storage layout.
+ * This matters because the real product should query "what the UI needs"
+ * rather than forcing the UI to understand storage layout or transcript
+ * materialization.
  */
 export type SessionView = {
   title: string;
@@ -400,7 +404,7 @@ export class StructuredSessionPoc {
   }
 
   /**
-   * Selector reads
+   * Selector reads for the metadata-first session summary path.
    */
   getSessionView(): SessionView {
     return {

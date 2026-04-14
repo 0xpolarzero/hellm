@@ -6,6 +6,7 @@ import {
   getSessionPreview,
   getSessionTitle,
   projectWorkspaceSessionSummary,
+  projectWorkspaceSessionSummaryFromInfo,
 } from "./session-projection";
 
 function userMessage(text: string, timestamp = Date.now()): AgentMessage {
@@ -120,5 +121,30 @@ describe("session projection", () => {
     expect(summary.parentSessionId).toBeUndefined();
     expect(summary.status).toBe("idle");
     expect(summary.updatedAt).toBe("2026-04-10T10:06:00.000Z");
+  });
+
+  it("projects inactive session summaries from metadata only", () => {
+    const summary = projectWorkspaceSessionSummaryFromInfo({
+      id: "session-2",
+      name: undefined,
+      firstMessage: "Trace the parser regression and fix it.",
+      created: "2026-04-10T10:00:00.000Z",
+      modified: "2026-04-10T10:05:00.000Z",
+      messageCount: 2,
+      path: "/tmp/session-2.jsonl",
+    });
+
+    expect(summary).toEqual({
+      id: "session-2",
+      title: "Trace the parser regression and fix it.",
+      preview: "Trace the parser regression and fix it.",
+      createdAt: "2026-04-10T10:00:00.000Z",
+      updatedAt: "2026-04-10T10:05:00.000Z",
+      messageCount: 2,
+      status: "idle",
+      sessionFile: "/tmp/session-2.jsonl",
+      parentSessionId: undefined,
+      parentSessionFile: undefined,
+    });
   });
 });

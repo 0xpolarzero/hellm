@@ -89,6 +89,14 @@ export interface ActiveSessionState {
   systemPrompt: string;
 }
 
+export interface ActiveSessionSummaryState {
+  session: WorkspaceSessionSummary;
+  provider: string;
+  model: string;
+  reasoningEffort: ReasoningEffort;
+  systemPrompt: string;
+}
+
 export interface ListSessionsResponse {
   activeSessionId?: string;
   sessions: WorkspaceSessionSummary[];
@@ -141,6 +149,10 @@ export interface ChatRPCSchema {
       getActiveSession: {
         params: undefined;
         response: ActiveSessionState | null;
+      };
+      getActiveSessionSummary: {
+        params: undefined;
+        response: ActiveSessionSummaryState | null;
       };
       createSession: {
         params: CreateSessionRequest;

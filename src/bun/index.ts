@@ -31,21 +31,7 @@ import {
   getE2eOAuthBehavior,
 } from "./e2e-control";
 import { refreshIfNeeded, startOAuthLogin, supportsOAuth } from "./oauth-login";
-import {
-  cancelAgentSession,
-  createWorkspaceSession,
-  deleteWorkspaceSession,
-  forkWorkspaceSession,
-  getActiveWorkspaceSession,
-  initPiHost,
-  listWorkspaceSessions,
-  openWorkspaceSession,
-  renameWorkspaceSession,
-  sendAgentPrompt,
-  setSessionModel,
-  setSessionThoughtLevel,
-} from "./pi-host";
-import type { SessionDefaults } from "./session-catalog";
+import { WorkspaceSessionCatalog, type SessionDefaults } from "./session-catalog";
 import { createSvvyToolBridge } from "./tool-bridge";
 import { resolveWorkspaceCwd } from "./workspace-context";
 
@@ -78,6 +64,7 @@ const PREFERRED_MODEL_FRAGMENTS = [
 ];
 let resolvedDefaults: ChatDefaults | null = null;
 let mainWindow: BrowserWindow | null = null;
+const workspaceSessionCatalog = new WorkspaceSessionCatalog(resolveWorkspaceCwd());
 
 function loadEnvFile(filePath: string): void {
   if (!existsSync(filePath)) return;
@@ -321,13 +308,13 @@ function getE2eRendererSeed(): {
 
 const svvyToolBridge = createSvvyToolBridge({
   defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
-  getActiveWorkspaceSession,
+  getActiveWorkspaceSession: () => workspaceSessionCatalog.getActiveSession(),
   getDefaultChatSettings,
   getMainWindow: () => mainWindow,
   getWorkspaceCwd: resolveWorkspaceCwd,
   getWorkspaceBranch,
   listProviderAuthSummaries,
-  listWorkspaceSessions,
+  listWorkspaceSessions: () => workspaceSessionCatalog.listSessions(),
 });
 const recordBridgeEvent = svvyToolBridge.recordEvent;
 const recordBridgeLog = svvyToolBridge.recordLog;
@@ -369,11 +356,15 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       listSessions: async () => {
         assertBootstrapReady();
-        return await listWorkspaceSessions();
+        return await workspaceSessionCatalog.listSessions();
       },
       getActiveSession: async () => {
         assertBootstrapReady();
-        return await getActiveWorkspaceSession();
+        return await workspaceSessionCatalog.getActiveSession();
+      },
+      getActiveSessionSummary: async () => {
+        assertBootstrapReady();
+        return await workspaceSessionCatalog.getActiveSessionSummary();
       },
       createSession: async ({
         title,
@@ -383,7 +374,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         title?: string;
       }) => {
         await applyE2eMutationBehavior("createSession");
-        const session = await createWorkspaceSession(
+        const session = await workspaceSessionCatalog.createSession(
           { title, parentSessionId },
           getSessionDefaults(),
         );
@@ -400,7 +391,10 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       openSession: async ({ sessionId }: { sessionId: string }) => {
         await applyE2eMutationBehavior("openSession");
-        const session = await openWorkspaceSession(sessionId, DEFAULT_SYSTEM_PROMPT);
+        const session = await workspaceSessionCatalog.openSession(
+          sessionId,
+          DEFAULT_SYSTEM_PROMPT,
+        );
         recordBridgeEvent("session.opened", {
           sessionId,
         });
@@ -408,7 +402,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       renameSession: async ({ sessionId, title }: { sessionId: string; title: string }) => {
         await applyE2eMutationBehavior("renameSession");
-        const result = await renameWorkspaceSession(sessionId, title);
+        const result = await workspaceSessionCatalog.renameSession(sessionId, title);
         recordBridgeEvent("session.renamed", {
           sessionId,
           title,
@@ -417,7 +411,10 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       forkSession: async ({ sessionId, title }: { sessionId: string; title?: string }) => {
         await applyE2eMutationBehavior("forkSession");
-        const session = await forkWorkspaceSession({ sessionId, title }, getSessionDefaults());
+        const session = await workspaceSessionCatalog.forkSession(
+          { sessionId, title },
+          getSessionDefaults(),
+        );
         recordBridgeEvent("session.forked", {
           sessionId,
           targetSessionId: session.session.id,
@@ -425,13 +422,15 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return session;
       },
-      deleteSession: async ({ sessionId }: { sessionId: string }) =>
-        applyE2eMutationBehavior("deleteSession")
-          .then(() => deleteWorkspaceSession(sessionId, getSessionDefaults()))
-          .then((result) => {
-          recordBridgeEvent("session.deleted", { sessionId });
-          return result;
-        }),
+      deleteSession: async ({ sessionId }: { sessionId: string }) => {
+        await applyE2eMutationBehavior("deleteSession");
+        const result = await workspaceSessionCatalog.deleteSession(
+          sessionId,
+          getSessionDefaults(),
+        );
+        recordBridgeEvent("session.deleted", { sessionId });
+        return result;
+      },
       sendPrompt: async (payload: SendPromptRequest): Promise<{ sessionId: string }> => {
         const resolved = resolveSendDefaults(payload);
 
@@ -461,7 +460,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           requestedSessionId: payload.sessionId ?? null,
         });
 
-        const session = await sendAgentPrompt({
+        const session = await workspaceSessionCatalog.sendPrompt({
           sessionId: payload.sessionId,
           provider: resolved.provider,
           model: model.id,
@@ -512,7 +511,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return { sessionId };
       },
       cancelPrompt: async ({ sessionId }: { sessionId: string }): Promise<{ ok: boolean }> => {
-        await cancelAgentSession(sessionId);
+        await workspaceSessionCatalog.cancelPrompt(sessionId);
         recordBridgeEvent("prompt.cancel.requested", { sessionId });
         return { ok: true };
       },
@@ -523,7 +522,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         sessionId: string;
         model: string;
       }): Promise<SessionMutationResponse> => {
-        const result = await setSessionModel(sessionId, model);
+        const result = await workspaceSessionCatalog.setSessionModel(sessionId, model);
         if (result.ok) {
           recordBridgeEvent("session.model.changed", { model, sessionId });
         } else {
@@ -546,7 +545,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         sessionId: string;
         level: ReasoningEffort;
       }): Promise<SessionMutationResponse> => {
-        const result = await setSessionThoughtLevel(sessionId, level);
+        const result = await workspaceSessionCatalog.setSessionThoughtLevel(sessionId, level);
         if (result.ok) {
           recordBridgeEvent("session.reasoning.changed", { level, sessionId });
         } else {
@@ -666,8 +665,6 @@ const appMenu: Parameters<typeof ApplicationMenu.setApplicationMenu>[0] = [
 ApplicationMenu.setApplicationMenu(appMenu);
 
 loadRuntimeEnv();
-
-await initPiHost();
 
 const url = await getMainViewUrl();
 const e2eHeadless = isEnvFlagEnabled("SVVY_E2E_HEADLESS");

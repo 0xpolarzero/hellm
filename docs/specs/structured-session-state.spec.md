@@ -45,6 +45,7 @@ If this spec and the POC ever disagree, that is a bug in the spec and should be 
 - Use one workspace-scoped SQLite database in the real implementation.
 - Use a small append-only domain event log for meaningful lifecycle transitions.
 - Use explicit selectors for read models instead of making the UI reconstruct state from storage details.
+- Treat session-summary and sidebar projections as the primary read model for list and navigation surfaces.
 
 ## Modeling Principle
 
@@ -449,6 +450,14 @@ The adopted session summary selector returns:
 - `counts`
 - `threadIdsByStatus`
 
+### Session Summary / Sidebar Projection
+
+The session summary used by sidebar and navigation surfaces is the canonical metadata-first read shape for this slice.
+
+It should be maintained incrementally from structured writes and must not be rebuilt by opening full session context or replaying transcript history.
+
+The projection is allowed to expose the fields the product needs for compact lists, including title, preview, status, counts, and recency metadata.
+
 ### Derived Fields
 
 The following are derived, not stored:
@@ -633,6 +642,7 @@ The read side should expose operations equivalent to the POC:
 `pi` remains canonical for transcript history.
 
 Structured state should not depend on transcript replay once structured writes exist.
+Transcript replay is not an allowed mechanism for session-summary or list-view updates once structured writes exist for those surfaces.
 
 The `pi` metadata mirrored in the structured state exists for product querying convenience only.
 

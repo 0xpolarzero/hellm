@@ -1,36 +1,63 @@
 <script lang="ts">
-	import type { AgentMessage } from "@mariozechner/pi-agent-core";
-	import type { AssistantMessage, Message, ToolCall, ToolResultMessage, UserMessage } from "@mariozechner/pi-ai";
-	import { tick } from "svelte";
-	import {
-		buildArtifactResultsMap,
-		buildArtifactsToolCallMap,
-		getArtifactCommandCopy,
-		parseArtifactsParams,
-	} from "./artifacts";
+	import type { AssistantMessage, ToolResultMessage, UserMessage } from "@mariozechner/pi-ai";
+	import { onMount, tick } from "svelte";
+	import { getArtifactCommandCopy, parseArtifactsParams } from "./artifacts";
 	import { formatTimestamp, formatUsage } from "./chat-format";
+	import type { ConversationProjection } from "./conversation-projection";
+	import {
+		compensateTranscriptScrollForMeasuredRow,
+		deriveTranscriptUserScrollState,
+	} from "./transcript-scroll";
+	import { TranscriptVirtualizer } from "./transcript-virtualizer";
 	import Button from "./ui/Button.svelte";
 
+	const DEFAULT_TRANSCRIPT_ROW_GAP = 16;
+	const MIN_VIRTUALIZED_MESSAGES = 40;
+
 	type Props = {
-		messages: AgentMessage[];
-		streamMessage?: AgentMessage;
+		conversation: ConversationProjection;
+		sessionId?: string;
+		streamMessage?: AssistantMessage;
 		pendingToolCalls: ReadonlySet<string>;
 		isStreaming: boolean;
 		onOpenArtifact: (filename: string) => void;
 	};
 
-	let { messages, streamMessage, pendingToolCalls, isStreaming, onOpenArtifact }: Props = $props();
+	let { conversation, sessionId, streamMessage, pendingToolCalls, isStreaming, onOpenArtifact }: Props = $props();
 
 	let scroller = $state<HTMLDivElement | null>(null);
+	let thread = $state<HTMLDivElement | null>(null);
+	let transcriptScrollTop = $state(0);
+	let transcriptViewportHeight = $state(0);
+	let transcriptRowGap = $state(DEFAULT_TRANSCRIPT_ROW_GAP);
+	let transcriptStickToBottom = $state(true);
+	let transcriptAnchorIndex = $state(0);
+	let transcriptRevision = $state(0);
+	let transcriptWindow = $state({
+		startIndex: 0,
+		endIndex: 0,
+		totalHeight: 0,
+	});
+	let transcriptSessionId: string | undefined = undefined;
+	let transcriptSessionInitialized = false;
+
 	let autoScroll = $state(true);
-
-	function isStandardMessage(message: AgentMessage): message is Message {
-		return message.role === "user" || message.role === "assistant" || message.role === "toolResult";
-	}
-
-	function isAssistantMessage(message: AgentMessage | undefined): message is AssistantMessage {
-		return !!message && message.role === "assistant";
-	}
+	const virtualizer = new TranscriptVirtualizer({
+		estimatedRowHeight: 132,
+		rowGapPx: DEFAULT_TRANSCRIPT_ROW_GAP,
+	});
+	const shouldVirtualize = $derived(
+		conversation.visibleMessages.length >= MIN_VIRTUALIZED_MESSAGES,
+	);
+	const windowedMessages = $derived(
+		shouldVirtualize
+			? conversation.visibleMessages.slice(
+					transcriptWindow.startIndex,
+					transcriptWindow.endIndex,
+				)
+			: conversation.visibleMessages,
+	);
+	const streamingAssistant = $derived(streamMessage ?? null);
 
 	function userLines(message: UserMessage): string[] {
 		if (typeof message.content === "string") return [message.content];
@@ -46,38 +73,154 @@
 	}
 
 	function resultDetailsText(message: ToolResultMessage): string {
-		return artifactResultTextById.get(message.toolCallId) || toolResultText(message);
+		return conversation.artifactResultTextById.get(message.toolCallId) || toolResultText(message);
 	}
 
-	function toolStatus(toolCallId: string, toolResultsById: Map<string, ToolResultMessage>): "pending" | "error" | "done" {
-		const result = toolResultsById.get(toolCallId);
+	function toolStatus(toolCallId: string): "pending" | "error" | "done" {
+		const result = conversation.toolResultsById.get(toolCallId);
 		if (result?.isError) return "error";
 		if (result) return "done";
-		return pendingToolCalls.has(toolCallId) ? "pending" : "pending";
+		return "pending";
 	}
-
-	const visibleMessages = $derived(messages.filter(isStandardMessage));
-	const toolCallsById = $derived(buildArtifactsToolCallMap(messages));
-	const artifactResultTextById = $derived(buildArtifactResultsMap(messages));
-	const toolResultsById = $derived.by(() => {
-		const results = new Map<string, ToolResultMessage>();
-		for (const message of visibleMessages) {
-			if (message.role === "toolResult") {
-				results.set(message.toolCallId, message);
-			}
-		}
-		return results;
-	});
-	const streamingAssistant = $derived(isAssistantMessage(streamMessage) ? streamMessage : null);
 
 	function handleScroll() {
 		if (!scroller) return;
-		const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-		autoScroll = distanceFromBottom < 48;
+		transcriptScrollTop = scroller.scrollTop;
+		const scrollState = deriveTranscriptUserScrollState({
+			scrollTop: scroller.scrollTop,
+			scrollHeight: scroller.scrollHeight,
+			clientHeight: scroller.clientHeight,
+			shouldVirtualize,
+			currentAnchorIndex: transcriptAnchorIndex,
+			getIndexAtOffset: (offset) => virtualizer.getIndexAtOffset(offset),
+		});
+		transcriptStickToBottom = scrollState.stickToBottom;
+		autoScroll = scrollState.autoScroll;
+		transcriptAnchorIndex = scrollState.anchorIndex;
 	}
 
+	function syncViewportMetrics() {
+		if (!scroller) return;
+		transcriptViewportHeight = scroller.clientHeight;
+		if (thread) {
+			const rowGap = parseFloat(getComputedStyle(thread).rowGap || "16");
+			if (Number.isFinite(rowGap) && rowGap > 0) {
+				transcriptRowGap = rowGap;
+			}
+		}
+	}
+
+	function updateWindowState() {
+		if (!shouldVirtualize) {
+			transcriptWindow = {
+				startIndex: 0,
+				endIndex: conversation.visibleMessages.length,
+				totalHeight: 0,
+			};
+			return;
+		}
+
+		virtualizer.setRowGap(transcriptRowGap);
+		virtualizer.setItemCount(conversation.visibleMessages.length);
+		transcriptWindow = virtualizer.getWindow(transcriptScrollTop, transcriptViewportHeight);
+	}
+
+	function recordRowHeight(index: number, height: number) {
+		if (!shouldVirtualize) return;
+
+		const delta = virtualizer.recordHeight(index, height);
+		if (!delta) return;
+
+		transcriptRevision += 1;
+		if (!scroller || transcriptStickToBottom) return;
+		const compensatedScrollTop = compensateTranscriptScrollForMeasuredRow({
+			scrollTop: scroller.scrollTop,
+			delta,
+			index,
+			anchorIndex: transcriptAnchorIndex,
+			stickToBottom: transcriptStickToBottom,
+		});
+		if (compensatedScrollTop !== null) {
+			// Keep the last user-selected anchor stable while rows above it settle.
+			scroller.scrollTop = compensatedScrollTop;
+			transcriptScrollTop = compensatedScrollTop;
+		}
+	}
+
+	function trackRowHeight(node: HTMLElement, index: number | undefined) {
+		if (typeof index !== "number") {
+			return {
+				destroy() {},
+			};
+		}
+
+		const measure = () => recordRowHeight(index, node.getBoundingClientRect().height);
+
+		if (typeof ResizeObserver === "undefined") {
+			measure();
+			return {
+				destroy() {},
+			};
+		}
+
+		const observer = new ResizeObserver(measure);
+		observer.observe(node);
+		measure();
+
+		return {
+			destroy() {
+				observer.disconnect();
+			},
+		};
+	}
+
+	onMount(() => {
+		syncViewportMetrics();
+
+		const observer = new ResizeObserver(() => {
+			syncViewportMetrics();
+		});
+
+		if (scroller) observer.observe(scroller);
+		if (thread) observer.observe(thread);
+
+		return () => {
+			observer.disconnect();
+		};
+	});
+
 	$effect(() => {
-		void visibleMessages;
+		void sessionId;
+
+		if (transcriptSessionInitialized && sessionId === transcriptSessionId) return;
+		transcriptSessionInitialized = true;
+		transcriptSessionId = sessionId;
+		virtualizer.reset();
+		virtualizer.setRowGap(transcriptRowGap);
+		virtualizer.setItemCount(conversation.visibleMessages.length);
+		transcriptScrollTop = 0;
+		transcriptAnchorIndex = 0;
+		transcriptStickToBottom = true;
+		autoScroll = true;
+		transcriptWindow = virtualizer.getWindow(0, transcriptViewportHeight);
+	}
+	);
+
+	$effect(() => {
+		void conversation.visibleMessages.length;
+		void shouldVirtualize;
+		void transcriptViewportHeight;
+		void transcriptRowGap;
+		void transcriptScrollTop;
+		void transcriptRevision;
+
+		updateWindowState();
+	}
+	);
+
+	$effect(() => {
+		void conversation.visibleMessages.length;
+		void conversation.toolResultsById;
 		void streamingAssistant;
 		void pendingToolCalls;
 		void isStreaming;
@@ -86,15 +229,29 @@
 		void tick().then(() => {
 			if (!scroller) return;
 			scroller.scrollTop = scroller.scrollHeight;
+			transcriptScrollTop = scroller.scrollTop;
 		});
 	});
 </script>
 
 <div bind:this={scroller} class="chat-transcript" onscroll={handleScroll}>
-	<div class="chat-thread">
-		{#each visibleMessages as message, index (`${message.role}:${message.timestamp}:${index}`)}
-			{#if message.role === "user"}
-				<article class="message-row user-row">
+	<div bind:this={thread} class="chat-thread">
+		<div
+			class:chat-thread-virtual={shouldVirtualize}
+			style={shouldVirtualize ? `height: ${transcriptWindow.totalHeight}px;` : undefined}
+		>
+			{#each windowedMessages as message, index (`${message.role}:${message.timestamp}:${transcriptWindow.startIndex + index}`)}
+				{@const rowIndex = shouldVirtualize ? transcriptWindow.startIndex + index : index}
+				{#if message.role === "user"}
+					<article
+						class={`message-row ${shouldVirtualize ? "virtual-row " : ""}user-row`.trim()}
+						use:trackRowHeight={shouldVirtualize ? rowIndex : undefined}
+						style={
+							shouldVirtualize
+								? `transform: translate3d(0, ${virtualizer.getOffsetForIndex(rowIndex)}px, 0);`
+								: undefined
+						}
+					>
 					<div class="message-bubble user-bubble">
 						<header>
 							<span>You</span>
@@ -105,8 +262,16 @@
 						{/each}
 					</div>
 				</article>
-			{:else if message.role === "assistant"}
-				<article class="message-row assistant-row">
+				{:else if message.role === "assistant"}
+					<article
+						class={`message-row ${shouldVirtualize ? "virtual-row " : ""}assistant-row`.trim()}
+						use:trackRowHeight={shouldVirtualize ? rowIndex : undefined}
+						style={
+							shouldVirtualize
+								? `transform: translate3d(0, ${virtualizer.getOffsetForIndex(rowIndex)}px, 0);`
+								: undefined
+						}
+					>
 					<div class="message-bubble assistant-bubble">
 						<header>
 							<div>
@@ -131,7 +296,7 @@
 								</details>
 							{:else if block.type === "toolCall"}
 								{@const params = parseArtifactsParams(block.arguments)}
-								{@const status = toolStatus(block.id, toolResultsById)}
+								{@const status = toolStatus(block.id)}
 								<div class={`tool-card ${status}`.trim()}>
 									<div class="tool-card-copy">
 										<strong>
@@ -156,11 +321,19 @@
 								</div>
 							{/if}
 						{/each}
-					</div>
-				</article>
-			{:else if message.role === "toolResult"}
-				{@const params = toolCallsById.get(message.toolCallId)}
-				<article class="message-row tool-row">
+						</div>
+					</article>
+				{:else if message.role === "toolResult"}
+					{@const params = conversation.toolCallsById.get(message.toolCallId)}
+					<article
+						class={`message-row ${shouldVirtualize ? "virtual-row " : ""}tool-row`.trim()}
+						use:trackRowHeight={shouldVirtualize ? rowIndex : undefined}
+						style={
+							shouldVirtualize
+								? `transform: translate3d(0, ${virtualizer.getOffsetForIndex(rowIndex)}px, 0);`
+								: undefined
+						}
+					>
 					<div class={`tool-result ${message.isError ? "error" : ""}`.trim()}>
 						<div class="tool-result-header">
 							<div>
@@ -186,10 +359,11 @@
 								<pre>{resultDetailsText(message)}</pre>
 							</details>
 						{/if}
-					</div>
-				</article>
-			{/if}
-		{/each}
+						</div>
+					</article>
+				{/if}
+			{/each}
+		</div>
 
 		{#if streamingAssistant}
 			<article class="message-row assistant-row">
@@ -250,9 +424,21 @@
 		padding: 1.15rem clamp(1rem, 3vw, 2rem) 1.35rem;
 	}
 
+	.chat-thread-virtual {
+		position: relative;
+		width: 100%;
+		contain: layout paint size;
+	}
+
 	.message-row {
 		display: flex;
 		width: 100%;
+	}
+
+	.virtual-row {
+		position: absolute;
+		inset-inline: 0;
+		will-change: transform;
 	}
 
 	.user-row {

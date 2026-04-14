@@ -577,9 +577,10 @@ The app must support:
 - no silent re-titling after the first real user turn has passed or after manual rename
 - deterministic task-based titles for delegated subagents and workflows instead of a separate naming pass
 - branching or forking session history
-- listing and filtering sessions
+- listing and filtering sessions from metadata-first summaries
 - grouping sessions with flat folder labels
 - restoring persisted pane layout and pane occupancy from durable workspace state
+- list, resume, and restore flows are metadata-first and only load transcript or detail state on demand
 - preserving durable session state across app restarts
 - reconstructing visible product state and session runtime profile overrides from durable session data
 
@@ -596,6 +597,7 @@ The app must show, within a single session surface:
 - verification summaries
 - blocked or waiting work
 - workflow activity
+- session-summary and sidebar projections for sessions, threads, episodes, verification, and workflows from structured state and incremental projections, not transcript replay
 - the current main runtime profile with expandable per-agent profile detail
 - explicit context-budget indicators for the current surface and delegated work surfaces
 - current workspace and worktree context
@@ -730,7 +732,9 @@ The desktop app is primary, but headless execution is a real product surface, no
 
 - pi-backed sessions remain the top-level user-facing session substrate
 - `svvy` extends that substrate with structured product state
+- session summaries, sidebar rows, navigation state, pane indicators, and restart recovery must come from durable metadata or projections, not transcript replay
 - product state must not depend on replaying the raw transcript for every decision
+- transcript and detail payloads are loaded lazily when the user opens or expands a surface that needs them
 - artifacts may live on disk and be referenced from durable product state
 - Smithers may keep its own workflow-run state, but that state is subordinate to the top-level session and episode model
 

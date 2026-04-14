@@ -3,12 +3,16 @@
   import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
   import PanelLeftOpenIcon from "@lucide/svelte/icons/panel-left-open";
   import SettingsIcon from "@lucide/svelte/icons/settings";
-  import type { AssistantMessage, Model, Usage } from "@mariozechner/pi-ai";
+  import type { AssistantMessage, Model } from "@mariozechner/pi-ai";
   import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
   import ArtifactsPanel from "./ArtifactsPanel.svelte";
   import { ArtifactsController, type ArtifactsSnapshot } from "./artifacts";
   import ChatComposer from "./ChatComposer.svelte";
   import { formatTimestamp, formatUsage } from "./chat-format";
+  import {
+    projectConversation,
+    projectConversationSummary,
+  } from "./conversation-projection";
   import type { WorkspaceSessionSummary } from "./chat-rpc";
   import type { PromptHistoryEntry } from "./prompt-history";
   import {
@@ -36,21 +40,6 @@
   };
 
   let { runtime, onOpenSettings }: Props = $props();
-
-  const ZERO_USAGE: Usage = {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 0,
-    },
-  };
 
   let controller = $state<ArtifactsController | null>(null);
   let messages = $state<ChatRuntime["agent"]["state"]["messages"]>([]);
@@ -81,11 +70,15 @@
   let renameValue = $state("");
   let deleteTarget = $state<WorkspaceSessionSummary | null>(null);
   let sidebarResizeHandle = $state<HTMLDivElement | null>(null);
+  let artifactSyncSessionId: string | undefined = undefined;
+  let artifactSyncMessageCount = 0;
 
   let sidebarResizePointerId: number | null = null;
   let sidebarResizeOriginX = 0;
   let sidebarResizeOriginWidth = DEFAULT_SIDEBAR_WIDTH;
 
+  const conversation = $derived(projectConversation(messages));
+  const conversationSummary = $derived(projectConversationSummary(conversation, streamMessage));
   const artifactCount = $derived(artifactsSnapshot.artifacts.length);
   const hasArtifacts = $derived(artifactCount > 0);
   const showDesktopSplit = $derived(windowWidth >= DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts);
@@ -93,51 +86,10 @@
   const effectiveSidebarWidth = $derived(clampSidebarWidth(sidebarWidth, windowWidth));
   const visibleSessions = $derived(sortVisibleSessionsByRecency(sessions));
   const currentSession = $derived(sessions.find((session) => session.id === activeSessionId) ?? null);
-  const totalUsage = $derived.by(() =>
-    messages
-      .filter((message): message is AssistantMessage => message.role === "assistant")
-      .reduce(
-        (usage, message) => ({
-          input: usage.input + message.usage.input,
-          output: usage.output + message.usage.output,
-          cacheRead: usage.cacheRead + message.usage.cacheRead,
-          cacheWrite: usage.cacheWrite + message.usage.cacheWrite,
-          totalTokens: usage.totalTokens + message.usage.totalTokens,
-          cost: {
-            input: usage.cost.input + message.usage.cost.input,
-            output: usage.cost.output + message.usage.cost.output,
-            cacheRead: usage.cost.cacheRead + message.usage.cost.cacheRead,
-            cacheWrite: usage.cost.cacheWrite + message.usage.cost.cacheWrite,
-            total: usage.cost.total + message.usage.cost.total,
-          },
-        }),
-        ZERO_USAGE,
-      ),
-  );
-  const usageText = $derived(formatUsage(totalUsage));
-  const messageCount = $derived(
-    messages.filter((message) => message.role === "user" || message.role === "assistant").length + (streamMessage ? 1 : 0),
-  );
-  const toolCallCount = $derived.by(() => {
-    let count = 0;
-    for (const message of messages) {
-      if (message.role !== "assistant") continue;
-      count += message.content.filter((block) => block.type === "toolCall").length;
-    }
-    if (streamMessage) {
-      count += streamMessage.content.filter((block) => block.type === "toolCall").length;
-    }
-    return count;
-  });
-  const lastActivity = $derived.by(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (message.role === "user" || message.role === "assistant" || message.role === "toolResult") {
-        return message.timestamp;
-      }
-    }
-    return null;
-  });
+  const usageText = $derived(formatUsage(conversation.usage));
+  const messageCount = $derived(conversationSummary.messageCount);
+  const toolCallCount = $derived(conversationSummary.toolCallCount);
+  const lastActivity = $derived(conversation.lastActivity);
   const lastActivityLabel = $derived(lastActivity ? `Last activity ${formatTimestamp(lastActivity)}` : "Waiting for first turn");
   const composerErrorMessage = $derived(
     errorMessage ?? (currentSession?.status === "error" ? currentSession.preview : undefined),
@@ -146,6 +98,7 @@
   const workspaceStatusTone = $derived(composerErrorMessage ? "danger" : isStreaming ? "warning" : "neutral");
 
   async function openModelSelector() {
+    if (!currentModel) return;
     showModelPicker = true;
     allowedProviders = [currentModel.provider];
     try {
@@ -200,9 +153,23 @@
     }
   }
 
-  async function rebuildArtifacts() {
+  async function syncArtifactsFromRuntime(force = false) {
     if (!controller) return;
-    await controller.reconstructFromMessages(runtime.agent.state.messages);
+
+    const sessionId = runtime.agent.sessionId;
+    const messageCount = runtime.agent.state.messages.length;
+    const sessionChanged = artifactSyncSessionId !== sessionId;
+    const cursorWentBackwards = messageCount < artifactSyncMessageCount;
+
+    if (force || sessionChanged || cursorWentBackwards) {
+      await controller.syncFromMessages(runtime.agent.state.messages, { replace: true });
+      artifactSyncSessionId = sessionId;
+      artifactSyncMessageCount = messageCount;
+      return;
+    }
+
+    await controller.syncFromMessages(runtime.agent.state.messages);
+    artifactSyncMessageCount = messageCount;
   }
 
   function toggleSidebarVisibility() {
@@ -251,7 +218,7 @@
       await action();
       syncRuntimeState();
       syncAgentState();
-      await rebuildArtifacts();
+      await syncArtifactsFromRuntime();
     } catch (error) {
       sidebarError = error instanceof Error ? error.message : "Session update failed.";
     } finally {
@@ -373,12 +340,12 @@
     const unsubscribeRuntime = runtime.subscribe(() => {
       syncRuntimeState();
       syncAgentState();
-      void rebuildArtifacts();
+      void syncArtifactsFromRuntime();
     });
     const unsubscribeArtifacts = nextController.subscribe((snapshot) => {
       syncArtifacts(snapshot);
     });
-    void nextController.reconstructFromMessages(runtime.agent.state.messages);
+    void syncArtifactsFromRuntime(true);
 
     return () => {
       unsubscribeAgent();
@@ -478,7 +445,8 @@
       <section class="chat-pane" id="conversation">
         <div class="chat-pane-shell">
           <ChatTranscript
-            {messages}
+            {conversation}
+            sessionId={runtime.agent.sessionId}
             streamMessage={streamMessage ?? undefined}
             {pendingToolCalls}
             {isStreaming}

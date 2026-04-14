@@ -8,8 +8,8 @@ import {
 } from "@mariozechner/pi-ai";
 import type {
   ActiveSessionState,
+  ActiveSessionSummaryState,
   CreateSessionRequest,
-  ListSessionsResponse,
   SendPromptRequest,
   SessionMutationResponse,
   WorkspaceSessionSummary,
@@ -57,6 +57,7 @@ export interface ChatRuntimeRpcClient {
     getWorkspaceInfo: typeof rpc.request.getWorkspaceInfo;
     listSessions: typeof rpc.request.listSessions;
     getActiveSession: typeof rpc.request.getActiveSession;
+    getActiveSessionSummary: typeof rpc.request.getActiveSessionSummary;
     createSession: typeof rpc.request.createSession;
     openSession: typeof rpc.request.openSession;
     renameSession: typeof rpc.request.renameSession;
@@ -140,15 +141,10 @@ function convertToLlm(messages: AgentMessage[]): Message[] {
   });
 }
 
-function updateSessionCatalogState(
-  target: {
-    activeSessionId?: string;
-    sessions: WorkspaceSessionSummary[];
-  },
-  response: ListSessionsResponse,
-): void {
-  target.activeSessionId = response.activeSessionId;
-  target.sessions = response.sessions;
+function countVisibleMessages(messages: AgentMessage[]): number {
+  return messages.filter((message) => {
+    return message.role === "user" || message.role === "assistant" || message.role === "toolResult";
+  }).length;
 }
 
 function applyActiveSessionState(agent: Agent, payload: ActiveSessionState): void {
@@ -165,6 +161,52 @@ function applyActiveSessionState(agent: Agent, payload: ActiveSessionState): voi
   agent.setThinkingLevel(payload.reasoningEffort);
   agent.replaceMessages(payload.messages);
   agent.setTools(currentTools);
+}
+
+function compareWorkspaceSessionSummaries(
+  left: WorkspaceSessionSummary,
+  right: WorkspaceSessionSummary,
+): number {
+  return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+}
+
+function upsertWorkspaceSessionSummary(
+  sessions: WorkspaceSessionSummary[],
+  summary: WorkspaceSessionSummary,
+): WorkspaceSessionSummary[] {
+  const nextSessions = sessions.filter((session) => session.id !== summary.id);
+  nextSessions.push(summary);
+  return nextSessions.toSorted(compareWorkspaceSessionSummaries);
+}
+
+function renameWorkspaceSessionSummary(
+  sessions: WorkspaceSessionSummary[],
+  sessionId: string,
+  title: string,
+): WorkspaceSessionSummary[] {
+  const updatedAt = new Date().toISOString();
+  let updated = false;
+  const nextSessions = sessions.map((session) => {
+    if (session.id !== sessionId) {
+      return session;
+    }
+
+    updated = true;
+    return {
+      ...session,
+      title,
+      updatedAt,
+    };
+  });
+
+  return updated ? nextSessions.toSorted(compareWorkspaceSessionSummaries) : sessions;
+}
+
+function removeWorkspaceSessionSummary(
+  sessions: WorkspaceSessionSummary[],
+  sessionId: string,
+): WorkspaceSessionSummary[] {
+  return sessions.filter((session) => session.id !== sessionId);
 }
 
 export async function createChatRuntime(
@@ -246,37 +288,65 @@ export async function createChatRuntime(
     }
   };
 
+  const applyActiveSessionSnapshot = (payload: ActiveSessionState): void => {
+    applyActiveSessionState(agent, payload);
+    activeSessionId = payload.session.id;
+    sessions = upsertWorkspaceSessionSummary(sessions, payload.session);
+  };
+
+  const applyActiveSessionSummary = (payload: ActiveSessionSummaryState): void => {
+    activeSessionId = payload.session.id;
+    agent.sessionId = payload.session.id;
+    agent.setSystemPrompt(payload.systemPrompt);
+    agent.setModel(
+      getModel(
+        payload.provider as Parameters<typeof getModel>[0],
+        payload.model as Parameters<typeof getModel>[1],
+      ),
+    );
+    agent.setThinkingLevel(payload.reasoningEffort);
+    sessions = upsertWorkspaceSessionSummary(sessions, payload.session);
+  };
+
   const refreshSessions = async (): Promise<WorkspaceSessionSummary[]> => {
     const response = await rpcClient.request.listSessions();
-    updateSessionCatalogState({ activeSessionId, sessions }, response);
     activeSessionId = response.activeSessionId;
     sessions = response.sessions;
     emit();
     return sessions;
   };
 
-  const applySessionMutation = async (response: SessionMutationResponse): Promise<void> => {
+  const applySessionMutation = async (
+    response: SessionMutationResponse,
+    mutation?: { sessionId: string; title?: string; deleted?: boolean },
+  ): Promise<void> => {
     if (response.activeSession) {
-      applyActiveSessionState(agent, response.activeSession);
-      activeSessionId = response.activeSession.session.id;
+      applyActiveSessionSnapshot(response.activeSession);
     } else if (response.activeSessionId && response.activeSessionId !== activeSessionId) {
       const nextActive = await rpcClient.request.getActiveSession();
       if (nextActive) {
-        applyActiveSessionState(agent, nextActive);
-        activeSessionId = nextActive.session.id;
+        applyActiveSessionSnapshot(nextActive);
       }
     }
-    await refreshSessions();
+
+    if (mutation?.title && !mutation.deleted) {
+      sessions = renameWorkspaceSessionSummary(sessions, mutation.sessionId, mutation.title);
+    }
+
+    if (mutation?.deleted) {
+      sessions = removeWorkspaceSessionSummary(sessions, mutation.sessionId);
+    }
+
+    emit();
   };
 
   const openActiveSession = async (payload: ActiveSessionState): Promise<void> => {
-    applyActiveSessionState(agent, payload);
-    activeSessionId = payload.session.id;
-    await refreshSessions();
+    applyActiveSessionSnapshot(payload);
+    emit();
   };
 
-  const syncActiveSessionState = async (sessionId?: string): Promise<void> => {
-    const nextActive = await rpcClient.request.getActiveSession();
+  const syncSettledActiveSessionState = async (sessionId?: string): Promise<void> => {
+    const nextActive = await rpcClient.request.getActiveSessionSummary();
     if (!nextActive) {
       await refreshSessions();
       return;
@@ -287,10 +357,25 @@ export async function createChatRuntime(
       return;
     }
 
-    applyActiveSessionState(agent, nextActive);
-    activeSessionId = nextActive.session.id;
+    if (nextActive.session.messageCount > countVisibleMessages(agent.state.messages)) {
+      const nextSnapshot = await rpcClient.request.getActiveSession();
+      if (!nextSnapshot) {
+        await refreshSessions();
+        return;
+      }
+
+      if (sessionId && nextSnapshot.session.id !== sessionId) {
+        await refreshSessions();
+        return;
+      }
+
+      applyActiveSessionSnapshot(nextSnapshot);
+      emit();
+      return;
+    }
+
+    applyActiveSessionSummary(nextActive);
     emit();
-    await refreshSessions();
   };
 
   const streamFromRpc: StreamFn = async (model, context, streamOptions) => {
@@ -341,7 +426,7 @@ export async function createChatRuntime(
       if (payload.event.type === "done" || payload.event.type === "error") {
         completed = true;
         cleanup();
-        void syncActiveSessionState(streamSessionId);
+        void syncSettledActiveSessionState(streamSessionId);
       }
     };
 
@@ -428,29 +513,23 @@ export async function createChatRuntime(
     void syncSessionThoughtLevel(level);
   };
 
-  updateSessionCatalogState({ activeSessionId, sessions }, initialCatalog);
   activeSessionId = initialCatalog.activeSessionId;
   sessions = initialCatalog.sessions;
 
   const currentActiveSession = await rpcClient.request.getActiveSession();
   if (currentActiveSession) {
-    applyActiveSessionState(agent, currentActiveSession);
-    activeSessionId = currentActiveSession.session.id;
+    applyActiveSessionSnapshot(currentActiveSession);
   } else if (initialCatalog.sessions.length > 0) {
     const [firstSession] = initialCatalog.sessions;
     if (!firstSession) {
       throw new Error("Expected an initial session to open.");
     }
     const initialSession = await rpcClient.request.openSession({ sessionId: firstSession.id });
-    applyActiveSessionState(agent, initialSession);
-    activeSessionId = initialSession.session.id;
+    applyActiveSessionSnapshot(initialSession);
   } else {
     const createdSession = await rpcClient.request.createSession({});
-    applyActiveSessionState(agent, createdSession);
-    activeSessionId = createdSession.session.id;
+    applyActiveSessionSnapshot(createdSession);
   }
-
-  await refreshSessions();
 
   const runtime: ChatRuntime = {
     agent,
@@ -487,7 +566,7 @@ export async function createChatRuntime(
     },
     renameSession: async (sessionId, title) => {
       const response = await rpcClient.request.renameSession({ sessionId, title });
-      await applySessionMutation(response);
+      await applySessionMutation(response, { sessionId, title });
     },
     forkSession: async (sessionId, title) => {
       const session = await rpcClient.request.forkSession({ sessionId, title });
@@ -495,7 +574,7 @@ export async function createChatRuntime(
     },
     deleteSession: async (sessionId) => {
       const response = await rpcClient.request.deleteSession({ sessionId });
-      await applySessionMutation(response);
+      await applySessionMutation(response, { sessionId, deleted: true });
     },
     syncProviderAuth,
     requireProviderAccess,

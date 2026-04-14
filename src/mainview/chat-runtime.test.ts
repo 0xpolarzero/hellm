@@ -4,6 +4,7 @@ import type { AssistantMessage, AssistantMessageEvent, ToolCall, ToolResultMessa
 import type { ChatStorage, CustomProvider } from "./chat-storage";
 import type {
   ActiveSessionState,
+  ActiveSessionSummaryState,
   SessionMutationResponse,
   WorkspaceSessionSummary,
 } from "./chat-rpc";
@@ -84,7 +85,9 @@ function createSummary(
   title: string,
   preview: string,
   reasoning: ActiveSessionState["reasoningEffort"] = "medium",
+  options: { includeModelMetadata?: boolean } = {},
 ): WorkspaceSessionSummary {
+  const includeModelMetadata = options.includeModelMetadata ?? true;
   return {
     id,
     title,
@@ -93,9 +96,13 @@ function createSummary(
     updatedAt: "2026-04-10T10:05:00.000Z",
     messageCount: 2,
     status: "idle",
-    provider: "openai",
-    modelId: "gpt-4o",
-    thinkingLevel: reasoning,
+    ...(includeModelMetadata
+      ? {
+          provider: "openai",
+          modelId: "gpt-4o",
+          thinkingLevel: reasoning,
+        }
+      : {}),
   };
 }
 
@@ -128,9 +135,28 @@ function cloneActiveSession(session: ActiveSessionState): ActiveSessionState {
   return structuredClone(session);
 }
 
-function createFakeRpc(initialSessions: ActiveSessionState[]): {
+function cloneActiveSessionSummary(session: ActiveSessionState): ActiveSessionSummaryState {
+  const { messages: _messages, ...summary } = cloneActiveSession(session);
+  return summary;
+}
+
+function stripSummaryMetadata(summary: WorkspaceSessionSummary): WorkspaceSessionSummary {
+  const { provider: _provider, modelId: _modelId, thinkingLevel: _thinkingLevel, ...rest } =
+    summary;
+  return { ...rest };
+}
+
+function createFakeRpc(
+  initialSessions: ActiveSessionState[],
+  options: { metadataOnlyListSessions?: boolean } = {},
+): {
   client: ChatRuntimeRpcClient;
   sentPromptSessions: string[];
+  requestCounts: {
+    listSessions: number;
+    getActiveSession: number;
+    getActiveSessionSummary: number;
+  };
 } {
   const listeners = new Set<
     (payload: { streamId: string; event: AssistantMessageEvent }) => void
@@ -140,13 +166,23 @@ function createFakeRpc(initialSessions: ActiveSessionState[]): {
   );
   let activeSessionId = initialSessions[0]?.session.id;
   const sentPromptSessions: string[] = [];
+  const requestCounts = {
+    listSessions: 0,
+    getActiveSession: 0,
+    getActiveSessionSummary: 0,
+  };
 
   const listSessions = () => ({
     activeSessionId,
-    sessions: Array.from(sessionsById.values()).map((session) => structuredClone(session.session)),
+    sessions: Array.from(sessionsById.values()).map((session) =>
+      options.metadataOnlyListSessions
+        ? stripSummaryMetadata(session.session)
+        : structuredClone(session.session),
+    ),
   });
 
   const getActiveSession = () => {
+    requestCounts.getActiveSession += 1;
     return activeSessionId ? cloneActiveSession(sessionsById.get(activeSessionId)!) : null;
   };
 
@@ -165,8 +201,15 @@ function createFakeRpc(initialSessions: ActiveSessionState[]): {
         workspaceLabel: "svvy",
         branch: "main",
       }),
-      listSessions: async () => listSessions(),
+      listSessions: async () => {
+        requestCounts.listSessions += 1;
+        return listSessions();
+      },
       getActiveSession: async () => getActiveSession(),
+      getActiveSessionSummary: async () => {
+        requestCounts.getActiveSessionSummary += 1;
+        return activeSessionId ? cloneActiveSessionSummary(sessionsById.get(activeSessionId)!) : null;
+      },
       createSession: async ({ title }: { title?: string }) => {
         const id = `session-${sessionsById.size + 1}`;
         const created = createActiveSession(id, title ?? "New Session", [], "medium");
@@ -276,10 +319,20 @@ function createFakeRpc(initialSessions: ActiveSessionState[]): {
     },
   };
 
-  return { client, sentPromptSessions };
+  return { client, sentPromptSessions, requestCounts };
 }
 
-function createFakeRpcWithToolUse(initialSession: ActiveSessionState): ChatRuntimeRpcClient {
+function createFakeRpcWithToolUse(
+  initialSession: ActiveSessionState,
+  options: { summaryMode?: "summary" | "null" | "mismatch" } = {},
+): {
+  client: ChatRuntimeRpcClient;
+  requestCounts: {
+    listSessions: number;
+    getActiveSession: number;
+    getActiveSessionSummary: number;
+  };
+} {
   const listeners = new Set<
     (payload: { streamId: string; event: AssistantMessageEvent }) => void
   >();
@@ -290,8 +343,13 @@ function createFakeRpcWithToolUse(initialSession: ActiveSessionState): ChatRunti
   });
   const finalAssistant = assistantMessage("Tool use finished.");
   const session = cloneActiveSession(initialSession);
+  const requestCounts = {
+    listSessions: 0,
+    getActiveSession: 0,
+    getActiveSessionSummary: 0,
+  };
 
-  return {
+  const client: ChatRuntimeRpcClient = {
     request: {
       getDefaults: async () => ({ provider: "openai", model: "gpt-4o", reasoningEffort: "medium" }),
       getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
@@ -300,11 +358,33 @@ function createFakeRpcWithToolUse(initialSession: ActiveSessionState): ChatRunti
         workspaceLabel: "svvy",
         branch: "main",
       }),
-      listSessions: async () => ({
-        activeSessionId: session.session.id,
-        sessions: [structuredClone(session.session)],
-      }),
-      getActiveSession: async () => cloneActiveSession(session),
+      listSessions: async () => {
+        requestCounts.listSessions += 1;
+        return {
+          activeSessionId: session.session.id,
+          sessions: [structuredClone(session.session)],
+        };
+      },
+      getActiveSession: async () => {
+        requestCounts.getActiveSession += 1;
+        return cloneActiveSession(session);
+      },
+      getActiveSessionSummary: async () => {
+        requestCounts.getActiveSessionSummary += 1;
+        if (options.summaryMode === "null") {
+          return null;
+        }
+        if (options.summaryMode === "mismatch") {
+          return {
+            ...cloneActiveSessionSummary(session),
+            session: {
+              ...cloneActiveSessionSummary(session).session,
+              id: `${session.session.id}-stale`,
+            },
+          };
+        }
+        return cloneActiveSessionSummary(session);
+      },
       createSession: async () => cloneActiveSession(session),
       openSession: async () => cloneActiveSession(session),
       renameSession: async () => ({
@@ -379,6 +459,8 @@ function createFakeRpcWithToolUse(initialSession: ActiveSessionState): ChatRunti
       );
     },
   };
+
+  return { client, requestCounts };
 }
 
 function createMemoryStorage(): ChatStorage {
@@ -424,7 +506,7 @@ function createMemoryStorage(): ChatStorage {
 describe("createChatRuntime", () => {
   it("hydrates sessions, switches the active transcript, and keeps prompts scoped to the selected session", async () => {
     const { createChatRuntime } = await import("./chat-runtime");
-    const { client, sentPromptSessions } = createFakeRpc([
+    const { client, sentPromptSessions, requestCounts } = createFakeRpc([
       createActiveSession(
         "session-1",
         "First",
@@ -443,10 +525,12 @@ describe("createChatRuntime", () => {
 
     expect(runtime.activeSessionId).toBe("session-1");
     expect(runtime.sessions).toHaveLength(2);
+    expect(requestCounts.listSessions).toBe(1);
 
     await runtime.openSession("session-2");
     expect(runtime.activeSessionId).toBe("session-2");
     expect(runtime.agent.state.thinkingLevel).toBe("high");
+    expect(requestCounts.listSessions).toBe(1);
     expect(
       runtime.agent.state.messages.some(
         (message) =>
@@ -459,12 +543,21 @@ describe("createChatRuntime", () => {
     await runtime.agent.prompt("continue");
     await runtime.agent.waitForIdle();
     expect(sentPromptSessions.at(-1)).toBe("session-2");
+    expect(requestCounts.listSessions).toBe(1);
+    expect(requestCounts.getActiveSession).toBe(2);
+    expect(requestCounts.getActiveSessionSummary).toBe(1);
+    expect(
+      runtime.sessions.find((session) => session.id === "session-2")?.preview,
+    ).toBe("Session-specific reply");
 
     await runtime.renameSession("session-2", "Renamed");
     expect(runtime.sessions.find((session) => session.id === "session-2")?.title).toBe("Renamed");
+    expect(requestCounts.listSessions).toBe(1);
 
     await runtime.deleteSession("session-2");
     expect(runtime.activeSessionId).toBe("session-1");
+    expect(runtime.sessions.some((session) => session.id === "session-2")).toBe(false);
+    expect(requestCounts.listSessions).toBe(1);
     expect(
       runtime.agent.state.messages.some(
         (message) =>
@@ -477,28 +570,122 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("refreshes the active session after a prompt settles so tool results appear in local state", async () => {
+  it("hydrates when sidebar summaries are metadata-only", async () => {
     const { createChatRuntime } = await import("./chat-runtime");
-    const client = createFakeRpcWithToolUse(
+    const { client, requestCounts } = createFakeRpc(
+      [
+        createActiveSession(
+          "session-1",
+          "First",
+          [userMessage("first"), assistantMessage("first reply")],
+          "medium",
+        ),
+        createActiveSession(
+          "session-2",
+          "Second",
+          [userMessage("second"), assistantMessage("second reply")],
+          "high",
+        ),
+      ],
+      { metadataOnlyListSessions: true },
+    );
+
+    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
+
+    expect(requestCounts.listSessions).toBe(1);
+    expect(
+      runtime.sessions.find((session) => session.id === "session-2") &&
+        runtime.sessions.find((session) => session.id === "session-2")?.provider === undefined &&
+        runtime.sessions.find((session) => session.id === "session-2")?.modelId === undefined &&
+        runtime.sessions.find((session) => session.id === "session-2")?.thinkingLevel === undefined,
+    ).toBe(true);
+
+    await runtime.openSession("session-2");
+    expect(runtime.activeSessionId).toBe("session-2");
+    expect(runtime.agent.state.thinkingLevel).toBe("high");
+    expect(requestCounts.listSessions).toBe(1);
+    expect(
+      runtime.agent.state.messages.some(
+        (message) =>
+          message.role === "assistant" &&
+          message.content[0]?.type === "text" &&
+          message.content[0].text === "second reply",
+      ),
+    ).toBe(true);
+
+    runtime.dispose();
+  });
+
+  it("keeps the active session in sync after a prompt settles without relisting the sidebar", async () => {
+    const { createChatRuntime } = await import("./chat-runtime");
+    const { client, requestCounts } = createFakeRpcWithToolUse(
       createActiveSession("session-1", "First", [userMessage("first")], "medium"),
     );
 
     const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
+    expect(requestCounts.listSessions).toBe(1);
+    expect(requestCounts.getActiveSessionSummary).toBe(0);
     await runtime.agent.prompt("use a tool");
     await runtime.agent.waitForIdle();
+    expect(requestCounts.listSessions).toBe(1);
+    expect(requestCounts.getActiveSessionSummary).toBe(1);
+    expect(runtime.sessions.find((session) => session.id === "session-1")?.preview).toBe(
+      "Tool use finished.",
+    );
+    expect(requestCounts.getActiveSession).toBe(2);
 
     expect(
       runtime.agent.state.messages.some(
-        (message) => message.role === "toolResult" && message.toolName === "artifacts",
+        (message) =>
+          message.role === "user" &&
+          typeof message.content !== "string" &&
+          message.content.some((block) => block.type === "text" && block.text === "use a tool"),
+      ),
+    ).toBe(true);
+    expect(
+      runtime.agent.state.messages.some(
+        (message) =>
+          message.role === "toolResult" &&
+          message.toolName === "artifacts" &&
+          message.content[0]?.type === "text" &&
+          message.content[0].text === "Created file tool-use.txt",
       ),
     ).toBe(true);
     expect(
       runtime.agent.state.messages.some(
         (message) =>
           message.role === "assistant" &&
-          message.content.some((block) => block.type === "toolCall"),
+          typeof message.content !== "string" &&
+          message.content.some(
+            (block) => block.type === "text" && block.text === "Tool use finished.",
+          ),
       ),
     ).toBe(true);
+
+    runtime.dispose();
+  });
+
+  it("falls back to relisting the sidebar when the summary sync is missing or stale", async () => {
+    const { createChatRuntime } = await import("./chat-runtime");
+    const { client, requestCounts } = createFakeRpcWithToolUse(
+      createActiveSession("session-1", "First", [userMessage("first")], "medium"),
+      { summaryMode: "null" },
+    );
+
+    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
+    expect(requestCounts.listSessions).toBe(1);
+    expect(requestCounts.getActiveSession).toBe(1);
+    expect(requestCounts.getActiveSessionSummary).toBe(0);
+
+    await runtime.agent.prompt("use a tool");
+    await runtime.agent.waitForIdle();
+
+    expect(requestCounts.getActiveSessionSummary).toBe(1);
+    expect(requestCounts.getActiveSession).toBe(1);
+    expect(requestCounts.listSessions).toBe(2);
+    expect(runtime.sessions.find((session) => session.id === "session-1")?.preview).toBe(
+      "Tool use finished.",
+    );
 
     runtime.dispose();
   });

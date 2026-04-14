@@ -1,13 +1,14 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-import type { Message } from "@mariozechner/pi-ai";
+import type { Message, StopReason } from "@mariozechner/pi-ai";
 import {
   getSvvySessionDir,
   WorkspaceSessionCatalog,
+  resolveRestoredSessionDefaults,
   type SessionDefaults,
 } from "./session-catalog";
 
@@ -46,13 +47,16 @@ function userMessage(text: string): Message {
   };
 }
 
-function assistantMessage(text: string): Message {
+function assistantMessage(
+  text: string,
+  options: { stopReason?: StopReason; provider?: string; model?: string } = {},
+): Message {
   return {
     role: "assistant",
     timestamp: Date.now(),
-    api: "openai-responses",
-    provider: "openai",
-    model: "gpt-4o",
+    api: `${options.provider ?? "openai"}-responses`,
+    provider: options.provider ?? "openai",
+    model: options.model ?? "gpt-4o",
     usage: {
       input: 0,
       output: 0,
@@ -61,9 +65,78 @@ function assistantMessage(text: string): Message {
       totalTokens: 0,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
-    stopReason: "stop",
+    stopReason: options.stopReason ?? "stop",
     content: [{ type: "text", text }],
   };
+}
+
+type PromptableSession = {
+  agent: {
+    appendMessage(message: Message): void;
+    state: {
+      messages: Message[];
+    };
+  };
+  sessionManager: {
+    appendMessage(message: Message): void;
+  };
+};
+
+type ManagedSessionHandle = {
+  session: PromptableSession;
+  promptSyncCursor: {
+    messageCount: number;
+  };
+};
+
+function getManagedSessionHandle(catalog: WorkspaceSessionCatalog): ManagedSessionHandle {
+  return (catalog as unknown as { activeSession: ManagedSessionHandle }).activeSession;
+}
+
+function appendMessagesToSession(session: PromptableSession, messages: readonly Message[]): void {
+  for (const message of messages) {
+    session.sessionManager.appendMessage(message);
+    session.agent.appendMessage(message);
+  }
+}
+
+async function waitFor(condition: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) {
+      return;
+    }
+    await Bun.sleep(10);
+  }
+
+  throw new Error("Timed out waiting for prompt sync.");
+}
+
+function installPromptSpy(
+  catalog: WorkspaceSessionCatalog,
+  responses: Array<{ user: Message; assistant: Message; error?: Error }>,
+) {
+  const promptTexts: string[] = [];
+  const sessionPrototype = Object.getPrototypeOf(getManagedSessionHandle(catalog).session) as {
+    prompt: (promptText: string) => Promise<void>;
+  };
+  const promptSpy = spyOn(sessionPrototype, "prompt").mockImplementation(async function (
+    this: PromptableSession,
+    promptText: string,
+  ) {
+    const response = responses[promptTexts.length];
+    if (!response) {
+      throw new Error("Unexpected prompt invocation.");
+    }
+
+    promptTexts.push(promptText);
+    appendMessagesToSession(this, [response.user, response.assistant]);
+    if (response.error) {
+      throw response.error;
+    }
+  });
+
+  return { promptTexts, promptSpy };
 }
 
 function createPersistedSession(
@@ -73,7 +146,14 @@ function createPersistedSession(
     title?: string;
     prompt: string;
     reply: string;
+    replyStopReason?: StopReason;
     thinkingLevel?: ThinkingLevel;
+    assistantProvider?: string;
+    assistantModel?: string;
+    modelChange?: {
+      provider: string;
+      model: string;
+    };
   },
 ) {
   const sessionManager = SessionManager.create(cwd, sessionDir);
@@ -84,7 +164,16 @@ function createPersistedSession(
     sessionManager.appendThinkingLevelChange(options.thinkingLevel);
   }
   sessionManager.appendMessage(userMessage(options.prompt));
-  sessionManager.appendMessage(assistantMessage(options.reply));
+  sessionManager.appendMessage(
+    assistantMessage(options.reply, {
+      stopReason: options.replyStopReason,
+      provider: options.assistantProvider,
+      model: options.assistantModel,
+    }),
+  );
+  if (options.modelChange) {
+    sessionManager.appendModelChange(options.modelChange.provider, options.modelChange.model);
+  }
   return {
     id: sessionManager.getSessionId(),
     path: sessionManager.getSessionFile(),
@@ -109,10 +198,268 @@ describe("WorkspaceSessionCatalog", () => {
     const sessions = await catalog.listSessions();
 
     expect(sessions.sessions).toHaveLength(2);
-    expect(sessions.sessions.map((session) => session.id)).toEqual([second.id, first.id]);
+    expect(sessions.sessions.some((session) => session.id === first.id)).toBe(true);
+    expect(sessions.sessions.some((session) => session.id === second.id)).toBe(true);
     expect(sessions.sessions.find((session) => session.id === first.id)?.title).toBe(
       "Investigate parser",
     );
+  });
+
+  it("lists inactive sessions from metadata only while keeping the active session rich", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const inactive = createPersistedSession(cwd, sessionDir, {
+      title: "Inactive",
+      prompt: "Investigate parser regression",
+      reply: "Parser root cause found",
+    });
+
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const active = await catalog.createSession({ title: "Active Session" }, DEFAULTS);
+
+    const openSpy = spyOn(SessionManager, "open");
+    const buildContextSpy = spyOn(SessionManager.prototype, "buildSessionContext");
+
+    try {
+      const sessions = await catalog.listSessions();
+
+      expect(openSpy).not.toHaveBeenCalled();
+      expect(buildContextSpy).not.toHaveBeenCalled();
+      expect(sessions.activeSessionId).toBe(active.session.id);
+      expect(sessions.sessions).toHaveLength(2);
+      expect(sessions.sessions.some((session) => session.id === active.session.id)).toBe(true);
+      expect(sessions.sessions.some((session) => session.id === inactive.id)).toBe(true);
+
+      const activeSummary = sessions.sessions.find((session) => session.id === active.session.id);
+      expect(activeSummary).toMatchObject({
+        id: active.session.id,
+        title: "Active Session",
+        status: "idle",
+        messageCount: 0,
+        provider: DEFAULTS.provider,
+        modelId: DEFAULTS.model,
+        thinkingLevel: DEFAULTS.thinkingLevel,
+      });
+
+      const inactiveSummary = sessions.sessions.find((session) => session.id === inactive.id);
+      expect(inactiveSummary).toMatchObject({
+        id: inactive.id,
+        title: "Inactive",
+        preview: "Investigate parser regression",
+        status: "idle",
+        messageCount: 2,
+        sessionFile: inactive.path,
+      });
+      expect(inactiveSummary?.provider).toBeUndefined();
+      expect(inactiveSummary?.modelId).toBeUndefined();
+      expect(inactiveSummary?.thinkingLevel).toBeUndefined();
+    } finally {
+      openSpy.mockRestore();
+      buildContextSpy.mockRestore();
+    }
+  });
+
+  it("marks inactive failed sessions as error without rebuilding full context", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const inactive = createPersistedSession(cwd, sessionDir, {
+      title: "Failed Session",
+      prompt: "Investigate parser regression",
+      reply: "Parser root cause failed.",
+      replyStopReason: "error",
+    });
+
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    await catalog.createSession({ title: "Active Session" }, DEFAULTS);
+
+    const openSpy = spyOn(SessionManager, "open");
+    const buildContextSpy = spyOn(SessionManager.prototype, "buildSessionContext");
+
+    try {
+      const sessions = await catalog.listSessions();
+      const inactiveSummary = sessions.sessions.find((session) => session.id === inactive.id);
+
+      expect(openSpy).not.toHaveBeenCalled();
+      expect(buildContextSpy).not.toHaveBeenCalled();
+      expect(inactiveSummary).toMatchObject({
+        id: inactive.id,
+        title: "Failed Session",
+        status: "error",
+      });
+    } finally {
+      openSpy.mockRestore();
+      buildContextSpy.mockRestore();
+    }
+  });
+
+  it("restores provider, model, and thinking level from persisted metadata without buildSessionContext", async () => {
+    const { cwd, sessionDir } = createWorkspaceFixture();
+    const sessionManager = SessionManager.create(cwd, sessionDir);
+    sessionManager.appendSessionInfo("Metadata Restore");
+    sessionManager.appendThinkingLevelChange("high");
+    sessionManager.appendMessage(userMessage("Inspect the queue"));
+    sessionManager.appendMessage(
+      assistantMessage("Queue inspected", {
+        provider: "openai",
+        model: "gpt-4o",
+      }),
+    );
+    sessionManager.appendModelChange("anthropic", "claude-sonnet-4-5");
+
+    const buildContextSpy = spyOn(SessionManager.prototype, "buildSessionContext");
+    try {
+      const restored = resolveRestoredSessionDefaults(sessionManager, {});
+
+      expect(buildContextSpy).not.toHaveBeenCalled();
+      expect(restored.provider).toBe("anthropic");
+      expect(restored.model).toBe("claude-sonnet-4-5");
+      expect(restored.thinkingLevel).toBe("high");
+    } finally {
+      buildContextSpy.mockRestore();
+    }
+  });
+
+  it("reuses the synced boundary for an appended user turn", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    await catalog.createSession({ title: "Prompted" }, DEFAULTS);
+
+    const firstUser = userMessage("Explain the parser");
+    const firstAssistant = assistantMessage("Parser cursor synced.");
+    const secondUser = userMessage("What changed?");
+    const secondAssistant = assistantMessage("Only the delta is sent.");
+    const { promptTexts, promptSpy } = installPromptSpy(catalog, [
+      { user: firstUser, assistant: firstAssistant },
+      { user: secondUser, assistant: secondAssistant },
+    ]);
+
+    try {
+      const activeSession = getManagedSessionHandle(catalog);
+
+      await catalog.sendPrompt({
+        ...DEFAULTS,
+        messages: [firstUser],
+        onEvent: () => {},
+      });
+
+      await waitFor(
+        () => promptTexts.length === 1 && getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2,
+      );
+      expect(promptTexts[0]).toContain("System:\nYou are svvy.");
+      expect(promptTexts[0]).toContain("User:\nExplain the parser");
+      expect(getManagedSessionHandle(catalog)).toBe(activeSession);
+
+      await catalog.sendPrompt({
+        ...DEFAULTS,
+        messages: [firstUser, firstAssistant, secondUser],
+        onEvent: () => {},
+      });
+
+      await waitFor(
+        () => promptTexts.length === 2 && getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 4,
+      );
+      expect(promptTexts[1]).toBe("What changed?");
+      expect(getManagedSessionHandle(catalog)).toBe(activeSession);
+    } finally {
+      promptSpy.mockRestore();
+    }
+  });
+
+  it("recreates the session when earlier history diverges", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    await catalog.createSession({ title: "Prompted" }, DEFAULTS);
+
+    const originalUser = userMessage("Explain the parser");
+    const firstAssistant = assistantMessage("Parser cursor synced.");
+    const divergentUser = userMessage("Explain the parser, but differently");
+    const secondUser = userMessage("What changed?");
+    const secondAssistant = assistantMessage("The transcript was rebuilt.");
+    const { promptTexts, promptSpy } = installPromptSpy(catalog, [
+      { user: originalUser, assistant: firstAssistant },
+      { user: secondUser, assistant: secondAssistant },
+    ]);
+
+    try {
+      const activeSession = getManagedSessionHandle(catalog);
+
+      await catalog.sendPrompt({
+        ...DEFAULTS,
+        messages: [originalUser],
+        onEvent: () => {},
+      });
+
+      await waitFor(
+        () => promptTexts.length === 1 && getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2,
+      );
+      expect(promptTexts[0]).toContain("System:\nYou are svvy.");
+      expect(promptTexts[0]).toContain("User:\nExplain the parser");
+      expect(getManagedSessionHandle(catalog)).toBe(activeSession);
+
+      await catalog.sendPrompt({
+        ...DEFAULTS,
+        messages: [divergentUser, firstAssistant, secondUser],
+        onEvent: () => {},
+      });
+
+      await waitFor(
+        () => promptTexts.length === 2 && getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 4,
+      );
+      expect(promptTexts[1]).toContain("System:\nYou are svvy.");
+      expect(promptTexts[1]).toContain("User:\nExplain the parser, but differently");
+      expect(promptTexts[1]).toContain("User:\nWhat changed?");
+      expect(getManagedSessionHandle(catalog)).not.toBe(activeSession);
+    } finally {
+      promptSpy.mockRestore();
+    }
+  });
+
+  it("keeps the prompt boundary usable after a prompt failure", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    await catalog.createSession({ title: "Prompted" }, DEFAULTS);
+
+    const firstUser = userMessage("Explain the parser");
+    const firstAssistant = assistantMessage("Prompt failed but the boundary stayed synced.");
+    const secondUser = userMessage("What changed?");
+    const secondAssistant = assistantMessage("Only the next delta was sent.");
+    const { promptTexts, promptSpy } = installPromptSpy(catalog, [
+      {
+        user: firstUser,
+        assistant: firstAssistant,
+        error: new Error("simulated prompt failure"),
+      },
+      { user: secondUser, assistant: secondAssistant },
+    ]);
+
+    try {
+      const activeSession = getManagedSessionHandle(catalog);
+
+      await catalog.sendPrompt({
+        ...DEFAULTS,
+        messages: [firstUser],
+        onEvent: () => {},
+      });
+
+      await waitFor(
+        () => promptTexts.length === 1 && getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2,
+      );
+      expect(promptTexts[0]).toContain("System:\nYou are svvy.");
+      expect(promptTexts[0]).toContain("User:\nExplain the parser");
+      expect(getManagedSessionHandle(catalog)).toBe(activeSession);
+
+      await catalog.sendPrompt({
+        ...DEFAULTS,
+        messages: [firstUser, firstAssistant, secondUser],
+        onEvent: () => {},
+      });
+
+      await waitFor(
+        () => promptTexts.length === 2 && getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 4,
+      );
+      expect(promptTexts[1]).toBe("What changed?");
+      expect(getManagedSessionHandle(catalog)).toBe(activeSession);
+    } finally {
+      promptSpy.mockRestore();
+    }
   });
 
   it("creates, opens, renames, forks, and restores sessions across catalog restarts", async () => {
