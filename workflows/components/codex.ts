@@ -43,7 +43,7 @@ export function createCodexAgent(input: {
       model_reasoning_effort: input.reasoningEffort,
       "features.multi_agent": false,
       "agents.max_threads": 1,
-      ...(input.config ?? {}),
+      ...input.config,
     },
     ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
   });

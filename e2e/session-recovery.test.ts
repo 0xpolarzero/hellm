@@ -190,7 +190,7 @@ test("a workspace with many sessions still boots and the newest session is activ
       };
     });
 
-    const expectedTitles = [...sessions].reverse().map((session) => session.title ?? "New Session");
+    const expectedTitles = [...sessions].toReversed().map((session) => session.title ?? "New Session");
     const newestTitle = expectedTitles[0] ?? "New Session";
 
     await withSvvyApp(

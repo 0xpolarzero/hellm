@@ -590,7 +590,7 @@ function listRecentEvents(dbPath: string, runId: string, limit: number) {
          LIMIT ?`,
       )
       .all(runId, limit) as EventRow[]
-    return rows.reverse()
+    return rows.toReversed()
   } finally {
     db.close()
   }
@@ -641,7 +641,7 @@ function listRecentEventsForNode(
          LIMIT ?`,
       )
       .all(runId, nodeId, iteration, limit) as EventRow[]
-    return rows.reverse()
+    return rows.toReversed()
   } finally {
     db.close()
   }
@@ -726,7 +726,7 @@ function parseChangedFiles(statusShort: string) {
 }
 
 function selectFocusNodes(nodeRows: NodeRow[], limit: number) {
-  const ordered = [...nodeRows].sort((left, right) => {
+  const ordered = [...nodeRows].toSorted((left, right) => {
     const leftFocus = FOCUS_STATES.has(left.state) ? 1 : 0
     const rightFocus = FOCUS_STATES.has(right.state) ? 1 : 0
 
