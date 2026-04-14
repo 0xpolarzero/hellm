@@ -8,6 +8,7 @@
     "dev": "bun scripts/dev.ts",
     "build": "vite build && electrobun build",
     "run": "electrobun run",
+    "workflow:implement-feature": "bun workflows/scripts/run-implement-feature.ts",
     "test": "bun test $(rg --files src -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts')",
     "setup:e2e": "electrobun-e2e setup --config ./electrobun-e2e.config.ts",
     "test:e2e": "electrobun-e2e run --config ./electrobun-e2e.config.ts",
