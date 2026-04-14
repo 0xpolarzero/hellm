@@ -171,7 +171,6 @@ async function main() {
 }
 
 export async function runObserver(options: ObserveRunOptions) {
-
   if (!existsSync(options.smithersBin)) {
     throw new Error(
       `Smithers binary not found at ${options.smithersBin}. Pass --smithers-bin if your local path differs.`,
@@ -187,7 +186,7 @@ export async function runObserver(options: ObserveRunOptions) {
 
   while (true) {
     const observation = await collectObservation(options, previous)
-    const summary = options.noCodex
+    const summary: string = options.noCodex
       ? buildDeterministicSummary(observation, previous)
       : await buildNarrativeSummary(observation, previous, options)
 
@@ -846,7 +845,7 @@ async function buildNarrativeSummary(
   observation: Observation,
   previous: PreviousObservation | null,
   options: ObserveRunOptions,
-) {
+): Promise<string> {
   const prompt = await buildSummaryPrompt(observation, previous)
   const outputDir = mkdtempSync(resolve(tmpdir(), "svvy-smithers-observer-"))
   const outputLastMessage = resolve(outputDir, "last-message.txt")
@@ -910,7 +909,7 @@ async function buildNarrativeSummary(
 async function buildSummaryPrompt(
   observation: Observation,
   previous: PreviousObservation | null,
-) {
+): Promise<string> {
   const summaryPrompt = await readSummaryPrompt()
   const repoContext = observation.repoContexts.map((context) => ({
     path: context.path,
@@ -949,7 +948,7 @@ async function buildSummaryPrompt(
   ].join("\n")
 }
 
-async function readSummaryPrompt() {
+async function readSummaryPrompt(): Promise<string> {
   if (existsSync(SUMMARY_PROMPT_PATH)) {
     return Bun.file(SUMMARY_PROMPT_PATH).text()
   }
@@ -978,7 +977,7 @@ async function readSummaryPrompt() {
 function buildDeterministicSummary(
   observation: Observation,
   previous: PreviousObservation | null,
-) {
+): string {
   const lines: string[] = []
 
   const activeSteps = observation.stepStates.filter((step) => FOCUS_STATES.has(step.state))
