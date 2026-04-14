@@ -21,3 +21,7 @@
 
 - use sandboxing separate from environment 
   - https://x.com/nicoalbanese10/status/2043745569278251112
+
+- integration with jjhub/codeplane would make sense, for instance:
+  - every time a piece of work in a session is done and orchestrator considers we run CI workflow, it takes a jj snapshot and executes the CI on jjhub/codeplane
+  - we don't git commit anymore (or maybe git mode/automatic—jj—mode) where orchestrator decides when to snapshot and push to run ci in cloud
