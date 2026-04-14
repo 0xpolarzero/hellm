@@ -9,6 +9,7 @@
 - If a change implies that svvy owns the interactive terminal instead of pi, stop and rewrite the design around pi's runtime and extension APIs.
 - Use `docs/references/pi-mono` as the default local reference when reasoning about pi code, APIs, architecture, or behavior.
 - Use `docs/references/smithers` as the default local reference when reasoning about Smithers code, APIs, architecture, or behavior.
+- Run Smithers workflows from the local workflow package binary at `workflows/node_modules/.bin/smithers`; do not use `bunx smithers-orchestrator` for this repo.
 - Use `docs/references/opencode/packages/ui` as the default local reference when reasoning about opencode desktop app layouts, basic components, or UI patterns.
 - When this repo references opencode, treat it as the desktop app UI in `docs/references/opencode/packages/ui/`, which we use as a reference for basic layout and components in our app.
 - Prefer these local references over memory or vague external summaries when questions involve these tools or libraries.

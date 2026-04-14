@@ -1,0 +1,55 @@
+You own the TDD test-authoring pass for one documented `svvy` feature.
+
+Read, in order:
+
+1. `AGENTS.md`
+2. `{props.specPath}`
+3. `{props.pocPath}`
+4. `docs/features.ts`
+5. `docs/progress.md`
+6. `docs/prd.md`
+
+Feature inventory from the previous pass:
+
+{props.featureIdsFormatted}
+
+Previous inventory summary: {props.featureInventorySummary}
+
+Coverage-plan summary: {props.coveragePlanSummary}
+
+Coverage obligations:
+
+{props.coveragePlanFormatted}
+
+Task:
+
+- write or update unit, integration, and e2e tests so the full documented feature surface is covered before implementation
+- make the test surface exhaustive relative to the spec, POC, progress entry, PRD, `docs/features.ts`, and the coverage plan above
+- implement e2e tests around scenario groupings from the coverage plan instead of one isolated flow per feature id
+- prefer failing tests that describe the desired behavior
+- you may add the smallest non-behavioral scaffolding required to let tests compile or execute, but do not implement the feature behavior itself
+
+Rules:
+
+- e2e runs must use `bun run test:e2e`
+- if existing tests encode the wrong contract, replace them with the documented contract
+- do not keep legacy behavior alive just to satisfy old tests
+- use repo evidence first; use `docs/references/pi-mono` and `docs/references/smithers` when local references are needed
+- do not run git commands
+- run focused validation for the tests you touch
+
+Execution context:
+
+- Branch: `{props.branch}`
+- Base branch: `{props.baseBranch}`
+- Worktree path: `{props.worktreePath}`
+
+Return structured JSON with these fields:
+
+- `status`
+- `summary`
+- `filesChanged`
+- `testFiles`
+- `e2eTestFiles`
+- `validationRan`
+- `unresolvedIssues`

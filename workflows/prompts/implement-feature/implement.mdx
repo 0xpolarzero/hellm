@@ -1,0 +1,47 @@
+Implement the documented feature.
+
+Read and follow:
+
+- `AGENTS.md`
+- `{props.specPath}`
+- `{props.pocPath}`
+- `docs/features.ts`
+- `docs/progress.md`
+- `docs/prd.md`
+
+Feature inventory:
+
+{props.featureIdsFormatted}
+
+Recent context:
+
+- Feature inventory summary: {props.featureInventorySummary}
+- Coverage-plan summary: {props.coveragePlanSummary}
+- Test summary: {props.testPlanSummary}
+
+Coverage obligations:
+
+{props.coveragePlanFormatted}
+
+Task:
+
+- make the authored test and e2e surface pass honestly
+- prefer deleting or rewriting legacy paths over preserving compatibility
+- keep the implementation and conceptual surface as small as possible
+- use repo evidence first; use `docs/references/pi-mono` and `docs/references/smithers` when local references are needed
+- do not run git commands
+- run focused validation before you finish
+
+Execution context:
+
+- Branch: `{props.branch}`
+- Base branch: `{props.baseBranch}`
+- Worktree path: `{props.worktreePath}`
+
+Return structured JSON with these fields:
+
+- `status`
+- `summary`
+- `filesChanged`
+- `validationRan`
+- `unresolvedIssues`

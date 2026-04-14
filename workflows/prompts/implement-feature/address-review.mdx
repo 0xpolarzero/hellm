@@ -1,0 +1,67 @@
+Address the latest feature review handoff.
+
+Read and follow:
+
+- `AGENTS.md`
+- `{props.specPath}`
+- `{props.pocPath}`
+- `docs/features.ts`
+- `docs/progress.md`
+- `docs/prd.md`
+
+Context:
+
+- Review round `{props.reviewRound}`
+- Feature inventory:
+
+{props.featureIdsFormatted}
+
+- Coverage-plan summary: {props.coveragePlanSummary}
+
+Coverage obligations:
+
+{props.coveragePlanFormatted}
+
+- Latest review verdict: `{props.reviewVerdict}`
+- Latest review summary: {props.reviewSummary}
+- Latest findings:
+
+{props.formattedFindings}
+
+- Latest blockers:
+
+{props.formattedBlockers}
+
+- Latest residual risks:
+
+{props.formattedResidualRisks}
+
+- Current implementation summary: {props.implementationSummary}
+- Current surface-check summary: {props.surfaceCheckSummary}
+- Previous address-review summary: {props.latestAddressSummary}
+
+Task:
+
+- fix the underlying truth behind the review handoff
+- if simplifying or deleting code is the right answer, do that
+- strengthen tests and `docs/features.ts` with the implementation when needed
+- preserve the intended scenario-level e2e grouping unless the review reveals a better coverage shape
+- use repo evidence first; use `docs/references/pi-mono` and `docs/references/smithers` when local references are needed
+- do not run git commands
+- run focused validation before you finish
+
+Execution context:
+
+- Branch: `{props.branch}`
+- Base branch: `{props.baseBranch}`
+- Worktree path: `{props.worktreePath}`
+
+Return structured JSON with these fields:
+
+- `status`
+- `summary`
+- `filesChanged`
+- `validationRan`
+- `findingsAddressed`
+- `remainingIssues`
+- `humanDecisionsNeeded`

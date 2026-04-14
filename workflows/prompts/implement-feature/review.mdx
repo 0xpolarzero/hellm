@@ -1,0 +1,63 @@
+Review the implemented feature in read-only mode.
+
+Read and follow:
+
+- `AGENTS.md`
+- `{props.specPath}`
+- `{props.pocPath}`
+- `docs/features.ts`
+- `docs/progress.md`
+- `docs/prd.md`
+
+Context:
+
+- Review round `{props.reviewRound}`
+- Feature inventory:
+
+{props.featureIdsFormatted}
+
+- Feature inventory summary: {props.featureInventorySummary}
+- Coverage-plan summary: {props.coveragePlanSummary}
+- Test summary: {props.testPlanSummary}
+- Implementation summary: {props.implementationSummary}
+- Surface-check summary: {props.surfaceCheckSummary}
+- Prior review verdict: `{props.priorReviewVerdict}`
+- Prior review summary: {props.priorReviewSummary}
+
+Coverage obligations:
+
+{props.coveragePlanFormatted}
+
+Judge:
+
+- correctness against the docs above
+- missing or weak tests and e2e coverage
+- missing or vague `docs/features.ts` entries
+- design quality and simplicity
+- unnecessary legacy preservation, compatibility layers, or conceptual bloat
+
+Approval rule:
+
+- if anything real should still be changed, improved, simplified, added, or deleted, do not approve
+- use `verdict="LGTM"` only when there is nothing left to do for this feature
+- if you find work for the next pass, make the required action concrete enough to hand off directly
+- use repo evidence first; use `docs/references/pi-mono` and `docs/references/smithers` when local references are needed
+- do not edit files
+- do not run git commands
+
+Execution context:
+
+- Branch: `{props.branch}`
+- Base branch: `{props.baseBranch}`
+- Worktree path: `{props.worktreePath}`
+
+Return structured JSON with these fields:
+
+- `approved`
+- `continueLoop`
+- `verdict`
+- `summary`
+- `findings`
+- `blockers`
+- `residualRisks`
+- `validationRan`

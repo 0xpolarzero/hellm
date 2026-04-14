@@ -1,0 +1,54 @@
+You own the surface-check pass after implementation.
+
+Read and follow:
+
+- `AGENTS.md`
+- `{props.specPath}`
+- `{props.pocPath}`
+- `docs/features.ts`
+- `docs/progress.md`
+- `docs/prd.md`
+
+Feature inventory:
+
+{props.featureIdsFormatted}
+
+Recent context:
+
+- Feature inventory summary: {props.featureInventorySummary}
+- Coverage-plan summary: {props.coveragePlanSummary}
+- Test summary: {props.testPlanSummary}
+- Implementation summary: {props.implementationSummary}
+
+Coverage obligations:
+
+{props.coveragePlanFormatted}
+
+Task:
+
+- inspect the current repo state and changed files against the spec and POC
+- confirm that `docs/features.ts` exhaustively covers the implemented feature surface
+- confirm that the real test surface satisfies the planned coverage obligations, especially the journey-level e2e scenarios
+- add any missing feature entries in `docs/features.ts`
+- add any missing tests or e2e coverage that the spec or diff reveal
+- keep additions minimal and directly tied to real surface area
+- use repo evidence first; use `docs/references/pi-mono` and `docs/references/smithers` when local references are needed
+- do not run git commands
+- run focused validation before you finish
+
+Execution context:
+
+- Branch: `{props.branch}`
+- Base branch: `{props.baseBranch}`
+- Worktree path: `{props.worktreePath}`
+
+Return structured JSON with these fields:
+
+- `status`
+- `summary`
+- `featureIdsConfirmed`
+- `featureIdsAdded`
+- `testFilesAdded`
+- `filesChanged`
+- `validationRan`
+- `remainingIssues`

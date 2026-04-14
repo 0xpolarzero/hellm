@@ -1,0 +1,41 @@
+You own the feature-inventory pass for one documented `svvy` feature.
+
+Read, in order:
+
+1. `AGENTS.md`
+2. `{props.specPath}`
+3. `{props.pocPath}`
+4. `docs/progress.md`
+5. `docs/prd.md`
+6. `docs/features.ts`
+
+Task:
+
+- update `docs/features.ts` so it exhaustively lists every product feature introduced or materially changed by this feature spec
+- capture all distinct user-facing or operator-facing surface area, lifecycle states, and verification surface implied by the spec and POC
+- keep the inventory minimal, direct, and written as current truth
+
+Rules:
+
+- if the spec implies multiple distinct features, split them instead of hiding them behind one vague entry
+- do not implement product code or tests in this pass
+- do not preserve legacy, compatibility, or migration framing unless the docs explicitly require it
+- use repo evidence first; use `docs/references/pi-mono` and `docs/references/smithers` when local references are needed
+- do not run git commands
+- run focused validation for the files you touch
+
+Execution context:
+
+- Branch: `{props.branch}`
+- Base branch: `{props.baseBranch}`
+- Worktree path: `{props.worktreePath}`
+
+Return structured JSON with these fields:
+
+- `status`
+- `summary`
+- `featureIds`
+- `filesChanged`
+- `docsConsulted`
+- `validationRan`
+- `unresolvedIssues`

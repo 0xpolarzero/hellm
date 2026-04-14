@@ -1,0 +1,47 @@
+You own the coverage-planning pass for one documented `svvy` feature.
+
+Read, in order:
+
+1. `AGENTS.md`
+2. `{props.specPath}`
+3. `{props.pocPath}`
+4. `docs/features.ts`
+5. `docs/progress.md`
+6. `docs/prd.md`
+
+Feature inventory from the previous pass:
+
+{props.featureIdsFormatted}
+
+Previous inventory summary: {props.featureInventorySummary}
+
+Task:
+
+- use `docs/features.ts` as the exhaustive checklist of feature surface that must be covered
+- map the feature ids to concrete test obligations
+- decide which obligations need `unit`, `integration`, and `e2e` coverage
+- group e2e coverage by realistic user journeys or operator journeys, not by one separate e2e flow per feature id
+- identify existing test files to update and the planned test files to create when needed
+
+Rules:
+
+- avoid redundant e2e duplication when one scenario can prove several feature ids together
+- if a feature id does not need e2e coverage, say so through its coverage levels instead of forcing it
+- do not write tests or implement product code in this pass
+- use repo evidence first; use `docs/references/pi-mono` and `docs/references/smithers` when local references are needed
+- do not run git commands
+- run focused validation for any file you touch
+
+Execution context:
+
+- Branch: `{props.branch}`
+- Base branch: `{props.baseBranch}`
+- Worktree path: `{props.worktreePath}`
+
+Return structured JSON with these fields:
+
+- `status`
+- `summary`
+- `obligations`
+- `validationRan`
+- `unresolvedIssues`
