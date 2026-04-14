@@ -78,25 +78,7 @@ async function selectModelBySearch(page: SvvyApp["page"], query: string): Promis
   await picker.waitFor({ state: "hidden" });
 }
 
-test("model picker only shows the current provider plus configured providers", async () => {
-  await runApp(
-    createEnv({
-      OPENAI_API_KEY: "test-openai-key",
-      ZAI_API_KEY: "test-zai-key",
-    }),
-    async ({ page }) => {
-      await openModelPicker(page);
-
-      const headings = await providerHeadings(page);
-      expect(headings).toContain("zai");
-      expect(headings).toContain("openai");
-      expect(headings).not.toContain("anthropic");
-      expect(headings).not.toContain("google");
-    },
-  );
-});
-
-test("reasoning menu only exposes xhigh on models that support it", async () => {
+test("model picker stays scoped to configured providers and reasoning options track the selected model", async () => {
   await runApp(
     createEnv({
       OPENAI_API_KEY: "test-openai-key",
@@ -111,6 +93,12 @@ test("reasoning menu only exposes xhigh on models that support it", async () => 
       await menu.waitFor({ state: "hidden" });
 
       await openModelPicker(page);
+
+      const headings = await providerHeadings(page);
+      expect(headings).toContain("zai");
+      expect(headings).toContain("openai");
+      expect(headings).not.toContain("anthropic");
+      expect(headings).not.toContain("google");
       await selectModelBySearch(page, "gpt-5.4");
 
       const modelLabel = (await page.locator(".model-control strong").textContent())?.trim() ?? "";
@@ -120,9 +108,11 @@ test("reasoning menu only exposes xhigh on models that support it", async () => 
       await menu.getByRole("option", { name: /^xhigh$/i }).waitFor({ state: "visible" });
       await menu.getByRole("option", { name: /^xhigh$/i }).click();
       await menu.waitFor({ state: "hidden" });
-      expect(((await page.getByRole("button", { name: "Thinking level" }).textContent()) ?? "").toLowerCase()).toContain(
-        "xhigh",
-      );
+      expect(
+        (
+          (await page.getByRole("button", { name: "Thinking level" }).textContent()) ?? ""
+        ).toLowerCase(),
+      ).toContain("xhigh");
     },
   );
 });

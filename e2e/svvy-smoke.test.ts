@@ -13,18 +13,9 @@ test("real app boots and renders the workspace shell", async () => {
     await page.locator(".session-sidebar").waitFor({ state: "visible" });
 
     expect(await page.locator(".workspace-titlebar-title").textContent()).toBe("svvy");
-  });
-});
-
-test("a fresh workspace starts with one session", async () => {
-  await withSvvyApp(async ({ page }) => {
     await page.getByText("1 sessions").waitFor({ state: "visible" });
     expect(await page.getByRole("button", { name: /Session actions for/ }).count()).toBe(1);
-  });
-});
 
-test("rename session works on the real app", async () => {
-  await withSvvyApp(async ({ page }) => {
     const nextTitle = `Smoke Renamed ${Date.now()}`;
     const firstSession = page.locator(".session-item").first();
     await firstSession.getByRole("button", { name: /Session actions for/ }).click({ force: true });
@@ -37,9 +28,11 @@ test("rename session works on the real app", async () => {
     await titleInput.fill(nextTitle);
     await page.getByRole("button", { name: "Save" }).click();
 
-    await page.getByRole("button", {
-      name: new RegExp(`^Session actions for ${escapeForRegExp(nextTitle)}$`),
-    }).waitFor({ state: "visible" });
+    await page
+      .getByRole("button", {
+        name: new RegExp(`^Session actions for ${escapeForRegExp(nextTitle)}$`),
+      })
+      .waitFor({ state: "visible" });
     expect(await page.locator(".workspace-main-title").textContent()).toBe(nextTitle);
   });
 });

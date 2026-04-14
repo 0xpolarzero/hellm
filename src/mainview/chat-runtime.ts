@@ -472,19 +472,9 @@ export async function createChatRuntime(
     rpcClient.request.getWorkspaceInfo(),
     rpcClient.request.listSessions(),
   ]);
-  const e2eRendererSeed = await rpcClient.request.getE2eRendererSeed();
-  await syncProviderAuth(defaults.provider);
-
-  if (e2eRendererSeed) {
-    if (e2eRendererSeed.customProviders.length > 0) {
-      for (const provider of e2eRendererSeed.customProviders) {
-        await storage.customProviders.set(provider);
-      }
-    }
-    if (e2eRendererSeed.promptHistory.length > 0) {
-      await storage.promptHistory.replace(workspaceInfo.workspaceId, e2eRendererSeed.promptHistory);
-    }
-  }
+  const e2eRendererSeedPromise = rpcClient.request.getE2eRendererSeed();
+  const syncProviderAuthPromise = syncProviderAuth(defaults.provider);
+  const currentActiveSessionPromise = rpcClient.request.getActiveSession();
 
   const agent = new Agent({
     initialState: {
@@ -516,7 +506,23 @@ export async function createChatRuntime(
   activeSessionId = initialCatalog.activeSessionId;
   sessions = initialCatalog.sessions;
 
-  const currentActiveSession = await rpcClient.request.getActiveSession();
+  const [e2eRendererSeed, currentActiveSession] = await Promise.all([
+    e2eRendererSeedPromise,
+    currentActiveSessionPromise,
+  ]);
+  await syncProviderAuthPromise;
+
+  if (e2eRendererSeed) {
+    if (e2eRendererSeed.customProviders.length > 0) {
+      for (const provider of e2eRendererSeed.customProviders) {
+        await storage.customProviders.set(provider);
+      }
+    }
+    if (e2eRendererSeed.promptHistory.length > 0) {
+      await storage.promptHistory.replace(workspaceInfo.workspaceId, e2eRendererSeed.promptHistory);
+    }
+  }
+
   if (currentActiveSession) {
     applyActiveSessionSnapshot(currentActiveSession);
   } else if (initialCatalog.sessions.length > 0) {

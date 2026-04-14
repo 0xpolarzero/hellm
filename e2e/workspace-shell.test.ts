@@ -130,7 +130,7 @@ async function currentWindowFrame(app: SvvyApp): Promise<{ width: number; height
   return (await app.driver.window("active").info()).frame;
 }
 
-test("keeps the workspace chrome visible while the sidebar toggles from the titlebar", async () => {
+test("keeps the workspace chrome visible while toggling the sidebar and opening settings", async () => {
   await withSvvyApp(async (app) => {
     const frame = await currentWindowFrame(app);
     expect(frame.width).toBeGreaterThan(MOBILE_OVERLAY_BREAKPOINT);
@@ -158,12 +158,6 @@ test("keeps the workspace chrome visible while the sidebar toggles from the titl
     await app.page.getByRole("button", { name: "Show sidebar" }).click();
     await app.page.locator(".session-sidebar").waitFor({ state: "visible" });
     expect((await app.page.attrs("css:.titlebar-icon")).attributes["aria-pressed"]).toBe("true");
-  });
-});
-
-test("settings dialog coexists with the shell chrome and preserves sidebar state", async () => {
-  await withSvvyApp(async (app) => {
-    await waitForShellChrome(app.page);
 
     await app.page.getByRole("button", { name: "Hide sidebar" }).click();
     await app.page.locator(".session-sidebar").waitFor({ state: "hidden" });
@@ -206,8 +200,12 @@ test("renders artifact output as a mobile overlay at the app's narrow shell widt
       const toolCards = app.page.locator(".tool-card");
       await toolCards.waitFor({ state: "visible", timeout: 15_000 });
       expect(await toolCards.count()).toBe(4);
-      await app.page.locator(".artifacts-slot.mobile-slot").waitFor({ state: "visible", timeout: 15_000 });
-      await app.page.locator(".artifacts-panel.overlay").waitFor({ state: "visible", timeout: 15_000 });
+      await app.page
+        .locator(".artifacts-slot.mobile-slot")
+        .waitFor({ state: "visible", timeout: 15_000 });
+      await app.page
+        .locator(".artifacts-panel.overlay")
+        .waitFor({ state: "visible", timeout: 15_000 });
       expect(await app.page.locator(".artifacts-slot.desktop-open").count()).toBe(0);
       expect(await app.page.locator(".workspace-titlebar").isVisible()).toBe(true);
       expect(await app.page.locator(".workspace-footer").isVisible()).toBe(true);

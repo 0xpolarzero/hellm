@@ -1,17 +1,7 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { rm } from "node:fs/promises";
-import {
-  createHomeDir,
-  ensureBuilt,
-  withSvvyApp,
-  type SvvyApp,
-} from "./harness";
-import {
-  assistantTextMessage,
-  seedSessions,
-  type SeedSessionInput,
-  userMessage,
-} from "./support";
+import { createHomeDir, ensureBuilt, withSvvyApp, type SvvyApp } from "./harness";
+import { assistantTextMessage, seedSessions, type SeedSessionInput, userMessage } from "./support";
 
 setDefaultTimeout(45_000);
 
@@ -61,14 +51,21 @@ async function openSessionActions(page: SvvyApp["page"], title: string): Promise
 }
 
 async function clickSessionByTitle(page: SvvyApp["page"], title: string): Promise<void> {
-  const sessionButton = page.locator(".session-main").filter({
-    has: page.locator("strong").filter({ hasText: title }),
-  }).first();
+  const sessionButton = page
+    .locator(".session-main")
+    .filter({
+      has: page.locator("strong").filter({ hasText: title }),
+    })
+    .first();
   await sessionButton.waitFor({ state: "visible" });
   await sessionButton.click({ force: true });
 }
 
-async function waitForSessionCount(page: SvvyApp["page"], expectedCount: number, timeoutMs = 15_000): Promise<void> {
+async function waitForSessionCount(
+  page: SvvyApp["page"],
+  expectedCount: number,
+  timeoutMs = 15_000,
+): Promise<void> {
   const context = page.locator(".sidebar-context");
   const expectedLabel = `${expectedCount} sessions`;
   const deadline = Date.now() + timeoutMs;
@@ -104,13 +101,19 @@ async function waitForSessionRows(
 
 async function openRenameDialog(page: SvvyApp["page"], title: string): Promise<void> {
   await openSessionActions(page, title);
-  await page.locator(".session-menu").getByRole("button", { name: "Rename" }).click({ force: true });
+  await page
+    .locator(".session-menu")
+    .getByRole("button", { name: "Rename" })
+    .click({ force: true });
   await page.getByRole("dialog", { name: "Rename Session" }).waitFor({ state: "visible" });
 }
 
 async function openDeleteDialog(page: SvvyApp["page"], title: string): Promise<void> {
   await openSessionActions(page, title);
-  await page.locator(".session-menu").getByRole("button", { name: "Delete" }).click({ force: true });
+  await page
+    .locator(".session-menu")
+    .getByRole("button", { name: "Delete" })
+    .click({ force: true });
   await page.getByRole("dialog", { name: "Delete Session" }).waitFor({ state: "visible" });
 }
 
@@ -147,7 +150,7 @@ async function waitForText(
   throw new Error(`Timed out waiting for text "${expected}". Last text was "${lastText}".`);
 }
 
-test("renders seeded sessions in recency order and projects title, preview, status, and fork badges", async () => {
+test("renders seeded sessions in recency order, projects badges, and switches the active session", async () => {
   await launchWithSessions(
     [
       {
@@ -190,39 +193,11 @@ test("renders seeded sessions in recency order and projects title, preview, stat
       await expectActiveSessionTitle(page, "Track beta branch");
       await page.locator(".session-status.status-error").waitFor({ state: "visible" });
       await page.locator(".session-branch").waitFor({ state: "visible" });
-    },
-  );
-});
 
-test("switches the active session from the sidebar list", async () => {
-  await launchWithSessions(
-    [
-      {
-        key: "older",
-        title: "Older Session",
-        messages: [
-          userMessage("Older question", TIMELINE + 100),
-          assistantTextMessage("Older answer", { timestamp: TIMELINE + 101 }),
-        ],
-      },
-      {
-        key: "newer",
-        title: "Newer Session",
-        messages: [
-          userMessage("Newer question", TIMELINE + 200),
-          assistantTextMessage("Newer answer", { timestamp: TIMELINE + 201 }),
-        ],
-      },
-    ],
-    async ({ page }) => {
-      await waitForSessionCount(page, 2);
-      await expectMainTitle(page, "Newer Session");
-      await expectActiveSessionTitle(page, "Newer Session");
+      await clickSessionByTitle(page, "Alpha Review");
 
-      await clickSessionByTitle(page, "Older Session");
-
-      await expectMainTitle(page, "Older Session");
-      await expectActiveSessionTitle(page, "Older Session");
+      await expectMainTitle(page, "Alpha Review");
+      await expectActiveSessionTitle(page, "Alpha Review");
     },
   );
 });
@@ -233,16 +208,20 @@ test("creates a new session, activates it, and keeps it after relaunch", async (
       {
         homeDir,
         beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
-          await seedSessions(launchHomeDir, [
-            {
-              key: "existing",
-              title: "Existing Session",
-              messages: [
-                userMessage("Existing prompt", TIMELINE + 100),
-                assistantTextMessage("Existing reply", { timestamp: TIMELINE + 101 }),
-              ],
-            },
-          ], workspaceDir);
+          await seedSessions(
+            launchHomeDir,
+            [
+              {
+                key: "existing",
+                title: "Existing Session",
+                messages: [
+                  userMessage("Existing prompt", TIMELINE + 100),
+                  assistantTextMessage("Existing reply", { timestamp: TIMELINE + 101 }),
+                ],
+              },
+            ],
+            workspaceDir,
+          );
         },
       },
       async ({ page }) => {
@@ -275,16 +254,20 @@ test("rejects an empty rename, then renames and persists the session title", asy
       {
         homeDir,
         beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
-          await seedSessions(launchHomeDir, [
-            {
-              key: "rename",
-              title: "Rename Candidate",
-              messages: [
-                userMessage("Rename candidate prompt", TIMELINE + 100),
-                assistantTextMessage("Rename candidate reply", { timestamp: TIMELINE + 101 }),
-              ],
-            },
-          ], workspaceDir);
+          await seedSessions(
+            launchHomeDir,
+            [
+              {
+                key: "rename",
+                title: "Rename Candidate",
+                messages: [
+                  userMessage("Rename candidate prompt", TIMELINE + 100),
+                  assistantTextMessage("Rename candidate reply", { timestamp: TIMELINE + 101 }),
+                ],
+              },
+            ],
+            workspaceDir,
+          );
         },
       },
       async ({ page }) => {
@@ -328,27 +311,34 @@ test("forks a session into a new active copy with a fork badge", async () => {
       {
         homeDir,
         beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
-          await seedSessions(launchHomeDir, [
-            {
-              key: "source",
-              title: "Fork Source",
-              messages: [
-                userMessage("Fork source prompt", TIMELINE + 100),
-                assistantTextMessage("Fork source reply", { timestamp: TIMELINE + 101 }),
-              ],
-            },
-          ], workspaceDir);
+          await seedSessions(
+            launchHomeDir,
+            [
+              {
+                key: "source",
+                title: "Fork Source",
+                messages: [
+                  userMessage("Fork source prompt", TIMELINE + 100),
+                  assistantTextMessage("Fork source reply", { timestamp: TIMELINE + 101 }),
+                ],
+              },
+            ],
+            workspaceDir,
+          );
         },
       },
       async ({ page }) => {
         await openSessionActions(page, "Fork Source");
-        await page.locator(".session-menu").getByRole("button", { name: "Fork" }).click({ force: true });
+        await page
+          .locator(".session-menu")
+          .getByRole("button", { name: "Fork" })
+          .click({ force: true });
 
         await waitForSessionRows(page, 2);
         await expectMainTitle(page, "Fork Source");
         await expectActiveSessionTitle(page, "Fork Source");
         expect(await page.locator(".session-branch").count()).toBe(1);
-        await page.locator('.session-item.active .session-branch').waitFor({ state: "visible" });
+        await page.locator(".session-item.active .session-branch").waitFor({ state: "visible" });
       },
     );
 
@@ -366,7 +356,7 @@ test("forks a session into a new active copy with a fork badge", async () => {
   });
 });
 
-test("cancels deleting a session and leaves the workspace unchanged", async () => {
+test("delete confirmation can be canceled and then remove an inactive session", async () => {
   await launchWithSessions(
     [
       {
@@ -391,39 +381,21 @@ test("cancels deleting a session and leaves the workspace unchanged", async () =
       await expectMainTitle(page, "Discard Me");
 
       await openDeleteDialog(page, "Keep Me");
-      await page.getByRole("dialog", { name: "Delete Session" }).getByRole("button", { name: "Cancel" }).click({ force: true });
+      await page
+        .getByRole("dialog", { name: "Delete Session" })
+        .getByRole("button", { name: "Cancel" })
+        .click({ force: true });
 
       await page.getByRole("dialog", { name: "Delete Session" }).waitFor({ state: "hidden" });
       await waitForSessionCount(page, 2);
       await expectMainTitle(page, "Discard Me");
       expect(await readSessionTitles(page)).toEqual(["Discard Me", "Keep Me"]);
-    },
-  );
-});
 
-test("confirms deleting an inactive session and removes it from the list", async () => {
-  await launchWithSessions(
-    [
-      {
-        key: "kept",
-        title: "Keep Me",
-        messages: [
-          userMessage("Keep me prompt", TIMELINE + 100),
-          assistantTextMessage("Keep me reply", { timestamp: TIMELINE + 101 }),
-        ],
-      },
-      {
-        key: "discarded",
-        title: "Discard Me",
-        messages: [
-          userMessage("Discard me prompt", TIMELINE + 200),
-          assistantTextMessage("Discard me reply", { timestamp: TIMELINE + 201 }),
-        ],
-      },
-    ],
-    async ({ page }) => {
       await openDeleteDialog(page, "Keep Me");
-      await page.getByRole("dialog", { name: "Delete Session" }).getByRole("button", { name: "Delete" }).click({ force: true });
+      await page
+        .getByRole("dialog", { name: "Delete Session" })
+        .getByRole("button", { name: "Delete" })
+        .click({ force: true });
 
       await page.getByRole("dialog", { name: "Delete Session" }).waitFor({ state: "hidden" });
       await waitForSessionCount(page, 1);
@@ -456,7 +428,10 @@ test("falls back to the next session after deleting the active session", async (
     async ({ page }) => {
       await expectMainTitle(page, "Current Active");
       await openDeleteDialog(page, "Current Active");
-      await page.getByRole("dialog", { name: "Delete Session" }).getByRole("button", { name: "Delete" }).click({ force: true });
+      await page
+        .getByRole("dialog", { name: "Delete Session" })
+        .getByRole("button", { name: "Delete" })
+        .click({ force: true });
 
       await waitForSessionCount(page, 1);
       await expectMainTitle(page, "Older Backup");
@@ -481,7 +456,10 @@ test("recreates a fresh session after deleting the last remaining one", async ()
     async ({ page }) => {
       await expectMainTitle(page, "Solo Session");
       await openDeleteDialog(page, "Solo Session");
-      await page.getByRole("dialog", { name: "Delete Session" }).getByRole("button", { name: "Delete" }).click({ force: true });
+      await page
+        .getByRole("dialog", { name: "Delete Session" })
+        .getByRole("button", { name: "Delete" })
+        .click({ force: true });
 
       await waitForSessionCount(page, 1);
       await expectMainTitle(page, "New Session");
@@ -491,34 +469,7 @@ test("recreates a fresh session after deleting the last remaining one", async ()
   );
 });
 
-test("toggles the sidebar from the titlebar button", async () => {
-  await launchWithSessions(
-    [
-      {
-        key: "solo",
-        title: "Solo Session",
-        messages: [
-          userMessage("Solo prompt", TIMELINE + 100),
-          assistantTextMessage("Solo reply", { timestamp: TIMELINE + 101 }),
-        ],
-      },
-    ],
-    async ({ page }) => {
-      await page.locator(".session-sidebar").waitFor({ state: "visible" });
-      const hideButton = page.getByRole("button", { name: "Hide sidebar" });
-      await hideButton.click();
-
-      await page.locator(".session-sidebar").waitFor({ state: "hidden" });
-      await page.getByRole("button", { name: "Show sidebar" }).waitFor({ state: "visible" });
-
-      await page.getByRole("button", { name: "Show sidebar" }).click();
-      await page.locator(".session-sidebar").waitFor({ state: "visible" });
-      await page.getByRole("button", { name: "Hide sidebar" }).waitFor({ state: "visible" });
-    },
-  );
-});
-
-test("exposes the sidebar resize handle with sane aria bounds and removes it when hidden", async () => {
+test("sidebar toggle updates visibility and the resize handle tracks the hidden state", async () => {
   await launchWithSessions(
     [
       {
@@ -532,6 +483,7 @@ test("exposes the sidebar resize handle with sane aria bounds and removes it whe
     ],
     async ({ page }) => {
       const handle = page.locator(".sidebar-resize-handle");
+      await page.locator(".session-sidebar").waitFor({ state: "visible" });
       await handle.waitFor({ state: "visible" });
 
       const attrs = await page.attrs("css:.sidebar-resize-handle");
@@ -544,8 +496,17 @@ test("exposes the sidebar resize handle with sane aria bounds and removes it whe
         Number(attrs.attributes["aria-valuemin"]),
       );
 
-      await page.getByRole("button", { name: "Hide sidebar" }).click();
+      const hideButton = page.getByRole("button", { name: "Hide sidebar" });
+      await hideButton.click();
+
+      await page.locator(".session-sidebar").waitFor({ state: "hidden" });
       await handle.waitFor({ state: "hidden" });
+      await page.getByRole("button", { name: "Show sidebar" }).waitFor({ state: "visible" });
+
+      await page.getByRole("button", { name: "Show sidebar" }).click();
+      await page.locator(".session-sidebar").waitFor({ state: "visible" });
+      await page.getByRole("button", { name: "Hide sidebar" }).waitFor({ state: "visible" });
+      await handle.waitFor({ state: "visible" });
     },
   );
 });

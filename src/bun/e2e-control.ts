@@ -1,8 +1,16 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import type { Message } from "@mariozechner/pi-ai";
 import type { OAuthCredentials } from "@mariozechner/pi-ai/oauth";
 
 const E2E_CONTROL_PATH_ENV = "SVVY_E2E_CONTROL_PATH";
+let cachedControl:
+  | {
+      controlPath: string | null;
+      mtimeMs: number | null;
+      size: number | null;
+      value: SvvyE2eControl | null;
+    }
+  | undefined;
 
 export type E2eSessionMutationKind =
   | "createSession"
@@ -79,11 +87,34 @@ function readConfiguredControlPath(): string | null {
 export function readSvvyE2eControl(): SvvyE2eControl | null {
   const controlPath = readConfiguredControlPath();
   if (!controlPath || !existsSync(controlPath)) {
+    cachedControl = {
+      controlPath: controlPath ?? null,
+      mtimeMs: null,
+      size: null,
+      value: null,
+    };
     return null;
   }
 
+  const stats = statSync(controlPath);
+  if (
+    cachedControl &&
+    cachedControl.controlPath === controlPath &&
+    cachedControl.mtimeMs === stats.mtimeMs &&
+    cachedControl.size === stats.size
+  ) {
+    return cachedControl.value;
+  }
+
   const content = readFileSync(controlPath, "utf8");
-  return JSON.parse(content) as SvvyE2eControl;
+  const value = JSON.parse(content) as SvvyE2eControl;
+  cachedControl = {
+    controlPath,
+    mtimeMs: stats.mtimeMs,
+    size: stats.size,
+    value,
+  };
+  return value;
 }
 
 export async function applyE2eMutationBehavior(

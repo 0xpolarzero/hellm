@@ -87,20 +87,44 @@ async function waitForWorkspaceChrome(page: Page): Promise<void> {
   const deadline = Date.now() + 20_000;
 
   while (Date.now() < deadline) {
-    if (await page.getByRole("button", { name: "Open settings" }).isVisible()) {
-      return;
-    }
+    try {
+      if (await page.getByRole("button", { name: "Open settings" }).isVisible()) {
+        return;
+      }
 
-    const startupFailed = page.getByText("Startup failed").first();
-    if (await startupFailed.isVisible()) {
-      const bootstrapText = (await page.locator(".ui-surface").textContent())?.replace(/\s+/g, " ").trim();
-      throw new Error(`svvy renderer bootstrap failed: ${bootstrapText ?? "Startup failed"}`);
+      const startupFailed = page.getByText("Startup failed").first();
+      if (await startupFailed.isVisible()) {
+        const bootstrapText = (await page
+          .locator(".ui-surface")
+          .textContent())
+          ?.replace(/\s+/g, " ")
+          .trim();
+        throw new Error(
+          `svvy renderer bootstrap failed: ${bootstrapText ?? "Startup failed"}`,
+        );
+      }
+    } catch (error) {
+      if (!isTransientBridgeBootstrapError(error)) {
+        throw error;
+      }
     }
 
     await Bun.sleep(100);
   }
 
   throw new Error("Timed out waiting for svvy workspace chrome.");
+}
+
+function isTransientBridgeBootstrapError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("unable to connect. is the computer able to access the url?") ||
+    message.includes("bridge request timed out")
+  );
 }
 
 export function escapeForRegExp(value: string): string {

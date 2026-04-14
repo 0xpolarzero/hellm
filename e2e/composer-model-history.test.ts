@@ -13,7 +13,11 @@ beforeAll(async () => {
   await ensureBuilt();
 });
 
-function makeSeededModel(provider: string, suffix: string, options: { reasoning: boolean; vision: boolean }): Model<any> {
+function makeSeededModel(
+  provider: string,
+  suffix: string,
+  options: { reasoning: boolean; vision: boolean },
+): Model<any> {
   return {
     id: `renderer-seed-${provider}-${suffix}`,
     name: `Renderer Seed ${provider} ${suffix}`,
@@ -80,9 +84,7 @@ function createAuthFreeEnv(): Record<string, string> {
   return env;
 }
 
-async function runSeededApp<T>(
-  fn: (app: SvvyApp) => Promise<T>,
-): Promise<T> {
+async function runSeededApp<T>(fn: (app: SvvyApp) => Promise<T>): Promise<T> {
   const homeDir = await createHomeDir();
   try {
     const seedFile = await writeRendererSeed(homeDir, buildRendererSeed());
@@ -135,16 +137,18 @@ async function openReasoningMenu(page: SvvyApp["page"]) {
   await page.locator(".thinking-menu").waitFor({ state: "visible" });
 }
 
-test("composer model control opens the picker, surfaces seeded custom providers, and updates the selection", async () => {
+test("model picker filters, seeded providers, and reasoning selection stay coherent across changes", async () => {
   await runSeededApp(async ({ page }) => {
     const modelButton = page.locator(".model-control");
     const initialLabel = (await modelButton.locator("strong").textContent())?.trim() ?? "";
 
     await openModelPicker(page);
-    expect((await page.locator(".model-row.current .model-state").textContent())?.trim()).toBe("Current");
+    expect((await page.locator(".model-row.current .model-state").textContent())?.trim()).toBe(
+      "Current",
+    );
 
     const picker = page.getByRole("dialog", { name: "Select a model" });
-    const search = picker.locator("input[placeholder^=\"Search model families\"]");
+    const search = picker.locator('input[placeholder^="Search model families"]');
     await search.fill("renderer-seed");
     expect((await picker.locator(".picker-summary").textContent())?.trim()).toBe("2 matches");
     expect(await picker.locator(".model-row").count()).toBe(2);
@@ -162,18 +166,9 @@ test("composer model control opens the picker, surfaces seeded custom providers,
 
     await openModelPicker(page);
     await search.fill("renderer-seed");
-    expect((await picker.locator(".model-row.current strong").textContent())?.trim()).toBe(firstSeededName);
-    await page.locator(".ui-dialog-close").click();
-    await picker.waitFor({ state: "hidden" });
-  });
-});
-
-test("model picker search and filters stay coherent across Thinking and Vision toggles", async () => {
-  await runSeededApp(async ({ page }) => {
-    await openModelPicker(page);
-
-    const picker = page.getByRole("dialog", { name: "Select a model" });
-    const search = picker.locator("input[placeholder^=\"Search model families\"]");
+    expect((await picker.locator(".model-row.current strong").textContent())?.trim()).toBe(
+      firstSeededName,
+    );
     const thinking = picker.getByRole("button", { name: "Thinking" });
     const vision = picker.getByRole("button", { name: "Vision" });
 
@@ -200,11 +195,7 @@ test("model picker search and filters stay coherent across Thinking and Vision t
     expect(await picker.locator(".model-row").count()).toBe(2);
     await page.locator(".ui-dialog-close").click();
     await picker.waitFor({ state: "hidden" });
-  });
-});
 
-test("reasoning selector opens, closes, and persists a selected level", async () => {
-  await runSeededApp(async ({ page }) => {
     const reasoningButton = page.getByRole("button", { name: "Thinking level" });
 
     await openReasoningMenu(page);
@@ -227,7 +218,7 @@ test("reasoning selector opens, closes, and persists a selected level", async ()
   });
 });
 
-test("prompt history walks older and newer entries and restores the preserved draft", async () => {
+test("prompt history navigation respects boundaries, competing UI surfaces, and missing-auth send gating", async () => {
   await runSeededApp(async ({ page }) => {
     const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
     await textarea.waitFor({ state: "visible" });
@@ -274,13 +265,7 @@ test("prompt history walks older and newer entries and restores the preserved dr
     await textarea.press("End");
     await textarea.press("ArrowDown");
     await waitForTextareaValue(page, "Working live draft");
-  });
-});
 
-test("prompt history ignores arrow keys when the caret is away from the absolute boundary", async () => {
-  await runSeededApp(async ({ page }) => {
-    const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
-    await textarea.waitFor({ state: "visible" });
     await textarea.fill("alpha\nbeta");
 
     await textarea.press("ArrowLeft");
@@ -292,13 +277,7 @@ test("prompt history ignores arrow keys when the caret is away from the absolute
 
     await textarea.press("ArrowUp");
     expect(await textareaValue(page)).toBe("alpha\nbeta");
-  });
-});
 
-test("prompt history ignores arrow keys while another ui surface owns them", async () => {
-  await runSeededApp(async ({ page }) => {
-    const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
-    await textarea.waitFor({ state: "visible" });
     await textarea.focus();
     await textarea.fill("boundary guard");
 
@@ -308,13 +287,7 @@ test("prompt history ignores arrow keys while another ui surface owns them", asy
     await textarea.press("ArrowDown");
     expect(await textareaValue(page)).toBe("boundary guard");
     await page.locator(".workspace-titlebar-title").click();
-  });
-});
 
-test("sending without provider auth opens settings instead of clearing the draft", async () => {
-  await runSeededApp(async ({ page }) => {
-    const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
-    await textarea.waitFor({ state: "visible" });
     await textarea.fill("Need provider access");
     await page.getByRole("button", { name: "Send" }).click();
 

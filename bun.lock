@@ -19,7 +19,7 @@
       "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^7.0.0",
         "@types/bun": "^1.3.11",
-        "electrobun-e2e": "file:../electrobun-e2e",
+        "electrobun-e2e": "1.0.2",
         "oxfmt": "0.44.0",
         "oxlint": "1.59.0",
         "typescript": "^6.0.2",
@@ -578,7 +578,7 @@
 
     "electrobun-browser-tools": ["electrobun-browser-tools@1.0.1", "", { "dependencies": { "incur": "^0.3.25" }, "bin": { "electrobun-browser-tools": "dist/bin.js" } }, "sha512-QxtWsLZkTTK4iVaDkOM1TO+TtF79+DHLhk/WK1Lm4uwJt5sX4epLAS3DCuKvi8yNL+fcuzX+puKAQB7bRwuirA=="],
 
-    "electrobun-e2e": ["electrobun-e2e@file:../electrobun-e2e", { "dependencies": { "electrobun-browser-tools": "1.0.1" }, "devDependencies": { "@types/bun": "^1.3.11", "typescript": "^6.0.2" }, "bin": { "electrobun-e2e": "./src/cli.ts" } }],
+    "electrobun-e2e": ["electrobun-e2e@1.0.2", "", { "dependencies": { "electrobun-browser-tools": "1.0.1" }, "bin": { "electrobun-e2e": "src/cli.ts" } }, "sha512-MHbFOBotZIQw7sfWR6dC9lwMAoV5Bv+vJVu8/QUSixb0D/15rN0vUv7MKpGGTd8f+GAry75nhplIiNLJhHlTQg=="],
 
     "emoji-regex": ["emoji-regex@8.0.0", "", {}, "sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A=="],
 

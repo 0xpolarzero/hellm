@@ -11,7 +11,7 @@
     "workflow:implement-feature": "bun workflows/scripts/run-implement-feature.ts",
     "test": "bun test $(rg --files src -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts')",
     "setup:e2e": "electrobun-e2e setup --config ./electrobun-e2e.config.ts",
-    "test:e2e": "electrobun-e2e run --config ./electrobun-e2e.config.ts",
+    "test:e2e": "ELECTROBUN_E2E_SHARDS=2 electrobun-e2e run --config ./electrobun-e2e.config.ts",
     "typecheck": "bun run typecheck:root && bun run typecheck:workflows",
     "typecheck:root": "tsc --noEmit",
     "typecheck:workflows": "bun run --cwd workflows typecheck",
@@ -35,7 +35,7 @@
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@types/bun": "^1.3.11",
-    "electrobun-e2e": "file:../electrobun-e2e",
+    "electrobun-e2e": "1.0.2",
     "oxfmt": "0.44.0",
     "oxlint": "1.59.0",
     "typescript": "^6.0.2",

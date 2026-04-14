@@ -158,8 +158,8 @@ function getApiKeyMissingError(provider: string): string {
   return `Missing ${envVar} for provider "${provider}". Add one in Provider settings.`;
 }
 
-async function getMainViewUrl(): Promise<string> {
-  const channel = await Updater.localInfo.channel();
+async function getMainViewUrl(channelPromise: Promise<string>): Promise<string> {
+  const channel = await channelPromise;
   if (channel === "dev") {
     const mode = getDevServerMode();
     const ready =
@@ -662,11 +662,13 @@ const appMenu: Parameters<typeof ApplicationMenu.setApplicationMenu>[0] = [
   },
 ];
 
+const localInfoChannelPromise = Updater.localInfo.channel();
+
 ApplicationMenu.setApplicationMenu(appMenu);
 
 loadRuntimeEnv();
 
-const url = await getMainViewUrl();
+const url = await getMainViewUrl(localInfoChannelPromise);
 const e2eHeadless = isEnvFlagEnabled("SVVY_E2E_HEADLESS");
 
 mainWindow = new BrowserWindow({

@@ -10,6 +10,7 @@ export default {
     postBuild: "scripts/postbuild.ts",
   },
   build: {
+    bunVersion: "1.3.10",
     bun: {
       external: [
         "@rivet-dev/*",
