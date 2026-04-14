@@ -12,3 +12,12 @@
   - make sure we read stuff in .agents/, etc?
 
 - figure out reliable diff tracking for both the full session and individual threads; `changedFiles` is not enough, so we need the right snapshot/checkpoint model and likely git-backed diffing semantics
+
+- nice moat but need to nail it:
+  - CI as a verification check on every session
+  - basically same as github workflows on push except it's smithers workflows
+  - need to figure out when it's sensible to run so it doesn't bloat the machine; in a vm it would solve it but the (remote) vm is something we need to figure out separately; or manual runs? kinda defeats the purpose
+  - do we onboard? like special session to figure out CI where AI guides you through?
+
+- use sandboxing separate from environment 
+  - https://x.com/nicoalbanese10/status/2043745569278251112
