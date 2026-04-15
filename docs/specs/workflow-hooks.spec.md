@@ -2,16 +2,16 @@
 
 ## Status
 
-- Date: 2026-04-09
-- Status: early adopted direction for repo-local workflow hooks
+- Date: 2026-04-15
+- Status: adopted direction for repo-local workflow hooks
 - Scope of this document:
-  - define the target product behavior for repo-local preflight and validation hooks
-  - capture the currently adopted workflow-hook decisions and open details
-  - make explicit what is adopted now versus what is still intentionally open
+  - define the target product behavior for repo-local workflow hooks
+  - explain how hooks fit into the new shared command model
+  - capture the adopted first-slice decisions and intentionally open details
 
 ## Purpose
 
-`svvy` needs a repo-local way to inject project-specific policy and context into consequential delegated work without turning the product into a rigid static workflow engine.
+`svvy` needs a repo-local way to inject project-specific policy and context into consequential delegated workflows without turning the product into a rigid static workflow engine.
 
 This document defines that initial direction.
 
@@ -19,15 +19,16 @@ This document defines that initial direction.
 
 The PRD defines:
 
-- delegated Smithers workflows as the default substrate for consequential delegated work
+- one shared command model
+- `workflow.start` and `workflow.resume` as native control tools
+- Smithers as the delegated workflow executor
 - repo-local workflow hooks under `.svvy/`
-- preflight hooks at the start of consequential workflows
-- validation hooks at the end of consequential workflows
 
-Sources:
+Workflow hooks are therefore:
 
-- `docs/prd.md`
-- `docs/execution-model.md`
+- policy around workflow commands
+- not a separate execution path
+- not a replacement for orchestrator routing
 
 ## Adopted Direction
 
@@ -37,9 +38,9 @@ The adopted `svvy` direction is:
 - consequential delegated workflows may be wrapped by two repo-local hooks:
   - `preflight`
   - `validation`
-- these hooks are part of product behavior, not one-off implementation glue
+- hooks are part of product behavior, not one-off implementation glue
 - hooks should shape workflow behavior without replacing orchestrator routing
-- hook outputs should be durable enough to affect workflow execution, episode content, and later debugging
+- hook outputs should be durable enough to affect workflow execution, workflow records, episodes, and later debugging
 
 Nothing below should be read as making the feature more rigid than that.
 
@@ -55,47 +56,64 @@ These are the workflows that should normally pick up preflight and validation be
 
 Not every trivial delegated action needs hooks. The point is to wrap the workflows where local policy, extra context, or required checks materially improve outcomes.
 
+## Placement In The Execution Model
+
+Hooks live around `workflow.start` and `workflow.resume`.
+
+The shared model is still:
+
+```text
+tool call -> command -> handler -> events -> structured state -> UI
+```
+
+In practice that means:
+
+- the orchestrator decides to call `workflow.start` or `workflow.resume`
+- the workflow handler discovers and runs any configured hooks
+- hook execution emits durable command and event facts
+- hook outputs may affect workflow status, workflow summary, artifacts, and resulting episodes
+
 ## Preflight Hook
 
-The preflight hook runs at the beginning of a consequential workflow.
+The preflight hook runs near the beginning of a consequential workflow.
 
-Its purpose is to prepare the workflow with repo-local context or policy before the main work executes.
+Its purpose is to prepare the workflow with repo-local context or policy before the main delegated work executes.
 
 Current intended uses include:
 
 - aggregating context needed by the workflow
 - expanding repo-local policy into executable or promptable inputs
 - preparing variables or structured inputs for downstream steps
-- influencing the first downstream agent or code-execution step with project-specific guidance
+- influencing the first downstream agent or `execute_typescript` step with project-specific guidance
 
 Adopted behavioral expectations:
 
 - preflight runs before the main workflow body
 - preflight may produce structured outputs for later workflow steps
-- preflight should be able to affect the context seen by the first meaningful downstream task
-- preflight should be visible in workflow state and inspectable when debugging
+- preflight should be visible in workflow-related command history and debugging surfaces
+- preflight may create artifacts and influence the initial workflow summary
 
 ## Validation Hook
 
-The validation hook runs at the end of a consequential workflow.
+The validation hook runs near the end of a consequential workflow.
 
 Its purpose is to apply repo-local validation before the workflow result is treated as complete.
 
 Current intended uses include:
 
 - enforcing repo-specific checks
-- attaching a final validation step to every consequential workflow run
+- attaching a final validation step to consequential workflow runs
 - producing explicit guidance about what to do when validation fails
-- shaping whether the workflow is considered successful, blocked, or failed
+- shaping whether the workflow is considered successful, waiting, or failed
 
 Adopted behavioral expectations:
 
 - validation runs after the main workflow body reaches a terminal candidate result
 - validation may emit artifacts, structured outputs, and failure guidance
-- validation results should influence the normalized workflow outcome, not just appear as logs
-- validation should be inspectable in workflow state and resulting episodes
+- validation results should influence normalized workflow outcome, not just appear as logs
+- validation should be inspectable in workflow-related command history, workflow records, and resulting episodes
 
-## Hook Inputs and Execution Style
+## Hook Inputs And Execution Style
 
 The current intended model is flexible by design.
 
@@ -103,23 +121,23 @@ Hooks may involve:
 
 - variables
 - scripts
-- prompting
+- prompts
 - context aggregation
-- structured outputs consumed by downstream steps
+- structured outputs consumed by downstream workflow steps
+- `execute_typescript` when generic capability composition is the cleanest implementation
 
 The product requirement is flexibility, not a single hook authoring format in v1.
 
-## Integration Expectations
+## State And Recording Expectations
 
-Workflow hooks should integrate with the rest of the product as follows:
+Hooks should integrate with the structured session state model as follows:
 
-- the orchestrator still decides whether to use the delegated workflow path
-- Smithers still executes the delegated workflow
-- preflight runs near workflow start
-- validation runs near workflow end
-- hook outputs and failures should surface in workflow state
+- hook execution should create commands and lifecycle events
 - meaningful hook outputs should be capturable in artifacts and episodes
-- hook behavior should be understandable from the session UI and headless outputs
+- hook failures should influence workflow status rather than only showing up as hidden logs
+- hook behavior should be understandable from the session UI and workflow inspection surfaces
+
+Hooks must not bypass the shared command model or write arbitrary state directly.
 
 ## Non-Goals
 
@@ -139,3 +157,11 @@ These points are directionally important but still intentionally open:
 - how hook outputs are typed and passed into downstream workflow steps
 - the exact failure semantics for validation in partially successful workflows
 - how much preflight output should be projected back into the orchestrator versus only into downstream workflow steps
+
+## Sources
+
+### Local Sources
+
+- [PRD](../prd.md)
+- [Execution Model](../execution-model.md)
+- [Structured Session State Spec](./structured-session-state.spec.md)

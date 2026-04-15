@@ -6,7 +6,7 @@ Ship `svvy` as an Electrobun desktop coding app with a pi-backed runtime, a visi
 
 ## Status
 
-- Date: 2026-04-09
+- Date: 2026-04-15
 - Status: target product PRD
 - Scope: this document defines the intended shipped product, not just the current bootstrap implementation
 
@@ -20,14 +20,14 @@ The product combines:
 - a pi-backed interactive runtime and session substrate
 - a `svvy` orchestrator that owns routing, reconciliation, and final decisions
 - Smithers-backed delegated workflows for bounded subagent work
-- first-class episodes, artifacts, verification, and worktree awareness
+- first-class threads, commands, episodes, artifacts, verification, and worktree awareness
 
-The result should feel closer to Slate than to stock pi:
+The intended feel is closer to Slate than to stock pi:
 
 - one strategic brain
 - bounded delegated work instead of persistent role agents
 - reusable structured outputs instead of transcript-only memory
-- visible verification and workflow state
+- visible workflow and verification state without turning the app into a rigid workflow builder
 - safe resume after interruption
 
 ## Product Goals
@@ -36,11 +36,12 @@ The shipped product must let a user:
 
 - open a local repository in a native desktop app and work in long-lived coding sessions
 - understand what the system is doing without reconstructing state from raw logs
-- move fluidly between direct action, delegated workflow execution, verification, and pause states
 - inspect durable outputs from each meaningful unit of work
-- resume interrupted work safely across app restarts
+- delegate bounded work while keeping top-level strategy and state visible
+- run and interpret verification as first-class product behavior
+- pause and resume safely when user input or an external prerequisite is required
 - keep session context and worktree context aligned
-- use the same product model from both the desktop app and headless automation surfaces
+- use the same execution model from both the desktop app and headless automation surfaces
 
 ## Product Principles
 
@@ -49,86 +50,113 @@ The shipped product must let a user:
 The main orchestrator owns:
 
 - request interpretation
-- path selection
 - context loading
-- delegated work authoring
+- tool selection
+- delegated workflow authoring
 - reconciliation
 - final user-facing decisions
 
 No worker becomes the source of truth for overall strategy.
 
-### 2. Bounded Work Over Persistent Roles
+### 2. One Execution Model
 
-Subagents are short-lived and task-specific.
+`svvy` does not have separate execution engines for direct work, workflow work, verification work, and waiting.
 
-The product does not use permanent planner, implementer, or reviewer personas as the default operating model.
+It has one execution model:
 
-### 3. Sessions Are Product Containers, Not Just Transcripts
+```text
+tool call -> command -> handler -> events -> structured state -> UI
+```
+
+Everything the agent does is a tool call.
+
+The differences between ordinary work, delegated work, verification, and waiting come from which tool is called and which runtime component handles it, not from four separate product subsystems.
+
+### 3. `execute_typescript` Is The Default Generic Work Surface
+
+Generic work should default to `execute_typescript`.
+
+That includes:
+
+- reading files
+- searching text
+- inspecting git state
+- generating artifacts
+- performing web lookups
+- composing several small tool calls into one bounded program
+
+The goal is consistency and lower conceptual overhead. Generic work should not splinter into many unrelated ad hoc surfaces when a single typed TypeScript tool can do the job more clearly.
+
+### 4. Native Control Tools Stay Small And Explicit
+
+Some actions are not ordinary generic work because they change product-level control flow.
+
+Those actions stay as native control tools:
+
+- `workflow.start`
+- `workflow.resume`
+- `verification.run`
+- `wait`
+
+These are still tool calls.
+
+They remain special only because they are handled by runtime integrations that own workflow, verification, and waiting semantics.
+
+### 5. Sessions Are Product Containers, Not Just Transcripts
 
 A session is the durable user-facing container for:
 
 - conversation history
-- threads
+- turns
+- visible threads
+- command history
 - episodes
 - artifacts
-- verification state
-- workflow references
-- blocked and waiting states
+- verification records
+- workflow records
+- wait state
 
-### 4. Episodes Are the Main Reusable Output
+### 6. Commands Are Requests, Events Are Facts
 
-Every meaningful work unit produces a structured episode that captures durable value rather than transcript noise.
+The system must keep these roles separate:
 
-### 5. Verification Changes What Happens Next
+- commands are requests to do work
+- events are facts about what happened
+- structured state is the current durable product view
+- the transcript is conversation history, not product truth
 
-Build, test, lint, integration, and manual checks are first-class product events. They are not cosmetic post-processing.
+The UI must read structured state and selectors, not reconstruct core product behavior from assistant prose.
 
-### 6. Visible State Beats Hidden Mechanics
+### 7. Episodes Are The Main Reusable Output
+
+Every meaningful unit of work should produce a durable episode rather than leaving durable value trapped inside transcript text.
+
+Episodes are what later orchestrator turns should reuse first.
+
+### 8. Visible State Beats Hidden Mechanics
 
 The user must be able to see:
 
 - what is active
 - what finished
-- what is blocked
+- what failed
+- what is waiting on the user
+- what is only waiting on another internal work item
 - what was verified
-- what needs clarification
+- which workflow is in flight
 - which worktree and session are currently in play
 
-### 7. Context Is a Scarce Resource
+### 9. Context Is A Scarce Resource
 
 The system should preserve strategic context in the orchestrator, spend local context deliberately, and externalize whatever does not need to stay in the active model window.
 
 In practice that means:
 
 - useful results are compressed into episodes and artifacts instead of dragging full transcripts forward
-- repeatable structure is scripted rather than repeatedly re-derived in prose
-- dynamic composition should move into `execute_typescript` when a short program is clearer and more reliable than many low-level tool calls
+- repeatable structure is pushed into `execute_typescript` or workflow definitions instead of repeatedly re-derived in prose
 - raw model reasoning is reserved for ambiguity, synthesis, prioritization, and recovery
 
-This is the intended middle path between two failure modes:
-
-- transcript-heavy agents that keep too much in context and lose focus
-- rigid workflow systems that over-script work and lose adaptability
-
-`svvy` should deliberately interleave agentic reasoning and executable structure:
-
-- use the model where judgment matters
-- use code and workflow structure where repetition, composition, or verification matter
-- move information across that boundary in compressed, reusable forms
-
-### 8. Layered Workflow Knowledge
-
-Workflow-related prompt and knowledge assets should be layered by who needs them.
-
-In practice that means:
-
-- the orchestrator may load minimal workflow-facing knowledge that fits prompt-scale routing and authoring needs
-- richer workflow examples, Smithers-specific guidance, and extended operational context should load only inside the bounded delegated worker or workflow run that needs them
-- the exact content and file format of those prompt or knowledge assets may evolve over time, but the separation of concerns should remain stable
-
-This keeps workflow capability available without bloating orchestrator context.
-
-### 9. Full Approvals By Default
+### 10. Full Approvals By Default
 
 `svvy` runs with full approvals by default.
 
@@ -168,11 +196,10 @@ Electrobun owns:
 
 - product behavior above the pi seam
 - the orchestrator
-- thread, episode, artifact, and verification models
+- session, turn, thread, command, episode, artifact, verification, workflow, and wait models
 - reconciliation
-- routing decisions
 - desktop UI product semantics
-- workflow and verification projection in the app
+- read models and selectors that drive the app
 
 ### Smithers
 
@@ -180,7 +207,7 @@ Smithers owns:
 
 - delegated workflow execution
 - durable multi-step runs
-- loops, retries, and branches when a delegated workflow needs them
+- retries, loops, branches, and internal workflow state
 - worktree-isolated execution when delegated work requires it
 
 Smithers is not:
@@ -189,13 +216,13 @@ Smithers is not:
 - the top-level session model
 - the main source of product strategy
 
-### execute_typescript
+### `execute_typescript`
 
-`execute_typescript` is an internal execution primitive, not a top-level user path.
+`execute_typescript` is the default generic work surface used by the orchestrator and delegated workers when typed capability composition is the clearest way to complete a bounded task.
 
-It is available to the orchestrator and to delegated work when typed capability composition is the most effective way to complete a bounded task.
+It is not a separate top-level product mode.
 
-## Users and Primary Jobs
+## Users And Primary Jobs
 
 The product is for developers who want an agent that can work in a real repository without collapsing into either:
 
@@ -243,36 +270,62 @@ A session must support:
 - session-level runtime profile overrides above app-wide defaults
 - session-level view of active and completed work
 
+### Turn
+
+A turn is one top-level user request handled by the orchestrator.
+
+A turn is the main correlation root for:
+
+- the triggering user request
+- the threads created while handling that request
+- the commands issued during that request
+- the final response or wait state produced by that request
+
 ### Thread
 
-A thread is a bounded workstream within a session.
+A thread is a visible bounded work item inside a session.
 
-Examples:
+Thread kinds are:
 
-- direct answer or small action
-- delegated Smithers workflow
-- verification run
-- clarification or other blocked state
+- `task`
+- `workflow`
+- `verification`
 
-Threads must expose:
+A thread may:
 
-- objective
+- run directly under the orchestrator
+- represent a delegated workflow started by the orchestrator
+- represent a verification run started by the orchestrator
+- wait on child thread completion
+- wait on user or external input
+
+Waiting is a thread or session status, not a separate thread kind.
+
+### Command
+
+A command is the durable record of one tool call.
+
+Every tool call should become a command record with:
+
+- the tool name
+- executor ownership
 - status
-- current executor
-- related worktree
-- related episodes
-- blocked or waiting reason when applicable
-- structured blocked-on cause when the thread is waiting on child threads, user input, or an external prerequisite
+- parent-child linkage when commands nest
+- trace versus surfaced visibility
+- timestamps
+
+Commands are the universal execution primitive in the product model.
 
 ### Episode
 
-An episode is the main synchronization unit produced by any meaningful work step.
+An episode is the main synchronization unit produced by any meaningful unit of work.
 
 An episode should capture:
 
 - objective
-- source
-- status
+- source thread
+- source command where relevant
+- status or outcome
 - conclusions
 - changed files
 - artifacts
@@ -283,7 +336,7 @@ An episode should capture:
 
 ### Artifact
 
-Artifacts are file-addressable outputs referenced by episodes.
+Artifacts are durable outputs referenced by episodes.
 
 Examples:
 
@@ -291,12 +344,12 @@ Examples:
 - logs
 - test reports
 - screenshots
-- structured workflow outputs
-- exported verification details
+- generated files
+- exported workflow details
 
 ### Verification Record
 
-A verification record captures a single meaningful check such as:
+A verification record captures a real verification outcome such as:
 
 - build
 - test
@@ -304,11 +357,65 @@ A verification record captures a single meaningful check such as:
 - integration
 - manual review checkpoint
 
-It must include status, summary, and linked artifacts.
+It must include status, summary, and linked evidence.
 
-### Workflow Run
+### Workflow Record
 
-A workflow run is the durable record of delegated Smithers-backed work associated with a thread and its episodes.
+A workflow record is the `svvy`-side durable record of a delegated Smithers run.
+
+It is not a copy of Smithers internals.
+
+It exists so the session model can expose:
+
+- which workflow was started
+- which Smithers run it maps to
+- its current top-level status
+- a legible top-level summary
+
+## Tool Model
+
+### Model-Facing Tool Surface
+
+The adopted top-level tool surface is intentionally small:
+
+- `execute_typescript`
+- `workflow.start`
+- `workflow.resume`
+- `verification.run`
+- `wait`
+
+This is the product-facing execution surface the orchestrator reasons about.
+
+### Generic Capability Surface Inside `execute_typescript`
+
+Inside `execute_typescript`, the runtime should expose a typed object API rather than flat `external_*` globals.
+
+The exact capability list may evolve, but the shape should look like:
+
+```ts
+await tools.repo.readFile({ path });
+await tools.repo.searchText({ pattern });
+await tools.git.status({});
+await tools.web.search({ query });
+await tools.artifact.writeText({ name, text });
+```
+
+This is the adopted direction for consistency.
+
+`external_*` naming is not part of the target product design.
+
+### Native Control Tool Boundaries
+
+Control tools are native because they change product-owned execution state:
+
+- `workflow.start` starts a real Smithers workflow and creates a workflow thread and workflow record
+- `workflow.resume` resumes a paused workflow from durable state
+- `verification.run` launches real verification and creates a verification thread and verification record
+- `wait` marks the current thread as waiting and may place the whole session into wait state when no runnable work remains
+
+These tools request real work.
+
+They do not directly write arbitrary product state. Runtime handlers and bridges own the resulting facts.
 
 ## Desktop Experience
 
@@ -321,7 +428,7 @@ The shipped desktop app should present one coherent workspace, not a loose colle
 The default shell includes:
 
 - a left navigation rail for workspace and session navigation
-- a main work area for conversation and live orchestration state that can expand into a fixed pane layout up to `3x3`
+- a main work area for conversation and visible orchestration state that can expand into a fixed pane layout up to `3x3`
 - a right-side inspector for selected details
 - a bottom composer and status strip for prompt entry and current runtime context
 
@@ -333,18 +440,16 @@ It must show more than a transcript. The session UI combines:
 
 - the conversation timeline
 - visible thread state
-- compact subagent cards with a short live headline
-- compact workflow cards with a minimal progress overview
+- compact workflow and verification cards when those threads exist
 - episode summaries
-- workflow progress
+- workflow state
 - verification summaries
 - artifact access
+- explicit wait state
 
 The user should be able to understand the current state of work at a glance without opening raw logs.
 
-Workflow runs remain subordinate to the main session model. The primary view should still be threads, episodes, verification, and artifacts, even when a delegated workflow is active.
-
-Subagents and workflows may expand into the right pane or into split panes without becoming separate top-level products views.
+Low-level generic commands such as file reads or text searches should be durably recorded, but they should normally remain trace-level details rather than top-level UI clutter.
 
 ### Navigation
 
@@ -366,7 +471,7 @@ The app must support:
 - jumps from messages to episodes, artifacts, verification, and workflow details
 - clear indication of current repo and worktree context
 
-### Composer and Runtime Controls
+### Composer And Runtime Controls
 
 The composer area must support:
 
@@ -388,11 +493,9 @@ The inspector area must support focused inspection of:
 - the selected thread
 - the selected episode
 - verification results
-- workflow progress
+- workflow status
 - artifact previews when available
 - unresolved issues and follow-up suggestions
-
-Secondary workflow inspection surfaces may expose deeper live workflow detail without replacing the session-centric main view.
 
 ### Dedicated Workflow Inspector
 
@@ -423,11 +526,9 @@ The product should let the user inspect delegated work without leaving the main 
 
 It must support:
 
-- opening a selected subagent card in the right pane as a fully interactive surface
-- opening a selected workflow in the right pane as a fully interactive workflow inspector surface
-- placing a subagent or workflow into a targeted pane slot by drag or explicit split/open actions
-- expanded subagent panes behaving like normal interactive session surfaces
-- expanded workflow panes representing the workflow as a whole through a live graph view, with drill-down into internal workflow boxes or agents
+- opening a selected workflow or verification surface in the right pane
+- placing a surface into a targeted pane slot by drag or explicit split or open actions
+- expanded panes behaving like normal inspectable session surfaces
 - allowing the same surface to be opened in more than one pane when the user wants multiple views
 - keeping the main session, expanded pane, and multi-pane views aligned as one coherent tree of work
 
@@ -451,11 +552,11 @@ Context pressure should be visible as explicit percentages against the active mo
 The product must support:
 
 - a full-width main-session context bar below the text input
-- compact bottom-edge context indicators on collapsed subagent and workflow surfaces
-- full-width context bars on expanded subagent and workflow panes
+- compact bottom-edge context indicators on collapsed delegated-work surfaces
+- full-width context bars on expanded delegated-work panes
 - the same neutral, orange, and red states across all surfaces, driven by explicit percentage thresholds rather than vague heuristics
 
-### Settings and Auth
+### Settings And Auth
 
 The app must include settings surfaces for:
 
@@ -470,77 +571,59 @@ Companion diagram: [Execution Model](./execution-model.md)
 
 Every user request goes through one orchestrator-controlled loop:
 
-1. load current workspace, session, thread, episode, artifact, and verification context
-2. classify the request
-3. choose the next path
-4. execute bounded work
-5. normalize the output into one or more episodes
-6. reconcile product state
-7. continue, pause, or finish
+1. load current workspace, session, thread, episode, artifact, verification, workflow, and wait context
+2. open a new turn
+3. choose the next tool call
+4. execute that tool through the correct handler
+5. record command and event facts
+6. update structured state
+7. continue, wait, or finish
 
-The product supports four top-level execution paths.
+The orchestrator does not choose between four separate product paths.
 
-### Direct Path
+It chooses the next tool call inside one shared command system.
 
-Use the direct path for:
+### Ordinary Generic Work
 
-- explanation
-- small synthesis
-- small read-only inspection
-- tiny single-step actions
+Ordinary generic work should usually happen through `execute_typescript`.
 
-The direct path still produces an episode.
+Use it when the work is:
 
-### Delegated Workflow Path
+- mostly generic repo or web inspection
+- small bounded file or data transformation
+- easier to express as a short typed program than as many low-level tool calls
 
-Use the delegated path when work benefits from:
+### Delegated Workflow Work
 
-- an explicit bounded subagent
+Use `workflow.start` when work benefits from:
+
+- an explicit bounded delegated worker
 - multi-step structure
-- milestone-based progress tracking with explicit verification gates
-- durable resume
-- loops or retries
-- same-branch parallel agent execution with explicit ownership
-- worktree isolation only when shared-branch execution is unusually risky
-- explicit workflow state in the UI
+- durable workflow state
+- retries, loops, or pause and resume
+- isolated worktree execution when the orchestrator decides isolation is worth the cost
 
-Delegated work should usually be represented as a Smithers workflow, even when the workflow is small.
+Delegated Smithers workflows remain milestone-based by default, not loose todo lists.
 
-Delegated Smithers workflows are milestone-based by default, not loose todo lists.
+### Verification Work
 
-The orchestrator must derive an explicit milestone graph with:
-
-- a milestone objective
-- milestone completion criteria
-- one or more bounded agent tasks
-- a verification boundary that must run before the next milestone unlocks
-
-The orchestrator may fan a milestone out into parallel agents, but those agents should default to the current branch and current worktree unless the orchestrator explicitly decides isolation is worth the cost.
-
-Milestones may evolve during execution through Smithers hot reload, but only the orchestrator is allowed to change the workflow graph.
-
-### Verification Path
-
-Use the verification path when the main next step is to check reality rather than modify it.
+Use `verification.run` when the main next step is to check reality rather than modify it.
 
 Verification results must feed back into routing and reconciliation.
 
-### Clarification or Pause Path
+### Waiting
 
-Use the pause path when:
+Use `wait` when:
 
 - the user must make a product choice
 - the next action is ambiguous
-- required information or an external prerequisite is missing
-- a delegated workflow is paused on a resumable waiting condition
+- required information is missing
+- an external prerequisite is missing
+- a delegated workflow reaches a durable pause condition that blocks the active frontier
 
-`svvy` runs with full approvals by default. Waiting is for clarification or resumable pause conditions, not approval gating.
+Waiting is a status in the shared model, not a separate product path.
 
-Internal waits on child threads or parallel subwork are not the same thing as whole-session waiting.
-
-They should stay on the owning thread as structured blocked-on state while the session remains `running`.
-
-`session.waitingOn` is reserved for pauses where no runnable work remains and the next meaningful progress requires user or external input.
+Internal waits on child threads or parallel subwork are not whole-session waiting. They remain thread-level dependency state while the session itself stays `running`.
 
 ## Slate-Inspired Subagent Model
 
@@ -552,8 +635,7 @@ The adopted subagent model is:
 - delegated work is bounded and short-lived
 - subagents return durable outputs instead of long private side conversations
 - synchronization happens frequently through episodes
-- lifecycle state is written from explicit runtime or tool events rather than inferred from prompt keywords or assistant prose
-- the system re-enters cheaply after each meaningful unit of work
+- runtime state is written from real command handlers and bridge events rather than transcript inference
 - the orchestrator keeps only lightweight workflow knowledge while richer workflow context stays local to delegated work
 - runtime profiles such as explorer, implementer, reviewer, and workflow-writer are bounded-task presets, not persistent always-on agents
 - hidden system agents may exist for narrow product tasks such as one-shot session naming without becoming user-facing persistent roles
@@ -566,7 +648,7 @@ This means the product should not optimize for:
 
 ## Feature Requirements
 
-### 1. Desktop Workspace and Repository Lifecycle
+### 1. Desktop Workspace And Repository Lifecycle
 
 The app must support:
 
@@ -577,7 +659,7 @@ The app must support:
 - preserving workspace-scoped pane layout and sidebar organization
 - surfacing worktree context clearly
 
-### 2. Provider Authentication and Model Configuration
+### 2. Provider Authentication And Runtime Profiles
 
 The app must support:
 
@@ -589,7 +671,7 @@ The app must support:
 - per-session overrides of those runtime profiles
 - a hidden `namer` system agent seeded initially to `gpt-5.4-mini` with low reasoning effort for one-shot top-level session naming
 
-### 3. Session Lifecycle and Navigation
+### 3. Session Lifecycle And Navigation
 
 The app must support:
 
@@ -603,7 +685,7 @@ The app must support:
 - listing and filtering sessions from metadata-first summaries
 - grouping sessions with flat folder labels
 - restoring persisted pane layout and pane occupancy from durable workspace state
-- list, resume, and restore flows are metadata-first and only load transcript or detail state on demand
+- list, resume, and restore flows being metadata-first and loading transcript or detail state only on demand
 - preserving durable session state across app restarts
 - reconstructing visible product state and session runtime profile overrides from durable session data
 
@@ -613,39 +695,35 @@ The app must show, within a single session surface:
 
 - the conversation
 - active and completed threads
-- compact subagent and workflow surfaces that can be expanded or split
+- compact workflow and verification surfaces that can be expanded or split
 - dedicated read-only workflow inspector surfaces when deeper workflow inspection is needed
 - exact pane placement and focus when the workspace is using a multi-pane layout
 - latest episodes
 - verification summaries
 - blocked or waiting work
 - workflow activity
-- session-summary and sidebar projections for sessions, threads, episodes, verification, and workflows from structured state and incremental projections, not transcript replay
+- metadata-first read models for sessions, threads, episodes, verification, workflows, and wait state
 - the current main runtime profile with expandable per-agent profile detail
 - explicit context-budget indicators for the current surface and delegated work surfaces
 - current workspace and worktree context
 
 This is a core product requirement, not a stretch goal.
 
-### 5. Orchestrator and Routing
+### 5. Orchestrator And Tool Routing
 
 The orchestrator must:
 
 - classify requests against current context
-- choose between direct, delegated, verification, and pause paths
 - resolve symbolic file and folder mentions from the composer into request context
-- author delegated workflow requests when appropriate
-- derive delegated workflows as milestone graphs with explicit milestone objectives, completion criteria, agent tasks, and verification gates
-- assign explicit write scopes and join conditions when dispatching parallel same-branch agents
-- emit explicit structured lifecycle writes through runtime or tool hooks for direct work, dependency blocking, verification, workflow, and waiting transitions
-- issue those lifecycle writes as first-class structured-state tool calls from the orchestrator or the owning runtime integration rather than reconstructing them later from transcript inspection
-- treat workflow hot reload as an orchestrator-owned graph mutation based on milestone outcomes and verification results, not as an autonomous worker behavior
-- reconcile all path outputs into the same product model
+- choose the next tool call instead of choosing among unrelated execution engines
+- prefer `execute_typescript` for ordinary generic work
+- call `workflow.start`, `workflow.resume`, `verification.run`, and `wait` only when product-level control flow requires them
+- author delegated workflows when appropriate
+- reconcile all command outcomes into the same product model
 - make final user-facing decisions after delegated work completes or pauses
 - support both orchestrator-session and quick-session entry modes, with different main-session prompts and default main runtime profiles
-- treat clarification and resumable waiting as the only pause states surfaced by the product
 
-### 6. Delegated Workflows and Smithers Integration
+### 6. Delegated Workflows And Smithers Integration
 
 Smithers-backed workflows are the default delegated-work substrate when a request needs explicit subagent boundaries or durable workflow structure.
 
@@ -654,7 +732,6 @@ The product must support:
 - short-lived delegated workflows for bounded work
 - workflows as small as one explicit bounded agent task
 - milestone-based workflows with explicit milestone objectives, completion criteria, agent tasks, and verification boundaries
-- milestone progress that is more structured and durable than a loose todo plan
 - larger workflows with retries, loops, and worktrees when needed
 - same-branch parallel agents as the default execution mode for milestone tasks
 - explicit write scopes for same-branch parallel agents so peer-style collaboration stays coordinated
@@ -666,19 +743,21 @@ The product must support:
 - orchestrator-only ownership of workflow graph evolution and milestone unlock decisions
 - worktree isolation only when the orchestrator judges same-branch execution too risky or too collision-prone
 - durable workflow pause and resume
-- workflow progress projected into the desktop UI
-- current milestone and current verification gate projected into the desktop UI
+- workflow state projected into the desktop UI
 - workflow results translated into episodes and artifacts
 - structured workflow knowledge assets split between minimal orchestrator-facing summaries and richer worker-facing prompts or examples
 - delegated workers loading the rich workflow context they need without expanding orchestrator context to match
 - delegated Smithers agents using runtime profiles such as explorer, implementer, reviewer, and workflow-writer when the workflow authoring or execution path requires them
 - workflow runs being inspectable as dedicated read-only graph surfaces, with drill-down into internal workflow nodes and child agent surfaces
 
-### 7. Episodes, Artifacts, and Reconciliation
+### 7. Commands, Episodes, Artifacts, And Reconciliation
 
 The system must:
 
-- create episodes from direct work, delegated work, and verification
+- record every tool call as a command
+- preserve parent-child command relationships when commands nest
+- preserve command visibility so low-level trace work does not overwhelm the UI
+- create episodes from meaningful completed work
 - preserve artifact references durably
 - expose changed files and outputs clearly
 - retain unresolved issues and follow-up suggestions
@@ -711,22 +790,21 @@ At minimum:
 - the session UI must show which worktree active work belongs to
 - the user must be able to tell when session context and filesystem context are misaligned
 
-### 10. execute_typescript / Code Mode
+### 10. `execute_typescript`
 
 Companion spec: [execute_typescript / Code Mode](./specs/execute-typescript.spec.md)
 
-The product adopts one internal code-mode primitive:
+The product adopts one default generic execution tool:
 
 - tool name: `execute_typescript`
 - input shape: `typescriptCode`
 - output shape: `{ success, result, logs, error }`
-- initial runtime: QuickJS
-- capability model: flat async `external_*` bindings generated from the selected host tools
+- capability model: typed `tools.*` namespaces injected by the runtime
 
 Code mode is available:
 
-- on the direct path
-- inside Smithers-backed delegated work
+- in ordinary orchestrator work
+- inside delegated Smithers work when generic typed capability composition is useful there too
 
 Code mode is used for:
 
@@ -734,13 +812,11 @@ Code mode is used for:
 - compact scripted transformations
 - reducing low-level multi-tool chatter when a short program is the clearer execution unit
 
-Code-mode events and traces must be captured into episodes and artifacts.
-
 Out of scope for the first implementation:
 
-- a code-mode-specific outer sandbox
-- a namespaced capability API
-- raw unrestricted shell access through code mode
+- product-visible sandbox controls
+- `external_*` naming
+- a second unrestricted shell hidden behind code mode
 
 ### 11. Repo-Local Workflow Hooks
 
@@ -757,7 +833,7 @@ Consequential workflows include repo-modifying work, heavy work, and other execu
 
 These hooks should support repo-specific policy, context gathering, and failure handling without turning the product into a rigid static workflow engine.
 
-### 12. Headless and Automation Surfaces
+### 12. Headless And Automation Surfaces
 
 The product must remain scriptable outside the desktop UI.
 
@@ -770,26 +846,25 @@ Required supporting surfaces:
 
 The desktop app is primary, but headless execution is a real product surface, not a throwaway test mode.
 
-## Persistence and State Requirements
+## Persistence And State Requirements
 
 - pi-backed sessions remain the top-level user-facing session substrate
 - `svvy` extends that substrate with structured product state
-- session summaries, sidebar rows, navigation state, pane indicators, and restart recovery must come from durable metadata or projections, not transcript replay
+- the transcript is canonical only for transcript history
+- commands, episodes, verification, workflow, wait, and navigation state must come from durable structured records, not transcript replay
 - product state must not depend on replaying the raw transcript for every decision
-- structured thread, verification, workflow, and waiting writes must come from explicit runtime or tool events owned by the orchestrator, verification runner, or Smithers integration
-- the real runtime should expose those writes as structured-state tool calls so the orchestrator, verification runner, and Smithers bridge can write facts at the moment lifecycle transitions occur
-- product state must not infer workflow, verification, or waiting lifecycle from prompt keywords, assistant prose, or transcript heuristics
+- runtime handlers and bridges must emit durable facts from real execution, not prompt-text inference
+- the agent must not be given arbitrary state-write tools for mutating product records directly
 - transcript and detail payloads are loaded lazily when the user opens or expands a surface that needs them
 - artifacts may live on disk and be referenced from durable product state
-- Smithers may keep its own workflow-run state, but that state is subordinate to the top-level session and episode model
+- Smithers may keep its own workflow-run state, but that state is subordinate to the top-level session and thread model
 
 ## Quality Requirements
 
 - the user must be able to recover meaningful state after app restart or workflow interruption
-- direct work, delegated work, and verification must normalize into one coherent product model
-- active, blocked, and completed work must be legible in the UI
-- clarification and waiting states must be explicit
-- thread-level dependency blocking and whole-session waiting must be modeled distinctly
+- task work, workflow work, and verification work must normalize into one coherent product model
+- active, waiting, failed, and completed work must be legible in the UI
+- whole-session waiting and thread-local dependency waiting must be modeled distinctly
 - product behavior must stay adaptive rather than collapsing into a rigid workflow tree
 - tests for interactive behavior must exercise the real pi-backed runtime seam, not a fake shell presented as the product
 
@@ -801,18 +876,20 @@ The shipped v1 product includes:
 - pi-backed runtime and session substrate
 - provider auth and model settings
 - session creation, resume, and navigation
-- a session-centric UI with conversation, threads, episodes, verification, workflow activity, and artifacts
-- one orchestrator with direct, delegated, verification, and pause paths
+- a session-centric UI with conversation, threads, episodes, verification, workflow state, wait state, and artifacts
+- one orchestrator using one command model
+- `execute_typescript` as the default generic work surface
+- native control tools for workflow start or resume, verification, and wait
 - Smithers-backed delegated workflows
 - first-class episodes and artifact inspection
 - first-class verification
 - worktree-aware thread and workflow state
-- `execute_typescript` on the direct and delegated paths
 - repo-local preflight and validation workflow hooks
 - headless one-shot execution and structured workflow input or output
 
 ## Later, Not v1
 
+- product-visible sandbox controls around generic capability execution
 - richer multi-model routing beyond practical session-level controls
 - advanced collaboration or multi-user features
 - a full long-lived server product surface
@@ -831,6 +908,8 @@ The product is not trying to:
 - force all requests through rigid predeclared workflows
 - rely on transcript-only memory
 - adopt persistent planner, implementer, and reviewer role stacks as the default model
+- expose arbitrary state-write tools as the agent contract
+- preserve `external_*` as a long-term capability naming model
 - turn code mode into a second unrestricted shell
 
 ## Ship Criteria
@@ -838,8 +917,9 @@ The product is not trying to:
 The product is on target when all of the following are true:
 
 - a user can open a real repository in the desktop app, authenticate a provider, and work in durable sessions
-- the session UI makes current work legible through threads, episodes, verification, workflow state, and artifacts
-- the orchestrator can choose between direct, delegated, verification, and pause paths without breaking the user model
+- the session UI makes current work legible through threads, episodes, verification, workflow state, wait state, and artifacts
+- the orchestrator chooses the next tool call coherently inside one execution model
+- ordinary generic work usually goes through `execute_typescript`
 - delegated work is visible, bounded, and resumable
 - meaningful work produces reusable episodes
 - verification is structured, inspectable, and programmatically relevant
@@ -849,7 +929,7 @@ The product is on target when all of the following are true:
 
 ## Design Basis
 
-### Public Slate Facts We Intend to Emulate
+### Public Slate Facts We Intend To Emulate
 
 The product intentionally borrows these public ideas:
 
@@ -865,7 +945,7 @@ The product also adopts these explicit inferences:
 
 - the quality comes from orchestration discipline more than cosmetic UI similarity
 - structured outputs matter more than long prose summaries
-- routing by task type improves reliability
+- routing by next action is more reliable than proliferating execution modes
 - the best balance is adaptive orchestration with bounded synchronization, not transcript sprawl and not rigid workflow bureaucracy
 
 These are `svvy` product choices, not claims about private Slate internals.

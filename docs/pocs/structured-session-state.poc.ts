@@ -6,93 +6,42 @@ import { basename, dirname, join } from "node:path";
  * Structured Session State POC
  * ============================
  *
- * This is one executable file that proves the whole idea.
+ * This file proves the adopted model:
  *
- * Read it in this order:
- * 1. `StructuredSessionState`: the whole proposed state model in one place.
- * 2. `StructuredSessionPoc`: the tiny runtime that writes and reads that state.
- * 3. `runPoc()`: the full lifecycle the product needs to support.
+ * - one shared execution model
+ * - turns and commands are first-class
+ * - every tool call becomes a command
+ * - `execute_typescript` is the default generic work surface
+ * - workflow, verification, and wait remain native control tools
+ * - runtime handlers and bridges record durable facts from real execution
+ * - waiting is a status, not a separate execution subsystem
+ * - the lifecycle survives save and reload
  *
- * What this file is trying to prove:
- * - `pi` should stay the source of truth for transcript history.
- * - `svvy` should own explicit product state above that transcript.
- * - structured writes should come from explicit runtime events, not prompt text
- *   or transcript heuristics.
- * - in the real product, those writes should be exposed as structured-state
- *   tool calls the orchestrator or owning integration performs at lifecycle
- *   boundaries.
- * - delegated Smithers workflows should be orchestrator-authored milestone
- *   graphs with verification at milestone boundaries, not loose todo plans.
- * - same-branch parallel agents are the default execution mode for milestone
- *   work, while worktrees are reserved for cases where isolation is worth it.
- * - the session-summary selector should serve sidebar and list views from
- *   structured metadata rather than transcript-derived convenience reads.
- * - that product state should make threads, results, verification, workflows,
- *   dependency blocking, and waiting state directly queryable.
- * - the lifecycle should survive save + reload.
- *
- * This POC uses one JSON file because that is the smallest way to make the
- * lifecycle executable in one file. The real implementation should still move
- * to workspace-scoped SQLite.
+ * The real implementation should still move to workspace-scoped SQLite.
+ * This POC keeps one JSON file because that is the smallest executable proof.
  */
 
 type SessionStatus = "idle" | "running" | "waiting" | "error";
-
-/**
- * Thread kind answers:
- * "what kind of workstream is this?"
- */
-type ThreadKind = "direct" | "verification" | "workflow";
-
-type ThreadStatus = "running" | "completed" | "failed" | "waiting";
-
-type ThreadBlockedOn =
-  | {
-      kind: "threads";
-      threadIds: string[];
-      waitPolicy: "all" | "any";
-      reason: string;
-      since: string;
-    }
-  | {
-      kind: "user" | "external";
-      reason: string;
-      resumeWhen: string;
-      since: string;
-    };
-
-/**
- * Result kind answers:
- * "what kind of final result did this thread produce?"
- */
-type ThreadResultKind =
-  | "analysis-summary"
-  | "change-summary"
-  | "verification-summary"
-  | "workflow-summary"
-  | "clarification-summary";
-
-/**
- * Verification kind is intentionally open-ended.
- *
- * We keep a few useful built-in kinds for clarity and autocomplete, but allow
- * any string because real repos may have domain-specific checks that do not fit
- * a small closed enum.
- */
+type TurnStatus = "running" | "waiting" | "completed" | "failed";
+type ThreadKind = "task" | "workflow" | "verification";
+type ThreadStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
+type WaitKind = "user" | "external";
+type CommandExecutor = "orchestrator" | "execute_typescript" | "runtime" | "smithers" | "verification";
+type CommandVisibility = "trace" | "summary" | "surface";
+type CommandStatus = "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+type EpisodeKind = "analysis" | "change" | "verification" | "workflow" | "clarification";
+type ArtifactKind = "text" | "log" | "json" | "file";
 type VerificationKind = "build" | "test" | "lint" | "integration" | "manual" | (string & {});
-
 type VerificationStatus = "passed" | "failed" | "cancelled";
-type WorkflowStatus = "running" | "completed" | "failed" | "waiting";
+type WorkflowStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
 
-/**
- * This single type is the core of the whole proposal.
- *
- * If you understand this shape, you understand the product model.
- *
- * The main idea:
- * - `pi` still owns raw conversation history.
- * - `svvy` owns the structured product state below `session`.
- */
+type WaitState = {
+  kind: WaitKind;
+  reason: string;
+  resumeWhen: string;
+  since: string;
+};
+
 export type StructuredSessionState = {
   workspace: {
     id: string;
@@ -107,44 +56,75 @@ export type StructuredSessionState = {
     model?: string;
     reasoningEffort?: string;
     messageCount: number;
-    status: SessionStatus;
     createdAt: string;
     updatedAt: string;
   };
 
   session: {
-    /**
-     * Everything else that can be derived from arrays should stay derived.
-     */
-    waitingOn: null | {
+    id: string;
+    wait: null | ({
       threadId: string;
-      reason: string;
-      resumeWhen: string;
-      since: string;
-    };
+    } & WaitState);
   };
 
-  threads: Array<{
+  turns: Array<{
     id: string;
-    kind: ThreadKind;
-    objective: string;
-    status: ThreadStatus;
-    result: null | {
-      kind: ThreadResultKind;
-      summary: string;
-      body: string;
-      createdAt: string;
-    };
-    blockedReason: string | null;
-    blockedOn: ThreadBlockedOn | null;
+    requestSummary: string;
+    status: TurnStatus;
     startedAt: string;
     updatedAt: string;
     finishedAt: string | null;
   }>;
 
+  threads: Array<{
+    id: string;
+    turnId: string;
+    parentThreadId: string | null;
+    kind: ThreadKind;
+    title: string;
+    objective: string;
+    status: ThreadStatus;
+    dependsOnThreadIds: string[];
+    wait: WaitState | null;
+    startedAt: string;
+    updatedAt: string;
+    finishedAt: string | null;
+  }>;
+
+  commands: Array<{
+    id: string;
+    turnId: string;
+    threadId: string;
+    parentCommandId: string | null;
+    toolName: string;
+    executor: CommandExecutor;
+    visibility: CommandVisibility;
+    status: CommandStatus;
+    attempts: number;
+    title: string;
+    summary: string;
+    error: string | null;
+    startedAt: string;
+    updatedAt: string;
+    finishedAt: string | null;
+  }>;
+
+  episodes: Array<{
+    id: string;
+    threadId: string;
+    sourceCommandId: string | null;
+    kind: EpisodeKind;
+    title: string;
+    summary: string;
+    body: string;
+    artifactIds: string[];
+    createdAt: string;
+  }>;
+
   verifications: Array<{
     id: string;
     threadId: string;
+    commandId: string;
     kind: VerificationKind;
     status: VerificationStatus;
     summary: string;
@@ -156,6 +136,7 @@ export type StructuredSessionState = {
   workflows: Array<{
     id: string;
     threadId: string;
+    commandId: string;
     smithersRunId: string;
     workflowName: string;
     status: WorkflowStatus;
@@ -165,44 +146,48 @@ export type StructuredSessionState = {
     finishedAt: string | null;
   }>;
 
+  artifacts: Array<{
+    id: string;
+    episodeId: string;
+    kind: ArtifactKind;
+    name: string;
+    path?: string;
+    content?: string;
+    createdAt: string;
+  }>;
+
   events: Array<{
     id: string;
     at: string;
-    kind:
-      | "thread-started"
-      | "thread-status-changed"
-      | "thread-result-created"
-      | "verification-finished"
-      | "workflow-started"
-      | "workflow-status-changed"
-      | "session-waiting-started"
-      | "session-waiting-ended";
-    threadId?: string;
+    kind: string;
+    subject: {
+      kind: "session" | "turn" | "thread" | "command" | "episode" | "verification" | "workflow" | "artifact";
+      id: string;
+    };
+    data?: Record<string, unknown>;
   }>;
 };
 
+type TurnRecord = StructuredSessionState["turns"][number];
 type ThreadRecord = StructuredSessionState["threads"][number];
-type ThreadResultRecord = NonNullable<ThreadRecord["result"]>;
+type CommandRecord = StructuredSessionState["commands"][number];
+type EpisodeRecord = StructuredSessionState["episodes"][number];
 type VerificationRecord = StructuredSessionState["verifications"][number];
 type WorkflowRecord = StructuredSessionState["workflows"][number];
+type ArtifactRecord = StructuredSessionState["artifacts"][number];
 
-/**
- * These are selector-style reads for sidebar/session-summary surfaces, not raw
- * storage reads.
- *
- * This matters because the real product should query "what the UI needs"
- * rather than forcing the UI to understand storage layout or transcript
- * materialization.
- */
 export type SessionView = {
   title: string;
   sessionStatus: SessionStatus;
-  waitingOn: StructuredSessionState["session"]["waitingOn"];
+  wait: StructuredSessionState["session"]["wait"];
   counts: {
+    turns: number;
     threads: number;
-    results: number;
+    commands: number;
+    episodes: number;
     verifications: number;
     workflows: number;
+    artifacts: number;
     events: number;
   };
   threadIdsByStatus: {
@@ -210,24 +195,9 @@ export type SessionView = {
     waiting: string[];
     failed: string[];
   };
+  visibleThreadIds: string[];
 };
 
-/**
- * Small runtime
- * -------------
- *
- * This class is intentionally tiny. It only exists to prove the lifecycle.
- *
- * The responsibilities are simple:
- * - own writes
- * - persist after each write
- * - expose a few selector reads
- * - reload from disk safely
- *
- * In production these methods should map cleanly to Bun-side structured-state
- * tool calls. The POC keeps them as direct method calls only so the lifecycle
- * remains executable in one file.
- */
 export class StructuredSessionPoc {
   private ids = new Map<string, number>();
 
@@ -240,6 +210,7 @@ export class StructuredSessionPoc {
     filePath: string;
     workspace: StructuredSessionState["workspace"];
     pi: StructuredSessionState["pi"];
+    sessionId: string;
   }): StructuredSessionPoc {
     mkdirSync(dirname(input.filePath), { recursive: true });
 
@@ -247,11 +218,16 @@ export class StructuredSessionPoc {
       workspace: { ...input.workspace },
       pi: { ...input.pi },
       session: {
-        waitingOn: null,
+        id: input.sessionId,
+        wait: null,
       },
+      turns: [],
       threads: [],
+      commands: [],
+      episodes: [],
       verifications: [],
       workflows: [],
+      artifacts: [],
       events: [],
     });
 
@@ -262,592 +238,865 @@ export class StructuredSessionPoc {
   static load(filePath: string): StructuredSessionPoc {
     const state = JSON.parse(readFileSync(filePath, "utf8")) as StructuredSessionState;
     const poc = new StructuredSessionPoc(filePath, state);
-    poc.rebuildIdCounters();
+    poc.rebuildIdState();
     return poc;
   }
 
-  startThread(input: { kind: ThreadKind; objective: string }): ThreadRecord {
-    const timestamp = new Date().toISOString();
-    const thread: ThreadRecord = {
-      id: this.id("thread"),
-      kind: input.kind,
-      objective: input.objective,
+  startTurn(requestSummary: string): TurnRecord {
+    const now = this.now();
+    const turn: TurnRecord = {
+      id: this.nextId("turn"),
+      requestSummary,
       status: "running",
-      result: null,
-      blockedReason: null,
-      blockedOn: null,
-      startedAt: timestamp,
-      updatedAt: timestamp,
+      startedAt: now,
+      updatedAt: now,
       finishedAt: null,
     };
-
-    this.state.threads.push(thread);
-    this.state.pi.updatedAt = timestamp;
-    this.event("thread-started", thread.id);
+    this.state.turns.push(turn);
+    this.pushEvent("turn.started", "turn", turn.id, { requestSummary });
+    this.touchPi(now);
     this.save();
-    return thread;
+    return structuredClone(turn);
   }
 
-  updateThread(input: {
-    threadId: string;
-    status: ThreadStatus;
-    blockedReason?: string | null;
-    blockedOn?: ThreadBlockedOn | null;
+  finishTurn(turnId: string, status: Exclude<TurnStatus, "running">): TurnRecord {
+    const turn = this.findTurn(turnId);
+    const now = this.now();
+    turn.status = status;
+    turn.updatedAt = now;
+    turn.finishedAt = now;
+    this.pushEvent(status === "waiting" ? "turn.waiting" : status === "failed" ? "turn.failed" : "turn.completed", "turn", turn.id);
+    this.touchPi(now);
+    this.save();
+    return structuredClone(turn);
+  }
+
+  createThread(input: {
+    turnId: string;
+    parentThreadId?: string | null;
+    kind: ThreadKind;
+    title: string;
+    objective: string;
   }): ThreadRecord {
-    const thread = this.mustFindThread(input.threadId);
-    const timestamp = new Date().toISOString();
+    const now = this.now();
+    const thread: ThreadRecord = {
+      id: this.nextId("thread"),
+      turnId: input.turnId,
+      parentThreadId: input.parentThreadId ?? null,
+      kind: input.kind,
+      title: input.title,
+      objective: input.objective,
+      status: "running",
+      dependsOnThreadIds: [],
+      wait: null,
+      startedAt: now,
+      updatedAt: now,
+      finishedAt: null,
+    };
+    this.state.threads.push(thread);
+    this.pushEvent("thread.created", "thread", thread.id, {
+      turnId: thread.turnId,
+      kind: thread.kind,
+      parentThreadId: thread.parentThreadId,
+    });
+    this.touchPi(now);
+    this.save();
+    return structuredClone(thread);
+  }
 
-    thread.status = input.status;
-    thread.blockedReason =
-      input.blockedReason === undefined ? thread.blockedReason : input.blockedReason;
-    thread.blockedOn = input.blockedOn === undefined ? thread.blockedOn : input.blockedOn;
-    thread.updatedAt = timestamp;
-    thread.finishedAt =
-      input.status === "completed" || input.status === "failed" ? timestamp : null;
+  updateThread(
+    threadId: string,
+    input: {
+      status?: ThreadStatus;
+      dependsOnThreadIds?: string[];
+      wait?: WaitState | null;
+      title?: string;
+      objective?: string;
+    },
+  ): ThreadRecord {
+    const thread = this.findThread(threadId);
+    const now = this.now();
 
-    if (input.status !== "waiting" && this.state.session.waitingOn?.threadId === thread.id) {
-      this.state.session.waitingOn = null;
-      this.event("session-waiting-ended", thread.id);
+    if (input.title !== undefined) {
+      thread.title = input.title;
+    }
+    if (input.objective !== undefined) {
+      thread.objective = input.objective;
+    }
+    if (input.dependsOnThreadIds !== undefined) {
+      thread.dependsOnThreadIds = [...input.dependsOnThreadIds];
+    }
+    if (input.wait !== undefined) {
+      thread.wait = input.wait === null ? null : { ...input.wait };
+    }
+    if (input.status !== undefined) {
+      thread.status = input.status;
     }
 
-    this.state.pi.updatedAt = timestamp;
+    if (thread.wait && thread.dependsOnThreadIds.length > 0) {
+      throw new Error(`Thread ${thread.id} cannot wait on threads and user/external input at the same time.`);
+    }
 
-    this.event("thread-status-changed", thread.id);
+    if (thread.status !== "waiting") {
+      thread.dependsOnThreadIds = [];
+      thread.wait = null;
+      if (this.state.session.wait?.threadId === thread.id) {
+        this.state.session.wait = null;
+        this.pushEvent("session.wait.cleared", "session", this.state.session.id, { threadId: thread.id });
+      }
+    }
+
+    thread.updatedAt = now;
+    if (thread.status === "completed" || thread.status === "failed" || thread.status === "cancelled") {
+      thread.finishedAt = now;
+    }
+
+    this.pushEvent(
+      thread.status === "completed" || thread.status === "failed" || thread.status === "cancelled"
+        ? "thread.finished"
+        : "thread.updated",
+      "thread",
+      thread.id,
+      {
+        status: thread.status,
+        dependsOnThreadIds: thread.dependsOnThreadIds,
+        wait: thread.wait,
+      },
+    );
+    this.touchPi(now);
     this.save();
-    return thread;
+    return structuredClone(thread);
   }
 
-  setThreadResult(input: {
+  setSessionWait(input: {
     threadId: string;
-    kind: ThreadResultKind;
+    kind: WaitKind;
+    reason: string;
+    resumeWhen: string;
+  }): StructuredSessionState["session"]["wait"] {
+    const thread = this.findThread(input.threadId);
+    if (thread.status !== "waiting" || !thread.wait) {
+      throw new Error(`Session wait requires a waiting thread with thread.wait details: ${thread.id}`);
+    }
+    if (thread.wait.kind !== input.kind || thread.wait.reason !== input.reason || thread.wait.resumeWhen !== input.resumeWhen) {
+      throw new Error(`Session wait must match the owning thread wait details: ${thread.id}`);
+    }
+    if (this.state.threads.some((candidate) => candidate.id !== thread.id && candidate.status === "running")) {
+      throw new Error("Session wait is only allowed when no other runnable work remains.");
+    }
+
+    const now = this.now();
+    const wait = {
+      threadId: input.threadId,
+      kind: input.kind,
+      reason: input.reason,
+      resumeWhen: input.resumeWhen,
+      since: now,
+    } satisfies NonNullable<StructuredSessionState["session"]["wait"]>;
+    this.state.session.wait = wait;
+    this.pushEvent("session.wait.started", "session", this.state.session.id, wait);
+    this.touchPi(now);
+    this.save();
+    return structuredClone(wait);
+  }
+
+  clearSessionWait(): void {
+    if (!this.state.session.wait) {
+      return;
+    }
+    const wait = this.state.session.wait;
+    const now = this.now();
+    this.state.session.wait = null;
+    this.pushEvent("session.wait.cleared", "session", this.state.session.id, {
+      threadId: wait.threadId,
+      kind: wait.kind,
+    });
+    this.touchPi(now);
+    this.save();
+  }
+
+  createCommand(input: {
+    turnId: string;
+    threadId: string;
+    parentCommandId?: string | null;
+    toolName: string;
+    executor: CommandExecutor;
+    visibility: CommandVisibility;
+    title: string;
+    summary: string;
+  }): CommandRecord {
+    const now = this.now();
+    const command: CommandRecord = {
+      id: this.nextId("command"),
+      turnId: input.turnId,
+      threadId: input.threadId,
+      parentCommandId: input.parentCommandId ?? null,
+      toolName: input.toolName,
+      executor: input.executor,
+      visibility: input.visibility,
+      status: "requested",
+      attempts: 1,
+      title: input.title,
+      summary: input.summary,
+      error: null,
+      startedAt: now,
+      updatedAt: now,
+      finishedAt: null,
+    };
+    this.state.commands.push(command);
+    this.pushEvent("command.requested", "command", command.id, {
+      toolName: command.toolName,
+      threadId: command.threadId,
+      parentCommandId: command.parentCommandId,
+    });
+    this.touchPi(now);
+    this.save();
+    return structuredClone(command);
+  }
+
+  bumpCommandAttempt(commandId: string): CommandRecord {
+    const command = this.findCommand(commandId);
+    const now = this.now();
+    command.attempts += 1;
+    command.updatedAt = now;
+    command.summary = `${command.summary} Retry attempt ${command.attempts}.`;
+    this.pushEvent("command.started", "command", command.id, { attempts: command.attempts, retry: true });
+    this.touchPi(now);
+    this.save();
+    return structuredClone(command);
+  }
+
+  startCommand(commandId: string): CommandRecord {
+    const command = this.findCommand(commandId);
+    const now = this.now();
+    command.status = "running";
+    command.updatedAt = now;
+    this.pushEvent("command.started", "command", command.id, { toolName: command.toolName });
+    this.touchPi(now);
+    this.save();
+    return structuredClone(command);
+  }
+
+  finishCommand(
+    commandId: string,
+    input: {
+      status: Exclude<CommandStatus, "requested" | "running">;
+      summary?: string;
+      error?: string | null;
+    },
+  ): CommandRecord {
+    const command = this.findCommand(commandId);
+    const now = this.now();
+    command.status = input.status;
+    command.updatedAt = now;
+    command.summary = input.summary ?? command.summary;
+    command.error = input.error ?? null;
+    command.finishedAt = input.status === "waiting" ? null : now;
+
+    this.pushEvent(input.status === "waiting" ? "command.waiting" : "command.finished", "command", command.id, {
+      status: input.status,
+      error: command.error,
+    });
+    this.touchPi(now);
+    this.save();
+    return structuredClone(command);
+  }
+
+  createEpisode(input: {
+    threadId: string;
+    sourceCommandId?: string | null;
+    kind: EpisodeKind;
+    title: string;
     summary: string;
     body: string;
-  }): ThreadResultRecord {
-    const thread = this.mustFindThread(input.threadId);
-    if (thread.result) {
-      throw new Error(`Thread already has a result: ${input.threadId}`);
-    }
-
-    const result: ThreadResultRecord = {
+  }): EpisodeRecord {
+    const now = this.now();
+    const episode: EpisodeRecord = {
+      id: this.nextId("episode"),
+      threadId: input.threadId,
+      sourceCommandId: input.sourceCommandId ?? null,
       kind: input.kind,
+      title: input.title,
       summary: input.summary,
       body: input.body,
-      createdAt: new Date().toISOString(),
+      artifactIds: [],
+      createdAt: now,
     };
-
-    thread.result = result;
-    thread.updatedAt = result.createdAt;
-    this.state.pi.updatedAt = result.createdAt;
-    this.event("thread-result-created", input.threadId);
+    this.state.episodes.push(episode);
+    this.pushEvent("episode.created", "episode", episode.id, {
+      threadId: episode.threadId,
+      kind: episode.kind,
+    });
+    this.touchPi(now);
     this.save();
-    return result;
+    return structuredClone(episode);
+  }
+
+  createArtifact(input: {
+    episodeId: string;
+    kind: ArtifactKind;
+    name: string;
+    path?: string;
+    content?: string;
+  }): ArtifactRecord {
+    const episode = this.findEpisode(input.episodeId);
+    const now = this.now();
+    const artifact: ArtifactRecord = {
+      id: this.nextId("artifact"),
+      episodeId: input.episodeId,
+      kind: input.kind,
+      name: input.name,
+      path: input.path,
+      content: input.content,
+      createdAt: now,
+    };
+    this.state.artifacts.push(artifact);
+    episode.artifactIds.push(artifact.id);
+    this.pushEvent("artifact.created", "artifact", artifact.id, {
+      episodeId: artifact.episodeId,
+      kind: artifact.kind,
+    });
+    this.touchPi(now);
+    this.save();
+    return structuredClone(artifact);
   }
 
   recordVerification(input: {
     threadId: string;
+    commandId: string;
     kind: VerificationKind;
     status: VerificationStatus;
     summary: string;
     command?: string;
   }): VerificationRecord {
-    this.mustFindThread(input.threadId);
-
-    const timestamp = new Date().toISOString();
+    const now = this.now();
     const verification: VerificationRecord = {
-      id: this.id("verification"),
+      id: this.nextId("verification"),
       threadId: input.threadId,
+      commandId: input.commandId,
       kind: input.kind,
       status: input.status,
       summary: input.summary,
       command: input.command,
-      startedAt: timestamp,
-      finishedAt: timestamp,
+      startedAt: now,
+      finishedAt: now,
     };
-
     this.state.verifications.push(verification);
-    this.state.pi.updatedAt = timestamp;
-    this.event("verification-finished", input.threadId);
+    this.pushEvent("verification.recorded", "verification", verification.id, {
+      threadId: verification.threadId,
+      status: verification.status,
+    });
+    this.touchPi(now);
     this.save();
-    return verification;
+    return structuredClone(verification);
   }
 
-  startWorkflow(input: {
+  recordWorkflow(input: {
     threadId: string;
+    commandId: string;
     smithersRunId: string;
     workflowName: string;
-    summary: string;
-  }): WorkflowRecord {
-    this.mustFindThread(input.threadId);
-    if (this.state.workflows.some((workflow) => workflow.threadId === input.threadId)) {
-      throw new Error(`Thread already has a workflow: ${input.threadId}`);
-    }
-
-    const timestamp = new Date().toISOString();
-    const workflow: WorkflowRecord = {
-      id: this.id("workflow"),
-      threadId: input.threadId,
-      smithersRunId: input.smithersRunId,
-      workflowName: input.workflowName,
-      status: "running",
-      summary: input.summary,
-      startedAt: timestamp,
-      updatedAt: timestamp,
-      finishedAt: null,
-    };
-
-    this.state.workflows.push(workflow);
-    this.state.pi.updatedAt = timestamp;
-    this.event("workflow-started", input.threadId);
-    this.save();
-    return workflow;
-  }
-
-  updateWorkflow(input: {
-    workflowId: string;
     status: WorkflowStatus;
     summary: string;
   }): WorkflowRecord {
-    const workflow = this.mustFindWorkflow(input.workflowId);
-    const timestamp = new Date().toISOString();
+    const now = this.now();
+    const workflow: WorkflowRecord = {
+      id: this.nextId("workflow"),
+      threadId: input.threadId,
+      commandId: input.commandId,
+      smithersRunId: input.smithersRunId,
+      workflowName: input.workflowName,
+      status: input.status,
+      summary: input.summary,
+      startedAt: now,
+      updatedAt: now,
+      finishedAt: input.status === "running" || input.status === "waiting" ? null : now,
+    };
+    this.state.workflows.push(workflow);
+    this.pushEvent("workflow.recorded", "workflow", workflow.id, {
+      threadId: workflow.threadId,
+      status: workflow.status,
+      smithersRunId: workflow.smithersRunId,
+    });
+    this.touchPi(now);
+    this.save();
+    return structuredClone(workflow);
+  }
 
+  updateWorkflow(
+    workflowId: string,
+    input: {
+      status: WorkflowStatus;
+      summary: string;
+    },
+  ): WorkflowRecord {
+    const workflow = this.findWorkflow(workflowId);
+    const now = this.now();
     workflow.status = input.status;
     workflow.summary = input.summary;
-    workflow.updatedAt = timestamp;
-    workflow.finishedAt =
-      input.status === "completed" || input.status === "failed" ? timestamp : null;
-
-    this.state.pi.updatedAt = timestamp;
-    this.event("workflow-status-changed", workflow.threadId);
+    workflow.updatedAt = now;
+    if (input.status === "completed" || input.status === "failed" || input.status === "cancelled") {
+      workflow.finishedAt = now;
+    }
+    this.pushEvent("workflow.updated", "workflow", workflow.id, {
+      status: workflow.status,
+      summary: workflow.summary,
+    });
+    this.touchPi(now);
     this.save();
-    return workflow;
+    return structuredClone(workflow);
   }
 
-  setWaitingState(input: {
-    threadId: string;
-    kind: "user" | "external";
-    reason: string;
-    resumeWhen: string;
-  }): void {
-    const thread = this.mustFindThread(input.threadId);
-    const timestamp = new Date().toISOString();
-    thread.status = "waiting";
-    thread.blockedReason = input.reason;
-    thread.blockedOn = {
-      kind: input.kind,
-      reason: input.reason,
-      resumeWhen: input.resumeWhen,
-      since: timestamp,
-    };
-    thread.updatedAt = timestamp;
-    thread.finishedAt = null;
-    this.state.session.waitingOn = {
-      threadId: input.threadId,
-      reason: input.reason,
-      resumeWhen: input.resumeWhen,
-      since: timestamp,
-    };
-    this.state.pi.status = "waiting";
-    this.state.pi.updatedAt = timestamp;
-    this.event("session-waiting-started", input.threadId);
-    this.save();
-  }
-
-  /**
-   * Selector reads for the metadata-first session summary path.
-   */
   getSessionView(): SessionView {
     return {
       title: this.state.pi.title,
-      sessionStatus: this.state.pi.status,
-      waitingOn: structuredClone(this.state.session.waitingOn),
+      sessionStatus: this.deriveSessionStatus(),
+      wait: structuredClone(this.state.session.wait),
       counts: {
+        turns: this.state.turns.length,
         threads: this.state.threads.length,
-        results: this.state.threads.filter((thread) => thread.result !== null).length,
+        commands: this.state.commands.length,
+        episodes: this.state.episodes.length,
         verifications: this.state.verifications.length,
         workflows: this.state.workflows.length,
+        artifacts: this.state.artifacts.length,
         events: this.state.events.length,
       },
       threadIdsByStatus: {
-        running: this.state.threads
-          .filter((thread) => thread.status === "running")
-          .map((thread) => thread.id),
-        waiting: this.state.threads
-          .filter((thread) => thread.status === "waiting")
-          .map((thread) => thread.id),
-        failed: this.state.threads
-          .filter((thread) => thread.status === "failed")
-          .map((thread) => thread.id),
+        running: this.state.threads.filter((thread) => thread.status === "running").map((thread) => thread.id),
+        waiting: this.state.threads.filter((thread) => thread.status === "waiting").map((thread) => thread.id),
+        failed: this.state.threads.filter((thread) => thread.status === "failed").map((thread) => thread.id),
       },
+      visibleThreadIds: [...this.state.threads]
+        .sort((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt))
+        .map((thread) => thread.id),
     };
   }
 
-  getThreadList(): ThreadRecord[] {
-    return structuredClone(this.state.threads);
+  getState(): StructuredSessionState {
+    return structuredClone(this.state);
   }
 
-  getThreadDetail(threadId: string) {
-    const thread = this.mustFindThread(threadId);
-    const verifications = this.state.verifications.filter(
-      (verification) => verification.threadId === threadId,
-    );
-    const workflow = this.state.workflows.find((item) => item.threadId === threadId) ?? null;
-
-    return {
-      thread: structuredClone(thread),
-      verifications: structuredClone(verifications),
-      workflow: structuredClone(workflow),
-    };
+  private findTurn(turnId: string): TurnRecord {
+    const turn = this.state.turns.find((candidate) => candidate.id === turnId);
+    if (!turn) {
+      throw new Error(`Unknown turn: ${turnId}`);
+    }
+    return turn;
   }
 
-  getPersistedFilePath(): string {
-    return this.filePath;
+  private findThread(threadId: string): ThreadRecord {
+    const thread = this.state.threads.find((candidate) => candidate.id === threadId);
+    if (!thread) {
+      throw new Error(`Unknown thread: ${threadId}`);
+    }
+    return thread;
   }
 
-  /**
-   * Internals
-   */
-  private save(): void {
-    this.refreshSessionStatus();
-    writeFileSync(this.filePath, `${JSON.stringify(this.state, null, 2)}\n`);
+  private findCommand(commandId: string): CommandRecord {
+    const command = this.state.commands.find((candidate) => candidate.id === commandId);
+    if (!command) {
+      throw new Error(`Unknown command: ${commandId}`);
+    }
+    return command;
   }
 
-  private event(kind: StructuredSessionState["events"][number]["kind"], threadId?: string): void {
-    this.state.events.push({
-      id: this.id("event"),
-      at: new Date().toISOString(),
-      kind,
-      threadId,
-    });
+  private findEpisode(episodeId: string): EpisodeRecord {
+    const episode = this.state.episodes.find((candidate) => candidate.id === episodeId);
+    if (!episode) {
+      throw new Error(`Unknown episode: ${episodeId}`);
+    }
+    return episode;
   }
 
-  private refreshSessionStatus(): void {
-    if (this.state.session.waitingOn) {
-      this.state.pi.status = "waiting";
-      return;
+  private findWorkflow(workflowId: string): WorkflowRecord {
+    const workflow = this.state.workflows.find((candidate) => candidate.id === workflowId);
+    if (!workflow) {
+      throw new Error(`Unknown workflow: ${workflowId}`);
+    }
+    return workflow;
+  }
+
+  private deriveSessionStatus(): SessionStatus {
+    if (this.state.session.wait) {
+      return "waiting";
     }
 
     if (this.state.threads.some((thread) => thread.status === "running")) {
-      this.state.pi.status = "running";
-      return;
+      return "running";
     }
 
     if (
       this.state.threads.some(
-        (thread) => thread.status === "waiting" && thread.blockedOn?.kind === "threads",
+        (thread) => thread.status === "waiting" && thread.dependsOnThreadIds.length > 0,
       )
     ) {
-      this.state.pi.status = "running";
-      return;
+      return "running";
     }
 
-    const latestUpdatedThread = this.state.threads.toSorted((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt),
-    )[0];
+    const latestFailure = [
+      ...this.state.turns.filter((turn) => turn.status === "failed").map((turn) => turn.updatedAt),
+      ...this.state.threads.filter((thread) => thread.status === "failed").map((thread) => thread.updatedAt),
+    ]
+      .sort()
+      .pop();
 
-    if (latestUpdatedThread?.status === "failed") {
-      this.state.pi.status = "error";
-      return;
+    if (latestFailure) {
+      return "error";
     }
 
-    this.state.pi.status = "idle";
+    return "idle";
   }
 
-  private id(prefix: string): string {
+  private pushEvent(
+    kind: string,
+    subjectKind: StructuredSessionState["events"][number]["subject"]["kind"],
+    subjectId: string,
+    data?: Record<string, unknown>,
+  ): void {
+    this.state.events.push({
+      id: this.nextId("event"),
+      at: this.now(),
+      kind,
+      subject: {
+        kind: subjectKind,
+        id: subjectId,
+      },
+      data,
+    });
+  }
+
+  private touchPi(at: string): void {
+    this.state.pi.updatedAt = at;
+  }
+
+  private save(): void {
+    writeFileSync(this.filePath, `${JSON.stringify(this.state, null, 2)}\n`, "utf8");
+  }
+
+  private nextId(prefix: string): string {
     const next = (this.ids.get(prefix) ?? 0) + 1;
     this.ids.set(prefix, next);
-    return `${prefix}-${String(next).padStart(3, "0")}`;
+    return `${prefix}-${next}`;
   }
 
-  private rebuildIdCounters(): void {
-    const ids = [
-      ...this.state.threads.map((item) => item.id),
-      ...this.state.verifications.map((item) => item.id),
-      ...this.state.workflows.map((item) => item.id),
-      ...this.state.events.map((item) => item.id),
+  private now(): string {
+    return new Date().toISOString();
+  }
+
+  private rebuildIdState(): void {
+    const prefixes = [
+      ...this.state.turns.map((record) => record.id),
+      ...this.state.threads.map((record) => record.id),
+      ...this.state.commands.map((record) => record.id),
+      ...this.state.episodes.map((record) => record.id),
+      ...this.state.verifications.map((record) => record.id),
+      ...this.state.workflows.map((record) => record.id),
+      ...this.state.artifacts.map((record) => record.id),
+      ...this.state.events.map((record) => record.id),
     ];
 
-    for (const value of ids) {
-      const match = value.match(/^([a-z]+)-(\d+)$/);
-      if (!match) continue;
-      const prefix = match[1];
-      const number = Number(match[2]);
-      this.ids.set(prefix, Math.max(this.ids.get(prefix) ?? 0, number));
+    for (const id of prefixes) {
+      const match = /^([a-z-]+)-(\d+)$/.exec(id);
+      if (!match) {
+        continue;
+      }
+      const [, prefix, rawValue] = match;
+      const value = Number(rawValue);
+      const current = this.ids.get(prefix) ?? 0;
+      if (value > current) {
+        this.ids.set(prefix, value);
+      }
     }
-  }
-
-  private mustFindThread(threadId: string): ThreadRecord {
-    const thread = this.state.threads.find((item) => item.id === threadId);
-    if (!thread) throw new Error(`Unknown thread: ${threadId}`);
-    return thread;
-  }
-
-  private mustFindWorkflow(workflowId: string): WorkflowRecord {
-    const workflow = this.state.workflows.find((item) => item.id === workflowId);
-    if (!workflow) throw new Error(`Unknown workflow: ${workflowId}`);
-    return workflow;
   }
 }
 
-/**
- * End-to-end proof
- * ----------------
- *
- * This is the full lifecycle in the exact order a first-time reader should
- * understand it.
- */
-export function runPoc() {
-  const folder = mkdtempSync(join(tmpdir(), "svvy-structured-session-state-"));
-  const filePath = join(folder, "structured-session-state.poc.json");
-  const cwd = process.cwd();
-  const workspaceLabel = basename(cwd) || "workspace";
+function runPoc(): void {
+  const root = mkdtempSync(join(tmpdir(), "svvy-structured-state-"));
+  const filePath = join(root, "structured-session-state.json");
 
-  /**
-   * Step 1:
-   * Start with a normal `pi` session mirror. No structured session records
-   * have been written yet.
-   */
   const poc = StructuredSessionPoc.create({
     filePath,
+    sessionId: "session-1",
     workspace: {
-      id: cwd,
-      label: workspaceLabel,
-      cwd,
+      id: "workspace-1",
+      label: "svvy",
+      cwd: "/repo/svvy",
     },
     pi: {
-      sessionId: "session-structured-review",
-      title: "Build a runtime structured session state POC",
+      sessionId: "pi-session-1",
+      title: "Refactor docs around the command model",
       provider: "openai",
       model: "gpt-5.4",
       reasoningEffort: "high",
-      messageCount: 18,
-      status: "idle",
-      createdAt: "2026-04-13T08:00:00.000Z",
-      updatedAt: "2026-04-13T08:00:00.000Z",
+      messageCount: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     },
   });
 
-  const beforeStructuredState = poc.getSessionView();
+  const turn1 = poc.startTurn("Read the product docs and explain the new command-centered model.");
+  const task1 = poc.createThread({
+    turnId: turn1.id,
+    kind: "task",
+    title: "Inspect the current docs",
+    objective: "Review the PRD, state spec, and execution model before rewriting them.",
+  });
 
-  /**
-   * Step 2:
-   * Start an orchestrator-authored milestone workflow.
-   *
-   * Milestone 1 fans out into two same-branch peer agents with explicit
-   * ownership. The owning workflow thread blocks on those child threads while
-   * the top-level workflow projection remains running.
-   */
-  const workflowThread = poc.startThread({
+  const executeTypescript = poc.createCommand({
+    turnId: turn1.id,
+    threadId: task1.id,
+    toolName: "execute_typescript",
+    executor: "orchestrator",
+    visibility: "summary",
+    title: "Inspect repo docs",
+    summary: "Run a short TypeScript program to inspect the docs surface.",
+  });
+  poc.startCommand(executeTypescript.id);
+
+  const searchDocs = poc.createCommand({
+    turnId: turn1.id,
+    threadId: task1.id,
+    parentCommandId: executeTypescript.id,
+    toolName: "repo.searchText",
+    executor: "execute_typescript",
+    visibility: "trace",
+    title: "Search docs",
+    summary: "Find stale references to direct paths, projections, and external_*.",
+  });
+  poc.startCommand(searchDocs.id);
+  poc.finishCommand(searchDocs.id, {
+    status: "succeeded",
+    summary: "Found the old path language and flat external_* capability references.",
+  });
+
+  const readPrd = poc.createCommand({
+    turnId: turn1.id,
+    threadId: task1.id,
+    parentCommandId: executeTypescript.id,
+    toolName: "repo.readFile",
+    executor: "execute_typescript",
+    visibility: "trace",
+    title: "Read PRD",
+    summary: "Load docs/prd.md for review.",
+  });
+  poc.startCommand(readPrd.id);
+  poc.finishCommand(readPrd.id, {
+    status: "succeeded",
+    summary: "Loaded the PRD and identified the old four-path framing.",
+  });
+
+  const writeResearchArtifact = poc.createCommand({
+    turnId: turn1.id,
+    threadId: task1.id,
+    parentCommandId: executeTypescript.id,
+    toolName: "artifact.writeText",
+    executor: "execute_typescript",
+    visibility: "summary",
+    title: "Write research notes",
+    summary: "Persist a compact note with the architecture mismatches.",
+  });
+  poc.startCommand(writeResearchArtifact.id);
+  poc.finishCommand(writeResearchArtifact.id, {
+    status: "succeeded",
+    summary: "Wrote a compact note about the outdated terminology and state model drift.",
+  });
+
+  poc.finishCommand(executeTypescript.id, {
+    status: "succeeded",
+    summary: "Completed generic inspection through execute_typescript and nested tools.* calls.",
+  });
+
+  const analysisEpisode = poc.createEpisode({
+    threadId: task1.id,
+    sourceCommandId: executeTypescript.id,
+    kind: "analysis",
+    title: "Current model audit",
+    summary: "The docs still describe multiple execution paths and external_* capabilities.",
+    body: "The design should move to one command model where execute_typescript handles ordinary work and native control tools handle workflow, verification, and wait.",
+  });
+  poc.createArtifact({
+    episodeId: analysisEpisode.id,
+    kind: "text",
+    name: "architecture-audit.md",
+    content: "Replace four-path language with a single command pipeline and tools.* capability model.",
+  });
+  poc.updateThread(task1.id, { status: "completed" });
+  poc.finishTurn(turn1.id, "completed");
+
+  const turn2 = poc.startTurn("Rewrite the PRD and the structured-state docs to match the adopted model.");
+  const task2 = poc.createThread({
+    turnId: turn2.id,
+    kind: "task",
+    title: "Coordinate the rewrite",
+    objective: "Drive the doc rewrite, workflow delegation, verification, and final wait state.",
+  });
+
+  const workflowThread = poc.createThread({
+    turnId: turn2.id,
+    parentThreadId: task2.id,
     kind: "workflow",
-    objective:
-      "Run an orchestrator-authored milestone workflow with same-branch peer agents and milestone verification gates.",
+    title: "Rewrite the product docs",
+    objective: "Run a delegated workflow that rewrites the PRD, specs, and POC around the command model.",
   });
-
-  const workflow = poc.startWorkflow({
-    threadId: workflowThread.id,
-    smithersRunId: "smithers-run-5101",
-    workflowName: "milestone-shared-branch-poc",
-    summary:
-      "Milestone 1 active: parallel same-branch implementation tasks are running before the verification gate.",
-  });
-
-  const runtimeWritesThread = poc.startThread({
-    kind: "direct",
-    objective:
-      "Milestone 1 task A on the current branch: implement structured-state write-path ownership and waiting rules.",
-  });
-
-  const selectorsThread = poc.startThread({
-    kind: "direct",
-    objective:
-      "Milestone 1 task B on the current branch: implement selector and projection updates without touching the write path.",
-  });
-
-  poc.updateThread({
-    threadId: workflowThread.id,
+  poc.updateThread(task2.id, {
     status: "waiting",
-    blockedReason:
-      "Waiting for milestone 1 same-branch peer agents to finish before starting the milestone verification gate.",
-    blockedOn: {
-      kind: "threads",
-      threadIds: [runtimeWritesThread.id, selectorsThread.id],
-      waitPolicy: "all",
-      reason:
-        "Need both milestone 1 implementation tasks to finish before the verification boundary can run.",
-      since: new Date().toISOString(),
-    },
+    dependsOnThreadIds: [workflowThread.id],
   });
 
-  /**
-   * Step 3:
-   * Finish both same-branch implementation tasks, then move the workflow to
-   * its milestone verification boundary.
-   */
-  poc.setThreadResult({
-    threadId: runtimeWritesThread.id,
-    kind: "change-summary",
-    summary:
-      "Task A completed the write-path contract for orchestrator-owned lifecycle writes.",
-    body: "The shared-branch implementation added explicit structured-state write ownership for orchestrator, verification, and Smithers lifecycle events without using a separate worktree.",
-  });
-
-  poc.updateThread({
-    threadId: runtimeWritesThread.id,
-    status: "completed",
-  });
-
-  poc.setThreadResult({
-    threadId: selectorsThread.id,
-    kind: "change-summary",
-    summary:
-      "Task B completed the read-model changes needed for milestone tracking and waiting-state projection.",
-    body: "The shared-branch implementation updated selectors and projections while respecting that another peer agent was editing nearby code on the same branch.",
-  });
-
-  poc.updateThread({
-    threadId: selectorsThread.id,
-    status: "completed",
-  });
-
-  poc.updateThread({
+  const workflowStart = poc.createCommand({
+    turnId: turn2.id,
     threadId: workflowThread.id,
+    toolName: "workflow.start",
+    executor: "smithers",
+    visibility: "surface",
+    title: "Start delegated workflow",
+    summary: "Launch the real delegated workflow in Smithers.",
+  });
+  poc.startCommand(workflowStart.id);
+  const workflowRecord = poc.recordWorkflow({
+    threadId: workflowThread.id,
+    commandId: workflowStart.id,
+    smithersRunId: "smithers-run-123",
+    workflowName: "rewrite-docs-around-command-model",
     status: "running",
-    blockedReason: null,
-    blockedOn: null,
+    summary: "Milestone 1: replace path language with the command-centered model.",
+  });
+  poc.finishCommand(workflowStart.id, {
+    status: "succeeded",
+    summary: "Started the Smithers workflow and recorded the top-level workflow record.",
   });
 
-  poc.updateWorkflow({
-    workflowId: workflow.id,
-    status: "running",
-    summary:
-      "Milestone 1 implementation finished on the current branch. The workflow is now at the milestone verification gate.",
+  poc.updateWorkflow(workflowRecord.id, {
+    status: "completed",
+    summary: "Workflow completed the rewrite and returned updated docs plus a reference POC.",
   });
+  const workflowEpisode = poc.createEpisode({
+    threadId: workflowThread.id,
+    sourceCommandId: workflowStart.id,
+    kind: "workflow",
+    title: "Docs rewrite completed",
+    summary: "The delegated workflow rewrote the PRD, specs, and POC around one command system.",
+    body: "The workflow removed external_* naming, restored episodes as durable records, introduced commands as first-class state, and made waiting a shared status instead of a separate subsystem.",
+  });
+  poc.createArtifact({
+    episodeId: workflowEpisode.id,
+    kind: "file",
+    name: "docs-rewrite.patch",
+    path: "/repo/svvy/docs-rewrite.patch",
+  });
+  poc.updateThread(workflowThread.id, { status: "completed" });
+  poc.updateThread(task2.id, { status: "running" });
 
-  const verificationThread = poc.startThread({
+  const verificationThread = poc.createThread({
+    turnId: turn2.id,
+    parentThreadId: task2.id,
     kind: "verification",
-    objective:
-      "Run the milestone 1 verification boundary before unlocking later milestones in the workflow.",
+    title: "Verify the rewritten docs",
+    objective: "Run the docs and POC verification checks before finalizing the turn.",
   });
-
-  poc.updateThread({
-    threadId: workflowThread.id,
+  poc.updateThread(task2.id, {
     status: "waiting",
-    blockedReason:
-      "Waiting for the milestone 1 verification boundary to finish before the next milestone can unlock.",
-    blockedOn: {
-      kind: "threads",
-      threadIds: [verificationThread.id],
-      waitPolicy: "all",
-      reason: "Need the verification outcome before milestone 2 can start.",
-      since: new Date().toISOString(),
-    },
+    dependsOnThreadIds: [verificationThread.id],
   });
 
-  /**
-   * Step 4:
-   * Run the milestone verification boundary, then let the orchestrator hot
-   * reload the workflow into a clarification gate for milestone 2.
-   */
+  const verificationRun = poc.createCommand({
+    turnId: turn2.id,
+    threadId: verificationThread.id,
+    toolName: "verification.run",
+    executor: "verification",
+    visibility: "surface",
+    title: "Run verification",
+    summary: "Run the POC and validate the rewritten docs surface.",
+  });
+  poc.startCommand(verificationRun.id);
   poc.recordVerification({
     threadId: verificationThread.id,
+    commandId: verificationRun.id,
     kind: "test",
     status: "passed",
-    summary:
-      "Milestone 1 verification passed after both same-branch implementation tasks landed cleanly.",
-    command: "bun test structured-session-state-poc",
+    summary: "The POC lifecycle executed and the rewritten docs stayed internally consistent.",
+    command: "bun docs/pocs/structured-session-state.poc.ts",
   });
-
-  poc.setThreadResult({
+  poc.finishCommand(verificationRun.id, {
+    status: "succeeded",
+    summary: "Verification passed and the resulting state model matched the rewritten docs.",
+  });
+  const verificationEpisode = poc.createEpisode({
     threadId: verificationThread.id,
-    kind: "verification-summary",
-    summary:
-      "Milestone 1 verification passed, so the workflow can unlock the next milestone.",
-    body: "The verification boundary confirmed that same-branch peer-agent edits and structured-state writes are coherent enough to continue without opening a worktree.",
+    sourceCommandId: verificationRun.id,
+    kind: "verification",
+    title: "Docs verification passed",
+    summary: "The new model is internally consistent across PRD, specs, and POC.",
+    body: "The reference POC exercised turns, commands, workflow, verification, and wait state without relying on transcript-derived product truth.",
   });
-
-  poc.updateThread({
-    threadId: verificationThread.id,
-    status: "completed",
+  poc.createArtifact({
+    episodeId: verificationEpisode.id,
+    kind: "log",
+    name: "poc-run.log",
+    content: "Structured session state POC completed successfully.",
   });
+  poc.updateThread(verificationThread.id, { status: "completed" });
+  poc.updateThread(task2.id, { status: "running" });
 
-  poc.updateThread({
-    threadId: workflowThread.id,
-    status: "running",
-    blockedReason: null,
-    blockedOn: null,
+  const waitCommand = poc.createCommand({
+    turnId: turn2.id,
+    threadId: task2.id,
+    toolName: "wait",
+    executor: "runtime",
+    visibility: "surface",
+    title: "Wait for user review",
+    summary: "Pause for final user review of the rewritten design before code refactoring starts.",
   });
-
-  poc.updateWorkflow({
-    workflowId: workflow.id,
-    status: "running",
-    summary:
-      "Milestone 1 verified. The orchestrator hot-reloaded milestone 2 to replace planned edits with a clarification gate before more work begins.",
-  });
-
-  poc.updateWorkflow({
-    workflowId: workflow.id,
+  poc.startCommand(waitCommand.id);
+  poc.updateThread(task2.id, {
     status: "waiting",
-    summary:
-      "Milestone 2 is durably paused on a clarification gate after the orchestrator hot-reloaded the workflow.",
+    wait: {
+      kind: "user",
+      reason: "Need explicit user review of the rewritten architecture docs before refactoring runtime code.",
+      resumeWhen: "The user confirms the rewritten docs and requests the runtime refactor.",
+      since: new Date().toISOString(),
+    },
   });
-
-  poc.setWaitingState({
-    threadId: workflowThread.id,
+  poc.setSessionWait({
+    threadId: task2.id,
     kind: "user",
-    reason:
-      "Need a product decision on whether milestone internals should stay Smithers-only or gain richer svvy-side projection before milestone 2 starts.",
-    resumeWhen:
-      "Resume when the user confirms whether milestone internals remain Smithers-only for this slice.",
+    reason: "Need explicit user review of the rewritten architecture docs before refactoring runtime code.",
+    resumeWhen: "The user confirms the rewritten docs and requests the runtime refactor.",
   });
+  poc.finishCommand(waitCommand.id, {
+    status: "waiting",
+    summary: "The session is now waiting on user review of the rewritten design.",
+  });
+  poc.createEpisode({
+    threadId: task2.id,
+    sourceCommandId: waitCommand.id,
+    kind: "clarification",
+    title: "Waiting for review",
+    summary: "The rewritten docs are ready for review before runtime implementation starts.",
+    body: "The next step is code refactoring, but the active frontier is intentionally paused until the user reviews the updated PRD, specs, and reference POC.",
+  });
+  poc.finishTurn(turn2.id, "waiting");
 
-  const afterStructuredState = poc.getSessionView();
-  const threads = poc.getThreadList();
-  const workflowDetail = poc.getThreadDetail(workflowThread.id);
-
-  /**
-   * Step 5:
-   * Reload from disk to prove the model survives persistence.
-   */
   const reloaded = StructuredSessionPoc.load(filePath);
-  const afterReload = reloaded.getSessionView();
-
-  if (JSON.stringify(afterStructuredState) !== JSON.stringify(afterReload)) {
-    throw new Error("Reloaded session view does not match the persisted final session view.");
-  }
-
-  return {
-    persistedFile: poc.getPersistedFilePath(),
-    beforeStructuredState,
-    afterStructuredState,
-    threads,
-    workflowDetail,
-    afterReload,
-  };
-}
-
-/**
- * Running the file prints the lifecycle in the same order a human should read
- * and understand it.
- */
-if (import.meta.main) {
-  const result = runPoc();
+  const sessionView = reloaded.getSessionView();
+  const snapshot = reloaded.getState();
 
   console.log("\nStructured Session State POC\n");
-  console.log(`Persisted file: ${result.persistedFile}\n`);
-
-  console.log("1. Before any structured records exist:");
-  console.log(JSON.stringify(result.beforeStructuredState, null, 2));
-
-  console.log("\n2. After milestone execution, milestone verification, and a durable pause:");
-  console.log(JSON.stringify(result.afterStructuredState, null, 2));
-
-  console.log("\n3. Thread list across workflow, same-branch tasks, and milestone verification:");
-  console.log(JSON.stringify(result.threads, null, 2));
-
-  console.log("\n4. Workflow thread detail:");
-  console.log(JSON.stringify(result.workflowDetail, null, 2));
-
-  console.log("\n5. After reload:");
-  console.log(JSON.stringify(result.afterReload, null, 2));
-
-  console.log("\nPOC completed successfully.");
+  console.log(`State file: ${filePath}`);
+  console.log(`Session title: ${sessionView.title}`);
+  console.log(`Session status: ${sessionView.sessionStatus}`);
+  console.log(`Visible thread ids: ${sessionView.visibleThreadIds.join(", ")}`);
+  console.log(`Counts: ${JSON.stringify(sessionView.counts, null, 2)}`);
+  console.log(`Current wait: ${JSON.stringify(sessionView.wait, null, 2)}`);
+  console.log(
+    `Workflow summaries: ${snapshot.workflows.map((workflow) => `${workflow.workflowName}=${workflow.status}`).join(", ")}`,
+  );
+  console.log(
+    `Verification summaries: ${snapshot.verifications.map((verification) => `${verification.kind}=${verification.status}`).join(", ")}`,
+  );
+  console.log(`Last event: ${snapshot.events.at(-1)?.kind ?? "none"}`);
+  console.log(`Saved file basename: ${basename(filePath)}`);
 }
+
+runPoc();

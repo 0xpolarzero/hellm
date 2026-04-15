@@ -21,18 +21,28 @@ How to use this file:
 
 ## 1. Structured Session State
 
+Workflow-inspector UI work remains explicitly out of scope for this section and stays under section 8.
+
 - [x] Build a POC session overlay document and validate how it can sit above pi session data. Commit(s): `pending local work / add landing hash when committed`
 - [x] Persist a minimal structured session overlay root above pi session data. Commit(s): `pending local work / add landing hash when committed`
+- [ ] Persist `TurnRecord` entries with request summary, lifecycle status, and timestamps.
+- [ ] Persist `CommandRecord` entries for every tool call, including parent-child linkage, executor ownership, visibility, attempts, and timestamps.
 - [x] Persist `ThreadRecord` entries with id, objective, status, kind, and timestamps. Commit(s): `pending local work / add landing hash when committed`
-- [x] Persist thread lifecycle transitions for direct, delegated, verification, and waiting states. Commit(s): `pending local work / add landing hash when committed`
+- [x] Persist thread lifecycle transitions for task, workflow, verification, dependency-wait, and user/external-wait states. Commit(s): `pending local work / add landing hash when committed`
+- [x] Remove transcript-derived fallback writes so structured session state only changes from explicit runtime producers or tool events. Commit(s): `pending local work / add landing hash when committed`
 - [ ] Build a POC `EpisodeRecord` and `VerificationRecord` shape against a few realistic session examples.
-- [ ] Persist `EpisodeRecord` skeletons for direct-path completions.
+- [ ] Persist first-class `EpisodeRecord` skeletons for ordinary task completions.
 - [ ] Persist artifact references independently from transcript parsing.
 - [x] Persist `VerificationRecord` entries with status, summary, optional command, and thread linkage. Commit(s): `pending local work / add landing hash when committed`
-- [x] Build a POC for workflow-run and waiting-state persistence before wiring full delegated execution. Commit(s): `pending local work / add landing hash when committed`
-- [x] Persist workflow run references linked to their source thread. Commit(s): `pending local work / add landing hash when committed`
-- [x] Persist blocked and waiting state as durable product state. Commit(s): `pending local work / add landing hash when committed`
+- [x] Wire a real verification bridge and bounded verification tool so verification writes come from actual subprocess outcomes. Commit(s): `pending local work / add landing hash when committed`
+- [x] Build a POC for workflow-record and wait-state persistence before wiring full delegated execution. Commit(s): `pending local work / add landing hash when committed`
+- [x] Persist workflow records linked to their source command and thread. Commit(s): `pending local work / add landing hash when committed`
+- [x] Add a real Smithers workflow bridge and smoke-test it against a live local Smithers run with a real run id. Commit(s): `pending local work / add landing hash when committed`
+- [x] Persist thread dependency waiting and user/external wait state as durable product state. Commit(s): `pending local work / add landing hash when committed`
 - [x] Reconstruct workspace and session summaries from structured state on app load. Commit(s): `pending local work / add landing hash when committed`
+- [x] Remove fake prompt-scenario integration coverage and delete the production seams that powered it. Commit(s): `pending local work / add landing hash when committed`
+- [x] Replace fake browser verification coverage with durable-state browser coverage that renders persisted verification state without test-only runtime seams. Commit(s): `pending local work / add landing hash when committed`
+- [x] Remove test-only runtime boot seams such as hidden-window e2e mode and renderer-seed injection from production code. Commit(s): `pending local work / add landing hash when committed`
 
 ## 2. Session Navigation And Core Projection
 
@@ -40,7 +50,7 @@ How to use this file:
 - [ ] Define the stored shape for flat folder labels on sessions.
 - [ ] Persist session folder membership.
 - [ ] Render flat folder groupings in the session sidebar.
-- [ ] Build a POC threads-and-episodes projection from structured state in the main session view.
+- [ ] Build a POC threads-and-episodes read model from structured state in the main session view.
 - [ ] Render the selected thread list from structured `ThreadRecord` data.
 - [ ] Show thread objective, status, executor, and blocked reason in the main session view.
 - [ ] Render a minimal episode list for the selected thread.
@@ -137,14 +147,14 @@ How to use this file:
 - [ ] Render full-width context bars on expanded workflow panes.
 - [ ] Surface workflow-internal agent context usage when drilling down inside an expanded workflow.
 
-## 10. Direct Path And Reconciliation
+## 10. Turn Execution And Reconciliation
 
-- [ ] Persist a per-request routing or classification result for the orchestrator.
-- [ ] Build a POC direct-path request flow from classification to episode normalization.
-- [ ] Implement minimal direct-path routing for explanation and small read-only actions.
-- [ ] Normalize direct read-only work into a completed episode.
-- [ ] Normalize direct repo-modifying work into an episode with changed-file references.
-- [ ] Store unresolved issues and follow-up suggestions on direct episodes.
+- [ ] Persist a per-turn routing or next-action result for the orchestrator.
+- [ ] Build a POC turn execution flow from request classification to command recording and episode normalization.
+- [ ] Implement minimal turn routing for explanation and small read-only actions using the shared command model.
+- [ ] Normalize ordinary read-only work into a completed episode.
+- [ ] Normalize ordinary repo-modifying work into an episode with changed-file references.
+- [ ] Store unresolved issues and follow-up suggestions on ordinary task episodes.
 - [ ] Re-enter the orchestrator from the latest durable episode and state instead of raw transcript scanning.
 
 ## 11. Verification As First-Class State
@@ -200,13 +210,14 @@ How to use this file:
 
 - [ ] Build a POC `execute_typescript` runtime with the adopted TypeScript input/output contract.
 - [ ] Expose a minimal `execute_typescript` tool with the adopted input and output contract.
-- [ ] Generate the first curated `external_*` host bindings.
-- [ ] Run a simple direct-path scripted task through `execute_typescript`.
+- [ ] Generate the first curated typed `tools.*` capability namespaces for repo, git, web, and artifact work.
+- [ ] Run a simple ordinary scripted task through `execute_typescript`.
 - [ ] Build a POC artifact/tracing pipeline for code-mode execution.
-- [ ] Capture code-mode logs and traces as artifacts.
+- [ ] Capture code-mode logs and nested command traces as artifacts and structured command records.
 - [ ] Normalize code-mode success and failure into episode data.
 - [ ] Build a POC delegated Smithers task that calls `execute_typescript`.
 - [ ] Allow delegated Smithers tasks to call `execute_typescript`.
+- [ ] Keep workflow, verification, and wait as native control tools rather than flattening them into generic code-mode helpers.
 - [ ] Limit day-one capabilities to the curated non-shell surface defined by the spec.
 
 ## 16. Repo-Local Workflow Hooks
@@ -226,9 +237,9 @@ How to use this file:
 
 - [ ] Build a POC one-shot headless entrypoint that reuses desktop orchestration code.
 - [ ] Define the headless one-shot input contract.
-- [ ] Return structured output for a direct-path headless run.
+- [ ] Return structured output for an ordinary headless turn.
 - [ ] Return structured output for a verification-led headless run.
-- [ ] Build a POC delegated headless workflow launch and result projection.
+- [ ] Build a POC delegated headless workflow launch and result state summary.
 - [ ] Start a delegated workflow from headless input.
 - [ ] Emit workflow, episode, and artifact references in headless results.
 - [ ] Reuse the same orchestrator and state model as desktop execution.
@@ -236,7 +247,7 @@ How to use this file:
 ## 18. Recovery And Test Coverage
 
 - [ ] Build a POC restart/resume flow that restores one active thread from durable state.
-- [ ] Restore active direct-path state after app restart.
+- [ ] Restore active ordinary task-thread state after app restart.
 - [ ] Restore active workflow state after app restart.
 - [ ] Restore pending clarification and waiting state after app restart.
 - [ ] Restore verification history and latest outcome after app restart.

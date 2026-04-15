@@ -53,7 +53,15 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Session State Overlay",
     status: "in-progress",
     summary:
-      "Adds a workspace-scoped svvy-owned session overlay above pi and Smithers with mirrored session metadata, SQLite-oriented persistence, append-only lifecycle events, and explicit runtime-driven writes for threads, verification, workflow projection, dependency blocking, and whole-session waiting that survive reload.",
+      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, command, episode, verification, workflow, artifact, wait, and lifecycle event records that survive reload.",
+    sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
+  },
+  {
+    id: "turn-command-state",
+    name: "Turn And Command State",
+    status: "in-progress",
+    summary:
+      "Tracks each user turn and every tool call as durable state with status, executor ownership, parent-child linkage, attempts, and trace-versus-surface visibility.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -61,15 +69,15 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Session Threads",
     status: "in-progress",
     summary:
-      "Tracks direct, verification, and workflow workstreams as durable threads with objective, running/completed/failed/waiting status, blocked reason, structured blockedOn cause, and timestamps.",
+      "Tracks task, workflow, and verification work items as durable threads with parent-child linkage, objective, lifecycle status, dependency waits, user or external waits, and timestamps.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
-    id: "thread-results",
-    name: "Per-Thread Durable Results",
+    id: "durable-episodes",
+    name: "Durable Episodes",
     status: "in-progress",
     summary:
-      "Stores one durable semantic result per thread, with analysis, change, verification, workflow, and clarification summaries for orchestrator reuse and inspection; workflow threads keep waiting reasons in blocked/waiting state and emit their single durable result only at terminal completion or failure.",
+      "Stores reusable semantic outputs as first-class episode records with kind, summary, body, source command linkage, and artifact references for orchestrator reuse and user inspection.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -77,31 +85,31 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Verification Records",
     status: "in-progress",
     summary:
-      "Captures thread-linked verification runs as first-class state with kind, passed/failed/cancelled outcome, summary, optional command, and timestamps that influence routing.",
+      "Captures command-linked verification runs as first-class state with kind, passed/failed/cancelled outcome, summary, optional command, and timestamps that influence routing.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
-    id: "workflow-projections",
-    name: "Delegated Workflow Projections",
+    id: "workflow-records",
+    name: "Delegated Workflow Records",
     status: "in-progress",
     summary:
-      "Projects one top-level orchestrator-authored, milestone-based Smithers workflow run per workflow thread into session state with run id, workflow name, running/completed/failed/waiting status, milestone-or-gate summary, and lifecycle timestamps.",
+      "Stores one top-level svvy-side record for each delegated Smithers workflow with source command linkage, run id, workflow name, running/waiting/completed/failed/cancelled status, summary, and lifecycle timestamps.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
-    id: "session-waiting-state",
-    name: "Session Waiting State",
+    id: "session-wait-state",
+    name: "Session Wait State",
     status: "in-progress",
     summary:
-      "Represents clarification and external-prerequisite pauses explicitly through session-level waiting ownership and resume conditions, while keeping waits on child threads or parallel subwork in per-thread blockedOn state.",
+      "Represents user and external blocking conditions explicitly through thread-local wait state and whole-session wait state, while keeping internal dependency waits on thread dependency links instead of conflating them with product pause behavior.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
-    id: "session-summary-projections",
-    name: "Metadata-First Session Summaries",
+    id: "session-summary-read-models",
+    name: "Metadata-First Session Read Models",
     status: "in-progress",
     summary:
-      "Derives idle/running/waiting/error session status, counts, thread status buckets, and thread detail reads from structured state for sidebar, navigation, and restart recovery without transcript replay, including the rule that dependency-blocked threads can coexist with a running session.",
+      "Derives idle/running/waiting/error session status, counts, visible thread ordering, and compact summary data from structured state for sidebar, navigation, and restart recovery without transcript replay.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {

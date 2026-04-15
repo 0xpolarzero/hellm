@@ -4,105 +4,99 @@ This document is a companion to the [PRD](./prd.md).
 
 It shows the intended product-level request flow for `svvy`. It is a behavioral model, not a package layout or implementation call graph.
 
+The adopted model is one shared command system:
+
+```text
+tool call -> command -> handler -> events -> structured state -> UI
+```
+
+The orchestrator does not switch between four unrelated engines. It chooses the next tool call inside one runtime model.
+
 ```mermaid
 flowchart TD
     subgraph Entry["Entry Surfaces"]
         Desktop["Desktop app session UI"]
-        Headless["Headless one-shot or structured workflow input"]
+        Headless["Headless one-shot or automation input"]
     end
 
     subgraph Context["Context Load"]
-        Load["Load workspace, session, threads, episodes, artifacts, verification state, AGENTS.md, and .svvy config"]
+        Load["Load workspace, session, turns, threads, episodes, artifacts, verification, workflow, wait state, AGENTS.md, and .svvy config"]
     end
 
-    subgraph Routing["Orchestrator Routing"]
-        Route["Main orchestrator classifies request and chooses next path"]
+    subgraph Turn["Turn Lifecycle"]
+        OpenTurn["Open turn"]
+        Decide["Orchestrator chooses next tool call"]
     end
 
-    subgraph Direct["Direct Path"]
-        DirectStart["Use direct path"]
-        DirectChoice{"Best direct execution primitive?"}
-        DirectReason["Answer directly or perform a tiny action"]
-        DirectCode["Run execute_typescript for typed composition"]
-        DirectEpisode["Normalize output into episode and artifacts"]
+    subgraph Tools["Tool Surface"]
+        Generic["execute_typescript"]
+        Workflow["workflow.start / workflow.resume"]
+        Verify["verification.run"]
+        Wait["wait"]
     end
 
-    subgraph Delegated["Delegated Workflow Path"]
-        DelegatedStart["Use delegated path"]
-        Preflight["Run repo-local preflight hook when configured"]
-        Author["Author short-lived Smithers workflow"]
-        WorkflowRun["Execute Smithers workflow with bounded pi-backed agent tasks, execute_typescript steps, loops, retries, and worktrees"]
-        WorkflowState{"Workflow state"}
-        Resume["Resume persisted workflow run"]
-        Validation["Run repo-local validation hook when configured"]
-        WorkflowEpisode["Normalize workflow output into episodes and artifacts"]
+    subgraph GenericExec["Generic Execution"]
+        GenericTools["Typed tools.* capability calls: repo, git, web, artifact, and related helpers"]
     end
 
-    subgraph Verification["Verification Path"]
-        VerificationStart["Use verification path"]
-        VerificationRun["Run build, test, lint, integration, or manual checks"]
-        VerificationEpisode["Normalize verification into episode and artifacts"]
+    subgraph Handlers["Runtime Handlers"]
+        RuntimeHandler["svvy runtime handles generic and wait commands"]
+        SmithersHandler["Smithers bridge handles workflow commands"]
+        VerificationHandler["Verification bridge handles verification commands"]
     end
 
-    subgraph Pause["Clarification / Pause Path"]
-        PauseStart["Use pause path"]
-        Wait["Record waiting state and pause for clarification or resumable waiting conditions"]
-        PauseProject["Project waiting state into the desktop UI and structured headless output"]
-        ResumeAfterInput["Resume after user input arrives"]
+    subgraph Facts["Durable Facts"]
+        Commands["Record command status and parent-child linkage"]
+        Events["Append lifecycle events"]
+        State["Update turns, threads, episodes, verification records, workflow records, artifacts, and session wait state"]
     end
 
-    subgraph Reconcile["Shared Reconciliation"]
-        ReconcileState["Reconcile threads, episodes, artifacts, verification, workflow references, and session state"]
-        Project["Project updated state into the desktop UI and structured headless output"]
-        Done{"Need more work?"}
-        Finish["Return final response or leave session ready to resume"]
+    subgraph ReadModels["Read Models"]
+        Selectors["Build metadata-first selectors and summaries"]
+        UI["Render transcript, threads, workflow cards, verification, episodes, artifacts, and wait state"]
+    end
+
+    subgraph Loop["Loop Control"]
+        More{"Need more work?"}
+        Finish["Return final response"]
+        Pause["Leave session waiting for resume"]
     end
 
     Desktop --> Load
     Headless --> Load
-    Load --> Route
+    Load --> OpenTurn
+    OpenTurn --> Decide
 
-    Route -->|Direct action| DirectStart
-    Route -->|Delegated or subagent work| DelegatedStart
-    Route -->|Verification is next| VerificationStart
-    Route -->|Clarification or pause needed| PauseStart
+    Decide --> Generic
+    Decide --> Workflow
+    Decide --> Verify
+    Decide --> Wait
 
-    DirectStart --> DirectChoice
-    DirectChoice -->|Reasoning is enough| DirectReason
-    DirectChoice -->|Typed composition helps| DirectCode
-    DirectReason --> DirectEpisode
-    DirectCode --> DirectEpisode
+    Generic --> GenericTools
+    GenericTools --> RuntimeHandler
+    Workflow --> SmithersHandler
+    Verify --> VerificationHandler
+    Wait --> RuntimeHandler
 
-    DelegatedStart --> Preflight
-    Preflight --> Author
-    Author --> WorkflowRun
-    WorkflowRun --> WorkflowState
-    WorkflowState -->|Waiting on clarification or prerequisite| Wait
-    WorkflowState -->|Interrupted, then resumed| Resume
-    Resume --> WorkflowRun
-    WorkflowState -->|Reached terminal state| Validation
-    Validation --> WorkflowEpisode
+    RuntimeHandler --> Commands
+    SmithersHandler --> Commands
+    VerificationHandler --> Commands
 
-    VerificationStart --> VerificationRun
-    VerificationRun --> VerificationEpisode
+    Commands --> Events
+    Events --> State
+    State --> Selectors
+    Selectors --> UI
+    UI --> More
 
-    PauseStart --> Wait
-    Wait --> PauseProject
-    PauseProject --> ResumeAfterInput
-    ResumeAfterInput --> Load
-
-    DirectEpisode --> ReconcileState
-    WorkflowEpisode --> ReconcileState
-    VerificationEpisode --> ReconcileState
-
-    ReconcileState --> Project
-    Project --> Done
-    Done -->|Yes| Load
-    Done -->|No| Finish
+    More -->|Yes| Decide
+    More -->|Finish| Finish
+    More -->|Blocked on user or external input| Pause
 ```
 
 Key points:
 
-- `execute_typescript` is an internal primitive inside the direct path and inside Smithers-backed delegated work. It is not a fifth top-level path.
-- Repo-local preflight and validation hooks wrap consequential delegated workflows rather than replacing orchestrator routing.
-- All meaningful execution paths normalize into episodes and artifacts before reconciliation, which keeps the product model uniform across desktop and headless use.
+- `execute_typescript` is the default generic work surface.
+- `workflow.start`, `workflow.resume`, `verification.run`, and `wait` are native control tools, but they are still just tool calls.
+- Generic capability access inside `execute_typescript` uses typed `tools.*` namespaces rather than flat `external_*` globals.
+- Runtime handlers and bridges write durable facts from real execution; the agent does not mutate product state directly through arbitrary write tools.
+- Waiting is a shared status in the model, not a fourth execution engine.

@@ -21,6 +21,7 @@
 
 - use sandboxing separate from environment 
   - https://x.com/nicoalbanese10/status/2043745569278251112
+  - keep the initial `execute_typescript` implementation unsandboxed; sandboxing should be a later hardening layer around the same `tools.*` contract, not a different execution model
 
 - integration with jjhub/codeplane would make sense, for instance:
   - every time a piece of work in a session is done and orchestrator considers we run CI workflow, it takes a jj snapshot and executes the CI on jjhub/codeplane
