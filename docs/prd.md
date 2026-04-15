@@ -252,7 +252,7 @@ Examples:
 - direct answer or small action
 - delegated Smithers workflow
 - verification run
-- clarification or waiting state
+- clarification or other blocked state
 
 Threads must expose:
 
@@ -262,6 +262,7 @@ Threads must expose:
 - related worktree
 - related episodes
 - blocked or waiting reason when applicable
+- structured blocked-on cause when the thread is waiting on child threads, user input, or an external prerequisite
 
 ### Episode
 
@@ -496,12 +497,27 @@ Use the delegated path when work benefits from:
 
 - an explicit bounded subagent
 - multi-step structure
+- milestone-based progress tracking with explicit verification gates
 - durable resume
 - loops or retries
-- worktree isolation
+- same-branch parallel agent execution with explicit ownership
+- worktree isolation only when shared-branch execution is unusually risky
 - explicit workflow state in the UI
 
 Delegated work should usually be represented as a Smithers workflow, even when the workflow is small.
+
+Delegated Smithers workflows are milestone-based by default, not loose todo lists.
+
+The orchestrator must derive an explicit milestone graph with:
+
+- a milestone objective
+- milestone completion criteria
+- one or more bounded agent tasks
+- a verification boundary that must run before the next milestone unlocks
+
+The orchestrator may fan a milestone out into parallel agents, but those agents should default to the current branch and current worktree unless the orchestrator explicitly decides isolation is worth the cost.
+
+Milestones may evolve during execution through Smithers hot reload, but only the orchestrator is allowed to change the workflow graph.
 
 ### Verification Path
 
@@ -520,6 +536,12 @@ Use the pause path when:
 
 `svvy` runs with full approvals by default. Waiting is for clarification or resumable pause conditions, not approval gating.
 
+Internal waits on child threads or parallel subwork are not the same thing as whole-session waiting.
+
+They should stay on the owning thread as structured blocked-on state while the session remains `running`.
+
+`session.waitingOn` is reserved for pauses where no runnable work remains and the next meaningful progress requires user or external input.
+
 ## Slate-Inspired Subagent Model
 
 `svvy` borrows product behavior from public Slate material and from defensible inferences about what makes that behavior effective.
@@ -530,6 +552,7 @@ The adopted subagent model is:
 - delegated work is bounded and short-lived
 - subagents return durable outputs instead of long private side conversations
 - synchronization happens frequently through episodes
+- lifecycle state is written from explicit runtime or tool events rather than inferred from prompt keywords or assistant prose
 - the system re-enters cheaply after each meaningful unit of work
 - the orchestrator keeps only lightweight workflow knowledge while richer workflow context stays local to delegated work
 - runtime profiles such as explorer, implementer, reviewer, and workflow-writer are bounded-task presets, not persistent always-on agents
@@ -612,6 +635,11 @@ The orchestrator must:
 - choose between direct, delegated, verification, and pause paths
 - resolve symbolic file and folder mentions from the composer into request context
 - author delegated workflow requests when appropriate
+- derive delegated workflows as milestone graphs with explicit milestone objectives, completion criteria, agent tasks, and verification gates
+- assign explicit write scopes and join conditions when dispatching parallel same-branch agents
+- emit explicit structured lifecycle writes through runtime or tool hooks for direct work, dependency blocking, verification, workflow, and waiting transitions
+- issue those lifecycle writes as first-class structured-state tool calls from the orchestrator or the owning runtime integration rather than reconstructing them later from transcript inspection
+- treat workflow hot reload as an orchestrator-owned graph mutation based on milestone outcomes and verification results, not as an autonomous worker behavior
 - reconcile all path outputs into the same product model
 - make final user-facing decisions after delegated work completes or pauses
 - support both orchestrator-session and quick-session entry modes, with different main-session prompts and default main runtime profiles
@@ -625,9 +653,21 @@ The product must support:
 
 - short-lived delegated workflows for bounded work
 - workflows as small as one explicit bounded agent task
+- milestone-based workflows with explicit milestone objectives, completion criteria, agent tasks, and verification boundaries
+- milestone progress that is more structured and durable than a loose todo plan
 - larger workflows with retries, loops, and worktrees when needed
+- same-branch parallel agents as the default execution mode for milestone tasks
+- explicit write scopes for same-branch parallel agents so peer-style collaboration stays coordinated
+- same-branch parallel agents assuming that other agents may edit nearby code and must not revert unrelated changes
+- milestone-level join barriers before milestone verification runs
+- verification after each milestone boundary before later milestones can unlock
+- failed milestone verification keeping the milestone open until remediation succeeds
+- workflow graph evolution through Smithers hot reload when milestone evidence shows the plan should change
+- orchestrator-only ownership of workflow graph evolution and milestone unlock decisions
+- worktree isolation only when the orchestrator judges same-branch execution too risky or too collision-prone
 - durable workflow pause and resume
 - workflow progress projected into the desktop UI
+- current milestone and current verification gate projected into the desktop UI
 - workflow results translated into episodes and artifacts
 - structured workflow knowledge assets split between minimal orchestrator-facing summaries and richer worker-facing prompts or examples
 - delegated workers loading the rich workflow context they need without expanding orchestrator context to match
@@ -666,6 +706,8 @@ At minimum:
 
 - a thread may be associated with a worktree
 - a delegated workflow may run in a worktree
+- delegated workflows should default to the current branch and current worktree rather than spawning worktrees automatically
+- worktrees should be used only when the orchestrator explicitly decides isolation is necessary
 - the session UI must show which worktree active work belongs to
 - the user must be able to tell when session context and filesystem context are misaligned
 
@@ -734,6 +776,9 @@ The desktop app is primary, but headless execution is a real product surface, no
 - `svvy` extends that substrate with structured product state
 - session summaries, sidebar rows, navigation state, pane indicators, and restart recovery must come from durable metadata or projections, not transcript replay
 - product state must not depend on replaying the raw transcript for every decision
+- structured thread, verification, workflow, and waiting writes must come from explicit runtime or tool events owned by the orchestrator, verification runner, or Smithers integration
+- the real runtime should expose those writes as structured-state tool calls so the orchestrator, verification runner, and Smithers bridge can write facts at the moment lifecycle transitions occur
+- product state must not infer workflow, verification, or waiting lifecycle from prompt keywords, assistant prose, or transcript heuristics
 - transcript and detail payloads are loaded lazily when the user opens or expands a surface that needs them
 - artifacts may live on disk and be referenced from durable product state
 - Smithers may keep its own workflow-run state, but that state is subordinate to the top-level session and episode model
@@ -744,6 +789,7 @@ The desktop app is primary, but headless execution is a real product surface, no
 - direct work, delegated work, and verification must normalize into one coherent product model
 - active, blocked, and completed work must be legible in the UI
 - clarification and waiting states must be explicit
+- thread-level dependency blocking and whole-session waiting must be modeled distinctly
 - product behavior must stay adaptive rather than collapsing into a rigid workflow tree
 - tests for interactive behavior must exercise the real pi-backed runtime seam, not a fake shell presented as the product
 

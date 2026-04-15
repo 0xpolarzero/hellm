@@ -45,8 +45,12 @@ const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
 const DEV_SERVER_WAIT_TIMEOUT_MS = 15_000;
 const DEV_SERVER_POLL_INTERVAL_MS = 250;
 const DEFAULT_RPC_TIMEOUT_MS = 120000;
-const DEFAULT_SYSTEM_PROMPT =
-  "You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.";
+const DEFAULT_SYSTEM_PROMPT = [
+  "You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.",
+  "When you intentionally start or change top-level work, write the lifecycle fact immediately with the structured-session-state tool.",
+  "Ordinary mentions of workflows, verification, resume, or waiting do not update structured state.",
+  "Use explicit lifecycle writes for direct work, delegated workflows, verification outcomes, dependency joins, and durable user or external waiting.",
+].join(" ");
 const ENV_FILES = [".env.local", ".env"];
 const PREFERRED_PROVIDERS = ["zai", "openai", "anthropic", "google"];
 const PREFERRED_MODEL_FRAGMENTS = [

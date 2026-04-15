@@ -16,10 +16,19 @@ import { basename, dirname, join } from "node:path";
  * What this file is trying to prove:
  * - `pi` should stay the source of truth for transcript history.
  * - `svvy` should own explicit product state above that transcript.
+ * - structured writes should come from explicit runtime events, not prompt text
+ *   or transcript heuristics.
+ * - in the real product, those writes should be exposed as structured-state
+ *   tool calls the orchestrator or owning integration performs at lifecycle
+ *   boundaries.
+ * - delegated Smithers workflows should be orchestrator-authored milestone
+ *   graphs with verification at milestone boundaries, not loose todo plans.
+ * - same-branch parallel agents are the default execution mode for milestone
+ *   work, while worktrees are reserved for cases where isolation is worth it.
  * - the session-summary selector should serve sidebar and list views from
  *   structured metadata rather than transcript-derived convenience reads.
  * - that product state should make threads, results, verification, workflows,
- *   and waiting state directly queryable.
+ *   dependency blocking, and waiting state directly queryable.
  * - the lifecycle should survive save + reload.
  *
  * This POC uses one JSON file because that is the smallest way to make the
@@ -36,6 +45,21 @@ type SessionStatus = "idle" | "running" | "waiting" | "error";
 type ThreadKind = "direct" | "verification" | "workflow";
 
 type ThreadStatus = "running" | "completed" | "failed" | "waiting";
+
+type ThreadBlockedOn =
+  | {
+      kind: "threads";
+      threadIds: string[];
+      waitPolicy: "all" | "any";
+      reason: string;
+      since: string;
+    }
+  | {
+      kind: "user" | "external";
+      reason: string;
+      resumeWhen: string;
+      since: string;
+    };
 
 /**
  * Result kind answers:
@@ -112,6 +136,7 @@ export type StructuredSessionState = {
       createdAt: string;
     };
     blockedReason: string | null;
+    blockedOn: ThreadBlockedOn | null;
     startedAt: string;
     updatedAt: string;
     finishedAt: string | null;
@@ -198,6 +223,10 @@ export type SessionView = {
  * - persist after each write
  * - expose a few selector reads
  * - reload from disk safely
+ *
+ * In production these methods should map cleanly to Bun-side structured-state
+ * tool calls. The POC keeps them as direct method calls only so the lifecycle
+ * remains executable in one file.
  */
 export class StructuredSessionPoc {
   private ids = new Map<string, number>();
@@ -246,6 +275,7 @@ export class StructuredSessionPoc {
       status: "running",
       result: null,
       blockedReason: null,
+      blockedOn: null,
       startedAt: timestamp,
       updatedAt: timestamp,
       finishedAt: null,
@@ -262,12 +292,15 @@ export class StructuredSessionPoc {
     threadId: string;
     status: ThreadStatus;
     blockedReason?: string | null;
+    blockedOn?: ThreadBlockedOn | null;
   }): ThreadRecord {
     const thread = this.mustFindThread(input.threadId);
     const timestamp = new Date().toISOString();
 
     thread.status = input.status;
-    thread.blockedReason = input.blockedReason ?? thread.blockedReason;
+    thread.blockedReason =
+      input.blockedReason === undefined ? thread.blockedReason : input.blockedReason;
+    thread.blockedOn = input.blockedOn === undefined ? thread.blockedOn : input.blockedOn;
     thread.updatedAt = timestamp;
     thread.finishedAt =
       input.status === "completed" || input.status === "failed" ? timestamp : null;
@@ -389,8 +422,24 @@ export class StructuredSessionPoc {
     return workflow;
   }
 
-  setWaitingState(input: { threadId: string; reason: string; resumeWhen: string }): void {
+  setWaitingState(input: {
+    threadId: string;
+    kind: "user" | "external";
+    reason: string;
+    resumeWhen: string;
+  }): void {
+    const thread = this.mustFindThread(input.threadId);
     const timestamp = new Date().toISOString();
+    thread.status = "waiting";
+    thread.blockedReason = input.reason;
+    thread.blockedOn = {
+      kind: input.kind,
+      reason: input.reason,
+      resumeWhen: input.resumeWhen,
+      since: timestamp,
+    };
+    thread.updatedAt = timestamp;
+    thread.finishedAt = null;
     this.state.session.waitingOn = {
       threadId: input.threadId,
       reason: input.reason,
@@ -478,6 +527,15 @@ export class StructuredSessionPoc {
     }
 
     if (this.state.threads.some((thread) => thread.status === "running")) {
+      this.state.pi.status = "running";
+      return;
+    }
+
+    if (
+      this.state.threads.some(
+        (thread) => thread.status === "waiting" && thread.blockedOn?.kind === "threads",
+      )
+    ) {
       this.state.pi.status = "running";
       return;
     }
@@ -572,40 +630,129 @@ export function runPoc() {
 
   /**
    * Step 2:
-   * Run a direct path and capture one durable result for the thread.
+   * Start an orchestrator-authored milestone workflow.
+   *
+   * Milestone 1 fans out into two same-branch peer agents with explicit
+   * ownership. The owning workflow thread blocks on those child threads while
+   * the top-level workflow projection remains running.
    */
-  const directThread = poc.startThread({
-    kind: "direct",
-    objective: "Inspect the state model and define the minimum structured contract.",
+  const workflowThread = poc.startThread({
+    kind: "workflow",
+    objective:
+      "Run an orchestrator-authored milestone workflow with same-branch peer agents and milestone verification gates.",
   });
 
-  poc.setThreadResult({
-    threadId: directThread.id,
-    kind: "analysis-summary",
-    summary: "Captured the minimum structured state contract as the thread result.",
-    body: "The direct analysis concluded that threads should be first-class product objects and that each thread should produce one durable semantic result, while the real implementation should persist the same model in Bun-side SQLite instead of JSON.",
+  const workflow = poc.startWorkflow({
+    threadId: workflowThread.id,
+    smithersRunId: "smithers-run-5101",
+    workflowName: "milestone-shared-branch-poc",
+    summary:
+      "Milestone 1 active: parallel same-branch implementation tasks are running before the verification gate.",
+  });
+
+  const runtimeWritesThread = poc.startThread({
+    kind: "direct",
+    objective:
+      "Milestone 1 task A on the current branch: implement structured-state write-path ownership and waiting rules.",
+  });
+
+  const selectorsThread = poc.startThread({
+    kind: "direct",
+    objective:
+      "Milestone 1 task B on the current branch: implement selector and projection updates without touching the write path.",
   });
 
   poc.updateThread({
-    threadId: directThread.id,
-    status: "completed",
+    threadId: workflowThread.id,
+    status: "waiting",
+    blockedReason:
+      "Waiting for milestone 1 same-branch peer agents to finish before starting the milestone verification gate.",
+    blockedOn: {
+      kind: "threads",
+      threadIds: [runtimeWritesThread.id, selectorsThread.id],
+      waitPolicy: "all",
+      reason:
+        "Need both milestone 1 implementation tasks to finish before the verification boundary can run.",
+      since: new Date().toISOString(),
+    },
   });
 
   /**
    * Step 3:
-   * Run verification and capture a final result for the thread.
+   * Finish both same-branch implementation tasks, then move the workflow to
+   * its milestone verification boundary.
    */
-  const verificationThread = poc.startThread({
-    kind: "verification",
-    objective: "Run verification and capture the result as a routing input.",
+  poc.setThreadResult({
+    threadId: runtimeWritesThread.id,
+    kind: "change-summary",
+    summary:
+      "Task A completed the write-path contract for orchestrator-owned lifecycle writes.",
+    body: "The shared-branch implementation added explicit structured-state write ownership for orchestrator, verification, and Smithers lifecycle events without using a separate worktree.",
   });
 
+  poc.updateThread({
+    threadId: runtimeWritesThread.id,
+    status: "completed",
+  });
+
+  poc.setThreadResult({
+    threadId: selectorsThread.id,
+    kind: "change-summary",
+    summary:
+      "Task B completed the read-model changes needed for milestone tracking and waiting-state projection.",
+    body: "The shared-branch implementation updated selectors and projections while respecting that another peer agent was editing nearby code on the same branch.",
+  });
+
+  poc.updateThread({
+    threadId: selectorsThread.id,
+    status: "completed",
+  });
+
+  poc.updateThread({
+    threadId: workflowThread.id,
+    status: "running",
+    blockedReason: null,
+    blockedOn: null,
+  });
+
+  poc.updateWorkflow({
+    workflowId: workflow.id,
+    status: "running",
+    summary:
+      "Milestone 1 implementation finished on the current branch. The workflow is now at the milestone verification gate.",
+  });
+
+  const verificationThread = poc.startThread({
+    kind: "verification",
+    objective:
+      "Run the milestone 1 verification boundary before unlocking later milestones in the workflow.",
+  });
+
+  poc.updateThread({
+    threadId: workflowThread.id,
+    status: "waiting",
+    blockedReason:
+      "Waiting for the milestone 1 verification boundary to finish before the next milestone can unlock.",
+    blockedOn: {
+      kind: "threads",
+      threadIds: [verificationThread.id],
+      waitPolicy: "all",
+      reason: "Need the verification outcome before milestone 2 can start.",
+      since: new Date().toISOString(),
+    },
+  });
+
+  /**
+   * Step 4:
+   * Run the milestone verification boundary, then let the orchestrator hot
+   * reload the workflow into a clarification gate for milestone 2.
+   */
   poc.recordVerification({
     threadId: verificationThread.id,
     kind: "test",
-    status: "failed",
+    status: "passed",
     summary:
-      "Verification exposed one remaining place where transcript reconstruction still leaks into product behavior.",
+      "Milestone 1 verification passed after both same-branch implementation tasks landed cleanly.",
     command: "bun test structured-session-state-poc",
   });
 
@@ -613,50 +760,43 @@ export function runPoc() {
     threadId: verificationThread.id,
     kind: "verification-summary",
     summary:
-      "Recorded the failed verification run as the thread result so routing can start from durable state instead of raw logs.",
-    body: "The verification result should be treated as first-class routing state, and the remaining gap is projecting that verification state cleanly in the UI instead of falling back to transcript reconstruction.",
+      "Milestone 1 verification passed, so the workflow can unlock the next milestone.",
+    body: "The verification boundary confirmed that same-branch peer-agent edits and structured-state writes are coherent enough to continue without opening a worktree.",
   });
 
   poc.updateThread({
     threadId: verificationThread.id,
-    status: "failed",
-    blockedReason:
-      "Verification exposed one remaining transcript-derived assumption that should move into structured state.",
+    status: "completed",
   });
 
-  /**
-   * Step 4:
-   * Start a delegated workflow, project its top-level status, and enter waiting.
-   */
-  const workflowThread = poc.startThread({
-    kind: "workflow",
-    objective: "Represent a delegated Smithers workflow in the top-level session model.",
-  });
-
-  const workflow = poc.startWorkflow({
+  poc.updateThread({
     threadId: workflowThread.id,
-    smithersRunId: "smithers-run-4021",
-    workflowName: "workflow-resume-poc",
-    summary: "Delegated workflow started and is now visible at the session level.",
+    status: "running",
+    blockedReason: null,
+    blockedOn: null,
+  });
+
+  poc.updateWorkflow({
+    workflowId: workflow.id,
+    status: "running",
+    summary:
+      "Milestone 1 verified. The orchestrator hot-reloaded milestone 2 to replace planned edits with a clarification gate before more work begins.",
   });
 
   poc.updateWorkflow({
     workflowId: workflow.id,
     status: "waiting",
-    summary: "Delegated workflow reached a durable pause waiting for clarification.",
-  });
-
-  poc.updateThread({
-    threadId: workflowThread.id,
-    status: "waiting",
-    blockedReason:
-      "The workflow is paused until the workflow-to-thread ownership rule is clarified.",
+    summary:
+      "Milestone 2 is durably paused on a clarification gate after the orchestrator hot-reloaded the workflow.",
   });
 
   poc.setWaitingState({
     threadId: workflowThread.id,
-    reason: "Need to clarify when a delegated workflow should get its own top-level thread.",
-    resumeWhen: "Resume when the user answers the workflow/thread ownership question.",
+    kind: "user",
+    reason:
+      "Need a product decision on whether milestone internals should stay Smithers-only or gain richer svvy-side projection before milestone 2 starts.",
+    resumeWhen:
+      "Resume when the user confirms whether milestone internals remain Smithers-only for this slice.",
   });
 
   const afterStructuredState = poc.getSessionView();
@@ -697,10 +837,10 @@ if (import.meta.main) {
   console.log("1. Before any structured records exist:");
   console.log(JSON.stringify(result.beforeStructuredState, null, 2));
 
-  console.log("\n2. After running the full lifecycle:");
+  console.log("\n2. After milestone execution, milestone verification, and a durable pause:");
   console.log(JSON.stringify(result.afterStructuredState, null, 2));
 
-  console.log("\n3. Thread list:");
+  console.log("\n3. Thread list across workflow, same-branch tasks, and milestone verification:");
   console.log(JSON.stringify(result.threads, null, 2));
 
   console.log("\n4. Workflow thread detail:");

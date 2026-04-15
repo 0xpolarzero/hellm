@@ -2,7 +2,7 @@
 
 ## Status
 
-- Date: 2026-04-14
+- Date: 2026-04-15
 - Status: adopted direction for the first structured session state implementation slice
 - Reference implementation: [POC](../pocs/structured-session-state.poc.ts)
 
@@ -44,6 +44,9 @@ If this spec and the POC ever disagree, that is a bug in the spec and should be 
 - Keep the first slice intentionally small.
 - Use one workspace-scoped SQLite database in the real implementation.
 - Use a small append-only domain event log for meaningful lifecycle transitions.
+- Drive structured writes from explicit runtime or tool events rather than prompt-text or transcript heuristics.
+- Expose the write path as explicit structured-state tool calls owned by the orchestrator or the relevant runtime integration.
+- Distinguish thread-level dependency blocking from whole-session waiting.
 - Use explicit selectors for read models instead of making the UI reconstruct state from storage details.
 - Treat session-summary and sidebar projections as the primary read model for list and navigation surfaces.
 
@@ -137,6 +140,21 @@ type StructuredSessionState = {
       createdAt: string;
     };
     blockedReason: string | null;
+    blockedOn:
+      | null
+      | {
+          kind: "threads";
+          threadIds: string[];
+          waitPolicy: "all" | "any";
+          reason: string;
+          since: string;
+        }
+      | {
+          kind: "user" | "external";
+          reason: string;
+          resumeWhen: string;
+          since: string;
+        };
     startedAt: string;
     updatedAt: string;
     finishedAt: string | null;
@@ -208,6 +226,12 @@ Everything else that can be derived from the record collections should stay deri
 
 `waitingOn` exists because it captures a whole-session pause condition that the product needs to resume explicitly.
 
+It is intentionally narrower than `thread.blockedOn`.
+
+`session.waitingOn` should only exist when no runnable work remains and progress requires user or external input.
+
+Waiting on child threads or parallel work is not a session-level wait.
+
 It contains:
 
 - `threadId`: which thread is responsible for the pause
@@ -237,6 +261,7 @@ What bounded workstream exists here?
 | `status`        | Captures the current lifecycle state of the workstream.                       |
 | `result`        | Holds the single durable semantic result for the thread, if one exists.       |
 | `blockedReason` | Explains why the thread is blocked, waiting, or otherwise unable to continue. |
+| `blockedOn`     | Captures the structured cause of a block, including thread joins and external pauses. |
 | `startedAt`     | Allows ordering and duration reasoning.                                       |
 | `updatedAt`     | Allows recency-based selectors and status derivation.                         |
 | `finishedAt`    | Marks terminal completion or failure time.                                    |
@@ -254,6 +279,49 @@ The workstream exists to run and interpret verification as first-class product s
 `workflow`
 
 The workstream exists to project a top-level delegated Smithers workflow into the session model.
+
+### `thread.blockedOn`
+
+`blockedOn` captures why a thread cannot currently advance.
+
+The adopted first-slice blocked causes are:
+
+- `threads`
+- `user`
+- `external`
+
+`blockedOn.kind = "threads"`
+
+This means the thread is waiting for one or more other threads to finish or unblock.
+
+This is how the orchestrator waits on delegated work or parallel subwork without turning the whole session into a user-facing waiting state.
+
+It contains:
+
+- `threadIds`: the child or sibling threads this thread depends on
+- `waitPolicy`: whether all listed threads must finish or whether any one of them is enough
+- `reason`: a concise human-readable explanation
+- `since`: when the dependency wait began
+
+`blockedOn.kind = "user" | "external"`
+
+This means the thread is blocked on a prerequisite outside the active runnable frontier.
+
+It contains:
+
+- `reason`: why the thread is blocked
+- `resumeWhen`: what must happen before the thread can continue
+- `since`: when that blocked state began
+
+### Waiting And Blocking Placement
+
+The blocked explanation is intentionally split across two layers:
+
+- `thread.blockedReason` is a compact digest for list rows, status badges, and quick reading
+- `thread.blockedOn` is the durable structured cause of the block
+- `session.waitingOn` is the explicit whole-session pause condition
+
+That split allows the product to represent internal orchestration waits without falsely telling the user the whole session is paused.
 
 ## Thread Result Model
 
@@ -331,6 +399,17 @@ Workflows in structured session state are top-level product projections of deleg
 
 They are not copies of Smithers internals.
 
+In the adopted product direction, those delegated Smithers runs are milestone-based by default rather than loose todo lists.
+
+The orchestrator is responsible for authoring the milestone graph.
+
+Each milestone must have:
+
+- a milestone objective
+- explicit completion criteria
+- one or more bounded agent tasks
+- a verification boundary that must run before the next milestone unlocks
+
 ### Workflow Fields
 
 | Field           | Why it exists                                                |
@@ -350,6 +429,33 @@ They are not copies of Smithers internals.
 Only one workflow projection is allowed per thread in this slice.
 
 That rule should be enforced by the write API and by the real database schema.
+
+### Workflow Authoring And Execution Rules
+
+These rules are adopted for the first slice even though Smithers remains canonical for workflow internals:
+
+- the orchestrator must author delegated workflows as milestone graphs rather than loose todo plans
+- same-branch execution is the default for milestone tasks
+- worktree isolation is an exception that requires an explicit orchestrator decision
+- parallel milestone tasks must have explicit ownership or write-scope boundaries
+- same-branch milestone tasks must assume peer edits on the current branch and must not revert unrelated changes
+- milestone joins must be represented as real dependency barriers before verification begins
+- milestone verification must finish before the next milestone unlocks
+- if milestone verification fails, the current milestone remains open and remediation must be scheduled before progress continues
+- Smithers hot reload may evolve the workflow graph during execution, but only the orchestrator may decide those graph mutations
+
+### Workflow Status Semantics
+
+`workflow.status` and the owning thread status are related but not identical.
+
+Use them this way:
+
+- keep `workflow.status = "running"` while the delegated workflow is alive and only waiting on internal milestone tasks or milestone verification joins
+- use `thread.blockedOn.kind = "threads"` on the owning thread to represent those internal joins
+- use `workflow.status = "waiting"` only when the Smithers run itself reaches a durable user or external pause condition
+- keep the workflow summary updated so the active milestone or active verification gate is legible even though milestone internals stay in Smithers
+
+This split is required so the product does not falsely report a durable paused workflow when the workflow is merely coordinating in-flight parallel work on the current branch.
 
 ## Domain Event Model
 
@@ -389,7 +495,7 @@ A new thread record was created.
 
 `thread-status-changed`
 
-A thread lifecycle status changed.
+A thread lifecycle status changed, or its structured blocked-on cause changed in a meaningful way.
 
 `thread-result-created`
 
@@ -429,12 +535,20 @@ The PRD-aligned triggers are:
 - an external prerequisite is missing
 - a delegated workflow paused on a resumable waiting condition
 
+Waiting on child threads or parallel subwork does not satisfy those triggers.
+
 ### Waiting State Placement
 
-The waiting explanation is split across two layers for different purposes:
+Use the layers this way:
 
-- `thread.blockedReason` explains why a specific thread is blocked
-- `session.waitingOn` explains the current whole-session pause condition
+- set `thread.blockedOn.kind = "threads"` when a thread is waiting on child threads or parallel subwork
+- set `thread.blockedOn.kind = "user" | "external"` when a specific thread is blocked on a real prerequisite
+- set `session.waitingOn` only when that user or external prerequisite blocks the whole active frontier
+
+That means:
+
+- a thread may be `waiting` while the session remains `running`
+- a session should become `waiting` only when there is no runnable work left
 
 ## Derived Read Model
 
@@ -476,8 +590,9 @@ The current derived rule is:
 
 1. if `session.waitingOn` exists, the session status is `waiting`
 2. else if any thread is `running`, the session status is `running`
-3. else if the latest updated thread is `failed`, the session status is `error`
-4. otherwise the session status is `idle`
+3. else if any thread is `waiting` with `blockedOn.kind = "threads"`, the session status is `running`
+4. else if the latest updated thread is `failed`, the session status is `error`
+5. otherwise the session status is `idle`
 
 ### Thread List
 
@@ -565,10 +680,15 @@ The `thread` table should store:
 - nullable result body
 - nullable result created time
 - blocked reason
+- nullable blocked kind
+- nullable blocked thread ids
+- nullable blocked wait policy
+- nullable blocked resume condition
+- nullable blocked since time
 - lifecycle timestamps
 - owning `session_id`
 
-The first slice stores the nullable thread result columns directly on `thread`.
+The first slice stores the nullable thread result columns and blocked-on columns directly on `thread`.
 
 ### Recommended Responsibility Of `verification`
 
@@ -615,18 +735,39 @@ It should stay intentionally small.
 The write side should expose operations equivalent to the POC:
 
 - `startThread(sessionId, kind, objective)`
-- `updateThread(threadId, status, blockedReason?)`
+- `updateThread(threadId, status, blockedReason?, blockedOn?)`
 - `setThreadResult(threadId, kind, summary, body)`
 - `recordVerification(threadId, kind, status, summary, command?)`
 - `startWorkflow(threadId, smithersRunId, workflowName, summary)`
 - `updateWorkflow(workflowId, status, summary)`
 - `setWaitingState(sessionId, threadId, reason, resumeWhen)`
 
+In the real product, these writes should be surfaced as Bun-side structured-state tool calls rather than hidden transcript-side conventions.
+
+The intended ownership is:
+
+- the orchestrator calls `startThread`, `updateThread`, `setThreadResult`, and `setWaitingState` for top-level direct, delegated, and dependency-blocking lifecycle transitions
+- the verification runner or verification tool bridge calls `recordVerification` when a real verification run finishes
+- the Smithers bridge calls `startWorkflow` and `updateWorkflow` from actual Smithers lifecycle events
+- no caller is allowed to synthesize these writes from prompt keywords, assistant prose, or transcript review after the fact
+
 ### Write-Side Rules
 
 - `setThreadResult` must fail if the thread already has a result
 - `startWorkflow` must fail if the thread already has a workflow projection
 - `updateThread` must clear `session.waitingOn` if the same thread leaves waiting
+- `recordVerification` must only be called for a real verification run outcome
+- `startWorkflow` must only be called when a real Smithers run starts and must use the real `smithersRunId`
+- `startWorkflow` should describe the initial milestone or gate in its summary so the workflow starts from legible progress state
+- `setWaitingState` must only be called when no runnable work remains and the pause is caused by a user or external prerequisite
+- waiting on child threads must stay in `thread.blockedOn.kind = "threads"` and must not set `session.waitingOn`
+- internal milestone joins and milestone verification barriers must keep the workflow projection `running` unless Smithers itself reports a durable pause
+- `updateWorkflow` should be called at milestone transitions, milestone verification boundaries, remediation loops, and durable pauses so the current milestone state stays visible
+- same-branch parallel milestone tasks must be dispatched with explicit ownership or write-scope boundaries
+- same-branch parallel milestone tasks must be prompted to tolerate peer edits on the current branch and never revert unrelated changes
+- worktree isolation should only be requested when the orchestrator has decided same-branch execution is too risky
+- workflow hot reload must be initiated by orchestrator policy after milestone evidence or verification results, not by prompt-keyword inference or autonomous worker self-redirection
+- structured writes must come from explicit runtime or tool events, not prompt text, assistant prose, or transcript heuristics
 - write methods should emit the corresponding lifecycle event
 
 ## Recommended Read API
@@ -652,6 +793,8 @@ The mirrored `pi.status` field visible in the POC must not become a second indep
 
 The product-facing session status remains the derived structured-state view described earlier in this spec.
 
+Prompt text and transcript content may help the orchestrator decide what to do, but they are not admissible evidence for writing verification, workflow, or waiting lifecycle facts into structured state.
+
 ## Synchronization With Smithers
 
 Smithers remains canonical for workflow internals.
@@ -663,6 +806,12 @@ That means:
 - keep the top-level `smithersRunId`
 - keep top-level projected workflow status and summary
 - do not copy Smithers node graphs or attempt details into `svvy` structured state
+
+Structured workflow projection writes must originate from actual Smithers lifecycle events rather than keyword inference or synthetic placeholder ids.
+
+The milestone graph, internal agent tasks, and hot-reload mutations remain Smithers-owned internals in this slice.
+
+`svvy` structured state only stores the top-level workflow projection and the thread-level blocking facts needed to make milestone progress and durable pauses legible in the product.
 
 ## Scope Boundaries
 

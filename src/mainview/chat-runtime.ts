@@ -218,6 +218,7 @@ export async function createChatRuntime(
   const listeners = new Set<ChatRuntimeListener>();
   let sessions: WorkspaceSessionSummary[] = [];
   let activeSessionId: string | undefined;
+  let promptDispatchInFlight = false;
   let disposed = false;
 
   const emit = () => {
@@ -394,6 +395,24 @@ export async function createChatRuntime(
     };
     const provider = request.provider ?? DEFAULT_CHAT_SETTINGS.provider;
     const modelId = request.model ?? DEFAULT_CHAT_SETTINGS.model;
+    if (promptDispatchInFlight) {
+      queueMicrotask(() => {
+        const failure = createFailureMessage(
+          new Error("Prompt dispatch already in flight."),
+          provider,
+          modelId,
+          "error",
+        );
+        agent.state.error = failure.errorMessage;
+        stream.push({
+          type: "error",
+          reason: "error",
+          error: failure,
+        });
+      });
+      return stream;
+    }
+
     const activeStreamId = request.streamId;
     let streamSessionId = request.sessionId ?? agent.sessionId;
     let completed = false;
@@ -449,6 +468,7 @@ export async function createChatRuntime(
     }
 
     void (async () => {
+      promptDispatchInFlight = true;
       try {
         const response = await rpcClient.request.sendPrompt(request);
         streamSessionId = response.sessionId;
@@ -461,6 +481,8 @@ export async function createChatRuntime(
         }
       } catch (error) {
         finishWithError("error", error);
+      } finally {
+        promptDispatchInFlight = false;
       }
     })();
 

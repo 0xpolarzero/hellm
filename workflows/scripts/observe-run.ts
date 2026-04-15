@@ -552,7 +552,7 @@ function getRunRow(dbPath: string, runId: string): RunRow | null {
   }
 }
 
-function listNodeRows(dbPath: string, runId: string) {
+function listNodeRows(dbPath: string, runId: string): NodeRow[] {
   const db = openReadonlyDb(dbPath)
   try {
     return db
@@ -574,7 +574,7 @@ function listNodeRows(dbPath: string, runId: string) {
   }
 }
 
-function listRecentEvents(dbPath: string, runId: string, limit: number) {
+function listRecentEvents(dbPath: string, runId: string, limit: number): EventRow[] {
   const db = openReadonlyDb(dbPath)
   try {
     const rows = db
@@ -590,7 +590,7 @@ function listRecentEvents(dbPath: string, runId: string, limit: number) {
          LIMIT ?`,
       )
       .all(runId, limit) as EventRow[]
-    return rows.toReversed()
+    return rows.slice().reverse()
   } finally {
     db.close()
   }
@@ -623,7 +623,7 @@ function listRecentEventsForNode(
   nodeId: string,
   iteration: number,
   limit: number,
-) {
+): EventRow[] {
   const db = openReadonlyDb(dbPath)
   try {
     const rows = db
@@ -641,7 +641,7 @@ function listRecentEventsForNode(
          LIMIT ?`,
       )
       .all(runId, nodeId, iteration, limit) as EventRow[]
-    return rows.toReversed()
+    return rows.slice().reverse()
   } finally {
     db.close()
   }
@@ -651,7 +651,7 @@ async function collectRepoContexts(
   options: ObserveRunOptions,
   runRow: RunRow,
   focusNodes: FocusNodeEvidence[],
-) {
+): Promise<RepoContext[]> {
   const candidatePaths = new Set<string>()
 
   if (options.worktreePath) {
@@ -710,7 +710,7 @@ async function inspectGitRepo(repoPath: string): Promise<RepoContext | null> {
   }
 }
 
-function parseChangedFiles(statusShort: string) {
+function parseChangedFiles(statusShort: string): string[] {
   const files: string[] = []
   for (const line of statusShort.split(/\r?\n/)) {
     const trimmed = line.trim()
@@ -725,8 +725,8 @@ function parseChangedFiles(statusShort: string) {
   return files
 }
 
-function selectFocusNodes(nodeRows: NodeRow[], limit: number) {
-  const ordered = [...nodeRows].toSorted((left, right) => {
+function selectFocusNodes(nodeRows: NodeRow[], limit: number): NodeRow[] {
+  const ordered = [...nodeRows].sort((left, right) => {
     const leftFocus = FOCUS_STATES.has(left.state) ? 1 : 0
     const rightFocus = FOCUS_STATES.has(right.state) ? 1 : 0
 

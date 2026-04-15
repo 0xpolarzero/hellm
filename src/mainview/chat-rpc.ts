@@ -78,6 +78,24 @@ export interface WorkspaceSessionSummary {
   modelId?: string;
   provider?: string;
   thinkingLevel?: string;
+  waitingOn?: {
+    threadId: string;
+    reason: string;
+    resumeWhen: string;
+    since: string;
+  } | null;
+  counts?: {
+    threads: number;
+    results: number;
+    verifications: number;
+    workflows: number;
+    events: number;
+  };
+  threadIdsByStatus?: {
+    running: string[];
+    waiting: string[];
+    failed: string[];
+  };
 }
 
 export interface ActiveSessionState {

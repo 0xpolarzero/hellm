@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
 import {
   getModel,
@@ -37,6 +37,23 @@ import {
   projectWorkspaceSessionSummary,
   projectWorkspaceSessionSummaryFromInfo,
 } from "./session-projection";
+import {
+  buildStructuredSessionSummaryProjection,
+  buildStructuredSessionView,
+} from "./structured-session-selectors";
+import {
+  createStructuredSessionStateTool,
+  createStructuredSessionToolRuntimeContext,
+  replayStructuredSessionStateToolCalls,
+  STRUCTURED_SESSION_STATE_TOOL_NAME,
+  type StructuredSessionToolRuntimeContext,
+  type StructuredSessionToolRuntimeHandle,
+} from "./structured-session-lifecycle-tool";
+import {
+  createStructuredSessionStateStore,
+  type StructuredSessionSnapshot,
+  type StructuredSessionStateStore,
+} from "./structured-session-state";
 import { resolveApiKey } from "./auth-store";
 import { resolveWorkspaceCwd } from "./workspace-context";
 
@@ -55,6 +72,8 @@ const ZERO_USAGE: AssistantMessage["usage"] = {
   },
 };
 
+const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state.sqlite";
+
 interface ManagedSession {
   sessionId: string;
   provider: string;
@@ -68,6 +87,7 @@ interface ManagedSession {
   activePrompt: boolean;
   recreateOnNextPrompt: boolean;
   abortRequested: boolean;
+  structuredSessionToolRuntime: StructuredSessionToolRuntimeHandle;
 }
 
 export interface SessionDefaults {
@@ -104,16 +124,28 @@ interface PromptSyncCursor {
 
 export class WorkspaceSessionCatalog {
   private activeSession: ManagedSession | null = null;
+  private readonly structuredSessionStore: StructuredSessionStateStore;
 
   constructor(
     private readonly cwd: string = resolveWorkspaceCwd(),
     private readonly agentDir: string = getSvvyAgentDir(),
     private readonly sessionDir: string = getSvvySessionDir(resolveWorkspaceCwd(), getSvvyAgentDir()),
-  ) {}
+  ) {
+    const workspaceLabel = basename(this.cwd) || "workspace";
+    this.structuredSessionStore = createStructuredSessionStateStore({
+      workspace: {
+        id: this.cwd,
+        label: workspaceLabel,
+        cwd: this.cwd,
+      },
+      databasePath: join(this.sessionDir, STRUCTURED_SESSION_DB_FILENAME),
+    });
+  }
 
   async dispose(): Promise<void> {
     this.activeSession?.session.dispose();
     this.activeSession = null;
+    this.structuredSessionStore.close();
   }
 
   async listSessions(): Promise<ListSessionsResponse> {
@@ -126,21 +158,23 @@ export class WorkspaceSessionCatalog {
         continue;
       }
 
+      const projected = {
+        ...projectWorkspaceSessionSummaryFromInfo({
+          id: info.id,
+          name: info.name,
+          firstMessage: info.firstMessage,
+          created: info.created,
+          modified: info.modified,
+          messageCount: info.messageCount,
+          path: info.path,
+          parentSessionPath: info.parentSessionPath,
+        }),
+        status: getInactiveSessionStatus(info.path),
+      };
+      this.upsertStructuredPiSession(projected);
       summaries.set(
         info.id,
-        {
-          ...projectWorkspaceSessionSummaryFromInfo({
-            id: info.id,
-            name: info.name,
-            firstMessage: info.firstMessage,
-            created: info.created,
-            modified: info.modified,
-            messageCount: info.messageCount,
-            path: info.path,
-            parentSessionPath: info.parentSessionPath,
-          }),
-          status: getInactiveSessionStatus(info.path),
-        },
+        this.decorateSummaryWithStructuredProjection(projected),
       );
     }
 
@@ -326,9 +360,10 @@ export class WorkspaceSessionCatalog {
 
     session.abortRequested = false;
     session.activePrompt = true;
+    const structuredPrompt = this.createStructuredPromptContext(session, options.messages);
 
     setTimeout(() => {
-      void this.runAgentPrompt(session, options);
+      void this.runAgentPrompt(session, options, structuredPrompt);
     }, 0);
 
     return { sessionId: session.sessionId };
@@ -500,6 +535,7 @@ export class WorkspaceSessionCatalog {
       thinkingLevel,
       systemPrompt,
       agentDir: this.agentDir,
+      structuredSessionStore: this.structuredSessionStore,
     });
     this.activeSession = nextSession;
     return nextSession;
@@ -512,12 +548,13 @@ export class WorkspaceSessionCatalog {
     const session = await createManagedSession({
       ...options,
       agentDir: this.agentDir,
+      structuredSessionStore: this.structuredSessionStore,
     });
     this.activeSession = session;
     return session;
   }
 
-  private buildSummaryFromManagedSession(session: ManagedSession): WorkspaceSessionSummary {
+  private buildLegacySummaryFromManagedSession(session: ManagedSession): WorkspaceSessionSummary {
     const header = session.session.sessionManager.getHeader();
     return projectWorkspaceSessionSummary({
       id: session.sessionId,
@@ -537,6 +574,15 @@ export class WorkspaceSessionCatalog {
     });
   }
 
+  private buildSummaryFromManagedSession(session: ManagedSession): WorkspaceSessionSummary {
+    const legacySummary = this.buildLegacySummaryFromManagedSession(session);
+    this.upsertStructuredPiSession(legacySummary);
+    return this.decorateSummaryWithStructuredProjection(
+      legacySummary,
+      session.activePrompt ? "running" : undefined,
+    );
+  }
+
   private buildActiveSessionSummary(session: ManagedSession): ActiveSessionSummaryState {
     return {
       session: this.buildSummaryFromManagedSession(session),
@@ -552,6 +598,139 @@ export class WorkspaceSessionCatalog {
       ...this.buildActiveSessionSummary(session),
       messages: structuredClone(session.session.agent.state.messages),
     };
+  }
+
+  private upsertStructuredPiSession(summary: WorkspaceSessionSummary): void {
+    try {
+      this.structuredSessionStore.upsertPiSession({
+        sessionId: summary.id,
+        title: summary.title,
+        provider: summary.provider,
+        model: summary.modelId,
+        reasoningEffort: summary.thinkingLevel,
+        messageCount: summary.messageCount,
+        status: summary.status,
+        createdAt: summary.createdAt,
+        updatedAt: summary.updatedAt,
+      });
+    } catch (error) {
+      console.error("Failed to upsert structured session metadata:", error);
+    }
+  }
+
+  private getStructuredSnapshot(sessionId: string): StructuredSessionSnapshot | null {
+    try {
+      return this.structuredSessionStore.getSessionState(sessionId);
+    } catch {
+      return null;
+    }
+  }
+
+  private decorateSummaryWithStructuredProjection(
+    summary: WorkspaceSessionSummary,
+    statusOverride?: WorkspaceSessionSummary["status"],
+  ): WorkspaceSessionSummary {
+    const snapshot = this.getStructuredSnapshot(summary.id);
+    if (!snapshot) {
+      return statusOverride ? { ...summary, status: statusOverride } : summary;
+    }
+
+    const hasStructuredFacts =
+      snapshot.session.waitingOn !== null ||
+      snapshot.threads.length > 0 ||
+      snapshot.verifications.length > 0 ||
+      snapshot.workflows.length > 0 ||
+      snapshot.events.length > 0;
+    if (!hasStructuredFacts) {
+      return statusOverride ? { ...summary, status: statusOverride } : summary;
+    }
+
+    const structuredSummary = buildStructuredSessionSummaryProjection(snapshot);
+    const view = buildStructuredSessionView(snapshot);
+
+    return {
+      ...summary,
+      title: structuredSummary.title || summary.title,
+      preview: structuredSummary.preview || summary.preview,
+      status: statusOverride ?? structuredSummary.status,
+      updatedAt: structuredSummary.updatedAt,
+      waitingOn: structuredSummary.waitingOn,
+      counts: structuredSummary.counts,
+      threadIdsByStatus: view.threadIdsByStatus,
+    };
+  }
+
+  private createStructuredPromptContext(
+    session: ManagedSession,
+    promptMessages: readonly Message[],
+  ): StructuredSessionToolRuntimeContext | null {
+    const promptText = getLatestUserPromptText(promptMessages);
+    if (!promptText) {
+      return null;
+    }
+
+    try {
+      const legacySummary = this.buildLegacySummaryFromManagedSession(session);
+      this.upsertStructuredPiSession(legacySummary);
+      return createStructuredSessionToolRuntimeContext(session.sessionId, promptText);
+    } catch (error) {
+      console.error("Failed to start structured prompt state:", error);
+      return null;
+    }
+  }
+
+  private applyStructuredPromptOutcome(
+    assistantMessage: AssistantMessage,
+    promptContext: StructuredSessionToolRuntimeContext | null,
+  ): void {
+    if (!promptContext) {
+      return;
+    }
+
+    const assistantText = flattenAssistantText(assistantMessage);
+    const isError =
+      assistantMessage.stopReason === "error" || assistantMessage.stopReason === "aborted";
+
+    try {
+      replayStructuredSessionStateToolCalls({
+        assistantMessage,
+        runtime: promptContext,
+        store: this.structuredSessionStore,
+      });
+
+      if (promptContext.structuredWriteCount > 0) {
+        return;
+      }
+
+      const thread = this.structuredSessionStore.startThread({
+        sessionId: promptContext.sessionId,
+        kind: "direct",
+        objective: promptContext.promptText,
+      });
+      if (isError) {
+        this.structuredSessionStore.updateThread({
+          threadId: thread.id,
+          status: "failed",
+          blockedReason: assistantText || "Direct thread failed.",
+        });
+        return;
+      }
+
+      const summary = assistantText || "Direct thread completed.";
+      this.structuredSessionStore.setThreadResult({
+        threadId: thread.id,
+        kind: "analysis-summary",
+        summary,
+        body: summary,
+      });
+      this.structuredSessionStore.updateThread({
+        threadId: thread.id,
+        status: "completed",
+        blockedReason: null,
+      });
+    } catch (error) {
+      console.error("Failed to apply structured prompt outcome:", error);
+    }
   }
 
   private async getSessionFileForId(
@@ -578,101 +757,109 @@ export class WorkspaceSessionCatalog {
   private async runAgentPrompt(
     session: ManagedSession,
     options: SendAgentPromptOptions,
+    promptContext: StructuredSessionToolRuntimeContext | null,
   ): Promise<void> {
-    const e2eScenario = getE2ePromptScenario(options.messages);
-    if (e2eScenario) {
-      await this.runE2ePromptScenario(session, options, e2eScenario);
-      return;
-    }
-
-    const streamState = createVisibleStreamState(options.provider, options.model);
-    options.onEvent({ type: "start", partial: streamState.partial });
-    const unsubscribe = session.session.subscribe((event) => {
-      if (event.type !== "message_update") {
+    session.structuredSessionToolRuntime.current = promptContext;
+    try {
+      const e2eScenario = getE2ePromptScenario(options.messages);
+      if (e2eScenario) {
+        await this.runE2ePromptScenario(session, options, e2eScenario, promptContext);
         return;
       }
-      applyVisibleAssistantEvent(streamState, event.assistantMessageEvent, options.onEvent);
-    });
 
-    try {
-      syncAuthStorage(session.authStorage);
-
-      const promptText = buildPromptText(session, options.messages, options.systemPrompt);
-      if (!promptText) {
-        throw new Error("No user message to send.");
-      }
-
-      const previousMessageCount = session.session.agent.state.messages.length;
-      await session.session.prompt(promptText, { expandPromptTemplates: false });
-      finishOpenVisibleBlocks(streamState, options.onEvent);
-
-      const emittedMessage =
-        getLatestAssistantMessage(
-          session.session.agent.state.messages.slice(previousMessageCount),
-        ) ?? getLatestAssistantMessage(session.session.agent.state.messages);
-
-      if (!emittedMessage) {
-        throw new Error("The pi session finished without producing an assistant message.");
-      }
-
-      const visibleMessage = finalizeVisibleAssistantMessage(
-        streamState,
-        emittedMessage,
-        options.provider,
-        options.model,
-      );
-
-      if (visibleMessage.stopReason === "error" || visibleMessage.stopReason === "aborted") {
-        options.onEvent({
-          type: "error",
-          reason: visibleMessage.stopReason,
-          error: visibleMessage,
-        });
-      } else {
-        options.onEvent({
-          type: "done",
-          reason: visibleMessage.stopReason === "toolUse" ? "stop" : visibleMessage.stopReason,
-          message: visibleMessage,
-        });
-      }
-
-      updatePromptSyncCursor(session, [...options.messages, visibleMessage]);
-      session.provider = options.provider;
-      session.model = options.model;
-      session.thinkingLevel = options.thinkingLevel;
-      session.systemPrompt = options.systemPrompt;
-      session.recreateOnNextPrompt = false;
-    } catch (error) {
-      const reason = session.abortRequested ? "aborted" : "error";
-      finishOpenVisibleBlocks(streamState, options.onEvent);
-      const failure = finalizeVisibleAssistantMessage(
-        streamState,
-        createErrorMessage(
-          options.provider,
-          options.model,
-          error instanceof Error ? error.message : "pi prompt failed.",
-          reason,
-        ),
-        options.provider,
-        options.model,
-      );
-
-      options.onEvent({
-        type: "error",
-        reason,
-        error: failure,
+      const streamState = createVisibleStreamState(options.provider, options.model);
+      options.onEvent({ type: "start", partial: streamState.partial });
+      const unsubscribe = session.session.subscribe((event) => {
+        if (event.type !== "message_update") {
+          return;
+        }
+        applyVisibleAssistantEvent(streamState, event.assistantMessageEvent, options.onEvent);
       });
 
-      updatePromptSyncCursor(session, [...options.messages, failure]);
-      session.provider = options.provider;
-      session.model = options.model;
-      session.thinkingLevel = options.thinkingLevel;
-      session.systemPrompt = options.systemPrompt;
+      try {
+        syncAuthStorage(session.authStorage);
+
+        const promptText = buildPromptText(session, options.messages, options.systemPrompt);
+        if (!promptText) {
+          throw new Error("No user message to send.");
+        }
+
+        const previousMessageCount = session.session.agent.state.messages.length;
+        await session.session.prompt(promptText, { expandPromptTemplates: false });
+        finishOpenVisibleBlocks(streamState, options.onEvent);
+
+        const emittedMessage =
+          getLatestAssistantMessage(
+            session.session.agent.state.messages.slice(previousMessageCount),
+          ) ?? getLatestAssistantMessage(session.session.agent.state.messages);
+
+        if (!emittedMessage) {
+          throw new Error("The pi session finished without producing an assistant message.");
+        }
+
+        const visibleMessage = finalizeVisibleAssistantMessage(
+          streamState,
+          emittedMessage,
+          options.provider,
+          options.model,
+        );
+
+        if (visibleMessage.stopReason === "error" || visibleMessage.stopReason === "aborted") {
+          options.onEvent({
+            type: "error",
+            reason: visibleMessage.stopReason,
+            error: visibleMessage,
+          });
+        } else {
+          options.onEvent({
+            type: "done",
+            reason: visibleMessage.stopReason === "toolUse" ? "stop" : visibleMessage.stopReason,
+            message: visibleMessage,
+          });
+        }
+
+        updatePromptSyncCursor(session, [...options.messages, visibleMessage]);
+        session.provider = options.provider;
+        session.model = options.model;
+        session.thinkingLevel = options.thinkingLevel;
+        session.systemPrompt = options.systemPrompt;
+        session.recreateOnNextPrompt = false;
+        this.applyStructuredPromptOutcome(emittedMessage, promptContext);
+      } catch (error) {
+        const reason = session.abortRequested ? "aborted" : "error";
+        finishOpenVisibleBlocks(streamState, options.onEvent);
+        const failure = finalizeVisibleAssistantMessage(
+          streamState,
+          createErrorMessage(
+            options.provider,
+            options.model,
+            error instanceof Error ? error.message : "pi prompt failed.",
+            reason,
+          ),
+          options.provider,
+          options.model,
+        );
+
+        options.onEvent({
+          type: "error",
+          reason,
+          error: failure,
+        });
+
+        updatePromptSyncCursor(session, [...options.messages, failure]);
+        session.provider = options.provider;
+        session.model = options.model;
+        session.thinkingLevel = options.thinkingLevel;
+        session.systemPrompt = options.systemPrompt;
+        this.applyStructuredPromptOutcome(failure, promptContext);
+      } finally {
+        unsubscribe();
+        session.abortRequested = false;
+        session.activePrompt = false;
+        this.syncManagedState(session);
+      }
     } finally {
-      unsubscribe();
-      session.abortRequested = false;
-      session.activePrompt = false;
-      this.syncManagedState(session);
+      session.structuredSessionToolRuntime.current = null;
     }
   }
 
@@ -680,6 +867,7 @@ export class WorkspaceSessionCatalog {
     session: ManagedSession,
     options: SendAgentPromptOptions,
     scenario: E2ePromptScenario,
+    promptContext: StructuredSessionToolRuntimeContext | null,
   ): Promise<void> {
     const streamState = createVisibleStreamState(options.provider, options.model);
 
@@ -699,7 +887,32 @@ export class WorkspaceSessionCatalog {
         if (session.abortRequested && !scenario.waitForAbort) {
           break;
         }
-        await runE2ePromptStep(step, streamState, options.onEvent);
+        await runE2ePromptStep(
+          step,
+          streamState,
+          options.onEvent,
+          async (toolCall) => {
+            if (
+              !promptContext ||
+              ![
+                STRUCTURED_SESSION_STATE_TOOL_NAME,
+                "structured_session_state",
+              ].includes(toolCall.name)
+            ) {
+              return;
+            }
+
+            replayStructuredSessionStateToolCalls({
+              assistantMessage: {
+                ...createPartialAssistantMessage(options.provider, options.model),
+                content: [toolCall],
+                stopReason: "stop",
+              },
+              runtime: promptContext,
+              store: this.structuredSessionStore,
+            });
+          },
+        );
       }
 
       if (scenario.waitForAbort) {
@@ -727,6 +940,7 @@ export class WorkspaceSessionCatalog {
         session.thinkingLevel = options.thinkingLevel;
         session.systemPrompt = options.systemPrompt;
         session.recreateOnNextPrompt = false;
+        this.applyStructuredPromptOutcome(failure, promptContext);
         return;
       }
 
@@ -755,6 +969,7 @@ export class WorkspaceSessionCatalog {
         session.thinkingLevel = options.thinkingLevel;
         session.systemPrompt = options.systemPrompt;
         session.recreateOnNextPrompt = false;
+        this.applyStructuredPromptOutcome(failure, promptContext);
         return;
       }
 
@@ -795,6 +1010,7 @@ export class WorkspaceSessionCatalog {
       session.thinkingLevel = options.thinkingLevel;
       session.systemPrompt = options.systemPrompt;
       session.recreateOnNextPrompt = false;
+      this.applyStructuredPromptOutcome(emittedMessage, promptContext);
     } catch (error) {
       const reason = session.abortRequested ? "aborted" : "error";
       finishOpenVisibleBlocks(streamState, options.onEvent);
@@ -822,6 +1038,7 @@ export class WorkspaceSessionCatalog {
       session.model = options.model;
       session.thinkingLevel = options.thinkingLevel;
       session.systemPrompt = options.systemPrompt;
+      this.applyStructuredPromptOutcome(failure, promptContext);
     } finally {
       session.abortRequested = false;
       session.activePrompt = false;
@@ -863,13 +1080,27 @@ export class WorkspaceSessionCatalog {
 }
 
 async function createManagedSession(
-  options: CreateManagedSessionOptions & { agentDir: string },
+  options: CreateManagedSessionOptions & {
+    agentDir: string;
+    structuredSessionStore: StructuredSessionStateStore;
+  },
 ): Promise<ManagedSession> {
   mkdirSync(options.agentDir, { recursive: true });
 
   const authStorage = AuthStorage.inMemory();
   syncAuthStorage(authStorage);
-  const modelRegistry = ModelRegistry.create(authStorage, join(options.agentDir, "models.json"));
+  const structuredSessionToolRuntime: StructuredSessionToolRuntimeHandle = {
+    current: null,
+  };
+  const modelRegistryFactory = ModelRegistry as unknown as {
+    create?: (authStorage: AuthStorage, modelPath: string) => ModelRegistry;
+    new (authStorage: AuthStorage, modelPath: string): ModelRegistry;
+  };
+  const modelRegistryPath = join(options.agentDir, "models.json");
+  const modelRegistry =
+    typeof modelRegistryFactory.create === "function"
+      ? modelRegistryFactory.create(authStorage, modelRegistryPath)
+      : new modelRegistryFactory(authStorage, modelRegistryPath);
   const settingsManager = SettingsManager.create(options.sessionManager.getCwd(), options.agentDir);
   const restoredDefaults = resolveRestoredSessionDefaults(options.sessionManager, {
     provider: options.provider,
@@ -890,6 +1121,12 @@ async function createManagedSession(
     settingsManager,
     model: resolvedModel,
     thinkingLevel: restoredDefaults.thinkingLevel,
+    tools: [
+      createStructuredSessionStateTool({
+        runtime: structuredSessionToolRuntime,
+        store: options.structuredSessionStore,
+      }),
+    ],
   });
   const activeModel = session.agent.state.model ?? resolvedModel;
 
@@ -906,6 +1143,7 @@ async function createManagedSession(
     activePrompt: false,
     recreateOnNextPrompt: false,
     abortRequested: false,
+    structuredSessionToolRuntime,
   };
 }
 
@@ -920,6 +1158,54 @@ function convertToLlmMessages(messages: AgentMessage[]): Message[] {
   return messages.filter((message): message is Message => {
     return message.role === "user" || message.role === "assistant" || message.role === "toolResult";
   });
+}
+
+function flattenUserMessageContent(content: Message["content"]): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  return content
+    .map((block) => {
+      if (block.type === "text") {
+        return block.text;
+      }
+      if (block.type === "image") {
+        return "[image]";
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function getLatestUserPromptText(messages: readonly Message[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "user") {
+      continue;
+    }
+
+    const text = flattenUserMessageContent(message.content).trim();
+    if (text) {
+      return text;
+    }
+  }
+
+  return null;
+}
+
+function flattenAssistantText(message: AssistantMessage): string {
+  return message.content
+    .map((block) => {
+      if (block.type === "text") {
+        return block.text;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
 }
 
 function getInactiveSessionStatus(
@@ -1474,6 +1760,7 @@ async function runE2ePromptStep(
   step: E2ePromptStep,
   streamState: VisibleStreamState,
   onEvent: (event: AssistantMessageEvent) => void,
+  onToolCall?: (toolCall: Extract<AssistantMessage["content"][number], { type: "toolCall" }>) => Promise<void> | void,
 ): Promise<void> {
   switch (step.type) {
     case "delay":
@@ -1495,7 +1782,7 @@ async function runE2ePromptStep(
       );
       return;
     case "toolCall":
-      await runE2eToolCallStep(step, streamState, onEvent);
+      await runE2eToolCallStep(step, streamState, onEvent, onToolCall);
       return;
   }
 }
@@ -1552,12 +1839,25 @@ async function runE2eToolCallStep(
   step: Extract<E2ePromptStep, { type: "toolCall" }>,
   streamState: VisibleStreamState,
   onEvent: (event: AssistantMessageEvent) => void,
+  onToolCall?: (toolCall: Extract<AssistantMessage["content"][number], { type: "toolCall" }>) => Promise<void> | void,
 ): Promise<void> {
   finishOpenVisibleBlocks(streamState, onEvent);
 
   const serializedArguments = JSON.stringify(step.arguments);
   const deltaChunks = resolveE2eChunks(serializedArguments, step.chunks);
   const toolCallId = step.id ?? crypto.randomUUID();
+  const completedToolCall = {
+    type: "toolCall" as const,
+    id: toolCallId,
+    name: step.name,
+    arguments: step.arguments,
+  };
+
+  if ([STRUCTURED_SESSION_STATE_TOOL_NAME, "structured_session_state"].includes(step.name)) {
+    await onToolCall?.(completedToolCall);
+    return;
+  }
+
   const contentIndex = streamState.partial.content.length;
   let rawArguments = "";
   let parsedArguments: Record<string, unknown> = {};
@@ -1602,12 +1902,6 @@ async function runE2eToolCallStep(
     } as AssistantMessageEvent);
   }
 
-  const completedToolCall = {
-    type: "toolCall" as const,
-    id: toolCallId,
-    name: step.name,
-    arguments: step.arguments,
-  };
   streamState.partial.content[contentIndex] = completedToolCall;
 
   onEvent({
@@ -1616,6 +1910,8 @@ async function runE2eToolCallStep(
     partial: streamState.partial,
     toolCall: completedToolCall,
   } as AssistantMessageEvent);
+
+  await onToolCall?.(completedToolCall);
 }
 
 function resolveE2eChunks(text: string, chunks?: string[]): string[] {

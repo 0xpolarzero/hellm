@@ -62,6 +62,44 @@
         return "Idle";
     }
   }
+
+  function getProgressLabels(currentSession: WorkspaceSessionSummary): string[] {
+    const labels: string[] = [];
+    const counts = currentSession.counts;
+    const threadIdsByStatus = currentSession.threadIdsByStatus;
+
+    if (counts) {
+      if (counts.workflows > 0) {
+        labels.push(`Workflow ${counts.workflows}`);
+      }
+
+      if (counts.verifications > 0) {
+        labels.push(`Gates ${counts.verifications}`);
+      }
+
+      if (counts.threads > 0) {
+        labels.push(`Threads ${counts.threads}`);
+      }
+    }
+
+    if (threadIdsByStatus?.running.length) {
+      labels.push(`Running ${threadIdsByStatus.running.length}`);
+    }
+
+    if (threadIdsByStatus?.waiting.length) {
+      labels.push(
+        currentSession.status === "running"
+          ? `Blocked ${threadIdsByStatus.waiting.length}`
+          : `Waiting ${threadIdsByStatus.waiting.length}`,
+      );
+    }
+
+    if (threadIdsByStatus?.failed.length) {
+      labels.push(`Failed ${threadIdsByStatus.failed.length}`);
+    }
+
+    return labels;
+  }
 </script>
 
 <article class={`session-item ${active ? "active" : ""} ${menuOpen ? "menu-open" : ""}`.trim()}>
@@ -78,6 +116,17 @@
       <strong>{session.title}</strong>
       <span>{formatRelativeSessionTime(session.updatedAt)}</span>
     </div>
+    <div class="session-main-body">
+      <div class="session-main-preview">{session.preview}</div>
+      {#if getProgressLabels(session).length > 0}
+        <div class="session-main-progress" aria-label="Structured workflow progress">
+          {#each getProgressLabels(session) as label}
+            <span class="session-progress-pill">{label}</span>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
     {#if session.status !== "idle" || session.parentSessionId}
       <div class="session-main-meta">
         {#if session.status !== "idle"}
@@ -135,7 +184,7 @@
     position: relative;
     width: 100%;
     min-width: 0;
-    padding: 0.64rem 0.72rem 0.64rem 0.92rem;
+    padding: 0.64rem 0.72rem 0.7rem 0.92rem;
     border-radius: calc(var(--ui-radius-md) + 0.16rem);
     border: 1px solid transparent;
     background: transparent;
@@ -207,6 +256,45 @@
     flex-shrink: 0;
     font-size: 0.62rem;
     color: var(--ui-text-tertiary);
+  }
+
+  .session-main-body {
+    display: grid;
+    gap: 0.24rem;
+    margin-top: 0.32rem;
+    min-width: 0;
+  }
+
+  .session-main-preview {
+    min-width: 0;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    font-size: 0.68rem;
+    line-height: 1.35;
+    color: var(--ui-text-secondary);
+  }
+
+  .session-main-progress {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.28rem;
+  }
+
+  .session-progress-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1rem;
+    padding: 0.14rem 0.38rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--ui-surface-subtle) 84%, transparent);
+    color: var(--ui-text-tertiary);
+    font-size: 0.56rem;
+    font-weight: 620;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
   }
 
   .session-main-meta {

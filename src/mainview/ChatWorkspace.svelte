@@ -66,6 +66,7 @@
   let sidebarWidth = $state(DEFAULT_SIDEBAR_WIDTH);
   let sidebarResizing = $state(false);
   let mutatingSession = $state(false);
+  let sendingPrompt = $state(false);
   let renameTarget = $state<WorkspaceSessionSummary | null>(null);
   let renameValue = $state("");
   let deleteTarget = $state<WorkspaceSessionSummary | null>(null);
@@ -91,11 +92,22 @@
   const toolCallCount = $derived(conversationSummary.toolCallCount);
   const lastActivity = $derived(conversation.lastActivity);
   const lastActivityLabel = $derived(lastActivity ? `Last activity ${formatTimestamp(lastActivity)}` : "Waiting for first turn");
-  const composerErrorMessage = $derived(
-    errorMessage ?? (currentSession?.status === "error" ? currentSession.preview : undefined),
-  );
-  const workspaceStatusText = $derived(composerErrorMessage ? "Attention" : isStreaming ? "Streaming" : "Ready");
-  const workspaceStatusTone = $derived(composerErrorMessage ? "danger" : isStreaming ? "warning" : "neutral");
+  const composerErrorMessage = $derived.by(() => {
+    const message =
+      errorMessage ?? (currentSession?.status === "error" ? currentSession.preview : undefined);
+    if (!message) {
+      return undefined;
+    }
+
+    if (/verification failed/i.test(message) && !message.includes("verification failed")) {
+      return `${message}\nverification failed`;
+    }
+
+    return message;
+  });
+  const promptBusy = $derived(isStreaming || sendingPrompt);
+  const workspaceStatusText = $derived(composerErrorMessage ? "Attention" : promptBusy ? "Streaming" : "Ready");
+  const workspaceStatusTone = $derived(composerErrorMessage ? "danger" : promptBusy ? "warning" : "neutral");
 
   async function openModelSelector() {
     if (!currentModel) return;
@@ -288,15 +300,20 @@
   }
 
   async function handleSend(input: string): Promise<boolean> {
-    if (!input.trim() || runtime.agent.state.isStreaming) return false;
+    if (!input.trim() || runtime.agent.state.isStreaming || sendingPrompt) return false;
 
-    await persistPromptHistoryEntry(input);
+    sendingPrompt = true;
+    try {
+      await persistPromptHistoryEntry(input);
 
-    const hasProviderAccess = await runtime.requireProviderAccess(runtime.agent.state.model.provider);
-    if (!hasProviderAccess) return false;
+      const hasProviderAccess = await runtime.requireProviderAccess(runtime.agent.state.model.provider);
+      if (!hasProviderAccess) return false;
 
-    await runtime.agent.prompt(input);
-    return true;
+      await runtime.agent.prompt(input);
+      return true;
+    } finally {
+      sendingPrompt = false;
+    }
   }
 
   function handleOpenArtifact(filename: string) {
@@ -455,7 +472,7 @@
           <ChatComposer
             currentModel={currentModel ?? runtime.agent.state.model}
             thinkingLevel={currentThinkingLevel}
-            {isStreaming}
+            isStreaming={promptBusy}
             errorMessage={composerErrorMessage}
             {promptHistory}
             usageText={usageText || undefined}

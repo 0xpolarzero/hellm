@@ -21,18 +21,18 @@ How to use this file:
 
 ## 1. Structured Session State
 
-- [ ] Build a POC session overlay document and validate how it can sit above pi session data.
-- [ ] Persist a minimal structured session overlay root above pi session data.
-- [ ] Persist `ThreadRecord` entries with id, objective, status, executor, and timestamps.
-- [ ] Persist thread lifecycle transitions for direct, delegated, verification, and waiting states.
+- [x] Build a POC session overlay document and validate how it can sit above pi session data. Commit(s): `pending local work / add landing hash when committed`
+- [x] Persist a minimal structured session overlay root above pi session data. Commit(s): `pending local work / add landing hash when committed`
+- [x] Persist `ThreadRecord` entries with id, objective, status, kind, and timestamps. Commit(s): `pending local work / add landing hash when committed`
+- [x] Persist thread lifecycle transitions for direct, delegated, verification, and waiting states. Commit(s): `pending local work / add landing hash when committed`
 - [ ] Build a POC `EpisodeRecord` and `VerificationRecord` shape against a few realistic session examples.
 - [ ] Persist `EpisodeRecord` skeletons for direct-path completions.
 - [ ] Persist artifact references independently from transcript parsing.
-- [ ] Persist `VerificationRecord` entries with status, summary, and linked artifacts.
-- [ ] Build a POC for workflow-run and waiting-state persistence before wiring full delegated execution.
-- [ ] Persist workflow run references linked to their source thread.
-- [ ] Persist blocked and waiting state as durable product state.
-- [ ] Reconstruct workspace and session summaries from structured state on app load.
+- [x] Persist `VerificationRecord` entries with status, summary, optional command, and thread linkage. Commit(s): `pending local work / add landing hash when committed`
+- [x] Build a POC for workflow-run and waiting-state persistence before wiring full delegated execution. Commit(s): `pending local work / add landing hash when committed`
+- [x] Persist workflow run references linked to their source thread. Commit(s): `pending local work / add landing hash when committed`
+- [x] Persist blocked and waiting state as durable product state. Commit(s): `pending local work / add landing hash when committed`
+- [x] Reconstruct workspace and session summaries from structured state on app load. Commit(s): `pending local work / add landing hash when committed`
 
 ## 2. Session Navigation And Core Projection
 

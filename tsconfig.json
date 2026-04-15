@@ -6,12 +6,10 @@
     "resolveJsonModule": true,
     "allowJs": true,
     "checkJs": true,
-    "ignoreDeprecations": "6.0",
     "isolatedModules": true,
     "exactOptionalPropertyTypes": false,
     "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "baseUrl": ".",
+    "noUnusedParameters": true
   },
   "include": [
     "docs/features.ts",
