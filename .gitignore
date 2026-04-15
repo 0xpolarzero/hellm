@@ -5,7 +5,6 @@ coverage/
 .electrobun/
 .svelte-kit/
 .vite/
-artifacts/
 test-results/
 .idea/
 .vscode/
