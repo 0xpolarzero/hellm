@@ -25,3 +25,5 @@
 - integration with jjhub/codeplane would make sense, for instance:
   - every time a piece of work in a session is done and orchestrator considers we run CI workflow, it takes a jj snapshot and executes the CI on jjhub/codeplane
   - we don't git commit anymore (or maybe git mode/automatic—jj—mode) where orchestrator decides when to snapshot and push to run ci in cloud
+
+- show list of files read and websites visited for a session; basically everything that made it into the context
