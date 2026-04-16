@@ -27,4 +27,6 @@
   - every time a piece of work in a session is done and orchestrator considers we run CI workflow, it takes a jj snapshot and executes the CI on jjhub/codeplane
   - we don't git commit anymore (or maybe git mode/automatic—jj—mode) where orchestrator decides when to snapshot and push to run ci in cloud
 
-- show list of files read and websites visited for a session; basically everything that made it into the context
+- need to figure out a way to nail observability, as in having a good idea of what is happening inside a session with a super high-level overview; both for what subagents/workflows are running, what context made in into which agent, and what is the overall status
+  - maybe a good starting point is to run a small model alongside the orchestrator visiting the transcript/session state at frequent intervals and appending a one-sentence high-level overview
+  - show list of files read and websites visited for a session; basically everything that made it into the context
