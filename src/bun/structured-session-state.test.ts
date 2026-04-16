@@ -99,9 +99,16 @@ describe("structured session state write API", () => {
     });
     const artifact = store.createArtifact({
       episodeId: episode.id,
+      sourceCommandId: command.id,
       kind: "text",
       name: "notes.md",
       content: "# Notes\nThe new model is command centered.\n",
+    });
+    const commandArtifact = store.createArtifact({
+      sourceCommandId: command.id,
+      kind: "json",
+      name: "inspect-store.json",
+      content: '{"ok":true}',
     });
     const completedThread = store.updateThread({
       threadId: rootThread.id,
@@ -149,8 +156,16 @@ describe("structured session state write API", () => {
       expect.objectContaining({
         id: artifact.id,
         episodeId: episode.id,
+        sourceCommandId: command.id,
         kind: "text",
         name: "notes.md",
+      }),
+      expect.objectContaining({
+        id: commandArtifact.id,
+        episodeId: null,
+        sourceCommandId: command.id,
+        kind: "json",
+        name: "inspect-store.json",
       }),
     ]);
     expect(snapshot.events.map((event) => event.kind)).toEqual([
@@ -163,13 +178,14 @@ describe("structured session state write API", () => {
       "command.finished",
       "episode.created",
       "artifact.created",
+      "artifact.created",
       "thread.finished",
       "turn.completed",
     ]);
     expect(detail.childThreads.map((thread) => thread.id)).toEqual([childThread.id]);
     expect(detail.commands.map((entry) => entry.id)).toEqual([command.id]);
     expect(detail.episodes.map((entry) => entry.id)).toEqual([episode.id]);
-    expect(detail.artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
+    expect(detail.artifacts.map((entry) => entry.id)).toEqual([artifact.id, commandArtifact.id]);
     expect(detail.verifications).toHaveLength(0);
     expect(detail.workflow).toBeNull();
     expect(finishedCommand.status).toBe("succeeded");
@@ -426,5 +442,55 @@ describe("structured session state write API", () => {
 
     expect(verificationDetail.verifications.map((entry) => entry.id)).toEqual([verification.id]);
     expect(workflowDetail.workflow?.id).toBe(workflow.id);
+  });
+
+  it("rejects artifacts without an episode or source command and scopes command artifacts to thread detail", () => {
+    const store = createStore();
+    seedSession(store, "session-command-artifacts");
+
+    const turn = store.startTurn({
+      sessionId: "session-command-artifacts",
+      requestSummary: "Persist command artifacts",
+    });
+    const thread = store.createThread({
+      turnId: turn.id,
+      kind: "task",
+      title: "Persist command artifacts",
+      objective: "Keep command-scoped artifacts visible without transcript replay.",
+    });
+    const command = store.createCommand({
+      turnId: turn.id,
+      threadId: thread.id,
+      toolName: "execute_typescript",
+      executor: "execute_typescript",
+      visibility: "summary",
+      title: "Persist command artifacts",
+      summary: "Persist command-scoped artifacts.",
+    });
+
+    expect(() =>
+      store.createArtifact({
+        kind: "text",
+        name: "invalid.txt",
+        content: "missing links",
+      }),
+    ).toThrow(/episode, a source command, or both/i);
+
+    const artifact = store.createArtifact({
+      sourceCommandId: command.id,
+      kind: "text",
+      name: "command-only.txt",
+      content: "command scoped",
+    });
+
+    const snapshot = store.getSessionState("session-command-artifacts");
+    expect(snapshot.artifacts).toEqual([
+      expect.objectContaining({
+        id: artifact.id,
+        episodeId: null,
+        sourceCommandId: command.id,
+      }),
+    ]);
+    expect(store.getThreadDetail(thread.id).artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
   });
 });

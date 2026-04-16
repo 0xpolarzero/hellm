@@ -148,7 +148,8 @@ export interface StructuredWorkflowRecord {
 export interface StructuredArtifactRecord {
   id: string;
   sessionId: string;
-  episodeId: string;
+  episodeId: string | null;
+  sourceCommandId: string | null;
   kind: StructuredArtifactKind;
   name: string;
   path?: string;
@@ -268,7 +269,8 @@ export interface StructuredSessionStateStore {
     body: string;
   }): StructuredEpisodeRecord;
   createArtifact(input: {
-    episodeId: string;
+    episodeId?: string | null;
+    sourceCommandId?: string | null;
     kind: StructuredArtifactKind;
     name: string;
     path?: string;
@@ -414,7 +416,8 @@ interface StructuredWorkflowRow {
 interface StructuredArtifactRow {
   id: string;
   session_id: string;
-  episode_id: string;
+  episode_id: string | null;
+  source_command_id: string | null;
   kind: StructuredArtifactKind;
   name: string;
   path: string | null;
@@ -433,7 +436,7 @@ interface StructuredEventRow {
 }
 
 const DEFAULT_DATABASE_PATH = ":memory:";
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const ID_COUNTER_TABLES = [
   { table: "turn", column: "id", prefix: "turn" },
   { table: "thread", column: "id", prefix: "thread" },
@@ -1176,13 +1179,28 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   createArtifact(input: {
-    episodeId: string;
+    episodeId?: string | null;
+    sourceCommandId?: string | null;
     kind: StructuredArtifactKind;
     name: string;
     path?: string;
     content?: string;
   }): StructuredArtifactRecord {
-    const episode = this.mustFindEpisode(input.episodeId);
+    const episode = input.episodeId ? this.mustFindEpisode(input.episodeId) : null;
+    const command = input.sourceCommandId ? this.mustFindCommand(input.sourceCommandId) : null;
+    if (!episode && !command) {
+      throw new Error("Artifacts require an episode, a source command, or both.");
+    }
+    if (episode && command && episode.session_id !== command.session_id) {
+      throw new Error(
+        `Episode ${episode.id} and command ${command.id} must belong to the same session.`,
+      );
+    }
+
+    const sessionId = episode?.session_id ?? command?.session_id;
+    if (!sessionId) {
+      throw new Error("Unable to resolve session for artifact.");
+    }
     const timestamp = this.now();
     const artifactId = this.nextId("artifact");
 
@@ -1192,17 +1210,19 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           id,
           session_id,
           episode_id,
+          source_command_id,
           kind,
           name,
           path,
           content,
           created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         artifactId,
-        episode.session_id,
-        input.episodeId,
+        sessionId,
+        input.episodeId ?? null,
+        input.sourceCommandId ?? null,
         input.kind,
         summarizeText(input.name, input.kind),
         input.path ?? null,
@@ -1210,13 +1230,14 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         timestamp,
       );
 
-    this.touchSession(episode.session_id, timestamp);
+    this.touchSession(sessionId, timestamp);
     this.appendEvent(
-      episode.session_id,
+      sessionId,
       "artifact.created",
       { kind: "artifact", id: artifactId },
       {
-        episodeId: input.episodeId,
+        episodeId: input.episodeId ?? null,
+        sourceCommandId: input.sourceCommandId ?? null,
         kind: input.kind,
       },
     );
@@ -1404,6 +1425,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const artifactIdsByEpisodeId = new Map<string, string[]>();
 
     for (const artifact of artifacts) {
+      if (!artifact.episodeId) {
+        continue;
+      }
       const ids = artifactIdsByEpisodeId.get(artifact.episodeId) ?? [];
       ids.push(artifact.id);
       artifactIdsByEpisodeId.set(artifact.episodeId, ids);
@@ -1444,6 +1468,11 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const session = this.getSessionState(thread.sessionId);
     const episodes = session.episodes.filter((episode) => episode.threadId === threadId);
     const episodeIds = new Set(episodes.map((episode) => episode.id));
+    const commandIds = new Set(
+      session.commands
+        .filter((command) => command.threadId === threadId)
+        .map((command) => command.id),
+    );
 
     return {
       thread,
@@ -1454,7 +1483,11 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         (verification) => verification.threadId === threadId,
       ),
       workflow: session.workflows.find((workflow) => workflow.threadId === threadId) ?? null,
-      artifacts: session.artifacts.filter((artifact) => episodeIds.has(artifact.episodeId)),
+      artifacts: session.artifacts.filter(
+        (artifact) =>
+          (artifact.episodeId ? episodeIds.has(artifact.episodeId) : false) ||
+          (artifact.sourceCommandId ? commandIds.has(artifact.sourceCommandId) : false),
+      ),
     };
   }
 
@@ -1472,6 +1505,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     }
 
     this.db.exec("PRAGMA foreign_keys = OFF;");
+    if (currentVersion === 2) {
+      this.migrateSchemaFromV2ToV3();
+      this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+      this.db.exec("PRAGMA foreign_keys = ON;");
+      return;
+    }
     this.db.exec(`
       DROP TABLE IF EXISTS domain_event;
       DROP TABLE IF EXISTS artifact;
@@ -1589,17 +1628,20 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       CREATE TABLE artifact (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
-        episode_id TEXT NOT NULL,
+        episode_id TEXT,
+        source_command_id TEXT,
         kind TEXT NOT NULL,
         name TEXT NOT NULL,
         path TEXT,
         content TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY(session_id) REFERENCES session(session_id) ON DELETE CASCADE,
-        FOREIGN KEY(episode_id) REFERENCES episode(id) ON DELETE CASCADE
+        FOREIGN KEY(episode_id) REFERENCES episode(id) ON DELETE SET NULL,
+        FOREIGN KEY(source_command_id) REFERENCES command(id) ON DELETE SET NULL
       );
       CREATE INDEX idx_artifact_session ON artifact(session_id);
       CREATE INDEX idx_artifact_episode ON artifact(episode_id);
+      CREATE INDEX idx_artifact_source_command ON artifact(source_command_id);
 
       CREATE TABLE verification (
         id TEXT PRIMARY KEY,
@@ -1652,6 +1694,55 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     `);
     this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
     this.db.exec("PRAGMA foreign_keys = ON;");
+  }
+
+  private migrateSchemaFromV2ToV3(): void {
+    this.db.exec(`
+      ALTER TABLE artifact RENAME TO artifact_v2;
+
+      CREATE TABLE artifact (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        episode_id TEXT,
+        source_command_id TEXT,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        path TEXT,
+        content TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(session_id) REFERENCES session(session_id) ON DELETE CASCADE,
+        FOREIGN KEY(episode_id) REFERENCES episode(id) ON DELETE SET NULL,
+        FOREIGN KEY(source_command_id) REFERENCES command(id) ON DELETE SET NULL
+      );
+      CREATE INDEX idx_artifact_session ON artifact(session_id);
+      CREATE INDEX idx_artifact_episode ON artifact(episode_id);
+      CREATE INDEX idx_artifact_source_command ON artifact(source_command_id);
+
+      INSERT INTO artifact (
+        id,
+        session_id,
+        episode_id,
+        source_command_id,
+        kind,
+        name,
+        path,
+        content,
+        created_at
+      )
+      SELECT
+        id,
+        session_id,
+        episode_id,
+        NULL,
+        kind,
+        name,
+        path,
+        content,
+        created_at
+      FROM artifact_v2;
+
+      DROP TABLE artifact_v2;
+    `);
   }
 
   private upsertWorkspace(workspace: StructuredWorkspaceRecord): void {
@@ -2090,6 +2181,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            id,
            session_id,
            episode_id,
+           source_command_id,
            kind,
            name,
            path,
@@ -2286,6 +2378,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            id,
            session_id,
            episode_id,
+           source_command_id,
            kind,
            name,
            path,
@@ -2432,6 +2525,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       id: row.id,
       sessionId: row.session_id,
       episodeId: row.episode_id,
+      sourceCommandId: row.source_command_id,
       kind: row.kind,
       name: row.name,
       path: row.path ?? undefined,

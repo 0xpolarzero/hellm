@@ -82,6 +82,12 @@ export function createVerifyRunTool(options: {
         });
 
         if (!result.launched) {
+          options.store.createArtifact({
+            sourceCommandId: structuredCommand.id,
+            kind: "text",
+            name: `${normalized.kind}-verification.launch-error.txt`,
+            content: result.error.message,
+          });
           options.store.finishCommand({
             commandId: structuredCommand.id,
             status: "failed",
@@ -126,7 +132,7 @@ export function createVerifyRunTool(options: {
           summary,
           command: commandText,
         });
-        options.store.createEpisode({
+        const episode = options.store.createEpisode({
           threadId: thread.id,
           sourceCommandId: structuredCommand.id,
           kind: "verification",
@@ -143,6 +149,21 @@ export function createVerifyRunTool(options: {
             cancelled: result.cancelled,
             signal: result.signal,
           }),
+        });
+        recordVerificationArtifacts({
+          store: options.store,
+          episodeId: episode.id,
+          commandId: structuredCommand.id,
+          kind: normalized.kind,
+          status,
+          summary,
+          command: commandText,
+          exitCode: result.exitCode,
+          cancelled: result.cancelled,
+          launched: result.launched,
+          signal: result.signal ?? null,
+          stdout: result.stdout,
+          stderr: result.stderr,
         });
         options.store.finishCommand({
           commandId: structuredCommand.id,
@@ -187,6 +208,12 @@ export function createVerifyRunTool(options: {
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Failed to run verification command.";
+        options.store.createArtifact({
+          sourceCommandId: structuredCommand.id,
+          kind: "text",
+          name: `${normalized.kind}-verification.error.txt`,
+          content: message,
+        });
         options.store.finishCommand({
           commandId: structuredCommand.id,
           status: "failed",
@@ -340,4 +367,61 @@ function releaseParentThreadDependency(input: {
 
 function isTerminalThreadStatus(status: "running" | "waiting" | "completed" | "failed" | "cancelled"): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function recordVerificationArtifacts(input: {
+  store: StructuredSessionStateStore;
+  episodeId: string;
+  commandId: string;
+  kind: VerificationKind;
+  status: "passed" | "failed" | "cancelled";
+  summary: string;
+  command: string;
+  exitCode: number;
+  cancelled: boolean;
+  launched: boolean;
+  signal: string | null;
+  stdout: string;
+  stderr: string;
+}): void {
+  input.store.createArtifact({
+    episodeId: input.episodeId,
+    sourceCommandId: input.commandId,
+    kind: "json",
+    name: `${input.kind}-verification.result.json`,
+    content: JSON.stringify(
+      {
+        kind: input.kind,
+        status: input.status,
+        summary: input.summary,
+        command: input.command,
+        exitCode: input.exitCode,
+        cancelled: input.cancelled,
+        launched: input.launched,
+        signal: input.signal,
+      },
+      null,
+      2,
+    ),
+  });
+
+  if (input.stdout.trim()) {
+    input.store.createArtifact({
+      episodeId: input.episodeId,
+      sourceCommandId: input.commandId,
+      kind: "log",
+      name: `${input.kind}-verification.stdout.log`,
+      content: input.stdout,
+    });
+  }
+
+  if (input.stderr.trim()) {
+    input.store.createArtifact({
+      episodeId: input.episodeId,
+      sourceCommandId: input.commandId,
+      kind: "log",
+      name: `${input.kind}-verification.stderr.log`,
+      content: input.stderr,
+    });
+  }
 }

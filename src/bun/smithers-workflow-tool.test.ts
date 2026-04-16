@@ -132,6 +132,7 @@ describe("smithers workflow tool", () => {
     expect(snapshot.commands).toHaveLength(1);
     expect(snapshot.workflows).toHaveLength(1);
     expect(snapshot.episodes).toHaveLength(0);
+    expect(snapshot.artifacts.length).toBeGreaterThanOrEqual(1);
     expect(rootThread?.status).toBe("waiting");
     expect(rootThread?.dependsOnThreadIds).toEqual([workflowThread?.id ?? ""]);
     expect(workflowThread?.kind).toBe("workflow");
@@ -152,6 +153,9 @@ describe("smithers workflow tool", () => {
     expect(snapshot.commands[0]?.threadId).toBe(workflowThread?.id);
     expect(snapshot.workflows[0]?.threadId).toBe(workflowThread?.id);
     expect(snapshot.workflows[0]?.status).toBe("waiting");
+    expect(snapshot.artifacts.every((entry) => entry.sourceCommandId === snapshot.commands[0]!.id)).toBe(
+      true,
+    );
     expect(
       snapshot.events.filter(
         (event) => event.subject.kind === "thread" && event.subject.id === rootThread?.id,
@@ -213,6 +217,7 @@ describe("smithers workflow tool", () => {
     expect(rootThread?.dependsOnThreadIds).toEqual([]);
     expect(workflowThread?.status).toBe("completed");
     expect(snapshot.session.wait).toBeNull();
+    expect(snapshot.artifacts.length).toBeGreaterThanOrEqual(1);
     expect(snapshot.episodes).toEqual([
       expect.objectContaining({
         threadId: workflowThread?.id,
@@ -255,6 +260,12 @@ describe("smithers workflow tool", () => {
     expect(snapshot.threads).toHaveLength(2);
     expect(snapshot.commands).toHaveLength(1);
     expect(snapshot.workflows).toHaveLength(0);
+    expect(snapshot.artifacts).toEqual([
+      expect.objectContaining({
+        sourceCommandId: snapshot.commands[0]?.id,
+        name: "implement-feature-workflow.error.txt",
+      }),
+    ]);
     expect(rootThread?.status).toBe("running");
     expect(rootThread?.dependsOnThreadIds).toEqual([]);
     expect(snapshot.threads[1]?.kind).toBe("workflow");

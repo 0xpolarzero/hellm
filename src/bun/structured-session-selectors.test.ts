@@ -172,6 +172,7 @@ function createSessionSnapshot(
         id: `artifact-00${index + 1}`,
         sessionId: "session-selectors",
         episodeId: "episode-001",
+        sourceCommandId: "command-001",
         kind: "text",
         name: `artifact-${index + 1}.md`,
         path: undefined,
@@ -410,6 +411,7 @@ describe("structured session selectors", () => {
         {
           id: "artifact-001",
           episodeId: "episode-001",
+          sourceCommandId: "command-001",
           createdAt: "2026-04-14T10:01:30.000Z",
         },
       ],

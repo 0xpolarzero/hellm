@@ -141,6 +141,7 @@ describe("verification tool", () => {
     expect(snapshot.commands).toHaveLength(1);
     expect(snapshot.verifications).toHaveLength(1);
     expect(snapshot.episodes).toHaveLength(1);
+    expect(snapshot.artifacts.length).toBeGreaterThanOrEqual(1);
     expect(rootThread?.status).toBe("running");
     expect(rootThread?.dependsOnThreadIds).toEqual([]);
     expect(verificationThread?.kind).toBe("verification");
@@ -178,6 +179,9 @@ describe("verification tool", () => {
     expect(detail.commands.map((entry) => entry.id)).toEqual([snapshot.commands[0]!.id]);
     expect(detail.verifications.map((entry) => entry.id)).toEqual([snapshot.verifications[0]!.id]);
     expect(detail.episodes.map((entry) => entry.id)).toEqual([snapshot.episodes[0]!.id]);
+    expect(detail.artifacts.every((entry) => entry.sourceCommandId === snapshot.commands[0]!.id)).toBe(
+      true,
+    );
   });
 
   it("rejects unsupported targets for non-test verifications", async () => {

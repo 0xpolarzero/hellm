@@ -97,6 +97,7 @@ export function createStartWorkflowTool(options: {
           status: projection.status,
           summary: projection.summary,
         });
+        let episodeId: string | null = null;
 
         if (projection.status === "waiting") {
           const wait = buildWorkflowWaitState(projection.summary);
@@ -124,7 +125,7 @@ export function createStartWorkflowTool(options: {
                 : mapWorkflowThreadStatus(projection.status),
           });
           if (projection.status !== "running") {
-            options.store.createEpisode({
+            episodeId = options.store.createEpisode({
               threadId: workflowThread.id,
               sourceCommandId: command.id,
               kind: "workflow",
@@ -136,9 +137,20 @@ export function createStartWorkflowTool(options: {
                     : "Delegated workflow failed",
               summary: projection.summary,
               body: projection.summary,
-            });
+            }).id;
           }
         }
+        recordWorkflowArtifacts({
+          store: options.store,
+          commandId: command.id,
+          episodeId,
+          workflowName: "implement-feature",
+          runId: started.runId,
+          status: projection.status,
+          summary: projection.summary,
+          stdout: started.stdout,
+          stderr: started.stderr,
+        });
         if (
           projection.status === "completed" ||
           projection.status === "failed" ||
@@ -188,6 +200,12 @@ export function createStartWorkflowTool(options: {
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Failed to start delegated workflow.";
+        options.store.createArtifact({
+          sourceCommandId: command.id,
+          kind: "text",
+          name: "implement-feature-workflow.error.txt",
+          content: message,
+        });
         options.store.finishCommand({
           commandId: command.id,
           status: "failed",
@@ -373,4 +391,53 @@ async function waitForProjectionInput(
   }
 
   return null;
+}
+
+function recordWorkflowArtifacts(input: {
+  store: StructuredSessionStateStore;
+  commandId: string;
+  episodeId: string | null;
+  workflowName: string;
+  runId: string;
+  status: StructuredWorkflowStatus;
+  summary: string;
+  stdout: string;
+  stderr: string;
+}): void {
+  input.store.createArtifact({
+    episodeId: input.episodeId,
+    sourceCommandId: input.commandId,
+    kind: "json",
+    name: `${input.workflowName}-workflow.result.json`,
+    content: JSON.stringify(
+      {
+        workflowName: input.workflowName,
+        runId: input.runId,
+        status: input.status,
+        summary: input.summary,
+      },
+      null,
+      2,
+    ),
+  });
+
+  if (input.stdout.trim()) {
+    input.store.createArtifact({
+      episodeId: input.episodeId,
+      sourceCommandId: input.commandId,
+      kind: "log",
+      name: `${input.workflowName}-workflow.stdout.log`,
+      content: input.stdout,
+    });
+  }
+
+  if (input.stderr.trim()) {
+    input.store.createArtifact({
+      episodeId: input.episodeId,
+      sourceCommandId: input.commandId,
+      kind: "log",
+      name: `${input.workflowName}-workflow.stderr.log`,
+      content: input.stderr,
+    });
+  }
 }

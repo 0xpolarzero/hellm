@@ -123,6 +123,7 @@ describe("structured session state SQLite persistence", () => {
     });
     const artifact = first.store.createArtifact({
       episodeId: episode.id,
+      sourceCommandId: command.id,
       kind: "text",
       name: "notes.md",
       content: "# Durable notes\n",
@@ -215,6 +216,13 @@ describe("structured session state SQLite persistence", () => {
       expect.objectContaining({
         id: episode.id,
         artifactIds: [artifact.id],
+      }),
+    ]);
+    expect(afterReload.artifacts).toEqual([
+      expect.objectContaining({
+        id: artifact.id,
+        episodeId: episode.id,
+        sourceCommandId: command.id,
       }),
     ]);
     expect(afterReload.verifications).toEqual([
@@ -511,6 +519,7 @@ describe("structured session state SQLite persistence", () => {
     });
     const firstArtifact = first.store.createArtifact({
       episodeId: firstEpisode.id,
+      sourceCommandId: firstCommand.id,
       kind: "text",
       name: "verification.txt",
       content: "First verification",
@@ -559,6 +568,7 @@ describe("structured session state SQLite persistence", () => {
     });
     second.store.createArtifact({
       episodeId: resumedEpisode.id,
+      sourceCommandId: resumedCommand.id,
       kind: "text",
       name: "workflow.txt",
       content: "Second workflow",
@@ -573,6 +583,60 @@ describe("structured session state SQLite persistence", () => {
     expect(resumedThread.id).toBe("thread-2");
     expect(resumedCommand.id).toBe("command-2");
     expect(resumedEpisode.id).toBe("episode-2");
+  });
+
+  it("persists command-scoped artifacts without an episode across restart", () => {
+    const first = createSqliteStore();
+    seedSession(first.store, {
+      sessionId: "session-command-artifacts",
+      title: "Command Artifacts",
+    });
+
+    const turn = first.store.startTurn({
+      sessionId: "session-command-artifacts",
+      requestSummary: "Persist command-scoped artifacts",
+    });
+    const thread = first.store.createThread({
+      turnId: turn.id,
+      kind: "task",
+      title: "Persist command artifacts",
+      objective: "Keep command artifacts durable across restart.",
+    });
+    const command = first.store.createCommand({
+      turnId: turn.id,
+      threadId: thread.id,
+      toolName: "execute_typescript",
+      executor: "execute_typescript",
+      visibility: "summary",
+      title: "Persist command artifacts",
+      summary: "Persist command-scoped artifacts.",
+    });
+    const artifact = first.store.createArtifact({
+      sourceCommandId: command.id,
+      kind: "json",
+      name: "snippet.json",
+      content: '{"ok":true}',
+    });
+
+    const beforeReload = first.store.getSessionState("session-command-artifacts");
+    closeTrackedStore(first.store);
+
+    const second = createSqliteStore({
+      databasePath: first.databasePath,
+      nowStart: "2026-04-14T13:00:00.000Z",
+    });
+    const afterReload = second.store.getSessionState("session-command-artifacts");
+    const detail = second.store.getThreadDetail(thread.id);
+
+    expect(afterReload).toEqual(beforeReload);
+    expect(afterReload.artifacts).toEqual([
+      expect.objectContaining({
+        id: artifact.id,
+        episodeId: null,
+        sourceCommandId: command.id,
+      }),
+    ]);
+    expect(detail.artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
   });
 
   it("scopes records by session id when multiple sessions share one workspace database", () => {

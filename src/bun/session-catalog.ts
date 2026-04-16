@@ -57,6 +57,7 @@ import { createStartWorkflowTool } from "./smithers-workflow-tool";
 import { createVerifyRunTool } from "./verification-tool";
 import { createWaitTool } from "./wait-tool";
 import { resolveApiKey } from "./auth-store";
+import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
 import { resolveWorkspaceCwd } from "./workspace-context";
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
@@ -978,14 +979,38 @@ export class WorkspaceSessionCatalog {
     promptContext: PromptExecutionContext | null,
   ): Promise<void> {
     session.promptExecutionRuntime.current = promptContext;
+    const toolCommandTracker = promptContext
+      ? createToolExecutionCommandTracker({
+          store: this.structuredSessionStore,
+          promptContext,
+        })
+      : null;
     try {
       const streamState = createVisibleStreamState(options.provider, options.model);
       options.onEvent({ type: "start", partial: streamState.partial });
       const unsubscribe = session.session.subscribe((event) => {
-        if (event.type !== "message_update") {
+        if (event.type === "message_update") {
+          applyVisibleAssistantEvent(streamState, event.assistantMessageEvent, options.onEvent);
           return;
         }
-        applyVisibleAssistantEvent(streamState, event.assistantMessageEvent, options.onEvent);
+
+        if (event.type === "tool_execution_start") {
+          toolCommandTracker?.handleToolExecutionStart({
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            args: event.args,
+          });
+          return;
+        }
+
+        if (event.type === "tool_execution_end") {
+          toolCommandTracker?.handleToolExecutionEnd({
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            result: event.result,
+            isError: event.isError,
+          });
+        }
       });
 
       try {
@@ -1039,6 +1064,10 @@ export class WorkspaceSessionCatalog {
         this.completePromptExecution(promptContext, visibleMessage);
       } catch (error) {
         const reason = session.abortRequested ? "aborted" : "error";
+        toolCommandTracker?.finishDanglingCommands({
+          status: reason === "aborted" ? "cancelled" : "failed",
+          error: error instanceof Error ? error.message : "pi prompt failed.",
+        });
         finishOpenVisibleBlocks(streamState, options.onEvent);
         const failure = finalizeVisibleAssistantMessage(
           streamState,
@@ -1066,6 +1095,10 @@ export class WorkspaceSessionCatalog {
         this.failPromptExecution(promptContext, failure);
       } finally {
         unsubscribe();
+        toolCommandTracker?.finishDanglingCommands({
+          status: "cancelled",
+          error: "Prompt execution ended before the tool run finished.",
+        });
         session.abortRequested = false;
         session.activePrompt = false;
         this.syncManagedState(session);
