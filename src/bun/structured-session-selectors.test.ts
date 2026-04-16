@@ -200,6 +200,7 @@ function createSessionSnapshot(
       id: "/repo/svvy",
       label: "svvy",
       cwd: "/repo/svvy",
+      artifactDir: "/repo/svvy/.svvy/artifacts",
     },
     pi: {
       sessionId: "session-selectors",

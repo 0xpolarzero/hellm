@@ -102,15 +102,23 @@ function getMostRecentThread(session: StructuredSessionSnapshot): StructuredThre
   );
 }
 
+function isCommandRollupSource(
+  command: StructuredCommandRecord,
+): command is StructuredCommandRecord & {
+  parentCommandId: null;
+  visibility: "summary" | "surface";
+} {
+  return (
+    command.parentCommandId === null &&
+    (command.visibility === "summary" || command.visibility === "surface")
+  );
+}
+
 function buildCommandRollups(
   commands: StructuredSessionSnapshot["commands"],
 ): StructuredCommandRollup[] {
   return commands
-    .filter(
-      (command) =>
-        command.parentCommandId === null &&
-        (command.visibility === "summary" || command.visibility === "surface"),
-    )
+    .filter(isCommandRollupSource)
     .map((command) => ({
       commandId: command.id,
       threadId: command.threadId,

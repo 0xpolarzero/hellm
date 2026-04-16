@@ -714,14 +714,18 @@ async function runCompiledSnippet(
   api: ExecuteTypescriptApi,
   logs: string[],
 ): Promise<unknown> {
-  const module = {
-    exports: {} as {
-      default?: (api: ExecuteTypescriptApi, console: SvvyConsole) => Promise<unknown>;
-    },
+  type CompiledSnippetModuleExports = {
+    default?: (api: ExecuteTypescriptApi, console: SvvyConsole) => Promise<unknown>;
+  };
+  type CompiledSnippetModule = {
+    exports: CompiledSnippetModuleExports;
+  };
+  const module: CompiledSnippetModule = {
+    exports: {},
   };
   const execute = new Function("module", "exports", javascript) as (
-    module: typeof module,
-    exports: typeof module.exports,
+    module: CompiledSnippetModule,
+    exports: CompiledSnippetModuleExports,
   ) => void;
   execute(module, module.exports);
   if (typeof module.exports.default !== "function") {
@@ -957,7 +961,7 @@ function createExecuteTypescriptApi(input: {
           },
         }),
       unlink: (params) =>
-        call({
+        call<{ path: string; deleted: boolean }>({
           toolName: "repo.unlink",
           title: "Delete path",
           summary: `Delete ${params.path}`,
@@ -986,7 +990,7 @@ function createExecuteTypescriptApi(input: {
           },
         }),
       stat: (params) =>
-        call({
+        call<ExecuteTypescriptRepoStat>({
           toolName: "repo.stat",
           title: "Stat path",
           summary: `Stat ${params.path}`,
@@ -1060,7 +1064,7 @@ function createExecuteTypescriptApi(input: {
               const lines = contents.split(/\r?\n/);
               for (let index = 0; index < lines.length; index += 1) {
                 const line = lines[index];
-                if (!matcher(line ?? "")) {
+                if (line === undefined || !matcher(line)) {
                   continue;
                 }
                 matches.push({ path, line: index + 1, text: line });
@@ -1156,7 +1160,7 @@ function createExecuteTypescriptApi(input: {
           },
         }),
       log: (params) =>
-        call({
+        call<{ commits: ExecuteTypescriptGitCommitSummary[] }>({
           toolName: "git.log",
           title: "Git log",
           summary: "Read recent commits",
@@ -1172,8 +1176,8 @@ function createExecuteTypescriptApi(input: {
             const commits = result.stdout
               .split(/\r?\n/)
               .filter(Boolean)
-              .map((line) => {
-                const [sha, subject, author, authoredAt] = line.split("\u001f");
+              .map<ExecuteTypescriptGitCommitSummary>((line) => {
+                const [sha = "", subject = "", author, authoredAt] = line.split("\u001f");
                 return { sha, subject, author, authoredAt };
               });
             return {
@@ -1212,7 +1216,10 @@ function createExecuteTypescriptApi(input: {
           },
         }),
       branch: (params) =>
-        call({
+        call<{
+          current?: string;
+          branches: Array<{ name: string; current: boolean; upstream?: string }>;
+        }>({
           toolName: "git.branch",
           title: "List branches",
           summary: "Inspect branches",
@@ -1225,8 +1232,11 @@ function createExecuteTypescriptApi(input: {
             const branches = result.stdout
               .split(/\r?\n/)
               .filter(Boolean)
-              .map((line) => {
+              .flatMap((line) => {
                 const [head, name, upstream] = line.split("\u001f");
+                if (!name) {
+                  return [];
+                }
                 return {
                   name,
                   current: head?.trim() === "*",
