@@ -14,6 +14,7 @@ import { basename, dirname, join } from "node:path";
  * - `execute_typescript` is the default generic work surface
  * - workflow, verification, and wait remain native control tools
  * - runtime handlers and bridges record durable facts from real execution
+ * - all threads are surfaced explicitly
  * - waiting is a status, not a separate execution subsystem
  * - the lifecycle survives save and reload
  *
@@ -210,7 +211,7 @@ export type SessionView = {
     waiting: string[];
     failed: string[];
   };
-  visibleThreadIds: string[];
+  threadIds: string[];
 };
 
 export class StructuredSessionPoc {
@@ -722,7 +723,7 @@ export class StructuredSessionPoc {
           .filter((thread) => thread.status === "failed")
           .map((thread) => thread.id),
       },
-      visibleThreadIds: [...this.state.threads]
+      threadIds: [...this.state.threads]
         .toSorted((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt))
         .map((thread) => thread.id),
     };
@@ -1149,7 +1150,7 @@ function runPoc(): void {
   console.log(`State file: ${filePath}`);
   console.log(`Session title: ${sessionView.title}`);
   console.log(`Session status: ${sessionView.sessionStatus}`);
-  console.log(`Visible thread ids: ${sessionView.visibleThreadIds.join(", ")}`);
+  console.log(`Thread ids: ${sessionView.threadIds.join(", ")}`);
   console.log(`Counts: ${JSON.stringify(sessionView.counts, null, 2)}`);
   console.log(`Current wait: ${JSON.stringify(sessionView.wait, null, 2)}`);
   console.log(

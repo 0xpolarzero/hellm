@@ -441,7 +441,6 @@ describe("structured session selectors", () => {
         waiting: ["thread-003"],
         failed: ["thread-002"],
       },
-      visibleThreadIds: ["thread-001", "thread-002", "thread-003"],
     });
 
     const summary = buildStructuredSessionSummaryProjection(snapshot);

@@ -13,7 +13,7 @@
 Without that layer, the product has to keep inferring important facts from raw message history:
 
 - which request is currently being handled
-- which visible work items exist
+- which threads exist and how they relate
 - which tool calls happened
 - which work finished
 - which work failed
@@ -90,8 +90,7 @@ Smithers remains canonical for:
 `svvy` is canonical for:
 
 - product-level session state
-- turns
-- visible threads
+- turns and all threads
 - command records
 - episodes
 - verification records
@@ -719,7 +718,7 @@ The adopted session summary selector returns:
 - `wait`
 - `counts`
 - `threadIdsByStatus`
-- `visibleThreadIds`
+- `threadIds`
 
 ### Derived Fields
 
@@ -728,7 +727,7 @@ The following are derived, not stored:
 - `sessionStatus`
 - counts
 - thread status buckets
-- visible-thread ordering
+- thread ordering
 
 ### `sessionStatus` Derivation
 
@@ -740,9 +739,9 @@ The current derived rule is:
 4. else if the latest updated turn or thread is `failed`, the session status is `error`
 5. otherwise the session status is `idle`
 
-### Visibility Rule For UI Reads
+### Thread Surface Rule
 
-The main session UI should primarily read:
+The main session UI should surface all threads and primarily read:
 
 - threads
 - episodes

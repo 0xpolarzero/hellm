@@ -117,7 +117,6 @@ function createSummary(
       waiting: [],
       failed: [],
     },
-    visibleThreadIds: [],
     ...(includeModelMetadata
       ? {
           provider: "openai",

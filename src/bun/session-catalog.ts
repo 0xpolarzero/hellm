@@ -656,7 +656,6 @@ export class WorkspaceSessionCatalog {
       wait: structuredSummary.wait,
       counts: structuredSummary.counts,
       threadIdsByStatus: view.threadIdsByStatus,
-      visibleThreadIds: view.visibleThreadIds,
     };
   }
 

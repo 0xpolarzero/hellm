@@ -27,7 +27,6 @@ export interface StructuredSessionView {
     waiting: string[];
     failed: string[];
   };
-  visibleThreadIds: string[];
 }
 
 export interface StructuredSessionSummaryProjection {
@@ -246,9 +245,6 @@ export function buildStructuredSessionView(
       events: session.events.length,
     },
     threadIdsByStatus: grouped,
-    visibleThreadIds: session.threads
-      .toSorted((left, right) => left.startedAt.localeCompare(right.startedAt))
-      .map((thread) => thread.id),
   };
 }
 

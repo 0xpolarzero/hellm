@@ -108,7 +108,7 @@ A session is the durable user-facing container for:
 
 - conversation history
 - turns
-- visible threads
+- all threads
 - command history
 - episodes
 - artifacts
@@ -439,7 +439,7 @@ The session view is the center of the product.
 It must show more than a transcript. The session UI combines:
 
 - the conversation timeline
-- visible thread state
+- thread state for all threads
 - compact workflow and verification cards when those threads exist
 - episode summaries
 - workflow state

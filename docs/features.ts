@@ -108,7 +108,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Metadata-First Session Read Models",
     status: "in-progress",
     summary:
-      "Derives idle/running/waiting/error session status, counts, visible thread ordering, and compact summary data from structured state for sidebar, navigation, and restart recovery without transcript replay.",
+      "Derives idle/running/waiting/error session status, counts, ordered thread ids, and compact summary data from structured state for sidebar, navigation, and restart recovery without transcript replay.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
