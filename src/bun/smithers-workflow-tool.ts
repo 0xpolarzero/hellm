@@ -372,7 +372,9 @@ function releaseParentThreadDependency(input: {
   });
 }
 
-function isTerminalThreadStatus(status: "running" | "waiting" | "completed" | "failed" | "cancelled"): boolean {
+function isTerminalThreadStatus(
+  status: "running" | "waiting" | "completed" | "failed" | "cancelled",
+): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 

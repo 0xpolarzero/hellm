@@ -91,7 +91,7 @@ describe("execute_typescript tool", () => {
 
     await expect(
       tool.execute("tool-call-1", {
-        typescriptCode: 'return { ok: true };',
+        typescriptCode: "return { ok: true };",
       }),
     ).rejects.toThrow("execute_typescript can only run during an active prompt.");
   });
@@ -170,7 +170,7 @@ describe("execute_typescript tool", () => {
       typescriptCode: [
         'const file = await api.repo.readFile({ path: "notes.txt" });',
         'const status = await api.exec.run({ command: "git", args: ["status", "--short"] });',
-        'const artifact = await api.artifact.writeText({',
+        "const artifact = await api.artifact.writeText({",
         '  name: "summary.md",',
         '  text: `${file.text.split("\\n")[0]}:${status.stdout.trim()}`',
         "});",
@@ -362,7 +362,11 @@ describe("execute_typescript tool", () => {
   it("supports read-only git commands and records normalized git facts", async () => {
     const workspaceCwd = createWorkspaceRoot();
     const store = createStore("session-git-readonly", workspaceCwd);
-    const runtime = createRuntime(store, "session-git-readonly", "Inspect git state through code mode");
+    const runtime = createRuntime(
+      store,
+      "session-git-readonly",
+      "Inspect git state through code mode",
+    );
     const diffText = "diff --git a/notes.txt b/notes.txt\n";
     const runCommand = mock(async (input) => {
       if (input.command !== "git") {
@@ -397,7 +401,9 @@ describe("execute_typescript tool", () => {
         case "branch":
           return {
             exitCode: 0,
-            stdout: ["*\u001fmain\u001forigin/main", " \u001ffeature\u001forigin/feature"].join("\n"),
+            stdout: ["*\u001fmain\u001forigin/main", " \u001ffeature\u001forigin/feature"].join(
+              "\n",
+            ),
             stderr: "",
           };
         case "merge-base":
@@ -514,7 +520,11 @@ describe("execute_typescript tool", () => {
   it("supports command-shaped git mutators and records summary-vs-trace facts", async () => {
     const workspaceCwd = createWorkspaceRoot();
     const store = createStore("session-git-mutating", workspaceCwd);
-    const runtime = createRuntime(store, "session-git-mutating", "Perform git updates through code mode");
+    const runtime = createRuntime(
+      store,
+      "session-git-mutating",
+      "Perform git updates through code mode",
+    );
     const commitSha = "abc1234567890def";
     const runCommand = mock(async (input) => {
       if (input.command !== "git") {

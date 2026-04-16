@@ -1449,7 +1449,9 @@ function matchesWaitState(
   return wait?.kind === kind && wait.reason === reason && wait.resumeWhen === resumeWhen;
 }
 
-function isTerminalThreadStatus(status: StructuredSessionSnapshot["threads"][number]["status"]): boolean {
+function isTerminalThreadStatus(
+  status: StructuredSessionSnapshot["threads"][number]["status"],
+): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 

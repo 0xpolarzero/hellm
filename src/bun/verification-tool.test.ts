@@ -183,9 +183,9 @@ describe("verification tool", () => {
     expect(detail.commands.map((entry) => entry.id)).toEqual([snapshot.commands[0]!.id]);
     expect(detail.verifications.map((entry) => entry.id)).toEqual([snapshot.verifications[0]!.id]);
     expect(detail.episodes.map((entry) => entry.id)).toEqual([snapshot.episodes[0]!.id]);
-    expect(detail.artifacts.every((entry) => entry.sourceCommandId === snapshot.commands[0]!.id)).toBe(
-      true,
-    );
+    expect(
+      detail.artifacts.every((entry) => entry.sourceCommandId === snapshot.commands[0]!.id),
+    ).toBe(true);
   });
 
   it("rejects unsupported targets for non-test verifications", async () => {

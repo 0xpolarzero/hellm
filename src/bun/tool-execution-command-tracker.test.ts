@@ -160,7 +160,7 @@ describe("tool execution command tracker", () => {
     tracker.handleToolExecutionStart({
       toolCallId: "tool-call-4",
       toolName: "execute_typescript",
-      args: { typescriptCode: 'return { ok: true };' },
+      args: { typescriptCode: "return { ok: true };" },
     });
     tracker.handleToolExecutionEnd({
       toolCallId: "tool-call-4",

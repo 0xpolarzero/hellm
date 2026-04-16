@@ -1029,7 +1029,8 @@ function runPoc(): void {
     sourceCommandId: executeTypescript.id,
     kind: "analysis",
     title: "Current model audit",
-    summary: "The docs still describe multiple execution paths and outdated artifact/session wiring.",
+    summary:
+      "The docs still describe multiple execution paths and outdated artifact/session wiring.",
     body: "The design should move to one command model where execute_typescript handles ordinary work, api.* host capabilities handle nested actions, api.exec.run is explicit, and native control tools handle workflow, verification, and wait.",
   });
   poc.createArtifact({
@@ -1037,16 +1038,15 @@ function runPoc(): void {
     episodeId: analysisEpisode.id,
     kind: "text",
     name: "inspect-docs.ts",
-    content:
-      [
-        'const search = await api.repo.grep({ pattern: "transcript" });',
-        'const prd = await api.repo.readFile({ path: "docs/prd.md" });',
-        'await api.exec.run({ command: "bun docs/pocs/structured-session-state.poc.ts", cwd: "/repo/svvy" });',
-        'await api.artifact.writeText({',
-        '  name: "architecture-audit.md",',
-        '  text: "Replace four-path language with a single command pipeline and api.* host capabilities.",',
-        "});",
-      ].join("\n"),
+    content: [
+      'const search = await api.repo.grep({ pattern: "transcript" });',
+      'const prd = await api.repo.readFile({ path: "docs/prd.md" });',
+      'await api.exec.run({ command: "bun docs/pocs/structured-session-state.poc.ts", cwd: "/repo/svvy" });',
+      "await api.artifact.writeText({",
+      '  name: "architecture-audit.md",',
+      '  text: "Replace four-path language with a single command pipeline and api.* host capabilities.",',
+      "});",
+    ].join("\n"),
   });
 
   const searchDocs = poc.createCommand({

@@ -2016,9 +2016,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .query(`SELECT id, label, cwd FROM workspace LIMIT 1`)
       .get() as StructuredWorkspaceRow | null;
 
-    return row
-      ? resolveWorkspaceRecord(row)
-      : structuredClone(this.workspaceFallback);
+    return row ? resolveWorkspaceRecord(row) : structuredClone(this.workspaceFallback);
   }
 
   private getSessionRow(sessionId: string): StructuredSessionRow | null {

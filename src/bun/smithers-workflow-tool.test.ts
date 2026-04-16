@@ -168,9 +168,9 @@ describe("smithers workflow tool", () => {
     expect(snapshot.commands[0]?.threadId).toBe(workflowThread?.id);
     expect(snapshot.workflows[0]?.threadId).toBe(workflowThread?.id);
     expect(snapshot.workflows[0]?.status).toBe("waiting");
-    expect(snapshot.artifacts.every((entry) => entry.sourceCommandId === snapshot.commands[0]!.id)).toBe(
-      true,
-    );
+    expect(
+      snapshot.artifacts.every((entry) => entry.sourceCommandId === snapshot.commands[0]!.id),
+    ).toBe(true);
     expect(
       snapshot.events.filter(
         (event) => event.subject.kind === "thread" && event.subject.id === rootThread?.id,

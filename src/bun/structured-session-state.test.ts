@@ -513,6 +513,8 @@ describe("structured session state write API", () => {
         sourceCommandId: command.id,
       }),
     ]);
-    expect(store.getThreadDetail(thread.id).artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
+    expect(store.getThreadDetail(thread.id).artifacts.map((entry) => entry.id)).toEqual([
+      artifact.id,
+    ]);
   });
 });

@@ -1,8 +1,16 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import type { Static } from "@sinclair/typebox";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, relative, resolve } from "node:path";
 import { inspect } from "node:util";
 import * as ts from "typescript";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
@@ -309,7 +317,10 @@ type ExecuteTypescriptApi = {
     }>;
   };
   web: {
-    search(input: { query: string; maxResults?: number }): Promise<ExecuteTypescriptWebSearchResult>;
+    search(input: {
+      query: string;
+      maxResults?: number;
+    }): Promise<ExecuteTypescriptWebSearchResult>;
     fetchText(input: { url: string }): Promise<ExecuteTypescriptWebFetchResult>;
   };
 };
@@ -517,7 +528,8 @@ async function runExecuteTypescript(input: {
             content: logs.join("\n"),
           })
         : null;
-    const message = error instanceof Error ? error.message : "execute_typescript failed at runtime.";
+    const message =
+      error instanceof Error ? error.message : "execute_typescript failed at runtime.";
     const parentRollup = buildExecuteTypescriptParentRollup({
       childActivity,
       snippetArtifactId: snippetArtifact.id,
@@ -567,7 +579,7 @@ function createResultEpisode(input: {
     : "execute_typescript failed";
   const summary = input.result.success
     ? summarizeResult(input.result.result)
-    : input.result.error?.message ?? "execute_typescript failed.";
+    : (input.result.error?.message ?? "execute_typescript failed.");
   const body = input.result.success
     ? JSON.stringify(
         {
@@ -632,7 +644,12 @@ function compileAndTypecheck(typescriptCode: string): {
       if (contents !== undefined) {
         return ts.createSourceFile(fileName, contents, languageVersion, true);
       }
-      return defaultHost.getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile);
+      return defaultHost.getSourceFile(
+        fileName,
+        languageVersion,
+        onError,
+        shouldCreateNewSourceFile,
+      );
     },
     writeFile() {},
   };
@@ -697,7 +714,11 @@ async function runCompiledSnippet(
   api: ExecuteTypescriptApi,
   logs: string[],
 ): Promise<unknown> {
-  const module = { exports: {} as { default?: (api: ExecuteTypescriptApi, console: SvvyConsole) => Promise<unknown> } };
+  const module = {
+    exports: {} as {
+      default?: (api: ExecuteTypescriptApi, console: SvvyConsole) => Promise<unknown>;
+    },
+  };
   const execute = new Function("module", "exports", javascript) as (
     module: typeof module,
     exports: typeof module.exports,
@@ -777,7 +798,7 @@ function createExecuteTypescriptApi(input: {
       const visibility = outcome.visibility ?? config.visibility ?? "trace";
       const summary =
         outcome.summary ?? `${config.toolName} ${status === "succeeded" ? "succeeded" : "failed"}.`;
-      const error = status === "failed" ? outcome.error ?? summary : null;
+      const error = status === "failed" ? (outcome.error ?? summary) : null;
       input.store.finishCommand({
         commandId: command.id,
         status,
@@ -920,7 +941,11 @@ function createExecuteTypescriptApi(input: {
             if (params.createDirectories) {
               mkdirSync(dirname(filePath), { recursive: true });
             }
-            const text = JSON.stringify(params.value, null, params.pretty === false ? undefined : 2);
+            const text = JSON.stringify(
+              params.value,
+              null,
+              params.pretty === false ? undefined : 2,
+            );
             writeFileSync(filePath, text, "utf8");
             const path = normalizeWorkspaceRelativePath(input.cwd, filePath);
             const bytesWritten = byteLength(text);
@@ -1002,7 +1027,9 @@ function createExecuteTypescriptApi(input: {
                 break;
               }
             }
-            const cwd = params.cwd ? normalizeWorkspaceRelativePath(input.cwd, scanRoot) : undefined;
+            const cwd = params.cwd
+              ? normalizeWorkspaceRelativePath(input.cwd, scanRoot)
+              : undefined;
             return {
               value: { paths: paths.toSorted() },
               facts: {
@@ -1253,11 +1280,15 @@ function createExecuteTypescriptApi(input: {
               ...(params?.remote ? [params.remote] : []),
               ...(params?.refspecs ?? []),
             ]);
-            return buildGitCommandOutcome(result, {
-              ...(params?.remote ? { remote: params.remote } : {}),
-              refspecCount: params?.refspecs?.length ?? 0,
-              prune: params?.prune === true,
-            }, "Fetched from remote.");
+            return buildGitCommandOutcome(
+              result,
+              {
+                ...(params?.remote ? { remote: params.remote } : {}),
+                refspecCount: params?.refspecs?.length ?? 0,
+                prune: params?.prune === true,
+              },
+              "Fetched from remote.",
+            );
           },
         }),
       pull: (params) =>
@@ -1273,11 +1304,15 @@ function createExecuteTypescriptApi(input: {
               ...(params?.remote ? [params.remote] : []),
               ...(params?.branch ? [params.branch] : []),
             ]);
-            return buildGitCommandOutcome(result, {
-              ...(params?.remote ? { remote: params.remote } : {}),
-              ...(params?.branch ? { branch: params.branch } : {}),
-              rebase: params?.rebase === true,
-            }, "Pulled from remote.");
+            return buildGitCommandOutcome(
+              result,
+              {
+                ...(params?.remote ? { remote: params.remote } : {}),
+                ...(params?.branch ? { branch: params.branch } : {}),
+                rebase: params?.rebase === true,
+              },
+              "Pulled from remote.",
+            );
           },
         }),
       push: (params) =>
@@ -1295,13 +1330,17 @@ function createExecuteTypescriptApi(input: {
               ...(params?.remote ? [params.remote] : []),
               ...(params?.branch ? [params.branch] : []),
             ]);
-            return buildGitCommandOutcome(result, {
-              ...(params?.remote ? { remote: params.remote } : {}),
-              ...(params?.branch ? { branch: params.branch } : {}),
-              setUpstream: params?.setUpstream === true,
-              forceWithLease: params?.forceWithLease === true,
-              tags: params?.tags === true,
-            }, "Pushed to remote.");
+            return buildGitCommandOutcome(
+              result,
+              {
+                ...(params?.remote ? { remote: params.remote } : {}),
+                ...(params?.branch ? { branch: params.branch } : {}),
+                setUpstream: params?.setUpstream === true,
+                forceWithLease: params?.forceWithLease === true,
+                tags: params?.tags === true,
+              },
+              "Pushed to remote.",
+            );
           },
         }),
       add: (params) =>
@@ -1317,11 +1356,15 @@ function createExecuteTypescriptApi(input: {
               ...(params.update ? ["--update"] : []),
               ...(params.paths?.length ? params.paths : []),
             ]);
-            return buildGitCommandOutcome(result, {
-              ...(params.paths?.length ? { paths: params.paths } : {}),
-              all: params.all === true,
-              update: params.update === true,
-            }, "Staged changes.");
+            return buildGitCommandOutcome(
+              result,
+              {
+                ...(params.paths?.length ? { paths: params.paths } : {}),
+                all: params.all === true,
+                update: params.update === true,
+              },
+              "Staged changes.",
+            );
           },
         }),
       commit: (params) =>
@@ -1369,11 +1412,15 @@ function createExecuteTypescriptApi(input: {
               params.branch,
               ...(params.startPoint ? [params.startPoint] : []),
             ]);
-            return buildGitCommandOutcome(result, {
-              branch: params.branch,
-              create: params.create === true,
-              ...(params.startPoint ? { startPoint: params.startPoint } : {}),
-            }, `Switched to ${params.branch}.`);
+            return buildGitCommandOutcome(
+              result,
+              {
+                branch: params.branch,
+                create: params.create === true,
+                ...(params.startPoint ? { startPoint: params.startPoint } : {}),
+              },
+              `Switched to ${params.branch}.`,
+            );
           },
         }),
       checkout: (params) =>
@@ -1399,11 +1446,15 @@ function createExecuteTypescriptApi(input: {
               throw new Error("git.checkout requires ref, paths, or createBranch.");
             }
             const result = await runGit(args);
-            return buildGitCommandOutcome(result, {
-              ...(params.ref ? { ref: params.ref } : {}),
-              ...(params.paths?.length ? { paths: params.paths } : {}),
-              ...(params.createBranch ? { createBranch: params.createBranch } : {}),
-            }, "Checked out git state.");
+            return buildGitCommandOutcome(
+              result,
+              {
+                ...(params.ref ? { ref: params.ref } : {}),
+                ...(params.paths?.length ? { paths: params.paths } : {}),
+                ...(params.createBranch ? { createBranch: params.createBranch } : {}),
+              },
+              "Checked out git state.",
+            );
           },
         }),
       restore: (params) =>
@@ -1422,12 +1473,16 @@ function createExecuteTypescriptApi(input: {
               "--",
               ...params.paths,
             ]);
-            return buildGitCommandOutcome(result, {
-              paths: params.paths,
-              ...(params.source ? { source: params.source } : {}),
-              staged: params.staged === true,
-              worktree,
-            }, "Restored tracked paths.");
+            return buildGitCommandOutcome(
+              result,
+              {
+                paths: params.paths,
+                ...(params.source ? { source: params.source } : {}),
+                staged: params.staged === true,
+                worktree,
+              },
+              "Restored tracked paths.",
+            );
           },
         }),
       rebase: (params) =>
@@ -1454,11 +1509,15 @@ function createExecuteTypescriptApi(input: {
               }
             }
             const result = await runGit(args);
-            return buildGitCommandOutcome(result, {
-              ...(params.upstream ? { upstream: params.upstream } : {}),
-              ...(params.branch ? { branch: params.branch } : {}),
-              mode,
-            }, `Rebase ${mode} completed.`);
+            return buildGitCommandOutcome(
+              result,
+              {
+                ...(params.upstream ? { upstream: params.upstream } : {}),
+                ...(params.branch ? { branch: params.branch } : {}),
+                mode,
+              },
+              `Rebase ${mode} completed.`,
+            );
           },
         }),
       cherryPick: (params) =>
@@ -1483,11 +1542,15 @@ function createExecuteTypescriptApi(input: {
               args.push(...(params.commits ?? []));
             }
             const result = await runGit(args);
-            return buildGitCommandOutcome(result, {
-              commitCount: params.commits?.length ?? 0,
-              noCommit: params.noCommit === true,
-              mode,
-            }, `Cherry-pick ${mode} completed.`);
+            return buildGitCommandOutcome(
+              result,
+              {
+                commitCount: params.commits?.length ?? 0,
+                noCommit: params.noCommit === true,
+                mode,
+              },
+              `Cherry-pick ${mode} completed.`,
+            );
           },
         }),
       stash: (params) =>
@@ -1495,7 +1558,8 @@ function createExecuteTypescriptApi(input: {
           toolName: "git.stash",
           title: "Git stash",
           summary: "Run git stash",
-          visibility: params?.subcommand === "list" || params?.subcommand === "show" ? "trace" : "summary",
+          visibility:
+            params?.subcommand === "list" || params?.subcommand === "show" ? "trace" : "summary",
           run: async () => {
             const subcommand = params?.subcommand ?? "push";
             const args = ["stash", subcommand];
@@ -1510,11 +1574,16 @@ function createExecuteTypescriptApi(input: {
               args.push(params.stash);
             }
             const result = await runGit(args);
-            return buildGitCommandOutcome(result, {
-              subcommand,
-              ...(params?.stash ? { stash: params.stash } : {}),
-              ...(params?.message ? { message: params.message } : {}),
-            }, `Stash ${subcommand} completed.`, subcommand === "list" || subcommand === "show" ? "trace" : "summary");
+            return buildGitCommandOutcome(
+              result,
+              {
+                subcommand,
+                ...(params?.stash ? { stash: params.stash } : {}),
+                ...(params?.message ? { message: params.message } : {}),
+              },
+              `Stash ${subcommand} completed.`,
+              subcommand === "list" || subcommand === "show" ? "trace" : "summary",
+            );
           },
         }),
       tag: (params) =>
@@ -1551,14 +1620,19 @@ function createExecuteTypescriptApi(input: {
               }
             }
             const result = await runGit(args);
-            return buildGitCommandOutcome(result, {
-              ...(params?.name ? { name: params.name } : {}),
-              ...(params?.target ? { target: params.target } : {}),
-              annotate: params?.annotate === true,
-              delete: params?.delete === true,
-              list: params?.list === true,
-              ...(params?.pattern ? { pattern: params.pattern } : {}),
-            }, "Tag command completed.", params?.list ? "trace" : "summary");
+            return buildGitCommandOutcome(
+              result,
+              {
+                ...(params?.name ? { name: params.name } : {}),
+                ...(params?.target ? { target: params.target } : {}),
+                annotate: params?.annotate === true,
+                delete: params?.delete === true,
+                list: params?.list === true,
+                ...(params?.pattern ? { pattern: params.pattern } : {}),
+              },
+              "Tag command completed.",
+              params?.list ? "trace" : "summary",
+            );
           },
         }),
     },
@@ -1590,9 +1664,7 @@ function createExecuteTypescriptApi(input: {
               status: value.exitCode === 0 ? "succeeded" : "failed",
               visibility: value.exitCode === 0 ? "trace" : "summary",
               summary:
-                value.exitCode === 0
-                  ? `${params.command} exited with code 0.`
-                  : failureSummary,
+                value.exitCode === 0 ? `${params.command} exited with code 0.` : failureSummary,
               error: value.exitCode === 0 ? null : failureSummary,
             };
           },
@@ -1631,7 +1703,11 @@ function createExecuteTypescriptApi(input: {
           summary: `Write JSON artifact ${params.name}`,
           visibility: "summary",
           run: async (commandId) => {
-            const text = JSON.stringify(params.value, null, params.pretty === false ? undefined : 2);
+            const text = JSON.stringify(
+              params.value,
+              null,
+              params.pretty === false ? undefined : 2,
+            );
             const artifact = input.store.createArtifact({
               sourceCommandId: commandId,
               kind: "json",
@@ -1793,7 +1869,7 @@ function parseGitStatusPorcelainV2(output: string): {
       continue;
     }
     if (line.startsWith("# branch.ab ")) {
-      const match = line.match(/\+(\d+)\s+\-(\d+)/);
+      const match = line.match(/\+(\d+)\s+-(\d+)/);
       if (match) {
         ahead = Number(match[1]);
         behind = Number(match[2]);
@@ -2085,8 +2161,9 @@ function buildExecuteTypescriptParentRollup(input: {
       snippetArtifactId: input.snippetArtifactId,
       ...(input.logsArtifactId ? { logsArtifactId: input.logsArtifactId } : {}),
       childCommandCount: input.childActivity.length,
-      failedChildCommandCount: input.childActivity.filter((activity) => activity.status === "failed")
-        .length,
+      failedChildCommandCount: input.childActivity.filter(
+        (activity) => activity.status === "failed",
+      ).length,
       repoReadCount,
       repoWriteCount,
       artifactCount,
@@ -2114,7 +2191,7 @@ async function defaultRunCommand(
     cwd: input.cwd,
     env: {
       ...process.env,
-      ...(input.env ?? {}),
+      ...input.env,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -2169,7 +2246,9 @@ async function defaultWebSearch(input: {
   });
   const html = await response.text();
   const matches = Array.from(
-    html.matchAll(/result__a" href="([^"]+)">([\s\S]*?)<\/a>[\s\S]*?result__snippet">([\s\S]*?)<\/a>/g),
+    html.matchAll(
+      /result__a" href="([^"]+)">([\s\S]*?)<\/a>[\s\S]*?result__snippet">([\s\S]*?)<\/a>/g,
+    ),
   ).slice(0, input.maxResults ?? 5);
   return {
     results: matches.map((match) => ({
@@ -2181,7 +2260,10 @@ async function defaultWebSearch(input: {
 }
 
 function stripHtml(value: string): string {
-  return value.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+  return value
+    .replace(/<[^>]+>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function getRuntimeErrorLine(error: unknown): number | undefined {

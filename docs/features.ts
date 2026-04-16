@@ -27,8 +27,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     id: "artifacts-panel",
     name: "Artifacts Projection",
     status: "shipped",
-    summary:
-      "Presents generated artifacts in a docked preview panel.",
+    summary: "Presents generated artifacts in a docked preview panel.",
     sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
   },
   {

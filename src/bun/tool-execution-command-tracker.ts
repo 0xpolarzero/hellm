@@ -15,11 +15,7 @@ const SPECIALIZED_TOOL_NAMES = new Set([
 ]);
 
 export interface ToolExecutionCommandTracker {
-  handleToolExecutionStart(input: {
-    toolCallId: string;
-    toolName: string;
-    args: unknown;
-  }): void;
+  handleToolExecutionStart(input: { toolCallId: string; toolName: string; args: unknown }): void;
   handleToolExecutionEnd(input: {
     toolCallId: string;
     toolName: string;
@@ -40,7 +36,10 @@ export function createToolExecutionCommandTracker(options: {
 
   return {
     handleToolExecutionStart(input) {
-      if (SPECIALIZED_TOOL_NAMES.has(input.toolName) || commandIdByToolCallId.has(input.toolCallId)) {
+      if (
+        SPECIALIZED_TOOL_NAMES.has(input.toolName) ||
+        commandIdByToolCallId.has(input.toolCallId)
+      ) {
         return;
       }
 
@@ -72,7 +71,7 @@ export function createToolExecutionCommandTracker(options: {
           (input.isError
             ? `${input.toolName} failed.`
             : `${input.toolName} completed successfully.`),
-        error: input.isError ? resultText ?? `${input.toolName} failed.` : null,
+        error: input.isError ? (resultText ?? `${input.toolName} failed.`) : null,
       });
       commandIdByToolCallId.delete(input.toolCallId);
     },
@@ -136,7 +135,10 @@ function summarizeToolResult(result: unknown): string | null {
         return [];
       }
 
-      if ((block as { type?: unknown }).type === "text" && typeof (block as { text?: unknown }).text === "string") {
+      if (
+        (block as { type?: unknown }).type === "text" &&
+        typeof (block as { text?: unknown }).text === "string"
+      ) {
         return [(block as { text: string }).text];
       }
 
