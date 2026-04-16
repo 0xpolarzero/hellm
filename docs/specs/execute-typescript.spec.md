@@ -85,6 +85,24 @@ The top-level `{ success, result, logs, error }` contract stays stable.
 
 The submitted snippet artifact is durable product state, not a required tool return field.
 
+## Prompt Contract
+
+The model must see the real `execute_typescript` SDK contract before it writes a snippet.
+
+Adopted rules:
+
+- the source of truth for the SDK shape is one documented TypeScript contract module in the repo
+- build and dev flows generate an ambient `.d.ts` artifact from that source-of-truth module
+- the generated declaration keeps relevant JSDoc so usage rules survive into the emitted artifact
+- the runtime uses that generated declaration for `execute_typescript` static checking
+- the default system prompt embeds that same generated declaration verbatim so the orchestrator sees the exact callable surface
+
+This is required because short prose summaries are not sufficient for a typed host SDK with namespace methods, subtle argument shapes, and important constraints such as:
+
+- use the injected `api` object instead of Node.js built-ins
+- use `api.exec.run({ command, args, cwd, timeoutMs, env })`
+- pass the executable in `command` and argv tokens separately in `args`
+
 ## Execution Boundary
 
 Use `execute_typescript` for bounded generic work such as:
@@ -120,6 +138,8 @@ That means:
 - web access should go through `api.web.*`
 
 Pure TypeScript inside the snippet remains available for local computation.
+
+The runtime and prompt contract must make clear that ordinary JavaScript language features are available inside the snippet, but Node.js modules and globals are not part of the injected environment. The intended path is `api.*`, not ad hoc `fs`, `path`, `process`, or `node:*` imports.
 
 The product does not try to decompose arbitrary in-memory code into separate durable facts.
 
@@ -307,18 +327,9 @@ type SvvyApi = {
       baseRef?: string;
       headRef?: string;
     }): Promise<{ text: string }>;
-    log(input?: {
-      ref?: string;
-      limit?: number;
-    }): Promise<{ commits: GitCommitSummary[] }>;
-    show(input: {
-      ref: string;
-      path?: string;
-    }): Promise<{ text: string }>;
-    branch(input?: {
-      all?: boolean;
-      verbose?: boolean;
-    }): Promise<{
+    log(input?: { ref?: string; limit?: number }): Promise<{ commits: GitCommitSummary[] }>;
+    show(input: { ref: string; path?: string }): Promise<{ text: string }>;
+    branch(input?: { all?: boolean; verbose?: boolean }): Promise<{
       current?: string;
       branches: Array<{
         name: string;
@@ -326,20 +337,13 @@ type SvvyApi = {
         upstream?: string;
       }>;
     }>;
-    mergeBase(input: {
-      baseRef: string;
-      headRef: string;
-    }): Promise<{ sha?: string }>;
+    mergeBase(input: { baseRef: string; headRef: string }): Promise<{ sha?: string }>;
     fetch(input?: {
       remote?: string;
       refspecs?: string[];
       prune?: boolean;
     }): Promise<GitCommandResult>;
-    pull(input?: {
-      remote?: string;
-      branch?: string;
-      rebase?: boolean;
-    }): Promise<GitCommandResult>;
+    pull(input?: { remote?: string; branch?: string; rebase?: boolean }): Promise<GitCommandResult>;
     push(input?: {
       remote?: string;
       branch?: string;
@@ -347,11 +351,7 @@ type SvvyApi = {
       forceWithLease?: boolean;
       tags?: boolean;
     }): Promise<GitCommandResult>;
-    add(input: {
-      paths?: string[];
-      all?: boolean;
-      update?: boolean;
-    }): Promise<GitCommandResult>;
+    add(input: { paths?: string[]; all?: boolean; update?: boolean }): Promise<GitCommandResult>;
     commit(input: {
       message: string;
       all?: boolean;
@@ -418,31 +418,16 @@ type SvvyApi = {
   };
 
   artifact: {
-    writeText(input: {
-      name: string;
-      text: string;
-    }): Promise<ArtifactWriteResult>;
-    writeJson<T>(input: {
-      name: string;
-      value: T;
-      pretty?: boolean;
-    }): Promise<ArtifactWriteResult>;
-    attachFile(input: {
-      path: string;
-      name?: string;
-    }): Promise<ArtifactWriteResult>;
+    writeText(input: { name: string; text: string }): Promise<ArtifactWriteResult>;
+    writeJson<T>(input: { name: string; value: T; pretty?: boolean }): Promise<ArtifactWriteResult>;
+    attachFile(input: { path: string; name?: string }): Promise<ArtifactWriteResult>;
   };
 
   web: {
-    search(input: {
-      query: string;
-      maxResults?: number;
-    }): Promise<{
+    search(input: { query: string; maxResults?: number }): Promise<{
       results: Array<{ title: string; url: string; snippet: string }>;
     }>;
-    fetchText(input: {
-      url: string;
-    }): Promise<{ url: string; text: string }>;
+    fetchText(input: { url: string }): Promise<{ url: string; text: string }>;
   };
 };
 ```
@@ -485,61 +470,61 @@ If a large payload matters beyond immediate execution, the runtime or the agent 
 
 ### `api.repo.*`
 
-| Method | Durable child-command facts | Extra default surfacing beyond trace |
-| --- | --- | --- |
-| `repo.readFile` | `path`, `bytesRead` | Parent rollup only. |
-| `repo.readFiles` | `paths`, `fileCount`, `totalBytesRead` | Parent rollup only. |
-| `repo.readJson` | `path` | Parent rollup only. |
-| `repo.writeFile` | `path`, `bytesWritten` | Parent summary-visible write. |
-| `repo.writeJson` | `path`, `bytesWritten` | Parent summary-visible write. |
-| `repo.unlink` | `path`, `deleted` | Parent summary-visible write. |
-| `repo.stat` | `path`, `exists`, `kind`, `sizeBytes?` | Trace only unless it fails. |
-| `repo.glob` | `pattern`, `resultCount`, `cwd?` | Parent rollup only. |
-| `repo.grep` | `pattern`, `glob?`, `matchCount`, `pathCount` | Parent rollup only. |
+| Method           | Durable child-command facts                   | Extra default surfacing beyond trace |
+| ---------------- | --------------------------------------------- | ------------------------------------ |
+| `repo.readFile`  | `path`, `bytesRead`                           | Parent rollup only.                  |
+| `repo.readFiles` | `paths`, `fileCount`, `totalBytesRead`        | Parent rollup only.                  |
+| `repo.readJson`  | `path`                                        | Parent rollup only.                  |
+| `repo.writeFile` | `path`, `bytesWritten`                        | Parent summary-visible write.        |
+| `repo.writeJson` | `path`, `bytesWritten`                        | Parent summary-visible write.        |
+| `repo.unlink`    | `path`, `deleted`                             | Parent summary-visible write.        |
+| `repo.stat`      | `path`, `exists`, `kind`, `sizeBytes?`        | Trace only unless it fails.          |
+| `repo.glob`      | `pattern`, `resultCount`, `cwd?`              | Parent rollup only.                  |
+| `repo.grep`      | `pattern`, `glob?`, `matchCount`, `pathCount` | Parent rollup only.                  |
 
 ### `api.git.*`
 
-| Method | Durable child-command facts | Extra default surfacing beyond trace |
-| --- | --- | --- |
-| `git.status` | `branch`, `changedFileCount`, `ahead`, `behind` | Parent rollup only. |
-| `git.diff` | `paths?`, `cached`, `baseRef?`, `headRef?`, `diffBytes` | Parent rollup only. |
-| `git.log` | `ref?`, `limit`, `commitCount` | Parent rollup only. |
-| `git.show` | `ref`, `path?`, `bytesRead` | Parent rollup only. |
-| `git.branch` | `current`, `branchCount` | Parent rollup only. |
-| `git.mergeBase` | `baseRef`, `headRef`, `sha?` | Parent rollup only. |
-| `git.fetch` | `remote?`, `refspecCount`, `prune` | Parent summary-visible sync action and failure. |
-| `git.pull` | `remote?`, `branch?`, `rebase` | Parent summary-visible sync action and failure. |
-| `git.push` | `remote?`, `branch?`, `setUpstream`, `forceWithLease`, `tags` | Parent summary-visible sync action and failure. |
-| `git.add` | `paths?`, `all`, `update` | Parent summary-visible write. |
-| `git.commit` | `messageSummary`, `sha?`, `all`, `allowEmpty`, `amend` | Parent summary-visible write. |
-| `git.switch` | `branch`, `create`, `startPoint?` | Parent summary-visible branch change. |
-| `git.checkout` | `ref?`, `paths?`, `createBranch?` | Parent summary-visible branch or file restore action. |
-| `git.restore` | `paths`, `source?`, `staged`, `worktree` | Parent summary-visible write. |
-| `git.rebase` | `upstream?`, `branch?`, `mode` | Parent summary-visible action and failure. |
-| `git.cherryPick` | `commitCount`, `noCommit`, `mode` | Parent summary-visible action and failure. |
-| `git.stash` | `subcommand`, `stash?`, `message?` | `list` and `show` contribute to parent rollup only; mutating subcommands are parent summary-visible. |
-| `git.tag` | `name?`, `target?`, `annotate`, `delete`, `list`, `pattern?` | `list` contributes to parent rollup only; create or delete actions are parent summary-visible. |
+| Method           | Durable child-command facts                                   | Extra default surfacing beyond trace                                                                 |
+| ---------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `git.status`     | `branch`, `changedFileCount`, `ahead`, `behind`               | Parent rollup only.                                                                                  |
+| `git.diff`       | `paths?`, `cached`, `baseRef?`, `headRef?`, `diffBytes`       | Parent rollup only.                                                                                  |
+| `git.log`        | `ref?`, `limit`, `commitCount`                                | Parent rollup only.                                                                                  |
+| `git.show`       | `ref`, `path?`, `bytesRead`                                   | Parent rollup only.                                                                                  |
+| `git.branch`     | `current`, `branchCount`                                      | Parent rollup only.                                                                                  |
+| `git.mergeBase`  | `baseRef`, `headRef`, `sha?`                                  | Parent rollup only.                                                                                  |
+| `git.fetch`      | `remote?`, `refspecCount`, `prune`                            | Parent summary-visible sync action and failure.                                                      |
+| `git.pull`       | `remote?`, `branch?`, `rebase`                                | Parent summary-visible sync action and failure.                                                      |
+| `git.push`       | `remote?`, `branch?`, `setUpstream`, `forceWithLease`, `tags` | Parent summary-visible sync action and failure.                                                      |
+| `git.add`        | `paths?`, `all`, `update`                                     | Parent summary-visible write.                                                                        |
+| `git.commit`     | `messageSummary`, `sha?`, `all`, `allowEmpty`, `amend`        | Parent summary-visible write.                                                                        |
+| `git.switch`     | `branch`, `create`, `startPoint?`                             | Parent summary-visible branch change.                                                                |
+| `git.checkout`   | `ref?`, `paths?`, `createBranch?`                             | Parent summary-visible branch or file restore action.                                                |
+| `git.restore`    | `paths`, `source?`, `staged`, `worktree`                      | Parent summary-visible write.                                                                        |
+| `git.rebase`     | `upstream?`, `branch?`, `mode`                                | Parent summary-visible action and failure.                                                           |
+| `git.cherryPick` | `commitCount`, `noCommit`, `mode`                             | Parent summary-visible action and failure.                                                           |
+| `git.stash`      | `subcommand`, `stash?`, `message?`                            | `list` and `show` contribute to parent rollup only; mutating subcommands are parent summary-visible. |
+| `git.tag`        | `name?`, `target?`, `annotate`, `delete`, `list`, `pattern?`  | `list` contributes to parent rollup only; create or delete actions are parent summary-visible.       |
 
 ### `api.exec.run`
 
-| Method | Durable child-command facts | Extra default surfacing beyond trace |
-| --- | --- | --- |
+| Method     | Durable child-command facts                                                      | Extra default surfacing beyond trace                                                                     |
+| ---------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `exec.run` | `command`, `args`, `cwd`, `timeoutMs?`, `exitCode`, `stdoutBytes`, `stderrBytes` | Parent rollup on success. Parent summary-visible on non-zero exit, timeout, or retained output artifact. |
 
 ### `api.artifact.*`
 
-| Method | Durable child-command facts | Extra default surfacing beyond trace |
-| --- | --- | --- |
-| `artifact.writeText` | `artifactId`, `name`, `path`, `bytesWritten` | Parent summary-visible plus first-class artifact record. |
-| `artifact.writeJson` | `artifactId`, `name`, `path`, `bytesWritten` | Parent summary-visible plus first-class artifact record. |
-| `artifact.attachFile` | `artifactId`, `name`, `path` | Parent summary-visible plus first-class artifact record. |
+| Method                | Durable child-command facts                  | Extra default surfacing beyond trace                     |
+| --------------------- | -------------------------------------------- | -------------------------------------------------------- |
+| `artifact.writeText`  | `artifactId`, `name`, `path`, `bytesWritten` | Parent summary-visible plus first-class artifact record. |
+| `artifact.writeJson`  | `artifactId`, `name`, `path`, `bytesWritten` | Parent summary-visible plus first-class artifact record. |
+| `artifact.attachFile` | `artifactId`, `name`, `path`                 | Parent summary-visible plus first-class artifact record. |
 
 ### `api.web.*`
 
-| Method | Durable child-command facts | Extra default surfacing beyond trace |
-| --- | --- | --- |
-| `web.search` | `query`, `resultCount` | Parent rollup only. |
-| `web.fetchText` | `url`, `bytesRead` | Parent rollup only. Failures become parent summary-visible. |
+| Method          | Durable child-command facts | Extra default surfacing beyond trace                        |
+| --------------- | --------------------------- | ----------------------------------------------------------- |
+| `web.search`    | `query`, `resultCount`      | Parent rollup only.                                         |
+| `web.fetchText` | `url`, `bytesRead`          | Parent rollup only. Failures become parent summary-visible. |
 
 ### Parent Rollups
 

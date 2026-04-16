@@ -88,7 +88,7 @@ That includes:
 
 The goal is consistency and lower conceptual overhead. Generic work should not splinter into many unrelated ad hoc surfaces when a single typed TypeScript tool can do the job more clearly. It also should not pretend that one deterministic script can summarize unseen text or replace normal orchestrator back-and-forth when the task needs a sequence of observations and decisions.
 
-Inside `execute_typescript`, the runtime injects `api.*` as a host SDK. `api.*` is the observable capability surface for external effects and facts, not a hard permission boundary. The SDK includes explicit `api.exec.run` for command execution. Nested `api.*` calls produce child command facts for traceability, while the enclosing `execute_typescript` attempt remains the main semantic unit. Every submitted snippet is persisted as a file-backed artifact in the workspace artifact directory, and the runtime must compile or typecheck the snippet before execution. Structured diagnostics must be produced, and invalid snippets must not run.
+Inside `execute_typescript`, the runtime injects `api.*` as a host SDK. `api.*` is the observable capability surface for external effects and facts, not a hard permission boundary. The SDK includes explicit `api.exec.run` for command execution. The full SDK declaration should be generated from the same source-of-truth contract used by the runtime and embedded verbatim in the default system prompt so the orchestrator sees the exact callable surface, including relevant JSDoc guidance, before it writes a snippet. Nested `api.*` calls produce child command facts for traceability, while the enclosing `execute_typescript` attempt remains the main semantic unit. Every submitted snippet is persisted as a file-backed artifact in the workspace artifact directory, and the runtime must compile or typecheck the snippet before execution. Structured diagnostics must be produced, and invalid snippets must not run.
 
 ### 4. Native Control Tools Stay Small And Explicit
 
@@ -120,6 +120,8 @@ A session is the durable user-facing container for:
 - wait state
 
 Session summaries, sidebar rows, and recovery views must be read models derived from structured state and artifact metadata, not from transcript reconstruction.
+
+`svvy` treats the structured session SQLite store as current-schema-only local state. Incompatible persisted layouts are discarded and rebuilt instead of being migrated forward.
 
 ### 6. Commands Are Requests, Events Are Facts
 

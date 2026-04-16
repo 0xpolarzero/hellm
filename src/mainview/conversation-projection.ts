@@ -1,10 +1,19 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, ToolResultMessage, Usage } from "@mariozechner/pi-ai";
+import type { AssistantMessage, ToolCall, ToolResultMessage, Usage } from "@mariozechner/pi-ai";
 import { parseArtifactsParams, type ArtifactsParams } from "./artifacts";
+
+export interface ProjectedToolCall {
+  id: string;
+  name: string;
+  argumentsValue: ToolCall["arguments"];
+  artifactParams?: ArtifactsParams;
+  attempt: number;
+  totalAttempts: number;
+}
 
 export interface ConversationProjection {
   visibleMessages: AgentMessage[];
-  toolCallsById: Map<string, ArtifactsParams>;
+  toolCallsById: Map<string, ProjectedToolCall>;
   artifactResultTextById: Map<string, string>;
   toolResultsById: Map<string, ToolResultMessage>;
   usage: Usage;
@@ -63,21 +72,37 @@ function countToolCalls(message: AssistantMessage | null | undefined): number {
   return message.content.filter((block) => block.type === "toolCall").length;
 }
 
+function retryKey(chainId: number, toolName: string): string {
+  return `${chainId}:${toolName}`;
+}
+
 export function projectConversation(messages: AgentMessage[]): ConversationProjection {
   const visibleMessages: AgentMessage[] = [];
-  const toolCallsById = new Map<string, ArtifactsParams>();
+  const toolCallsById = new Map<string, ProjectedToolCall>();
   const artifactResultTextById = new Map<string, string>();
   const toolResultsById = new Map<string, ToolResultMessage>();
   const usage = createUsage();
+  const retryAttemptByKey = new Map<string, number>();
+  const retryKeyByToolCallId = new Map<string, string>();
+  const retryTotalByKey = new Map<string, number>();
   let messageCount = 0;
   let toolCallCount = 0;
   let lastActivity: number | null = null;
+  let retryChainId = 0;
+
+  const resetRetryChain = () => {
+    retryAttemptByKey.clear();
+    retryChainId += 1;
+  };
+
+  resetRetryChain();
 
   for (const message of messages) {
     if (message.role === "user") {
       visibleMessages.push(message);
       messageCount += 1;
       lastActivity = message.timestamp;
+      resetRetryChain();
       continue;
     }
 
@@ -87,15 +112,36 @@ export function projectConversation(messages: AgentMessage[]): ConversationProje
       lastActivity = message.timestamp;
       addUsage(usage, message.usage);
 
-      for (const block of message.content) {
-        if (block.type !== "toolCall") continue;
-        toolCallCount += 1;
-        if (block.name !== "artifacts") continue;
+      const toolCalls = message.content.filter(
+        (block): block is ToolCall => block.type === "toolCall",
+      );
+      const toolNamesSeenInMessage = new Set<string>();
 
-        const params = parseArtifactsParams(block.arguments);
-        if (params) {
-          toolCallsById.set(block.id, params);
-        }
+      for (const block of toolCalls) {
+        toolCallCount += 1;
+        const key = retryKey(retryChainId, block.name);
+        const attempt = toolNamesSeenInMessage.has(block.name)
+          ? (retryAttemptByKey.get(key) ?? 1)
+          : (retryAttemptByKey.get(key) ?? 0) + 1;
+        retryAttemptByKey.set(key, attempt);
+        retryKeyByToolCallId.set(block.id, key);
+        retryTotalByKey.set(key, attempt);
+        toolNamesSeenInMessage.add(block.name);
+        const artifactParams =
+          block.name === "artifacts" ? parseArtifactsParams(block.arguments) : undefined;
+
+        toolCallsById.set(block.id, {
+          id: block.id,
+          name: block.name,
+          argumentsValue: block.arguments,
+          artifactParams: artifactParams ?? undefined,
+          attempt,
+          totalAttempts: 1,
+        });
+      }
+
+      if (message.stopReason !== "toolUse") {
+        resetRetryChain();
       }
 
       continue;
@@ -110,6 +156,12 @@ export function projectConversation(messages: AgentMessage[]): ConversationProje
         artifactResultTextById.set(message.toolCallId, toolResultText(message));
       }
     }
+  }
+
+  for (const toolCall of toolCallsById.values()) {
+    const totalAttempts =
+      retryTotalByKey.get(retryKeyByToolCallId.get(toolCall.id) ?? "") ?? toolCall.totalAttempts;
+    toolCall.totalAttempts = totalAttempts;
   }
 
   return {

@@ -13,6 +13,17 @@ import {
 import { basename, dirname, relative, resolve } from "node:path";
 import { inspect } from "node:util";
 import * as ts from "typescript";
+import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "./generated/execute-typescript-api.generated";
+import type {
+  GitCommitSummary,
+  GitFileChange,
+  RepoGrepMatch,
+  RepoStat,
+  SvvyApi,
+  SvvyConsole,
+  WebFetchTextResult,
+  WebSearchResult,
+} from "./execute-typescript-api-contract";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import type {
   StructuredCommandExecutor,
@@ -64,14 +75,9 @@ export type ExecuteTypescriptRunCommandResult = {
   stderr: string;
 };
 
-export type ExecuteTypescriptWebSearchResult = {
-  results: Array<{ title: string; url: string; snippet: string }>;
-};
+export type ExecuteTypescriptWebSearchResult = WebSearchResult;
 
-export type ExecuteTypescriptWebFetchResult = {
-  url: string;
-  text: string;
-};
+export type ExecuteTypescriptWebFetchResult = WebFetchTextResult;
 
 export const executeTypescriptParamsSchema = Type.Object(
   {
@@ -85,6 +91,7 @@ export type ExecuteTypescriptParams = Static<typeof executeTypescriptParamsSchem
 const EXECUTE_TYPESCRIPT_DESCRIPTION = [
   "Run a bounded TypeScript program against the injected typed api.* host SDK.",
   "Use this as the default generic work surface for ordinary repository, git, web, artifact, and explicit api.exec.run work.",
+  "Inside the snippet, use the injected api object instead of Node.js built-ins such as fs, path, process, or node:* imports.",
   "The runtime persists the submitted snippet before execution, typechecks before running, and records nested api.* calls as child commands.",
 ].join(" ");
 
@@ -123,207 +130,11 @@ type ExecuteTypescriptToolOptions = {
   }) => Promise<ExecuteTypescriptWebFetchResult>;
 };
 
-type ExecuteTypescriptRepoTextFile = {
-  path: string;
-  text: string;
-};
-
-type ExecuteTypescriptRepoWriteResult = {
-  path: string;
-  bytes: number;
-};
-
-type ExecuteTypescriptRepoStat = {
-  path: string;
-  exists: boolean;
-  kind: "file" | "directory" | "missing";
-  sizeBytes?: number;
-};
-
-type ExecuteTypescriptRepoGrepMatch = {
-  path: string;
-  line: number;
-  text: string;
-};
-
-type ExecuteTypescriptGitFileChange = {
-  path: string;
-  change: "added" | "modified" | "deleted" | "renamed" | "untracked";
-  previousPath?: string;
-};
-
-type ExecuteTypescriptGitCommitSummary = {
-  sha: string;
-  subject: string;
-  author?: string;
-  authoredAt?: string;
-};
-
-type ExecuteTypescriptGitCommandResult = ExecuteTypescriptRunCommandResult & {
-  sha?: string;
-};
-
-type ExecuteTypescriptApi = {
-  repo: {
-    readFile(input: { path: string }): Promise<ExecuteTypescriptRepoTextFile>;
-    readFiles(input: { paths: string[] }): Promise<{ files: ExecuteTypescriptRepoTextFile[] }>;
-    readJson<T>(input: { path: string }): Promise<{ path: string; value: T }>;
-    writeFile(input: {
-      path: string;
-      text: string;
-      createDirectories?: boolean;
-    }): Promise<ExecuteTypescriptRepoWriteResult>;
-    writeJson<T>(input: {
-      path: string;
-      value: T;
-      pretty?: boolean;
-      createDirectories?: boolean;
-    }): Promise<ExecuteTypescriptRepoWriteResult>;
-    unlink(input: { path: string }): Promise<{ path: string; deleted: boolean }>;
-    stat(input: { path: string }): Promise<ExecuteTypescriptRepoStat>;
-    glob(input: {
-      pattern: string;
-      cwd?: string;
-      includeDirectories?: boolean;
-      maxResults?: number;
-    }): Promise<{ paths: string[] }>;
-    grep(input: {
-      pattern: string;
-      glob?: string;
-      maxResults?: number;
-      caseSensitive?: boolean;
-      regex?: boolean;
-    }): Promise<{
-      matches: ExecuteTypescriptRepoGrepMatch[];
-    }>;
-  };
-  git: {
-    status(input?: { paths?: string[] }): Promise<{
-      branch?: string;
-      files: ExecuteTypescriptGitFileChange[];
-      ahead?: number;
-      behind?: number;
-    }>;
-    diff(input?: {
-      paths?: string[];
-      cached?: boolean;
-      baseRef?: string;
-      headRef?: string;
-    }): Promise<{ text: string }>;
-    log(input?: { ref?: string; limit?: number }): Promise<{
-      commits: ExecuteTypescriptGitCommitSummary[];
-    }>;
-    show(input: { ref: string; path?: string }): Promise<{
-      text: string;
-    }>;
-    branch(input?: { all?: boolean; verbose?: boolean }): Promise<{
-      current?: string;
-      branches: Array<{ name: string; current: boolean; upstream?: string }>;
-    }>;
-    mergeBase(input: { baseRef: string; headRef: string }): Promise<{ sha?: string }>;
-    fetch(input?: {
-      remote?: string;
-      refspecs?: string[];
-      prune?: boolean;
-    }): Promise<ExecuteTypescriptRunCommandResult>;
-    pull(input?: {
-      remote?: string;
-      branch?: string;
-      rebase?: boolean;
-    }): Promise<ExecuteTypescriptRunCommandResult>;
-    push(input?: {
-      remote?: string;
-      branch?: string;
-      setUpstream?: boolean;
-      forceWithLease?: boolean;
-      tags?: boolean;
-    }): Promise<ExecuteTypescriptRunCommandResult>;
-    add(input: {
-      paths?: string[];
-      all?: boolean;
-      update?: boolean;
-    }): Promise<ExecuteTypescriptRunCommandResult>;
-    commit(input: {
-      message: string;
-      all?: boolean;
-      allowEmpty?: boolean;
-      amend?: boolean;
-    }): Promise<ExecuteTypescriptGitCommandResult>;
-    switch(input: {
-      branch: string;
-      create?: boolean;
-      startPoint?: string;
-    }): Promise<ExecuteTypescriptRunCommandResult>;
-    checkout(input: {
-      ref?: string;
-      paths?: string[];
-      createBranch?: string;
-    }): Promise<ExecuteTypescriptRunCommandResult>;
-    restore(input: {
-      paths: string[];
-      source?: string;
-      staged?: boolean;
-      worktree?: boolean;
-    }): Promise<ExecuteTypescriptRunCommandResult>;
-    rebase(input: {
-      upstream?: string;
-      branch?: string;
-      continue?: boolean;
-      abort?: boolean;
-    }): Promise<ExecuteTypescriptRunCommandResult>;
-    cherryPick(input: {
-      commits?: string[];
-      continue?: boolean;
-      abort?: boolean;
-      noCommit?: boolean;
-    }): Promise<ExecuteTypescriptRunCommandResult>;
-    stash(input?: {
-      subcommand?: "push" | "pop" | "apply" | "drop" | "list" | "show";
-      stash?: string;
-      message?: string;
-      includeUntracked?: boolean;
-    }): Promise<ExecuteTypescriptRunCommandResult>;
-    tag(input?: {
-      name?: string;
-      target?: string;
-      annotate?: boolean;
-      message?: string;
-      delete?: boolean;
-      list?: boolean;
-      pattern?: string;
-    }): Promise<ExecuteTypescriptRunCommandResult>;
-  };
-  exec: {
-    run(input: {
-      command: string;
-      args?: string[];
-      cwd?: string;
-      timeoutMs?: number;
-      env?: Record<string, string>;
-    }): Promise<ExecuteTypescriptRunCommandResult>;
-  };
-  artifact: {
-    writeText(input: { name: string; text: string }): Promise<{
-      artifactId: string;
-      path: string;
-    }>;
-    writeJson<T>(input: { name: string; value: T; pretty?: boolean }): Promise<{
-      artifactId: string;
-      path: string;
-    }>;
-    attachFile(input: { path: string; name?: string }): Promise<{
-      artifactId: string;
-      path: string;
-    }>;
-  };
-  web: {
-    search(input: {
-      query: string;
-      maxResults?: number;
-    }): Promise<ExecuteTypescriptWebSearchResult>;
-    fetchText(input: { url: string }): Promise<ExecuteTypescriptWebFetchResult>;
-  };
-};
+type ExecuteTypescriptRepoStat = RepoStat;
+type ExecuteTypescriptRepoGrepMatch = RepoGrepMatch;
+type ExecuteTypescriptGitFileChange = GitFileChange;
+type ExecuteTypescriptGitCommitSummary = GitCommitSummary;
+type ExecuteTypescriptApi = SvvyApi;
 
 type ExecuteTypescriptCommandFacts = Record<string, unknown>;
 
@@ -628,7 +439,7 @@ function compileAndTypecheck(typescriptCode: string): {
   const defaultHost = ts.createCompilerHost(compilerOptions, true);
   const sourceFiles = new Map<string, string>([
     [SOURCE_FILE, wrappedSource],
-    [API_DECLARATIONS_FILE, createApiDeclarationSource()],
+    [API_DECLARATIONS_FILE, EXECUTE_TYPESCRIPT_API_DECLARATION],
   ]);
 
   const host: ts.CompilerHost = {
@@ -733,13 +544,6 @@ async function runCompiledSnippet(
   }
   return await module.exports.default(api, createCapturedConsole(logs));
 }
-
-type SvvyConsole = {
-  log: (...args: unknown[]) => void;
-  info: (...args: unknown[]) => void;
-  warn: (...args: unknown[]) => void;
-  error: (...args: unknown[]) => void;
-};
 
 function createCapturedConsole(logs: string[]): SvvyConsole {
   const append = (...args: unknown[]) => {
@@ -2286,213 +2090,4 @@ function getRuntimeErrorLine(error: unknown): number | undefined {
   }
   const line = Number(match[1]);
   return Number.isFinite(line) ? line : undefined;
-}
-
-function createApiDeclarationSource(): string {
-  return `
-type SvvyConsole = {
-  log(...args: unknown[]): void;
-  info(...args: unknown[]): void;
-  warn(...args: unknown[]): void;
-  error(...args: unknown[]): void;
-};
-
-type RepoTextFile = {
-  path: string;
-  text: string;
-};
-
-type RepoWriteResult = {
-  path: string;
-  bytes: number;
-};
-
-type RepoStat = {
-  path: string;
-  exists: boolean;
-  kind: "file" | "directory" | "missing";
-  sizeBytes?: number;
-};
-
-type RepoGrepMatch = {
-  path: string;
-  line: number;
-  text: string;
-};
-
-type GitFileChange = {
-  path: string;
-  change: "added" | "modified" | "deleted" | "renamed" | "untracked";
-  previousPath?: string;
-};
-
-type GitCommitSummary = {
-  sha: string;
-  subject: string;
-  author?: string;
-  authoredAt?: string;
-};
-
-type GitCommandResult = {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-};
-
-type ArtifactWriteResult = {
-  artifactId: string;
-  path: string;
-};
-
-type SvvyApi = {
-  repo: {
-    readFile(input: { path: string }): Promise<RepoTextFile>;
-    readFiles(input: { paths: string[] }): Promise<{ files: RepoTextFile[] }>;
-    readJson<T>(input: { path: string }): Promise<{ path: string; value: T }>;
-    writeFile(input: {
-      path: string;
-      text: string;
-      createDirectories?: boolean;
-    }): Promise<RepoWriteResult>;
-    writeJson<T>(input: {
-      path: string;
-      value: T;
-      pretty?: boolean;
-      createDirectories?: boolean;
-    }): Promise<RepoWriteResult>;
-    unlink(input: { path: string }): Promise<{ path: string; deleted: boolean }>;
-    stat(input: { path: string }): Promise<RepoStat>;
-    glob(input: {
-      pattern: string;
-      cwd?: string;
-      includeDirectories?: boolean;
-      maxResults?: number;
-    }): Promise<{ paths: string[] }>;
-    grep(input: {
-      pattern: string;
-      glob?: string;
-      maxResults?: number;
-      caseSensitive?: boolean;
-      regex?: boolean;
-    }): Promise<{
-      matches: RepoGrepMatch[];
-    }>;
-  };
-  git: {
-    status(input?: { paths?: string[] }): Promise<{
-      branch?: string;
-      files: GitFileChange[];
-      ahead?: number;
-      behind?: number;
-    }>;
-    diff(input?: {
-      paths?: string[];
-      cached?: boolean;
-      baseRef?: string;
-      headRef?: string;
-    }): Promise<{ text: string }>;
-    log(input?: { ref?: string; limit?: number }): Promise<{ commits: GitCommitSummary[] }>;
-    show(input: { ref: string; path?: string }): Promise<{ text: string }>;
-    branch(input?: {
-      all?: boolean;
-      verbose?: boolean;
-    }): Promise<{
-      current?: string;
-      branches: Array<{ name: string; current: boolean; upstream?: string }>;
-    }>;
-    mergeBase(input: { baseRef: string; headRef: string }): Promise<{ sha?: string }>;
-    fetch(input?: {
-      remote?: string;
-      refspecs?: string[];
-      prune?: boolean;
-    }): Promise<GitCommandResult>;
-    pull(input?: {
-      remote?: string;
-      branch?: string;
-      rebase?: boolean;
-    }): Promise<GitCommandResult>;
-    push(input?: {
-      remote?: string;
-      branch?: string;
-      setUpstream?: boolean;
-      forceWithLease?: boolean;
-      tags?: boolean;
-    }): Promise<GitCommandResult>;
-    add(input: {
-      paths?: string[];
-      all?: boolean;
-      update?: boolean;
-    }): Promise<GitCommandResult>;
-    commit(input: {
-      message: string;
-      all?: boolean;
-      allowEmpty?: boolean;
-      amend?: boolean;
-    }): Promise<GitCommandResult & { sha?: string }>;
-    switch(input: {
-      branch: string;
-      create?: boolean;
-      startPoint?: string;
-    }): Promise<GitCommandResult>;
-    checkout(input: {
-      ref?: string;
-      paths?: string[];
-      createBranch?: string;
-    }): Promise<GitCommandResult>;
-    restore(input: {
-      paths: string[];
-      source?: string;
-      staged?: boolean;
-      worktree?: boolean;
-    }): Promise<GitCommandResult>;
-    rebase(input: {
-      upstream?: string;
-      branch?: string;
-      continue?: boolean;
-      abort?: boolean;
-    }): Promise<GitCommandResult>;
-    cherryPick(input: {
-      commits?: string[];
-      continue?: boolean;
-      abort?: boolean;
-      noCommit?: boolean;
-    }): Promise<GitCommandResult>;
-    stash(input?: {
-      subcommand?: "push" | "pop" | "apply" | "drop" | "list" | "show";
-      stash?: string;
-      message?: string;
-      includeUntracked?: boolean;
-    }): Promise<GitCommandResult>;
-    tag(input?: {
-      name?: string;
-      target?: string;
-      annotate?: boolean;
-      message?: string;
-      delete?: boolean;
-      list?: boolean;
-      pattern?: string;
-    }): Promise<GitCommandResult>;
-  };
-  exec: {
-    run(input: {
-      command: string;
-      args?: string[];
-      cwd?: string;
-      timeoutMs?: number;
-      env?: Record<string, string>;
-    }): Promise<GitCommandResult>;
-  };
-  artifact: {
-    writeText(input: { name: string; text: string }): Promise<ArtifactWriteResult>;
-    writeJson<T>(input: { name: string; value: T; pretty?: boolean }): Promise<ArtifactWriteResult>;
-    attachFile(input: { path: string; name?: string }): Promise<ArtifactWriteResult>;
-  };
-  web: {
-    search(input: { query: string; maxResults?: number }): Promise<{
-      results: Array<{ title: string; url: string; snippet: string }>;
-    }>;
-    fetchText(input: { url: string }): Promise<{ url: string; text: string }>;
-  };
-};
-`;
 }

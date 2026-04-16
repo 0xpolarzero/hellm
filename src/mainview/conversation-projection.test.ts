@@ -41,6 +41,7 @@ function assistantMessage(
   timestamp: number,
   text: string,
   options: {
+    stopReason?: "stop" | "toolUse";
     toolCalls?: ToolCall[];
     usage?: ReturnType<typeof zeroUsage>;
   } = {},
@@ -65,7 +66,7 @@ function assistantMessage(
         total: 10,
       },
     },
-    stopReason: "stop",
+    stopReason: options.stopReason ?? "stop",
     content: [{ type: "text", text }, ...(options.toolCalls ?? [])],
   };
 }
@@ -122,12 +123,66 @@ describe("conversation projection", () => {
       },
     });
     expect(projection.toolCallsById.get("tool-call-1")).toEqual({
-      command: "create",
-      filename: "summary.html",
+      id: "tool-call-1",
+      name: "artifacts",
+      argumentsValue: { command: "create", filename: "summary.html" },
+      artifactParams: {
+        command: "create",
+        filename: "summary.html",
+      },
+      attempt: 1,
+      totalAttempts: 1,
     });
-    expect(projection.toolCallsById.has("tool-call-2")).toBe(false);
+    expect(projection.toolCallsById.get("tool-call-2")).toEqual({
+      id: "tool-call-2",
+      name: "search",
+      argumentsValue: { query: "svvy" },
+      artifactParams: undefined,
+      attempt: 1,
+      totalAttempts: 1,
+    });
     expect(projection.toolResultsById.get("tool-call-1")?.toolName).toBe("artifacts");
     expect(projection.artifactResultTextById.get("tool-call-1")).toBe("Created file summary.html");
+  });
+
+  it("tracks repeated tool-use loops as numbered attempts within one retry chain", () => {
+    const projection = projectConversation([
+      userMessage(1, "Read the directory."),
+      assistantMessage(2, "First try", {
+        stopReason: "toolUse",
+        toolCalls: [toolCall("tool-call-1", "execute_typescript", { typescriptCode: "first" })],
+      }),
+      {
+        role: "toolResult",
+        toolCallId: "tool-call-1",
+        toolName: "execute_typescript",
+        timestamp: 3,
+        isError: false,
+        content: [{ type: "text", text: '{"success":false}' }],
+      } satisfies ToolResultMessage,
+      assistantMessage(4, "Second try", {
+        stopReason: "toolUse",
+        toolCalls: [toolCall("tool-call-2", "execute_typescript", { typescriptCode: "second" })],
+      }),
+      {
+        role: "toolResult",
+        toolCallId: "tool-call-2",
+        toolName: "execute_typescript",
+        timestamp: 5,
+        isError: false,
+        content: [{ type: "text", text: '{"success":true}' }],
+      } satisfies ToolResultMessage,
+      assistantMessage(6, "Final answer"),
+    ]);
+
+    expect(projection.toolCallsById.get("tool-call-1")).toMatchObject({
+      attempt: 1,
+      totalAttempts: 2,
+    });
+    expect(projection.toolCallsById.get("tool-call-2")).toMatchObject({
+      attempt: 2,
+      totalAttempts: 2,
+    });
   });
 
   it("keeps committed indexes stable when streaming only changes", () => {

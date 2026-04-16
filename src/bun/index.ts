@@ -22,6 +22,7 @@ import {
   setApiKey as storeApiKey,
 } from "./auth-store";
 import { refreshIfNeeded, startOAuthLogin, supportsOAuth } from "./oauth-login";
+import { DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt";
 import { WorkspaceSessionCatalog, type SessionDefaults } from "./session-catalog";
 import { createSvvyToolBridge } from "./tool-bridge";
 import { resolveWorkspaceCwd } from "./workspace-context";
@@ -36,12 +37,6 @@ const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
 const DEV_SERVER_WAIT_TIMEOUT_MS = 15_000;
 const DEV_SERVER_POLL_INTERVAL_MS = 250;
 const DEFAULT_RPC_TIMEOUT_MS = 120000;
-const DEFAULT_SYSTEM_PROMPT = [
-  "You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.",
-  "Everything you do is a tool call inside one shared execution model.",
-  "Use execute_typescript for ordinary generic work, verification.run for real verification, workflow.start for delegated workflows, and wait for durable user or external waits.",
-  "Threads, commands, verification, workflows, and wait state come from real tool execution rather than assistant prose.",
-].join(" ");
 const ENV_FILES = [".env.local", ".env"];
 const PREFERRED_PROVIDERS = ["zai", "openai", "anthropic", "google"];
 const PREFERRED_MODEL_FRAGMENTS = [

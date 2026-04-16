@@ -3,7 +3,7 @@
 	import { onMount, tick } from "svelte";
 	import { getArtifactCommandCopy, parseArtifactsParams } from "./artifacts";
 	import { formatTimestamp, formatUsage } from "./chat-format";
-	import type { ConversationProjection } from "./conversation-projection";
+	import type { ConversationProjection, ProjectedToolCall } from "./conversation-projection";
 	import {
 		compensateTranscriptScrollForMeasuredRow,
 		deriveTranscriptUserScrollState,
@@ -81,6 +81,11 @@
 		if (result?.isError) return "error";
 		if (result) return "done";
 		return "pending";
+	}
+
+	function toolAttemptLabel(toolCall: ProjectedToolCall | undefined): string | null {
+		if (!toolCall || toolCall.totalAttempts <= 1) return null;
+		return `Attempt ${toolCall.attempt} of ${toolCall.totalAttempts}`;
 	}
 
 	function handleScroll() {
@@ -295,7 +300,8 @@
 									<pre>{block.thinking || "[redacted]"}</pre>
 								</details>
 							{:else if block.type === "toolCall"}
-								{@const params = parseArtifactsParams(block.arguments)}
+								{@const projectedToolCall = conversation.toolCallsById.get(block.id)}
+								{@const params = projectedToolCall?.artifactParams ?? parseArtifactsParams(block.arguments)}
 								{@const status = toolStatus(block.id)}
 								<div class={`tool-card ${status}`.trim()}>
 									<div class="tool-card-copy">
@@ -309,6 +315,9 @@
 										{/if}
 									</div>
 									<div class="tool-card-actions">
+										{#if toolAttemptLabel(projectedToolCall)}
+											<span class="tool-attempt">{toolAttemptLabel(projectedToolCall)}</span>
+										{/if}
 										<span class={`tool-status tone-${status === "error" ? "danger" : status === "done" ? "success" : "warning"}`.trim()}>
 											{status}
 										</span>
@@ -324,7 +333,8 @@
 						</div>
 					</article>
 				{:else if message.role === "toolResult"}
-					{@const params = conversation.toolCallsById.get(message.toolCallId)}
+					{@const projectedToolCall = conversation.toolCallsById.get(message.toolCallId)}
+					{@const params = projectedToolCall?.artifactParams}
 					<article
 						class={`message-row ${shouldVirtualize ? "virtual-row " : ""}tool-row`.trim()}
 						use:trackRowHeight={shouldVirtualize ? rowIndex : undefined}
@@ -345,6 +355,9 @@
 								{/if}
 							</div>
 							<div class="tool-result-actions">
+								{#if toolAttemptLabel(projectedToolCall)}
+									<span class="tool-attempt">{toolAttemptLabel(projectedToolCall)}</span>
+								{/if}
 								<span class={`tool-status tone-${message.isError ? "danger" : "success"}`.trim()}>
 									{message.isError ? "Error" : "Complete"}
 								</span>
@@ -527,6 +540,14 @@
 		font-family: var(--font-mono);
 		font-variant-numeric: tabular-nums;
 		color: var(--ui-text-secondary);
+	}
+
+	.tool-attempt {
+		font-size: 0.66rem;
+		font-family: var(--font-mono);
+		font-variant-numeric: tabular-nums;
+		color: var(--ui-text-secondary);
+		opacity: 0.9;
 	}
 
 	.tool-status.tone-success {
