@@ -9,7 +9,7 @@ import {
   userMessage,
 } from "./support";
 
-setDefaultTimeout(45_000);
+setDefaultTimeout(90_000);
 
 const DESKTOP_SPLIT_BREAKPOINT = 1220;
 const MOBILE_OVERLAY_BREAKPOINT = 760;

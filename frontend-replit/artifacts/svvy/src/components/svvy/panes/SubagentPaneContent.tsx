@@ -1,7 +1,6 @@
-import { Clock, GitBranch, FileText } from "lucide-react";
+import { Clock, FileText } from "lucide-react";
 import { StatusBadge } from "../StatusBadge";
 import { ModelBadge } from "../ModelBadge";
-import { usePanes } from "@/hooks/usePanes";
 import type { SubagentItem, AgentType } from "@/data/mock";
 import { Zap, Search, Code2, Eye, Workflow, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -82,9 +81,20 @@ Summary ready.`,
 };
 
 const filesReadMap: Record<string, string[]> = {
-  a1: ["src/utils/oauth.ts", "src/types/oauth.ts", "tests/utils/oauth.test.ts", "src/utils/index.ts"],
+  a1: [
+    "src/utils/oauth.ts",
+    "src/types/oauth.ts",
+    "tests/utils/oauth.test.ts",
+    "src/utils/index.ts",
+  ],
   a2: ["src/middleware/auth.ts", "src/utils/jwt.ts", "src/utils/oauth.ts", "src/types/oauth.ts"],
-  a3: ["src/middleware/auth.ts", "src/utils/jwt.ts", "src/types/index.ts", "src/middleware/session.ts", "src/routes/auth.ts"],
+  a3: [
+    "src/middleware/auth.ts",
+    "src/utils/jwt.ts",
+    "src/types/index.ts",
+    "src/middleware/session.ts",
+    "src/routes/auth.ts",
+  ],
 };
 
 const filesWrittenMap: Record<string, string[]> = {
@@ -133,12 +143,16 @@ export function SubagentPaneContent({ agent }: SubagentPaneContentProps) {
         </div>
 
         <div className="w-40 flex-shrink-0 border-l border-border overflow-y-auto scrollbar-thin py-2 px-2.5">
-          <div className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider mb-1.5">Read</div>
+          <div className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider mb-1.5">
+            Read
+          </div>
           <div className="space-y-0.5 mb-3">
-            {filesRead.map(f => (
+            {filesRead.map((f) => (
               <div key={f} className="flex items-center gap-1">
                 <FileText className="w-2 h-2 text-muted-foreground/50 flex-shrink-0" />
-                <span className="font-mono text-[9px] text-muted-foreground truncate">{f.split("/").pop()}</span>
+                <span className="font-mono text-[9px] text-muted-foreground truncate">
+                  {f.split("/").pop()}
+                </span>
               </div>
             ))}
             {filesRead.length === 0 && (
@@ -146,12 +160,16 @@ export function SubagentPaneContent({ agent }: SubagentPaneContentProps) {
             )}
           </div>
 
-          <div className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider mb-1.5">Written</div>
+          <div className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider mb-1.5">
+            Written
+          </div>
           <div className="space-y-0.5">
-            {filesWritten.map(f => (
+            {filesWritten.map((f) => (
               <div key={f} className="flex items-center gap-1">
                 <FileText className="w-2 h-2 text-emerald-400/60 flex-shrink-0" />
-                <span className="font-mono text-[9px] text-emerald-400/80 truncate">{f.split("/").pop()}</span>
+                <span className="font-mono text-[9px] text-emerald-400/80 truncate">
+                  {f.split("/").pop()}
+                </span>
               </div>
             ))}
             {filesWritten.length === 0 && (

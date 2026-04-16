@@ -1,10 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
-import {
-  projectConversation,
-  projectConversationSummary,
-} from "./conversation-projection";
+import { projectConversation, projectConversationSummary } from "./conversation-projection";
 
 function zeroUsage() {
   return {
@@ -54,21 +51,20 @@ function assistantMessage(
     api: "openai-responses",
     provider: "openai",
     model: "gpt-4o",
-    usage:
-      options.usage ?? {
+    usage: options.usage ?? {
+      input: 1,
+      output: 2,
+      cacheRead: 3,
+      cacheWrite: 4,
+      totalTokens: 10,
+      cost: {
         input: 1,
         output: 2,
         cacheRead: 3,
         cacheWrite: 4,
-        totalTokens: 10,
-        cost: {
-          input: 1,
-          output: 2,
-          cacheRead: 3,
-          cacheWrite: 4,
-          total: 10,
-        },
+        total: 10,
       },
+    },
     stopReason: "stop",
     content: [{ type: "text", text }, ...(options.toolCalls ?? [])],
   };
@@ -90,7 +86,9 @@ describe("conversation projection", () => {
     const messages: AgentMessage[] = [
       userMessage(1, "Hello"),
       assistantMessage(2, "First reply", {
-        toolCalls: [toolCall("tool-call-1", "artifacts", { command: "create", filename: "summary.html" })],
+        toolCalls: [
+          toolCall("tool-call-1", "artifacts", { command: "create", filename: "summary.html" }),
+        ],
       }),
       toolResultMessage(3, "Created file summary.html"),
       assistantMessage(4, "Second reply", {
@@ -139,7 +137,9 @@ describe("conversation projection", () => {
       toolResultMessage(3, "Created file summary.html"),
     ]);
     const streamMessage = assistantMessage(4, "Streaming reply", {
-      toolCalls: [toolCall("tool-call-3", "artifacts", { command: "update", filename: "summary.html" })],
+      toolCalls: [
+        toolCall("tool-call-3", "artifacts", { command: "update", filename: "summary.html" }),
+      ],
     });
 
     const summary = projectConversationSummary(committed, streamMessage);

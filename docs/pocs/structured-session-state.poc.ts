@@ -26,7 +26,12 @@ type TurnStatus = "running" | "waiting" | "completed" | "failed";
 type ThreadKind = "task" | "workflow" | "verification";
 type ThreadStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
 type WaitKind = "user" | "external";
-type CommandExecutor = "orchestrator" | "execute_typescript" | "runtime" | "smithers" | "verification";
+type CommandExecutor =
+  | "orchestrator"
+  | "execute_typescript"
+  | "runtime"
+  | "smithers"
+  | "verification";
 type CommandVisibility = "trace" | "summary" | "surface";
 type CommandStatus = "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
 type EpisodeKind = "analysis" | "change" | "verification" | "workflow" | "clarification";
@@ -62,9 +67,11 @@ export type StructuredSessionState = {
 
   session: {
     id: string;
-    wait: null | ({
-      threadId: string;
-    } & WaitState);
+    wait:
+      | null
+      | ({
+          threadId: string;
+        } & WaitState);
   };
 
   turns: Array<{
@@ -161,7 +168,15 @@ export type StructuredSessionState = {
     at: string;
     kind: string;
     subject: {
-      kind: "session" | "turn" | "thread" | "command" | "episode" | "verification" | "workflow" | "artifact";
+      kind:
+        | "session"
+        | "turn"
+        | "thread"
+        | "command"
+        | "episode"
+        | "verification"
+        | "workflow"
+        | "artifact";
       id: string;
     };
     data?: Record<string, unknown>;
@@ -265,7 +280,15 @@ export class StructuredSessionPoc {
     turn.status = status;
     turn.updatedAt = now;
     turn.finishedAt = now;
-    this.pushEvent(status === "waiting" ? "turn.waiting" : status === "failed" ? "turn.failed" : "turn.completed", "turn", turn.id);
+    this.pushEvent(
+      status === "waiting"
+        ? "turn.waiting"
+        : status === "failed"
+          ? "turn.failed"
+          : "turn.completed",
+      "turn",
+      turn.id,
+    );
     this.touchPi(now);
     this.save();
     return structuredClone(turn);
@@ -334,7 +357,9 @@ export class StructuredSessionPoc {
     }
 
     if (thread.wait && thread.dependsOnThreadIds.length > 0) {
-      throw new Error(`Thread ${thread.id} cannot wait on threads and user/external input at the same time.`);
+      throw new Error(
+        `Thread ${thread.id} cannot wait on threads and user/external input at the same time.`,
+      );
     }
 
     if (thread.status !== "waiting") {
@@ -342,12 +367,18 @@ export class StructuredSessionPoc {
       thread.wait = null;
       if (this.state.session.wait?.threadId === thread.id) {
         this.state.session.wait = null;
-        this.pushEvent("session.wait.cleared", "session", this.state.session.id, { threadId: thread.id });
+        this.pushEvent("session.wait.cleared", "session", this.state.session.id, {
+          threadId: thread.id,
+        });
       }
     }
 
     thread.updatedAt = now;
-    if (thread.status === "completed" || thread.status === "failed" || thread.status === "cancelled") {
+    if (
+      thread.status === "completed" ||
+      thread.status === "failed" ||
+      thread.status === "cancelled"
+    ) {
       thread.finishedAt = now;
     }
 
@@ -376,12 +407,22 @@ export class StructuredSessionPoc {
   }): StructuredSessionState["session"]["wait"] {
     const thread = this.findThread(input.threadId);
     if (thread.status !== "waiting" || !thread.wait) {
-      throw new Error(`Session wait requires a waiting thread with thread.wait details: ${thread.id}`);
+      throw new Error(
+        `Session wait requires a waiting thread with thread.wait details: ${thread.id}`,
+      );
     }
-    if (thread.wait.kind !== input.kind || thread.wait.reason !== input.reason || thread.wait.resumeWhen !== input.resumeWhen) {
+    if (
+      thread.wait.kind !== input.kind ||
+      thread.wait.reason !== input.reason ||
+      thread.wait.resumeWhen !== input.resumeWhen
+    ) {
       throw new Error(`Session wait must match the owning thread wait details: ${thread.id}`);
     }
-    if (this.state.threads.some((candidate) => candidate.id !== thread.id && candidate.status === "running")) {
+    if (
+      this.state.threads.some(
+        (candidate) => candidate.id !== thread.id && candidate.status === "running",
+      )
+    ) {
       throw new Error("Session wait is only allowed when no other runnable work remains.");
     }
 
@@ -460,7 +501,10 @@ export class StructuredSessionPoc {
     command.attempts += 1;
     command.updatedAt = now;
     command.summary = `${command.summary} Retry attempt ${command.attempts}.`;
-    this.pushEvent("command.started", "command", command.id, { attempts: command.attempts, retry: true });
+    this.pushEvent("command.started", "command", command.id, {
+      attempts: command.attempts,
+      retry: true,
+    });
     this.touchPi(now);
     this.save();
     return structuredClone(command);
@@ -493,10 +537,15 @@ export class StructuredSessionPoc {
     command.error = input.error ?? null;
     command.finishedAt = input.status === "waiting" ? null : now;
 
-    this.pushEvent(input.status === "waiting" ? "command.waiting" : "command.finished", "command", command.id, {
-      status: input.status,
-      error: command.error,
-    });
+    this.pushEvent(
+      input.status === "waiting" ? "command.waiting" : "command.finished",
+      "command",
+      command.id,
+      {
+        status: input.status,
+        error: command.error,
+      },
+    );
     this.touchPi(now);
     this.save();
     return structuredClone(command);
@@ -663,12 +712,18 @@ export class StructuredSessionPoc {
         events: this.state.events.length,
       },
       threadIdsByStatus: {
-        running: this.state.threads.filter((thread) => thread.status === "running").map((thread) => thread.id),
-        waiting: this.state.threads.filter((thread) => thread.status === "waiting").map((thread) => thread.id),
-        failed: this.state.threads.filter((thread) => thread.status === "failed").map((thread) => thread.id),
+        running: this.state.threads
+          .filter((thread) => thread.status === "running")
+          .map((thread) => thread.id),
+        waiting: this.state.threads
+          .filter((thread) => thread.status === "waiting")
+          .map((thread) => thread.id),
+        failed: this.state.threads
+          .filter((thread) => thread.status === "failed")
+          .map((thread) => thread.id),
       },
       visibleThreadIds: [...this.state.threads]
-        .sort((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt))
+        .toSorted((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt))
         .map((thread) => thread.id),
     };
   }
@@ -736,9 +791,11 @@ export class StructuredSessionPoc {
 
     const latestFailure = [
       ...this.state.turns.filter((turn) => turn.status === "failed").map((turn) => turn.updatedAt),
-      ...this.state.threads.filter((thread) => thread.status === "failed").map((thread) => thread.updatedAt),
+      ...this.state.threads
+        .filter((thread) => thread.status === "failed")
+        .map((thread) => thread.updatedAt),
     ]
-      .sort()
+      .toSorted()
       .pop();
 
     if (latestFailure) {
@@ -919,12 +976,15 @@ function runPoc(): void {
     episodeId: analysisEpisode.id,
     kind: "text",
     name: "architecture-audit.md",
-    content: "Replace four-path language with a single command pipeline and tools.* capability model.",
+    content:
+      "Replace four-path language with a single command pipeline and tools.* capability model.",
   });
   poc.updateThread(task1.id, { status: "completed" });
   poc.finishTurn(turn1.id, "completed");
 
-  const turn2 = poc.startTurn("Rewrite the PRD and the structured-state docs to match the adopted model.");
+  const turn2 = poc.startTurn(
+    "Rewrite the PRD and the structured-state docs to match the adopted model.",
+  );
   const task2 = poc.createThread({
     turnId: turn2.id,
     kind: "task",
@@ -937,7 +997,8 @@ function runPoc(): void {
     parentThreadId: task2.id,
     kind: "workflow",
     title: "Rewrite the product docs",
-    objective: "Run a delegated workflow that rewrites the PRD, specs, and POC around the command model.",
+    objective:
+      "Run a delegated workflow that rewrites the PRD, specs, and POC around the command model.",
   });
   poc.updateThread(task2.id, {
     status: "waiting",
@@ -1053,7 +1114,8 @@ function runPoc(): void {
     status: "waiting",
     wait: {
       kind: "user",
-      reason: "Need explicit user review of the rewritten architecture docs before refactoring runtime code.",
+      reason:
+        "Need explicit user review of the rewritten architecture docs before refactoring runtime code.",
       resumeWhen: "The user confirms the rewritten docs and requests the runtime refactor.",
       since: new Date().toISOString(),
     },
@@ -1061,7 +1123,8 @@ function runPoc(): void {
   poc.setSessionWait({
     threadId: task2.id,
     kind: "user",
-    reason: "Need explicit user review of the rewritten architecture docs before refactoring runtime code.",
+    reason:
+      "Need explicit user review of the rewritten architecture docs before refactoring runtime code.",
     resumeWhen: "The user confirms the rewritten docs and requests the runtime refactor.",
   });
   poc.finishCommand(waitCommand.id, {

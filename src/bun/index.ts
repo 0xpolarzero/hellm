@@ -9,27 +9,18 @@ import type {
   ProviderAuthInfo,
   SendPromptRequest,
 } from "../mainview/chat-rpc";
-import type { CustomProvider } from "../mainview/chat-storage";
 import {
   DEFAULT_CHAT_SETTINGS,
   type ChatDefaults,
   type ReasoningEffort,
 } from "../mainview/chat-settings";
-import type { PromptHistoryEntry } from "../mainview/prompt-history";
 import {
   getProviderEnvVar,
   removeCredential,
   resolveApiKey,
   resolveAuthState,
   setApiKey as storeApiKey,
-  setOAuthCredentials,
 } from "./auth-store";
-import {
-  applyE2eMutationBehavior,
-  applyE2eBootstrapDelayOnce,
-  getE2eBootstrapError,
-  getE2eOAuthBehavior,
-} from "./e2e-control";
 import { refreshIfNeeded, startOAuthLogin, supportsOAuth } from "./oauth-login";
 import { WorkspaceSessionCatalog, type SessionDefaults } from "./session-catalog";
 import { createSvvyToolBridge } from "./tool-bridge";
@@ -47,9 +38,9 @@ const DEV_SERVER_POLL_INTERVAL_MS = 250;
 const DEFAULT_RPC_TIMEOUT_MS = 120000;
 const DEFAULT_SYSTEM_PROMPT = [
   "You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.",
-  "When you intentionally start or change top-level work, write the lifecycle fact immediately with the structured-session-state tool.",
-  "Ordinary mentions of workflows, verification, resume, or waiting do not update structured state.",
-  "Use explicit lifecycle writes for direct work, delegated workflows, verification outcomes, dependency joins, and durable user or external waiting.",
+  "Everything you do is a tool call inside one shared execution model.",
+  "Use ordinary coding tools for generic work, verification.run for real verification, workflow.start for delegated workflows, and wait for durable user or external waits.",
+  "Threads, commands, verification, workflows, and wait state come from real tool execution rather than assistant prose.",
 ].join(" ");
 const ENV_FILES = [".env.local", ".env"];
 const PREFERRED_PROVIDERS = ["zai", "openai", "anthropic", "google"];
@@ -123,11 +114,6 @@ type DevServerMode = "auto" | "wait";
 
 function getDevServerMode(): DevServerMode {
   return process.env.SVVY_VITE_DEV_SERVER === "wait" ? "wait" : "auto";
-}
-
-function isEnvFlagEnabled(name: string): boolean {
-  const value = process.env[name]?.trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes";
 }
 
 async function isDevServerReady(): Promise<boolean> {
@@ -278,38 +264,6 @@ function listProviderAuthSummaries(): ProviderAuthInfo[] {
   });
 }
 
-function getE2eRendererSeed(): {
-  customProviders: CustomProvider[];
-  promptHistory: PromptHistoryEntry[];
-} | null {
-  const seedPath = process.env.SVVY_E2E_RENDERER_SEED_PATH?.trim();
-  if (!seedPath) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(readFileSync(seedPath, "utf8")) as {
-      customProviders?: CustomProvider[];
-      promptHistory?: PromptHistoryEntry[];
-    };
-    return {
-      customProviders: Array.isArray(parsed.customProviders) ? parsed.customProviders : [],
-      promptHistory: Array.isArray(parsed.promptHistory) ? parsed.promptHistory : [],
-    };
-  } catch (error) {
-    recordBridgeError(
-      "rpc",
-      error instanceof Error ? error.message : "Failed to read e2e renderer seed.",
-      "bun.e2e",
-      {
-        seedPath,
-      },
-      error,
-    );
-    return null;
-  }
-}
-
 const svvyToolBridge = createSvvyToolBridge({
   defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
   getActiveWorkspaceSession: () => workspaceSessionCatalog.getActiveSession(),
@@ -324,20 +278,11 @@ const recordBridgeEvent = svvyToolBridge.recordEvent;
 const recordBridgeLog = svvyToolBridge.recordLog;
 const recordBridgeError = svvyToolBridge.recordError;
 
-function assertBootstrapReady(): void {
-  const bootstrapError = getE2eBootstrapError();
-  if (bootstrapError) {
-    throw new Error(bootstrapError);
-  }
-}
-
 const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
   maxRequestTime: getRpcRequestTimeoutMs(),
   handlers: {
     requests: {
       getDefaults: async () => {
-        await applyE2eBootstrapDelayOnce();
-        assertBootstrapReady();
         return getDefaultChatSettings();
       },
       getProviderAuthState: async ({
@@ -345,12 +290,10 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       }: {
         providerId?: string;
       }): Promise<AuthStateResponse> => {
-        assertBootstrapReady();
         const defaults = getDefaultChatSettings();
         return createAuthState(providerId || defaults.provider);
       },
       getWorkspaceInfo: () => {
-        assertBootstrapReady();
         const cwd = resolveWorkspaceCwd();
         return {
           workspaceId: cwd,
@@ -359,15 +302,12 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         };
       },
       listSessions: async () => {
-        assertBootstrapReady();
         return await workspaceSessionCatalog.listSessions();
       },
       getActiveSession: async () => {
-        assertBootstrapReady();
         return await workspaceSessionCatalog.getActiveSession();
       },
       getActiveSessionSummary: async () => {
-        assertBootstrapReady();
         return await workspaceSessionCatalog.getActiveSessionSummary();
       },
       createSession: async ({
@@ -377,7 +317,6 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         parentSessionId?: string;
         title?: string;
       }) => {
-        await applyE2eMutationBehavior("createSession");
         const session = await workspaceSessionCatalog.createSession(
           { title, parentSessionId },
           getSessionDefaults(),
@@ -394,18 +333,13 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return session;
       },
       openSession: async ({ sessionId }: { sessionId: string }) => {
-        await applyE2eMutationBehavior("openSession");
-        const session = await workspaceSessionCatalog.openSession(
-          sessionId,
-          DEFAULT_SYSTEM_PROMPT,
-        );
+        const session = await workspaceSessionCatalog.openSession(sessionId, DEFAULT_SYSTEM_PROMPT);
         recordBridgeEvent("session.opened", {
           sessionId,
         });
         return session;
       },
       renameSession: async ({ sessionId, title }: { sessionId: string; title: string }) => {
-        await applyE2eMutationBehavior("renameSession");
         const result = await workspaceSessionCatalog.renameSession(sessionId, title);
         recordBridgeEvent("session.renamed", {
           sessionId,
@@ -414,7 +348,6 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return result;
       },
       forkSession: async ({ sessionId, title }: { sessionId: string; title?: string }) => {
-        await applyE2eMutationBehavior("forkSession");
         const session = await workspaceSessionCatalog.forkSession(
           { sessionId, title },
           getSessionDefaults(),
@@ -427,11 +360,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return session;
       },
       deleteSession: async ({ sessionId }: { sessionId: string }) => {
-        await applyE2eMutationBehavior("deleteSession");
-        const result = await workspaceSessionCatalog.deleteSession(
-          sessionId,
-          getSessionDefaults(),
-        );
+        const result = await workspaceSessionCatalog.deleteSession(sessionId, getSessionDefaults());
         recordBridgeEvent("session.deleted", { sessionId });
         return result;
       },
@@ -586,21 +515,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         providerId: string;
       }): Promise<{ ok: boolean; error?: string }> => {
         try {
-          const oauthBehavior = getE2eOAuthBehavior(providerId);
-          if (oauthBehavior) {
-            if (oauthBehavior.delayMs && oauthBehavior.delayMs > 0) {
-              await Bun.sleep(oauthBehavior.delayMs);
-            }
-            if (oauthBehavior.error?.trim()) {
-              throw new Error(oauthBehavior.error.trim());
-            }
-
-            if (oauthBehavior.credentials) {
-              setOAuthCredentials(providerId, oauthBehavior.credentials);
-            }
-          } else {
           await startOAuthLogin(providerId);
-          }
           recordBridgeEvent("provider.oauth.started", { providerId });
           return { ok: true };
         } catch (error) {
@@ -621,7 +536,6 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         recordBridgeEvent("provider.auth.removed", { providerId });
         return { ok: true };
       },
-      getE2eRendererSeed: async () => getE2eRendererSeed(),
     },
   },
 });
@@ -673,27 +587,21 @@ ApplicationMenu.setApplicationMenu(appMenu);
 loadRuntimeEnv();
 
 const url = await getMainViewUrl(localInfoChannelPromise);
-const e2eHeadless = isEnvFlagEnabled("SVVY_E2E_HEADLESS");
 
 mainWindow = new BrowserWindow({
   title: "svvy",
   frame: {
-    x: e2eHeadless ? -20_000 : 0,
-    y: e2eHeadless ? -20_000 : 0,
+    x: 0,
+    y: 0,
     width: 1180,
     height: 820,
   },
-  hidden: e2eHeadless,
   titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
-  url,
   rpc,
 });
 
 const mountedToolBridge = await svvyToolBridge.mount(mainWindow);
-
-if (e2eHeadless) {
-  mainWindow.show();
-}
+mainWindow.webview.loadURL(url);
 
 recordBridgeEvent("app.ready", {
   bridgeUrl: mountedToolBridge.url ?? null,

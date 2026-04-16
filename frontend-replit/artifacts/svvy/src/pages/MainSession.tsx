@@ -5,14 +5,24 @@ import { EpisodeCard } from "@/components/svvy/EpisodeCard";
 import { VerificationCard } from "@/components/svvy/VerificationCard";
 import { WaitingCard } from "@/components/svvy/WaitingCard";
 import { FailedCard } from "@/components/svvy/FailedCard";
-import { mockThreads, mockSubagents, mockWorkflowRun, mockEpisodes, mockVerification, mockVerificationFailed } from "@/data/mock";
+import {
+  mockThreads,
+  mockSubagents,
+  mockWorkflowRun,
+  mockEpisodes,
+  mockVerification,
+  mockVerificationFailed,
+} from "@/data/mock";
 
 interface MainSessionProps {
   variant?: "default" | "inspector" | "active" | "waiting" | "failed";
 }
 
 const userMessages = [
-  { id: "um1", text: "Implement OAuth 2.0 support with PKCE for GitHub and Google providers. Make sure the middleware handles token refresh and expired tokens gracefully." },
+  {
+    id: "um1",
+    text: "Implement OAuth 2.0 support with PKCE for GitHub and Google providers. Make sure the middleware handles token refresh and expired tokens gracefully.",
+  },
 ];
 
 const orchestratorMessages = [
@@ -41,8 +51,12 @@ function OrchestratorMessage({ text, bullets }: { text: string; bullets?: string
   return (
     <div data-testid="orchestrator-message">
       <div className="flex items-center gap-1.5 mb-1.5">
-        <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-wider">orchestrator</span>
-        <span className="font-mono text-[9px] text-orange-400 border border-orange-500/20 bg-orange-500/8 rounded px-1 py-0.5">opus</span>
+        <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-wider">
+          orchestrator
+        </span>
+        <span className="font-mono text-[9px] text-orange-400 border border-orange-500/20 bg-orange-500/8 rounded px-1 py-0.5">
+          opus
+        </span>
       </div>
       <p className="text-[13px] text-foreground leading-relaxed mb-2">{text}</p>
       {bullets && bullets.length > 0 && (
@@ -63,12 +77,15 @@ export default function MainSession({ variant = "default" }: MainSessionProps) {
   const showInspector = variant === "inspector";
   const isStreaming = variant === "active";
   const budgetPercent = variant === "active" ? 71 : variant === "failed" ? 88 : 42;
-  const threadList = variant === "waiting" ? [mockThreads[2], mockThreads[1]] : [mockThreads[0], mockThreads[1]];
+  const threadList =
+    variant === "waiting" ? [mockThreads[2], mockThreads[1]] : [mockThreads[0], mockThreads[1]];
 
   return (
     <PaneSplitShell
       title="OAuth Provider Integration"
-      sessionStatus={variant === "waiting" ? "waiting" : variant === "failed" ? "failed" : "running"}
+      sessionStatus={
+        variant === "waiting" ? "waiting" : variant === "failed" ? "failed" : "running"
+      }
       worktree="feat/oauth-provider"
       budgetPercent={budgetPercent}
       isStreaming={isStreaming}
@@ -88,15 +105,19 @@ export default function MainSession({ variant = "default" }: MainSessionProps) {
           <ThreadCard
             key={thread.id}
             thread={thread}
-            subagents={index === 0 ? [mockSubagents[0], mockSubagents[2]] : variant === "active" ? [mockSubagents[1]] : []}
+            subagents={
+              index === 0
+                ? [mockSubagents[0], mockSubagents[2]]
+                : variant === "active"
+                  ? [mockSubagents[1]]
+                  : []
+            }
           />
         ))}
 
         <EpisodeCard episode={mockEpisodes[0]} />
 
-        {variant !== "failed" && (
-          <VerificationCard result={mockVerification} />
-        )}
+        {variant !== "failed" && <VerificationCard result={mockVerification} />}
 
         {variant === "failed" && (
           <FailedCard
@@ -119,8 +140,11 @@ export default function MainSession({ variant = "default" }: MainSessionProps) {
 
         {isStreaming && (
           <div className="text-[13px] text-foreground/80 leading-relaxed">
-            <span className="font-mono text-[9px] text-muted-foreground block mb-1.5 uppercase tracking-wider">orchestrator</span>
-            Now delegating integration test writing to the implementer subagent. I'll review the test coverage once the initial suite is written
+            <span className="font-mono text-[9px] text-muted-foreground block mb-1.5 uppercase tracking-wider">
+              orchestrator
+            </span>
+            Now delegating integration test writing to the implementer subagent. I'll review the
+            test coverage once the initial suite is written
             <span className="stream-cursor" />
           </div>
         )}

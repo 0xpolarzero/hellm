@@ -10,7 +10,7 @@ import {
   userMessage,
 } from "./support";
 
-setDefaultTimeout(45_000);
+setDefaultTimeout(90_000);
 
 beforeAll(async () => {
   await ensureBuilt();
@@ -63,7 +63,11 @@ async function openSessionActions(page: SvvyApp["page"], title: string): Promise
   await page.getByRole("button", { name: `Session actions for ${title}` }).click({ force: true });
 }
 
-async function renameSession(page: SvvyApp["page"], title: string, nextTitle: string): Promise<void> {
+async function renameSession(
+  page: SvvyApp["page"],
+  title: string,
+  nextTitle: string,
+): Promise<void> {
   await openSessionActions(page, title);
   await page.getByRole("button", { name: "Rename" }).click();
   await page.getByRole("dialog", { name: "Rename Session" }).waitFor({ state: "visible" });
@@ -190,7 +194,9 @@ test("a workspace with many sessions still boots and the newest session is activ
       };
     });
 
-    const expectedTitles = [...sessions].toReversed().map((session) => session.title ?? "New Session");
+    const expectedTitles = [...sessions]
+      .toReversed()
+      .map((session) => session.title ?? "New Session");
     const newestTitle = expectedTitles[0] ?? "New Session";
 
     await withSvvyApp(

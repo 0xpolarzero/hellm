@@ -12,15 +12,8 @@ import type {
   UserMessage,
 } from "@mariozechner/pi-ai";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
-import type {
-  E2ePromptScenario,
-  E2ePromptStep,
-  SvvyE2eControl,
-} from "../src/bun/e2e-control";
 import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
-import type { CustomProvider } from "../src/mainview/chat-storage";
 import { DEFAULT_CHAT_SETTINGS } from "../src/mainview/chat-settings";
-import type { PromptHistoryEntry } from "../src/mainview/prompt-history";
 
 export function resolveAppWorkspaceDir(rootDir = process.cwd()): string {
   return resolveElectrobunWorkspaceDir(rootDir);
@@ -63,10 +56,7 @@ export function getTestAgentDir(homeDir: string): string {
   return join(homeDir, ".config", "svvy", "pi-agent");
 }
 
-export function getTestSessionDir(
-  homeDir: string,
-  workspaceDir = ROOT_WORKSPACE_DIR,
-): string {
+export function getTestSessionDir(homeDir: string, workspaceDir = ROOT_WORKSPACE_DIR): string {
   return join(
     getTestAgentDir(homeDir),
     "sessions",
@@ -76,14 +66,6 @@ export function getTestSessionDir(
 
 export function getTestAuthFile(homeDir: string): string {
   return join(homeDir, ".config", "svvy", "auth.json");
-}
-
-export function getRendererSeedFile(homeDir: string): string {
-  return join(homeDir, ".config", "svvy", "renderer-seed.json");
-}
-
-export function getE2eControlFile(homeDir: string): string {
-  return join(homeDir, ".config", "svvy", "e2e-control.json");
 }
 
 export async function seedProviderApiKeys(
@@ -99,33 +81,6 @@ export async function seedProviderApiKeys(
   await writeFile(authFile, `${JSON.stringify(serialized, null, 2)}\n`, {
     mode: 0o600,
   });
-}
-
-export async function writeRendererSeed(
-  homeDir: string,
-  seed: {
-    customProviders?: CustomProvider[];
-    promptHistory?: PromptHistoryEntry[];
-  },
-): Promise<string> {
-  const seedFile = getRendererSeedFile(homeDir);
-  await mkdir(join(homeDir, ".config", "svvy"), { recursive: true });
-  await writeFile(seedFile, `${JSON.stringify(seed, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  return seedFile;
-}
-
-export async function writeE2eControl(
-  homeDir: string,
-  control: SvvyE2eControl,
-): Promise<string> {
-  const controlFile = getE2eControlFile(homeDir);
-  await mkdir(join(homeDir, ".config", "svvy"), { recursive: true });
-  await writeFile(controlFile, `${JSON.stringify(control, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  return controlFile;
 }
 
 export async function seedSessions(
@@ -243,68 +198,6 @@ export function toolResultMessage(
   };
 }
 
-export function e2eTextStep(
-  text: string,
-  options: {
-    chunkDelayMs?: number;
-    chunks?: string[];
-  } = {},
-): E2ePromptStep {
-  return {
-    type: "text",
-    text,
-    chunkDelayMs: options.chunkDelayMs,
-    chunks: options.chunks,
-  };
-}
-
-export function e2eThinkingStep(
-  text: string,
-  options: {
-    chunkDelayMs?: number;
-    chunks?: string[];
-  } = {},
-): E2ePromptStep {
-  return {
-    type: "thinking",
-    text,
-    chunkDelayMs: options.chunkDelayMs,
-    chunks: options.chunks,
-  };
-}
-
-export function e2eToolCallStep(
-  name: string,
-  argumentsValue: Record<string, unknown>,
-  options: {
-    chunkDelayMs?: number;
-    chunks?: string[];
-    id?: string;
-  } = {},
-): E2ePromptStep {
-  return {
-    type: "toolCall",
-    name,
-    arguments: argumentsValue,
-    chunkDelayMs: options.chunkDelayMs,
-    chunks: options.chunks,
-    id: options.id,
-  };
-}
-
-export function e2eDelayStep(ms: number): E2ePromptStep {
-  return {
-    type: "delay",
-    ms,
-  };
-}
-
-export function e2ePromptScenario(
-  scenario: E2ePromptScenario,
-): E2ePromptScenario {
-  return scenario;
-}
-
 export function artifactCreateConversation(options: {
   content: string;
   filename: string;
@@ -327,12 +220,9 @@ export function artifactCreateConversation(options: {
       toolCalls: [artifactCall],
       stopReason: "toolUse",
     }),
-    toolResultMessage(
-      artifactCall.id,
-      "artifacts",
-      `Created file ${options.filename}`,
-      { timestamp: startedAt + 2 },
-    ),
+    toolResultMessage(artifactCall.id, "artifacts", `Created file ${options.filename}`, {
+      timestamp: startedAt + 2,
+    }),
     assistantTextMessage(`Done. Open ${options.filename}.`, {
       timestamp: startedAt + 3,
     }),

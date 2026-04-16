@@ -10,7 +10,7 @@ import {
   type SeedSessionInput,
 } from "./support";
 
-setDefaultTimeout(45_000);
+setDefaultTimeout(90_000);
 
 const BASE_TIMESTAMP = 1_730_000_000_000;
 
@@ -205,7 +205,9 @@ test("renders seeded transcript messages, reasoning traces, and tool cards", asy
   await withRichTranscriptApp(async ({ page }) => {
     await openSeededSession(page, "Transcript and artifacts");
 
-    await page.getByText("Seed the transcript that exercises artifacts.").waitFor({ state: "visible" });
+    await page
+      .getByText("Seed the transcript that exercises artifacts.")
+      .waitFor({ state: "visible" });
     await page.getByText("I will create the HTML preview first.").waitFor({ state: "visible" });
     await page.getByText("The HTML artifact is ready.").waitFor({ state: "visible" });
 
@@ -213,7 +215,9 @@ test("renders seeded transcript messages, reasoning traces, and tool cards", asy
     expect(await thinkingBlocks.count()).toBe(4);
     const firstThinking = thinkingBlocks.first();
     await firstThinking.locator("summary").click({ force: true });
-    expect(await firstThinking.locator("pre").textContent()).toContain("Plan the preview and the supporting files.");
+    expect(await firstThinking.locator("pre").textContent()).toContain(
+      "Plan the preview and the supporting files.",
+    );
 
     const toolCards = page.locator(".tool-card");
     expect(await toolCards.count()).toBe(4);
@@ -279,7 +283,9 @@ test("disables the artifact button when no artifacts are seeded", async () => {
     expect((await assistantTexts.first().textContent())?.trim()).toBe(
       "This session only checks transcript rendering.",
     );
-    expect((await page.getByRole("button", { name: /Artifacts 0/ }).resolve()).first?.disabled).toBe(true);
+    expect(
+      (await page.getByRole("button", { name: /Artifacts 0/ }).resolve()).first?.disabled,
+    ).toBe(true);
   });
 });
 

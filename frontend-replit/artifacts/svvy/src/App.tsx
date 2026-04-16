@@ -18,21 +18,11 @@ function Router() {
       <Route path="/new" component={NewSession} />
       <Route path="/session/multipane" component={MultiPanePage} />
       <Route path="/session/subagent" component={SubagentPane} />
-      <Route path="/session/inspector">
-        {() => <MainSession variant="inspector" />}
-      </Route>
-      <Route path="/session/active">
-        {() => <MainSession variant="active" />}
-      </Route>
-      <Route path="/session/waiting">
-        {() => <MainSession variant="waiting" />}
-      </Route>
-      <Route path="/session/failed">
-        {() => <MainSession variant="failed" />}
-      </Route>
-      <Route path="/session">
-        {() => <MainSession variant="default" />}
-      </Route>
+      <Route path="/session/inspector">{() => <MainSession variant="inspector" />}</Route>
+      <Route path="/session/active">{() => <MainSession variant="active" />}</Route>
+      <Route path="/session/waiting">{() => <MainSession variant="waiting" />}</Route>
+      <Route path="/session/failed">{() => <MainSession variant="failed" />}</Route>
+      <Route path="/session">{() => <MainSession variant="default" />}</Route>
       <Route path="/workflow" component={WorkflowInspectorPage} />
       <Route path="/artifacts" component={ArtifactBrowserPage} />
       <Route path="/settings/auth" component={SettingsAuth} />
@@ -42,8 +32,13 @@ function Router() {
         {() => (
           <div className="h-full flex items-center justify-center bg-background">
             <div className="text-center">
-              <p className="font-mono text-[12px] text-muted-foreground mb-2">404 — route not found</p>
-              <a href="/" className="text-[12px] text-orange-500 hover:text-orange-400 underline underline-offset-2">
+              <p className="font-mono text-[12px] text-muted-foreground mb-2">
+                404 — route not found
+              </p>
+              <a
+                href="/"
+                className="text-[12px] text-orange-500 hover:text-orange-400 underline underline-offset-2"
+              >
                 Go to launcher
               </a>
             </div>

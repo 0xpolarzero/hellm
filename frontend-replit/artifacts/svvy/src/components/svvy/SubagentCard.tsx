@@ -35,27 +35,29 @@ export function SubagentCard({ agent, className, expandable = true }: SubagentCa
       className={cn(
         "flex items-center gap-2 px-2 py-1.5 rounded bg-muted/40 border border-border/50",
         expandable && "hover:bg-muted/70 transition-colors cursor-pointer",
-        className
+        className,
       )}
       onClick={handleClick}
       role={expandable ? "button" : undefined}
       tabIndex={expandable ? 0 : undefined}
-      onKeyDown={e => e.key === "Enter" && handleClick()}
+      onKeyDown={(e) => e.key === "Enter" && handleClick()}
       data-testid={`subagent-card-${agent.id}`}
     >
       <Icon className={cn("w-3 h-3 flex-shrink-0", config.color)} />
-      <span className={cn("font-mono text-[10px] flex-shrink-0", config.color)}>{config.label}</span>
+      <span className={cn("font-mono text-[10px] flex-shrink-0", config.color)}>
+        {config.label}
+      </span>
       <span className="text-[11px] text-foreground/80 flex-1 truncate">{agent.headline}</span>
 
       <div className="flex items-center gap-1.5 flex-shrink-0">
         <StatusDot status={agent.status} />
         {agent.tokens && (
-          <span className="font-mono text-[9px] text-muted-foreground">{(agent.tokens / 1000).toFixed(1)}k</span>
+          <span className="font-mono text-[9px] text-muted-foreground">
+            {(agent.tokens / 1000).toFixed(1)}k
+          </span>
         )}
         <ModelBadge model={agent.model} size="xs" />
-        {expandable && (
-          <span className="font-mono text-[8px] text-muted-foreground/40">→</span>
-        )}
+        {expandable && <span className="font-mono text-[8px] text-muted-foreground/40">→</span>}
       </div>
     </div>
   );

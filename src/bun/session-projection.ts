@@ -121,13 +121,11 @@ export function getSessionParentId(parentSessionFile: string | undefined): strin
   return match?.[1];
 }
 
-export function getSessionTitle(
-  source: {
-    name?: string;
-    firstMessage?: string;
-    messages?: AgentMessage[];
-  },
-): string {
+export function getSessionTitle(source: {
+  name?: string;
+  firstMessage?: string;
+  messages?: AgentMessage[];
+}): string {
   const explicitName = normalizeText(source.name, TITLE_LIMIT);
   if (explicitName) {
     return explicitName;
@@ -144,12 +142,10 @@ export function getSessionTitle(
   return NEW_SESSION_TITLE;
 }
 
-export function getSessionPreview(
-  source: {
-    firstMessage?: string;
-    messages?: AgentMessage[];
-  },
-): string {
+export function getSessionPreview(source: {
+  firstMessage?: string;
+  messages?: AgentMessage[];
+}): string {
   if (source.messages) {
     const latestText = normalizeText(
       flattenMessageText(getLatestVisibleMessage(source.messages)),

@@ -1,6 +1,11 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, AssistantMessageEvent, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type {
+  AssistantMessage,
+  AssistantMessageEvent,
+  ToolCall,
+  ToolResultMessage,
+} from "@mariozechner/pi-ai";
 import type { ChatStorage, CustomProvider } from "./chat-storage";
 import type {
   ActiveSessionState,
@@ -96,6 +101,23 @@ function createSummary(
     updatedAt: "2026-04-10T10:05:00.000Z",
     messageCount: 2,
     status: "idle",
+    wait: null,
+    counts: {
+      turns: 0,
+      threads: 0,
+      commands: 0,
+      episodes: 0,
+      verifications: 0,
+      workflows: 0,
+      artifacts: 0,
+      events: 0,
+    },
+    threadIdsByStatus: {
+      running: [],
+      waiting: [],
+      failed: [],
+    },
+    visibleThreadIds: [],
     ...(includeModelMetadata
       ? {
           provider: "openai",
@@ -141,8 +163,12 @@ function cloneActiveSessionSummary(session: ActiveSessionState): ActiveSessionSu
 }
 
 function stripSummaryMetadata(summary: WorkspaceSessionSummary): WorkspaceSessionSummary {
-  const { provider: _provider, modelId: _modelId, thinkingLevel: _thinkingLevel, ...rest } =
-    summary;
+  const {
+    provider: _provider,
+    modelId: _modelId,
+    thinkingLevel: _thinkingLevel,
+    ...rest
+  } = summary;
   return { ...rest };
 }
 
@@ -208,7 +234,9 @@ function createFakeRpc(
       getActiveSession: async () => getActiveSession(),
       getActiveSessionSummary: async () => {
         requestCounts.getActiveSessionSummary += 1;
-        return activeSessionId ? cloneActiveSessionSummary(sessionsById.get(activeSessionId)!) : null;
+        return activeSessionId
+          ? cloneActiveSessionSummary(sessionsById.get(activeSessionId)!)
+          : null;
       },
       createSession: async ({ title }: { title?: string }) => {
         const id = `session-${sessionsById.size + 1}`;
@@ -305,7 +333,6 @@ function createFakeRpc(
       setProviderApiKey: async () => ({ ok: true }),
       startOAuth: async () => ({ ok: true }),
       removeProviderAuth: async () => ({ ok: true }),
-      getE2eRendererSeed: async () => null,
     },
     addMessageListener: (_messageName: string, listener: unknown) => {
       listeners.add(
@@ -404,10 +431,7 @@ function createFakeRpcWithToolUse(
         const toolAssistant: AssistantMessage = {
           ...assistantMessage("Using the artifacts tool."),
           stopReason: "toolUse",
-          content: [
-            { type: "text", text: "Using the artifacts tool." },
-            toolUse,
-          ],
+          content: [{ type: "text", text: "Using the artifacts tool." }, toolUse],
         };
         session.messages = [
           ...request.messages,
@@ -446,7 +470,6 @@ function createFakeRpcWithToolUse(
       setProviderApiKey: async () => ({ ok: true }),
       startOAuth: async () => ({ ok: true }),
       removeProviderAuth: async () => ({ ok: true }),
-      getE2eRendererSeed: async () => null,
     },
     addMessageListener: (_messageName: string, listener: unknown) => {
       listeners.add(
@@ -546,9 +569,9 @@ describe("createChatRuntime", () => {
     expect(requestCounts.listSessions).toBe(1);
     expect(requestCounts.getActiveSession).toBe(2);
     expect(requestCounts.getActiveSessionSummary).toBe(1);
-    expect(
-      runtime.sessions.find((session) => session.id === "session-2")?.preview,
-    ).toBe("Session-specific reply");
+    expect(runtime.sessions.find((session) => session.id === "session-2")?.preview).toBe(
+      "Session-specific reply",
+    );
 
     await runtime.renameSession("session-2", "Renamed");
     expect(runtime.sessions.find((session) => session.id === "session-2")?.title).toBe("Renamed");

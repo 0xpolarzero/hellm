@@ -27,7 +27,10 @@ const fakeDiff: DiffLine[] = [
   { type: "add", content: "+  const provider = req.headers['x-oauth-provider'] as OAuthProvider;" },
   { type: "add", content: "+" },
   { type: "add", content: "+  if (!authHeader) {" },
-  { type: "add", content: "+    return res.status(401).json({ error: 'No authorization header' });" },
+  {
+    type: "add",
+    content: "+    return res.status(401).json({ error: 'No authorization header' });",
+  },
   { type: "add", content: "+  }" },
   { type: "add", content: "+" },
   { type: "add", content: "+  const token = authHeader.startsWith('Bearer ')" },
@@ -59,10 +62,14 @@ interface DiffViewerProps {
   className?: string;
 }
 
-export function DiffViewer({ lines = fakeDiff, filename = "src/middleware/auth.ts", className }: DiffViewerProps) {
+export function DiffViewer({
+  lines = fakeDiff,
+  filename = "src/middleware/auth.ts",
+  className,
+}: DiffViewerProps) {
   const stats = {
-    added: lines.filter(l => l.type === "add").length,
-    removed: lines.filter(l => l.type === "remove").length,
+    added: lines.filter((l) => l.type === "add").length,
+    removed: lines.filter((l) => l.type === "remove").length,
   };
 
   return (
@@ -87,11 +94,13 @@ export function DiffViewer({ lines = fakeDiff, filename = "src/middleware/auth.t
                   line.type === "context" && "diff-context",
                 )}
               >
-                <td className={cn(
-                  "pl-4 pr-2 select-none w-4 text-[10px] text-right opacity-40 border-r border-border/40",
-                  line.type === "add" ? "text-emerald-500" : "",
-                  line.type === "remove" ? "text-red-500" : "",
-                )}>
+                <td
+                  className={cn(
+                    "pl-4 pr-2 select-none w-4 text-[10px] text-right opacity-40 border-r border-border/40",
+                    line.type === "add" ? "text-emerald-500" : "",
+                    line.type === "remove" ? "text-red-500" : "",
+                  )}
+                >
                   {line.type === "add" ? "+" : line.type === "remove" ? "-" : " "}
                 </td>
                 <td className="pl-3 pr-4 py-0 whitespace-pre overflow-hidden">

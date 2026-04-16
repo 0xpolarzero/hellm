@@ -13,7 +13,7 @@ export default function MultiPanePage() {
     <div className="flex h-full bg-background overflow-hidden" data-testid="multi-pane-page">
       <NavRail
         collapsed={collapsed}
-        onToggle={() => setCollapsed(c => !c)}
+        onToggle={() => setCollapsed((c) => !c)}
         activeSessionId="s1"
       />
 
@@ -21,7 +21,9 @@ export default function MultiPanePage() {
         {/* Header */}
         <div className="flex items-center justify-between px-4 h-9 border-b border-border flex-shrink-0 bg-card/50">
           <div className="flex items-center gap-2">
-            <span className="text-[12px] font-medium text-foreground">OAuth Provider Integration</span>
+            <span className="text-[12px] font-medium text-foreground">
+              OAuth Provider Integration
+            </span>
             <StatusBadge status="running" size="xs" />
             <span className="text-border mx-0.5">/</span>
             <span className="font-mono text-[10px] text-muted-foreground flex items-center gap-1">

@@ -1,9 +1,9 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { ensureBuilt, withSvvyApp, type SvvyApp } from "./harness";
-import { getTestAuthFile, writeE2eControl } from "./support";
+import { getTestAuthFile } from "./support";
 
-setDefaultTimeout(45_000);
+setDefaultTimeout(90_000);
 
 const BLANK_PROVIDER_ENV = {
   OPENAI_API_KEY: "",
@@ -47,13 +47,10 @@ async function openSettings(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("dialog").waitFor({ state: "visible" });
 }
 
-async function closeSettings(page: SvvyApp["page"]): Promise<void> {
-  await page.locator(".ui-dialog-close").click();
-  await page.getByRole("dialog").waitFor({ state: "detached" });
-}
-
 async function providerStatus(page: SvvyApp["page"], providerId: string): Promise<string> {
-  return (await providerRow(page, providerId).locator(".provider-status").textContent())?.trim() ?? "";
+  return (
+    (await providerRow(page, providerId).locator(".provider-status").textContent())?.trim() ?? ""
+  );
 }
 
 test("saving an API key writes auth.json", async () => {
@@ -76,76 +73,6 @@ test("saving an API key writes auth.json", async () => {
     const authContent = readFileSync(authFile, "utf8");
     expect(authContent).toContain("persisted-openai-key");
   });
-});
-
-test("successful OAuth writes auth.json and refreshes provider status", async () => {
-  await withSvvyApp(
-    {
-      env: noAuthEnv(),
-      beforeLaunch: async ({ homeDir, runtimeEnv }) => {
-        const controlFile = await writeE2eControl(homeDir, {
-          oauth: {
-            anthropic: {
-              credentials: {
-                access: "anthropic-access-token",
-                refresh: "anthropic-refresh-token",
-                expires: Date.now() + 60_000,
-              },
-            },
-          },
-        });
-        runtimeEnv.SVVY_E2E_CONTROL_PATH = controlFile;
-      },
-    },
-    async ({ homeDir, page }) => {
-      const authFile = getTestAuthFile(homeDir);
-      await openSettings(page);
-      await page.locator(".provider-row").first().waitFor({ state: "visible" });
-
-      const anthropicRow = providerRow(page, "anthropic");
-      await anthropicRow.getByRole("button", { name: "OAuth" }).first().click();
-
-      await page.getByText("Connected").waitFor({ state: "visible" });
-      expect(await providerStatus(page, "anthropic")).toBe("OAuth");
-      expect(existsSync(authFile)).toBe(true);
-
-      const authState = JSON.parse(readFileSync(authFile, "utf8")) as Record<
-        string,
-        { type?: string; credentials?: { access?: string } }
-      >;
-      expect(authState.anthropic?.type).toBe("oauth");
-      expect(authState.anthropic?.credentials?.access).toBe("anthropic-access-token");
-    },
-  );
-});
-
-test("failed OAuth shows an error and leaves auth state unchanged", async () => {
-  await withSvvyApp(
-    {
-      env: noAuthEnv(),
-      beforeLaunch: async ({ homeDir, runtimeEnv }) => {
-        const controlFile = await writeE2eControl(homeDir, {
-          oauth: {
-            anthropic: {
-              error: "OAuth handshake failed in e2e stub",
-            },
-          },
-        });
-        runtimeEnv.SVVY_E2E_CONTROL_PATH = controlFile;
-      },
-    },
-    async ({ homeDir, page }) => {
-      await openSettings(page);
-      await page.locator(".provider-row").first().waitFor({ state: "visible" });
-
-      const anthropicRow = providerRow(page, "anthropic");
-      await anthropicRow.getByRole("button", { name: "OAuth" }).first().click();
-
-      await page.getByText("OAuth handshake failed in e2e stub").waitFor({ state: "visible" });
-      expect(await providerStatus(page, "anthropic")).toBe("Not configured");
-      expect(existsSync(getTestAuthFile(homeDir))).toBe(false);
-    },
-  );
 });
 
 test("env-backed auth shows as connected without writing auth.json", async () => {

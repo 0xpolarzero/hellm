@@ -9,6 +9,14 @@ const REPORT_HTML_CONTENT =
 const CHART_HTML_CONTENT =
   '<!doctype html><html><body><script>console.log("chart");</script>Chart</body></html>';
 
+async function captureFilenameLog(filename: string) {
+  return `[log] ${filename}`;
+}
+
+async function captureEmptyLog() {
+  return "";
+}
+
 type ArtifactOperation = {
   id: string;
   command: ArtifactCommand;
@@ -191,13 +199,12 @@ describe("ArtifactsController", () => {
   test("syncFromMessages matches full replay for mixed artifact operations", async () => {
     const fullReplayController = new ArtifactsController();
     const incrementalController = new ArtifactsController();
-    const captureHtmlLogs = async (filename: string) => `[log] ${filename}`;
     (
-      fullReplayController as unknown as { captureHtmlLogs: typeof captureHtmlLogs }
-    ).captureHtmlLogs = captureHtmlLogs;
+      fullReplayController as unknown as { captureHtmlLogs: typeof captureFilenameLog }
+    ).captureHtmlLogs = captureFilenameLog;
     (
-      incrementalController as unknown as { captureHtmlLogs: typeof captureHtmlLogs }
-    ).captureHtmlLogs = captureHtmlLogs;
+      incrementalController as unknown as { captureHtmlLogs: typeof captureFilenameLog }
+    ).captureHtmlLogs = captureFilenameLog;
 
     const operations: ArtifactOperation[] = [
       {
@@ -276,9 +283,8 @@ describe("ArtifactsController", () => {
 
   test("getPreviewDocument escapes embedded script markers in the snapshot", async () => {
     const controller = new ArtifactsController();
-    const captureHtmlLogs = async () => "";
-    (controller as unknown as { captureHtmlLogs: typeof captureHtmlLogs }).captureHtmlLogs =
-      captureHtmlLogs;
+    (controller as unknown as { captureHtmlLogs: typeof captureEmptyLog }).captureHtmlLogs =
+      captureEmptyLog;
 
     await controller.syncFromMessages(createSeededHtmlMessages(), { replace: true });
 

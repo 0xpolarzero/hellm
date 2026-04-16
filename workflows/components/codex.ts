@@ -5,12 +5,7 @@ import { resolve } from "node:path";
 
 export type CodexSandbox = "read-only" | "workspace-write" | "danger-full-access";
 
-type CodexConfigValue =
-  | string
-  | number
-  | boolean
-  | Record<string, unknown>
-  | null;
+type CodexConfigValue = string | number | boolean | Record<string, unknown> | null;
 
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = parsePositiveInt(
   process.env.SVVY_WORKFLOWS_HEARTBEAT_TIMEOUT_MS,

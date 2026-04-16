@@ -1,15 +1,48 @@
 import { useLocation } from "wouter";
-import { FolderOpen, Clock, Plus, ChevronRight, GitBranch, Settings, Sun, Moon, ArrowRight } from "lucide-react";
-import { cn } from "@/lib/utils";
+import {
+  FolderOpen,
+  Clock,
+  Plus,
+  ChevronRight,
+  GitBranch,
+  Settings,
+  Sun,
+  Moon,
+  ArrowRight,
+} from "lucide-react";
 import { StatusDot } from "@/components/svvy/StatusBadge";
 import { useTheme } from "@/hooks/useTheme";
 import { mockFolderGroups, mockSessions } from "@/data/mock";
 
 const recentWorkspaces = [
-  { path: "~/code/auth-service", branch: "feat/oauth-provider", sessions: 3, lastUsed: "2m ago", status: "running" as const },
-  { path: "~/code/payments-api", branch: "main", sessions: 1, lastUsed: "2h ago", status: "idle" as const },
-  { path: "~/code/infra-scripts", branch: "refactor/cleanup", sessions: 5, lastUsed: "1d ago", status: "done" as const },
-  { path: "~/code/dashboard-v2", branch: "feat/charts", sessions: 2, lastUsed: "3d ago", status: "idle" as const },
+  {
+    path: "~/code/auth-service",
+    branch: "feat/oauth-provider",
+    sessions: 3,
+    lastUsed: "2m ago",
+    status: "running" as const,
+  },
+  {
+    path: "~/code/payments-api",
+    branch: "main",
+    sessions: 1,
+    lastUsed: "2h ago",
+    status: "idle" as const,
+  },
+  {
+    path: "~/code/infra-scripts",
+    branch: "refactor/cleanup",
+    sessions: 5,
+    lastUsed: "1d ago",
+    status: "done" as const,
+  },
+  {
+    path: "~/code/dashboard-v2",
+    branch: "feat/charts",
+    sessions: 2,
+    lastUsed: "3d ago",
+    status: "idle" as const,
+  },
 ];
 
 export default function WorkspaceLauncher() {
@@ -20,7 +53,9 @@ export default function WorkspaceLauncher() {
     <div className="h-full flex flex-col bg-background">
       {/* Top bar */}
       <div className="flex items-center justify-between px-6 h-10 border-b border-border">
-        <span className="font-mono text-[12px] text-orange-500 font-semibold tracking-tight">svvy</span>
+        <span className="font-mono text-[12px] text-orange-500 font-semibold tracking-tight">
+          svvy
+        </span>
         <div className="flex items-center gap-2">
           <button
             onClick={toggle}
@@ -42,11 +77,12 @@ export default function WorkspaceLauncher() {
       {/* Main content */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-6 py-10">
-
           {/* Hero */}
           <div className="mb-10">
             <h1 className="text-xl font-semibold text-foreground mb-1">Workspaces</h1>
-            <p className="text-[13px] text-muted-foreground">Open a local repository to start a session.</p>
+            <p className="text-[13px] text-muted-foreground">
+              Open a local repository to start a session.
+            </p>
           </div>
 
           {/* Actions */}
@@ -86,10 +122,10 @@ export default function WorkspaceLauncher() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-[12px] text-foreground truncate">{ws.path}</span>
-                      {ws.status === "running" && (
-                        <StatusDot status="running" />
-                      )}
+                      <span className="font-mono text-[12px] text-foreground truncate">
+                        {ws.path}
+                      </span>
+                      {ws.status === "running" && <StatusDot status="running" />}
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className="font-mono text-[10px] text-muted-foreground flex items-center gap-1">
@@ -102,7 +138,9 @@ export default function WorkspaceLauncher() {
                         {ws.lastUsed}
                       </span>
                       <span className="text-border text-xs">·</span>
-                      <span className="font-mono text-[10px] text-muted-foreground">{ws.sessions} sessions</span>
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        {ws.sessions} sessions
+                      </span>
                     </div>
                   </div>
                   <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
@@ -117,7 +155,7 @@ export default function WorkspaceLauncher() {
               Recent Sessions
             </h2>
             <div className="space-y-0.5">
-              {mockSessions.slice(0, 3).map(session => (
+              {mockSessions.slice(0, 3).map((session) => (
                 <button
                   key={session.id}
                   onClick={() => setLocation("/session")}
@@ -125,8 +163,12 @@ export default function WorkspaceLauncher() {
                   data-testid={`recent-session-${session.id}`}
                 >
                   <StatusDot status={session.status} />
-                  <span className="text-[12px] text-foreground/80 flex-1 truncate">{session.title}</span>
-                  <span className="font-mono text-[10px] text-muted-foreground">{session.time}</span>
+                  <span className="text-[12px] text-foreground/80 flex-1 truncate">
+                    {session.title}
+                  </span>
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    {session.time}
+                  </span>
                   <ArrowRight className="w-3 h-3 text-muted-foreground/30" />
                 </button>
               ))}
@@ -138,7 +180,7 @@ export default function WorkspaceLauncher() {
               Session folders
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {mockFolderGroups.map(group => (
+              {mockFolderGroups.map((group) => (
                 <button
                   key={group.label}
                   onClick={() => setLocation("/session/multipane")}
@@ -147,11 +189,13 @@ export default function WorkspaceLauncher() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[12px] text-foreground">{group.label}</span>
-                    <span className="font-mono text-[10px] text-muted-foreground">{group.sessionIds.length}</span>
+                    <span className="font-mono text-[10px] text-muted-foreground">
+                      {group.sessionIds.length}
+                    </span>
                   </div>
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     {group.sessionIds
-                      .map(id => mockSessions.find(session => session.id === id)?.title)
+                      .map((id) => mockSessions.find((session) => session.id === id)?.title)
                       .filter(Boolean)
                       .slice(0, 2)
                       .join(" · ")}

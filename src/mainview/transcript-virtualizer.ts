@@ -19,13 +19,13 @@ class FenwickTree {
   }
 
   reset(size = 0): void {
-    this.values = new Array(size + 1).fill(0);
+    this.values = Array.from({ length: size + 1 }, () => 0);
   }
 
   ensureSize(size: number): void {
     if (size <= this.size) return;
 
-    const nextValues = new Array(size + 1).fill(0);
+    const nextValues = Array.from({ length: size + 1 }, () => 0);
     for (let index = 1; index < this.values.length; index += 1) {
       nextValues[index] = this.values[index] ?? 0;
     }
@@ -156,7 +156,11 @@ export class TranscriptVirtualizer {
     return Math.min(this.count, this.tree.lowerBound(safeOffset + 0.001));
   }
 
-  getWindow(scrollTop: number, viewportHeight: number, overscanPx = this.overscanPx): TranscriptWindow {
+  getWindow(
+    scrollTop: number,
+    viewportHeight: number,
+    overscanPx = this.overscanPx,
+  ): TranscriptWindow {
     if (this.count === 0) {
       return {
         startIndex: 0,
@@ -169,7 +173,10 @@ export class TranscriptVirtualizer {
     const startOffset = Math.max(0, scrollTop - overscanPx);
     const endOffset = Math.max(startOffset, scrollTop + Math.max(0, viewportHeight) + overscanPx);
     const startIndex = this.getIndexAtOffset(startOffset);
-    const endIndex = Math.max(startIndex, Math.min(this.count, this.getIndexAtOffset(Math.max(0, endOffset - 0.001)) + 1));
+    const endIndex = Math.max(
+      startIndex,
+      Math.min(this.count, this.getIndexAtOffset(Math.max(0, endOffset - 0.001)) + 1),
+    );
 
     return {
       startIndex,
@@ -178,7 +185,11 @@ export class TranscriptVirtualizer {
     };
   }
 
-  isAtBottom(scrollTop: number, viewportHeight: number, thresholdPx = this.bottomThresholdPx): boolean {
+  isAtBottom(
+    scrollTop: number,
+    viewportHeight: number,
+    thresholdPx = this.bottomThresholdPx,
+  ): boolean {
     const totalHeight = this.getTotalHeight();
     return totalHeight - (scrollTop + viewportHeight) <= thresholdPx;
   }

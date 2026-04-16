@@ -2,9 +2,7 @@ import { useState } from "react";
 import { NavRail } from "./NavRail";
 import { BottomComposer } from "./BottomComposer";
 import { RightInspector } from "./RightInspector";
-import {
-  GitBranch, Grid2x2, PanelRight, ChevronDown
-} from "lucide-react";
+import { GitBranch, Grid2x2, PanelRight, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ContextBudgetBar } from "./ContextBudgetBar";
 import { StatusBadge } from "./StatusBadge";
@@ -42,7 +40,7 @@ export function AppShell({
     <div className={cn("flex h-full bg-background overflow-hidden", className)}>
       <NavRail
         collapsed={collapsed}
-        onToggle={() => setCollapsed(c => !c)}
+        onToggle={() => setCollapsed((c) => !c)}
         activeSessionId={activeSessionId}
       />
 
@@ -81,10 +79,10 @@ export function AppShell({
             </span>
 
             <button
-              onClick={() => setShowInspector(v => !v)}
+              onClick={() => setShowInspector((v) => !v)}
               className={cn(
                 "text-muted-foreground hover:text-foreground transition-colors rounded p-1",
-                showInspector && "bg-secondary text-foreground"
+                showInspector && "bg-secondary text-foreground",
               )}
               title="Toggle inspector"
               data-testid="btn-toggle-inspector"
@@ -97,9 +95,7 @@ export function AppShell({
         {/* Main area + inspector */}
         <div className="flex-1 flex min-h-0 overflow-hidden">
           <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-            <div className="flex-1 overflow-y-auto scrollbar-thin">
-              {children}
-            </div>
+            <div className="flex-1 overflow-y-auto scrollbar-thin">{children}</div>
             <BottomComposer
               budgetPercent={budgetPercent}
               isStreaming={isStreaming}

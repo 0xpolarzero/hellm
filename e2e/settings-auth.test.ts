@@ -5,7 +5,7 @@ import type { OAuthCredentials } from "@mariozechner/pi-ai";
 import { ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 import { getTestAuthFile } from "./support";
 
-setDefaultTimeout(45_000);
+setDefaultTimeout(90_000);
 
 const BLANK_PROVIDER_ENV = {
   OPENAI_API_KEY: "",

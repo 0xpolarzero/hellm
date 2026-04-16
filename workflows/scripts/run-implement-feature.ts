@@ -1,135 +1,140 @@
 #!/usr/bin/env bun
 
-import { existsSync } from "node:fs"
-import { resolve } from "node:path"
-import { parseObserveRunArgs, printObserveRunHelp, runObserver, type ObserveRunOptions } from "./observe-run"
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import {
+  parseObserveRunArgs,
+  printObserveRunHelp,
+  runObserver,
+  type ObserveRunOptions,
+} from "./observe-run";
 
 type RunImplementFeatureOptions = {
-  specPath: string
-  pocPath: string
-  slug?: string
-  worktreeRoot?: string
-  branchPrefix?: string
-  baseBranch?: string
-  maxIterations?: number
-  onMaxReached?: "return-last" | "fail"
-  explicitRunId?: string
-  observer: ObserveRunOptions
-}
+  specPath: string;
+  pocPath: string;
+  slug?: string;
+  worktreeRoot?: string;
+  branchPrefix?: string;
+  baseBranch?: string;
+  maxIterations?: number;
+  onMaxReached?: "return-last" | "fail";
+  explicitRunId?: string;
+  observer: ObserveRunOptions;
+};
 
-const IMPLEMENT_FEATURE_WORKFLOW = "definitions/implement-feature.tsx"
+const IMPLEMENT_FEATURE_WORKFLOW = "definitions/implement-feature.tsx";
 
 async function main() {
-  const options = parseRunImplementFeatureArgs(process.argv.slice(2))
-  const runId = await startWorkflow(options)
-  await waitForPath(options.observer.dbPath, 15_000)
+  const options = parseRunImplementFeatureArgs(process.argv.slice(2));
+  const runId = await startWorkflow(options);
+  await waitForPath(options.observer.dbPath, 15_000);
 
-  console.log(`started workflow ${IMPLEMENT_FEATURE_WORKFLOW} as run ${runId}`)
+  console.log(`started workflow ${IMPLEMENT_FEATURE_WORKFLOW} as run ${runId}`);
   await runObserver({
     ...options.observer,
     runId,
-  })
+  });
 }
 
 function parseRunImplementFeatureArgs(argv: string[]): RunImplementFeatureOptions {
-  const observer = parseObserveRunArgs([])
-  let specPath: string | undefined
-  let pocPath: string | undefined
-  let slug: string | undefined
-  let worktreeRoot: string | undefined
-  let branchPrefix: string | undefined
-  let baseBranch: string | undefined
-  let maxIterations: number | undefined
-  let onMaxReached: "return-last" | "fail" | undefined
-  let explicitRunId: string | undefined
+  const observer = parseObserveRunArgs([]);
+  let specPath: string | undefined;
+  let pocPath: string | undefined;
+  let slug: string | undefined;
+  let worktreeRoot: string | undefined;
+  let branchPrefix: string | undefined;
+  let baseBranch: string | undefined;
+  let maxIterations: number | undefined;
+  let onMaxReached: "return-last" | "fail" | undefined;
+  let explicitRunId: string | undefined;
 
   for (let index = 0; index < argv.length; index++) {
-    const arg = argv[index]!
+    const arg = argv[index]!;
 
     switch (arg) {
       case "--help":
       case "-h":
-        printRunImplementFeatureHelp()
-        process.exit(0)
+        printRunImplementFeatureHelp();
+        process.exit(0);
       case "--spec":
-        specPath = readRequiredValue(argv, ++index, arg)
-        break
+        specPath = readRequiredValue(argv, ++index, arg);
+        break;
       case "--poc":
-        pocPath = readRequiredValue(argv, ++index, arg)
-        break
+        pocPath = readRequiredValue(argv, ++index, arg);
+        break;
       case "--slug":
-        slug = readRequiredValue(argv, ++index, arg)
-        break
+        slug = readRequiredValue(argv, ++index, arg);
+        break;
       case "--worktree-root":
-        worktreeRoot = readRequiredValue(argv, ++index, arg)
-        break
+        worktreeRoot = readRequiredValue(argv, ++index, arg);
+        break;
       case "--branch-prefix":
-        branchPrefix = readRequiredValue(argv, ++index, arg)
-        break
+        branchPrefix = readRequiredValue(argv, ++index, arg);
+        break;
       case "--base-branch":
-        baseBranch = readRequiredValue(argv, ++index, arg)
-        break
+        baseBranch = readRequiredValue(argv, ++index, arg);
+        break;
       case "--max-iterations":
-        maxIterations = parsePositiveInt(readRequiredValue(argv, ++index, arg), arg)
-        break
+        maxIterations = parsePositiveInt(readRequiredValue(argv, ++index, arg), arg);
+        break;
       case "--on-max-reached": {
-        const value = readRequiredValue(argv, ++index, arg)
+        const value = readRequiredValue(argv, ++index, arg);
         if (value !== "return-last" && value !== "fail") {
-          throw new Error(`Invalid value for ${arg}: ${value}`)
+          throw new Error(`Invalid value for ${arg}: ${value}`);
         }
-        onMaxReached = value
-        break
+        onMaxReached = value;
+        break;
       }
       case "--run-id":
-        explicitRunId = readRequiredValue(argv, ++index, arg)
-        break
+        explicitRunId = readRequiredValue(argv, ++index, arg);
+        break;
       case "--interval":
-        observer.intervalMs = parseDurationMs(readRequiredValue(argv, ++index, arg))
-        break
+        observer.intervalMs = parseDurationMs(readRequiredValue(argv, ++index, arg));
+        break;
       case "--once":
-        observer.once = true
-        break
+        observer.once = true;
+        break;
       case "--model":
-        observer.model = readRequiredValue(argv, ++index, arg)
-        break
+        observer.model = readRequiredValue(argv, ++index, arg);
+        break;
       case "--reasoning-effort":
-        observer.reasoningEffort = readRequiredValue(argv, ++index, arg)
-        break
+        observer.reasoningEffort = readRequiredValue(argv, ++index, arg);
+        break;
       case "--repo-root":
-        observer.repoRoot = resolve(readRequiredValue(argv, ++index, arg))
-        break
+        observer.repoRoot = resolve(readRequiredValue(argv, ++index, arg));
+        break;
       case "--smithers-cwd":
-        observer.smithersCwd = resolve(readRequiredValue(argv, ++index, arg))
-        break
+        observer.smithersCwd = resolve(readRequiredValue(argv, ++index, arg));
+        break;
       case "--smithers-bin":
-        observer.smithersBin = resolve(readRequiredValue(argv, ++index, arg))
-        break
+        observer.smithersBin = resolve(readRequiredValue(argv, ++index, arg));
+        break;
       case "--db-path":
-        observer.dbPath = resolve(readRequiredValue(argv, ++index, arg))
-        break
+        observer.dbPath = resolve(readRequiredValue(argv, ++index, arg));
+        break;
       case "--focus-nodes":
-        observer.focusNodes = parsePositiveInt(readRequiredValue(argv, ++index, arg), arg)
-        break
+        observer.focusNodes = parsePositiveInt(readRequiredValue(argv, ++index, arg), arg);
+        break;
       case "--event-tail":
-        observer.eventTail = parsePositiveInt(readRequiredValue(argv, ++index, arg), arg)
-        break
+        observer.eventTail = parsePositiveInt(readRequiredValue(argv, ++index, arg), arg);
+        break;
       case "--worktree-path":
-        observer.worktreePath = resolve(readRequiredValue(argv, ++index, arg))
-        break
+        observer.worktreePath = resolve(readRequiredValue(argv, ++index, arg));
+        break;
       case "--no-codex":
-        observer.noCodex = true
-        break
+        observer.noCodex = true;
+        break;
       default:
-        throw new Error(`Unknown argument: ${arg}`)
+        throw new Error(`Unknown argument: ${arg}`);
     }
   }
 
   if (!specPath) {
-    throw new Error("Missing --spec <path>")
+    throw new Error("Missing --spec <path>");
   }
 
   if (!pocPath) {
-    throw new Error("Missing --poc <path>")
+    throw new Error("Missing --poc <path>");
   }
 
   return {
@@ -143,7 +148,7 @@ function parseRunImplementFeatureArgs(argv: string[]): RunImplementFeatureOption
     onMaxReached,
     explicitRunId,
     observer,
-  }
+  };
 }
 
 function printRunImplementFeatureHelp() {
@@ -186,13 +191,13 @@ Observer options:
   --no-codex               Skip narrative synthesis and print deterministic summaries
 
 More observer details:
-`)
-  printObserveRunHelp()
+`);
+  printObserveRunHelp();
 }
 
 async function startWorkflow(options: RunImplementFeatureOptions) {
   if (!existsSync(options.observer.smithersBin)) {
-    throw new Error(`Smithers binary not found at ${options.observer.smithersBin}`)
+    throw new Error(`Smithers binary not found at ${options.observer.smithersBin}`);
   }
 
   const input = {
@@ -204,7 +209,7 @@ async function startWorkflow(options: RunImplementFeatureOptions) {
     ...(options.baseBranch ? { baseBranch: options.baseBranch } : {}),
     ...(options.maxIterations ? { maxIterations: options.maxIterations } : {}),
     ...(options.onMaxReached ? { onMaxReached: options.onMaxReached } : {}),
-  }
+  };
 
   const args = [
     options.observer.smithersBin,
@@ -216,66 +221,68 @@ async function startWorkflow(options: RunImplementFeatureOptions) {
     options.observer.repoRoot,
     "--input",
     JSON.stringify(input),
-  ]
+  ];
 
   if (options.explicitRunId) {
-    args.push("--run-id", options.explicitRunId)
+    args.push("--run-id", options.explicitRunId);
   }
 
-  const result = await runCommand(args, options.observer.smithersCwd)
+  const result = await runCommand(args, options.observer.smithersCwd);
   if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || "Failed to start implement-feature workflow.")
+    throw new Error(
+      result.stderr || result.stdout || "Failed to start implement-feature workflow.",
+    );
   }
 
-  const runId = extractRunId(result.stdout)
+  const runId = extractRunId(result.stdout);
   if (!runId) {
-    throw new Error(`Could not parse run id from Smithers output:\n${result.stdout}`)
+    throw new Error(`Could not parse run id from Smithers output:\n${result.stdout}`);
   }
 
-  return runId
+  return runId;
 }
 
 function parseDurationMs(raw: string) {
   if (/^\d+$/.test(raw)) {
-    return Number.parseInt(raw, 10) * 60_000
+    return Number.parseInt(raw, 10) * 60_000;
   }
 
-  const match = raw.match(/^(\d+)(ms|s|m|h)$/)
+  const match = raw.match(/^(\d+)(ms|s|m|h)$/);
   if (!match) {
-    throw new Error(`Invalid duration "${raw}". Use values like 5s, 5m, or 1h.`)
+    throw new Error(`Invalid duration "${raw}". Use values like 5s, 5m, or 1h.`);
   }
 
-  const value = Number.parseInt(match[1]!, 10)
-  const unit = match[2]!
+  const value = Number.parseInt(match[1]!, 10);
+  const unit = match[2]!;
 
   switch (unit) {
     case "ms":
-      return value
+      return value;
     case "s":
-      return value * 1_000
+      return value * 1_000;
     case "m":
-      return value * 60_000
+      return value * 60_000;
     case "h":
-      return value * 60 * 60_000
+      return value * 60 * 60_000;
     default:
-      throw new Error(`Unsupported duration unit: ${unit}`)
+      throw new Error(`Unsupported duration unit: ${unit}`);
   }
 }
 
 function parsePositiveInt(raw: string, flag: string) {
-  const value = Number.parseInt(raw, 10)
+  const value = Number.parseInt(raw, 10);
   if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`Expected a positive integer for ${flag}, got "${raw}"`)
+    throw new Error(`Expected a positive integer for ${flag}, got "${raw}"`);
   }
-  return value
+  return value;
 }
 
 function readRequiredValue(argv: string[], index: number, flag: string) {
-  const value = argv[index]
+  const value = argv[index];
   if (!value) {
-    throw new Error(`Missing value for ${flag}`)
+    throw new Error(`Missing value for ${flag}`);
   }
-  return value
+  return value;
 }
 
 async function runCommand(command: string[], cwd: string) {
@@ -285,53 +292,55 @@ async function runCommand(command: string[], cwd: string) {
     stdout: "pipe",
     stderr: "pipe",
     env: process.env,
-  })
+  });
 
   const [stdout, stderr, exitCode] = await Promise.all([
     proc.stdout ? new Response(proc.stdout).text() : Promise.resolve(""),
     proc.stderr ? new Response(proc.stderr).text() : Promise.resolve(""),
     proc.exited,
-  ])
+  ]);
 
   return {
     stdout: stripAnsi(stdout),
     stderr: stripAnsi(stderr),
     exitCode,
-  }
+  };
 }
 
 function extractRunId(output: string) {
-  const textMatch = output.match(/runId:\s*([^\s]+)/)
+  const textMatch = output.match(/runId:\s*([^\s]+)/);
   if (textMatch?.[1]) {
-    return textMatch[1]
+    return textMatch[1];
   }
 
-  const jsonMatch = output.match(/"runId"\s*:\s*"([^"]+)"/)
+  const jsonMatch = output.match(/"runId"\s*:\s*"([^"]+)"/);
   if (jsonMatch?.[1]) {
-    return jsonMatch[1]
+    return jsonMatch[1];
   }
 
-  return null
+  return null;
 }
 
 function stripAnsi(value: string) {
-  return value.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "")
+  return value.replace(ANSI_ESCAPE_PATTERN, "");
 }
 
+const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*[A-Za-z]`, "g");
+
 async function waitForPath(path: string, timeoutMs: number) {
-  const deadline = Date.now() + timeoutMs
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (existsSync(path)) {
-      return
+      return;
     }
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 250))
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
   }
-  throw new Error(`Timed out waiting for ${path} to appear.`)
+  throw new Error(`Timed out waiting for ${path} to appear.`);
 }
 
 if (import.meta.main) {
   main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error))
-    process.exit(1)
-  })
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
 }

@@ -9,14 +9,62 @@ interface StatusBadgeProps {
 }
 
 const statusConfig = {
-  running: { label: "Running", dot: "bg-orange-500", text: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/20" },
-  active: { label: "Active", dot: "bg-orange-500", text: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/20" },
-  done: { label: "Done", dot: "bg-emerald-500", text: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
-  verified: { label: "Verified", dot: "bg-emerald-500", text: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
-  waiting: { label: "Waiting", dot: "bg-amber-500", text: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/20" },
-  blocked: { label: "Blocked", dot: "bg-amber-500", text: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/20" },
-  failed: { label: "Failed", dot: "bg-red-500", text: "text-red-400", bg: "bg-red-500/10", border: "border-red-500/20" },
-  idle: { label: "Idle", dot: "bg-slate-400", text: "text-slate-400", bg: "bg-slate-500/10", border: "border-slate-500/20" },
+  running: {
+    label: "Running",
+    dot: "bg-orange-500",
+    text: "text-orange-400",
+    bg: "bg-orange-500/10",
+    border: "border-orange-500/20",
+  },
+  active: {
+    label: "Active",
+    dot: "bg-orange-500",
+    text: "text-orange-400",
+    bg: "bg-orange-500/10",
+    border: "border-orange-500/20",
+  },
+  done: {
+    label: "Done",
+    dot: "bg-emerald-500",
+    text: "text-emerald-400",
+    bg: "bg-emerald-500/10",
+    border: "border-emerald-500/20",
+  },
+  verified: {
+    label: "Verified",
+    dot: "bg-emerald-500",
+    text: "text-emerald-400",
+    bg: "bg-emerald-500/10",
+    border: "border-emerald-500/20",
+  },
+  waiting: {
+    label: "Waiting",
+    dot: "bg-amber-500",
+    text: "text-amber-400",
+    bg: "bg-amber-500/10",
+    border: "border-amber-500/20",
+  },
+  blocked: {
+    label: "Blocked",
+    dot: "bg-amber-500",
+    text: "text-amber-400",
+    bg: "bg-amber-500/10",
+    border: "border-amber-500/20",
+  },
+  failed: {
+    label: "Failed",
+    dot: "bg-red-500",
+    text: "text-red-400",
+    bg: "bg-red-500/10",
+    border: "border-red-500/20",
+  },
+  idle: {
+    label: "Idle",
+    dot: "bg-slate-400",
+    text: "text-slate-400",
+    bg: "bg-slate-500/10",
+    border: "border-slate-500/20",
+  },
 };
 
 export function StatusBadge({ status, size = "sm", className, showDot = true }: StatusBadgeProps) {
@@ -38,9 +86,11 @@ export function StatusBadge({ status, size = "sm", className, showDot = true }: 
     <span
       className={cn(
         "inline-flex items-center font-mono rounded border select-none",
-        config.text, config.bg, config.border,
+        config.text,
+        config.bg,
+        config.border,
         sizeClasses[size],
-        className
+        className,
       )}
       data-testid={`status-badge-${status}`}
     >
@@ -50,7 +100,7 @@ export function StatusBadge({ status, size = "sm", className, showDot = true }: 
             "rounded-full flex-shrink-0",
             config.dot,
             dotSizes[size],
-            (status === "running" || status === "active") && "pulse-dot"
+            (status === "running" || status === "active") && "pulse-dot",
           )}
         />
       )}
@@ -59,7 +109,13 @@ export function StatusBadge({ status, size = "sm", className, showDot = true }: 
   );
 }
 
-export function StatusDot({ status, className }: { status: SessionStatus | "active" | "verified" | "blocked"; className?: string }) {
+export function StatusDot({
+  status,
+  className,
+}: {
+  status: SessionStatus | "active" | "verified" | "blocked";
+  className?: string;
+}) {
   const config = statusConfig[status] || statusConfig.idle;
   return (
     <span
@@ -67,7 +123,7 @@ export function StatusDot({ status, className }: { status: SessionStatus | "acti
         "inline-block w-2 h-2 rounded-full flex-shrink-0",
         config.dot,
         (status === "running" || status === "active") && "pulse-dot",
-        className
+        className,
       )}
       data-testid={`status-dot-${status}`}
     />

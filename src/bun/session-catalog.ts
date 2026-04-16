@@ -29,31 +29,33 @@ import type {
 } from "../mainview/chat-rpc";
 import { DEFAULT_CHAT_SETTINGS } from "../mainview/chat-settings";
 import {
-  getE2ePromptScenario,
-  type E2ePromptScenario,
-  type E2ePromptStep,
-} from "./e2e-control";
-import {
   projectWorkspaceSessionSummary,
   projectWorkspaceSessionSummaryFromInfo,
 } from "./session-projection";
 import {
   buildStructuredSessionSummaryProjection,
   buildStructuredSessionView,
+  hasStructuredSessionFacts,
 } from "./structured-session-selectors";
 import {
-  createStructuredSessionStateTool,
-  createStructuredSessionToolRuntimeContext,
-  replayStructuredSessionStateToolCalls,
-  STRUCTURED_SESSION_STATE_TOOL_NAME,
-  type StructuredSessionToolRuntimeContext,
-  type StructuredSessionToolRuntimeHandle,
-} from "./structured-session-lifecycle-tool";
+  createPromptExecutionContext,
+  type PromptExecutionContext,
+  type PromptExecutionRuntimeHandle,
+} from "./prompt-execution-context";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionSnapshot,
+  type StructuredWaitState,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
+import {
+  mapSmithersRunStateToWorkflowProjectionInput,
+  readSmithersRunState,
+  type SmithersRunState,
+} from "./smithers-workflow-bridge";
+import { createStartWorkflowTool } from "./smithers-workflow-tool";
+import { createVerifyRunTool } from "./verification-tool";
+import { createWaitTool } from "./wait-tool";
 import { resolveApiKey } from "./auth-store";
 import { resolveWorkspaceCwd } from "./workspace-context";
 
@@ -87,7 +89,7 @@ interface ManagedSession {
   activePrompt: boolean;
   recreateOnNextPrompt: boolean;
   abortRequested: boolean;
-  structuredSessionToolRuntime: StructuredSessionToolRuntimeHandle;
+  promptExecutionRuntime: PromptExecutionRuntimeHandle;
 }
 
 export interface SessionDefaults {
@@ -129,7 +131,10 @@ export class WorkspaceSessionCatalog {
   constructor(
     private readonly cwd: string = resolveWorkspaceCwd(),
     private readonly agentDir: string = getSvvyAgentDir(),
-    private readonly sessionDir: string = getSvvySessionDir(resolveWorkspaceCwd(), getSvvyAgentDir()),
+    private readonly sessionDir: string = getSvvySessionDir(
+      resolveWorkspaceCwd(),
+      getSvvyAgentDir(),
+    ),
   ) {
     const workspaceLabel = basename(this.cwd) || "workspace";
     this.structuredSessionStore = createStructuredSessionStateStore({
@@ -149,6 +154,7 @@ export class WorkspaceSessionCatalog {
   }
 
   async listSessions(): Promise<ListSessionsResponse> {
+    this.refreshSmithersWorkflowProjections();
     const infos = await SessionManager.list(this.cwd, this.sessionDir);
     const summaries = new Map<string, WorkspaceSessionSummary>();
 
@@ -172,10 +178,7 @@ export class WorkspaceSessionCatalog {
         status: getInactiveSessionStatus(info.path),
       };
       this.upsertStructuredPiSession(projected);
-      summaries.set(
-        info.id,
-        this.decorateSummaryWithStructuredProjection(projected),
-      );
+      summaries.set(info.id, this.decorateSummaryWithStructuredProjection(projected));
     }
 
     if (this.activeSession && !summaries.has(this.activeSession.sessionId)) {
@@ -194,6 +197,7 @@ export class WorkspaceSessionCatalog {
   }
 
   async getActiveSession(): Promise<ActiveSessionState | null> {
+    this.refreshSmithersWorkflowProjections();
     if (!this.activeSession) {
       return null;
     }
@@ -202,6 +206,7 @@ export class WorkspaceSessionCatalog {
   }
 
   async getActiveSessionSummary(): Promise<ActiveSessionSummaryState | null> {
+    this.refreshSmithersWorkflowProjections();
     if (!this.activeSession) {
       return null;
     }
@@ -360,10 +365,10 @@ export class WorkspaceSessionCatalog {
 
     session.abortRequested = false;
     session.activePrompt = true;
-    const structuredPrompt = this.createStructuredPromptContext(session, options.messages);
+    const promptExecution = this.createPromptExecutionContext(session, options.messages);
 
     setTimeout(() => {
-      void this.runAgentPrompt(session, options, structuredPrompt);
+      void this.runAgentPrompt(session, options, promptExecution);
     }, 0);
 
     return { sessionId: session.sessionId };
@@ -635,13 +640,7 @@ export class WorkspaceSessionCatalog {
       return statusOverride ? { ...summary, status: statusOverride } : summary;
     }
 
-    const hasStructuredFacts =
-      snapshot.session.waitingOn !== null ||
-      snapshot.threads.length > 0 ||
-      snapshot.verifications.length > 0 ||
-      snapshot.workflows.length > 0 ||
-      snapshot.events.length > 0;
-    if (!hasStructuredFacts) {
+    if (!hasStructuredSessionFacts(snapshot)) {
       return statusOverride ? { ...summary, status: statusOverride } : summary;
     }
 
@@ -654,16 +653,172 @@ export class WorkspaceSessionCatalog {
       preview: structuredSummary.preview || summary.preview,
       status: statusOverride ?? structuredSummary.status,
       updatedAt: structuredSummary.updatedAt,
-      waitingOn: structuredSummary.waitingOn,
+      wait: structuredSummary.wait,
       counts: structuredSummary.counts,
       threadIdsByStatus: view.threadIdsByStatus,
+      visibleThreadIds: view.visibleThreadIds,
     };
   }
 
-  private createStructuredPromptContext(
+  private refreshSmithersWorkflowProjections(): void {
+    for (const session of this.structuredSessionStore.listSessionStates()) {
+      for (const workflow of session.workflows) {
+        if (
+          workflow.status === "completed" ||
+          workflow.status === "failed" ||
+          workflow.status === "cancelled"
+        ) {
+          continue;
+        }
+
+        try {
+          this.refreshSmithersWorkflowProjection(session, workflow);
+        } catch (error) {
+          console.error(`Failed to refresh Smithers workflow projection ${workflow.id}:`, error);
+        }
+      }
+    }
+  }
+
+  private refreshSmithersWorkflowProjection(
+    session: StructuredSessionSnapshot,
+    workflow: StructuredSessionSnapshot["workflows"][number],
+  ): void {
+    const run = readSmithersRunState({
+      runId: workflow.smithersRunId,
+    });
+    if (!run) {
+      return;
+    }
+
+    const projection = mapSmithersRunStateToWorkflowProjectionInput(run);
+    const thread = session.threads.find((entry) => entry.id === workflow.threadId);
+    if (!thread) {
+      return;
+    }
+
+    if (workflow.status !== projection.status || workflow.summary !== projection.summary) {
+      this.structuredSessionStore.updateWorkflow({
+        workflowId: workflow.id,
+        status: projection.status,
+        summary: projection.summary,
+      });
+    }
+
+    if (projection.status === "waiting") {
+      this.refreshSmithersWaitingWorkflowProjection(thread, workflow, run, projection.summary);
+      return;
+    }
+
+    if (projection.status === "running") {
+      if (
+        thread.status !== "running" ||
+        thread.wait !== null ||
+        thread.dependsOnThreadIds.length > 0
+      ) {
+        this.structuredSessionStore.updateThread({
+          threadId: thread.id,
+          status: "running",
+        });
+      }
+      return;
+    }
+
+    const hasWorkflowEpisode = session.episodes.some(
+      (episode) =>
+        episode.threadId === thread.id &&
+        episode.kind === "workflow" &&
+        episode.sourceCommandId === workflow.commandId,
+    );
+    if (!hasWorkflowEpisode) {
+      this.structuredSessionStore.createEpisode({
+        threadId: thread.id,
+        sourceCommandId: workflow.commandId,
+        kind: "workflow",
+        title:
+          projection.status === "completed"
+            ? "Delegated workflow completed"
+            : projection.status === "cancelled"
+              ? "Delegated workflow cancelled"
+              : "Delegated workflow failed",
+        summary: projection.summary,
+        body: projection.summary,
+      });
+    }
+
+    this.structuredSessionStore.updateThread({
+      threadId: thread.id,
+      status:
+        projection.status === "completed"
+          ? "completed"
+          : projection.status === "cancelled"
+            ? "cancelled"
+            : "failed",
+    });
+  }
+
+  private refreshSmithersWaitingWorkflowProjection(
+    thread: StructuredSessionSnapshot["threads"][number],
+    workflow: StructuredSessionSnapshot["workflows"][number],
+    run: SmithersRunState,
+    summary: string,
+  ): void {
+    const liveSession = this.structuredSessionStore.getSessionState(thread.sessionId);
+    const waiting = buildSmithersWaitingState(run);
+    if (
+      thread.status !== "waiting" ||
+      !matchesWaitState(thread.wait, waiting.kind, waiting.reason, waiting.resumeWhen)
+    ) {
+      this.structuredSessionStore.updateThread({
+        threadId: thread.id,
+        status: "waiting",
+        wait: waiting,
+      });
+    }
+
+    if (this.canSessionWaitOnThread(liveSession, thread.id)) {
+      const activeWait = liveSession.session.wait;
+      if (
+        activeWait?.threadId !== thread.id ||
+        activeWait.kind !== waiting.kind ||
+        activeWait.reason !== waiting.reason ||
+        activeWait.resumeWhen !== waiting.resumeWhen
+      ) {
+        this.structuredSessionStore.setSessionWait({
+          sessionId: thread.sessionId,
+          threadId: thread.id,
+          kind: waiting.kind,
+          reason: waiting.reason,
+          resumeWhen: waiting.resumeWhen,
+        });
+      }
+    } else if (liveSession.session.wait?.threadId === thread.id) {
+      this.structuredSessionStore.clearSessionWait({
+        sessionId: thread.sessionId,
+      });
+    }
+
+    if (workflow.status !== "waiting" || workflow.summary !== summary) {
+      this.structuredSessionStore.updateWorkflow({
+        workflowId: workflow.id,
+        status: "waiting",
+        summary,
+      });
+    }
+  }
+
+  private canSessionWaitOnThread(session: StructuredSessionSnapshot, threadId: string): boolean {
+    if (session.session.wait && session.session.wait.threadId !== threadId) {
+      return false;
+    }
+
+    return session.threads.every((thread) => thread.id === threadId || thread.status !== "running");
+  }
+
+  private createPromptExecutionContext(
     session: ManagedSession,
     promptMessages: readonly Message[],
-  ): StructuredSessionToolRuntimeContext | null {
+  ): PromptExecutionContext | null {
     const promptText = getLatestUserPromptText(promptMessages);
     if (!promptText) {
       return null;
@@ -672,64 +827,28 @@ export class WorkspaceSessionCatalog {
     try {
       const legacySummary = this.buildLegacySummaryFromManagedSession(session);
       this.upsertStructuredPiSession(legacySummary);
-      return createStructuredSessionToolRuntimeContext(session.sessionId, promptText);
+      const requestSummary = summarizePromptForTurn(promptText);
+      const turn = this.structuredSessionStore.startTurn({
+        sessionId: session.sessionId,
+        requestSummary,
+      });
+      const rootThread = this.structuredSessionStore.createThread({
+        turnId: turn.id,
+        kind: "task",
+        title: requestSummary,
+        objective: promptText,
+      });
+
+      return createPromptExecutionContext({
+        sessionId: session.sessionId,
+        turnId: turn.id,
+        rootThreadId: rootThread.id,
+        promptText,
+        rootEpisodeKind: inferRootEpisodeKind(promptText),
+      });
     } catch (error) {
-      console.error("Failed to start structured prompt state:", error);
+      console.error("Failed to start prompt execution state:", error);
       return null;
-    }
-  }
-
-  private applyStructuredPromptOutcome(
-    assistantMessage: AssistantMessage,
-    promptContext: StructuredSessionToolRuntimeContext | null,
-  ): void {
-    if (!promptContext) {
-      return;
-    }
-
-    const assistantText = flattenAssistantText(assistantMessage);
-    const isError =
-      assistantMessage.stopReason === "error" || assistantMessage.stopReason === "aborted";
-
-    try {
-      replayStructuredSessionStateToolCalls({
-        assistantMessage,
-        runtime: promptContext,
-        store: this.structuredSessionStore,
-      });
-
-      if (promptContext.structuredWriteCount > 0) {
-        return;
-      }
-
-      const thread = this.structuredSessionStore.startThread({
-        sessionId: promptContext.sessionId,
-        kind: "direct",
-        objective: promptContext.promptText,
-      });
-      if (isError) {
-        this.structuredSessionStore.updateThread({
-          threadId: thread.id,
-          status: "failed",
-          blockedReason: assistantText || "Direct thread failed.",
-        });
-        return;
-      }
-
-      const summary = assistantText || "Direct thread completed.";
-      this.structuredSessionStore.setThreadResult({
-        threadId: thread.id,
-        kind: "analysis-summary",
-        summary,
-        body: summary,
-      });
-      this.structuredSessionStore.updateThread({
-        threadId: thread.id,
-        status: "completed",
-        blockedReason: null,
-      });
-    } catch (error) {
-      console.error("Failed to apply structured prompt outcome:", error);
     }
   }
 
@@ -757,16 +876,10 @@ export class WorkspaceSessionCatalog {
   private async runAgentPrompt(
     session: ManagedSession,
     options: SendAgentPromptOptions,
-    promptContext: StructuredSessionToolRuntimeContext | null,
+    promptContext: PromptExecutionContext | null,
   ): Promise<void> {
-    session.structuredSessionToolRuntime.current = promptContext;
+    session.promptExecutionRuntime.current = promptContext;
     try {
-      const e2eScenario = getE2ePromptScenario(options.messages);
-      if (e2eScenario) {
-        await this.runE2ePromptScenario(session, options, e2eScenario, promptContext);
-        return;
-      }
-
       const streamState = createVisibleStreamState(options.provider, options.model);
       options.onEvent({ type: "start", partial: streamState.partial });
       const unsubscribe = session.session.subscribe((event) => {
@@ -824,7 +937,7 @@ export class WorkspaceSessionCatalog {
         session.thinkingLevel = options.thinkingLevel;
         session.systemPrompt = options.systemPrompt;
         session.recreateOnNextPrompt = false;
-        this.applyStructuredPromptOutcome(emittedMessage, promptContext);
+        this.completePromptExecution(promptContext, visibleMessage);
       } catch (error) {
         const reason = session.abortRequested ? "aborted" : "error";
         finishOpenVisibleBlocks(streamState, options.onEvent);
@@ -851,7 +964,7 @@ export class WorkspaceSessionCatalog {
         session.model = options.model;
         session.thinkingLevel = options.thinkingLevel;
         session.systemPrompt = options.systemPrompt;
-        this.applyStructuredPromptOutcome(failure, promptContext);
+        this.failPromptExecution(promptContext, failure);
       } finally {
         unsubscribe();
         session.abortRequested = false;
@@ -859,190 +972,95 @@ export class WorkspaceSessionCatalog {
         this.syncManagedState(session);
       }
     } finally {
-      session.structuredSessionToolRuntime.current = null;
+      session.promptExecutionRuntime.current = null;
     }
   }
 
-  private async runE2ePromptScenario(
-    session: ManagedSession,
-    options: SendAgentPromptOptions,
-    scenario: E2ePromptScenario,
-    promptContext: StructuredSessionToolRuntimeContext | null,
-  ): Promise<void> {
-    const streamState = createVisibleStreamState(options.provider, options.model);
+  private completePromptExecution(
+    promptContext: PromptExecutionContext | null,
+    message: AssistantMessage,
+  ): void {
+    if (!promptContext) {
+      return;
+    }
 
     try {
-      appendMessagesToSession(
-        session,
-        options.messages.slice(session.promptSyncCursor.messageCount),
+      const snapshot = this.structuredSessionStore.getSessionState(promptContext.sessionId);
+      const rootThread = snapshot.threads.find(
+        (thread) => thread.id === promptContext.rootThreadId,
       );
-
-      if (scenario.delayBeforeStartMs && scenario.delayBeforeStartMs > 0) {
-        await Bun.sleep(scenario.delayBeforeStartMs);
+      if (!rootThread) {
+        return;
       }
 
-      options.onEvent({ type: "start", partial: streamState.partial });
+      const assistantText = messageToPlainText(message).trim();
+      if (assistantText) {
+        this.structuredSessionStore.createEpisode({
+          threadId: promptContext.rootThreadId,
+          kind: promptContext.sessionWaitApplied ? "clarification" : promptContext.rootEpisodeKind,
+          title: promptContext.sessionWaitApplied
+            ? "Waiting for follow-up"
+            : rootThread.title || summarizePromptForTurn(promptContext.promptText),
+          summary: summarizePromptForTurn(assistantText),
+          body: assistantText,
+        });
+      }
 
-      for (const step of scenario.stream ?? []) {
-        if (session.abortRequested && !scenario.waitForAbort) {
-          break;
+      if (promptContext.sessionWaitApplied) {
+        if (rootThread.status === "running") {
+          this.structuredSessionStore.updateThread({
+            threadId: rootThread.id,
+            status: "completed",
+          });
         }
-        await runE2ePromptStep(
-          step,
-          streamState,
-          options.onEvent,
-          async (toolCall) => {
-            if (
-              !promptContext ||
-              ![
-                STRUCTURED_SESSION_STATE_TOOL_NAME,
-                "structured_session_state",
-              ].includes(toolCall.name)
-            ) {
-              return;
-            }
-
-            replayStructuredSessionStateToolCalls({
-              assistantMessage: {
-                ...createPartialAssistantMessage(options.provider, options.model),
-                content: [toolCall],
-                stopReason: "stop",
-              },
-              runtime: promptContext,
-              store: this.structuredSessionStore,
-            });
-          },
-        );
-      }
-
-      if (scenario.waitForAbort) {
-        const aborted = await waitForE2eAbort(session, scenario.abortTimeoutMs ?? 10_000);
-        const failure = finalizeVisibleAssistantMessage(
-          streamState,
-          createErrorMessage(
-            options.provider,
-            options.model,
-            scenario.abortFallbackMessage ?? "Request aborted by user",
-            aborted ? "aborted" : "error",
-          ),
-          options.provider,
-          options.model,
-        );
-        appendMessagesToSession(session, [failure]);
-        options.onEvent({
-          type: "error",
-          reason: aborted ? "aborted" : "error",
-          error: failure,
+        this.structuredSessionStore.finishTurn({
+          turnId: promptContext.turnId,
+          status: "waiting",
         });
-        updatePromptSyncCursor(session, [...options.messages, failure]);
-        session.provider = options.provider;
-        session.model = options.model;
-        session.thinkingLevel = options.thinkingLevel;
-        session.systemPrompt = options.systemPrompt;
-        session.recreateOnNextPrompt = false;
-        this.applyStructuredPromptOutcome(failure, promptContext);
         return;
       }
 
-      if (scenario.error?.trim()) {
-        finishOpenVisibleBlocks(streamState, options.onEvent);
-        const failure = finalizeVisibleAssistantMessage(
-          streamState,
-          createErrorMessage(
-            options.provider,
-            options.model,
-            scenario.error.trim(),
-            scenario.errorReason ?? "error",
-          ),
-          options.provider,
-          options.model,
-        );
-        appendMessagesToSession(session, [failure]);
-        options.onEvent({
-          type: "error",
-          reason: scenario.errorReason ?? "error",
-          error: failure,
+      if (rootThread.status === "running") {
+        this.structuredSessionStore.updateThread({
+          threadId: rootThread.id,
+          status: "completed",
         });
-        updatePromptSyncCursor(session, [...options.messages, failure]);
-        session.provider = options.provider;
-        session.model = options.model;
-        session.thinkingLevel = options.thinkingLevel;
-        session.systemPrompt = options.systemPrompt;
-        session.recreateOnNextPrompt = false;
-        this.applyStructuredPromptOutcome(failure, promptContext);
-        return;
       }
 
-      finishOpenVisibleBlocks(streamState, options.onEvent);
-      const persistedMessages =
-        scenario.persistedMessages && scenario.persistedMessages.length > 0
-          ? scenario.persistedMessages
-          : [
-              finalizeVisibleAssistantMessage(
-                streamState,
-                createPartialAssistantMessage(options.provider, options.model),
-                options.provider,
-                options.model,
-              ),
-            ];
-
-      appendMessagesToSession(session, persistedMessages);
-
-      const emittedMessage = getLatestAssistantMessage(persistedMessages);
-      if (!emittedMessage) {
-        throw new Error("The e2e prompt scenario finished without an assistant message.");
-      }
-
-      options.onEvent({
-        type: "done",
-        reason:
-          emittedMessage.stopReason === "length"
-            ? "length"
-            : emittedMessage.stopReason === "toolUse"
-              ? "stop"
-              : "stop",
-        message: emittedMessage,
+      this.structuredSessionStore.finishTurn({
+        turnId: promptContext.turnId,
+        status: "completed",
       });
-
-      updatePromptSyncCursor(session, [...options.messages, ...persistedMessages]);
-      session.provider = options.provider;
-      session.model = options.model;
-      session.thinkingLevel = options.thinkingLevel;
-      session.systemPrompt = options.systemPrompt;
-      session.recreateOnNextPrompt = false;
-      this.applyStructuredPromptOutcome(emittedMessage, promptContext);
     } catch (error) {
-      const reason = session.abortRequested ? "aborted" : "error";
-      finishOpenVisibleBlocks(streamState, options.onEvent);
-      const failure = finalizeVisibleAssistantMessage(
-        streamState,
-        createErrorMessage(
-          options.provider,
-          options.model,
-          error instanceof Error ? error.message : "e2e prompt failed.",
-          reason,
-        ),
-        options.provider,
-        options.model,
+      console.error("Failed to finalize prompt execution:", error);
+    }
+  }
+
+  private failPromptExecution(
+    promptContext: PromptExecutionContext | null,
+    _message: AssistantMessage,
+  ): void {
+    if (!promptContext) {
+      return;
+    }
+
+    try {
+      const snapshot = this.structuredSessionStore.getSessionState(promptContext.sessionId);
+      const rootThread = snapshot.threads.find(
+        (thread) => thread.id === promptContext.rootThreadId,
       );
-
-      appendMessagesToSession(session, [failure]);
-      options.onEvent({
-        type: "error",
-        reason,
-        error: failure,
+      if (rootThread && rootThread.status === "running") {
+        this.structuredSessionStore.updateThread({
+          threadId: rootThread.id,
+          status: "failed",
+        });
+      }
+      this.structuredSessionStore.finishTurn({
+        turnId: promptContext.turnId,
+        status: "failed",
       });
-
-      updatePromptSyncCursor(session, [...options.messages, failure]);
-      session.provider = options.provider;
-      session.model = options.model;
-      session.thinkingLevel = options.thinkingLevel;
-      session.systemPrompt = options.systemPrompt;
-      this.applyStructuredPromptOutcome(failure, promptContext);
-    } finally {
-      session.abortRequested = false;
-      session.activePrompt = false;
-      this.syncManagedState(session);
+    } catch (error) {
+      console.error("Failed to mark prompt execution failure:", error);
     }
   }
 
@@ -1089,9 +1107,24 @@ async function createManagedSession(
 
   const authStorage = AuthStorage.inMemory();
   syncAuthStorage(authStorage);
-  const structuredSessionToolRuntime: StructuredSessionToolRuntimeHandle = {
+  const promptExecutionRuntime: PromptExecutionRuntimeHandle = {
     current: null,
   };
+  const tools = [
+    createVerifyRunTool({
+      cwd: options.sessionManager.getCwd(),
+      runtime: promptExecutionRuntime,
+      store: options.structuredSessionStore,
+    }),
+    createStartWorkflowTool({
+      runtime: promptExecutionRuntime,
+      store: options.structuredSessionStore,
+    }),
+    createWaitTool({
+      runtime: promptExecutionRuntime,
+      store: options.structuredSessionStore,
+    }),
+  ] as const;
   const modelRegistryFactory = ModelRegistry as unknown as {
     create?: (authStorage: AuthStorage, modelPath: string) => ModelRegistry;
     new (authStorage: AuthStorage, modelPath: string): ModelRegistry;
@@ -1121,12 +1154,7 @@ async function createManagedSession(
     settingsManager,
     model: resolvedModel,
     thinkingLevel: restoredDefaults.thinkingLevel,
-    tools: [
-      createStructuredSessionStateTool({
-        runtime: structuredSessionToolRuntime,
-        store: options.structuredSessionStore,
-      }),
-    ],
+    tools: [...tools],
   });
   const activeModel = session.agent.state.model ?? resolvedModel;
 
@@ -1143,7 +1171,7 @@ async function createManagedSession(
     activePrompt: false,
     recreateOnNextPrompt: false,
     abortRequested: false,
-    structuredSessionToolRuntime,
+    promptExecutionRuntime,
   };
 }
 
@@ -1195,19 +1223,6 @@ function getLatestUserPromptText(messages: readonly Message[]): string | null {
   return null;
 }
 
-function flattenAssistantText(message: AssistantMessage): string {
-  return message.content
-    .map((block) => {
-      if (block.type === "text") {
-        return block.text;
-      }
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n")
-    .trim();
-}
-
 function getInactiveSessionStatus(
   sessionFile: string | undefined,
 ): WorkspaceSessionSummary["status"] {
@@ -1244,9 +1259,61 @@ function getInactiveSessionStatus(
   return "idle";
 }
 
-function getStatusFromSessionEntry(
-  entry: unknown,
-): WorkspaceSessionSummary["status"] | undefined {
+function buildSmithersWaitingState(run: SmithersRunState): StructuredWaitState {
+  switch (run.status) {
+    case "waiting-approval":
+      return {
+        kind: "user",
+        reason: "Waiting for approval or clarification before the Smithers workflow can continue.",
+        resumeWhen: "Resume when the required approval or clarification is provided.",
+        since: new Date().toISOString(),
+      };
+    case "waiting-event":
+      return {
+        kind: "external",
+        reason: "Waiting for an external Smithers event before the workflow can continue.",
+        resumeWhen: "Resume when the required external Smithers event arrives.",
+        since: new Date().toISOString(),
+      };
+    default:
+      return {
+        kind: "external",
+        reason: "Waiting for the Smithers workflow to resume.",
+        resumeWhen: "Resume when the Smithers workflow reports progress again.",
+        since: new Date().toISOString(),
+      };
+  }
+}
+
+function matchesWaitState(
+  wait: StructuredSessionSnapshot["threads"][number]["wait"],
+  kind: "user" | "external",
+  reason: string,
+  resumeWhen: string,
+): boolean {
+  return wait?.kind === kind && wait.reason === reason && wait.resumeWhen === resumeWhen;
+}
+
+function summarizePromptForTurn(text: string, limit = 96): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  if (!collapsed) {
+    return "New turn";
+  }
+
+  if (collapsed.length <= limit) {
+    return collapsed;
+  }
+
+  return `${collapsed.slice(0, limit - 1).trimEnd()}…`;
+}
+
+function inferRootEpisodeKind(promptText: string): PromptExecutionContext["rootEpisodeKind"] {
+  return /\b(explain|summari[sz]e|review|audit|analy[sz]e|why|what)\b/i.test(promptText)
+    ? "analysis"
+    : "change";
+}
+
+function getStatusFromSessionEntry(entry: unknown): WorkspaceSessionSummary["status"] | undefined {
   if (!entry || typeof entry !== "object" || !("type" in entry) || entry.type !== "message") {
     return undefined;
   }
@@ -1268,11 +1335,7 @@ function getStatusFromSessionEntry(
     return "error";
   }
 
-  if (
-    message.role === "user" ||
-    message.role === "assistant" ||
-    message.role === "toolResult"
-  ) {
+  if (message.role === "user" || message.role === "assistant" || message.role === "toolResult") {
     return "idle";
   }
 
@@ -1307,7 +1370,8 @@ export function resolveRestoredSessionDefaults(
   return {
     provider: overrides.provider ?? metadata.provider ?? DEFAULT_CHAT_SETTINGS.provider,
     model: overrides.model ?? metadata.model ?? DEFAULT_CHAT_SETTINGS.model,
-    thinkingLevel: overrides.thinkingLevel ?? metadata.thinkingLevel ?? DEFAULT_CHAT_SETTINGS.reasoningEffort,
+    thinkingLevel:
+      overrides.thinkingLevel ?? metadata.thinkingLevel ?? DEFAULT_CHAT_SETTINGS.reasoningEffort,
   };
 }
 
@@ -1728,201 +1792,4 @@ function createErrorMessage(
     errorMessage: message,
     timestamp: Date.now(),
   };
-}
-
-function appendMessagesToSession(
-  session: ManagedSession,
-  messages: readonly Message[],
-): void {
-  for (const message of messages) {
-    session.session.sessionManager.appendMessage(message);
-    session.session.agent.appendMessage(message);
-  }
-}
-
-async function waitForE2eAbort(
-  session: ManagedSession,
-  timeoutMs: number,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    if (session.abortRequested) {
-      return true;
-    }
-    await Bun.sleep(20);
-  }
-
-  return session.abortRequested;
-}
-
-async function runE2ePromptStep(
-  step: E2ePromptStep,
-  streamState: VisibleStreamState,
-  onEvent: (event: AssistantMessageEvent) => void,
-  onToolCall?: (toolCall: Extract<AssistantMessage["content"][number], { type: "toolCall" }>) => Promise<void> | void,
-): Promise<void> {
-  switch (step.type) {
-    case "delay":
-      if (step.ms > 0) {
-        await Bun.sleep(step.ms);
-      }
-      return;
-    case "text":
-      await runE2eTextLikeStep("text", step.text, step.chunks, step.chunkDelayMs, streamState, onEvent);
-      return;
-    case "thinking":
-      await runE2eTextLikeStep(
-        "thinking",
-        step.text,
-        step.chunks,
-        step.chunkDelayMs,
-        streamState,
-        onEvent,
-      );
-      return;
-    case "toolCall":
-      await runE2eToolCallStep(step, streamState, onEvent, onToolCall);
-      return;
-  }
-}
-
-async function runE2eTextLikeStep(
-  type: "text" | "thinking",
-  text: string,
-  chunks: string[] | undefined,
-  chunkDelayMs: number | undefined,
-  streamState: VisibleStreamState,
-  onEvent: (event: AssistantMessageEvent) => void,
-): Promise<void> {
-  const parts = resolveE2eChunks(text, chunks);
-  const startEvent =
-    type === "text"
-      ? ({
-          type: "text_start",
-          contentIndex: streamState.partial.content.length,
-          partial: streamState.partial,
-        } satisfies AssistantMessageEvent)
-      : ({
-          type: "thinking_start",
-          contentIndex: streamState.partial.content.length,
-          partial: streamState.partial,
-        } satisfies AssistantMessageEvent);
-
-  applyVisibleAssistantEvent(streamState, startEvent, onEvent);
-
-  for (const part of parts) {
-    if (chunkDelayMs && chunkDelayMs > 0) {
-      await Bun.sleep(chunkDelayMs);
-    }
-
-    const deltaEvent =
-      type === "text"
-        ? ({
-            type: "text_delta",
-            delta: part,
-            contentIndex: streamState.activeTextIndex ?? 0,
-            partial: streamState.partial,
-          } satisfies AssistantMessageEvent)
-        : ({
-            type: "thinking_delta",
-            delta: part,
-            contentIndex: streamState.activeThinkingIndex ?? 0,
-            partial: streamState.partial,
-          } satisfies AssistantMessageEvent);
-
-    applyVisibleAssistantEvent(streamState, deltaEvent, onEvent);
-  }
-}
-
-async function runE2eToolCallStep(
-  step: Extract<E2ePromptStep, { type: "toolCall" }>,
-  streamState: VisibleStreamState,
-  onEvent: (event: AssistantMessageEvent) => void,
-  onToolCall?: (toolCall: Extract<AssistantMessage["content"][number], { type: "toolCall" }>) => Promise<void> | void,
-): Promise<void> {
-  finishOpenVisibleBlocks(streamState, onEvent);
-
-  const serializedArguments = JSON.stringify(step.arguments);
-  const deltaChunks = resolveE2eChunks(serializedArguments, step.chunks);
-  const toolCallId = step.id ?? crypto.randomUUID();
-  const completedToolCall = {
-    type: "toolCall" as const,
-    id: toolCallId,
-    name: step.name,
-    arguments: step.arguments,
-  };
-
-  if ([STRUCTURED_SESSION_STATE_TOOL_NAME, "structured_session_state"].includes(step.name)) {
-    await onToolCall?.(completedToolCall);
-    return;
-  }
-
-  const contentIndex = streamState.partial.content.length;
-  let rawArguments = "";
-  let parsedArguments: Record<string, unknown> = {};
-
-  streamState.partial.content.push({
-    type: "toolCall",
-    id: toolCallId,
-    name: step.name,
-    arguments: {},
-  });
-
-  onEvent({
-    type: "toolcall_start",
-    contentIndex,
-    partial: streamState.partial,
-  } as AssistantMessageEvent);
-
-  for (const delta of deltaChunks) {
-    if (step.chunkDelayMs && step.chunkDelayMs > 0) {
-      await Bun.sleep(step.chunkDelayMs);
-    }
-
-    rawArguments += delta;
-    try {
-      parsedArguments = JSON.parse(rawArguments) as Record<string, unknown>;
-    } catch {
-      // Keep the last successfully parsed partial.
-    }
-
-    streamState.partial.content[contentIndex] = {
-      type: "toolCall",
-      id: toolCallId,
-      name: step.name,
-      arguments: parsedArguments,
-    };
-
-    onEvent({
-      type: "toolcall_delta",
-      contentIndex,
-      delta,
-      partial: streamState.partial,
-    } as AssistantMessageEvent);
-  }
-
-  streamState.partial.content[contentIndex] = completedToolCall;
-
-  onEvent({
-    type: "toolcall_end",
-    contentIndex,
-    partial: streamState.partial,
-    toolCall: completedToolCall,
-  } as AssistantMessageEvent);
-
-  await onToolCall?.(completedToolCall);
-}
-
-function resolveE2eChunks(text: string, chunks?: string[]): string[] {
-  if (chunks && chunks.length > 0) {
-    return chunks;
-  }
-
-  if (text.length <= 8) {
-    return [text];
-  }
-
-  const midpoint = Math.ceil(text.length / 2);
-  return [text.slice(0, midpoint), text.slice(midpoint)];
 }

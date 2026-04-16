@@ -354,7 +354,8 @@ export class ArtifactsController {
         return {
           mutated: true,
           needsHtmlRefresh:
-            kind === "html" && (previousContent === undefined || previousContent !== params.content),
+            kind === "html" &&
+            (previousContent === undefined || previousContent !== params.content),
         };
       }
       case "update": {

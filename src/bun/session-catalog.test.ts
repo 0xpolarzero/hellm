@@ -11,7 +11,10 @@ import {
   resolveRestoredSessionDefaults,
   type SessionDefaults,
 } from "./session-catalog";
-import type { StructuredSessionSnapshot, StructuredSessionStateStore } from "./structured-session-state";
+import type {
+  StructuredSessionSnapshot,
+  StructuredSessionStateStore,
+} from "./structured-session-state";
 
 const tempDirs: string[] = [];
 
@@ -81,32 +84,6 @@ function assistantMessage(
   };
 }
 
-const STRUCTURED_SESSION_LIFECYCLE_TOOL_NAME = "structured-session-state";
-
-type StructuredSessionLifecycleOperation =
-  | "startThread"
-  | "updateThread"
-  | "setThreadResult"
-  | "recordVerification"
-  | "startWorkflow"
-  | "updateWorkflow"
-  | "setWaitingState";
-
-function lifecycleToolCall(
-  operation: StructuredSessionLifecycleOperation,
-  argumentsValue: Record<string, unknown>,
-): ToolCall {
-  return {
-    type: "toolCall",
-    id: crypto.randomUUID(),
-    name: STRUCTURED_SESSION_LIFECYCLE_TOOL_NAME,
-    arguments: {
-      operation,
-      ...argumentsValue,
-    },
-  };
-}
-
 type PromptableSession = {
   agent: {
     appendMessage(message: Message): void;
@@ -153,31 +130,9 @@ function getStructuredSessionState(
   catalog: WorkspaceSessionCatalog,
   sessionId: string,
 ): StructuredSessionSnapshot {
-  const store = (
-    catalog as unknown as { structuredSessionStore: StructuredSessionStateStore }
-  ).structuredSessionStore;
+  const store = (catalog as unknown as { structuredSessionStore: StructuredSessionStateStore })
+    .structuredSessionStore;
   return store.getSessionState(sessionId);
-}
-
-async function waitForSessionSummary(
-  catalog: WorkspaceSessionCatalog,
-  sessionId: string,
-  predicate: (summary: Record<string, unknown>) => boolean,
-  timeoutMs = 3_000,
-): Promise<Record<string, unknown>> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const sessions = await catalog.listSessions();
-    const summary = sessions.sessions.find((entry) => entry.id === sessionId) as
-      | Record<string, unknown>
-      | undefined;
-    if (summary && predicate(summary)) {
-      return summary;
-    }
-    await Bun.sleep(20);
-  }
-
-  throw new Error(`Timed out waiting for session summary for ${sessionId}.`);
 }
 
 function installPromptSpy(
@@ -409,7 +364,9 @@ describe("WorkspaceSessionCatalog", () => {
       });
 
       await waitFor(
-        () => promptTexts.length === 1 && getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2,
+        () =>
+          promptTexts.length === 1 &&
+          getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2,
       );
       expect(promptTexts[0]).toContain("System:\nYou are svvy.");
       expect(promptTexts[0]).toContain("User:\nExplain the parser");
@@ -422,7 +379,9 @@ describe("WorkspaceSessionCatalog", () => {
       });
 
       await waitFor(
-        () => promptTexts.length === 2 && getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 4,
+        () =>
+          promptTexts.length === 2 &&
+          getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 4,
       );
       expect(promptTexts[1]).toBe("What changed?");
       expect(getManagedSessionHandle(catalog)).toBe(activeSession);
@@ -456,7 +415,9 @@ describe("WorkspaceSessionCatalog", () => {
       });
 
       await waitFor(
-        () => promptTexts.length === 1 && getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2,
+        () =>
+          promptTexts.length === 1 &&
+          getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2,
       );
       expect(promptTexts[0]).toContain("System:\nYou are svvy.");
       expect(promptTexts[0]).toContain("User:\nExplain the parser");
@@ -469,7 +430,9 @@ describe("WorkspaceSessionCatalog", () => {
       });
 
       await waitFor(
-        () => promptTexts.length === 2 && getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 4,
+        () =>
+          promptTexts.length === 2 &&
+          getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 4,
       );
       expect(promptTexts[1]).toContain("System:\nYou are svvy.");
       expect(promptTexts[1]).toContain("User:\nExplain the parser, but differently");
@@ -508,7 +471,9 @@ describe("WorkspaceSessionCatalog", () => {
       });
 
       await waitFor(
-        () => promptTexts.length === 1 && getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2,
+        () =>
+          promptTexts.length === 1 &&
+          getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2,
       );
       expect(promptTexts[0]).toContain("System:\nYou are svvy.");
       expect(promptTexts[0]).toContain("User:\nExplain the parser");
@@ -521,7 +486,9 @@ describe("WorkspaceSessionCatalog", () => {
       });
 
       await waitFor(
-        () => promptTexts.length === 2 && getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 4,
+        () =>
+          promptTexts.length === 2 &&
+          getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 4,
       );
       expect(promptTexts[1]).toBe("What changed?");
       expect(getManagedSessionHandle(catalog)).toBe(activeSession);
@@ -530,23 +497,11 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("persists a running structured thread before completion and exposes it after catalog restart", async () => {
+  it("creates a structured turn, thread, and episode for a plain assistant reply", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    const created = await catalog.createSession({ title: "Interrupted Prompt" }, DEFAULTS);
-    const prompt = userMessage("Run a direct architecture pass and summarize the change.");
-
-    let releasePrompt: (() => void) | null = null;
-    const promptGate = new Promise<void>((resolve) => {
-      releasePrompt = resolve;
-    });
-    const releasePromptGate = () => {
-      const release = releasePrompt;
-      if (typeof release === "function") {
-        release();
-      }
-    };
-
+    const created = await catalog.createSession({ title: "Plain Reply" }, DEFAULTS);
+    const prompt = userMessage("Explain the parser");
     const sessionPrototype = Object.getPrototypeOf(getManagedSessionHandle(catalog).session) as {
       prompt: (promptText: string) => Promise<void>;
     };
@@ -554,37 +509,8 @@ describe("WorkspaceSessionCatalog", () => {
       this: PromptableSession,
       _promptText: string,
     ) {
-      const store = (
-        catalog as unknown as { structuredSessionStore: StructuredSessionStateStore }
-      ).structuredSessionStore;
-      const runningThread = store.startThread({
-        sessionId: created.session.id,
-        kind: "direct",
-        objective: "Run a direct architecture pass and summarize the change.",
-      });
-
-      await promptGate;
-      appendMessagesToSession(this, [
-        prompt,
-        assistantMessage("Direct thread completed with structured summary.", {
-          toolCalls: [
-            lifecycleToolCall("setThreadResult", {
-              threadId: runningThread.id,
-              kind: "analysis-summary",
-              summary: "Direct thread completed with structured summary.",
-              body: "The runtime-owned direct thread finished successfully.",
-            }),
-            lifecycleToolCall("updateThread", {
-              threadId: runningThread.id,
-              status: "completed",
-              blockedReason: null,
-            }),
-          ],
-        }),
-      ]);
+      appendMessagesToSession(this, [prompt, assistantMessage("Parser cursor synced.")]);
     });
-
-    const restartedCatalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
     try {
       await catalog.sendPrompt({
@@ -593,310 +519,108 @@ describe("WorkspaceSessionCatalog", () => {
         onEvent: () => {},
       });
 
-      const runningSummary = await waitForSessionSummary(
-        catalog,
-        created.session.id,
-        (summary) => {
-          const threadIdsByStatus = summary.threadIdsByStatus as
-            | { running?: unknown[] }
-            | undefined;
-          return (
-            summary.status === "running" &&
-            Array.isArray(threadIdsByStatus?.running) &&
-            (threadIdsByStatus?.running.length ?? 0) > 0
-          );
-        },
-      );
-      expect(runningSummary.counts).toMatchObject({
-        threads: 1,
-        results: 0,
-      });
-
-      const recoveredRunningSummary = await waitForSessionSummary(
-        restartedCatalog,
-        created.session.id,
-        (summary) => summary.status === "running",
-      );
-      expect(recoveredRunningSummary.counts).toMatchObject({
-        threads: 1,
-        results: 0,
-      });
-
-      releasePromptGate();
-      await waitFor(() => getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2);
-    } finally {
-      releasePromptGate();
-      promptSpy.mockRestore();
-      await restartedCatalog.dispose();
-      await catalog.dispose();
-    }
-  });
-
-  it("keeps ordinary verification and workflow mentions direct until explicit lifecycle tool calls write structured state", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    const created = await catalog.createSession({ title: "Structured Results" }, DEFAULTS);
-    const directPrompt = userMessage(
-      "Review this change, mention verification and workflow in the reply, but stay direct.",
-    );
-    const directReply = assistantMessage(
-      "This stays direct work even though it mentions verification and workflow in passing.",
-    );
-
-    const verificationPrompt = userMessage("Start verification as an explicit lifecycle write.");
-    const verificationReply = assistantMessage("Starting the verification thread explicitly.", {
-      toolCalls: [
-        lifecycleToolCall("startThread", {
-          kind: "verification",
-          objective: "Run verification for the current change.",
-        }),
-        lifecycleToolCall("recordVerification", {
-          kind: "test",
-          status: "failed",
-          summary: "Verification failed: build is red.",
-          command: "bun test",
-        }),
-        lifecycleToolCall("setThreadResult", {
-          kind: "verification-summary",
-          summary: "Verification failed: build is red.",
-          body: "The verification result is durable structured state, not transcript text.",
-        }),
-        lifecycleToolCall("updateThread", {
-          status: "failed",
-          blockedReason: null,
-        }),
-      ],
-    });
-
-    const workflowPrompt = userMessage("Start the delegated workflow explicitly.");
-    const workflowReply = assistantMessage("Starting the workflow thread explicitly.", {
-      toolCalls: [
-        lifecycleToolCall("startThread", {
-          kind: "workflow",
-          objective: "Represent the delegated Smithers workflow in structured state.",
-        }),
-        lifecycleToolCall("startWorkflow", {
-          smithersRunId: "smithers-run-001",
-          workflowName: "workflow-resume-poc",
-          summary: "Delegated workflow started and projected into session state.",
-        }),
-        lifecycleToolCall("setWaitingState", {
-          kind: "user",
-          reason: "Need clarification about rollout ownership.",
-          resumeWhen: "Resume when the user answers the workflow ownership question.",
-        }),
-      ],
-    });
-
-    const resumePrompt = userMessage("Resume the explicit workflow and finish it.");
-    const resumeReply = assistantMessage("Completing the workflow through explicit lifecycle writes.", {
-      toolCalls: [
-        lifecycleToolCall("updateWorkflow", {
-          status: "completed",
-          summary: "Workflow resumed and completed after clarification.",
-        }),
-        lifecycleToolCall("setThreadResult", {
-          kind: "workflow-summary",
-          summary: "Workflow resumed and completed after clarification.",
-          body: "The delegated workflow completed after clarification, and that completion is durable state.",
-        }),
-        lifecycleToolCall("updateThread", {
-          status: "completed",
-          blockedReason: null,
-        }),
-      ],
-    });
-
-    const { promptSpy } = installPromptSpy(catalog, [
-      { user: directPrompt, assistant: directReply },
-      { user: verificationPrompt, assistant: verificationReply },
-      { user: workflowPrompt, assistant: workflowReply },
-      { user: resumePrompt, assistant: resumeReply },
-    ]);
-
-    try {
-      await catalog.sendPrompt({
-        ...DEFAULTS,
-        messages: [directPrompt],
-        onEvent: () => {},
-      });
-      await waitFor(() => getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2);
-
-      const afterDirect = getStructuredSessionState(catalog, created.session.id);
-      expect(afterDirect.threads).toHaveLength(1);
-      expect(afterDirect.threads[0]?.kind).toBe("direct");
-      expect(afterDirect.threads[0]?.status).toBe("completed");
-      expect(afterDirect.verifications).toHaveLength(0);
-      expect(afterDirect.workflows).toHaveLength(0);
-      expect(afterDirect.session.waitingOn).toBeNull();
-
-      await catalog.sendPrompt({
-        ...DEFAULTS,
-        messages: [...getManagedSessionHandle(catalog).session.agent.state.messages, verificationPrompt],
-        onEvent: () => {},
-      });
-      await waitFor(() => getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 4);
-
-      const afterVerification = getStructuredSessionState(catalog, created.session.id);
-      const verificationThread = afterVerification.threads.find(
-        (thread) => thread.kind === "verification",
-      );
-      expect(verificationThread?.status).toBe("failed");
-      expect(verificationThread?.result?.kind).toBe("verification-summary");
-      expect(afterVerification.verifications).toHaveLength(1);
-      expect(afterVerification.workflows).toHaveLength(0);
-      expect(afterVerification.session.waitingOn).toBeNull();
-
-      const verificationSummary = await waitForSessionSummary(
-        catalog,
-        created.session.id,
-        (summary) =>
-          summary.status === "error" &&
-          typeof summary.preview === "string" &&
-          summary.preview.includes("Verification failed: build is red."),
-      );
-      expect(verificationSummary.counts).toMatchObject({
-        threads: 2,
-        results: 2,
-        verifications: 1,
-        workflows: 0,
-      });
-
-      await catalog.sendPrompt({
-        ...DEFAULTS,
-        messages: [...getManagedSessionHandle(catalog).session.agent.state.messages, workflowPrompt],
-        onEvent: () => {},
-      });
-      await waitFor(() => getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 6);
-
-      const afterWorkflowWaiting = getStructuredSessionState(catalog, created.session.id);
-      const workflowThread = afterWorkflowWaiting.threads.find((thread) => thread.kind === "workflow");
-      expect(workflowThread?.status).toBe("waiting");
-      expect(workflowThread?.result).toBeNull();
-      expect(afterWorkflowWaiting.workflows).toHaveLength(1);
-      expect(afterWorkflowWaiting.session.waitingOn).toMatchObject({
-        threadId: workflowThread?.id,
-        reason: "Need clarification about rollout ownership.",
-      });
-      expect(afterWorkflowWaiting.threads.filter((thread) => thread.result !== null)).toHaveLength(
-        2,
-      );
-
-      const waitingSummary = await waitForSessionSummary(
-        catalog,
-        created.session.id,
-        (summary) =>
-          summary.status === "waiting" &&
-          typeof summary.preview === "string" &&
-          summary.preview.toLowerCase().includes("clarification"),
-      );
-      expect(waitingSummary.waitingOn).toEqual({
-        threadId: expect.any(String),
-        reason: expect.stringContaining("clarification"),
-        resumeWhen: expect.stringContaining("Resume"),
-        since: expect.any(String),
-      });
-      expect(waitingSummary.counts).toMatchObject({
-        threads: 3,
-        results: 2,
-        verifications: 1,
-        workflows: 1,
-      });
-
-      await catalog.sendPrompt({
-        ...DEFAULTS,
-        messages: [...getManagedSessionHandle(catalog).session.agent.state.messages, resumePrompt],
-        onEvent: () => {},
-      });
-      await waitFor(() => getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 8);
-
-      const afterResume = getStructuredSessionState(catalog, created.session.id);
-      const resumedWorkflowThread = afterResume.threads.find(
-        (thread) => thread.kind === "workflow",
-      );
-      expect(resumedWorkflowThread?.status).toBe("completed");
-      expect(resumedWorkflowThread?.result?.kind).toBe("workflow-summary");
-      expect(resumedWorkflowThread?.result?.summary).toContain(
-        "Workflow resumed and completed after clarification.",
-      );
-      expect(afterResume.session.waitingOn).toBeNull();
-      expect(afterResume.threads.filter((thread) => thread.result !== null)).toHaveLength(3);
-
-      const resumedSummary = await waitForSessionSummary(
-        catalog,
-        created.session.id,
-        (summary) =>
-          summary.status === "idle" &&
-          typeof summary.preview === "string" &&
-          summary.preview.includes("Workflow resumed and completed after clarification."),
-      );
-      expect(resumedSummary.waitingOn).toBeNull();
-      expect(resumedSummary.counts).toMatchObject({
-        threads: 3,
-        results: 3,
-        verifications: 1,
-        workflows: 1,
-      });
-    } finally {
-      promptSpy.mockRestore();
-      await catalog.dispose();
-    }
-  });
-
-  it("keeps dependency-blocked threads out of session waiting", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    const created = await catalog.createSession({ title: "Blocked Dependencies" }, DEFAULTS);
-    const store = (
-      catalog as unknown as { structuredSessionStore: StructuredSessionStateStore }
-    ).structuredSessionStore;
-
-    try {
-      const directThread = store.startThread({
-        sessionId: created.session.id,
-        kind: "direct",
-        objective: "Continue direct work while another thread is blocked.",
-      });
-      const blockedThread = store.startThread({
-        sessionId: created.session.id,
-        kind: "workflow",
-        objective: "Wait on a dependency without pausing the whole session.",
-      });
-
-      store.updateThread({
-        threadId: blockedThread.id,
-        status: "waiting",
-        blockedReason: "Waiting on a dependency thread.",
-        blockedOn: {
-          kind: "threads",
-          threadIds: [directThread.id],
-          waitPolicy: "all",
-          reason: "Waiting on the direct work thread to finish.",
-          since: new Date().toISOString(),
-        },
-      });
-
-      const waitingSummary = await waitForSessionSummary(
-        catalog,
-        created.session.id,
-        (summary) => summary.status === "running",
-      );
-      expect(waitingSummary.waitingOn).toBeNull();
-      expect(waitingSummary.counts).toMatchObject({
-        threads: 2,
-        results: 0,
-        verifications: 0,
-        workflows: 0,
+      await waitFor(() => {
+        const snapshot = getStructuredSessionState(catalog, created.session.id);
+        return snapshot.episodes.length === 1;
       });
 
       const snapshot = getStructuredSessionState(catalog, created.session.id);
-      const blockedThreadSnapshot = snapshot.threads.find((thread) => thread.id === blockedThread.id);
-      expect(blockedThreadSnapshot?.blockedOn).toMatchObject({
-        kind: "threads",
-        threadIds: [directThread.id],
-        waitPolicy: "all",
+      expect(snapshot.turns).toHaveLength(1);
+      expect(snapshot.threads).toHaveLength(1);
+      expect(snapshot.commands).toHaveLength(0);
+      expect(snapshot.episodes).toHaveLength(1);
+      expect(snapshot.verifications).toHaveLength(0);
+      expect(snapshot.workflows).toHaveLength(0);
+      expect(snapshot.session.wait).toBeNull();
+      expect(snapshot.turns[0]).toMatchObject({
+        requestSummary: "Explain the parser",
+        status: "completed",
       });
-      expect(snapshot.session.waitingOn).toBeNull();
+      expect(snapshot.threads[0]).toMatchObject({
+        kind: "task",
+        status: "completed",
+        parentThreadId: null,
+      });
+      expect(snapshot.episodes[0]).toMatchObject({
+        kind: "analysis",
+        title: "Explain the parser",
+      });
+      expect(snapshot.events.map((event) => event.kind)).toEqual([
+        "turn.started",
+        "thread.created",
+        "episode.created",
+        "thread.finished",
+        "turn.completed",
+      ]);
+    } finally {
+      promptSpy.mockRestore();
+      await catalog.dispose();
+    }
+  });
+
+  it("projects durable session wait separately from thread wait", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Blocked Dependencies" }, DEFAULTS);
+    const store = (catalog as unknown as { structuredSessionStore: StructuredSessionStateStore })
+      .structuredSessionStore;
+
+    try {
+      const turn = store.startTurn({
+        sessionId: created.session.id,
+        requestSummary: "Wait on the user",
+      });
+      const waitingThread = store.createThread({
+        turnId: turn.id,
+        kind: "workflow",
+        title: "Pause for input",
+        objective: "Wait for a durable session wait.",
+      });
+
+      const wait = {
+        kind: "user" as const,
+        reason: "Need clarification before continuing.",
+        resumeWhen: "Resume when the user answers the rollout question.",
+        since: new Date().toISOString(),
+      };
+      store.updateThread({
+        threadId: waitingThread.id,
+        status: "waiting",
+        wait,
+      });
+      const waitingOn = store.setSessionWait({
+        sessionId: created.session.id,
+        threadId: waitingThread.id,
+        ...wait,
+      });
+
+      const sessions = await catalog.listSessions();
+      const summary = sessions.sessions.find((session) => session.id === created.session.id);
+      expect(summary?.status).toBe("waiting");
+      expect(summary?.wait).toEqual(waitingOn);
+      expect(summary?.preview).toBe("Waiting: Need clarification before continuing.");
+      expect(summary?.counts).toMatchObject({
+        turns: 1,
+        threads: 1,
+        commands: 0,
+        episodes: 0,
+        verifications: 0,
+        workflows: 0,
+        artifacts: 0,
+      });
+
+      const snapshot = getStructuredSessionState(catalog, created.session.id);
+      expect(snapshot.session.wait).toEqual(waitingOn);
+      expect(snapshot.threads[0]?.wait).toMatchObject({
+        kind: "user",
+        reason: "Need clarification before continuing.",
+      });
+      expect(snapshot.events.map((event) => event.kind)).toEqual([
+        "turn.started",
+        "thread.created",
+        "thread.updated",
+        "session.wait.started",
+      ]);
     } finally {
       await catalog.dispose();
     }

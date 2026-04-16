@@ -1,6 +1,6 @@
 import { WorkflowGraph } from "../WorkflowGraph";
 import { StatusBadge } from "../StatusBadge";
-import { Clock, GitBranch } from "lucide-react";
+import { Clock } from "lucide-react";
 import { mockWorkflowNodes, mockWorkflowEdges, mockWorkflowRun } from "@/data/mock";
 import type { WorkflowRun } from "@/data/mock";
 
@@ -26,10 +26,7 @@ export function WorkflowPaneContent({ workflow = mockWorkflowRun }: WorkflowPane
             {workflow.stepsDone}/{workflow.stepsTotal}
           </span>
           <div className="w-12 h-1 rounded-full bg-muted overflow-hidden">
-            <div
-              className="h-full bg-orange-500 rounded-full"
-              style={{ width: `${pct}%` }}
-            />
+            <div className="h-full bg-orange-500 rounded-full" style={{ width: `${pct}%` }} />
           </div>
         </div>
       </div>

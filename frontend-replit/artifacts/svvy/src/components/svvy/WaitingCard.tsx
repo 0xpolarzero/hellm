@@ -16,7 +16,7 @@ export function WaitingCard({ question, context, className, onReply }: WaitingCa
     <div
       className={cn(
         "border border-border rounded bg-card border-l-2 border-l-amber-500",
-        className
+        className,
       )}
       data-testid="waiting-card"
     >
@@ -36,11 +36,11 @@ export function WaitingCard({ question, context, className, onReply }: WaitingCa
           <input
             type="text"
             value={reply}
-            onChange={e => setReply(e.target.value)}
+            onChange={(e) => setReply(e.target.value)}
             placeholder="Type your response..."
             className="flex-1 text-[12px] bg-muted border border-border rounded px-2.5 py-1.5 text-foreground placeholder:text-muted-foreground outline-none focus:border-ring transition-colors"
             data-testid="waiting-reply-input"
-            onKeyDown={e => {
+            onKeyDown={(e) => {
               if (e.key === "Enter" && reply.trim() && onReply) {
                 onReply(reply);
                 setReply("");
@@ -48,13 +48,18 @@ export function WaitingCard({ question, context, className, onReply }: WaitingCa
             }}
           />
           <button
-            onClick={() => { if (reply.trim() && onReply) { onReply(reply); setReply(""); } }}
+            onClick={() => {
+              if (reply.trim() && onReply) {
+                onReply(reply);
+                setReply("");
+              }
+            }}
             disabled={!reply.trim()}
             className={cn(
               "text-[11px] px-3 py-1.5 rounded font-medium transition-colors",
               reply.trim()
                 ? "bg-orange-500 text-white hover:bg-orange-600"
-                : "bg-muted text-muted-foreground cursor-not-allowed"
+                : "bg-muted text-muted-foreground cursor-not-allowed",
             )}
             data-testid="btn-reply"
           >

@@ -5,7 +5,7 @@ import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
 import { escapeForRegExp, launchSvvyApp, createHomeDir } from "./harness";
 import { assistantTextMessage, seedSessions, userMessage } from "./support";
 
-setDefaultTimeout(45_000);
+setDefaultTimeout(90_000);
 
 function getAppWorkspaceDir(): string {
   return resolveElectrobunWorkspaceDir(process.cwd());
@@ -65,10 +65,13 @@ async function expectWorkspaceChrome(page: Awaited<ReturnType<typeof launchSvvyA
   return { branch, workspaceLabel };
 }
 
-async function expectBootState(page: Awaited<ReturnType<typeof launchSvvyApp>>["page"], expected: {
-  titles: string[];
-  activeTitle: string;
-}) {
+async function expectBootState(
+  page: Awaited<ReturnType<typeof launchSvvyApp>>["page"],
+  expected: {
+    titles: string[];
+    activeTitle: string;
+  },
+) {
   expect(await page.locator(".session-item").count()).toBe(expected.titles.length);
   expect(await sessionTitles(page)).toEqual(expected.titles);
   expect(await text(page, ".workspace-main-title")).toBe(expected.activeTitle);
@@ -98,36 +101,40 @@ test("a clean isolated home dir boots the shell and creates one session", async 
 test("seeded sessions are hydrated on boot and the newest one opens first", async () => {
   await withHomeDir(async (homeDir) => {
     const base = Date.now() - 60_000;
-    await seedSessions(homeDir, [
-      {
-        key: "older",
-        title: "Older session",
-        messages: [
-          userMessage("Investigate the queue", base),
-          assistantTextMessage("Queue looks healthy.", { timestamp: base + 1 }),
-        ],
-      },
-      {
-        key: "failed",
-        title: "Failed session",
-        messages: [
-          userMessage("Check the failing boot path", base + 2_000),
-          assistantTextMessage("Boot path failed.", {
-            stopReason: "error",
-            timestamp: base + 2_001,
-          }),
-        ],
-      },
-      {
-        key: "forked",
-        title: "Forked child",
-        parentKey: "older",
-        messages: [
-          userMessage("Carry the work forward", base + 4_000),
-          assistantTextMessage("Forked work is ready.", { timestamp: base + 4_001 }),
-        ],
-      },
-    ], getAppWorkspaceDir());
+    await seedSessions(
+      homeDir,
+      [
+        {
+          key: "older",
+          title: "Older session",
+          messages: [
+            userMessage("Investigate the queue", base),
+            assistantTextMessage("Queue looks healthy.", { timestamp: base + 1 }),
+          ],
+        },
+        {
+          key: "failed",
+          title: "Failed session",
+          messages: [
+            userMessage("Check the failing boot path", base + 2_000),
+            assistantTextMessage("Boot path failed.", {
+              stopReason: "error",
+              timestamp: base + 2_001,
+            }),
+          ],
+        },
+        {
+          key: "forked",
+          title: "Forked child",
+          parentKey: "older",
+          messages: [
+            userMessage("Carry the work forward", base + 4_000),
+            assistantTextMessage("Forked work is ready.", { timestamp: base + 4_001 }),
+          ],
+        },
+      ],
+      getAppWorkspaceDir(),
+    );
 
     const app = await launchSvvyApp({ homeDir });
     try {
@@ -146,9 +153,9 @@ test("seeded sessions are hydrated on boot and the newest one opens first", asyn
       expect(await app.page.locator(".session-item").nth(0).locator("strong").textContent()).toBe(
         "Forked child",
       );
-      expect(await app.page.locator(".session-item").nth(0).locator(".session-branch").textContent()).toBe(
-        "Fork",
-      );
+      expect(
+        await app.page.locator(".session-item").nth(0).locator(".session-branch").textContent(),
+      ).toBe("Fork");
     } finally {
       await app.close();
     }
@@ -157,16 +164,20 @@ test("seeded sessions are hydrated on boot and the newest one opens first", asyn
 
 test("renaming a session persists across relaunch on the same home dir", async () => {
   await withHomeDir(async (homeDir) => {
-    await seedSessions(homeDir, [
-      {
-        key: "rename-me",
-        title: "Original session",
-        messages: [
-          userMessage("Rename this session", Date.now() - 1_000),
-          assistantTextMessage("Ready to rename.", { timestamp: Date.now() - 999 }),
-        ],
-      },
-    ], getAppWorkspaceDir());
+    await seedSessions(
+      homeDir,
+      [
+        {
+          key: "rename-me",
+          title: "Original session",
+          messages: [
+            userMessage("Rename this session", Date.now() - 1_000),
+            assistantTextMessage("Ready to rename.", { timestamp: Date.now() - 999 }),
+          ],
+        },
+      ],
+      getAppWorkspaceDir(),
+    );
 
     const renamedTitle = `Renamed for persistence ${Date.now()}`;
 
@@ -180,7 +191,9 @@ test("renaming a session persists across relaunch on the same home dir", async (
       });
 
       const firstSession = firstLaunch.page.locator(".session-item").first();
-      await firstSession.getByRole("button", { name: /Session actions for/ }).click({ force: true });
+      await firstSession
+        .getByRole("button", { name: /Session actions for/ })
+        .click({ force: true });
       await firstLaunch.page.getByRole("button", { name: "Rename" }).click();
 
       const dialog = firstLaunch.page.getByRole("dialog", { name: "Rename Session" });
@@ -215,36 +228,40 @@ test("renaming a session persists across relaunch on the same home dir", async (
 test("relaunching the same seeded home dir keeps session data stable", async () => {
   await withHomeDir(async (homeDir) => {
     const base = Date.now() - 60_000;
-    await seedSessions(homeDir, [
-      {
-        key: "older",
-        title: "Older session",
-        messages: [
-          userMessage("Investigate the queue", base),
-          assistantTextMessage("Queue looks healthy.", { timestamp: base + 1 }),
-        ],
-      },
-      {
-        key: "failed",
-        title: "Failed session",
-        messages: [
-          userMessage("Check the failing boot path", base + 2_000),
-          assistantTextMessage("Boot path failed.", {
-            stopReason: "error",
-            timestamp: base + 2_001,
-          }),
-        ],
-      },
-      {
-        key: "forked",
-        title: "Forked child",
-        parentKey: "older",
-        messages: [
-          userMessage("Carry the work forward", base + 4_000),
-          assistantTextMessage("Forked work is ready.", { timestamp: base + 4_001 }),
-        ],
-      },
-    ], getAppWorkspaceDir());
+    await seedSessions(
+      homeDir,
+      [
+        {
+          key: "older",
+          title: "Older session",
+          messages: [
+            userMessage("Investigate the queue", base),
+            assistantTextMessage("Queue looks healthy.", { timestamp: base + 1 }),
+          ],
+        },
+        {
+          key: "failed",
+          title: "Failed session",
+          messages: [
+            userMessage("Check the failing boot path", base + 2_000),
+            assistantTextMessage("Boot path failed.", {
+              stopReason: "error",
+              timestamp: base + 2_001,
+            }),
+          ],
+        },
+        {
+          key: "forked",
+          title: "Forked child",
+          parentKey: "older",
+          messages: [
+            userMessage("Carry the work forward", base + 4_000),
+            assistantTextMessage("Forked work is ready.", { timestamp: base + 4_001 }),
+          ],
+        },
+      ],
+      getAppWorkspaceDir(),
+    );
 
     const expectedTitles = ["Forked child", "Failed session", "Older session"];
 

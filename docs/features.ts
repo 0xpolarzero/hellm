@@ -13,8 +13,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     id: "desktop-shell",
     name: "Electrobun Desktop Shell",
     status: "shipped",
-    summary:
-      "Runs svvy as a native desktop coding app with a Bun-side pi host and renderer shell.",
+    summary: "Runs svvy as a native desktop coding app with a Bun-side pi host and renderer shell.",
     sourceSpecs: ["docs/prd.md"],
   },
   {

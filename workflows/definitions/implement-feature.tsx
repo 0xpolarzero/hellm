@@ -63,7 +63,11 @@ const inputSchema = z.object({
   worktreeRoot: z.string().default(".worktrees/implement-feature"),
   branchPrefix: z.string().default("workflow/implement-feature"),
   baseBranch: z.string().default(process.env.SVVY_IMPLEMENT_FEATURE_BASE_BRANCH ?? "main"),
-  featureInventoryTimeoutMs: z.number().int().positive().default(DEFAULT_FEATURE_INVENTORY_TIMEOUT_MS),
+  featureInventoryTimeoutMs: z
+    .number()
+    .int()
+    .positive()
+    .default(DEFAULT_FEATURE_INVENTORY_TIMEOUT_MS),
   coveragePlanTimeoutMs: z.number().int().positive().default(DEFAULT_COVERAGE_PLAN_TIMEOUT_MS),
   testAuthorTimeoutMs: z.number().int().positive().default(DEFAULT_TEST_AUTHOR_TIMEOUT_MS),
   implementTimeoutMs: z.number().int().positive().default(DEFAULT_IMPLEMENT_TIMEOUT_MS),
@@ -281,17 +285,16 @@ export default smithers((ctx) => {
     latestTestPlan?.status === "BLOCKED" ||
     latestImplementation?.status === "BLOCKED" ||
     latestSurfaceCheck?.status === "BLOCKED";
-  const canPlanCoverage =
-    !!latestFeatureInventory && latestFeatureInventory.status !== "BLOCKED";
+  const canPlanCoverage = !!latestFeatureInventory && latestFeatureInventory.status !== "BLOCKED";
   const canWriteTests =
     canPlanCoverage && !!latestCoveragePlan && latestCoveragePlan.status !== "BLOCKED";
-  const canImplement =
-    canWriteTests && !!latestTestPlan && latestTestPlan.status !== "BLOCKED";
+  const canImplement = canWriteTests && !!latestTestPlan && latestTestPlan.status !== "BLOCKED";
   const canSurfaceCheck =
     canImplement && !!latestImplementation && latestImplementation.status !== "BLOCKED";
   const canReview =
     canSurfaceCheck && !!latestSurfaceCheck && latestSurfaceCheck.status !== "BLOCKED";
-  const stopLoop = blockedBeforeReview || latestReview?.approved === true || latestReview?.continueLoop === false;
+  const stopLoop =
+    blockedBeforeReview || latestReview?.approved === true || latestReview?.continueLoop === false;
 
   return (
     <Workflow name="svvy-implement-feature" cache={false}>
@@ -478,7 +481,8 @@ export default smithers((ctx) => {
                     reviewRound={reviewIterations + 1}
                     featureIdsFormatted={formatList(featureIds)}
                     featureInventorySummary={
-                      latestFeatureInventory?.summary ?? "No feature inventory summary was captured."
+                      latestFeatureInventory?.summary ??
+                      "No feature inventory summary was captured."
                     }
                     coveragePlanSummary={
                       latestCoveragePlan?.summary ?? "No coverage-plan summary was captured."
@@ -685,12 +689,10 @@ function formatCoveragePlan(plan?: TestCoveragePlanResult) {
     .map((obligation) => {
       const levels = obligation.coverageLevels.join(", ");
       const features = obligation.featureIds.join(", ");
-      const existing = obligation.existingTestFiles.length > 0
-        ? obligation.existingTestFiles.join(", ")
-        : "none";
-      const planned = obligation.plannedTestFiles.length > 0
-        ? obligation.plannedTestFiles.join(", ")
-        : "none";
+      const existing =
+        obligation.existingTestFiles.length > 0 ? obligation.existingTestFiles.join(", ") : "none";
+      const planned =
+        obligation.plannedTestFiles.length > 0 ? obligation.plannedTestFiles.join(", ") : "none";
 
       return [
         `- ${obligation.scenarioId}: ${obligation.scenarioName}`,

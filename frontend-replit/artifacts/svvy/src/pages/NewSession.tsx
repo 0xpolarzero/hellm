@@ -27,7 +27,9 @@ export default function NewSession() {
         </div>
 
         <h2 className="text-lg font-semibold text-foreground mb-1">Start orchestrating</h2>
-        <p className="text-[13px] text-muted-foreground mb-8">Choose a session type or resume a recent session.</p>
+        <p className="text-[13px] text-muted-foreground mb-8">
+          Choose a session type or resume a recent session.
+        </p>
 
         {/* Entry point cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full max-w-xl mb-10">
@@ -43,7 +45,9 @@ export default function NewSession() {
               <ChevronRight className="w-3 h-3 text-muted-foreground/30 group-hover:text-muted-foreground ml-auto" />
             </div>
             <div>
-              <div className="text-[12px] font-medium text-foreground mb-0.5">Orchestrator session</div>
+              <div className="text-[12px] font-medium text-foreground mb-0.5">
+                Orchestrator session
+              </div>
               <div className="text-[11px] text-muted-foreground">Full power, all agents</div>
             </div>
           </button>
@@ -85,7 +89,9 @@ export default function NewSession() {
         <div className="w-full max-w-xl mb-8 rounded border border-border bg-card px-3 py-3">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[11px] font-medium text-foreground">Session mode preview</span>
-            <span className="font-mono text-[10px] text-muted-foreground">orchestrator vs quick</span>
+            <span className="font-mono text-[10px] text-muted-foreground">
+              orchestrator vs quick
+            </span>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded border border-orange-500/20 bg-orange-500/5 px-2.5 py-2">
@@ -97,7 +103,8 @@ export default function NewSession() {
             <div className="rounded border border-border px-2.5 py-2">
               <div className="text-[11px] text-foreground mb-1">Quick</div>
               <div className="text-[10px] text-muted-foreground leading-relaxed">
-                Single surface, smaller context budget, faster answer path with fewer delegated actions.
+                Single surface, smaller context budget, faster answer path with fewer delegated
+                actions.
               </div>
             </div>
           </div>
@@ -109,11 +116,11 @@ export default function NewSession() {
             <input
               type="text"
               value={prompt}
-              onChange={e => setPrompt(e.target.value)}
+              onChange={(e) => setPrompt(e.target.value)}
               placeholder="Describe what you want to accomplish..."
               className="flex-1 bg-transparent text-[13px] text-foreground placeholder:text-muted-foreground outline-none"
               data-testid="new-session-prompt"
-              onKeyDown={e => {
+              onKeyDown={(e) => {
                 if (e.key === "Enter" && prompt.trim()) {
                   setLocation("/session/active");
                 }
@@ -132,9 +139,11 @@ export default function NewSession() {
 
         {/* Recent sessions */}
         <div className="w-full max-w-xl">
-          <h3 className="text-[10px] font-mono font-semibold text-muted-foreground uppercase tracking-wider mb-2">Recent</h3>
+          <h3 className="text-[10px] font-mono font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+            Recent
+          </h3>
           <div className="space-y-0.5">
-            {recentSessions.map(session => (
+            {recentSessions.map((session) => (
               <button
                 key={session.id}
                 onClick={() => setLocation("/session")}
@@ -142,7 +151,9 @@ export default function NewSession() {
                 data-testid={`recent-row-${session.id}`}
               >
                 <StatusDot status={session.status} />
-                <span className="text-[12px] text-foreground/80 flex-1 truncate">{session.title}</span>
+                <span className="text-[12px] text-foreground/80 flex-1 truncate">
+                  {session.title}
+                </span>
                 <span className="font-mono text-[10px] text-muted-foreground">{session.time}</span>
               </button>
             ))}

@@ -5,8 +5,22 @@ export const mockWorkspace = {
 };
 
 export type SessionStatus = "running" | "done" | "waiting" | "failed" | "idle";
-export type AgentType = "orchestrator" | "quick" | "explorer" | "implementer" | "reviewer" | "workflow-writer";
-export type NodeType = "agent-task" | "script" | "verification" | "wait" | "retry" | "terminal" | "preflight" | "validation";
+export type AgentType =
+  | "orchestrator"
+  | "quick"
+  | "explorer"
+  | "implementer"
+  | "reviewer"
+  | "workflow-writer";
+export type NodeType =
+  | "agent-task"
+  | "script"
+  | "verification"
+  | "wait"
+  | "retry"
+  | "terminal"
+  | "preflight"
+  | "validation";
 export type NodeStatus = "completed" | "active" | "waiting" | "failed";
 export type ArtifactType = "diff" | "log" | "screenshot" | "report" | "html" | "json";
 
@@ -280,10 +294,7 @@ export const mockThreads: Thread[] = [
     worktree: "feat/oauth-provider",
     elapsed: "1m 12s",
     model: "sonnet",
-    changedFiles: [
-      "tests/integration/oauth.test.ts",
-      "tests/fixtures/oauth.ts",
-    ],
+    changedFiles: ["tests/integration/oauth.test.ts", "tests/fixtures/oauth.ts"],
     conclusions: [],
     unresolvedIssues: ["Token expiry handling not yet covered"],
     followUpSuggestions: [],
@@ -296,7 +307,8 @@ export const mockThreads: Thread[] = [
     title: "Project workflow state into session timeline",
     status: "waiting",
     progress: 78,
-    objective: "Show workflow progress, wait states, and node provenance inline in the session surface.",
+    objective:
+      "Show workflow progress, wait states, and node provenance inline in the session surface.",
     worktree: "feat/session-overlay",
     elapsed: "2m 48s",
     model: "opus",
@@ -305,9 +317,7 @@ export const mockThreads: Thread[] = [
       "src/session/projection.ts",
       "src/ui/workflow-timeline.tsx",
     ],
-    conclusions: [
-      "Overlay shape validated against direct, delegated, and waiting paths",
-    ],
+    conclusions: ["Overlay shape validated against direct, delegated, and waiting paths"],
     unresolvedIssues: ["Need durable waiting-state wording from product"],
     followUpSuggestions: ["Surface retry provenance on the workflow card"],
     executor: "Workflow writer",
@@ -367,11 +377,36 @@ export const mockEpisodes: Episode[] = [
   {
     id: "e1",
     title: "Auth middleware implementation complete",
-    summary: "Successfully implemented OAuth 2.0 middleware with PKCE support for GitHub and Google. All unit tests passing. Security review passed.",
+    summary:
+      "Successfully implemented OAuth 2.0 middleware with PKCE support for GitHub and Google. All unit tests passing. Security review passed.",
     artifacts: [
-      { id: "af1", name: "auth-middleware.patch", type: "diff", size: "4.2 KB", age: "5m ago", session: "OAuth Provider Integration", thread: "t1" },
-      { id: "af2", name: "test-results.log", type: "log", size: "12.8 KB", age: "5m ago", session: "OAuth Provider Integration", thread: "t1" },
-      { id: "af3", name: "coverage-report.html", type: "html", size: "88.4 KB", age: "5m ago", session: "OAuth Provider Integration", thread: "t1" },
+      {
+        id: "af1",
+        name: "auth-middleware.patch",
+        type: "diff",
+        size: "4.2 KB",
+        age: "5m ago",
+        session: "OAuth Provider Integration",
+        thread: "t1",
+      },
+      {
+        id: "af2",
+        name: "test-results.log",
+        type: "log",
+        size: "12.8 KB",
+        age: "5m ago",
+        session: "OAuth Provider Integration",
+        thread: "t1",
+      },
+      {
+        id: "af3",
+        name: "coverage-report.html",
+        type: "html",
+        size: "88.4 KB",
+        age: "5m ago",
+        session: "OAuth Provider Integration",
+        thread: "t1",
+      },
     ],
     verified: true,
     thread: "Implement auth middleware",
@@ -390,8 +425,24 @@ export const mockVerification: VerificationResult = {
   testsPassed: 24,
   summary: "All 24 tests passing. Build clean. No lint violations.",
   artifacts: [
-    { id: "af2", name: "test-results.log", type: "log", size: "12.8 KB", age: "5m ago", session: "OAuth Provider Integration", thread: "t1" },
-    { id: "af3", name: "coverage-report.html", type: "html", size: "88.4 KB", age: "5m ago", session: "OAuth Provider Integration", thread: "t1" },
+    {
+      id: "af2",
+      name: "test-results.log",
+      type: "log",
+      size: "12.8 KB",
+      age: "5m ago",
+      session: "OAuth Provider Integration",
+      thread: "t1",
+    },
+    {
+      id: "af3",
+      name: "coverage-report.html",
+      type: "html",
+      size: "88.4 KB",
+      age: "5m ago",
+      session: "OAuth Provider Integration",
+      thread: "t1",
+    },
   ],
 };
 
@@ -417,65 +468,106 @@ export const mockVerificationFailed: VerificationResult = {
          |                             ^
       44 |   });`,
   artifacts: [
-    { id: "af7", name: "ci-run.log", type: "log", size: "44.2 KB", age: "1d ago", session: "Update CI pipeline" },
+    {
+      id: "af7",
+      name: "ci-run.log",
+      type: "log",
+      size: "44.2 KB",
+      age: "1d ago",
+      session: "Update CI pipeline",
+    },
   ],
 };
 
 export const mockWorkflowNodes: WorkflowNode[] = [
   {
-    id: "n1", label: "preflight-check", type: "preflight", status: "completed",
-    x: 280, y: 20,
+    id: "n1",
+    label: "preflight-check",
+    type: "preflight",
+    status: "completed",
+    x: 280,
+    y: 20,
     objective: "Verify repository state and check for conflicts",
     latestOutput: "Repository clean. No uncommitted changes. Branch up to date.",
     elapsed: "0m 04s",
     worktree: "feat/oauth-provider",
   },
   {
-    id: "n2", label: "fetch-context", type: "agent-task", status: "completed",
-    x: 280, y: 120,
+    id: "n2",
+    label: "fetch-context",
+    type: "agent-task",
+    status: "completed",
+    x: 280,
+    y: 120,
     objective: "Gather relevant context from codebase for the auth refactor",
     latestOutput: "Fetched 14 relevant files. Identified 3 patterns to preserve.",
-    model: "haiku", elapsed: "0m 22s",
+    model: "haiku",
+    elapsed: "0m 22s",
     worktree: "feat/oauth-provider",
   },
   {
-    id: "n3", label: "implement-changes", type: "agent-task", status: "completed",
-    x: 280, y: 220,
+    id: "n3",
+    label: "implement-changes",
+    type: "agent-task",
+    status: "completed",
+    x: 280,
+    y: 220,
     objective: "Implement OAuth middleware changes per spec",
     latestOutput: "Applied changes to 4 files. 142 lines added, 38 lines removed.",
-    model: "sonnet", elapsed: "1m 58s",
+    model: "sonnet",
+    elapsed: "1m 58s",
     worktree: "feat/oauth-provider",
   },
   {
-    id: "n4", label: "run-tests", type: "verification", status: "active",
-    x: 120, y: 340,
+    id: "n4",
+    label: "run-tests",
+    type: "verification",
+    status: "active",
+    x: 120,
+    y: 340,
     objective: "Run full test suite and capture results",
     latestOutput: "Running... 18/24 tests complete. 0 failures so far.",
     elapsed: "0m 41s",
     worktree: "feat/oauth-provider",
   },
   {
-    id: "n5", label: "lint-check", type: "script", status: "waiting",
-    x: 440, y: 340,
+    id: "n5",
+    label: "lint-check",
+    type: "script",
+    status: "waiting",
+    x: 440,
+    y: 340,
     objective: "Run ESLint and TypeScript strict checks",
     worktree: "feat/oauth-provider",
   },
   {
-    id: "n6", label: "review-changes", type: "agent-task", status: "waiting",
-    x: 280, y: 460,
+    id: "n6",
+    label: "review-changes",
+    type: "agent-task",
+    status: "waiting",
+    x: 280,
+    y: 460,
     objective: "Security and code quality review of implemented changes",
     model: "sonnet",
     worktree: "feat/oauth-provider",
   },
   {
-    id: "n7", label: "apply-diff", type: "script", status: "waiting",
-    x: 280, y: 560,
+    id: "n7",
+    label: "apply-diff",
+    type: "script",
+    status: "waiting",
+    x: 280,
+    y: 560,
     objective: "Apply the verified diff to the working tree",
     worktree: "feat/oauth-provider",
   },
   {
-    id: "n8", label: "final-validation", type: "validation", status: "waiting",
-    x: 280, y: 660,
+    id: "n8",
+    label: "final-validation",
+    type: "validation",
+    status: "waiting",
+    x: 280,
+    y: 660,
     objective: "Run final integration smoke tests and confirm deployment readiness",
     worktree: "feat/oauth-provider",
   },
@@ -493,24 +585,140 @@ export const mockWorkflowEdges: WorkflowEdge[] = [
 ];
 
 export const mockArtifacts: ArtifactItem[] = [
-  { id: "af1", name: "auth-middleware.patch", type: "diff", size: "4.2 KB", age: "5m ago", session: "OAuth Provider Integration", thread: "t1" },
-  { id: "af2", name: "test-results.log", type: "log", size: "12.8 KB", age: "5m ago", session: "OAuth Provider Integration", thread: "t1" },
-  { id: "af3", name: "coverage-report.html", type: "html", size: "88.4 KB", age: "5m ago", session: "OAuth Provider Integration", thread: "t1" },
-  { id: "af4", name: "middleware-screenshot.png", type: "screenshot", size: "224 KB", age: "12m ago", session: "OAuth Provider Integration" },
-  { id: "af5", name: "lint-report.json", type: "json", size: "3.1 KB", age: "1h ago", session: "Fix rate limiting bug", thread: "t2" },
-  { id: "af6", name: "rate-limit-fix.patch", type: "diff", size: "1.8 KB", age: "1h ago", session: "Fix rate limiting bug" },
-  { id: "af7", name: "ci-run.log", type: "log", size: "44.2 KB", age: "1d ago", session: "Update CI pipeline" },
-  { id: "af8", name: "test-report.html", type: "html", size: "102.6 KB", age: "1d ago", session: "Update CI pipeline" },
+  {
+    id: "af1",
+    name: "auth-middleware.patch",
+    type: "diff",
+    size: "4.2 KB",
+    age: "5m ago",
+    session: "OAuth Provider Integration",
+    thread: "t1",
+  },
+  {
+    id: "af2",
+    name: "test-results.log",
+    type: "log",
+    size: "12.8 KB",
+    age: "5m ago",
+    session: "OAuth Provider Integration",
+    thread: "t1",
+  },
+  {
+    id: "af3",
+    name: "coverage-report.html",
+    type: "html",
+    size: "88.4 KB",
+    age: "5m ago",
+    session: "OAuth Provider Integration",
+    thread: "t1",
+  },
+  {
+    id: "af4",
+    name: "middleware-screenshot.png",
+    type: "screenshot",
+    size: "224 KB",
+    age: "12m ago",
+    session: "OAuth Provider Integration",
+  },
+  {
+    id: "af5",
+    name: "lint-report.json",
+    type: "json",
+    size: "3.1 KB",
+    age: "1h ago",
+    session: "Fix rate limiting bug",
+    thread: "t2",
+  },
+  {
+    id: "af6",
+    name: "rate-limit-fix.patch",
+    type: "diff",
+    size: "1.8 KB",
+    age: "1h ago",
+    session: "Fix rate limiting bug",
+  },
+  {
+    id: "af7",
+    name: "ci-run.log",
+    type: "log",
+    size: "44.2 KB",
+    age: "1d ago",
+    session: "Update CI pipeline",
+  },
+  {
+    id: "af8",
+    name: "test-report.html",
+    type: "html",
+    size: "102.6 KB",
+    age: "1d ago",
+    session: "Update CI pipeline",
+  },
 ];
 
 export const mockRuntimeProfiles: RuntimeProfile[] = [
-  { role: "Orchestrator", model: "claude-opus-4.5", reasoning: "extended", maxTokens: 32000, temperature: 0.3, budgetPerStep: "$0.08", provider: "Anthropic" },
-  { role: "Quick", model: "claude-haiku-3.5", reasoning: "none", maxTokens: 8000, temperature: 0.5, budgetPerStep: "$0.002", provider: "Anthropic" },
-  { role: "Explorer", model: "claude-sonnet-4.5", reasoning: "brief", maxTokens: 16000, temperature: 0.4, budgetPerStep: "$0.018", provider: "Anthropic" },
-  { role: "Implementer", model: "claude-sonnet-4.5", reasoning: "standard", maxTokens: 24000, temperature: 0.2, budgetPerStep: "$0.024", provider: "Anthropic" },
-  { role: "Reviewer", model: "claude-sonnet-4.5", reasoning: "standard", maxTokens: 16000, temperature: 0.3, budgetPerStep: "$0.018", provider: "Anthropic" },
-  { role: "Workflow-writer", model: "claude-sonnet-4.5", reasoning: "brief", maxTokens: 16000, temperature: 0.3, budgetPerStep: "$0.018", provider: "Anthropic" },
-  { role: "Namer", model: "gpt-5.4-mini", reasoning: "low", maxTokens: 4000, temperature: 0.2, budgetPerStep: "$0.001", provider: "OpenAI" },
+  {
+    role: "Orchestrator",
+    model: "claude-opus-4.5",
+    reasoning: "extended",
+    maxTokens: 32000,
+    temperature: 0.3,
+    budgetPerStep: "$0.08",
+    provider: "Anthropic",
+  },
+  {
+    role: "Quick",
+    model: "claude-haiku-3.5",
+    reasoning: "none",
+    maxTokens: 8000,
+    temperature: 0.5,
+    budgetPerStep: "$0.002",
+    provider: "Anthropic",
+  },
+  {
+    role: "Explorer",
+    model: "claude-sonnet-4.5",
+    reasoning: "brief",
+    maxTokens: 16000,
+    temperature: 0.4,
+    budgetPerStep: "$0.018",
+    provider: "Anthropic",
+  },
+  {
+    role: "Implementer",
+    model: "claude-sonnet-4.5",
+    reasoning: "standard",
+    maxTokens: 24000,
+    temperature: 0.2,
+    budgetPerStep: "$0.024",
+    provider: "Anthropic",
+  },
+  {
+    role: "Reviewer",
+    model: "claude-sonnet-4.5",
+    reasoning: "standard",
+    maxTokens: 16000,
+    temperature: 0.3,
+    budgetPerStep: "$0.018",
+    provider: "Anthropic",
+  },
+  {
+    role: "Workflow-writer",
+    model: "claude-sonnet-4.5",
+    reasoning: "brief",
+    maxTokens: 16000,
+    temperature: 0.3,
+    budgetPerStep: "$0.018",
+    provider: "Anthropic",
+  },
+  {
+    role: "Namer",
+    model: "gpt-5.4-mini",
+    reasoning: "low",
+    maxTokens: 4000,
+    temperature: 0.2,
+    budgetPerStep: "$0.001",
+    provider: "OpenAI",
+  },
 ];
 
 export const mockFolderGroups: FolderGroup[] = [
@@ -521,14 +729,28 @@ export const mockFolderGroups: FolderGroup[] = [
 ];
 
 export const mockPaneSurfaces: PaneSurface[] = [
-  { id: "surface-session-main", label: "OAuth Provider Integration", positions: ["[1,1]", "[2,1]"], type: "session" },
-  { id: "surface-workflow-auth", label: "auth-refactor-ci", positions: ["[1,3]"], type: "workflow" },
+  {
+    id: "surface-session-main",
+    label: "OAuth Provider Integration",
+    positions: ["[1,1]", "[2,1]"],
+    type: "session",
+  },
+  {
+    id: "surface-workflow-auth",
+    label: "auth-refactor-ci",
+    positions: ["[1,3]"],
+    type: "workflow",
+  },
   { id: "surface-subagent-explorer", label: "explorer", positions: ["[2,2]"], type: "subagent" },
   { id: "surface-artifacts", label: "Artifacts", positions: ["[2,3]"], type: "artifact" },
 ];
 
 export const mockMentionTargets: MentionTarget[] = [
-  { path: "src/middleware/auth.ts", isFolder: false, resolvedPath: "/workspace/src/middleware/auth.ts" },
+  {
+    path: "src/middleware/auth.ts",
+    isFolder: false,
+    resolvedPath: "/workspace/src/middleware/auth.ts",
+  },
   { path: "tests/", isFolder: true, resolvedPath: "/workspace/tests" },
   { path: ".svvy/hooks/", isFolder: true, resolvedPath: "/workspace/.svvy/hooks" },
 ];

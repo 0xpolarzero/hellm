@@ -1,7 +1,5 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessageEvent, Message } from "@mariozechner/pi-ai";
-import type { PromptHistoryEntry } from "./prompt-history";
-import type { CustomProvider } from "./chat-storage";
 import type { ChatDefaults, ReasoningEffort } from "./chat-settings";
 
 export type AuthKeyType = "apikey" | "oauth" | "env" | "none";
@@ -78,17 +76,21 @@ export interface WorkspaceSessionSummary {
   modelId?: string;
   provider?: string;
   thinkingLevel?: string;
-  waitingOn?: {
+  wait?: {
     threadId: string;
+    kind: "user" | "external";
     reason: string;
     resumeWhen: string;
     since: string;
   } | null;
   counts?: {
+    turns: number;
     threads: number;
-    results: number;
+    commands: number;
+    episodes: number;
     verifications: number;
     workflows: number;
+    artifacts: number;
     events: number;
   };
   threadIdsByStatus?: {
@@ -96,6 +98,7 @@ export interface WorkspaceSessionSummary {
     waiting: string[];
     failed: string[];
   };
+  visibleThreadIds?: string[];
 }
 
 export interface ActiveSessionState {
@@ -223,13 +226,6 @@ export interface ChatRPCSchema {
       removeProviderAuth: {
         params: { providerId: string };
         response: { ok: boolean };
-      };
-      getE2eRendererSeed: {
-        params: undefined;
-        response: {
-          customProviders: CustomProvider[];
-          promptHistory: PromptHistoryEntry[];
-        } | null;
       };
     };
     messages: Record<string, never>;

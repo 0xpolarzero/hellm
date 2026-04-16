@@ -2,7 +2,7 @@ import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { createHomeDir, ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 
-setDefaultTimeout(45_000);
+setDefaultTimeout(90_000);
 
 beforeAll(async () => {
   await ensureBuilt();

@@ -14,12 +14,16 @@ function CheckRow({ label, status }: { label: string; status: "pass" | "fail" | 
       {status === "fail" && <XCircle className="w-3 h-3 text-red-500 flex-shrink-0" />}
       {status === "skip" && <MinusCircle className="w-3 h-3 text-muted-foreground flex-shrink-0" />}
       <span className="text-[11px] text-foreground/80">{label}</span>
-      <span className={cn(
-        "font-mono text-[10px] ml-auto",
-        status === "pass" && "text-emerald-400",
-        status === "fail" && "text-red-400",
-        status === "skip" && "text-muted-foreground",
-      )}>{status}</span>
+      <span
+        className={cn(
+          "font-mono text-[10px] ml-auto",
+          status === "pass" && "text-emerald-400",
+          status === "fail" && "text-red-400",
+          status === "skip" && "text-muted-foreground",
+        )}
+      >
+        {status}
+      </span>
     </div>
   );
 }
@@ -30,7 +34,7 @@ export function VerificationCard({ result, className }: VerificationCardProps) {
       className={cn(
         "border rounded bg-card border-l-2",
         result.passed ? "border-border border-l-emerald-500/60" : "border-border border-l-red-500",
-        className
+        className,
       )}
       data-testid={`verification-card-${result.id}`}
     >
@@ -41,12 +45,14 @@ export function VerificationCard({ result, className }: VerificationCardProps) {
           <XCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
         )}
         <span className="text-[12px] font-medium text-foreground">Verification</span>
-        <span className={cn(
-          "font-mono text-[10px] px-1.5 py-0.5 rounded border",
-          result.passed
-            ? "text-emerald-400 border-emerald-500/20 bg-emerald-500/10"
-            : "text-red-400 border-red-500/20 bg-red-500/10"
-        )}>
+        <span
+          className={cn(
+            "font-mono text-[10px] px-1.5 py-0.5 rounded border",
+            result.passed
+              ? "text-emerald-400 border-emerald-500/20 bg-emerald-500/10"
+              : "text-red-400 border-red-500/20 bg-red-500/10",
+          )}
+        >
           {result.passed ? "passed" : "failed"}
         </span>
         <span className="font-mono text-[10px] text-muted-foreground ml-auto">

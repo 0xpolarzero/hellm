@@ -28,7 +28,7 @@ export function PanesProvider({ children }: { children: React.ReactNode }) {
 
   const openPane = (type: PaneType, data: any, title: string) => {
     const newPane: PaneItem = { id: `pane-${Date.now()}`, type, data, title };
-    setAdditionalPanes(prev => {
+    setAdditionalPanes((prev) => {
       if (prev.length >= 2) {
         return [...prev.slice(0, 1), newPane];
       }
@@ -37,12 +37,12 @@ export function PanesProvider({ children }: { children: React.ReactNode }) {
   };
 
   const closePane = (id: string) => {
-    setAdditionalPanes(prev => prev.filter(p => p.id !== id));
+    setAdditionalPanes((prev) => prev.filter((p) => p.id !== id));
   };
 
   const replacePane = (id: string, type: PaneType, data: any, title: string) => {
     const newPane: PaneItem = { id: `pane-${Date.now()}`, type, data, title };
-    setAdditionalPanes(prev => prev.map(p => (p.id === id ? newPane : p)));
+    setAdditionalPanes((prev) => prev.map((p) => (p.id === id ? newPane : p)));
   };
 
   return (

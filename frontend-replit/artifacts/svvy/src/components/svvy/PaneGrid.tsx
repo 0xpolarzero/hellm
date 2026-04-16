@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useLocation } from "wouter";
 import { X, Plus, Maximize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -12,7 +11,13 @@ interface Pane {
 }
 
 const defaultPanes: Pane[] = [
-  { id: "p11", label: "Session: OAuth Integration", position: [1, 1], span: [2, 1], type: "session" },
+  {
+    id: "p11",
+    label: "Session: OAuth Integration",
+    position: [1, 1],
+    span: [2, 1],
+    type: "session",
+  },
   { id: "p12", label: "Empty", position: [1, 2], type: "empty" },
   { id: "p13", label: "Workflow Inspector", position: [1, 3], type: "workflow" },
   { id: "p21", label: "Subagent: explorer", position: [2, 2], type: "subagent" },
@@ -31,6 +36,12 @@ const paneColors: Record<string, string> = {
   empty: "border-border border-dashed",
 };
 
+function occupiedBySpan(pane: Pane, r: number, c: number) {
+  const [startRow, startCol] = pane.position;
+  const [rowSpan, colSpan] = pane.span ?? [1, 1];
+  return r >= startRow && r < startRow + rowSpan && c >= startCol && c < startCol + colSpan;
+}
+
 interface PaneGridProps {
   panes?: Pane[];
   className?: string;
@@ -41,25 +52,21 @@ export function PaneGrid({ panes = defaultPanes, className }: PaneGridProps) {
   const rows = 3;
   const cols = 3;
 
-  const occupiedBySpan = (pane: Pane, r: number, c: number) => {
-    const [startRow, startCol] = pane.position;
-    const [rowSpan, colSpan] = pane.span ?? [1, 1];
-    return r >= startRow && r < startRow + rowSpan && c >= startCol && c < startCol + colSpan;
-  };
-
-  const getPane = (r: number, c: number) =>
-    panes.find(p => occupiedBySpan(p, r, c));
+  const getPane = (r: number, c: number) => panes.find((p) => occupiedBySpan(p, r, c));
 
   return (
     <div
       className={cn("grid gap-1 p-2 h-full", className)}
-      style={{ gridTemplateRows: `repeat(${rows}, 1fr)`, gridTemplateColumns: `repeat(${cols}, 1fr)` }}
+      style={{
+        gridTemplateRows: `repeat(${rows}, 1fr)`,
+        gridTemplateColumns: `repeat(${cols}, 1fr)`,
+      }}
       data-testid="pane-grid"
     >
-      {Array.from({ length: rows }, (_, r) =>
-        Array.from({ length: cols }, (_, c) => {
-          const row = r + 1;
-          const col = c + 1;
+      {Array.from({ length: rows }, (__, rowIndex) =>
+        Array.from({ length: cols }, (___, colIndex) => {
+          const row = rowIndex + 1;
+          const col = colIndex + 1;
           const pane = getPane(row, col);
           if (!pane) return null;
           const isOrigin = pane.position[0] === row && pane.position[1] === col;
@@ -70,11 +77,11 @@ export function PaneGrid({ panes = defaultPanes, className }: PaneGridProps) {
 
           return (
             <div
-              key={`${r}-${c}`}
+              key={`${rowIndex}-${colIndex}`}
               className={cn(
                 "border rounded flex flex-col overflow-hidden bg-card",
                 paneColors[pane.type] || "border-border",
-                isEmpty && "opacity-50"
+                isEmpty && "opacity-50",
               )}
               style={{
                 gridRow: `span ${rowSpan}`,
@@ -130,7 +137,7 @@ export function PaneGrid({ panes = defaultPanes, className }: PaneGridProps) {
               </div>
             </div>
           );
-        })
+        }),
       )}
     </div>
   );
@@ -154,8 +161,18 @@ function PaneContent({ type, label }: { type: string; label: string }) {
       <div className="space-y-1">
         <span className="text-[10px] text-foreground/80 font-mono">auth-refactor-ci</span>
         <div className="flex items-center gap-1 mt-1">
-          {[1,1,1,0,0,0,0,0].map((done, i) => (
-            <span key={i} className={cn("w-1.5 h-1.5 rounded-full", i === 3 ? "bg-orange-500 pulse-dot" : done ? "bg-emerald-500" : "bg-muted-foreground/20")} />
+          {[1, 1, 1, 0, 0, 0, 0, 0].map((done, i) => (
+            <span
+              key={i}
+              className={cn(
+                "w-1.5 h-1.5 rounded-full",
+                i === 3
+                  ? "bg-orange-500 pulse-dot"
+                  : done
+                    ? "bg-emerald-500"
+                    : "bg-muted-foreground/20",
+              )}
+            />
           ))}
         </div>
         <div className="text-[9px] text-muted-foreground font-mono">3/8 · run-tests active</div>
@@ -167,7 +184,9 @@ function PaneContent({ type, label }: { type: string; label: string }) {
           <span className="text-[9px] font-mono text-blue-400">explorer</span>
           <span className="w-1.5 h-1.5 rounded-full bg-orange-500 pulse-dot" />
         </div>
-        <div className="text-[9px] text-muted-foreground font-mono truncate">Exploring codebase patterns...</div>
+        <div className="text-[9px] text-muted-foreground font-mono truncate">
+          Exploring codebase patterns...
+        </div>
       </div>
     ),
     artifact: (

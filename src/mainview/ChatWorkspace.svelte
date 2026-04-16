@@ -88,7 +88,7 @@
   const visibleSessions = $derived(sortVisibleSessionsByRecency(sessions));
   const currentSession = $derived(sessions.find((session) => session.id === activeSessionId) ?? null);
   const usageText = $derived(formatUsage(conversation.usage));
-  const messageCount = $derived(conversationSummary.messageCount);
+  const summaryMessageCount = $derived(conversationSummary.messageCount);
   const toolCallCount = $derived(conversationSummary.toolCallCount);
   const lastActivity = $derived(conversation.lastActivity);
   const lastActivityLabel = $derived(lastActivity ? `Last activity ${formatTimestamp(lastActivity)}` : "Waiting for first turn");
@@ -169,19 +169,19 @@
     if (!controller) return;
 
     const sessionId = runtime.agent.sessionId;
-    const messageCount = runtime.agent.state.messages.length;
+    const nextMessageCount = runtime.agent.state.messages.length;
     const sessionChanged = artifactSyncSessionId !== sessionId;
-    const cursorWentBackwards = messageCount < artifactSyncMessageCount;
+    const cursorWentBackwards = nextMessageCount < artifactSyncMessageCount;
 
     if (force || sessionChanged || cursorWentBackwards) {
       await controller.syncFromMessages(runtime.agent.state.messages, { replace: true });
       artifactSyncSessionId = sessionId;
-      artifactSyncMessageCount = messageCount;
+      artifactSyncMessageCount = nextMessageCount;
       return;
     }
 
     await controller.syncFromMessages(runtime.agent.state.messages);
-    artifactSyncMessageCount = messageCount;
+    artifactSyncMessageCount = nextMessageCount;
   }
 
   function toggleSidebarVisibility() {
@@ -445,7 +445,7 @@
 
         <div class="workspace-main-meta">
           <Badge tone={workspaceStatusTone}>{workspaceStatusText}</Badge>
-          <span>{messageCount} turns</span>
+          <span>{summaryMessageCount} turns</span>
           <span>{toolCallCount} tool runs</span>
           <span>{lastActivityLabel}</span>
           <Button

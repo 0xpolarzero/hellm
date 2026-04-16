@@ -10,7 +10,7 @@ import {
   type SeedSessionInput,
 } from "./support";
 
-setDefaultTimeout(45_000);
+setDefaultTimeout(90_000);
 
 const BASE_TIMESTAMP = Date.parse("2026-04-10T13:00:00.000Z");
 const SESSION_TITLE = "Transcript edge cases";

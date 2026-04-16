@@ -25,7 +25,9 @@ export function BottomComposer({
 }: BottomComposerProps) {
   const [expanded, setExpanded] = useState(false);
   const [text, setText] = useState("");
-  const [mentions, setMentions] = useState(mockMentionTargets.map(({ path, isFolder }) => ({ path, isFolder })));
+  const [mentions, setMentions] = useState(
+    mockMentionTargets.map(({ path, isFolder }) => ({ path, isFolder })),
+  );
   const [showProfiles, setShowProfiles] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -44,20 +46,18 @@ export function BottomComposer({
   };
 
   const removeMention = (path: string) => {
-    setMentions(prev => prev.filter(m => m.path !== path));
+    setMentions((prev) => prev.filter((m) => m.path !== path));
   };
 
   return (
     <div
-      className={cn(
-        "flex-shrink-0 border-t border-border bg-card transition-all duration-150",
-      )}
+      className={cn("flex-shrink-0 border-t border-border bg-card transition-all duration-150")}
       data-testid="bottom-composer"
     >
       {/* Expanded: mention chips + profiles */}
       {expanded && (
         <div className="border-b border-border px-3 py-2 flex flex-wrap gap-1.5">
-          {mentions.map(m => (
+          {mentions.map((m) => (
             <MentionChip
               key={m.path}
               path={m.path}
@@ -90,15 +90,19 @@ export function BottomComposer({
         <textarea
           ref={textareaRef}
           value={text}
-          onChange={e => setText(e.target.value)}
+          onChange={(e) => setText(e.target.value)}
           onFocus={() => setExpanded(true)}
           onKeyDown={handleKeyDown}
-          placeholder={expanded ? "Describe what you want to accomplish..." : "Send a message or instruction..."}
+          placeholder={
+            expanded
+              ? "Describe what you want to accomplish..."
+              : "Send a message or instruction..."
+          }
           rows={expanded ? 3 : 1}
           className={cn(
             "flex-1 resize-none bg-transparent text-[13px] text-foreground placeholder:text-muted-foreground",
             "outline-none border-none focus:ring-0 py-0.5 leading-relaxed scrollbar-thin",
-            !expanded && "max-h-6 overflow-hidden"
+            !expanded && "max-h-6 overflow-hidden",
           )}
           data-testid="composer-input"
         />
@@ -114,11 +118,15 @@ export function BottomComposer({
           )}
 
           <button
-            onClick={() => setExpanded(e => !e)}
+            onClick={() => setExpanded((e) => !e)}
             className="text-muted-foreground hover:text-foreground transition-colors"
             data-testid="btn-expand-composer"
           >
-            {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+            {expanded ? (
+              <ChevronDown className="w-3.5 h-3.5" />
+            ) : (
+              <ChevronUp className="w-3.5 h-3.5" />
+            )}
           </button>
 
           {isStreaming ? (
@@ -138,7 +146,7 @@ export function BottomComposer({
                 "w-7 h-7 flex items-center justify-center rounded transition-colors",
                 text.trim()
                   ? "bg-orange-500 text-white hover:bg-orange-600"
-                  : "bg-muted text-muted-foreground cursor-not-allowed"
+                  : "bg-muted text-muted-foreground cursor-not-allowed",
               )}
               title="Send"
               data-testid="btn-send"
@@ -170,13 +178,17 @@ export function BottomComposer({
             <ContextBudgetBar percent={budgetPercent} showLabel width="w-32" />
 
             <button
-              onClick={() => setShowProfiles(p => !p)}
+              onClick={() => setShowProfiles((p) => !p)}
               className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
               data-testid="btn-runtime-profiles"
             >
               <Layers className="w-3 h-3" />
               <span>opus + 5</span>
-              {showProfiles ? <ChevronDown className="w-2.5 h-2.5" /> : <ChevronUp className="w-2.5 h-2.5" />}
+              {showProfiles ? (
+                <ChevronDown className="w-2.5 h-2.5" />
+              ) : (
+                <ChevronUp className="w-2.5 h-2.5" />
+              )}
             </button>
           </div>
         </div>
@@ -185,8 +197,8 @@ export function BottomComposer({
       {expanded && mentions.length > 0 && (
         <div className="border-t border-border px-3 py-1.5 flex flex-wrap gap-1.5">
           {mockMentionTargets
-            .filter(target => mentions.some(mention => mention.path === target.path))
-            .map(target => (
+            .filter((target) => mentions.some((mention) => mention.path === target.path))
+            .map((target) => (
               <span
                 key={target.path}
                 className="font-mono text-[9px] text-muted-foreground border border-border rounded px-1.5 py-0.5"
@@ -200,7 +212,7 @@ export function BottomComposer({
       {/* Profile accordion */}
       {expanded && showProfiles && (
         <div className="border-t border-border px-3 py-2 grid grid-cols-2 gap-1">
-          {mockRuntimeProfiles.map(p => (
+          {mockRuntimeProfiles.map((p) => (
             <div
               key={p.role}
               className="flex items-center justify-between px-2 py-1 rounded bg-muted/40"

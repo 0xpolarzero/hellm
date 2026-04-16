@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "./StatusBadge";
-import { Workflow, Clock, ArrowRight } from "lucide-react";
+import { Workflow, ArrowRight } from "lucide-react";
 import { usePanes } from "@/hooks/usePanes";
 import type { WorkflowRun } from "@/data/mock";
 
@@ -25,12 +25,12 @@ export function WorkflowCard({ workflow, className }: WorkflowCardProps) {
     <div
       className={cn(
         "border border-border rounded bg-card px-3 py-2.5 hover:border-border/70 transition-colors cursor-pointer",
-        className
+        className,
       )}
       onClick={handleClick}
       role="button"
       tabIndex={0}
-      onKeyDown={e => e.key === "Enter" && handleClick()}
+      onKeyDown={(e) => e.key === "Enter" && handleClick()}
       data-testid={`workflow-card-${workflow.id}`}
     >
       <div className="flex items-start gap-2">
@@ -53,7 +53,7 @@ export function WorkflowCard({ workflow, className }: WorkflowCardProps) {
                     "w-1.5 h-1.5 rounded-full transition-colors",
                     dot.active && "bg-orange-500 pulse-dot",
                     dot.done && "bg-emerald-500",
-                    !dot.done && !dot.active && "bg-muted-foreground/25"
+                    !dot.done && !dot.active && "bg-muted-foreground/25",
                   )}
                 />
               ))}
@@ -68,7 +68,9 @@ export function WorkflowCard({ workflow, className }: WorkflowCardProps) {
             <span className="text-[11px] text-muted-foreground truncate">
               {workflow.status === "running" ? workflow.currentStep : "Completed"}
             </span>
-            <span className="font-mono text-[9px] text-muted-foreground ml-auto">{workflow.runId}</span>
+            <span className="font-mono text-[9px] text-muted-foreground ml-auto">
+              {workflow.runId}
+            </span>
             <span className="font-mono text-[8px] text-muted-foreground/40 ml-1">→</span>
           </div>
         </div>

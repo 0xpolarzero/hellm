@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { XCircle, RefreshCw, ExternalLink, AlertOctagon } from "lucide-react";
+import { RefreshCw, ExternalLink, AlertOctagon } from "lucide-react";
 
 interface FailedCardProps {
   title?: string;
@@ -24,10 +24,7 @@ export function FailedCard({
 
   return (
     <div
-      className={cn(
-        "border border-border rounded bg-card border-l-2 border-l-red-500",
-        className
-      )}
+      className={cn("border border-border rounded bg-card border-l-2 border-l-red-500", className)}
       data-testid="failed-card"
     >
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border">

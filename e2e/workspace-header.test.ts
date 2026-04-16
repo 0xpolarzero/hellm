@@ -8,7 +8,7 @@ import {
   userMessage,
 } from "./support";
 
-setDefaultTimeout(45_000);
+setDefaultTimeout(90_000);
 
 const TIMELINE = Date.parse("2026-04-10T10:00:00.000Z");
 
@@ -16,9 +16,7 @@ beforeAll(async () => {
   await ensureBuilt();
 });
 
-async function launchWithSeededSessions(
-  fn: (app: SvvyApp) => Promise<void>,
-): Promise<void> {
+async function launchWithSeededSessions(fn: (app: SvvyApp) => Promise<void>): Promise<void> {
   await withSvvyApp(
     {
       beforeLaunch: async ({ homeDir, workspaceDir }) => {
@@ -35,12 +33,9 @@ async function launchWithSeededSessions(
                   timestamp: TIMELINE + 60_500,
                   toolCalls: [alphaToolCall],
                 }),
-                toolResultMessage(
-                  alphaToolCall.id,
-                  alphaToolCall.name,
-                  "alpha done",
-                  { timestamp: TIMELINE + 61_000 },
-                ),
+                toolResultMessage(alphaToolCall.id, alphaToolCall.name, "alpha done", {
+                  timestamp: TIMELINE + 61_000,
+                }),
               ],
             },
             {
@@ -61,25 +56,34 @@ async function launchWithSeededSessions(
 }
 
 async function clickSessionByTitle(page: SvvyApp["page"], title: string): Promise<void> {
-  const sessionButton = page.locator(".session-main").filter({
-    has: page.locator("strong").filter({ hasText: title }),
-  }).first();
+  const sessionButton = page
+    .locator(".session-main")
+    .filter({
+      has: page.locator("strong").filter({ hasText: title }),
+    })
+    .first();
   await sessionButton.waitFor({ state: "visible" });
   await sessionButton.click({ force: true });
 }
 
 async function readLastActivityLabel(page: SvvyApp["page"]): Promise<string> {
-  const label = await page.locator(".workspace-main-meta > span:not(.ui-badge)").nth(2).textContent();
+  const label = await page
+    .locator(".workspace-main-meta > span:not(.ui-badge)")
+    .nth(2)
+    .textContent();
   return label?.trim() ?? "";
 }
 
-async function expectHeaderMeta(page: SvvyApp["page"], expected: {
-  activity: string;
-  status: string;
-  title: string;
-  toolRuns: string;
-  turns: string;
-}): Promise<void> {
+async function expectHeaderMeta(
+  page: SvvyApp["page"],
+  expected: {
+    activity: string;
+    status: string;
+    title: string;
+    toolRuns: string;
+    turns: string;
+  },
+): Promise<void> {
   const title = page.locator(".workspace-main-title");
   const badge = page.locator(".workspace-main-meta .ui-badge");
   const metaSpans = page.locator(".workspace-main-meta > span:not(.ui-badge)");

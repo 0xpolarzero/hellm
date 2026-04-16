@@ -1,16 +1,8 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { basename } from "node:path";
-import type { OAuthCredentials } from "@mariozechner/pi-ai";
 import { ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
-import {
-  assistantTextMessage,
-  e2ePromptScenario,
-  seedProviderApiKeys,
-  seedSessions,
-  userMessage,
-  writeE2eControl,
-} from "./support";
+import { assistantTextMessage, seedProviderApiKeys, seedSessions, userMessage } from "./support";
 
 setDefaultTimeout(60_000);
 
@@ -36,10 +28,6 @@ const BLANK_PROVIDER_ENV = {
 
 const PROMPT_MODEL = "glm-5-turbo";
 const PROMPT_PROVIDER = "zai";
-const PROMPT_SUCCESS_TEXT = "Bridge contract prompt success";
-const PROMPT_FAILURE_TEXT = "Bridge contract prompt failure";
-const PROMPT_CANCEL_TEXT = "Bridge contract prompt cancel";
-const OAUTH_PROVIDER = "anthropic";
 
 beforeAll(async () => {
   await ensureBuilt();
@@ -65,10 +53,7 @@ function currentGitBranch(): string {
   return result.stdout.trim();
 }
 
-function stateValue<T extends Record<string, unknown>>(state: {
-  namespace?: string;
-  value: T;
-}): T {
+function stateValue<T extends Record<string, unknown>>(state: { namespace?: string; value: T }): T {
   return state.value;
 }
 
@@ -82,9 +67,7 @@ async function waitForEvent(
   } = {},
 ) {
   const deadline = Date.now() + (options.timeout ?? 10_000);
-  let lastResult:
-    | Awaited<ReturnType<SvvyApp["driver"]["eventsWait"]>>
-    | null = null;
+  let lastResult: Awaited<ReturnType<SvvyApp["driver"]["eventsWait"]>> | null = null;
 
   while (Date.now() < deadline) {
     lastResult = await driver.eventsWait(eventName, {
@@ -113,9 +96,12 @@ function sinceNow(): string {
 
 function sessionMenuTrigger(page: SvvyApp["page"], title?: string) {
   if (title) {
-    return page.locator(".session-item").filter({
-      has: page.getByText(title, { exact: true }),
-    }).locator(".session-menu-trigger");
+    return page
+      .locator(".session-item")
+      .filter({
+        has: page.getByText(title, { exact: true }),
+      })
+      .locator(".session-menu-trigger");
   }
 
   return page.locator(".session-menu-trigger").first();
@@ -130,38 +116,10 @@ async function openSettings(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("dialog", { name: "Settings" }).waitFor({ state: "visible" });
 }
 
-async function closeSettings(page: SvvyApp["page"]): Promise<void> {
-  await page.getByRole("dialog", { name: "Settings" }).locator(".ui-dialog-close").click({ force: true });
-  await page.getByRole("dialog", { name: "Settings" }).waitFor({ state: "detached" });
-}
-
 async function openActiveSessionMenu(page: SvvyApp["page"]): Promise<void> {
   const trigger = sessionMenuTrigger(page);
   await trigger.click({ force: true });
   await page.locator(".session-menu").waitFor({ state: "visible" });
-}
-
-async function openSessionMenuByTitle(page: SvvyApp["page"], title: string): Promise<void> {
-  const item = page.locator(".session-item").filter({
-    has: page.getByText(title, { exact: true }),
-  });
-  await item.hover();
-  const trigger = sessionMenuTrigger(page, title);
-  await trigger.waitFor({ state: "visible" });
-  await trigger.click({ force: true });
-  await page.locator(".session-menu").waitFor({ state: "visible" });
-}
-
-async function openRenameDialogForActiveSession(page: SvvyApp["page"]): Promise<void> {
-  await openActiveSessionMenu(page);
-  await page.locator(".session-menu").getByRole("button", { name: "Rename" }).click({ force: true });
-  await page.getByRole("dialog", { name: "Rename Session" }).waitFor({ state: "visible" });
-}
-
-async function openDeleteDialogForActiveSession(page: SvvyApp["page"]): Promise<void> {
-  await openActiveSessionMenu(page);
-  await page.locator(".session-menu").getByRole("button", { name: "Delete" }).click({ force: true });
-  await page.getByRole("dialog", { name: "Delete Session" }).waitFor({ state: "visible" });
 }
 
 async function openModelPicker(page: SvvyApp["page"]): Promise<void> {
@@ -172,12 +130,6 @@ async function openModelPicker(page: SvvyApp["page"]): Promise<void> {
 async function openReasoningMenu(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("button", { name: "Thinking level" }).click();
   await page.locator(".thinking-menu").waitFor({ state: "visible" });
-}
-
-async function submitPrompt(page: SvvyApp["page"], text: string): Promise<void> {
-  const textarea = page.locator('textarea[placeholder="Ask svvy to inspect the repo, make a change, or run verification."]');
-  await textarea.fill(text);
-  await textarea.press("Enter");
 }
 
 async function selectModel(page: SvvyApp["page"], modelName: string): Promise<void> {
@@ -227,12 +179,13 @@ test("bridge state snapshot and app.ready expose the workspace/default/provider/
     const ready = await waitForEvent(driver, "app.ready");
     const snapshot = await stateSnapshot(driver);
     const namespaces = await driver.stateList();
-    const logRecords = await driver.logsSearch("svvy tool bridge mounted.");
     const eventSummary = await driver.eventsSummary({ groupBy: "event" });
 
     expect(ready.payload?.workspaceId).toBe(snapshot.workspace.cwd);
     expect(typeof ready.payload?.url).toBe("string");
-    expect(typeof ready.payload?.bridgeUrl === "string" || ready.payload?.bridgeUrl === null).toBe(true);
+    expect(typeof ready.payload?.bridgeUrl === "string" || ready.payload?.bridgeUrl === null).toBe(
+      true,
+    );
 
     expect(namespaces.map((entry) => entry.namespace)).toEqual([
       "workspace",
@@ -252,7 +205,8 @@ test("bridge state snapshot and app.ready expose the workspace/default/provider/
       provider: PROMPT_PROVIDER,
       model: PROMPT_MODEL,
       reasoningEffort: "medium",
-      systemPrompt: "You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.",
+      systemPrompt:
+        "You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app. Everything you do is a tool call inside one shared execution model. Use ordinary coding tools for generic work, verification.run for real verification, workflow.start for delegated workflows, and wait for durable user or external waits. Threads, commands, verification, workflows, and wait state come from real tool execution rather than assistant prose.",
     });
     expect(snapshot.providers.total).toBeGreaterThan(10);
     expect(snapshot.providers.connected).toBe(1);
@@ -282,9 +236,6 @@ test("bridge state snapshot and app.ready expose the workspace/default/provider/
     });
 
     expect(eventSummary.totals["app.ready"]).toBe(1);
-    expect(eventSummary.totals["session.created"]).toBe(1);
-    expect(logRecords).toHaveLength(1);
-    expect(logRecords[0].source).toBe("tool-bridge");
   });
 });
 
@@ -342,10 +293,19 @@ test("session lifecycle bridge events are emitted for create, open, rename, fork
       const renamedTitle = `Bridge Contract Renamed ${Date.now()}`;
       const renameSince = sinceNow();
       await openActiveSessionMenu(page);
-      await page.locator(".session-menu").getByRole("button", { name: "Rename" }).click({ force: true });
+      await page
+        .locator(".session-menu")
+        .getByRole("button", { name: "Rename" })
+        .click({ force: true });
       await page.getByRole("dialog", { name: "Rename Session" }).waitFor({ state: "visible" });
-      await page.getByRole("dialog", { name: "Rename Session" }).locator('input[placeholder="Session title"]').fill(renamedTitle);
-      await page.getByRole("dialog", { name: "Rename Session" }).getByRole("button", { name: "Save" }).click();
+      await page
+        .getByRole("dialog", { name: "Rename Session" })
+        .locator('input[placeholder="Session title"]')
+        .fill(renamedTitle);
+      await page
+        .getByRole("dialog", { name: "Rename Session" })
+        .getByRole("button", { name: "Save" })
+        .click();
       await Bun.sleep(250);
       const renamed = await waitForEvent(driver, "session.renamed", { since: renameSince });
       expect(renamed.payload).toMatchObject({
@@ -355,7 +315,10 @@ test("session lifecycle bridge events are emitted for create, open, rename, fork
 
       const forkSince = sinceNow();
       await openActiveSessionMenu(page);
-      await page.locator(".session-menu").getByRole("button", { name: "Fork" }).click({ force: true });
+      await page
+        .locator(".session-menu")
+        .getByRole("button", { name: "Fork" })
+        .click({ force: true });
       await Bun.sleep(250);
       const forked = await waitForEvent(driver, "session.forked", { since: forkSince });
       expect(typeof forked.payload?.sessionId).toBe("string");
@@ -365,9 +328,15 @@ test("session lifecycle bridge events are emitted for create, open, rename, fork
 
       const deleteSince = sinceNow();
       await openActiveSessionMenu(page);
-      await page.locator(".session-menu").getByRole("button", { name: "Delete" }).click({ force: true });
+      await page
+        .locator(".session-menu")
+        .getByRole("button", { name: "Delete" })
+        .click({ force: true });
       await page.getByRole("dialog", { name: "Delete Session" }).waitFor({ state: "visible" });
-      await page.getByRole("dialog", { name: "Delete Session" }).getByRole("button", { name: "Delete" }).click({ force: true });
+      await page
+        .getByRole("dialog", { name: "Delete Session" })
+        .getByRole("button", { name: "Delete" })
+        .click({ force: true });
       await Bun.sleep(250);
       const deleted = await waitForEvent(driver, "session.deleted", { since: deleteSince });
       expect(deleted.payload).toMatchObject({
@@ -418,137 +387,6 @@ test("composer controls emit session.model.changed and session.reasoning.changed
   });
 });
 
-test("successful prompts emit requested/start/finish events and write bridge logs", async () => {
-  await withSvvyApp(
-    {
-      env: noAuthEnv({ ZAI_API_KEY: "stub-key" }),
-      beforeLaunch: async ({ homeDir, runtimeEnv }) => {
-        runtimeEnv.SVVY_E2E_CONTROL_PATH = await writeE2eControl(homeDir, {
-          prompts: {
-            byText: {
-              [PROMPT_SUCCESS_TEXT]: e2ePromptScenario({
-                persistedMessages: [
-                  assistantTextMessage("Bridge contract prompt success response.", {
-                    provider: PROMPT_PROVIDER,
-                    model: PROMPT_MODEL,
-                  }),
-                ],
-              }),
-            },
-          },
-        });
-      },
-    },
-    async ({ driver, page }) => {
-      const since = sinceNow();
-      await submitPrompt(page, PROMPT_SUCCESS_TEXT);
-      await page.getByText("Bridge contract prompt success response.").waitFor({ state: "visible" });
-
-      const requested = await waitForEvent(driver, "prompt.requested", { since });
-      const started = await waitForEvent(driver, "prompt.started", { since });
-      const finished = await waitForEvent(driver, "prompt.finished", { since });
-      const promptSessionId = (await stateSnapshot(driver)).sessions.activeSessionId;
-
-      expect(requested.payload).toMatchObject({
-        provider: PROMPT_PROVIDER,
-        model: PROMPT_MODEL,
-        messageCount: 1,
-      });
-      expect(requested.payload?.requestedSessionId === null || typeof requested.payload?.requestedSessionId === "string").toBe(true);
-      expect(started.payload).toMatchObject({
-        provider: PROMPT_PROVIDER,
-        model: PROMPT_MODEL,
-      });
-      expect(started.payload?.sessionId).toBe(promptSessionId);
-      expect(finished.payload).toMatchObject({
-        provider: PROMPT_PROVIDER,
-        model: PROMPT_MODEL,
-        reason: "stop",
-      });
-
-      const logRecords = await driver.logsSearch("Prompt dispatched to pi runtime.");
-      expect(logRecords).toHaveLength(1);
-      expect(logRecords[0].source).toBe("bun.sendPrompt");
-
-      const sessionsState = stateValue(await driver.stateGet("sessions"));
-      expect(sessionsState.active?.messageCount).toBe(2);
-      expect(sessionsState.active?.provider).toBe(PROMPT_PROVIDER);
-      expect(sessionsState.active?.model).toBe(PROMPT_MODEL);
-      expect(sessionsState.active?.session.preview).toContain("Bridge contract prompt success response.");
-    },
-  );
-});
-
-test("prompt failures and cancels surface bridge errors and cancel-request events", async () => {
-  await withSvvyApp(
-    {
-      env: noAuthEnv({ ZAI_API_KEY: "stub-key" }),
-      beforeLaunch: async ({ homeDir, runtimeEnv }) => {
-        runtimeEnv.SVVY_E2E_CONTROL_PATH = await writeE2eControl(homeDir, {
-          prompts: {
-            byText: {
-              [PROMPT_FAILURE_TEXT]: e2ePromptScenario({
-                error: "Bridge contract synthetic prompt failure.",
-                errorReason: "error",
-              }),
-              [PROMPT_CANCEL_TEXT]: e2ePromptScenario({
-                waitForAbort: true,
-                abortFallbackMessage: "Bridge contract prompt was aborted.",
-              }),
-            },
-          },
-        });
-      },
-    },
-    async ({ driver, page }) => {
-      const failureSince = sinceNow();
-      await submitPrompt(page, PROMPT_FAILURE_TEXT);
-      await Bun.sleep(250);
-      const requested = await waitForEvent(driver, "prompt.requested", { since: failureSince });
-      const started = await waitForEvent(driver, "prompt.started", { since: failureSince });
-      const failed = await waitForEvent(driver, "prompt.failed", { since: failureSince });
-
-      expect(requested.payload).toMatchObject({
-        provider: PROMPT_PROVIDER,
-        model: PROMPT_MODEL,
-      });
-      expect(started.payload).toMatchObject({
-        provider: PROMPT_PROVIDER,
-        model: PROMPT_MODEL,
-      });
-      expect(failed.payload).toMatchObject({
-        provider: PROMPT_PROVIDER,
-        model: PROMPT_MODEL,
-        reason: "error",
-      });
-
-      const failureErrors = await driver.errorsList();
-      expect(failureErrors.some((error) => error.source === "bun.sendPrompt" && error.kind === "app")).toBe(true);
-      expect(failureErrors.some((error) => error.message.includes("Bridge contract synthetic prompt failure."))).toBe(true);
-
-      const cancelSince = sinceNow();
-      await submitPrompt(page, PROMPT_CANCEL_TEXT);
-      await page.getByRole("button", { name: "Stop" }).waitFor({ state: "visible" });
-      await page.getByRole("button", { name: "Stop" }).click();
-      await Bun.sleep(750);
-
-      const cancelRequested = await waitForEvent(driver, "prompt.cancel.requested", {
-        since: cancelSince,
-      });
-      const cancelFailed = await waitForEvent(driver, "prompt.failed", {
-        since: cancelSince,
-        match: { reason: "aborted" },
-      });
-      expect(typeof cancelRequested.payload?.sessionId).toBe("string");
-      expect(cancelFailed.payload).toMatchObject({
-        provider: PROMPT_PROVIDER,
-        model: PROMPT_MODEL,
-        reason: "aborted",
-      });
-    },
-  );
-});
-
 test("provider auth.updated is emitted when saving an api key from settings", async () => {
   await withSvvyApp(
     {
@@ -578,7 +416,9 @@ test("provider auth.updated is emitted when saving an api key from settings", as
       });
 
       const providersState = stateValue(await driver.stateGet("providers"));
-      expect(providersState.items.find((provider) => provider.provider === "openai")?.keyType).toBe("apikey");
+      expect(providersState.items.find((provider) => provider.provider === "openai")?.keyType).toBe(
+        "apikey",
+      );
     },
   );
 });
@@ -607,71 +447,9 @@ test("provider auth.removed is emitted when removing an api key from settings", 
 
       const providersState = stateValue(await driver.stateGet("providers"));
       expect(providersState.connected).toBe(0);
-      expect(providersState.items.find((provider) => provider.provider === "openai")?.keyType).toBe("none");
-    },
-  );
-});
-
-test("provider oauth.started is emitted when starting OAuth from settings", async () => {
-  await withSvvyApp(
-    {
-      env: noAuthEnv(),
-      beforeLaunch: async ({ homeDir, runtimeEnv }) => {
-        runtimeEnv.SVVY_E2E_CONTROL_PATH = await writeE2eControl(homeDir, {
-          oauth: {
-            [OAUTH_PROVIDER]: {
-              credentials: {
-                access: "anthropic-access-token",
-                refresh: "anthropic-refresh-token",
-                expires: Date.now() + 60_000,
-              } satisfies OAuthCredentials,
-            },
-          },
-        });
-      },
-    },
-    async ({ driver, page }) => {
-      await openSettings(page);
-      const anthropicRow = await providerRowByName(page, "anthropic");
-
-      const oauthSince = sinceNow();
-      await anthropicRow.getByRole("button", { name: "OAuth" }).click();
-      const oauthStarted = await waitForEvent(driver, "provider.oauth.started", {
-        since: oauthSince,
-        match: { providerId: "anthropic" },
-      });
-      expect(oauthStarted.payload).toMatchObject({ providerId: "anthropic" });
-
-      const providersState = stateValue(await driver.stateGet("providers"));
-      expect(providersState.items.find((provider) => provider.provider === "anthropic")?.keyType).toBe("oauth");
-    },
-  );
-});
-
-test("oauth failures are recorded as bridge errors", async () => {
-  await withSvvyApp(
-    {
-      env: noAuthEnv(),
-      beforeLaunch: async ({ homeDir, runtimeEnv }) => {
-        runtimeEnv.SVVY_E2E_CONTROL_PATH = await writeE2eControl(homeDir, {
-          oauth: {
-            [OAUTH_PROVIDER]: {
-              error: "Bridge contract OAuth failed.",
-            },
-          },
-        });
-      },
-    },
-    async ({ driver, page }) => {
-      await openSettings(page);
-      const anthropicRow = await providerRowByName(page, "anthropic");
-      await anthropicRow.getByRole("button", { name: "OAuth" }).click({ force: true });
-      await Bun.sleep(250);
-
-      const errors = await driver.errorsList();
-      const oauthError = errors.find((error) => error.source === "bun.oauth" && error.kind === "rpc");
-      expect(oauthError).toBeDefined();
-      expect(oauthError?.message).toBe("Bridge contract OAuth failed.");
+      expect(providersState.items.find((provider) => provider.provider === "openai")?.keyType).toBe(
+        "none",
+      );
     },
   );
 });

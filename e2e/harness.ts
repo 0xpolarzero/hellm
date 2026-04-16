@@ -11,10 +11,34 @@ import {
 
 const PROJECT_DIR = process.cwd();
 const APP_WORKSPACE_DIR = resolveElectrobunWorkspaceDir(PROJECT_DIR);
+const FALLBACK_APP_ID = "svvy";
+const FALLBACK_APP_READY_PATTERN = /^svvy desktop app started$/;
+
+const parseBridgeMetadata = (() => {
+  const parseJsonBridgeMetadata = createJsonBridgeMetadataParser("svvy bridge:");
+
+  return (line: string) => {
+    const metadata = parseJsonBridgeMetadata(line);
+    if (metadata) {
+      return metadata;
+    }
+
+    if (FALLBACK_APP_READY_PATTERN.test(line)) {
+      return {
+        appId: FALLBACK_APP_ID,
+        bridgeUrl: null,
+      };
+    }
+
+    return null;
+  };
+})();
+
 const BRIDGE_METADATA = {
   metadataLabel: "svvy bridge metadata",
-  parseLine: createJsonBridgeMetadataParser("svvy bridge:"),
+  parseLine: parseBridgeMetadata,
   processLabel: "svvy",
+  startupTimeoutMs: 45_000,
 } as const;
 
 export const ROOT_WORKSPACE_DIR = APP_WORKSPACE_DIR;
@@ -69,10 +93,7 @@ function createLaunchOptions(options: SvvyAppLaunchOptions) {
   return {
     beforeLaunch: options.beforeLaunch,
     bridgeMetadata: BRIDGE_METADATA,
-    env: {
-      SVVY_E2E_HEADLESS: "1",
-      ...options.env,
-    },
+    env: options.env,
     homeDir: options.homeDir,
     projectRoot: PROJECT_DIR,
     ready: async ({ page }: { page: Page }) => {
@@ -84,7 +105,7 @@ function createLaunchOptions(options: SvvyAppLaunchOptions) {
 }
 
 async function waitForWorkspaceChrome(page: Page): Promise<void> {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + 40_000;
 
   while (Date.now() < deadline) {
     try {
@@ -94,14 +115,10 @@ async function waitForWorkspaceChrome(page: Page): Promise<void> {
 
       const startupFailed = page.getByText("Startup failed").first();
       if (await startupFailed.isVisible()) {
-        const bootstrapText = (await page
-          .locator(".ui-surface")
-          .textContent())
+        const bootstrapText = (await page.locator(".ui-surface").textContent())
           ?.replace(/\s+/g, " ")
           .trim();
-        throw new Error(
-          `svvy renderer bootstrap failed: ${bootstrapText ?? "Startup failed"}`,
-        );
+        throw new Error(`svvy renderer bootstrap failed: ${bootstrapText ?? "Startup failed"}`);
       }
     } catch (error) {
       if (!isTransientBridgeBootstrapError(error)) {

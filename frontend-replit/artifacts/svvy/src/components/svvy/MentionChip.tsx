@@ -16,7 +16,7 @@ export function MentionChip({ path, isFolder = false, onRemove, className }: Men
       className={cn(
         "inline-flex items-center gap-1 font-mono text-[10px] px-1.5 py-0.5 rounded",
         "bg-orange-500/12 text-orange-400 border border-orange-500/25",
-        className
+        className,
       )}
       data-testid={`mention-chip-${path}`}
     >

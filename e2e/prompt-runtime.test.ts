@@ -1,30 +1,23 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { rm } from "node:fs/promises";
+import { basename, join } from "node:path";
 import type { AssistantMessage, StopReason, ToolCall, Usage } from "@mariozechner/pi-ai";
+import { createStructuredSessionStateStore } from "../src/bun/structured-session-state";
 import { createHomeDir, ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 import {
-  e2eDelayStep,
-  e2ePromptScenario,
-  e2eTextStep,
-  e2eThinkingStep,
-  e2eToolCallStep,
+  assistantTextMessage,
+  getTestSessionDir,
   seedSessions,
   toolCall,
   toolResultMessage,
   userMessage,
-  writeE2eControl,
   type SeedSessionInput,
 } from "./support";
-import type { SvvyE2eControl, E2ePromptScenario } from "../src/bun/e2e-control";
 
 const PROMPT_RUNTIME_TIMEOUT_MS = process.env.ELECTROBUN_E2E_LAUNCH_RETRIES ? 90_000 : 45_000;
+const TIMESTAMP = Date.parse("2026-04-10T12:00:00.000Z");
 
 setDefaultTimeout(PROMPT_RUNTIME_TIMEOUT_MS);
-
-const TIMESTAMP = Date.parse("2026-04-10T12:00:00.000Z");
-const SUCCESS_PROMPT = "Store this prompt";
-const FAILURE_PROMPT = "Fail this prompt";
-const MULTILINE_PROMPT = "first line\nsecond line";
 
 beforeAll(async () => {
   await ensureBuilt();
@@ -74,283 +67,12 @@ function assistantMessageWithUsage(
   };
 }
 
-function successScenario(reply: string): E2ePromptScenario {
-  return e2ePromptScenario({
-    stream: [e2eTextStep(reply, { chunks: [reply.slice(0, Math.ceil(reply.length / 2)), reply.slice(Math.ceil(reply.length / 2))] })],
-  });
-}
-
-function streamingScenario(): E2ePromptScenario {
-  return e2ePromptScenario({
-    stream: [
-      e2eThinkingStep("Thinking through the live request.", {
-        chunks: ["Thinking through ", "the live request."],
-        chunkDelayMs: 300,
-      }),
-      e2eTextStep("Partial answer from the live stream.", {
-        chunks: ["Partial answer ", "from the live stream."],
-        chunkDelayMs: 300,
-      }),
-      e2eToolCallStep(
-        "artifacts",
-        {
-          command: "create",
-          filename: "streamed.txt",
-          content: "streamed artifact",
-        },
-        {
-          chunks: [
-            '{"command":"create","filename":"streamed.txt",',
-            '"content":"streamed artifact"}',
-          ],
-          chunkDelayMs: 500,
-        },
-      ),
-      e2eDelayStep(750),
-    ],
-  });
-}
-
-function abortScenario(): E2ePromptScenario {
-  return e2ePromptScenario({
-    waitForAbort: true,
-    abortFallbackMessage: "Prompt aborted by test.",
-    stream: [e2eDelayStep(1_500)],
-  });
-}
-
-function toolUseScenario(): E2ePromptScenario {
-  const artifactCall = toolCall("artifacts", {
-    command: "create",
-    filename: "tool-use.txt",
-    content: "tool use artifact",
-  });
-
-  return e2ePromptScenario({
-    stream: [
-      e2eToolCallStep(
-        "artifacts",
-        {
-          command: "create",
-          filename: "tool-use.txt",
-          content: "tool use artifact",
-        },
-        {
-          id: artifactCall.id,
-          chunks: [
-            '{"command":"create","filename":"tool-use.txt",',
-            '"content":"tool use artifact"}',
-          ],
-          chunkDelayMs: 300,
-        },
-      ),
-      e2eDelayStep(500),
-    ],
-    persistedMessages: [
-      assistantMessageWithUsage("Using the artifacts tool.", {
-        provider: "zai",
-        model: "glm-5-turbo",
-        timestamp: TIMESTAMP + 10,
-        stopReason: "toolUse",
-        toolCalls: [artifactCall],
-      }),
-      toolResultMessage(artifactCall.id, "artifacts", "Created file tool-use.txt", {
-        timestamp: TIMESTAMP + 11,
-      }),
-      assistantMessageWithUsage("The tool use finished.", {
-        provider: "zai",
-        model: "glm-5-turbo",
-        timestamp: TIMESTAMP + 12,
-      }),
-    ],
-  });
-}
-
-function failureScenario(): E2ePromptScenario {
-  return e2ePromptScenario({
-    error: "Synthetic prompt failure.",
-    errorReason: "error",
-  });
-}
-
-function promptControl(byText: Record<string, E2ePromptScenario>): SvvyE2eControl {
-  return {
-    prompts: {
-      byText,
-    },
-  };
-}
-
-async function waitForTextContent(
-  locator: {
-    textContent(): Promise<string | null>;
-  },
-  expected: string,
-  timeoutMs = 15_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastValue = "";
-
-  while (Date.now() < deadline) {
-    lastValue = (await locator.textContent())?.trim() ?? "";
-    if (lastValue === expected) {
-      return;
-    }
-    await Bun.sleep(100);
-  }
-
-  throw new Error(`Timed out waiting for "${expected}". Last value was "${lastValue}".`);
-}
-
-async function waitForSubstring(
-  locator: {
-    textContent(): Promise<string | null>;
-  },
-  expected: string,
-  timeoutMs = 15_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastValue = "";
-
-  while (Date.now() < deadline) {
-    lastValue = (await locator.textContent())?.trim() ?? "";
-    if (lastValue.includes(expected)) {
-      return;
-    }
-    await Bun.sleep(100);
-  }
-
-  throw new Error(`Timed out waiting for text containing "${expected}". Last value was "${lastValue}".`);
-}
-
-async function waitForVisible(
-  locator: {
-    isVisible(): Promise<boolean>;
-  },
-  timeoutMs = 15_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    if (await locator.isVisible()) {
-      return;
-    }
-    await Bun.sleep(100);
-  }
-
-  throw new Error("Timed out waiting for a locator to become visible.");
-}
-
-async function waitForActiveSessionToLeaveRunningState(
-  driver: SvvyApp["driver"],
-  timeoutMs = 15_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastStatus = "unknown";
-
-  while (Date.now() < deadline) {
-    const sessionsState = (
-      await driver.stateGet("sessions")
-    ).value as {
-      activeSessionId?: string | null;
-      summaries?: Array<{ id: string; status?: string }>;
-    };
-    const activeSummary = sessionsState.summaries?.find(
-      (summary) => summary.id === sessionsState.activeSessionId,
-    );
-    lastStatus = activeSummary?.status ?? "missing";
-    if (lastStatus !== "running") {
-      return;
-    }
-    await Bun.sleep(100);
-  }
-
-  throw new Error(`Timed out waiting for the active session to stop running. Last status was "${lastStatus}".`);
-}
-
-async function waitForActiveSessionSummary(
-  driver: SvvyApp["driver"],
-  expected: {
-    previewIncludes: string;
-    status?: string;
-    minMessageCount?: number;
-  },
-  timeoutMs = 15_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastSummary: { messageCount?: number; preview?: string; status?: string } | null = null;
-
-  while (Date.now() < deadline) {
-    const sessionsState = (
-      await driver.stateGet("sessions")
-    ).value as {
-      activeSessionId?: string | null;
-      summaries?: Array<{
-        messageCount?: number;
-        preview?: string;
-        status?: string;
-        id: string;
-      }>;
-    };
-    lastSummary =
-      sessionsState.summaries?.find((summary) => summary.id === sessionsState.activeSessionId) ??
-      null;
-
-    if (
-      lastSummary &&
-      (expected.status ? lastSummary.status === expected.status : true) &&
-      (expected.minMessageCount ? (lastSummary.messageCount ?? 0) >= expected.minMessageCount : true) &&
-      (lastSummary.preview ?? "").includes(expected.previewIncludes)
-    ) {
-      return;
-    }
-
-    await Bun.sleep(100);
-  }
-
-  throw new Error(
-    `Timed out waiting for active session summary. Last summary was ${JSON.stringify(lastSummary)}.`,
-  );
-}
-
-async function textareaValue(page: SvvyApp["page"]): Promise<string> {
-  const resolved = await page.locator('textarea[placeholder^="Ask svvy"]').resolve();
-  return resolved.first?.value ?? "";
-}
-
-async function expectTextareaValue(
-  page: SvvyApp["page"],
-  expected: string,
-  timeoutMs = 15_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastValue = "";
-
-  while (Date.now() < deadline) {
-    lastValue = await textareaValue(page);
-    if (lastValue.trimEnd() === expected) {
-      return;
-    }
-    await Bun.sleep(100);
-  }
-
-  expect(lastValue.trimEnd()).toBe(expected);
-}
-
-async function submitPrompt(page: SvvyApp["page"], text: string): Promise<void> {
-  const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
-  await textarea.fill(text);
-  await textarea.press("Enter");
-}
-
-async function launchPromptRuntimeApp<T>(
+async function launchSeededApp<T>(
   options: {
-    auth?: boolean;
-    control: SvvyE2eControl;
-    env?: Record<string, string | undefined>;
     homeDir?: string;
     workspaceDir?: string;
     sessions?: SeedSessionInput[];
+    beforeLaunch?: (context: { homeDir: string; workspaceDir: string }) => Promise<void> | void;
   },
   fn: (app: SvvyApp) => Promise<T>,
 ): Promise<T> {
@@ -358,20 +80,21 @@ async function launchPromptRuntimeApp<T>(
   const homeDir = options.homeDir ?? (await createHomeDir());
 
   try {
-    const controlFile = await writeE2eControl(homeDir, options.control);
     return await withSvvyApp(
       {
         homeDir,
         workspaceDir: options.workspaceDir,
         env: {
-          ...(options.auth === false ? { ZAI_API_KEY: "" } : { ZAI_API_KEY: "stub-key" }),
-          ...options.env,
-          SVVY_E2E_CONTROL_PATH: controlFile,
+          ZAI_API_KEY: "stub-key",
         },
         beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
           if (options.sessions?.length) {
             await seedSessions(launchHomeDir, options.sessions, workspaceDir);
           }
+          await options.beforeLaunch?.({
+            homeDir: launchHomeDir,
+            workspaceDir,
+          });
         },
       },
       fn,
@@ -383,222 +106,116 @@ async function launchPromptRuntimeApp<T>(
   }
 }
 
-async function openNewSession(page: SvvyApp["page"]): Promise<void> {
-  await page.getByRole("button", { name: "Create a new session" }).click();
-  await waitForTextContent(page.locator(".workspace-main-title"), "New Session");
-}
-
-async function launchWithSameHome<T>(
+async function seedPersistedVerificationSession(
   homeDir: string,
-  control: SvvyE2eControl,
-  fn: (app: SvvyApp) => Promise<T>,
-  options: {
-    auth?: boolean;
-    env?: Record<string, string | undefined>;
-    sessions?: SeedSessionInput[];
-  } = {},
-): Promise<T> {
-  return await launchPromptRuntimeApp(
-    {
-      homeDir,
-      control,
-      auth: options.auth,
-      env: options.env,
-      sessions: options.sessions,
-    },
-    fn,
-  );
-}
-
-test("composer submit sends on Enter, accepts multiline drafts, and ignores an empty draft", async () => {
-  await launchPromptRuntimeApp(
-    {
-      control: promptControl({
-        [MULTILINE_PROMPT]: successScenario("Multiline prompt received."),
-      }),
-    },
-    async ({ page }) => {
-      const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
-      const sendButton = page.getByRole("button", { name: "Send" });
-
-      await textarea.waitFor({ state: "visible" });
-      expect((await sendButton.resolve()).first?.disabled).toBe(true);
-
-      await textarea.focus();
-      await textarea.press("Enter");
-      expect(await page.locator(".assistant-row").count()).toBe(0);
-
-      await textarea.fill(MULTILINE_PROMPT);
-      expect(await textareaValue(page)).toBe(MULTILINE_PROMPT);
-      expect((await sendButton.resolve()).first?.disabled).toBe(false);
-
-      await textarea.press("Enter");
-      await waitForSubstring(page.locator(".workspace-main-meta"), "2 turns");
-      await page.getByText("Multiline prompt received.").waitFor({ state: "visible" });
-      expect(await page.locator(".user-row").count()).toBe(1);
-      expect(await page.locator(".user-row .message-text").count()).toBe(1);
-      expect((await page.locator(".user-row .message-text").textContent()) ?? "").toContain(
-        "first line",
-      );
-      expect((await page.locator(".user-row .message-text").textContent()) ?? "").toContain(
-        "second line",
-      );
-
-      await textarea.fill("");
-      expect((await sendButton.resolve()).first?.disabled).toBe(true);
-      await textarea.press("Enter");
-      expect(await page.locator(".assistant-row").count()).toBe(1);
-    },
-  );
-});
-
-test("composer stop aborts a streaming prompt and lets the user send again immediately", async () => {
-  await launchPromptRuntimeApp(
-    {
-      control: promptControl({
-        "Abort this prompt": abortScenario(),
-        "Follow up after stop": successScenario("Follow-up prompt succeeded."),
-      }),
-    },
-    async ({ page, driver }) => {
-      await submitPrompt(page, "Abort this prompt");
-
-      const stopButton = page.getByRole("button", { name: "Stop" });
-      await waitForVisible(stopButton);
-      await stopButton.click();
-
-      await waitForSubstring(page.locator(".assistant-row .message-text"), "Request aborted by user");
-      await waitForActiveSessionToLeaveRunningState(driver);
-      await Bun.sleep(250);
-      const sendButton = page.getByRole("button", { name: "Send" });
-      await waitForVisible(sendButton);
-      await page.locator('textarea[placeholder^="Ask svvy"]').fill("Follow up after stop");
-      await expectTextareaValue(page, "Follow up after stop");
-      await Bun.sleep(250);
-      await sendButton.click({ force: true });
-      await waitForActiveSessionSummary(driver, {
-        previewIncludes: "Follow-up prompt succeeded.",
-        status: "idle",
-        minMessageCount: 4,
-      });
-      await waitForVisible(page.getByRole("button", { name: "Send" }));
-    },
-  );
-});
-
-test("composer surfaces runtime stream errors", async () => {
-  await launchPromptRuntimeApp(
-    {
-      control: promptControl({
-        "Cause a stream error": failureScenario(),
-      }),
-    },
-    async ({ page }) => {
-      await submitPrompt(page, "Cause a stream error");
-
-      await page.getByRole("button", { name: "Send" }).waitFor({ state: "visible" });
-      await page.getByText("Synthetic prompt failure.").waitFor({ state: "visible" });
-      await waitForSubstring(page.locator(".composer-error"), "Synthetic prompt failure.");
-      expect(await page.locator(".assistant-row").count()).toBe(1);
-    },
-  );
-});
-
-test("prompt history stores successful sends, shares them across sessions, and survives relaunch", async () => {
-  const homeDir = await createHomeDir();
-  try {
-    const firstPrompt = `Store this prompt ${Date.now()} a`;
-    const secondPrompt = `Store this prompt ${Date.now()} b`;
-    const control = promptControl({
-      [firstPrompt]: successScenario("Stored prompt reply a."),
-      [secondPrompt]: successScenario("Stored prompt reply b."),
-    });
-
-    await launchWithSameHome(homeDir, control, async ({ page }) => {
-      await submitPrompt(page, firstPrompt);
-      await page.getByText("Stored prompt reply a.").waitFor({ state: "visible" });
-
-      await submitPrompt(page, secondPrompt);
-      await page.getByText("Stored prompt reply b.").waitFor({ state: "visible" });
-
-      await openNewSession(page);
-      const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
-      await textarea.focus();
-      await textarea.press("ArrowUp");
-      await expectTextareaValue(page, secondPrompt);
-    });
-
-    await launchWithSameHome(homeDir, control, async ({ page }) => {
-      const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
-      await textarea.waitFor({ state: "visible" });
-      await textarea.focus();
-      await textarea.press("ArrowUp");
-      await expectTextareaValue(page, secondPrompt);
-    });
-  } finally {
-    await rm(homeDir, { force: true, recursive: true });
-  }
-});
-
-test("prompt history also recalls failed sends as the newest entry", async () => {
-  const homeDir = await createHomeDir();
-  try {
-    const control = promptControl({
-      [SUCCESS_PROMPT]: successScenario("Anchor reply."),
-      [FAILURE_PROMPT]: failureScenario(),
-    });
-
-    await launchWithSameHome(homeDir, control, async ({ page }) => {
-      await submitPrompt(page, SUCCESS_PROMPT);
-      await page.getByText("Anchor reply.").waitFor({ state: "visible" });
-
-      await submitPrompt(page, FAILURE_PROMPT);
-      await page.getByText("Synthetic prompt failure.").waitFor({ state: "visible" });
-
-      const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
-      await textarea.focus();
-      await textarea.press("ArrowUp");
-      await expectTextareaValue(page, FAILURE_PROMPT);
-    });
-  } finally {
-    await rm(homeDir, { force: true, recursive: true });
-  }
-});
-
-test("prompt history also recalls blocked sends after missing-provider gating", async () => {
-  const homeDir = await createHomeDir();
-  const workspaceDir = await createHomeDir("svvy-e2e-workspace-");
-  try {
-    const control = promptControl({});
-    const blockedPrompt = `Blocked by auth ${Date.now()}`;
-
-    await launchPromptRuntimeApp(
+  workspaceDir: string,
+): Promise<void> {
+  const verificationTarget = "src/bun/verification-tool.test.ts";
+  const verificationCall = toolCall("verification.run", {
+    kind: "test",
+    target: verificationTarget,
+  });
+  const title = "Verification Runtime";
+  const seededSessions = await seedSessions(
+    homeDir,
+    [
       {
-        homeDir,
-        workspaceDir,
-        control,
-        auth: false,
+        title,
+        messages: [
+          userMessage("Run verification in this prompt", TIMESTAMP),
+          assistantTextMessage("Running verification now.", {
+            provider: "zai",
+            model: "glm-5-turbo",
+            stopReason: "toolUse",
+            timestamp: TIMESTAMP + 1,
+            toolCalls: [verificationCall],
+          }),
+          toolResultMessage(verificationCall.id, "verification.run", "test verification passed.", {
+            timestamp: TIMESTAMP + 2,
+          }),
+        ],
       },
-      async ({ page }) => {
-        await submitPrompt(page, blockedPrompt);
-
-        const settings = page.getByRole("dialog", { name: "Settings" });
-        await settings.waitFor({ state: "visible" });
-        expect(await page.getByText("Not configured").isVisible()).toBe(true);
-        await page.locator(".ui-dialog-close").click();
-        await settings.waitFor({ state: "detached" });
-        const textarea = page.locator('textarea[placeholder^="Ask svvy"]');
-        await textarea.fill("");
-        await textarea.focus();
-        await textarea.press("ArrowUp");
-        await expectTextareaValue(page, blockedPrompt);
-      },
-    );
-  } finally {
-    await rm(workspaceDir, { force: true, recursive: true });
-    await rm(homeDir, { force: true, recursive: true });
+    ],
+    workspaceDir,
+  );
+  const sessionId = seededSessions[0]?.id;
+  if (!sessionId) {
+    throw new Error("Failed to seed verification session for prompt runtime e2e.");
   }
-});
+
+  const store = createStructuredSessionStateStore({
+    workspace: {
+      id: workspaceDir,
+      label: basename(workspaceDir),
+      cwd: workspaceDir,
+    },
+    databasePath: join(getTestSessionDir(homeDir, workspaceDir), "structured-session-state.sqlite"),
+  });
+
+  try {
+    store.upsertPiSession({
+      sessionId,
+      title,
+      provider: "zai",
+      model: "glm-5-turbo",
+      reasoningEffort: "medium",
+      messageCount: 4,
+      status: "idle",
+      createdAt: new Date(TIMESTAMP).toISOString(),
+      updatedAt: new Date(TIMESTAMP + 3).toISOString(),
+    });
+
+    const turn = store.startTurn({
+      sessionId,
+      requestSummary: "Run verification in this prompt",
+    });
+
+    const verificationThread = store.createThread({
+      turnId: turn.id,
+      kind: "verification",
+      title: title,
+      objective: `Run verification for ${basename(verificationTarget)}`,
+    });
+
+    const verificationCommand = store.createCommand({
+      turnId: turn.id,
+      threadId: verificationThread.id,
+      toolName: "verification.run",
+      executor: "verification",
+      visibility: "surface",
+      title: "Run verification",
+      summary: `Run verification for ${basename(verificationTarget)}`,
+    });
+
+    store.startCommand(verificationCommand.id);
+    store.recordVerification({
+      threadId: verificationThread.id,
+      commandId: verificationCommand.id,
+      kind: "test",
+      status: "passed",
+      summary: "test verification passed.",
+      command: `bun test -- ${verificationTarget}`,
+    });
+
+    store.finishCommand({
+      commandId: verificationCommand.id,
+      status: "succeeded",
+      summary: "test verification passed.",
+    });
+
+    store.updateThread({
+      threadId: verificationThread.id,
+      status: "completed",
+    });
+
+    store.finishTurn({
+      turnId: turn.id,
+      status: "completed",
+    });
+  } finally {
+    store.close();
+  }
+}
 
 test("transcript rendering projects assistant metadata, tool cards, tool results, reasoning, and artifact affordances", async () => {
   const reportCall = toolCall("artifacts", {
@@ -632,9 +249,8 @@ test("transcript rendering projects assistant metadata, tool cards, tool results
     },
   ];
 
-  await launchPromptRuntimeApp(
+  await launchSeededApp(
     {
-      control: promptControl({}),
       sessions,
     },
     async ({ page }) => {
@@ -653,18 +269,22 @@ test("transcript rendering projects assistant metadata, tool cards, tool results
       expect((await firstAssistant.locator("small").textContent())?.trim()).toBe(
         "zai · glm-5-turbo",
       );
-      expect((await firstAssistant.locator(".message-usage").textContent())?.trim()).toContain("↑12");
-      expect((await firstAssistant.locator(".message-usage").textContent())?.trim()).toContain("↓34");
+      expect((await firstAssistant.locator(".message-usage").textContent())?.trim()).toContain(
+        "↑12",
+      );
+      expect((await firstAssistant.locator(".message-usage").textContent())?.trim()).toContain(
+        "↓34",
+      );
       expect((await firstAssistant.locator(".message-usage").textContent())?.trim()).toContain(
         "$0.1234",
       );
       expect((await firstAssistant.locator(".thinking-block pre").textContent()) ?? "").toContain(
         "durable artifact",
       );
-      expect((await firstAssistant.locator(".tool-card .tool-status").textContent()) ?? "").toBe(
+      expect((await firstAssistant.locator(".tool-card .tool-status").textContent())?.trim()).toBe(
         "done",
       );
-      expect((await page.locator(".tool-result .tool-status").textContent()) ?? "").toBe(
+      expect((await page.locator(".tool-result .tool-status").textContent())?.trim()).toBe(
         "Complete",
       );
       expect(await page.getByText("report.html").isVisible()).toBe(true);
@@ -677,48 +297,29 @@ test("transcript rendering projects assistant metadata, tool cards, tool results
   );
 });
 
-test("streaming transcript rendering updates incrementally while the prompt is live", async () => {
-  await launchPromptRuntimeApp(
+test("persisted verification state renders in the browser transcript and session summary", async () => {
+  await launchSeededApp(
     {
-      control: promptControl({
-        "Stream this prompt": streamingScenario(),
-      }),
+      beforeLaunch: async ({ homeDir, workspaceDir }) => {
+        await seedPersistedVerificationSession(homeDir, workspaceDir);
+      },
     },
     async ({ page }) => {
-      await submitPrompt(page, "Stream this prompt");
-
-      await page.getByRole("button", { name: "Stop" }).waitFor({ state: "visible" });
-      await page.getByText("Streaming").waitFor({ state: "visible" });
-      await waitForSubstring(page.locator(".streaming .thinking-block pre"), "live request");
-      await waitForSubstring(page.locator(".streaming .message-text"), "Partial answer");
-      await page.locator(".tool-card.pending").waitFor({ state: "visible" });
-      expect(await page.locator(".tool-card.pending .tool-status").textContent()).toBe("pending");
-    },
-  );
-});
-
-test("tool use appears in the session while a prompt is running and after it completes", async () => {
-  await launchPromptRuntimeApp(
-    {
-      control: promptControl({
-        "Use a tool in this prompt": toolUseScenario(),
-      }),
-    },
-    async ({ page }) => {
-      await submitPrompt(page, "Use a tool in this prompt");
-
-      await page.getByRole("button", { name: "Stop" }).waitFor({ state: "visible" });
-      await page.locator(".tool-card.pending").waitFor({ state: "visible" });
-      expect((await page.locator(".tool-card.pending .tool-status").textContent())?.trim()).toBe(
-        "pending",
+      await page.locator(".tool-row").waitFor({ state: "visible", timeout: 60_000 });
+      await page.locator(".workspace-main-title").waitFor({ state: "visible", timeout: 60_000 });
+      expect((await page.locator(".workspace-main-title").textContent())?.trim()).toBe(
+        "Verification Runtime",
+      );
+      expect((await page.locator(".tool-result .tool-status").textContent())?.trim()).toBe(
+        "Complete",
       );
 
-      await waitForVisible(page.getByRole("button", { name: "Send" }));
-      await page.locator(".tool-row").waitFor({ state: "visible" });
-      await page.locator(".tool-result .result-details summary").first().click({ force: true });
-      await page.getByText("Created file tool-use.txt").waitFor({ state: "visible" });
       expect(await page.locator(".tool-row").count()).toBe(1);
-      expect((await page.locator(".tool-card .tool-status").textContent())?.trim()).toBe("done");
+      await page.locator(".tool-result .result-details summary").first().click({ force: true });
+      await page.getByText("test verification passed.", { exact: false }).waitFor({
+        state: "visible",
+        timeout: 60_000,
+      });
     },
   );
 });

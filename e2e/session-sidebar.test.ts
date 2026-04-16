@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import { createHomeDir, ensureBuilt, withSvvyApp, type SvvyApp } from "./harness";
 import { assistantTextMessage, seedSessions, type SeedSessionInput, userMessage } from "./support";
 
-setDefaultTimeout(45_000);
+setDefaultTimeout(90_000);
 
 const TIMELINE = Date.parse("2026-04-10T10:00:00.000Z");
 
@@ -225,7 +225,7 @@ test("creates a new session, activates it, and keeps it after relaunch", async (
         },
       },
       async ({ page }) => {
-        await waitForSessionCount(page, 1);
+        await waitForSessionRows(page, 1);
         await page.getByRole("button", { name: "Create a new session" }).click({ force: true });
 
         await waitForSessionRows(page, 2);

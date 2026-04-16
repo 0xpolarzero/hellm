@@ -71,7 +71,6 @@ export interface ChatRuntimeRpcClient {
     setProviderApiKey: typeof rpc.request.setProviderApiKey;
     startOAuth: typeof rpc.request.startOAuth;
     removeProviderAuth: typeof rpc.request.removeProviderAuth;
-    getE2eRendererSeed: typeof rpc.request.getE2eRendererSeed;
   };
   addMessageListener: typeof rpc.addMessageListener;
   removeMessageListener: typeof rpc.removeMessageListener;
@@ -494,7 +493,6 @@ export async function createChatRuntime(
     rpcClient.request.getWorkspaceInfo(),
     rpcClient.request.listSessions(),
   ]);
-  const e2eRendererSeedPromise = rpcClient.request.getE2eRendererSeed();
   const syncProviderAuthPromise = syncProviderAuth(defaults.provider);
   const currentActiveSessionPromise = rpcClient.request.getActiveSession();
 
@@ -528,22 +526,8 @@ export async function createChatRuntime(
   activeSessionId = initialCatalog.activeSessionId;
   sessions = initialCatalog.sessions;
 
-  const [e2eRendererSeed, currentActiveSession] = await Promise.all([
-    e2eRendererSeedPromise,
-    currentActiveSessionPromise,
-  ]);
+  const currentActiveSession = await currentActiveSessionPromise;
   await syncProviderAuthPromise;
-
-  if (e2eRendererSeed) {
-    if (e2eRendererSeed.customProviders.length > 0) {
-      for (const provider of e2eRendererSeed.customProviders) {
-        await storage.customProviders.set(provider);
-      }
-    }
-    if (e2eRendererSeed.promptHistory.length > 0) {
-      await storage.promptHistory.replace(workspaceInfo.workspaceId, e2eRendererSeed.promptHistory);
-    }
-  }
 
   if (currentActiveSession) {
     applyActiveSessionSnapshot(currentActiveSession);

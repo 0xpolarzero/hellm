@@ -18,34 +18,35 @@ export function ThreadCard({ thread, subagents = [], className }: ThreadCardProp
   const [expanded, setExpanded] = useState(true);
   const { openPane } = usePanes();
 
-  const borderColor = {
-    running: "border-l-orange-500",
-    done: "border-l-emerald-500/50",
-    waiting: "border-l-amber-500",
-    failed: "border-l-red-500",
-    idle: "border-l-border",
-  }[thread.status] || "border-l-border";
+  const borderColor =
+    {
+      running: "border-l-orange-500",
+      done: "border-l-emerald-500/50",
+      waiting: "border-l-amber-500",
+      failed: "border-l-red-500",
+      idle: "border-l-border",
+    }[thread.status] || "border-l-border";
 
   return (
     <div
       className={cn(
         "border border-border rounded bg-card border-l-2 transition-colors",
         borderColor,
-        className
+        className,
       )}
       data-testid={`thread-card-${thread.id}`}
     >
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2.5">
         <button
-          onClick={() => setExpanded(e => !e)}
+          onClick={() => setExpanded((e) => !e)}
           className="text-muted-foreground flex-shrink-0"
           data-testid={`thread-card-toggle-${thread.id}`}
         >
           {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         </button>
         <button
-          onClick={() => setExpanded(e => !e)}
+          onClick={() => setExpanded((e) => !e)}
           className="text-[12px] font-medium text-foreground flex-1 truncate text-left"
         >
           {thread.title}
@@ -84,11 +85,13 @@ export function ThreadCard({ thread, subagents = [], className }: ThreadCardProp
             className="overflow-hidden"
           >
             <div className="border-t border-border px-3 py-2 space-y-2">
-              <p className="text-[11px] text-muted-foreground leading-relaxed">{thread.objective}</p>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                {thread.objective}
+              </p>
 
               {subagents.length > 0 && (
                 <div className="space-y-1">
-                  {subagents.map(a => (
+                  {subagents.map((a) => (
                     <SubagentCard key={a.id} agent={a} />
                   ))}
                 </div>

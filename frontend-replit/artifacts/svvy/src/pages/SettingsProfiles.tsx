@@ -7,15 +7,27 @@ import { useTheme } from "@/hooks/useTheme";
 import { Sun, Moon } from "lucide-react";
 
 const navItems = [
-  "General", "Providers", "Runtime Profiles", "Workspace", "Appearance", "Keyboard Shortcuts", "About"
+  "General",
+  "Providers",
+  "Runtime Profiles",
+  "Workspace",
+  "Appearance",
+  "Keyboard Shortcuts",
+  "About",
 ];
 
-function SettingsLayout({ children, activeItem }: { children: React.ReactNode; activeItem: string }) {
+function SettingsLayout({
+  children,
+  activeItem,
+}: {
+  children: React.ReactNode;
+  activeItem: string;
+}) {
   const [, setLocation] = useLocation();
   const { theme, toggle } = useTheme();
 
   const navPaths: Record<string, string> = {
-    "Providers": "/settings/auth",
+    Providers: "/settings/auth",
     "Runtime Profiles": "/settings/profiles",
   };
 
@@ -30,12 +42,15 @@ function SettingsLayout({ children, activeItem }: { children: React.ReactNode; a
           >
             ← svvy
           </button>
-          <button onClick={toggle} className="text-muted-foreground hover:text-foreground transition-colors">
+          <button
+            onClick={toggle}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
             {theme === "dark" ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
           </button>
         </div>
         <nav className="flex-1 py-2">
-          {navItems.map(item => (
+          {navItems.map((item) => (
             <button
               key={item}
               onClick={() => setLocation(navPaths[item] || "/settings/auth")}
@@ -43,7 +58,7 @@ function SettingsLayout({ children, activeItem }: { children: React.ReactNode; a
                 "w-full text-left px-4 py-2 text-[12px] transition-colors",
                 item === activeItem
                   ? "text-foreground bg-secondary"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50",
               )}
             >
               {item}
@@ -81,12 +96,13 @@ export default function SettingsProfiles() {
         <div className="border border-amber-500/15 bg-amber-500/5 rounded px-3 py-2.5 flex items-start gap-2">
           <Info className="w-3.5 h-3.5 text-amber-400 mt-0.5 flex-shrink-0" />
           <p className="text-[11px] text-amber-300/80 leading-relaxed">
-            Profiles can be overridden per-repository using a <span className="font-mono">svvy.config.json</span> file in the repo root.
+            Profiles can be overridden per-repository using a{" "}
+            <span className="font-mono">svvy.config.json</span> file in the repo root.
           </p>
         </div>
 
         <div className="space-y-2">
-          {mockRuntimeProfiles.map(profile => {
+          {mockRuntimeProfiles.map((profile) => {
             const reasoningKey = profile.reasoning as keyof typeof reasoningBadge;
             return (
               <div
@@ -97,19 +113,28 @@ export default function SettingsProfiles() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1.5">
-                      <span className="text-[13px] font-medium text-foreground">{profile.role}</span>
+                      <span className="text-[13px] font-medium text-foreground">
+                        {profile.role}
+                      </span>
                       <ModelBadge model={profile.model} />
-                      <span className={cn(
-                        "font-mono text-[9px] border rounded px-1.5 py-0.5",
-                        reasoningBadge[reasoningKey] || reasoningBadge.none
-                      )}>
-                        {profile.reasoning === "none" ? "no reasoning" : `${profile.reasoning} reasoning`}
+                      <span
+                        className={cn(
+                          "font-mono text-[9px] border rounded px-1.5 py-0.5",
+                          reasoningBadge[reasoningKey] || reasoningBadge.none,
+                        )}
+                      >
+                        {profile.reasoning === "none"
+                          ? "no reasoning"
+                          : `${profile.reasoning} reasoning`}
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1">
                       <ProfileMetaRow label="Model" value={profile.model} />
                       <ProfileMetaRow label="Provider" value={profile.provider} />
-                      <ProfileMetaRow label="Max tokens" value={profile.maxTokens.toLocaleString()} />
+                      <ProfileMetaRow
+                        label="Max tokens"
+                        value={profile.maxTokens.toLocaleString()}
+                      />
                       <ProfileMetaRow label="Temperature" value={String(profile.temperature)} />
                       <ProfileMetaRow label="Budget/step" value={profile.budgetPerStep} />
                     </div>

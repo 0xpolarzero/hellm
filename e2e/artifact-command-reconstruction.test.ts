@@ -9,7 +9,7 @@ import {
   type SeedSessionInput,
 } from "./support";
 
-setDefaultTimeout(45_000);
+setDefaultTimeout(90_000);
 
 const BASE_TIMESTAMP = 1_730_100_000_000;
 

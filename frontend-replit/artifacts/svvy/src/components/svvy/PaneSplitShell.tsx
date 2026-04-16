@@ -1,6 +1,16 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { GitBranch, Grid2x2, PanelRight, ChevronDown, X, Bot, Workflow, GitBranch as GitBranchIcon, FileText } from "lucide-react";
+import {
+  GitBranch,
+  Grid2x2,
+  PanelRight,
+  ChevronDown,
+  X,
+  Bot,
+  Workflow,
+  GitBranch as GitBranchIcon,
+  FileText,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NavRail } from "./NavRail";
 import { BottomComposer } from "./BottomComposer";
@@ -80,7 +90,9 @@ function SessionPaneLabel({ count }: { count: number }) {
   if (count === 0) return null;
   return (
     <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border bg-muted/30 flex-shrink-0">
-      <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-wider">Session</span>
+      <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-wider">
+        Session
+      </span>
     </div>
   );
 }
@@ -108,7 +120,7 @@ function PaneSplitShellInner({
     <div className="flex h-full bg-background overflow-hidden" data-testid="pane-split-shell">
       <NavRail
         collapsed={collapsed}
-        onToggle={() => setCollapsed(c => !c)}
+        onToggle={() => setCollapsed((c) => !c)}
         activeSessionId={activeSessionId}
       />
 
@@ -144,10 +156,10 @@ function PaneSplitShellInner({
             </span>
 
             <button
-              onClick={() => setShowInspector(v => !v)}
+              onClick={() => setShowInspector((v) => !v)}
               className={cn(
                 "text-muted-foreground hover:text-foreground transition-colors rounded p-1",
-                showInspector && "bg-secondary text-foreground"
+                showInspector && "bg-secondary text-foreground",
               )}
               title="Toggle inspector"
               data-testid="btn-toggle-inspector"
@@ -161,11 +173,7 @@ function PaneSplitShellInner({
         <div className="flex-1 flex min-h-0 overflow-hidden">
           <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
             {/* Panel group */}
-            <PanelGroup
-              key={totalPanes}
-              direction="horizontal"
-              className="flex-1 min-h-0"
-            >
+            <PanelGroup key={totalPanes} direction="horizontal" className="flex-1 min-h-0">
               {/* Session pane */}
               <Panel
                 minSize={20}
@@ -173,14 +181,12 @@ function PaneSplitShellInner({
                 className="flex flex-col overflow-hidden"
               >
                 <SessionPaneLabel count={additionalPanes.length} />
-                <div className="flex-1 overflow-y-auto scrollbar-thin">
-                  {children}
-                </div>
+                <div className="flex-1 overflow-y-auto scrollbar-thin">{children}</div>
               </Panel>
 
               {/* Detail panes */}
-              {additionalPanes.map((pane, i) => (
-                <>
+              {additionalPanes.map((pane) => (
+                <Fragment key={pane.id}>
                   <PaneResizeHandleBar key={`handle-${pane.id}`} />
                   <Panel
                     key={pane.id}
@@ -193,7 +199,7 @@ function PaneSplitShellInner({
                       <PaneContentRouter pane={pane} />
                     </div>
                   </Panel>
-                </>
+                </Fragment>
               ))}
             </PanelGroup>
 

@@ -73,15 +73,19 @@ export function ArtifactPaneContent({ artifact, showBrowser = false }: ArtifactP
     <div className="flex flex-col h-full" data-testid={`artifact-pane-${artifact.id}`}>
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border flex-shrink-0 bg-muted/20">
         <Icon className="w-3 h-3 text-muted-foreground" />
-        <span className="font-mono text-[11px] text-foreground/90 flex-1 truncate">{artifact.name}</span>
+        <span className="font-mono text-[11px] text-foreground/90 flex-1 truncate">
+          {artifact.name}
+        </span>
         <div className="flex items-center gap-0.5">
-          {(["preview", "metadata"] as const).map(t => (
+          {(["preview", "metadata"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
               className={cn(
                 "text-[10px] px-2 py-0.5 rounded capitalize transition-colors",
-                tab === t ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+                tab === t
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {t}
@@ -105,7 +109,9 @@ export function ArtifactPaneContent({ artifact, showBrowser = false }: ArtifactP
                 {jsonContent}
               </pre>
             )}
-            {(artifact.type === "screenshot" || artifact.type === "html" || artifact.type === "report") && (
+            {(artifact.type === "screenshot" ||
+              artifact.type === "html" ||
+              artifact.type === "report") && (
               <div className="flex items-center justify-center h-full text-muted-foreground">
                 <div className="text-center">
                   <Icon className="w-8 h-8 mx-auto mb-2 opacity-20" />

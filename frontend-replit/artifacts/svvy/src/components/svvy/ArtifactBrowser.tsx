@@ -1,6 +1,14 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { FileText, GitBranch, Image, BarChart2, FileCode, FileJson, ChevronRight, ChevronDown } from "lucide-react";
+import {
+  FileText,
+  GitBranch,
+  Image,
+  BarChart2,
+  FileCode,
+  FileJson,
+  ChevronDown,
+} from "lucide-react";
 import { DiffViewer } from "./DiffViewer";
 import { mockArtifacts } from "@/data/mock";
 import type { ArtifactItem, ArtifactType } from "@/data/mock";
@@ -26,7 +34,7 @@ const typeColors: Record<ArtifactType, string> = {
 function LogPreview() {
   return (
     <pre className="font-mono text-[10px] leading-relaxed text-foreground/70 overflow-auto scrollbar-thin p-3 h-full">
-{`[14:03:22] Starting test suite...
+      {`[14:03:22] Starting test suite...
 [14:03:22] Environment: test
 [14:03:22] Database: in-memory
 [14:03:23] PASS  auth/login.test.ts
@@ -56,7 +64,7 @@ function LogPreview() {
 function JsonPreview() {
   return (
     <pre className="font-mono text-[10px] leading-relaxed text-foreground/70 overflow-auto scrollbar-thin p-3 h-full">
-{`{
+      {`{
   "lintResults": {
     "errorCount": 0,
     "warningCount": 2,
@@ -95,11 +103,14 @@ export function ArtifactBrowser({ className }: ArtifactBrowserProps) {
   const [selected, setSelected] = useState<ArtifactItem>(mockArtifacts[0]);
   const [activeTab, setActiveTab] = useState<"preview" | "raw" | "metadata">("preview");
 
-  const grouped = mockArtifacts.reduce((acc, a) => {
-    if (!acc[a.session]) acc[a.session] = [];
-    acc[a.session].push(a);
-    return acc;
-  }, {} as Record<string, ArtifactItem[]>);
+  const grouped = mockArtifacts.reduce(
+    (acc, a) => {
+      if (!acc[a.session]) acc[a.session] = [];
+      acc[a.session].push(a);
+      return acc;
+    },
+    {} as Record<string, ArtifactItem[]>,
+  );
 
   return (
     <div className={cn("flex h-full", className)} data-testid="artifact-browser">
@@ -111,7 +122,7 @@ export function ArtifactBrowser({ className }: ArtifactBrowserProps) {
               <ChevronDown className="w-2.5 h-2.5" />
               {session.length > 20 ? session.slice(0, 20) + "…" : session}
             </div>
-            {artifacts.map(a => {
+            {artifacts.map((a) => {
               const Icon = typeIcons[a.type] || FileText;
               const isSelected = selected.id === a.id;
               return (
@@ -122,7 +133,7 @@ export function ArtifactBrowser({ className }: ArtifactBrowserProps) {
                     "w-full flex items-center gap-2 px-4 py-1.5 text-left transition-colors",
                     isSelected
                       ? "bg-secondary text-foreground"
-                      : "text-foreground/70 hover:bg-secondary/50"
+                      : "text-foreground/70 hover:bg-secondary/50",
                   )}
                   data-testid={`artifact-row-${a.id}`}
                 >
@@ -141,7 +152,7 @@ export function ArtifactBrowser({ className }: ArtifactBrowserProps) {
         {/* Tabs + meta */}
         <div className="flex items-center gap-3 px-3 py-2 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-0.5">
-            {(["preview", "raw", "metadata"] as const).map(tab => (
+            {(["preview", "raw", "metadata"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -149,7 +160,7 @@ export function ArtifactBrowser({ className }: ArtifactBrowserProps) {
                   "text-[11px] px-2.5 py-1 rounded capitalize transition-colors",
                   activeTab === tab
                     ? "bg-secondary text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
                 data-testid={`artifact-tab-${tab}`}
               >
