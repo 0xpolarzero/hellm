@@ -67,26 +67,137 @@ export function createVerifyRunTool(options: {
         summary: `Launch ${normalized.kind} verification against the real workspace.`,
       });
       options.store.startCommand(structuredCommand.id);
-
-      const result = await runVerificationBridge({
-        command,
-        cwd: options.cwd,
-        signal,
+      setParentThreadDependencyWaiting({
+        store: options.store,
+        sessionId: runtime.sessionId,
+        parentThreadId: runtime.rootThreadId,
+        childThreadId: thread.id,
       });
 
-      if (!result.launched) {
+      try {
+        const result = await runVerificationBridge({
+          command,
+          cwd: options.cwd,
+          signal,
+        });
+
+        if (!result.launched) {
+          options.store.finishCommand({
+            commandId: structuredCommand.id,
+            status: "failed",
+            summary: `Failed to launch ${normalized.kind} verification.`,
+            error: result.error.message,
+          });
+          options.store.updateThread({
+            threadId: thread.id,
+            status: "failed",
+            title: `Run ${normalized.kind} verification`,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  ok: false,
+                  threadId: thread.id,
+                  commandId: structuredCommand.id,
+                  error: result.error.message,
+                }),
+              },
+            ],
+            details: {
+              ok: false,
+              threadId: thread.id,
+              commandId: structuredCommand.id,
+              error: result.error.message,
+            },
+          };
+        }
+
+        const status = result.cancelled ? "cancelled" : result.exitCode === 0 ? "passed" : "failed";
+        const commandText = displayCommand(command);
+        const summary = buildVerificationSummary(normalized.kind, status, result.exitCode);
+        const verification = options.store.recordVerification({
+          threadId: thread.id,
+          commandId: structuredCommand.id,
+          kind: normalized.kind,
+          status,
+          summary,
+          command: commandText,
+        });
+        options.store.createEpisode({
+          threadId: thread.id,
+          sourceCommandId: structuredCommand.id,
+          kind: "verification",
+          title: `${normalized.kind} verification`,
+          summary,
+          body: formatVerificationBody({
+            kind: normalized.kind,
+            command: commandText,
+            status,
+            exitCode: result.exitCode,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            launched: true,
+            cancelled: result.cancelled,
+            signal: result.signal,
+          }),
+        });
+        options.store.finishCommand({
+          commandId: structuredCommand.id,
+          status: "succeeded",
+          summary,
+        });
+        options.store.updateThread({
+          threadId: thread.id,
+          status:
+            status === "passed" ? "completed" : status === "cancelled" ? "cancelled" : "failed",
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                ok: true,
+                threadId: thread.id,
+                commandId: structuredCommand.id,
+                verificationId: verification.id,
+                status,
+                summary,
+                exitCode: result.exitCode,
+                cancelled: result.cancelled,
+              }),
+            },
+          ],
+          details: {
+            ok: true,
+            threadId: thread.id,
+            commandId: structuredCommand.id,
+            verificationId: verification.id,
+            status,
+            summary,
+            exitCode: result.exitCode,
+            cancelled: result.cancelled,
+            stdout: result.stdout,
+            stderr: result.stderr,
+          },
+        };
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to run verification command.";
         options.store.finishCommand({
           commandId: structuredCommand.id,
           status: "failed",
           summary: `Failed to launch ${normalized.kind} verification.`,
-          error: result.error.message,
+          error: message,
         });
         options.store.updateThread({
           threadId: thread.id,
           status: "failed",
           title: `Run ${normalized.kind} verification`,
         });
-
         return {
           content: [
             {
@@ -95,7 +206,7 @@ export function createVerifyRunTool(options: {
                 ok: false,
                 threadId: thread.id,
                 commandId: structuredCommand.id,
-                error: result.error.message,
+                error: message,
               }),
             },
           ],
@@ -103,79 +214,17 @@ export function createVerifyRunTool(options: {
             ok: false,
             threadId: thread.id,
             commandId: structuredCommand.id,
-            error: result.error.message,
+            error: message,
           },
         };
+      } finally {
+        releaseParentThreadDependency({
+          store: options.store,
+          sessionId: runtime.sessionId,
+          parentThreadId: runtime.rootThreadId,
+          childThreadId: thread.id,
+        });
       }
-
-      const status = result.cancelled ? "cancelled" : result.exitCode === 0 ? "passed" : "failed";
-      const commandText = displayCommand(command);
-      const summary = buildVerificationSummary(normalized.kind, status, result.exitCode);
-      const verification = options.store.recordVerification({
-        threadId: thread.id,
-        commandId: structuredCommand.id,
-        kind: normalized.kind,
-        status,
-        summary,
-        command: commandText,
-      });
-      options.store.createEpisode({
-        threadId: thread.id,
-        sourceCommandId: structuredCommand.id,
-        kind: "verification",
-        title: `${normalized.kind} verification`,
-        summary,
-        body: formatVerificationBody({
-          kind: normalized.kind,
-          command: commandText,
-          status,
-          exitCode: result.exitCode,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          launched: true,
-          cancelled: result.cancelled,
-          signal: result.signal,
-        }),
-      });
-      options.store.finishCommand({
-        commandId: structuredCommand.id,
-        status: "succeeded",
-        summary,
-      });
-      options.store.updateThread({
-        threadId: thread.id,
-        status: status === "passed" ? "completed" : status === "cancelled" ? "cancelled" : "failed",
-      });
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              ok: true,
-              threadId: thread.id,
-              commandId: structuredCommand.id,
-              verificationId: verification.id,
-              status,
-              summary,
-              exitCode: result.exitCode,
-              cancelled: result.cancelled,
-            }),
-          },
-        ],
-        details: {
-          ok: true,
-          threadId: thread.id,
-          commandId: structuredCommand.id,
-          verificationId: verification.id,
-          status,
-          summary,
-          exitCode: result.exitCode,
-          cancelled: result.cancelled,
-          stdout: result.stdout,
-          stderr: result.stderr,
-        },
-      };
     },
   };
 }
@@ -214,4 +263,81 @@ function rejectTarget(params: VerifyRunParams): void {
 
 function buildVerificationObjective(kind: VerificationKind, command: VerificationCommand): string {
   return `${kind} verification: ${displayCommand(command)}`;
+}
+
+function setParentThreadDependencyWaiting(input: {
+  store: StructuredSessionStateStore;
+  sessionId: string;
+  parentThreadId: string;
+  childThreadId: string;
+}): void {
+  const parentThread = input.store
+    .getSessionState(input.sessionId)
+    .threads.find((thread) => thread.id === input.parentThreadId);
+  if (!parentThread || isTerminalThreadStatus(parentThread.status)) {
+    return;
+  }
+
+  if (parentThread.status === "waiting" && parentThread.wait) {
+    return;
+  }
+
+  const nextDependsOn =
+    parentThread.status === "waiting" && !parentThread.wait
+      ? [...new Set([...parentThread.dependsOnThreadIds, input.childThreadId])]
+      : [input.childThreadId];
+  if (
+    parentThread.status === "waiting" &&
+    !parentThread.wait &&
+    parentThread.dependsOnThreadIds.length === nextDependsOn.length &&
+    parentThread.dependsOnThreadIds.every((value, index) => value === nextDependsOn[index])
+  ) {
+    return;
+  }
+
+  input.store.updateThread({
+    threadId: parentThread.id,
+    status: "waiting",
+    dependsOnThreadIds: nextDependsOn,
+  });
+}
+
+function releaseParentThreadDependency(input: {
+  store: StructuredSessionStateStore;
+  sessionId: string;
+  parentThreadId: string;
+  childThreadId: string;
+}): void {
+  const parentThread = input.store
+    .getSessionState(input.sessionId)
+    .threads.find((thread) => thread.id === input.parentThreadId);
+  if (!parentThread || isTerminalThreadStatus(parentThread.status)) {
+    return;
+  }
+
+  if (parentThread.status !== "waiting" || parentThread.wait) {
+    return;
+  }
+  if (!parentThread.dependsOnThreadIds.includes(input.childThreadId)) {
+    return;
+  }
+
+  const remaining = parentThread.dependsOnThreadIds.filter((id) => id !== input.childThreadId);
+  if (remaining.length === 0) {
+    input.store.updateThread({
+      threadId: parentThread.id,
+      status: "running",
+    });
+    return;
+  }
+
+  input.store.updateThread({
+    threadId: parentThread.id,
+    status: "waiting",
+    dependsOnThreadIds: remaining,
+  });
+}
+
+function isTerminalThreadStatus(status: "running" | "waiting" | "completed" | "failed" | "cancelled"): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }

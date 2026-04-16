@@ -656,21 +656,28 @@ export class WorkspaceSessionCatalog {
       wait: structuredSummary.wait,
       counts: structuredSummary.counts,
       threadIdsByStatus: view.threadIdsByStatus,
+      threadIds: structuredSummary.threadIds,
     };
   }
 
   private refreshSmithersWorkflowProjections(): void {
     for (const session of this.structuredSessionStore.listSessionStates()) {
       for (const workflow of session.workflows) {
-        if (
-          workflow.status === "completed" ||
-          workflow.status === "failed" ||
-          workflow.status === "cancelled"
-        ) {
+        const thread = session.threads.find((entry) => entry.id === workflow.threadId);
+        if (!thread) {
           continue;
         }
 
         try {
+          if (
+            workflow.status === "completed" ||
+            workflow.status === "failed" ||
+            workflow.status === "cancelled"
+          ) {
+            this.reconcileTerminalWorkflowProjection(session, workflow, thread);
+            continue;
+          }
+
           this.refreshSmithersWorkflowProjection(session, workflow);
         } catch (error) {
           console.error(`Failed to refresh Smithers workflow projection ${workflow.id}:`, error);
@@ -720,9 +727,24 @@ export class WorkspaceSessionCatalog {
           status: "running",
         });
       }
+      if (thread.parentThreadId) {
+        this.setParentThreadDependencyWaiting(thread.sessionId, thread.parentThreadId, thread.id);
+      }
       return;
     }
 
+    this.reconcileTerminalWorkflowProjection(
+      session,
+      { ...workflow, status: projection.status, summary: projection.summary },
+      thread,
+    );
+  }
+
+  private reconcileTerminalWorkflowProjection(
+    session: StructuredSessionSnapshot,
+    workflow: StructuredSessionSnapshot["workflows"][number],
+    thread: StructuredSessionSnapshot["threads"][number],
+  ): void {
     const hasWorkflowEpisode = session.episodes.some(
       (episode) =>
         episode.threadId === thread.id &&
@@ -735,25 +757,28 @@ export class WorkspaceSessionCatalog {
         sourceCommandId: workflow.commandId,
         kind: "workflow",
         title:
-          projection.status === "completed"
+          workflow.status === "completed"
             ? "Delegated workflow completed"
-            : projection.status === "cancelled"
+            : workflow.status === "cancelled"
               ? "Delegated workflow cancelled"
               : "Delegated workflow failed",
-        summary: projection.summary,
-        body: projection.summary,
+        summary: workflow.summary,
+        body: workflow.summary,
       });
     }
 
     this.structuredSessionStore.updateThread({
       threadId: thread.id,
       status:
-        projection.status === "completed"
+        workflow.status === "completed"
           ? "completed"
-          : projection.status === "cancelled"
+          : workflow.status === "cancelled"
             ? "cancelled"
             : "failed",
     });
+    if (thread.parentThreadId) {
+      this.releaseParentThreadDependency(thread.sessionId, thread.parentThreadId, thread.id);
+    }
   }
 
   private refreshSmithersWaitingWorkflowProjection(
@@ -762,7 +787,6 @@ export class WorkspaceSessionCatalog {
     run: SmithersRunState,
     summary: string,
   ): void {
-    const liveSession = this.structuredSessionStore.getSessionState(thread.sessionId);
     const waiting = buildSmithersWaitingState(run);
     if (
       thread.status !== "waiting" ||
@@ -774,6 +798,11 @@ export class WorkspaceSessionCatalog {
         wait: waiting,
       });
     }
+    if (thread.parentThreadId) {
+      this.setParentThreadDependencyWaiting(thread.sessionId, thread.parentThreadId, thread.id);
+    }
+
+    const liveSession = this.structuredSessionStore.getSessionState(thread.sessionId);
 
     if (this.canSessionWaitOnThread(liveSession, thread.id)) {
       const activeWait = liveSession.session.wait;
@@ -812,6 +841,77 @@ export class WorkspaceSessionCatalog {
     }
 
     return session.threads.every((thread) => thread.id === threadId || thread.status !== "running");
+  }
+
+  private setParentThreadDependencyWaiting(
+    sessionId: string,
+    parentThreadId: string,
+    childThreadId: string,
+  ): void {
+    const parentThread = this.structuredSessionStore
+      .getSessionState(sessionId)
+      .threads.find((thread) => thread.id === parentThreadId);
+    if (!parentThread || isTerminalThreadStatus(parentThread.status)) {
+      return;
+    }
+
+    if (parentThread.status === "waiting" && parentThread.wait) {
+      return;
+    }
+
+    const nextDependsOn =
+      parentThread.status === "waiting" && !parentThread.wait
+        ? [...new Set([...parentThread.dependsOnThreadIds, childThreadId])]
+        : [childThreadId];
+    if (
+      parentThread.status === "waiting" &&
+      !parentThread.wait &&
+      parentThread.dependsOnThreadIds.length === nextDependsOn.length &&
+      parentThread.dependsOnThreadIds.every((value, index) => value === nextDependsOn[index])
+    ) {
+      return;
+    }
+
+    this.structuredSessionStore.updateThread({
+      threadId: parentThread.id,
+      status: "waiting",
+      dependsOnThreadIds: nextDependsOn,
+    });
+  }
+
+  private releaseParentThreadDependency(
+    sessionId: string,
+    parentThreadId: string,
+    childThreadId: string,
+  ): void {
+    const parentThread = this.structuredSessionStore
+      .getSessionState(sessionId)
+      .threads.find((thread) => thread.id === parentThreadId);
+    if (!parentThread || isTerminalThreadStatus(parentThread.status)) {
+      return;
+    }
+
+    if (parentThread.status !== "waiting" || parentThread.wait) {
+      return;
+    }
+    if (!parentThread.dependsOnThreadIds.includes(childThreadId)) {
+      return;
+    }
+
+    const remaining = parentThread.dependsOnThreadIds.filter((id) => id !== childThreadId);
+    if (remaining.length === 0) {
+      this.structuredSessionStore.updateThread({
+        threadId: parentThread.id,
+        status: "running",
+      });
+      return;
+    }
+
+    this.structuredSessionStore.updateThread({
+      threadId: parentThread.id,
+      status: "waiting",
+      dependsOnThreadIds: remaining,
+    });
   }
 
   private createPromptExecutionContext(
@@ -1291,6 +1391,10 @@ function matchesWaitState(
   resumeWhen: string,
 ): boolean {
   return wait?.kind === kind && wait.reason === reason && wait.resumeWhen === resumeWhen;
+}
+
+function isTerminalThreadStatus(status: StructuredSessionSnapshot["threads"][number]["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 function summarizePromptForTurn(text: string, limit = 96): string {

@@ -141,11 +141,38 @@ describe("verification tool", () => {
     expect(snapshot.commands).toHaveLength(1);
     expect(snapshot.verifications).toHaveLength(1);
     expect(snapshot.episodes).toHaveLength(1);
+    expect(rootThread?.status).toBe("running");
+    expect(rootThread?.dependsOnThreadIds).toEqual([]);
     expect(verificationThread?.kind).toBe("verification");
     expect(verificationThread?.parentThreadId).toBe(rootThread?.id);
     expect(snapshot.commands[0]?.threadId).toBe(verificationThread?.id);
     expect(snapshot.verifications[0]?.threadId).toBe(verificationThread?.id);
     expect(snapshot.episodes[0]?.sourceCommandId).toBe(snapshot.commands[0]?.id);
+    expect(
+      snapshot.events.filter(
+        (event) => event.subject.kind === "thread" && event.subject.id === rootThread?.id,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        kind: "thread.created",
+      }),
+      expect.objectContaining({
+        kind: "thread.updated",
+        data: {
+          status: "waiting",
+          dependsOnThreadIds: [verificationThread?.id],
+          wait: null,
+        },
+      }),
+      expect.objectContaining({
+        kind: "thread.updated",
+        data: {
+          status: "running",
+          dependsOnThreadIds: [],
+          wait: null,
+        },
+      }),
+    ]);
 
     const detail = store.getThreadDetail(verificationThread!.id);
     expect(detail.commands.map((entry) => entry.id)).toEqual([snapshot.commands[0]!.id]);

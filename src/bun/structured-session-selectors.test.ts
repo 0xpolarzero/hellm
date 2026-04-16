@@ -304,7 +304,7 @@ describe("structured session selectors", () => {
     ).toBe("idle");
   });
 
-  it("builds a session view with structured counts and thread buckets", () => {
+  it("builds a session view with structured counts, buckets, and startedAt thread ordering", () => {
     const snapshot = createSessionSnapshot({
       session: {
         id: "session-selectors",
@@ -325,6 +325,23 @@ describe("structured session selectors", () => {
       ],
       threads: [
         {
+          id: "thread-003",
+          kind: "workflow",
+          title: "Workflow objective",
+          objective: "Workflow body",
+          status: "waiting",
+          dependsOnThreadIds: [],
+          wait: {
+            kind: "external",
+            reason: "Need clarification",
+            resumeWhen: "Resume when the user decides ownership.",
+            since: "2026-04-14T10:03:00.000Z",
+          },
+          startedAt: "2026-04-14T10:02:30.000Z",
+          updatedAt: "2026-04-14T10:03:00.000Z",
+          finishedAt: null,
+        },
+        {
           id: "thread-001",
           kind: "task",
           title: "Direct objective",
@@ -344,26 +361,9 @@ describe("structured session selectors", () => {
           status: "failed",
           dependsOnThreadIds: [],
           wait: null,
-          startedAt: "2026-04-14T10:01:30.000Z",
+          startedAt: "2026-04-14T10:00:30.000Z",
           updatedAt: "2026-04-14T10:02:00.000Z",
           finishedAt: "2026-04-14T10:02:00.000Z",
-        },
-        {
-          id: "thread-003",
-          kind: "workflow",
-          title: "Workflow objective",
-          objective: "Workflow body",
-          status: "waiting",
-          dependsOnThreadIds: [],
-          wait: {
-            kind: "external",
-            reason: "Need clarification",
-            resumeWhen: "Resume when the user decides ownership.",
-            since: "2026-04-14T10:03:00.000Z",
-          },
-          startedAt: "2026-04-14T10:02:30.000Z",
-          updatedAt: "2026-04-14T10:03:00.000Z",
-          finishedAt: null,
         },
       ],
       commands: [
@@ -441,6 +441,7 @@ describe("structured session selectors", () => {
         waiting: ["thread-003"],
         failed: ["thread-002"],
       },
+      threadIds: ["thread-001", "thread-002", "thread-003"],
     });
 
     const summary = buildStructuredSessionSummaryProjection(snapshot);
@@ -452,6 +453,7 @@ describe("structured session selectors", () => {
       updatedAt: "2026-04-14T10:03:30.000Z",
       counts: view.counts,
       wait: snapshot.session.wait,
+      threadIds: view.threadIds,
     });
   });
 

@@ -98,6 +98,7 @@ export interface WorkspaceSessionSummary {
     waiting: string[];
     failed: string[];
   };
+  threadIds?: string[];
 }
 
 export interface ActiveSessionState {

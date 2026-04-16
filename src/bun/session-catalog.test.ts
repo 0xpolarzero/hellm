@@ -11,6 +11,7 @@ import {
   resolveRestoredSessionDefaults,
   type SessionDefaults,
 } from "./session-catalog";
+import type { SmithersRunState } from "./smithers-workflow-bridge";
 import type {
   StructuredSessionSnapshot,
   StructuredSessionStateStore,
@@ -608,6 +609,7 @@ describe("WorkspaceSessionCatalog", () => {
         workflows: 0,
         artifacts: 0,
       });
+      expect(summary?.threadIds).toEqual([waitingThread.id]);
 
       const snapshot = getStructuredSessionState(catalog, created.session.id);
       expect(snapshot.session.wait).toEqual(waitingOn);
@@ -620,6 +622,128 @@ describe("WorkspaceSessionCatalog", () => {
         "thread.created",
         "thread.updated",
         "session.wait.started",
+      ]);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("reconciles parent dependency waits for long-lived workflow refreshes", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Workflow Refresh" }, DEFAULTS);
+    const store = (catalog as unknown as { structuredSessionStore: StructuredSessionStateStore })
+      .structuredSessionStore;
+
+    try {
+      const turn = store.startTurn({
+        sessionId: created.session.id,
+        requestSummary: "Refresh workflow dependency state",
+      });
+      const rootThread = store.createThread({
+        turnId: turn.id,
+        kind: "task",
+        title: "Coordinate workflow",
+        objective: "Track the long-lived workflow from the parent task.",
+      });
+      const workflowThread = store.createThread({
+        turnId: turn.id,
+        parentThreadId: rootThread.id,
+        kind: "workflow",
+        title: "Delegated workflow",
+        objective: "Represent a long-lived workflow child thread.",
+      });
+      const command = store.createCommand({
+        turnId: turn.id,
+        threadId: workflowThread.id,
+        toolName: "workflow.start",
+        executor: "smithers",
+        visibility: "surface",
+        title: "Start workflow",
+        summary: "Start the delegated workflow.",
+      });
+      const workflow = store.recordWorkflow({
+        threadId: workflowThread.id,
+        commandId: command.id,
+        smithersRunId: "run-refresh-123",
+        workflowName: "implement-feature",
+        status: "running",
+        summary: "Workflow started.",
+      });
+
+      const snapshot = getStructuredSessionState(catalog, created.session.id);
+      const childThread = snapshot.threads.find((thread) => thread.id === workflowThread.id)!;
+      const workflowRecord = snapshot.workflows.find((entry) => entry.id === workflow.id)!;
+      const run: SmithersRunState = {
+        runId: workflow.smithersRunId,
+        workflowName: workflow.workflowName,
+        workflowPath: "definitions/implement-feature.tsx",
+        status: "waiting-event",
+        createdAtMs: 1,
+        startedAtMs: 2,
+        finishedAtMs: null,
+        heartbeatAtMs: null,
+        vcsRoot: null,
+        vcsRevision: null,
+        errorJson: null,
+        nodeCounts: {},
+      };
+
+      (
+        catalog as unknown as {
+          refreshSmithersWaitingWorkflowProjection: (
+            thread: StructuredSessionSnapshot["threads"][number],
+            workflow: StructuredSessionSnapshot["workflows"][number],
+            run: SmithersRunState,
+            summary: string,
+          ) => void;
+        }
+      ).refreshSmithersWaitingWorkflowProjection(
+        childThread,
+        workflowRecord,
+        run,
+        "implement-feature run run-refresh-123 is waiting for an external event.",
+      );
+
+      const waitingSnapshot = getStructuredSessionState(catalog, created.session.id);
+      expect(waitingSnapshot.threads.find((thread) => thread.id === rootThread.id)).toMatchObject({
+        status: "waiting",
+        dependsOnThreadIds: [workflowThread.id],
+      });
+      expect(
+        waitingSnapshot.threads.find((thread) => thread.id === workflowThread.id)?.wait,
+      ).toMatchObject({
+        kind: "external",
+      });
+      expect(waitingSnapshot.session.wait).toMatchObject({
+        threadId: workflowThread.id,
+        kind: "external",
+      });
+
+      store.updateWorkflow({
+        workflowId: workflow.id,
+        status: "completed",
+        summary: "Workflow completed after the external event arrived.",
+      });
+      await catalog.listSessions();
+
+      const resumedSnapshot = getStructuredSessionState(catalog, created.session.id);
+      expect(resumedSnapshot.session.wait).toBeNull();
+      expect(resumedSnapshot.threads.find((thread) => thread.id === rootThread.id)).toMatchObject({
+        status: "running",
+        dependsOnThreadIds: [],
+      });
+      expect(
+        resumedSnapshot.threads.find((thread) => thread.id === workflowThread.id),
+      ).toMatchObject({
+        status: "completed",
+        wait: null,
+      });
+      expect(resumedSnapshot.episodes).toEqual([
+        expect.objectContaining({
+          threadId: workflowThread.id,
+          kind: "workflow",
+        }),
       ]);
     } finally {
       await catalog.dispose();

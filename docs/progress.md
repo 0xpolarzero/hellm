@@ -28,15 +28,15 @@ Some later adjacent slices already landed. Keep the remaining foundation gaps ne
 
 - [x] Build a POC session overlay document and validate how it can sit above pi session data. Commit(s): `pending local work / add landing hash when committed`
 - [x] Persist a minimal structured session overlay root above pi session data. Commit(s): `pending local work / add landing hash when committed`
-- [ ] Persist `TurnRecord` entries with request summary, lifecycle status, and timestamps.
+- [x] Persist `TurnRecord` entries with request summary, lifecycle status, and timestamps. Commit(s): `pending local work / add landing hash when committed`
 - [x] Persist `ThreadRecord` entries with id, objective, status, kind, and timestamps. Commit(s): `pending local work / add landing hash when committed`
 - [x] Persist thread lifecycle transitions for task, workflow, verification, dependency-wait, and user/external-wait states. Commit(s): `pending local work / add landing hash when committed`
 - [x] Persist thread dependency waiting and user/external wait state as durable product state. Commit(s): `pending local work / add landing hash when committed`
 - [ ] Persist `CommandRecord` entries for every tool call, including parent-child linkage, executor ownership, visibility, attempts, and timestamps.
-- [ ] Build a POC `EpisodeRecord` and `VerificationRecord` shape against a few realistic session examples.
+- [x] Build a POC `EpisodeRecord` and `VerificationRecord` shape against a few realistic session examples. Commit(s): `pending local work / add landing hash when committed`
 - [x] Persist `VerificationRecord` entries with status, summary, optional command, and thread linkage. Commit(s): `pending local work / add landing hash when committed`
 - [x] Wire a real verification bridge and bounded verification tool so verification writes come from actual subprocess outcomes. Commit(s): `pending local work / add landing hash when committed`
-- [ ] Persist first-class `EpisodeRecord` skeletons for ordinary task completions.
+- [x] Persist first-class `EpisodeRecord` skeletons for ordinary task completions. Commit(s): `pending local work / add landing hash when committed`
 - [ ] Persist artifact references independently from transcript parsing.
 - [x] Build a POC for workflow-record and wait-state persistence before wiring full delegated execution. Commit(s): `pending local work / add landing hash when committed`
 - [x] Persist workflow records linked to their source command and thread. Commit(s): `pending local work / add landing hash when committed`

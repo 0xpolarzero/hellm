@@ -555,6 +555,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     this.ensureSchema();
     this.upsertWorkspace(options.workspace);
     this.rebuildIdCounters();
+    this.reconcileSessionWaitInvariants();
   }
 
   upsertPiSession(pi: StructuredPiSessionRecord): void {
@@ -754,6 +755,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         parentThreadId: input.parentThreadId ?? null,
       },
     );
+    this.clearSessionWaitWhenRunnableWorkExists(turn.session_id, timestamp);
 
     return this.mustFindThreadRecord(threadId);
   }
@@ -855,6 +857,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         wait,
       },
     );
+    this.clearSessionWaitWhenRunnableWorkExists(thread.session_id, timestamp);
 
     return this.mustFindThreadRecord(thread.id);
   }
@@ -1761,9 +1764,62 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     );
   }
 
-  private hasRunnableWorkRemaining(sessionId: string, excludeThreadId: string): boolean {
+  private clearSessionWaitWhenRunnableWorkExists(sessionId: string, at: string): void {
+    const session = this.getSessionRow(sessionId);
+    if (!session?.wait_thread_id) {
+      return;
+    }
+    if (!this.hasRunnableWorkRemaining(sessionId)) {
+      return;
+    }
+
+    this.clearSessionWaitForThread(sessionId, session.wait_thread_id, at);
+  }
+
+  private hasRunnableWorkRemaining(sessionId: string, excludeThreadId?: string): boolean {
     const rows = this.listThreadRows(sessionId);
-    return rows.some((thread) => thread.id !== excludeThreadId && thread.status === "running");
+    return rows.some(
+      (thread) =>
+        thread.status === "running" &&
+        (excludeThreadId === undefined || thread.id !== excludeThreadId),
+    );
+  }
+
+  private reconcileSessionWaitInvariants(): void {
+    const sessions = this.db
+      .query(
+        `SELECT session_id
+         FROM session
+         WHERE wait_thread_id IS NOT NULL`,
+      )
+      .all() as Array<{ session_id: string }>;
+
+    for (const session of sessions) {
+      this.reconcileSessionWaitInvariant(session.session_id, this.now());
+    }
+  }
+
+  private reconcileSessionWaitInvariant(sessionId: string, at: string): void {
+    const session = this.getSessionRow(sessionId);
+    if (!session?.wait_thread_id) {
+      return;
+    }
+
+    const owner = this.getThreadRow(session.wait_thread_id);
+    const sessionWait = mapSessionWait(session);
+    const ownerWait = owner ? mapWait(owner) : null;
+    const invalidOwner =
+      !owner ||
+      owner.session_id !== sessionId ||
+      owner.status !== "waiting" ||
+      !sessionWait ||
+      !ownerWait ||
+      ownerWait.kind !== sessionWait.kind ||
+      ownerWait.reason !== sessionWait.reason ||
+      ownerWait.resumeWhen !== sessionWait.resumeWhen;
+    if (invalidOwner || this.hasRunnableWorkRemaining(sessionId, session.wait_thread_id)) {
+      this.clearSessionWaitForThread(sessionId, session.wait_thread_id, at);
+    }
   }
 
   private getWorkspaceRecord(): StructuredWorkspaceRecord {

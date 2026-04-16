@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { StructuredWorkflowStatus } from "./structured-session-state";
 
@@ -42,6 +42,7 @@ export interface StartSmithersWorkflowOptions {
   runId?: string;
   smithersBin?: string;
   smithersCwd?: string;
+  env?: Record<string, string | undefined>;
 }
 
 export interface StartSmithersWorkflowResult {
@@ -119,7 +120,7 @@ export async function startSmithersWorkflow(
     args.push("--run-id", options.runId);
   }
 
-  const result = await runCommand(args, smithersCwd);
+  const result = await runCommand(args, smithersCwd, options.env);
 
   if (result.exitCode !== 0) {
     throw new Error(result.stderr || result.stdout || "Failed to start Smithers workflow.");
@@ -238,13 +239,19 @@ export function readSmithersWorkflowProjectionInput(options: {
   return run ? mapSmithersRunStateToWorkflowProjectionInput(run) : null;
 }
 
-async function runCommand(command: string[], cwd: string) {
+async function runCommand(
+  command: string[],
+  cwd: string,
+  envOverride?: Record<string, string | undefined>,
+) {
+  const env = buildCommandEnv(envOverride ?? process.env);
+
   const proc = Bun.spawn(command, {
     cwd,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    env: process.env,
+    env,
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -279,9 +286,52 @@ function mapRunStatusToWorkflowStatus(status: SmithersRunStatus): StructuredWork
     case "finished":
       return "completed";
     case "failed":
-    case "cancelled":
       return "failed";
+    case "cancelled":
+      return "cancelled";
   }
+}
+
+function buildCommandEnv(baseEnv: Record<string, string | undefined>) {
+  const env: Record<string, string | undefined> = { ...baseEnv };
+  const bunExecutablePath = resolveBunExecutablePath(baseEnv);
+  if (!bunExecutablePath) {
+    return env;
+  }
+
+  env.PATH = prependPathEntry(baseEnv.PATH, dirname(bunExecutablePath));
+  return env;
+}
+
+function resolveBunExecutablePath(env: Record<string, string | undefined>) {
+  const envBun = env.BUN_EXECUTABLE;
+  if (envBun && existsSync(envBun)) {
+    return envBun;
+  }
+
+  if (isBunExecutablePath(process.execPath) && existsSync(process.execPath)) {
+    return process.execPath;
+  }
+
+  return null;
+}
+
+function isBunExecutablePath(path: string) {
+  const name = basename(path).toLowerCase();
+  return name === "bun" || name === "bun.exe";
+}
+
+function prependPathEntry(pathValue: string | undefined, entry: string) {
+  if (!pathValue) {
+    return entry;
+  }
+
+  const parts = pathValue.split(delimiter).filter(Boolean);
+  if (parts.includes(entry)) {
+    return parts.join(delimiter);
+  }
+
+  return [entry, ...parts].join(delimiter);
 }
 
 function buildWorkflowSummary(run: SmithersRunState): string {

@@ -234,6 +234,105 @@ describe("structured session state write API", () => {
     expect(resumedSnapshot.threads[0]?.wait).toBeNull();
   });
 
+  it("clears session wait when a new runnable thread is created", () => {
+    const store = createStore();
+    seedSession(store, "session-wait-cleared-on-create");
+
+    const turn = store.startTurn({
+      sessionId: "session-wait-cleared-on-create",
+      requestSummary: "Wait and then resume with new runnable work",
+    });
+    const waitingThread = store.createThread({
+      turnId: turn.id,
+      kind: "workflow",
+      title: "Need user input",
+      objective: "Block until the user provides missing rollout details.",
+    });
+    const wait = {
+      kind: "user" as const,
+      reason: "Need rollout scope confirmation",
+      resumeWhen: "Resume when the user confirms rollout scope.",
+      since: "2026-04-14T09:00:02.000Z",
+    };
+    store.updateThread({
+      threadId: waitingThread.id,
+      status: "waiting",
+      wait,
+    });
+    store.setSessionWait({
+      sessionId: "session-wait-cleared-on-create",
+      threadId: waitingThread.id,
+      ...wait,
+    });
+
+    const runnableThread = store.createThread({
+      turnId: turn.id,
+      kind: "task",
+      title: "Continue parallel implementation",
+      objective: "Resume progress on runnable thread work.",
+    });
+    const snapshot = store.getSessionState("session-wait-cleared-on-create");
+
+    expect(runnableThread.status).toBe("running");
+    expect(snapshot.session.wait).toBeNull();
+    expect(snapshot.threads.find((thread) => thread.id === waitingThread.id)?.wait).toEqual(wait);
+  });
+
+  it("clears session wait when another thread becomes runnable", () => {
+    const store = createStore();
+    seedSession(store, "session-wait-cleared-on-update");
+
+    const turn = store.startTurn({
+      sessionId: "session-wait-cleared-on-update",
+      requestSummary: "Resume work from dependency wait",
+    });
+    const blockingThread = store.createThread({
+      turnId: turn.id,
+      kind: "workflow",
+      title: "Waiting on user",
+      objective: "Pause for user action.",
+    });
+    const dependencyThread = store.createThread({
+      turnId: turn.id,
+      kind: "task",
+      title: "Dependency thread",
+      objective: "Will transition back to runnable.",
+    });
+
+    store.updateThread({
+      threadId: dependencyThread.id,
+      status: "waiting",
+      dependsOnThreadIds: [blockingThread.id],
+    });
+
+    const wait = {
+      kind: "external" as const,
+      reason: "Waiting on external approval",
+      resumeWhen: "Resume when external approval arrives.",
+      since: "2026-04-14T09:00:04.000Z",
+    };
+    store.updateThread({
+      threadId: blockingThread.id,
+      status: "waiting",
+      wait,
+    });
+    store.setSessionWait({
+      sessionId: "session-wait-cleared-on-update",
+      threadId: blockingThread.id,
+      ...wait,
+    });
+
+    const resumedDependency = store.updateThread({
+      threadId: dependencyThread.id,
+      status: "running",
+    });
+    const snapshot = store.getSessionState("session-wait-cleared-on-update");
+
+    expect(resumedDependency.status).toBe("running");
+    expect(snapshot.session.wait).toBeNull();
+    expect(snapshot.threads.find((thread) => thread.id === blockingThread.id)?.wait).toEqual(wait);
+  });
+
   it("records verifications and workflows against command/thread ownership", () => {
     const store = createStore();
     seedSession(store, "session-routed");

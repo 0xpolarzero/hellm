@@ -61,6 +61,13 @@ type CreateSvvyToolBridgeOptions = {
   listWorkspaceSessions: () => Promise<WorkspaceSessionsState>;
 };
 
+const TOOL_BRIDGE_PORT_BASE = 59_000;
+const TOOL_BRIDGE_PORT_RANGE = 1_000;
+
+function getPreferredToolBridgePort(): number {
+  return TOOL_BRIDGE_PORT_BASE + (process.pid % TOOL_BRIDGE_PORT_RANGE);
+}
+
 export function createSvvyToolBridge(options: CreateSvvyToolBridgeOptions) {
   let toolBridge: ToolBridgeInstance | null = null;
 
@@ -117,6 +124,7 @@ export function createSvvyToolBridge(options: CreateSvvyToolBridgeOptions) {
     async mount(mainWindow: BrowserWindow): Promise<{ appId: string; url?: string }> {
       const mountedToolBridge = await mountElectrobunToolBridge({
         mainWindow,
+        port: getPreferredToolBridgePort(),
         state: buildState,
       });
       toolBridge = mountedToolBridge;

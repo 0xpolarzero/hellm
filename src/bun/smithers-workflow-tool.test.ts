@@ -88,7 +88,7 @@ describe("smithers workflow tool", () => {
     ).rejects.toThrow("workflow.start can only run during an active prompt.");
   });
 
-  it("records a waiting workflow thread without promoting the session into wait when runnable work remains", async () => {
+  it("records dependency waiting on the parent thread and promotes the session into wait when the workflow is externally blocked", async () => {
     const startImplementFeatureWorkflow = mock(async () => ({
       runId: "run-123",
       stdout: "workflow started",
@@ -132,6 +132,8 @@ describe("smithers workflow tool", () => {
     expect(snapshot.commands).toHaveLength(1);
     expect(snapshot.workflows).toHaveLength(1);
     expect(snapshot.episodes).toHaveLength(0);
+    expect(rootThread?.status).toBe("waiting");
+    expect(rootThread?.dependsOnThreadIds).toEqual([workflowThread?.id ?? ""]);
     expect(workflowThread?.kind).toBe("workflow");
     expect(workflowThread?.status).toBe("waiting");
     expect(workflowThread?.wait).toMatchObject({
@@ -140,12 +142,84 @@ describe("smithers workflow tool", () => {
       resumeWhen: "Resume when the delegated workflow reports new progress.",
     });
     expect(typeof workflowThread?.wait?.since).toBe("string");
-    expect(snapshot.session.wait).toBeNull();
-    expect(runtime.current?.sessionWaitApplied).toBe(false);
+    expect(snapshot.session.wait).toMatchObject({
+      threadId: workflowThread?.id,
+      kind: "external",
+      reason: "Need approval before the workflow can continue.",
+      resumeWhen: "Resume when the delegated workflow reports new progress.",
+    });
+    expect(runtime.current?.sessionWaitApplied).toBe(true);
     expect(snapshot.commands[0]?.threadId).toBe(workflowThread?.id);
     expect(snapshot.workflows[0]?.threadId).toBe(workflowThread?.id);
     expect(snapshot.workflows[0]?.status).toBe("waiting");
+    expect(
+      snapshot.events.filter(
+        (event) => event.subject.kind === "thread" && event.subject.id === rootThread?.id,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        kind: "thread.created",
+      }),
+      expect.objectContaining({
+        kind: "thread.updated",
+        data: {
+          status: "waiting",
+          dependsOnThreadIds: [workflowThread?.id],
+          wait: null,
+        },
+      }),
+    ]);
+  });
+
+  it("releases the parent dependency wait when the workflow is already terminal at tool return", async () => {
+    const startImplementFeatureWorkflow = mock(async () => ({
+      runId: "run-456",
+      stdout: "workflow started",
+      stderr: "",
+    }));
+    const readSmithersWorkflowProjectionInput = mock(() => ({
+      status: "completed" as const,
+      summary: "Workflow completed successfully.",
+    }));
+    mock.module("./smithers-workflow-bridge", () => ({
+      startImplementFeatureWorkflow,
+      readSmithersWorkflowProjectionInput,
+    }));
+
+    const { createStartWorkflowTool } = await importToolModule();
+    const store = createStore();
+    const runtime = createRuntime(store);
+    const tool = createStartWorkflowTool({
+      runtime,
+      store,
+    });
+
+    const result = await tool.execute("tool-call-3", {
+      specPath: "docs/specs/structured-session-state.spec.md",
+      pocPath: "docs/pocs/structured-session-state.poc.ts",
+    });
+
+    expect(result.details).toMatchObject({
+      ok: true,
+      runId: "run-456",
+      status: "completed",
+      summary: "Workflow completed successfully.",
+    });
+
+    const snapshot = store.getSessionState("session-smithers-tool");
+    const [rootThread, workflowThread] = snapshot.threads;
+
     expect(rootThread?.status).toBe("running");
+    expect(rootThread?.dependsOnThreadIds).toEqual([]);
+    expect(workflowThread?.status).toBe("completed");
+    expect(snapshot.session.wait).toBeNull();
+    expect(snapshot.episodes).toEqual([
+      expect.objectContaining({
+        threadId: workflowThread?.id,
+        sourceCommandId: snapshot.commands[0]?.id,
+        kind: "workflow",
+      }),
+    ]);
   });
 
   it("fails the workflow command cleanly when the Smithers bridge throws", async () => {
@@ -165,7 +239,7 @@ describe("smithers workflow tool", () => {
       store,
     });
 
-    const result = await tool.execute("tool-call-3", {
+    const result = await tool.execute("tool-call-4", {
       specPath: "docs/specs/structured-session-state.spec.md",
       pocPath: "docs/pocs/structured-session-state.poc.ts",
     });
@@ -177,9 +251,12 @@ describe("smithers workflow tool", () => {
     });
 
     const snapshot = store.getSessionState("session-smithers-tool");
+    const [rootThread] = snapshot.threads;
     expect(snapshot.threads).toHaveLength(2);
     expect(snapshot.commands).toHaveLength(1);
     expect(snapshot.workflows).toHaveLength(0);
+    expect(rootThread?.status).toBe("running");
+    expect(rootThread?.dependsOnThreadIds).toEqual([]);
     expect(snapshot.threads[1]?.kind).toBe("workflow");
     expect(snapshot.threads[1]?.status).toBe("failed");
     expect(snapshot.commands[0]?.status).toBe("failed");

@@ -72,7 +72,7 @@ describe("smithers workflow bridge", () => {
     ).toBe("failed");
     expect(
       mapSmithersRunStateToWorkflowProjectionInput({ ...baseRun, status: "cancelled" }).status,
-    ).toBe("failed");
+    ).toBe("cancelled");
   });
 
   it("reads run state from the Smithers sqlite db and builds a projection summary", () => {
@@ -172,6 +172,10 @@ describe("smithers workflow bridge", () => {
       input: {},
       smithersCwd: workflowsDir,
       repoRoot: resolve(workflowsDir, ".."),
+      env: {
+        ...process.env,
+        PATH: "",
+      },
     });
 
     expect(started.runId).toBeTruthy();

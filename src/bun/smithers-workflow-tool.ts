@@ -72,6 +72,12 @@ export function createStartWorkflowTool(options: {
         summary: "Launch the delegated workflow in Smithers.",
       });
       options.store.startCommand(command.id);
+      setParentThreadDependencyWaiting({
+        store: options.store,
+        sessionId: runtime.sessionId,
+        parentThreadId: runtime.rootThreadId,
+        childThreadId: workflowThread.id,
+      });
 
       try {
         const started = await startImplementFeatureWorkflow(normalized);
@@ -133,6 +139,18 @@ export function createStartWorkflowTool(options: {
             });
           }
         }
+        if (
+          projection.status === "completed" ||
+          projection.status === "failed" ||
+          projection.status === "cancelled"
+        ) {
+          releaseParentThreadDependency({
+            store: options.store,
+            sessionId: runtime.sessionId,
+            parentThreadId: runtime.rootThreadId,
+            childThreadId: workflowThread.id,
+          });
+        }
 
         options.store.finishCommand({
           commandId: command.id,
@@ -179,6 +197,12 @@ export function createStartWorkflowTool(options: {
         options.store.updateThread({
           threadId: workflowThread.id,
           status: "failed",
+        });
+        releaseParentThreadDependency({
+          store: options.store,
+          sessionId: runtime.sessionId,
+          parentThreadId: runtime.rootThreadId,
+          childThreadId: workflowThread.id,
         });
 
         return {
@@ -255,6 +279,83 @@ function mapWorkflowThreadStatus(
     case "running":
       throw new Error("Running workflow status should not map through mapWorkflowThreadStatus.");
   }
+}
+
+function setParentThreadDependencyWaiting(input: {
+  store: StructuredSessionStateStore;
+  sessionId: string;
+  parentThreadId: string;
+  childThreadId: string;
+}): void {
+  const parentThread = input.store
+    .getSessionState(input.sessionId)
+    .threads.find((thread) => thread.id === input.parentThreadId);
+  if (!parentThread || isTerminalThreadStatus(parentThread.status)) {
+    return;
+  }
+
+  if (parentThread.status === "waiting" && parentThread.wait) {
+    return;
+  }
+
+  const nextDependsOn =
+    parentThread.status === "waiting" && !parentThread.wait
+      ? [...new Set([...parentThread.dependsOnThreadIds, input.childThreadId])]
+      : [input.childThreadId];
+  if (
+    parentThread.status === "waiting" &&
+    !parentThread.wait &&
+    parentThread.dependsOnThreadIds.length === nextDependsOn.length &&
+    parentThread.dependsOnThreadIds.every((value, index) => value === nextDependsOn[index])
+  ) {
+    return;
+  }
+
+  input.store.updateThread({
+    threadId: parentThread.id,
+    status: "waiting",
+    dependsOnThreadIds: nextDependsOn,
+  });
+}
+
+function releaseParentThreadDependency(input: {
+  store: StructuredSessionStateStore;
+  sessionId: string;
+  parentThreadId: string;
+  childThreadId: string;
+}): void {
+  const parentThread = input.store
+    .getSessionState(input.sessionId)
+    .threads.find((thread) => thread.id === input.parentThreadId);
+  if (!parentThread || isTerminalThreadStatus(parentThread.status)) {
+    return;
+  }
+
+  if (parentThread.status !== "waiting" || parentThread.wait) {
+    return;
+  }
+  if (!parentThread.dependsOnThreadIds.includes(input.childThreadId)) {
+    return;
+  }
+
+  const remaining = parentThread.dependsOnThreadIds.filter((id) => id !== input.childThreadId);
+  if (remaining.length === 0) {
+    input.store.updateThread({
+      threadId: parentThread.id,
+      status: "running",
+    });
+    return;
+  }
+
+  input.store.updateThread({
+    threadId: parentThread.id,
+    status: "waiting",
+    dependsOnThreadIds: remaining,
+  });
+}
+
+function isTerminalThreadStatus(status: "running" | "waiting" | "completed" | "failed" | "cancelled"): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 async function waitForProjectionInput(

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -288,6 +289,193 @@ describe("structured session state SQLite persistence", () => {
     const afterClearedReload = third.store.getSessionState("session-waiting-persist");
     expect(afterClearedReload.session.wait).toBeNull();
     expect(afterClearedReload.threads[0]?.wait).toBeNull();
+  });
+
+  it("persists session wait clearing when new runnable thread is created", () => {
+    const first = createSqliteStore();
+    seedSession(first.store, {
+      sessionId: "session-wait-cleared-by-create",
+      title: "Waiting Create Clear Persist",
+    });
+
+    const turn = first.store.startTurn({
+      sessionId: "session-wait-cleared-by-create",
+      requestSummary: "Clear wait when runnable thread appears",
+    });
+    const waitingThread = first.store.createThread({
+      turnId: turn.id,
+      kind: "workflow",
+      title: "Need input",
+      objective: "Pause until input arrives.",
+    });
+    const wait = {
+      kind: "user" as const,
+      reason: "Need missing launch details",
+      resumeWhen: "Resume when launch details arrive.",
+      since: "2026-04-14T12:00:02.000Z",
+    };
+    first.store.updateThread({
+      threadId: waitingThread.id,
+      status: "waiting",
+      wait,
+    });
+    first.store.setSessionWait({
+      sessionId: "session-wait-cleared-by-create",
+      threadId: waitingThread.id,
+      ...wait,
+    });
+
+    const runnableThread = first.store.createThread({
+      turnId: turn.id,
+      kind: "task",
+      title: "Continue implementation",
+      objective: "Resume runnable work now that there is new scope.",
+    });
+    const beforeReload = first.store.getSessionState("session-wait-cleared-by-create");
+    expect(runnableThread.status).toBe("running");
+    expect(beforeReload.session.wait).toBeNull();
+
+    closeTrackedStore(first.store);
+
+    const second = createSqliteStore({
+      databasePath: first.databasePath,
+      nowStart: "2026-04-14T13:00:00.000Z",
+    });
+    const afterReload = second.store.getSessionState("session-wait-cleared-by-create");
+
+    expect(afterReload.session.wait).toBeNull();
+    expect(afterReload.threads.find((thread) => thread.id === runnableThread.id)?.status).toBe(
+      "running",
+    );
+  });
+
+  it("reconciles stale persisted session wait when runnable work exists after restart", () => {
+    const first = createSqliteStore();
+    seedSession(first.store, {
+      sessionId: "session-wait-reconcile-on-restart",
+      title: "Waiting Reconcile Persist",
+    });
+
+    const turn = first.store.startTurn({
+      sessionId: "session-wait-reconcile-on-restart",
+      requestSummary: "Create initial wait state",
+    });
+    const waitingThread = first.store.createThread({
+      turnId: turn.id,
+      kind: "workflow",
+      title: "Wait thread",
+      objective: "Populate wait state before restart reconciliation.",
+    });
+    const wait = {
+      kind: "external" as const,
+      reason: "Waiting on external system",
+      resumeWhen: "Resume when external system responds.",
+      since: "2026-04-14T12:00:02.000Z",
+    };
+    first.store.updateThread({
+      threadId: waitingThread.id,
+      status: "waiting",
+      wait,
+    });
+    first.store.setSessionWait({
+      sessionId: "session-wait-reconcile-on-restart",
+      threadId: waitingThread.id,
+      ...wait,
+    });
+    closeTrackedStore(first.store);
+
+    const rawDb = new Database(first.databasePath);
+    rawDb
+      .query(
+        `UPDATE thread
+         SET
+           status = 'running',
+           depends_on_thread_ids = '[]',
+           wait_kind = NULL,
+           wait_reason = NULL,
+           wait_resume_when = NULL,
+           wait_since = NULL
+         WHERE id = ?`,
+      )
+      .run(waitingThread.id);
+    rawDb.close();
+
+    const second = createSqliteStore({
+      databasePath: first.databasePath,
+      nowStart: "2026-04-14T13:00:00.000Z",
+    });
+    const snapshot = second.store.getSessionState("session-wait-reconcile-on-restart");
+
+    expect(snapshot.session.wait).toBeNull();
+    expect(snapshot.threads[0]?.status).toBe("running");
+    expect(snapshot.threads[0]?.wait).toBeNull();
+    expect(snapshot.events.map((event) => event.kind)).toContain("session.wait.cleared");
+  });
+
+  it("reconciles stale persisted session wait when the owning thread is no longer waiting", () => {
+    const first = createSqliteStore();
+    seedSession(first.store, {
+      sessionId: "session-wait-owner-not-waiting",
+      title: "Waiting Owner Not Waiting",
+    });
+
+    const turn = first.store.startTurn({
+      sessionId: "session-wait-owner-not-waiting",
+      requestSummary: "Create wait state before invalid owner restart",
+    });
+    const waitingThread = first.store.createThread({
+      turnId: turn.id,
+      kind: "workflow",
+      title: "Wait owner",
+      objective: "Own session wait before becoming stale.",
+    });
+    const wait = {
+      kind: "user" as const,
+      reason: "Need final approval",
+      resumeWhen: "Resume when final approval arrives.",
+      since: "2026-04-14T12:00:02.000Z",
+    };
+    first.store.updateThread({
+      threadId: waitingThread.id,
+      status: "waiting",
+      wait,
+    });
+    first.store.setSessionWait({
+      sessionId: "session-wait-owner-not-waiting",
+      threadId: waitingThread.id,
+      ...wait,
+    });
+    closeTrackedStore(first.store);
+
+    const rawDb = new Database(first.databasePath);
+    rawDb
+      .query(
+        `UPDATE thread
+         SET
+           status = 'completed',
+           wait_kind = NULL,
+           wait_reason = NULL,
+           wait_resume_when = NULL,
+           wait_since = NULL,
+           finished_at = ?
+         WHERE id = ?`,
+      )
+      .run("2026-04-14T12:10:00.000Z", waitingThread.id);
+    rawDb.close();
+
+    const second = createSqliteStore({
+      databasePath: first.databasePath,
+      nowStart: "2026-04-14T13:00:00.000Z",
+    });
+    const snapshot = second.store.getSessionState("session-wait-owner-not-waiting");
+
+    expect(snapshot.session.wait).toBeNull();
+    expect(snapshot.threads[0]).toMatchObject({
+      id: waitingThread.id,
+      status: "completed",
+      wait: null,
+    });
+    expect(snapshot.events.map((event) => event.kind)).toContain("session.wait.cleared");
   });
 
   it("continues deterministic ids after restart", () => {

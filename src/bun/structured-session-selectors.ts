@@ -27,6 +27,7 @@ export interface StructuredSessionView {
     waiting: string[];
     failed: string[];
   };
+  threadIds: string[];
 }
 
 export interface StructuredSessionSummaryProjection {
@@ -37,6 +38,7 @@ export interface StructuredSessionSummaryProjection {
   updatedAt: string;
   counts: StructuredSessionView["counts"];
   wait: StructuredSessionSnapshot["session"]["wait"];
+  threadIds: StructuredSessionView["threadIds"];
 }
 
 function getUpdatedAt(
@@ -84,6 +86,12 @@ function getMostRecentThread(session: StructuredSessionSnapshot): StructuredThre
     session.threads.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ??
     null
   );
+}
+
+function deriveThreadIds(threads: StructuredThreadRecord[]): string[] {
+  return threads
+    .toSorted((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt))
+    .map((thread) => thread.id);
 }
 
 function describeWaitingThread(thread: StructuredThreadRecord): string {
@@ -245,6 +253,7 @@ export function buildStructuredSessionView(
       events: session.events.length,
     },
     threadIdsByStatus: grouped,
+    threadIds: deriveThreadIds(session.threads),
   };
 }
 
@@ -261,6 +270,7 @@ export function buildStructuredSessionSummaryProjection(
     updatedAt: deriveUpdatedAt(session),
     counts: view.counts,
     wait: view.wait,
+    threadIds: view.threadIds,
   };
 }
 
