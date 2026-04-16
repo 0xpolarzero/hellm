@@ -43,7 +43,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Execute Typescript Work Surface",
     status: "in-progress",
     summary:
-      "Provides the default generic top-level work surface with observable typed api.* host capabilities, a generated JSDoc-rich SDK declaration embedded in the system prompt and reused for static checking, explicit api.exec.run, workspace-fs-style repo reads and searches, curated git command names, preflight typecheck or compile diagnostics, file-backed snippet artifacts for every attempt, and parent-first rollups over nested child command facts.",
+      "Provides the default generic top-level work surface with observable typed api.* host capabilities, a generated JSDoc-rich SDK declaration embedded in the system prompt and reused for static checking, explicit api.exec.run, workspace-fs-style repo reads and searches, curated git command names, preflight typecheck or compile diagnostics, file-backed snippet artifacts for every attempt, inline transcript visibility into submitted execute_typescript bodies, and parent-first rollups over nested child command facts.",
     sourceSpecs: ["docs/prd.md", "docs/specs/execute-typescript.spec.md"],
   },
   {

@@ -297,6 +297,62 @@ test("transcript rendering projects assistant metadata, tool cards, tool results
   );
 });
 
+test("transcript rendering shows execute_typescript bodies on tool cards", async () => {
+  const executeTypescriptCall = toolCall("execute_typescript", {
+    typescriptCode: [
+      'const result = await api.exec.run({ command: "ls", args: ["-la"] });',
+      "console.log(result.stdout);",
+    ].join("\n"),
+  });
+
+  const sessions: SeedSessionInput[] = [
+    {
+      title: "Execute Typescript Transcript",
+      messages: [
+        userMessage("Inspect the working directory.", TIMESTAMP),
+        assistantMessageWithUsage("I will inspect the directory through execute_typescript.", {
+          provider: "zai",
+          model: "glm-5-turbo",
+          timestamp: TIMESTAMP + 10,
+          stopReason: "toolUse",
+          toolCalls: [executeTypescriptCall],
+        }),
+        toolResultMessage(
+          executeTypescriptCall.id,
+          "execute_typescript",
+          "Directory inspection complete.",
+          {
+            timestamp: TIMESTAMP + 11,
+          },
+        ),
+      ],
+    },
+  ];
+
+  await launchSeededApp(
+    {
+      sessions,
+    },
+    async ({ page }) => {
+      await page.getByText("Inspect the working directory.").waitFor({ state: "visible" });
+      await page.getByText("I will inspect the directory through execute_typescript.").waitFor({
+        state: "visible",
+      });
+
+      const toolCard = page.locator(".tool-card").first();
+      await toolCard.waitFor({ state: "visible" });
+      expect((await toolCard.locator(".tool-body-label").textContent())?.trim()).toBe(
+        "TypeScript body",
+      );
+      const toolBody = (await toolCard.locator(".tool-body-preview pre").textContent()) ?? "";
+      expect(toolBody).toContain(
+        'const result = await api.exec.run({ command: "ls", args: ["-la"] });',
+      );
+      expect(toolBody).toContain("console.log(result.stdout);");
+    },
+  );
+});
+
 test("persisted verification state renders in the browser transcript and session summary", async () => {
   await launchSeededApp(
     {

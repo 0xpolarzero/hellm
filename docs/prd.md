@@ -463,6 +463,7 @@ It must show more than a transcript. The session UI combines:
 - workflow state
 - verification summaries
 - artifact access
+- inline visibility into submitted `execute_typescript` bodies on transcript tool-call cards
 - explicit wait state
 - session summaries and navigation metadata derived from structured state and artifact metadata, not transcript reconstruction
 

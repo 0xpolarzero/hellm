@@ -560,6 +560,8 @@ The default layout is:
 
 SQLite stores metadata and path indexes for lookup.
 
+The session transcript UI must also expose that exact submitted body for each `execute_typescript` attempt so users can inspect retries and diagnostics without leaving the session view.
+
 ### Diagnostics
 
 Compile and typecheck failures must:

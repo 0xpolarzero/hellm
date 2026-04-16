@@ -88,6 +88,14 @@
 		return `Attempt ${toolCall.attempt} of ${toolCall.totalAttempts}`;
 	}
 
+	function executeTypescriptBody(toolName: string, argumentsValue: unknown): string | null {
+		if (toolName !== "execute_typescript" || !argumentsValue || typeof argumentsValue !== "object") {
+			return null;
+		}
+		const body = (argumentsValue as Record<string, unknown>).typescriptCode;
+		return typeof body === "string" && body.length > 0 ? body : null;
+	}
+
 	function handleScroll() {
 		if (!scroller) return;
 		transcriptScrollTop = scroller.scrollTop;
@@ -302,31 +310,43 @@
 							{:else if block.type === "toolCall"}
 								{@const projectedToolCall = conversation.toolCallsById.get(block.id)}
 								{@const params = projectedToolCall?.artifactParams ?? parseArtifactsParams(block.arguments)}
+								{@const toolBody = executeTypescriptBody(
+									block.name,
+									projectedToolCall?.argumentsValue ?? block.arguments,
+								)}
 								{@const status = toolStatus(block.id)}
 								<div class={`tool-card ${status}`.trim()}>
-									<div class="tool-card-copy">
-										<strong>
-											{params ? getArtifactCommandCopy(params.command).complete : `Ran ${block.name}`}
-										</strong>
-										{#if params}
-											<span>{params.filename}</span>
-										{:else}
-											<span>{block.name}</span>
-										{/if}
+									<div class="tool-card-header">
+										<div class="tool-card-copy">
+											<strong>
+												{params ? getArtifactCommandCopy(params.command).complete : `Ran ${block.name}`}
+											</strong>
+											{#if params}
+												<span>{params.filename}</span>
+											{:else}
+												<span>{block.name}</span>
+											{/if}
+										</div>
+										<div class="tool-card-actions">
+											{#if toolAttemptLabel(projectedToolCall)}
+												<span class="tool-attempt">{toolAttemptLabel(projectedToolCall)}</span>
+											{/if}
+											<span class={`tool-status tone-${status === "error" ? "danger" : status === "done" ? "success" : "warning"}`.trim()}>
+												{status}
+											</span>
+											{#if params}
+												<Button size="sm" variant="ghost" onclick={() => onOpenArtifact(params.filename)}>
+													Open
+												</Button>
+											{/if}
+										</div>
 									</div>
-									<div class="tool-card-actions">
-										{#if toolAttemptLabel(projectedToolCall)}
-											<span class="tool-attempt">{toolAttemptLabel(projectedToolCall)}</span>
-										{/if}
-										<span class={`tool-status tone-${status === "error" ? "danger" : status === "done" ? "success" : "warning"}`.trim()}>
-											{status}
-										</span>
-										{#if params}
-											<Button size="sm" variant="ghost" onclick={() => onOpenArtifact(params.filename)}>
-												Open
-											</Button>
-										{/if}
-									</div>
+									{#if toolBody}
+										<div class="tool-body-preview">
+											<span class="tool-body-label">TypeScript body</span>
+											<pre>{toolBody}</pre>
+										</div>
+									{/if}
 								</div>
 							{/if}
 						{/each}
@@ -399,18 +419,27 @@
 							</details>
 						{:else if block.type === "toolCall"}
 							{@const params = parseArtifactsParams(block.arguments)}
+							{@const toolBody = executeTypescriptBody(block.name, block.arguments)}
 							<div class="tool-card pending">
-								<div class="tool-card-copy">
-									<strong>
-										{params ? getArtifactCommandCopy(params.command).inProgress : `Running ${block.name}`}
-									</strong>
-									{#if params}
-										<span>{params.filename}</span>
-									{:else}
-										<span>{block.name}</span>
-									{/if}
+								<div class="tool-card-header">
+									<div class="tool-card-copy">
+										<strong>
+											{params ? getArtifactCommandCopy(params.command).inProgress : `Running ${block.name}`}
+										</strong>
+										{#if params}
+											<span>{params.filename}</span>
+										{:else}
+											<span>{block.name}</span>
+										{/if}
+									</div>
+									<span class="tool-status tone-warning">pending</span>
 								</div>
-								<span class="tool-status tone-warning">pending</span>
+								{#if toolBody}
+									<div class="tool-body-preview">
+										<span class="tool-body-label">TypeScript body</span>
+										<pre>{toolBody}</pre>
+									</div>
+								{/if}
 							</div>
 						{/if}
 					{/each}
@@ -610,8 +639,7 @@
 	.tool-card {
 		position: relative;
 		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
+		flex-direction: column;
 		gap: 0.8rem;
 		margin-top: 0.8rem;
 		padding: 0.75rem 0.85rem;
@@ -624,6 +652,13 @@
 	.tool-card::before,
 	.tool-result::before {
 		content: none;
+	}
+
+	.tool-card-header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 0.8rem;
 	}
 
 	.tool-card.error,
@@ -664,6 +699,38 @@
 		color: var(--ui-text-secondary);
 	}
 
+	.tool-body-preview {
+		display: flex;
+		flex-direction: column;
+		gap: 0.45rem;
+		padding-top: 0.7rem;
+		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+	}
+
+	.tool-body-label {
+		font-size: 0.68rem;
+		font-weight: 620;
+		letter-spacing: 0.02em;
+		text-transform: uppercase;
+		color: var(--ui-text-secondary);
+	}
+
+	.tool-body-preview pre {
+		margin: 0;
+		max-height: 16rem;
+		overflow: auto;
+		padding: 0.72rem 0.78rem;
+		border-radius: var(--ui-radius-sm);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 80%, transparent);
+		background: color-mix(in oklab, var(--ui-code) 90%, var(--ui-surface));
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		word-break: break-word;
+		font-size: 0.78rem;
+		line-height: 1.58;
+		color: var(--ui-text-primary);
+	}
+
 	@media (max-width: 760px) {
 		.chat-thread {
 			padding-inline: 0.9rem;
@@ -671,7 +738,7 @@
 
 		.message-bubble header,
 		.tool-result-header,
-		.tool-card {
+		.tool-card-header {
 			flex-direction: column;
 			align-items: stretch;
 		}
