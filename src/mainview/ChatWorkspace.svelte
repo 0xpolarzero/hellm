@@ -13,6 +13,7 @@
     projectConversation,
     projectConversationSummary,
   } from "./conversation-projection";
+  import { buildSessionTranscriptExport } from "./session-transcript";
   import type { WorkspaceSessionSummary } from "./chat-rpc";
   import type { PromptHistoryEntry } from "./prompt-history";
   import {
@@ -73,10 +74,12 @@
   let sidebarResizeHandle = $state<HTMLDivElement | null>(null);
   let artifactSyncSessionId: string | undefined = undefined;
   let artifactSyncMessageCount = 0;
+  let copyTranscriptState = $state<"idle" | "copying" | "copied" | "error">("idle");
 
   let sidebarResizePointerId: number | null = null;
   let sidebarResizeOriginX = 0;
   let sidebarResizeOriginWidth = DEFAULT_SIDEBAR_WIDTH;
+  let copyTranscriptResetTimer: ReturnType<typeof setTimeout> | null = null;
 
   const conversation = $derived(projectConversation(messages));
   const conversationSummary = $derived(projectConversationSummary(conversation, streamMessage));
@@ -108,6 +111,59 @@
   const promptBusy = $derived(isStreaming || sendingPrompt);
   const workspaceStatusText = $derived(composerErrorMessage ? "Attention" : promptBusy ? "Streaming" : "Ready");
   const workspaceStatusTone = $derived(composerErrorMessage ? "danger" : promptBusy ? "warning" : "neutral");
+  const copyTranscriptLabel = $derived.by(() => {
+    switch (copyTranscriptState) {
+      case "copying":
+        return "Copying...";
+      case "copied":
+        return "Copied";
+      case "error":
+        return "Copy failed";
+      default:
+        return "Copy transcript";
+    }
+  });
+
+  function clearCopyTranscriptResetTimer() {
+    if (!copyTranscriptResetTimer) return;
+    clearTimeout(copyTranscriptResetTimer);
+    copyTranscriptResetTimer = null;
+  }
+
+  function scheduleCopyTranscriptReset() {
+    clearCopyTranscriptResetTimer();
+    copyTranscriptResetTimer = window.setTimeout(() => {
+      copyTranscriptState = "idle";
+      copyTranscriptResetTimer = null;
+    }, 2400);
+  }
+
+  async function copyTextToClipboard(text: string): Promise<void> {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const fallback = document.createElement("textarea");
+    fallback.value = text;
+    fallback.setAttribute("readonly", "true");
+    fallback.style.position = "fixed";
+    fallback.style.top = "0";
+    fallback.style.left = "0";
+    fallback.style.opacity = "0";
+    document.body.appendChild(fallback);
+    fallback.focus();
+    fallback.select();
+
+    try {
+      const copied = document.execCommand("copy");
+      if (!copied) {
+        throw new Error("Document copy command was rejected.");
+      }
+    } finally {
+      document.body.removeChild(fallback);
+    }
+  }
 
   async function openModelSelector() {
     if (!currentModel) return;
@@ -321,6 +377,40 @@
     showArtifactsPanel = true;
   }
 
+  async function handleCopyTranscript() {
+    if (copyTranscriptState === "copying") return;
+
+    const session = currentSession;
+    const activeModel = currentModel ?? runtime.agent.state.model;
+    const exportText = buildSessionTranscriptExport({
+      session: {
+        id: session?.id ?? runtime.agent.sessionId ?? "unknown-session",
+        title: session?.title ?? "New Session",
+        status: session?.status ?? "idle",
+        createdAt: session?.createdAt ?? new Date(0).toISOString(),
+        updatedAt: session?.updatedAt ?? new Date().toISOString(),
+      },
+      provider: activeModel.provider,
+      model: activeModel.id,
+      reasoningEffort: currentThinkingLevel,
+      systemPrompt: runtime.agent.state.systemPrompt,
+      messages,
+      streamMessage,
+    });
+
+    copyTranscriptState = "copying";
+
+    try {
+      await copyTextToClipboard(exportText);
+      copyTranscriptState = "copied";
+      scheduleCopyTranscriptReset();
+    } catch (error) {
+      console.error("Failed to copy transcript:", error);
+      copyTranscriptState = "error";
+      scheduleCopyTranscriptReset();
+    }
+  }
+
   syncRuntimeState();
   syncAgentState();
 
@@ -370,6 +460,7 @@
       unsubscribeArtifacts();
       nextController.dispose();
       setSidebarResizing(false);
+      clearCopyTranscriptResetTimer();
       window.removeEventListener("resize", handleResize);
       window.removeEventListener("keydown", handleWindowKeydown);
       controller = null;
@@ -448,6 +539,15 @@
           <span>{summaryMessageCount} turns</span>
           <span>{toolCallCount} tool runs</span>
           <span>{lastActivityLabel}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Copy the full session transcript, including tool calls and tool results."
+            disabled={copyTranscriptState === "copying"}
+            onclick={() => void handleCopyTranscript()}
+          >
+            {copyTranscriptLabel}
+          </Button>
           <Button
             variant="ghost"
             size="sm"
