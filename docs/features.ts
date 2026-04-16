@@ -28,8 +28,32 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Artifacts Projection",
     status: "shipped",
     summary:
-      "Reconstructs generated artifacts from the transcript and presents them in a docked preview panel.",
-    sourceSpecs: ["docs/prd.md"],
+      "Presents generated artifacts in a docked preview panel.",
+    sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
+  },
+  {
+    id: "durable-artifact-storage",
+    name: "Durable Artifact Storage",
+    status: "in-progress",
+    summary:
+      "Moves artifacts into a dedicated workspace artifact directory with SQLite metadata and path indexing, including submitted execute_typescript snippets for every attempt.",
+    sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
+  },
+  {
+    id: "execute-typescript-surface",
+    name: "Execute Typescript Work Surface",
+    status: "in-progress",
+    summary:
+      "Provides the default generic top-level work surface with injected api.* host capabilities, explicit api.exec.run, preflight typecheck or compile diagnostics, and file-backed snippet artifacts that gate invalid execution.",
+    sourceSpecs: ["docs/prd.md", "docs/specs/execute-typescript.spec.md"],
+  },
+  {
+    id: "workflow-hooks",
+    name: "Repo-Local Workflow Hooks",
+    status: "in-progress",
+    summary:
+      "Wraps consequential delegated workflows with repo-local preflight and validation hooks that can use execute_typescript without flattening workflow control into api.* helpers.",
+    sourceSpecs: ["docs/prd.md", "docs/specs/workflow-hooks.spec.md"],
   },
   {
     id: "prompt-history",
@@ -52,7 +76,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Session State Overlay",
     status: "in-progress",
     summary:
-      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, command, episode, verification, workflow, artifact, wait, and lifecycle event records that survive reload.",
+      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, command, episode, verification, workflow, artifact, wait, lifecycle event records, file-backed artifact indexing, and metadata-first session summaries that survive reload.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -60,7 +84,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Turn And Command State",
     status: "in-progress",
     summary:
-      "Tracks each user turn and every tool call as durable state with status, executor ownership, parent-child linkage, attempts, and trace-versus-surface visibility.",
+      "Tracks each user turn and every tool call, including execute_typescript snippets and nested api.* calls, as durable state with status, executor ownership, parent-child linkage, attempts, and trace-versus-surface visibility.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -108,7 +132,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Metadata-First Session Read Models",
     status: "in-progress",
     summary:
-      "Derives idle/running/waiting/error session status, counts, ordered thread ids, and compact summary data from structured state for sidebar, navigation, and restart recovery without transcript replay.",
+      "Derives idle/running/waiting/error session status, counts, ordered thread ids, and compact summary data from structured state and artifact metadata for sidebar, navigation, and restart recovery without transcript replay.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {

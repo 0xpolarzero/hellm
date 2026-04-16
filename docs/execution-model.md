@@ -2,7 +2,7 @@
 
 This document is a companion to the [PRD](./prd.md).
 
-It shows the intended product-level request flow for `svvy`. It is a behavioral model, not a package layout or implementation call graph.
+It describes the intended product-level request flow for `svvy`. It is a behavioral model, not a package layout or implementation call graph.
 
 The adopted model is one shared command system:
 
@@ -10,7 +10,7 @@ The adopted model is one shared command system:
 tool call -> command -> handler -> events -> structured state -> UI
 ```
 
-The orchestrator does not switch between four unrelated engines. It chooses the next tool call inside one runtime model.
+The orchestrator chooses the next tool call inside one runtime model. It does not switch between unrelated engines.
 
 ```mermaid
 flowchart TD
@@ -28,19 +28,27 @@ flowchart TD
         Decide["Orchestrator chooses next tool call"]
     end
 
-    subgraph Tools["Tool Surface"]
+    subgraph ToolSurface["Top-Level Tool Surface"]
         Generic["execute_typescript"]
-        Workflow["workflow.start / workflow.resume"]
+        WorkflowStart["workflow.start"]
+        WorkflowResume["workflow.resume"]
         Verify["verification.run"]
         Wait["wait"]
     end
 
     subgraph GenericExec["Generic Execution"]
-        GenericTools["Typed tools.* capability calls: repo, git, web, artifact, and related helpers"]
+        Compile["Compile/typecheck snippet against api.* types"]
+        Run["Run valid TypeScript program"]
+        Api["Injected api.* SDK"]
+        ApiRepo["api.repo.*"]
+        ApiGit["api.git.*"]
+        ApiWeb["api.web.*"]
+        ApiArtifact["api.artifact.*"]
+        ApiExec["api.exec.run"]
     end
 
     subgraph Handlers["Runtime Handlers"]
-        RuntimeHandler["svvy runtime handles generic and wait commands"]
+        RuntimeHandler["svvy runtime handles execute_typescript and wait commands"]
         SmithersHandler["Smithers bridge handles workflow commands"]
         VerificationHandler["Verification bridge handles verification commands"]
     end
@@ -48,6 +56,7 @@ flowchart TD
     subgraph Facts["Durable Facts"]
         Commands["Record command status and parent-child linkage"]
         Events["Append lifecycle events"]
+        Artifacts["Persist file-backed artifacts and SQLite path metadata"]
         State["Update turns, threads, episodes, verification records, workflow records, artifacts, and session wait state"]
     end
 
@@ -68,13 +77,22 @@ flowchart TD
     OpenTurn --> Decide
 
     Decide --> Generic
-    Decide --> Workflow
+    Decide --> WorkflowStart
+    Decide --> WorkflowResume
     Decide --> Verify
     Decide --> Wait
 
-    Generic --> GenericTools
-    GenericTools --> RuntimeHandler
-    Workflow --> SmithersHandler
+    Generic --> Compile
+    Compile --> Run
+    Run --> Api
+    Api --> ApiRepo
+    Api --> ApiGit
+    Api --> ApiWeb
+    Api --> ApiArtifact
+    Api --> ApiExec
+    Api --> RuntimeHandler
+    WorkflowStart --> SmithersHandler
+    WorkflowResume --> SmithersHandler
     Verify --> VerificationHandler
     Wait --> RuntimeHandler
 
@@ -83,6 +101,8 @@ flowchart TD
     VerificationHandler --> Commands
 
     Commands --> Events
+    Events --> Artifacts
+    Artifacts --> State
     Events --> State
     State --> Selectors
     Selectors --> UI
@@ -96,7 +116,11 @@ flowchart TD
 Key points:
 
 - `execute_typescript` is the default generic work surface.
-- `workflow.start`, `workflow.resume`, `verification.run`, and `wait` are native control tools, but they are still just tool calls.
-- Generic capability access inside `execute_typescript` uses typed `tools.*` namespaces rather than flat `external_*` globals.
+- The injected SDK is `api.*`.
+- `api.exec.run` is allowed as an explicit bounded execution capability.
+- `execute_typescript` snippets are compiled or typechecked before runtime execution, and invalid snippets stop at diagnostics instead of running blindly.
+- `workflow.start`, `workflow.resume`, `verification.run`, and `wait` remain separate native control tools because they change product-level control flow.
+- Artifacts are file-backed, with SQLite metadata and path indexing so durable records can point back to files.
+- Hooks may call `execute_typescript`, but hooks do not flatten the control tools into `api.*`.
 - Runtime handlers and bridges write durable facts from real execution; the agent does not mutate product state directly through arbitrary write tools.
 - Waiting is a shared status in the model, not a fourth execution engine.

@@ -2,22 +2,20 @@
 
 ## Status
 
-- Date: 2026-04-15
+- Date: 2026-04-16
 - Status: adopted direction for repo-local workflow hooks
 - Scope of this document:
   - define the target product behavior for repo-local workflow hooks
-  - explain how hooks fit into the new shared command model
-  - capture the adopted first-slice decisions and intentionally open details
+  - explain how hooks fit into the shared command model
+  - pin the first-slice hook boundary and the remaining open details
 
 ## Purpose
 
 `svvy` needs a repo-local way to inject project-specific policy and context into consequential delegated workflows without turning the product into a rigid static workflow engine.
 
-This document defines that initial direction.
-
 ## Product Fit
 
-The PRD defines:
+The PRD and execution model define:
 
 - one shared command model
 - `workflow.start` and `workflow.resume` as native control tools
@@ -26,9 +24,10 @@ The PRD defines:
 
 Workflow hooks are therefore:
 
-- policy around workflow commands
+- policy around delegated workflow commands
 - not a separate execution path
 - not a replacement for orchestrator routing
+- not a way to turn control tools into `api.*` helpers
 
 ## Adopted Direction
 
@@ -39,10 +38,9 @@ The adopted `svvy` direction is:
   - `preflight`
   - `validation`
 - hooks are part of product behavior, not one-off implementation glue
+- hooks may use `execute_typescript` for generic context gathering or synthesis work
 - hooks should shape workflow behavior without replacing orchestrator routing
 - hook outputs should be durable enough to affect workflow execution, workflow records, episodes, and later debugging
-
-Nothing below should be read as making the feature more rigid than that.
 
 ## Consequential Workflow Policy
 
@@ -54,17 +52,9 @@ The first intended policy boundary is:
 
 These are the workflows that should normally pick up preflight and validation behavior.
 
-Not every trivial delegated action needs hooks. The point is to wrap the workflows where local policy, extra context, or required checks materially improve outcomes.
-
 ## Placement In The Execution Model
 
 Hooks live around `workflow.start` and `workflow.resume`.
-
-The shared model is still:
-
-```text
-tool call -> command -> handler -> events -> structured state -> UI
-```
 
 In practice that means:
 
@@ -72,6 +62,8 @@ In practice that means:
 - the workflow handler discovers and runs any configured hooks
 - hook execution emits durable command and event facts
 - hook outputs may affect workflow status, workflow summary, artifacts, and resulting episodes
+- if a hook needs generic computation, it may use `execute_typescript`
+- if a hook needs to change product-level control flow, it must stay on the native control tools
 
 ## Preflight Hook
 
@@ -147,6 +139,7 @@ This feature is not trying to:
 - force every request through hooks
 - turn repo policy into an opaque hidden side effect
 - require one fixed scripting format before practical experience exists
+- flatten workflow, verification, or wait control into `api.*`
 
 ## Open Details
 

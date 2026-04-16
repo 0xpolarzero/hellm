@@ -12,6 +12,9 @@ import { basename, dirname, join } from "node:path";
  * - turns and commands are first-class
  * - every tool call becomes a command
  * - `execute_typescript` is the default generic work surface
+ * - `execute_typescript` injects `api.*` host capabilities
+ * - compile/typecheck-before-run blocks invalid execution with structured diagnostics
+ * - every submitted `execute_typescript` snippet is persisted as a file-backed artifact
  * - workflow, verification, and wait remain native control tools
  * - runtime handlers and bridges record durable facts from real execution
  * - all threads are surfaced explicitly
@@ -53,6 +56,7 @@ export type StructuredSessionState = {
     id: string;
     label: string;
     cwd: string;
+    artifactDir: string;
   };
 
   pi: {
@@ -156,10 +160,11 @@ export type StructuredSessionState = {
 
   artifacts: Array<{
     id: string;
-    episodeId: string;
+    episodeId: string | null;
+    sourceCommandId: string | null;
     kind: ArtifactKind;
     name: string;
-    path?: string;
+    path: string;
     content?: string;
     createdAt: string;
   }>;
@@ -229,6 +234,7 @@ export class StructuredSessionPoc {
     sessionId: string;
   }): StructuredSessionPoc {
     mkdirSync(dirname(input.filePath), { recursive: true });
+    mkdirSync(input.workspace.artifactDir, { recursive: true });
 
     const poc = new StructuredSessionPoc(input.filePath, {
       workspace: { ...input.workspace },
@@ -583,27 +589,44 @@ export class StructuredSessionPoc {
   }
 
   createArtifact(input: {
-    episodeId: string;
+    episodeId?: string | null;
+    sourceCommandId?: string | null;
     kind: ArtifactKind;
     name: string;
     path?: string;
     content?: string;
   }): ArtifactRecord {
-    const episode = this.findEpisode(input.episodeId);
+    const episode = input.episodeId ? this.findEpisode(input.episodeId) : null;
+    if (input.sourceCommandId) {
+      this.findCommand(input.sourceCommandId);
+    }
+    if (!episode && !input.sourceCommandId) {
+      throw new Error("Artifacts must link to an episode, a source command, or both.");
+    }
     const now = this.now();
+    const id = this.nextId("artifact");
+    const artifactPath = join(
+      this.state.workspace.artifactDir,
+      `${id}-${basename(input.path ?? input.name)}`,
+    );
+    writeFileSync(artifactPath, input.content ?? "", "utf8");
     const artifact: ArtifactRecord = {
-      id: this.nextId("artifact"),
-      episodeId: input.episodeId,
+      id,
+      episodeId: input.episodeId ?? null,
+      sourceCommandId: input.sourceCommandId ?? null,
       kind: input.kind,
       name: input.name,
-      path: input.path,
+      path: artifactPath,
       content: input.content,
       createdAt: now,
     };
     this.state.artifacts.push(artifact);
-    episode.artifactIds.push(artifact.id);
+    if (episode) {
+      episode.artifactIds.push(artifact.id);
+    }
     this.pushEvent("artifact.created", "artifact", artifact.id, {
       episodeId: artifact.episodeId,
+      sourceCommandId: artifact.sourceCommandId,
       kind: artifact.kind,
     });
     this.touchPi(now);
@@ -872,6 +895,7 @@ export class StructuredSessionPoc {
 function runPoc(): void {
   const root = mkdtempSync(join(tmpdir(), "svvy-structured-state-"));
   const filePath = join(root, "structured-session-state.json");
+  const artifactDir = join(root, "artifacts");
 
   const poc = StructuredSessionPoc.create({
     filePath,
@@ -880,6 +904,7 @@ function runPoc(): void {
       id: "workspace-1",
       label: "svvy",
       cwd: "/repo/svvy",
+      artifactDir,
     },
     pi: {
       sessionId: "pi-session-1",
@@ -893,12 +918,63 @@ function runPoc(): void {
     },
   });
 
-  const turn1 = poc.startTurn("Read the product docs and explain the new command-centered model.");
+  const turn1 = poc.startTurn("Read the product docs and validate the new command-centered model.");
   const task1 = poc.createThread({
     turnId: turn1.id,
     kind: "task",
     title: "Inspect the current docs",
     objective: "Review the PRD, state spec, and execution model before rewriting them.",
+  });
+
+  const blockedExecuteTypescript = poc.createCommand({
+    turnId: turn1.id,
+    threadId: task1.id,
+    toolName: "execute_typescript",
+    executor: "orchestrator",
+    visibility: "summary",
+    title: "Preflight invalid snippet",
+    summary: "Typecheck a malformed snippet and block execution before any runtime work starts.",
+  });
+  poc.startCommand(blockedExecuteTypescript.id);
+
+  const blockedEpisode = poc.createEpisode({
+    threadId: task1.id,
+    sourceCommandId: blockedExecuteTypescript.id,
+    kind: "analysis",
+    title: "Invalid execute_typescript attempt",
+    summary: "The runtime rejected a malformed snippet before execution.",
+    body: "Compile and typecheck diagnostics blocked the invalid snippet, so no host SDK execution was allowed.",
+  });
+  poc.createArtifact({
+    sourceCommandId: blockedExecuteTypescript.id,
+    episodeId: blockedEpisode.id,
+    kind: "text",
+    name: "invalid-snippet.ts",
+    content: "const title: string = 42;\n",
+  });
+  poc.createArtifact({
+    sourceCommandId: blockedExecuteTypescript.id,
+    episodeId: blockedEpisode.id,
+    kind: "json",
+    name: "invalid-snippet.diagnostics.json",
+    content: JSON.stringify(
+      [
+        {
+          severity: "error",
+          message: "Type 'number' is not assignable to type 'string'.",
+          file: "invalid-snippet.ts",
+          line: 1,
+          column: 7,
+        },
+      ],
+      null,
+      2,
+    ),
+  });
+  poc.finishCommand(blockedExecuteTypescript.id, {
+    status: "failed",
+    summary: "Compile/typecheck produced structured diagnostics and blocked execution.",
+    error: "Type 'number' is not assignable to type 'string'.",
   });
 
   const executeTypescript = poc.createCommand({
@@ -908,31 +984,56 @@ function runPoc(): void {
     executor: "orchestrator",
     visibility: "summary",
     title: "Inspect repo docs",
-    summary: "Run a short TypeScript program to inspect the docs surface.",
+    summary: "Inspect the docs through api.* host capabilities and file-backed artifacts.",
   });
   poc.startCommand(executeTypescript.id);
+
+  const analysisEpisode = poc.createEpisode({
+    threadId: task1.id,
+    sourceCommandId: executeTypescript.id,
+    kind: "analysis",
+    title: "Current model audit",
+    summary: "The docs still describe multiple execution paths and outdated artifact/session wiring.",
+    body: "The design should move to one command model where execute_typescript handles ordinary work, api.* host capabilities handle nested actions, api.exec.run is explicit, and native control tools handle workflow, verification, and wait.",
+  });
+  poc.createArtifact({
+    sourceCommandId: executeTypescript.id,
+    episodeId: analysisEpisode.id,
+    kind: "text",
+    name: "inspect-docs.ts",
+    content:
+      [
+        'const search = await api.repo.searchText({ pattern: "transcript" });',
+        'const prd = await api.repo.readFile({ path: "docs/prd.md" });',
+        'await api.exec.run({ command: "bun docs/pocs/structured-session-state.poc.ts", cwd: "/repo/svvy" });',
+        'await api.artifact.writeText({',
+        '  name: "architecture-audit.md",',
+        '  text: "Replace four-path language with a single command pipeline and api.* host capabilities.",',
+        "});",
+      ].join("\n"),
+  });
 
   const searchDocs = poc.createCommand({
     turnId: turn1.id,
     threadId: task1.id,
     parentCommandId: executeTypescript.id,
-    toolName: "repo.searchText",
+    toolName: "api.repo.searchText",
     executor: "execute_typescript",
     visibility: "trace",
     title: "Search docs",
-    summary: "Find stale references to direct paths, projections, and external_*.",
+    summary: "Find stale references to direct paths, projections, and old session wiring.",
   });
   poc.startCommand(searchDocs.id);
   poc.finishCommand(searchDocs.id, {
     status: "succeeded",
-    summary: "Found the old path language and flat external_* capability references.",
+    summary: "Found the old path language and outdated artifact handling.",
   });
 
   const readPrd = poc.createCommand({
     turnId: turn1.id,
     threadId: task1.id,
     parentCommandId: executeTypescript.id,
-    toolName: "repo.readFile",
+    toolName: "api.repo.readFile",
     executor: "execute_typescript",
     visibility: "trace",
     title: "Read PRD",
@@ -944,11 +1045,27 @@ function runPoc(): void {
     summary: "Loaded the PRD and identified the old four-path framing.",
   });
 
+  const runCommand = poc.createCommand({
+    turnId: turn1.id,
+    threadId: task1.id,
+    parentCommandId: executeTypescript.id,
+    toolName: "api.exec.run",
+    executor: "runtime",
+    visibility: "trace",
+    title: "Run host command",
+    summary: "Run a command through the explicit host SDK execution path.",
+  });
+  poc.startCommand(runCommand.id);
+  poc.finishCommand(runCommand.id, {
+    status: "succeeded",
+    summary: "Executed the explicit api.exec.run command path.",
+  });
+
   const writeResearchArtifact = poc.createCommand({
     turnId: turn1.id,
     threadId: task1.id,
     parentCommandId: executeTypescript.id,
-    toolName: "artifact.writeText",
+    toolName: "api.artifact.writeText",
     executor: "execute_typescript",
     visibility: "summary",
     title: "Write research notes",
@@ -962,23 +1079,15 @@ function runPoc(): void {
 
   poc.finishCommand(executeTypescript.id, {
     status: "succeeded",
-    summary: "Completed generic inspection through execute_typescript and nested tools.* calls.",
-  });
-
-  const analysisEpisode = poc.createEpisode({
-    threadId: task1.id,
-    sourceCommandId: executeTypescript.id,
-    kind: "analysis",
-    title: "Current model audit",
-    summary: "The docs still describe multiple execution paths and external_* capabilities.",
-    body: "The design should move to one command model where execute_typescript handles ordinary work and native control tools handle workflow, verification, and wait.",
+    summary: "Completed generic inspection through execute_typescript and nested api.* calls.",
   });
   poc.createArtifact({
+    sourceCommandId: writeResearchArtifact.id,
     episodeId: analysisEpisode.id,
     kind: "text",
     name: "architecture-audit.md",
     content:
-      "Replace four-path language with a single command pipeline and tools.* capability model.",
+      "Replace four-path language with a single command pipeline and api.* host capabilities.",
   });
   poc.updateThread(task1.id, { status: "completed" });
   poc.finishTurn(turn1.id, "completed");
@@ -1039,13 +1148,16 @@ function runPoc(): void {
     kind: "workflow",
     title: "Docs rewrite completed",
     summary: "The delegated workflow rewrote the PRD, specs, and POC around one command system.",
-    body: "The workflow removed external_* naming, restored episodes as durable records, introduced commands as first-class state, and made waiting a shared status instead of a separate subsystem.",
+    body: "The workflow aligned the docs around one command system, restored episodes as durable records, introduced commands as first-class state, made waiting a shared status instead of a separate subsystem, and aligned artifacts with the dedicated workspace artifact directory.",
   });
   poc.createArtifact({
+    sourceCommandId: workflowStart.id,
     episodeId: workflowEpisode.id,
     kind: "file",
     name: "docs-rewrite.patch",
-    path: "/repo/svvy/docs-rewrite.patch",
+    path: "docs-rewrite.patch",
+    content:
+      "Replace four-path language with one command pipeline, api.* host capabilities, and file-backed artifact storage.",
   });
   poc.updateThread(workflowThread.id, { status: "completed" });
   poc.updateThread(task2.id, { status: "running" });
@@ -1090,9 +1202,10 @@ function runPoc(): void {
     kind: "verification",
     title: "Docs verification passed",
     summary: "The new model is internally consistent across PRD, specs, and POC.",
-    body: "The reference POC exercised turns, commands, workflow, verification, and wait state without relying on transcript-derived product truth.",
+    body: "The reference POC exercised turns, commands, workflow, verification, and wait state without relying on transcript-derived product truth, while persisting snippets and outputs as file-backed artifacts in the workspace artifact directory.",
   });
   poc.createArtifact({
+    sourceCommandId: verificationRun.id,
     episodeId: verificationEpisode.id,
     kind: "log",
     name: "poc-run.log",

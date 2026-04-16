@@ -10,7 +10,7 @@
 
 `svvy` needs explicit product state above the `pi` transcript and beside Smithers workflow state.
 
-Without that layer, the product has to keep inferring important facts from raw message history:
+Without that layer, the product has to keep inferring important facts from raw message history or transcript replay:
 
 - which request is currently being handled
 - which threads exist and how they relate
@@ -48,13 +48,17 @@ If this spec and the POC ever disagree, that is a bug in the spec and should be 
 - Model turns and commands explicitly.
 - Treat every tool call as a command.
 - Make `execute_typescript` the default generic work surface.
+- Treat `execute_typescript` as the single default generic top-level tool.
+- Inject `api.*` as the host SDK inside `execute_typescript`.
+- Include explicit `api.exec.run` in the host SDK.
+- Compile or typecheck before run, emit structured diagnostics, and block invalid execution.
+- Persist every submitted `execute_typescript` snippet as a file-backed artifact in the workspace artifact directory.
 - Keep only a very small set of native control tools for workflow, verification, and wait.
-- Remove `external_*` naming from the target architecture.
 - Remove arbitrary agent-facing structured-state write tools from the product contract.
 - Drive durable facts from real runtime handlers and bridge events, not transcript heuristics.
 - Distinguish thread dependency waits from user or external waits.
 - Treat whole-session waiting as a derived product state backed by an explicit session wait record.
-- Use selectors and metadata-first read models instead of making the UI reconstruct state from storage details.
+- Use selectors and metadata-first read models instead of making the UI reconstruct state from storage details or transcripts.
 
 ## Core Modeling Rule
 
@@ -63,6 +67,7 @@ The product should model the durable things that actually affect routing, inspec
 That means:
 
 - keep first-class records for turns, threads, commands, episodes, verification runs, workflows, artifacts, and lifecycle events
+- keep file-backed artifact metadata and path indexes alongside those records
 - do not split every human-readable summary into a large bespoke schema
 - keep Smithers internals inside Smithers unless `svvy` truly needs a top-level summary of them
 - record low-level work durably, but avoid making every low-level tool call a top-level UI card
@@ -96,6 +101,7 @@ Smithers remains canonical for:
 - verification records
 - top-level workflow records
 - artifacts
+- session summary read models and selectors
 - wait state
 - lightweight lifecycle events and selectors
 
@@ -109,6 +115,7 @@ type StructuredSessionState = {
     id: string;
     label: string;
     cwd: string;
+    artifactDir: string;
   };
 
   pi: {
@@ -230,10 +237,11 @@ type StructuredSessionState = {
 
   artifacts: Array<{
     id: string;
-    episodeId: string;
+    episodeId: string | null;
+    sourceCommandId: string | null;
     kind: "text" | "log" | "json" | "file";
     name: string;
-    path?: string;
+    path: string;
     content?: string;
     createdAt: string;
   }>;
@@ -267,7 +275,7 @@ The session record stores product-wide wait state because the product needs an e
 
 Is the whole active frontier blocked on user or external input?
 
-Everything else that can be derived from collections should stay derived.
+Session summaries and counts should be derived from the structured records and artifact metadata, not reconstructed from transcript text.
 
 ### Turn
 
@@ -303,6 +311,7 @@ This gives the system a durable answer to:
 - whether it started, succeeded, failed, or is waiting
 - how commands nest
 - which commands are trace-only versus surfaced work
+- which command-scoped artifacts, including submitted `execute_typescript` snippets, belong to the attempt
 
 ### Episode
 
@@ -320,7 +329,7 @@ Workflow records exist because the product needs a top-level durable summary of 
 
 ### Artifact
 
-Artifacts exist because generated outputs, logs, and exported details need stable durable handles.
+Artifacts exist because generated outputs, logs, exported details, and submitted `execute_typescript` snippets need stable file-backed durable handles.
 
 ### Event
 
@@ -346,7 +355,8 @@ These rules are adopted for the next structured-state slice:
 - one thread contains many episodes
 - one thread contains zero or many verifications
 - one workflow record belongs to exactly one workflow thread
-- one artifact belongs to exactly one episode
+- one artifact may link directly to the command that produced it
+- one artifact may also be attached to one episode for semantic reuse
 
 ## Session Wait Model
 
@@ -477,7 +487,7 @@ Commands are the universal durable representation of tool calls.
 | `error` | Stores terminal failure text when needed. |
 | `startedAt` | Enables ordering and duration reasoning. |
 | `updatedAt` | Enables recency-based selectors. |
-| `finishedAt` | Marks terminal completion, failure, cancellation, or handoff into wait. |
+| `finishedAt` | Marks terminal completion, failure, or cancellation. Waiting commands keep `finishedAt = null`. |
 
 ### Command Visibility
 
@@ -623,18 +633,23 @@ Do not use top-level workflow status to represent every internal milestone join 
 
 ## Artifact Model
 
-Artifacts are durable outputs referenced by episodes.
+Artifacts are durable file-backed outputs.
+
+Most artifacts are attached to episodes.
+
+Some artifacts, such as submitted `execute_typescript` snippets and compile diagnostics, originate at command scope first and may later be attached to an episode.
 
 ### Artifact Fields
 
 | Field | Why it exists |
 | --- | --- |
 | `id` | Stable artifact handle. |
-| `episodeId` | Links the artifact to the episode that references it. |
+| `episodeId` | Optionally links the artifact to the episode that reuses or surfaces it. |
+| `sourceCommandId` | Links the artifact back to the command attempt that produced it. |
 | `kind` | Distinguishes text, log, json, and file outputs. |
 | `name` | Human-readable artifact label. |
-| `path` | Optional file path when the artifact lives on disk. |
-| `content` | Optional inline content for small artifacts and the POC. |
+| `path` | Workspace artifact path inside the dedicated artifact directory. |
+| `content` | Optional inline preview content for small artifacts and the POC. |
 | `createdAt` | Orders artifact creation. |
 
 ## Event Model
@@ -760,7 +775,7 @@ Commands should be exposed with their `visibility` respected:
 
 The POC uses one JSON file because that is the smallest executable proof.
 
-The real implementation should use one workspace-scoped SQLite database.
+The real implementation should use one workspace-scoped SQLite database plus a dedicated workspace artifact directory.
 
 ### Why Workspace-Scoped SQLite
 
@@ -768,6 +783,7 @@ The real implementation should use one workspace-scoped SQLite database.
 - SQLite is a good fit for a small local durable product overlay
 - the read patterns are query-oriented rather than transcript-oriented
 - the state should survive restarts without replaying chat history
+- artifact lookup should be path-indexed from SQLite rows into the workspace artifact directory
 
 ### Session Scoping Rule
 
@@ -811,7 +827,7 @@ The `session` table should store:
 - nullable wait resume condition
 - nullable wait since time
 
-The product-facing session status and counts should be derived at read time.
+The product-facing session status, counts, and session summaries should be derived at read time from structured records and artifact metadata.
 
 ### Recommended Responsibility Of `turn`
 
@@ -911,12 +927,16 @@ The `artifact` table should store:
 
 - artifact identity
 - parent `session_id`
-- parent `episode_id`
+- nullable parent `episode_id`
+- optional source `command_id`
 - kind
 - name
-- nullable path
-- nullable inline content for small artifacts
+- workspace artifact path
+- metadata and path-index fields for SQLite lookup
+- optional inline preview content for small artifacts
 - timestamps
+
+Every submitted `execute_typescript` snippet should land in this table as a file-backed artifact in the dedicated workspace artifact directory before execution begins. Those snippet artifacts should link directly to their source command, and they may also be attached to a later episode when the runtime produces a meaningful semantic output.
 
 ### Recommended Responsibility Of `domain_event`
 
@@ -982,6 +1002,8 @@ The exact method names may change. The ownership boundaries should not.
 
 - every tool call must create a command record
 - nested capability calls inside `execute_typescript` must create child command records
+- every `execute_typescript` attempt must persist its submitted snippet as a file-backed artifact before execution
+- compile or typecheck diagnostics must be written as structured facts and invalid snippets must not run
 - `trace` commands must still be durable even if they are not promoted into primary UI surfaces
 - a workflow record must only be created from a real Smithers run with a real `smithersRunId`
 - a verification record must only be created from a real verification outcome
@@ -997,7 +1019,7 @@ The exact method names may change. The ownership boundaries should not.
 
 Structured state should not depend on transcript replay once structured writes exist.
 
-Transcript replay is not an allowed mechanism for session-summary, navigation, command-state, verification-state, workflow-state, or wait-state updates once structured writes exist for those surfaces.
+Transcript replay is not an allowed mechanism for session-summary, navigation, command-state, verification-state, workflow-state, or wait-state updates once structured writes exist for those surfaces. Session summaries and navigation read models must instead be built from structured records, selectors, and artifact metadata.
 
 The mirrored `pi` metadata exists for product querying convenience only.
 
@@ -1046,6 +1068,8 @@ The rollout should be:
 4. wire workflow, verification, and wait handlers to the same command model
 5. switch UI selectors to structured reads where available
 6. handle diff tracking and deeper artifact or workflow provenance as separate design work
+
+When diff tracking lands, it should support both thread-level and session-global views derived from durable `api.*` write activity and repository state, rather than from transcript parsing.
 
 ## Sources
 

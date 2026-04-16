@@ -223,10 +223,10 @@ Keyboard support should include:
 When a session is selected:
 
 - the main conversation timeline rehydrates from that session
-- artifacts are reconstructed from that session's message history
+- artifacts are hydrated from that session's structured artifact metadata and file-backed paths
 - model and reasoning controls reflect that session's current state
 - the composer targets that session
-- any currently visible session-specific badges, waiting state, or inspector content swap with the selection
+- any currently visible session-specific badges, waiting state, thread summaries, and inspector content swap with the selection
 
 The user should not need to reload the app or open a modal just to resume an existing session.
 
@@ -251,14 +251,12 @@ For v1, `svvy` should project sessions into one of these UI states:
 
 Guidelines:
 
-- `running`: currently selected session with an active prompt stream
+- `running`: the structured session summary shows runnable work, an active turn, or active thread work
 - `waiting`: session explicitly blocked on user input, clarification, or another resumable waiting condition
 - `error`: last terminal result was an error and there is no newer successful activity
 - `idle`: default stable state
 
-Only the selected session needs fully live status in v1.
-
-For non-selected sessions, status may be derived from durable metadata and the last known projected state.
+Selected and non-selected sessions should both derive these states from structured session summaries. The selected session may update more frequently because its runtime is active, but the status model itself should stay metadata-first rather than special-casing live prompt streaming.
 
 ## Architecture Direction
 
@@ -412,7 +410,8 @@ That response should include:
 
 - selected session metadata
 - restored model and thinking level
-- message history for the selected session
+- the selected session's conversation payload
+- structured session summary, threads, episodes, verification, workflow, wait, and artifact metadata needed to render the metadata-first session surface immediately
 
 This avoids forcing the frontend to immediately make a second read call after every selection.
 
@@ -447,7 +446,7 @@ When the user opens a session:
 
 - the backend should load that session through pi
 - the frontend should replace its active message set with the selected session's messages
-- the artifacts controller should reconstruct from the selected message list
+- the artifacts controller should hydrate from the selected session's structured artifact metadata and file-backed paths
 
 The frontend should not attempt to merge message arrays from two sessions.
 
@@ -503,7 +502,7 @@ Forking should be supported in the multi-session design, but its first implement
 
 `Deferred`:
 
-- arbitrary entry-point fork selection from the full transcript UI
+- arbitrary entry-point fork selection from the full conversation-history UI
 
 That richer fork UI can come later once transcript-to-entry mapping is surfaced cleanly in the desktop app.
 
@@ -679,11 +678,11 @@ Manual QA should include:
 
 ## Risk: Two Session Systems
 
-If `svvy` stores transcripts separately from pi, the product will drift into double persistence and unreliable resume behavior.
+If `svvy` stores full transcripts separately from pi-backed session history, the product will drift into double persistence and unreliable resume behavior.
 
 ### Mitigation
 
-Use pi session files as the transcript source of truth and limit `svvy` overlays to UI-only metadata.
+Use pi session files as the canonical session history and limit `svvy` overlays to metadata-first projections and UI-only state.
 
 ## Risk: Manual Runtime Replay Logic
 
@@ -691,7 +690,7 @@ If session switching is implemented by manually replaying frontend messages into
 
 ### Mitigation
 
-Prefer pi runtime session switching or direct session-manager-backed runtime creation over ad hoc transcript replay.
+Prefer pi runtime session switching or direct session-manager-backed runtime creation over ad hoc message replay.
 
 ## Risk: Nav Becomes a Chat List and Nothing More
 

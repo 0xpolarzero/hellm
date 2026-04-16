@@ -49,15 +49,16 @@ Some later adjacent slices already landed. Keep the remaining foundation gaps ne
 
 ## 2. `execute_typescript`
 
-- [ ] Build a POC `execute_typescript` runtime with the adopted TypeScript input/output contract.
-- [ ] Expose a minimal `execute_typescript` tool with the adopted input and output contract.
-- [ ] Generate the first curated typed `tools.*` capability namespaces for repo, git, web, and artifact work.
+- [ ] Build a POC `execute_typescript` runtime with compile/typecheck-before-run diagnostics and the adopted TypeScript input/output contract.
+- [ ] Expose a minimal `execute_typescript` tool with the adopted input/output contract and injected `api.*` surface.
+- [ ] Persist each attempted snippet as a file-backed artifact before execution, with SQLite metadata and path indexing.
+- [ ] Generate the first curated typed `api.*` capability namespaces for repo, git, web, artifact, and bounded exec work.
 - [ ] Run a simple ordinary scripted task through `execute_typescript`.
 - [ ] Build a POC artifact/tracing pipeline for code-mode execution.
 - [ ] Capture code-mode logs and nested command traces as artifacts and structured command records.
 - [ ] Normalize code-mode success and failure into episode data.
-- [ ] Keep workflow, verification, and wait as native control tools rather than flattening them into generic code-mode helpers.
-- [ ] Limit day-one capabilities to the curated non-shell surface defined by the spec.
+- [ ] Keep `workflow.start`, `workflow.resume`, `verification.run`, and `wait` as separate native control tools.
+- [ ] Limit day-one capabilities to the curated `api.*` surface defined by the spec, including explicit `api.exec.run`.
 
 ## 3. Turn Execution And Reconciliation
 

@@ -84,8 +84,11 @@ That includes:
 - generating artifacts
 - performing web lookups
 - composing several small tool calls into one bounded program
+- handling multi-step semantic work across more than one turn when that is the right unit of work
 
-The goal is consistency and lower conceptual overhead. Generic work should not splinter into many unrelated ad hoc surfaces when a single typed TypeScript tool can do the job more clearly.
+The goal is consistency and lower conceptual overhead. Generic work should not splinter into many unrelated ad hoc surfaces when a single typed TypeScript tool can do the job more clearly. It also should not pretend that one deterministic script can summarize unseen text or replace normal orchestrator back-and-forth when the task needs a sequence of observations and decisions.
+
+Inside `execute_typescript`, the runtime injects `api.*` as a host SDK. The SDK includes explicit `api.exec.run` for command execution. Every submitted snippet is persisted as a file-backed artifact in the workspace artifact directory, and the runtime must compile or typecheck the snippet before execution. Structured diagnostics must be produced, and invalid snippets must not run.
 
 ### 4. Native Control Tools Stay Small And Explicit
 
@@ -100,7 +103,7 @@ Those actions stay as native control tools:
 
 These are still tool calls.
 
-They remain special only because they are handled by runtime integrations that own workflow, verification, and waiting semantics.
+They remain special only because they are handled by runtime integrations that own workflow, verification, and waiting semantics. They move the product-level execution frontier, so they stay native instead of being wrapped as generic SDK calls.
 
 ### 5. Sessions Are Product Containers, Not Just Transcripts
 
@@ -115,6 +118,8 @@ A session is the durable user-facing container for:
 - verification records
 - workflow records
 - wait state
+
+Session summaries, sidebar rows, and recovery views must be read models derived from structured state and artifact metadata, not from transcript reconstruction.
 
 ### 6. Commands Are Requests, Events Are Facts
 
@@ -221,6 +226,8 @@ Smithers is not:
 `execute_typescript` is the default generic work surface used by the orchestrator and delegated workers when typed capability composition is the clearest way to complete a bounded task.
 
 It is not a separate top-level product mode.
+
+The runtime inside `execute_typescript` exposes `api.*` host capabilities.
 
 ## Users And Primary Jobs
 
@@ -343,6 +350,7 @@ Examples:
 - diffs
 - logs
 - test reports
+- submitted `execute_typescript` source snippets, including failed attempts
 - screenshots
 - generated files
 - exported workflow details
@@ -388,21 +396,22 @@ This is the product-facing execution surface the orchestrator reasons about.
 
 ### Generic Capability Surface Inside `execute_typescript`
 
-Inside `execute_typescript`, the runtime should expose a typed object API rather than flat `external_*` globals.
+Inside `execute_typescript`, the runtime should expose a typed object API as `api.*` host capabilities.
 
 The exact capability list may evolve, but the shape should look like:
 
 ```ts
-await tools.repo.readFile({ path });
-await tools.repo.searchText({ pattern });
-await tools.git.status({});
-await tools.web.search({ query });
-await tools.artifact.writeText({ name, text });
+await api.repo.readFile({ path });
+await api.repo.searchText({ pattern });
+await api.git.status({});
+await api.web.search({ query });
+await api.artifact.writeText({ name, text });
+await api.exec.run({ command, cwd });
 ```
 
-This is the adopted direction for consistency.
+This is the adopted direction for consistency. Every submitted snippet is persisted as a file-backed artifact in the workspace artifact directory, with path metadata that can be indexed by SQLite. Before any run, the runtime must typecheck or compile the snippet, emit structured diagnostics, and block execution when the snippet is invalid.
 
-`external_*` naming is not part of the target product design.
+The concrete day-one `api.*` inventory is defined in the `execute_typescript` companion spec. It should stay function-first, namespace-based, and generic where useful rather than drifting into class-based clients or hidden control-flow helpers.
 
 ### Native Control Tool Boundaries
 
@@ -446,6 +455,7 @@ It must show more than a transcript. The session UI combines:
 - verification summaries
 - artifact access
 - explicit wait state
+- session summaries and navigation metadata derived from structured state and artifact metadata, not transcript reconstruction
 
 The user should be able to understand the current state of work at a glance without opening raw logs.
 
@@ -687,7 +697,7 @@ The app must support:
 - restoring persisted pane layout and pane occupancy from durable workspace state
 - list, resume, and restore flows being metadata-first and loading transcript or detail state only on demand
 - preserving durable session state across app restarts
-- reconstructing visible product state and session runtime profile overrides from durable session data
+- reconstructing visible product state, session runtime profile overrides, and session summaries from durable structured data without transcript replay
 
 ### 4. Session-Centric Orchestration UI
 
@@ -799,7 +809,11 @@ The product adopts one default generic execution tool:
 - tool name: `execute_typescript`
 - input shape: `typescriptCode`
 - output shape: `{ success, result, logs, error }`
-- capability model: typed `tools.*` namespaces injected by the runtime
+- capability model: typed `api.*` host capabilities injected by the runtime
+- `api.exec.run` is part of the SDK and is the explicit command-execution path
+- every attempted snippet is persisted as a file-backed artifact in `.svvy/artifacts/<sessionId>/<artifactId>-<slug>` so the UI can inspect it, including failed attempts
+- invalid snippets must be typechecked or compiled first, emit structured diagnostics, and not run
+- `execute_typescript` is a deterministic host-SDK execution surface; meaningful semantic synthesis may span more than one tool call or turn when the active agent needs to inspect, reason, then write
 
 Code mode is available:
 
@@ -815,7 +829,7 @@ Code mode is used for:
 Out of scope for the first implementation:
 
 - product-visible sandbox controls
-- `external_*` naming
+- nested model calls hidden inside `execute_typescript`
 - a second unrestricted shell hidden behind code mode
 
 ### 11. Repo-Local Workflow Hooks
@@ -852,11 +866,13 @@ The desktop app is primary, but headless execution is a real product surface, no
 - `svvy` extends that substrate with structured product state
 - the transcript is canonical only for transcript history
 - commands, episodes, verification, workflow, wait, and navigation state must come from durable structured records, not transcript replay
+- session summaries and navigation read models must be derived from structured records and artifact metadata rather than transcript reconstruction
 - product state must not depend on replaying the raw transcript for every decision
 - runtime handlers and bridges must emit durable facts from real execution, not prompt-text inference
 - the agent must not be given arbitrary state-write tools for mutating product records directly
 - transcript and detail payloads are loaded lazily when the user opens or expands a surface that needs them
-- artifacts may live on disk and be referenced from durable product state
+- artifacts are file-backed in a dedicated workspace artifact directory and referenced from durable product state through metadata/path indexing
+- submitted `execute_typescript` snippets are persisted as file-backed artifacts for every attempt, including failed attempts
 - Smithers may keep its own workflow-run state, but that state is subordinate to the top-level session and thread model
 
 ## Quality Requirements
@@ -909,7 +925,6 @@ The product is not trying to:
 - rely on transcript-only memory
 - adopt persistent planner, implementer, and reviewer role stacks as the default model
 - expose arbitrary state-write tools as the agent contract
-- preserve `external_*` as a long-term capability naming model
 - turn code mode into a second unrestricted shell
 
 ## Ship Criteria
