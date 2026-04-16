@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import * as PiCodingAgent from "@mariozechner/pi-coding-agent";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Message, StopReason, ToolCall } from "@mariozechner/pi-ai";
@@ -136,6 +137,80 @@ function getStructuredSessionState(
   return store.getSessionState(sessionId);
 }
 
+function getStructuredSessionStore(catalog: WorkspaceSessionCatalog): StructuredSessionStateStore {
+  return (catalog as unknown as { structuredSessionStore: StructuredSessionStateStore })
+    .structuredSessionStore;
+}
+
+function seedCommandRollupSession(
+  catalog: WorkspaceSessionCatalog,
+  sessionId: string,
+  title: string,
+): void {
+  const store = getStructuredSessionStore(catalog);
+  const timestamp = new Date().toISOString();
+  store.upsertPiSession({
+    sessionId,
+    title,
+    provider: DEFAULTS.provider,
+    model: DEFAULTS.model,
+    reasoningEffort: DEFAULTS.thinkingLevel,
+    messageCount: 2,
+    status: "idle",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+
+  const turn = store.startTurn({
+    sessionId,
+    requestSummary: `Inspect ${title}`,
+  });
+  const thread = store.createThread({
+    turnId: turn.id,
+    kind: "task",
+    title: `Inspect ${title}`,
+    objective: `Inspect ${title} command rollups.`,
+  });
+  const command = store.createCommand({
+    turnId: turn.id,
+    threadId: thread.id,
+    toolName: "execute_typescript",
+    executor: "execute_typescript",
+    visibility: "summary",
+    title: `Inspect ${title}`,
+    summary: `Read the structured session for ${title}.`,
+  });
+  const childCommand = store.createCommand({
+    turnId: turn.id,
+    threadId: thread.id,
+    parentCommandId: command.id,
+    toolName: "runtime",
+    executor: "runtime",
+    visibility: "trace",
+    title: `Inspect ${title} child`,
+    summary: `Child command for ${title}.`,
+  });
+
+  store.finishCommand({
+    commandId: childCommand.id,
+    status: "succeeded",
+    summary: `Child command for ${title} finished.`,
+  });
+  store.finishCommand({
+    commandId: command.id,
+    status: "succeeded",
+    summary: `Read the structured session for ${title}.`,
+  });
+  store.updateThread({
+    threadId: thread.id,
+    status: "completed",
+  });
+  store.finishTurn({
+    turnId: turn.id,
+    status: "completed",
+  });
+}
+
 function installPromptSpy(
   catalog: WorkspaceSessionCatalog,
   responses: Array<{ user: Message; assistant: Message; error?: Error }>,
@@ -205,6 +280,26 @@ function createPersistedSession(
 }
 
 describe("WorkspaceSessionCatalog", () => {
+  it("registers execute_typescript and native control tools as custom tools", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const createAgentSessionSpy = spyOn(PiCodingAgent, "createAgentSession");
+    let catalog: WorkspaceSessionCatalog | null = null;
+
+    try {
+      catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+      await catalog.createSession({ title: "Tool Surface" }, DEFAULTS);
+
+      const [options] = createAgentSessionSpy.mock.calls[0] ?? [];
+      expect(options?.tools).toEqual([]);
+      expect(options?.customTools?.map((tool) => tool.name).toSorted()).toEqual(
+        ["execute_typescript", "verification.run", "workflow.start", "wait"].toSorted(),
+      );
+    } finally {
+      createAgentSessionSpy.mockRestore();
+      await catalog?.dispose();
+    }
+  });
+
   it("lists persisted sessions sorted by recency", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const first = createPersistedSession(cwd, sessionDir, {
@@ -227,6 +322,48 @@ describe("WorkspaceSessionCatalog", () => {
     expect(sessions.sessions.find((session) => session.id === first.id)?.title).toBe(
       "Investigate parser",
     );
+  });
+
+  it("preserves structured command rollups on session summaries", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const inactive = createPersistedSession(cwd, sessionDir, {
+      title: "Inactive rollups",
+      prompt: "Investigate parser regression",
+      reply: "Parser root cause found",
+    });
+
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const active = await catalog.createSession({ title: "Active rollups" }, DEFAULTS);
+
+    seedCommandRollupSession(catalog, inactive.id, "Inactive rollups");
+    seedCommandRollupSession(catalog, active.session.id, "Active rollups");
+
+    const sessions = await catalog.listSessions();
+    const inactiveSummary = sessions.sessions.find((session) => session.id === inactive.id);
+    const activeSummary = sessions.sessions.find((session) => session.id === active.session.id);
+
+    expect(inactiveSummary?.commandRollups).toHaveLength(1);
+    expect(activeSummary?.commandRollups).toHaveLength(1);
+    expect(inactiveSummary?.commandRollups?.[0]).toMatchObject({
+      commandId: expect.any(String),
+      threadId: expect.any(String),
+      toolName: "execute_typescript",
+      visibility: "summary",
+      status: "succeeded",
+      title: "Inspect Inactive rollups",
+      summary: "Read the structured session for Inactive rollups.",
+      childCount: 1,
+    });
+    expect(activeSummary?.commandRollups?.[0]).toMatchObject({
+      commandId: expect.any(String),
+      threadId: expect.any(String),
+      toolName: "execute_typescript",
+      visibility: "summary",
+      status: "succeeded",
+      title: "Inspect Active rollups",
+      summary: "Read the structured session for Active rollups.",
+      childCount: 1,
+    });
   });
 
   it("lists inactive sessions from metadata only while keeping the active session rich", async () => {

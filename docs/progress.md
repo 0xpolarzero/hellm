@@ -49,16 +49,20 @@ Some later adjacent slices already landed. Keep the remaining foundation gaps ne
 
 ## 2. `execute_typescript`
 
-- [ ] Build a POC `execute_typescript` runtime with compile/typecheck-before-run diagnostics and the adopted TypeScript input/output contract.
-- [ ] Expose a minimal `execute_typescript` tool with the adopted input/output contract and injected `api.*` surface.
-- [ ] Persist each attempted snippet as a file-backed artifact before execution, with SQLite metadata and path indexing.
-- [ ] Generate the first curated typed `api.*` capability namespaces for repo, git, web, artifact, and bounded exec work.
-- [ ] Run a simple ordinary scripted task through `execute_typescript`.
-- [ ] Build a POC artifact/tracing pipeline for code-mode execution.
-- [ ] Capture code-mode logs and nested command traces as artifacts and structured command records.
-- [ ] Normalize code-mode success and failure into episode data.
-- [ ] Keep `workflow.start`, `workflow.resume`, `verification.run`, and `wait` as separate native control tools.
-- [ ] Limit day-one capabilities to the curated `api.*` surface defined by the spec, including explicit `api.exec.run`.
+- [x] Build a POC `execute_typescript` runtime with compile/typecheck-before-run diagnostics and the adopted TypeScript input/output contract.
+- [x] Expose a minimal `execute_typescript` tool with the adopted input/output contract and injected `api.*` surface.
+- [x] Persist each attempted snippet as a file-backed artifact before execution, with SQLite metadata and path indexing.
+- [x] Generate the first curated typed `api.*` capability namespaces for repo, git, web, artifact, and bounded exec work.
+- [x] Run a simple ordinary scripted task through `execute_typescript`.
+- [x] Build a POC artifact/tracing pipeline for code-mode execution.
+- [x] Capture code-mode logs and nested command traces as artifacts and structured command records.
+- [x] Normalize code-mode success and failure into episode data.
+- [x] Keep `workflow.start`, `workflow.resume`, `verification.run`, and `wait` as separate native control tools.
+- [x] Limit day-one capabilities to the curated `api.*` surface defined by the spec, including explicit `api.exec.run`.
+- [x] Expand the repo namespace to workspace-fs and search utilities with plural reads and structured listings.
+- [x] Expand the git namespace to the settled command-shaped surface, including `status`, `diff`, `log`, `show`, `branch`, `mergeBase`, `fetch`, `pull`, `push`, `add`, `commit`, `switch`, `checkout`, `restore`, `rebase`, `cherryPick`, `stash`, and `tag`.
+- [x] Persist normalized child-command facts for nested `api.*` calls while the parent `execute_typescript` attempt remains the main semantic unit.
+- [x] Surface parent rollups and trace inspector detail without promoting child commands to top-level cards.
 
 ## 3. Turn Execution And Reconciliation
 

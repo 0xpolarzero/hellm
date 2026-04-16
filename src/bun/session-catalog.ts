@@ -17,7 +17,9 @@ import {
   SessionManager,
   SettingsManager,
   type AgentSession,
+  type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
+import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type {
   ActiveSessionState,
   ActiveSessionSummaryState,
@@ -54,6 +56,7 @@ import {
   type SmithersRunState,
 } from "./smithers-workflow-bridge";
 import { createStartWorkflowTool } from "./smithers-workflow-tool";
+import { createExecuteTypescriptTool } from "./execute-typescript-tool";
 import { createVerifyRunTool } from "./verification-tool";
 import { createWaitTool } from "./wait-tool";
 import { resolveApiKey } from "./auth-store";
@@ -658,6 +661,7 @@ export class WorkspaceSessionCatalog {
       counts: structuredSummary.counts,
       threadIdsByStatus: view.threadIdsByStatus,
       threadIds: structuredSummary.threadIds,
+      commandRollups: view.commandRollups.length > 0 ? view.commandRollups : undefined,
     };
   }
 
@@ -1243,6 +1247,11 @@ async function createManagedSession(
     current: null,
   };
   const tools = [
+    createExecuteTypescriptTool({
+      cwd: options.sessionManager.getCwd(),
+      runtime: promptExecutionRuntime,
+      store: options.structuredSessionStore,
+    }),
     createVerifyRunTool({
       cwd: options.sessionManager.getCwd(),
       runtime: promptExecutionRuntime,
@@ -1257,6 +1266,7 @@ async function createManagedSession(
       store: options.structuredSessionStore,
     }),
   ] as const;
+  const customTools = createCustomToolDefinitions(tools);
   const modelRegistryFactory = ModelRegistry as unknown as {
     create?: (authStorage: AuthStorage, modelPath: string) => ModelRegistry;
     new (authStorage: AuthStorage, modelPath: string): ModelRegistry;
@@ -1286,7 +1296,8 @@ async function createManagedSession(
     settingsManager,
     model: resolvedModel,
     thinkingLevel: restoredDefaults.thinkingLevel,
-    tools: [...tools],
+    tools: [],
+    customTools,
   });
   const activeModel = session.agent.state.model ?? resolvedModel;
 
@@ -1305,6 +1316,18 @@ async function createManagedSession(
     abortRequested: false,
     promptExecutionRuntime,
   };
+}
+
+function createCustomToolDefinitions(tools: readonly AgentTool<any>[]): ToolDefinition[] {
+  return tools.map((tool) => ({
+    name: tool.name,
+    label: tool.label,
+    description: tool.description,
+    parameters: tool.parameters,
+    prepareArguments: tool.prepareArguments,
+    execute: async (toolCallId, params, signal, onUpdate) =>
+      await tool.execute(toolCallId, params, signal, onUpdate),
+  }));
 }
 
 function countVisibleMessages(messages: AgentMessage[]): number {

@@ -62,6 +62,18 @@ export interface ProviderAuthInfo {
 
 export type SessionStatus = "idle" | "running" | "waiting" | "error";
 
+export interface WorkspaceCommandRollup {
+  commandId: string;
+  threadId: string;
+  toolName: string;
+  visibility: "summary" | "surface";
+  status: "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+  title: string;
+  summary: string;
+  childCount: number;
+  updatedAt: string;
+}
+
 export interface WorkspaceSessionSummary {
   id: string;
   title: string;
@@ -99,6 +111,7 @@ export interface WorkspaceSessionSummary {
     failed: string[];
   };
   threadIds?: string[];
+  commandRollups?: WorkspaceCommandRollup[];
 }
 
 export interface ActiveSessionState {

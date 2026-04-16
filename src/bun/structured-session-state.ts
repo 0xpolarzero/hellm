@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 export type StructuredSessionStatus = "idle" | "running" | "waiting" | "error";
 export type StructuredTurnStatus = "running" | "waiting" | "completed" | "failed";
@@ -35,6 +35,14 @@ export interface StructuredWorkspaceRecord {
   id: string;
   label: string;
   cwd: string;
+  artifactDir: string;
+}
+
+export interface StructuredWorkspaceInput {
+  id: string;
+  label: string;
+  cwd: string;
+  artifactDir?: string;
 }
 
 export interface StructuredPiSessionRecord {
@@ -99,6 +107,7 @@ export interface StructuredCommandRecord {
   attempts: number;
   title: string;
   summary: string;
+  facts: Record<string, unknown> | null;
   error: string | null;
   startedAt: string;
   updatedAt: string;
@@ -209,7 +218,7 @@ export interface StructuredThreadDetail {
 export interface CreateStructuredSessionStateStoreOptions {
   databasePath?: string;
   now?: () => string;
-  workspace: StructuredWorkspaceRecord;
+  workspace: StructuredWorkspaceInput;
 }
 
 export interface StructuredSessionStateStore {
@@ -251,6 +260,7 @@ export interface StructuredSessionStateStore {
     visibility: StructuredCommandVisibility;
     title: string;
     summary: string;
+    facts?: Record<string, unknown> | null;
   }): StructuredCommandRecord;
   startCommand(commandId: string): StructuredCommandRecord;
   bumpCommandAttempt(commandId: string): StructuredCommandRecord;
@@ -258,6 +268,8 @@ export interface StructuredSessionStateStore {
     commandId: string;
     status: Exclude<StructuredCommandStatus, "requested" | "running">;
     summary?: string;
+    facts?: Record<string, unknown> | null;
+    visibility?: StructuredCommandVisibility;
     error?: string | null;
   }): StructuredCommandRecord;
   createEpisode(input: {
@@ -368,6 +380,7 @@ interface StructuredCommandRow {
   attempts: number;
   title: string;
   summary: string;
+  facts_json: string | null;
   error: string | null;
   started_at: string;
   updated_at: string;
@@ -436,7 +449,7 @@ interface StructuredEventRow {
 }
 
 const DEFAULT_DATABASE_PATH = ":memory:";
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 5;
 const ID_COUNTER_TABLES = [
   { table: "turn", column: "id", prefix: "turn" },
   { table: "thread", column: "id", prefix: "thread" },
@@ -450,6 +463,27 @@ const ID_COUNTER_TABLES = [
 
 function resolveDatabasePath(databasePath: string | undefined): string {
   return databasePath?.trim() || DEFAULT_DATABASE_PATH;
+}
+
+function getDefaultArtifactDir(cwd: string): string {
+  return join(cwd, ".svvy", "artifacts");
+}
+
+function resolveWorkspaceRecord(workspace: StructuredWorkspaceInput): StructuredWorkspaceRecord {
+  return {
+    id: workspace.id,
+    label: workspace.label,
+    cwd: workspace.cwd,
+    artifactDir: workspace.artifactDir?.trim() || getDefaultArtifactDir(workspace.cwd),
+  };
+}
+
+function slugifyArtifactName(name: string, fallback: string): string {
+  const normalized = basename(name.trim() || fallback)
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || fallback;
 }
 
 function isTerminalThreadStatus(status: StructuredThreadStatus): boolean {
@@ -480,18 +514,30 @@ function serializeIdList(values: string[]): string {
 }
 
 function parseEventData(value: string | null): Record<string, unknown> | undefined {
+  const parsed = parseJsonObject(value);
+  return parsed ?? undefined;
+}
+
+function parseJsonObject(value: string | null): Record<string, unknown> | null {
   if (!value) {
-    return undefined;
+    return null;
   }
 
   try {
     const parsed = JSON.parse(value) as unknown;
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
-      : undefined;
+      : null;
   } catch {
-    return undefined;
+    return null;
   }
+}
+
+function serializeJsonObject(value: Record<string, unknown> | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  return JSON.stringify(value);
 }
 
 function serializeEventData(data: Record<string, unknown> | undefined): string | null {
@@ -546,17 +592,18 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   constructor(options: CreateStructuredSessionStateStoreOptions) {
     const databasePath = resolveDatabasePath(options.databasePath);
+    const workspace = resolveWorkspaceRecord(options.workspace);
     if (databasePath !== DEFAULT_DATABASE_PATH) {
       mkdirSync(dirname(databasePath), { recursive: true });
     }
 
     this.db = new Database(databasePath);
     this.now = options.now ?? (() => new Date().toISOString());
-    this.workspaceFallback = structuredClone(options.workspace);
+    this.workspaceFallback = structuredClone(workspace);
 
     this.db.exec("PRAGMA foreign_keys = ON;");
     this.ensureSchema();
-    this.upsertWorkspace(options.workspace);
+    this.upsertWorkspace(workspace);
     this.rebuildIdCounters();
     this.reconcileSessionWaitInvariants();
   }
@@ -951,6 +998,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     visibility: StructuredCommandVisibility;
     title: string;
     summary: string;
+    facts?: Record<string, unknown> | null;
   }): StructuredCommandRecord {
     const turn = this.mustFindTurn(input.turnId);
     const thread = this.mustFindThread(input.threadId);
@@ -984,11 +1032,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           attempts,
           title,
           summary,
+          facts_json,
           error,
           started_at,
           updated_at,
           finished_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'requested', 1, ?, ?, NULL, ?, ?, NULL)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'requested', 1, ?, ?, ?, NULL, ?, ?, NULL)`,
       )
       .run(
         commandId,
@@ -1001,6 +1050,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         input.visibility,
         summarizeText(input.title, input.toolName),
         summarizeText(input.summary, input.toolName),
+        serializeJsonObject(input.facts),
         timestamp,
         timestamp,
       );
@@ -1078,6 +1128,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     commandId: string;
     status: Exclude<StructuredCommandStatus, "requested" | "running">;
     summary?: string;
+    facts?: Record<string, unknown> | null;
+    visibility?: StructuredCommandVisibility;
     error?: string | null;
   }): StructuredCommandRecord {
     const command = this.mustFindCommand(input.commandId);
@@ -1088,7 +1140,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         `UPDATE command
          SET
            status = ?,
+           visibility = ?,
            summary = ?,
+           facts_json = ?,
            error = ?,
            updated_at = ?,
            finished_at = ?
@@ -1096,7 +1150,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       )
       .run(
         input.status,
+        input.visibility ?? command.visibility,
         input.summary ? summarizeText(input.summary, command.summary) : command.summary,
+        input.facts === undefined ? command.facts_json : serializeJsonObject(input.facts),
         input.error ?? null,
         timestamp,
         input.status === "waiting" ? null : timestamp,
@@ -1203,6 +1259,19 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     }
     const timestamp = this.now();
     const artifactId = this.nextId("artifact");
+    const workspace = this.getWorkspaceRecord();
+    const artifactDir = join(workspace.artifactDir, sessionId);
+    const artifactPath = join(
+      artifactDir,
+      `${artifactId}-${slugifyArtifactName(input.path ?? input.name, input.kind)}`,
+    );
+
+    mkdirSync(artifactDir, { recursive: true });
+    if (input.path && input.content === undefined) {
+      copyFileSync(input.path, artifactPath);
+    } else {
+      writeFileSync(artifactPath, input.content ?? "", "utf8");
+    }
 
     this.db
       .query(
@@ -1225,7 +1294,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         input.sourceCommandId ?? null,
         input.kind,
         summarizeText(input.name, input.kind),
-        input.path ?? null,
+        artifactPath,
         input.content ?? null,
         timestamp,
       );
@@ -1505,8 +1574,23 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     }
 
     this.db.exec("PRAGMA foreign_keys = OFF;");
+    if (currentVersion === 4) {
+      this.migrateSchemaFromV4ToV5();
+      this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+      this.db.exec("PRAGMA foreign_keys = ON;");
+      return;
+    }
+    if (currentVersion === 3) {
+      this.migrateSchemaFromV3ToV4();
+      this.migrateSchemaFromV4ToV5();
+      this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+      this.db.exec("PRAGMA foreign_keys = ON;");
+      return;
+    }
     if (currentVersion === 2) {
       this.migrateSchemaFromV2ToV3();
+      this.migrateSchemaFromV3ToV4();
+      this.migrateSchemaFromV4ToV5();
       this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
       this.db.exec("PRAGMA foreign_keys = ON;");
       return;
@@ -1596,6 +1680,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         attempts INTEGER NOT NULL,
         title TEXT NOT NULL,
         summary TEXT NOT NULL,
+        facts_json TEXT,
         error TEXT,
         started_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -1642,6 +1727,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       CREATE INDEX idx_artifact_session ON artifact(session_id);
       CREATE INDEX idx_artifact_episode ON artifact(episode_id);
       CREATE INDEX idx_artifact_source_command ON artifact(source_command_id);
+      CREATE INDEX idx_artifact_session_path ON artifact(session_id, path);
 
       CREATE TABLE verification (
         id TEXT PRIMARY KEY,
@@ -1742,6 +1828,18 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       FROM artifact_v2;
 
       DROP TABLE artifact_v2;
+    `);
+  }
+
+  private migrateSchemaFromV3ToV4(): void {
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_artifact_session_path ON artifact(session_id, path);
+    `);
+  }
+
+  private migrateSchemaFromV4ToV5(): void {
+    this.db.exec(`
+      ALTER TABLE command ADD COLUMN facts_json TEXT;
     `);
   }
 
@@ -1919,11 +2017,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .get() as StructuredWorkspaceRow | null;
 
     return row
-      ? {
-          id: row.id,
-          label: row.label,
-          cwd: row.cwd,
-        }
+      ? resolveWorkspaceRecord(row)
       : structuredClone(this.workspaceFallback);
   }
 
@@ -2039,15 +2133,16 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            parent_command_id,
            tool_name,
            executor,
-           visibility,
-           status,
-           attempts,
-           title,
-           summary,
-           error,
-           started_at,
-           updated_at,
-           finished_at
+         visibility,
+         status,
+         attempts,
+         title,
+         summary,
+         facts_json,
+         error,
+         started_at,
+         updated_at,
+         finished_at
          FROM command
          WHERE id = ?
          LIMIT 1`,
@@ -2297,6 +2392,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            attempts,
            title,
            summary,
+           facts_json,
            error,
            started_at,
            updated_at,
@@ -2467,6 +2563,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       attempts: row.attempts,
       title: row.title,
       summary: row.summary,
+      facts: parseJsonObject(row.facts_json),
       error: row.error,
       startedAt: row.started_at,
       updatedAt: row.updated_at,

@@ -1,4 +1,5 @@
 import type {
+  StructuredCommandRecord,
   StructuredEpisodeRecord,
   StructuredSessionSnapshot,
   StructuredSessionStatus,
@@ -7,6 +8,18 @@ import type {
   StructuredTurnRecord,
   StructuredWorkflowRecord,
 } from "./structured-session-state";
+
+export interface StructuredCommandRollup {
+  commandId: string;
+  threadId: string;
+  toolName: string;
+  visibility: "summary" | "surface";
+  status: StructuredCommandRecord["status"];
+  title: string;
+  summary: string;
+  childCount: number;
+  updatedAt: string;
+}
 
 export interface StructuredSessionView {
   title: string;
@@ -28,6 +41,7 @@ export interface StructuredSessionView {
     failed: string[];
   };
   threadIds: string[];
+  commandRollups: StructuredCommandRollup[];
 }
 
 export interface StructuredSessionSummaryProjection {
@@ -88,6 +102,29 @@ function getMostRecentThread(session: StructuredSessionSnapshot): StructuredThre
   );
 }
 
+function buildCommandRollups(
+  commands: StructuredSessionSnapshot["commands"],
+): StructuredCommandRollup[] {
+  return commands
+    .filter(
+      (command) =>
+        command.parentCommandId === null &&
+        (command.visibility === "summary" || command.visibility === "surface"),
+    )
+    .map((command) => ({
+      commandId: command.id,
+      threadId: command.threadId,
+      toolName: command.toolName,
+      visibility: command.visibility,
+      status: command.status,
+      title: command.title,
+      summary: command.summary,
+      childCount: commands.filter((candidate) => candidate.parentCommandId === command.id).length,
+      updatedAt: command.updatedAt,
+    }))
+    .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
 function deriveThreadIds(threads: StructuredThreadRecord[]): string[] {
   return threads
     .toSorted((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt))
@@ -120,6 +157,7 @@ function formatEpisodePreview(episode: StructuredEpisodeRecord): string {
 }
 
 function derivePreview(session: StructuredSessionSnapshot): string {
+  const commandRollups = buildCommandRollups(session.commands);
   if (session.session.wait) {
     return `Waiting: ${session.session.wait.reason}`;
   }
@@ -132,6 +170,11 @@ function derivePreview(session: StructuredSessionSnapshot): string {
   const latestEpisode = getMostRecentEpisode(session);
   if (latestEpisode) {
     return formatEpisodePreview(latestEpisode);
+  }
+
+  const latestCommandRollup = commandRollups[0];
+  if (latestCommandRollup) {
+    return latestCommandRollup.summary;
   }
 
   const latestVerificationSummary = getMostRecentVerificationSummary(session);
@@ -226,6 +269,7 @@ export function buildStructuredSessionView(
   session: StructuredSessionSnapshot,
 ): StructuredSessionView {
   const grouped = groupThreadIdsByStatus(session.threads);
+  const commandRollups = buildCommandRollups(session.commands);
 
   return {
     title: session.pi.title,
@@ -254,6 +298,7 @@ export function buildStructuredSessionView(
     },
     threadIdsByStatus: grouped,
     threadIds: deriveThreadIds(session.threads),
+    commandRollups,
   };
 }
 
@@ -297,7 +342,7 @@ export function hasStructuredSessionFacts(session: StructuredSessionSnapshot): b
     session.session.wait !== null ||
     session.turns.length > 0 ||
     session.threads.length > 0 ||
-    session.commands.length > 0 ||
+    buildCommandRollups(session.commands).length > 0 ||
     session.episodes.length > 0 ||
     session.verifications.length > 0 ||
     session.workflows.length > 0 ||

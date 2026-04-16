@@ -1,18 +1,12 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
-
-const WORKSPACE = {
-  id: "/repo/svvy",
-  label: "svvy",
-  cwd: "/repo/svvy",
-} as const;
 
 function createDeterministicClock(start = "2026-04-14T12:00:00.000Z") {
   let cursor = Date.parse(start);
@@ -59,17 +53,23 @@ describe("structured session state SQLite persistence", () => {
   function createSqliteStore(options: { databasePath?: string; nowStart?: string } = {}): {
     databasePath: string;
     store: StructuredSessionStateStore;
+    workspaceCwd: string;
   } {
     const root = mkdtempSync(join(tmpdir(), "svvy-structured-sqlite-"));
     tempDirs.push(root);
     const databasePath = options.databasePath ?? join(root, "structured-session-state.sqlite");
+    const workspaceCwd = root;
     const store = createStructuredSessionStateStore({
-      workspace: WORKSPACE,
+      workspace: {
+        id: workspaceCwd,
+        label: "svvy",
+        cwd: workspaceCwd,
+      },
       databasePath,
       now: createDeterministicClock(options.nowStart ?? "2026-04-14T12:00:00.000Z"),
     });
     openStores.push(store);
-    return { databasePath, store };
+    return { databasePath, store, workspaceCwd };
   }
 
   function closeTrackedStore(store: StructuredSessionStateStore) {
@@ -112,6 +112,10 @@ describe("structured session state SQLite persistence", () => {
       commandId: command.id,
       status: "succeeded",
       summary: "Inspection completed.",
+      facts: {
+        repoReads: 3,
+        childCommandCount: 4,
+      },
     });
     const episode = first.store.createEpisode({
       threadId: rootThread.id,
@@ -212,6 +216,15 @@ describe("structured session state SQLite persistence", () => {
       verificationCommand.id,
       workflowCommand.id,
     ]);
+    expect(afterReload.commands).toContainEqual(
+      expect.objectContaining({
+        id: command.id,
+        facts: {
+          repoReads: 3,
+          childCommandCount: 4,
+        },
+      }),
+    );
     expect(afterReload.episodes).toEqual([
       expect.objectContaining({
         id: episode.id,
@@ -231,6 +244,60 @@ describe("structured session state SQLite persistence", () => {
         commandId: verificationCommand.id,
       }),
     ]);
+  });
+
+  it("writes artifacts into the workspace-scoped artifact directory with persisted path metadata", () => {
+    const { store, workspaceCwd } = createSqliteStore();
+    seedSession(store, {
+      sessionId: "session-artifact-files",
+      title: "Artifact Files",
+    });
+
+    const turn = store.startTurn({
+      sessionId: "session-artifact-files",
+      requestSummary: "Persist file-backed artifacts",
+    });
+    const thread = store.createThread({
+      turnId: turn.id,
+      kind: "task",
+      title: "Persist file-backed artifacts",
+      objective: "Keep artifact payloads on disk instead of only in SQLite.",
+    });
+    const command = store.createCommand({
+      turnId: turn.id,
+      threadId: thread.id,
+      toolName: "execute_typescript",
+      executor: "orchestrator",
+      visibility: "summary",
+      title: "Persist snippet",
+      summary: "Persist a snippet artifact before execution.",
+    });
+    const artifact = store.createArtifact({
+      sourceCommandId: command.id,
+      kind: "text",
+      name: "snippet.ts",
+      content: 'console.log("hello from artifact");\n',
+    });
+
+    const snapshot = store.getSessionState("session-artifact-files");
+    const expectedArtifactRoot = join(workspaceCwd, ".svvy", "artifacts");
+    const expectedArtifactDir = join(expectedArtifactRoot, "session-artifact-files");
+
+    expect(snapshot.workspace).toEqual(
+      expect.objectContaining({
+        artifactDir: expectedArtifactRoot,
+      }),
+    );
+    expect(artifact.path).toBe(join(expectedArtifactDir, `${artifact.id}-snippet.ts`));
+    expect(snapshot.artifacts).toEqual([
+      expect.objectContaining({
+        id: artifact.id,
+        sourceCommandId: command.id,
+        path: artifact.path,
+      }),
+    ]);
+    expect(existsSync(artifact.path!)).toBe(true);
+    expect(readFileSync(artifact.path!, "utf8")).toBe('console.log("hello from artifact");\n');
   });
 
   it("persists session wait and clears it when the owning thread resumes", () => {

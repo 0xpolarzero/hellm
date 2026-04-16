@@ -1,14 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
-
-const WORKSPACE = {
-  id: "/repo/svvy",
-  label: "svvy",
-  cwd: "/repo/svvy",
-} as const;
 
 function createDeterministicClock(start = "2026-04-14T09:00:00.000Z") {
   let cursor = Date.parse(start);
@@ -35,16 +32,29 @@ function seedSession(store: StructuredSessionStateStore, sessionId = "session-00
 
 describe("structured session state write API", () => {
   const stores: StructuredSessionStateStore[] = [];
+  const tempDirs: string[] = [];
 
   afterEach(() => {
     while (stores.length > 0) {
       stores.pop()?.close();
     }
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop();
+      if (dir) {
+        rmSync(dir, { force: true, recursive: true });
+      }
+    }
   });
 
   function createStore() {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "svvy-structured-store-"));
+    tempDirs.push(workspaceCwd);
     const store = createStructuredSessionStateStore({
-      workspace: WORKSPACE,
+      workspace: {
+        id: workspaceCwd,
+        label: "svvy",
+        cwd: workspaceCwd,
+      },
       now: createDeterministicClock(),
     });
     stores.push(store);
@@ -88,6 +98,10 @@ describe("structured session state write API", () => {
       commandId: command.id,
       status: "succeeded",
       summary: "Store inspection complete.",
+      facts: {
+        repoReads: 2,
+        artifactIds: ["artifact-123"],
+      },
     });
     const episode = store.createEpisode({
       threadId: rootThread.id,
@@ -132,7 +146,7 @@ describe("structured session state write API", () => {
       }),
     ]);
     expect(snapshot.threads.map((thread) => thread.id)).toEqual([rootThread.id, childThread.id]);
-    expect(snapshot.commands).toEqual([
+    expect(snapshot.commands).toContainEqual(
       expect.objectContaining({
         id: command.id,
         threadId: rootThread.id,
@@ -141,8 +155,12 @@ describe("structured session state write API", () => {
         visibility: "trace",
         status: "succeeded",
         attempts: 2,
+        facts: {
+          repoReads: 2,
+          artifactIds: ["artifact-123"],
+        },
       }),
-    ]);
+    );
     expect(snapshot.episodes).toEqual([
       expect.objectContaining({
         id: episode.id,
@@ -189,6 +207,10 @@ describe("structured session state write API", () => {
     expect(detail.verifications).toHaveLength(0);
     expect(detail.workflow).toBeNull();
     expect(finishedCommand.status).toBe("succeeded");
+    expect(finishedCommand.facts).toEqual({
+      repoReads: 2,
+      artifactIds: ["artifact-123"],
+    });
     expect(completedThread.status).toBe("completed");
     expect(completedTurn.status).toBe("completed");
   });

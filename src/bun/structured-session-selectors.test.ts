@@ -106,6 +106,7 @@ function createSessionSnapshot(
         attempts: 1,
         title: "Selector command",
         summary: "Selector command summary",
+        facts: null,
         error: null,
         startedAt: "2026-04-14T07:00:30.000Z",
         updatedAt: "2026-04-14T07:01:00.000Z",
@@ -370,8 +371,29 @@ describe("structured session selectors", () => {
       commands: [
         {
           id: "command-001",
+          toolName: "execute_typescript",
+          visibility: "summary",
+          title: "Inspect docs",
+          summary: "Read 2 files and created 1 artifact.",
+          facts: {
+            repoReads: 2,
+            artifactsCreated: 1,
+          },
           threadId: "thread-001",
           updatedAt: "2026-04-14T10:01:00.000Z",
+        },
+        {
+          id: "command-002",
+          parentCommandId: "command-001",
+          toolName: "repo.readFile",
+          visibility: "trace",
+          title: "Read docs/prd.md",
+          summary: "Loaded docs/prd.md.",
+          facts: {
+            path: "docs/prd.md",
+          },
+          threadId: "thread-001",
+          updatedAt: "2026-04-14T10:00:30.000Z",
         },
       ],
       episodes: [
@@ -431,7 +453,7 @@ describe("structured session selectors", () => {
       counts: {
         turns: 1,
         threads: 3,
-        commands: 1,
+        commands: 2,
         episodes: 2,
         verifications: 1,
         workflows: 1,
@@ -444,6 +466,19 @@ describe("structured session selectors", () => {
         failed: ["thread-002"],
       },
       threadIds: ["thread-001", "thread-002", "thread-003"],
+      commandRollups: [
+        {
+          commandId: "command-001",
+          threadId: "thread-001",
+          toolName: "execute_typescript",
+          visibility: "summary",
+          status: "succeeded",
+          title: "Inspect docs",
+          summary: "Read 2 files and created 1 artifact.",
+          childCount: 1,
+          updatedAt: "2026-04-14T10:01:00.000Z",
+        },
+      ],
     });
 
     const summary = buildStructuredSessionSummaryProjection(snapshot);
