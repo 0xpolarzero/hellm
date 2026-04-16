@@ -115,6 +115,7 @@ export type StructuredSessionState = {
     attempts: number;
     title: string;
     summary: string;
+    facts: Record<string, unknown> | null;
     error: string | null;
     startedAt: string;
     updatedAt: string;
@@ -217,6 +218,16 @@ export type SessionView = {
     failed: string[];
   };
   threadIds: string[];
+  commandRollups: Array<{
+    commandId: string;
+    threadId: string;
+    toolName: string;
+    visibility: "summary" | "surface";
+    status: CommandStatus;
+    title: string;
+    summary: string;
+    childCount: number;
+  }>;
 };
 
 export class StructuredSessionPoc {
@@ -486,6 +497,7 @@ export class StructuredSessionPoc {
       attempts: 1,
       title: input.title,
       summary: input.summary,
+      facts: null,
       error: null,
       startedAt: now,
       updatedAt: now,
@@ -533,6 +545,7 @@ export class StructuredSessionPoc {
     input: {
       status: Exclude<CommandStatus, "requested" | "running">;
       summary?: string;
+      facts?: Record<string, unknown> | null;
       error?: string | null;
     },
   ): CommandRecord {
@@ -541,6 +554,7 @@ export class StructuredSessionPoc {
     command.status = input.status;
     command.updatedAt = now;
     command.summary = input.summary ?? command.summary;
+    command.facts = input.facts ?? command.facts;
     command.error = input.error ?? null;
     command.finishedAt = input.status === "waiting" ? null : now;
 
@@ -749,6 +763,24 @@ export class StructuredSessionPoc {
       threadIds: [...this.state.threads]
         .toSorted((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt))
         .map((thread) => thread.id),
+      commandRollups: this.state.commands
+        .filter(
+          (command) =>
+            command.parentCommandId === null &&
+            (command.visibility === "summary" || command.visibility === "surface"),
+        )
+        .map((command) => ({
+          commandId: command.id,
+          threadId: command.threadId,
+          toolName: command.toolName,
+          visibility: command.visibility,
+          status: command.status,
+          title: command.title,
+          summary: command.summary,
+          childCount: this.state.commands.filter(
+            (candidate) => candidate.parentCommandId === command.id,
+          ).length,
+        })),
     };
   }
 
@@ -974,6 +1006,10 @@ function runPoc(): void {
   poc.finishCommand(blockedExecuteTypescript.id, {
     status: "failed",
     summary: "Compile/typecheck produced structured diagnostics and blocked execution.",
+    facts: {
+      diagnosticsCount: 1,
+      snippetArtifactPersisted: true,
+    },
     error: "Type 'number' is not assignable to type 'string'.",
   });
 
@@ -1003,7 +1039,7 @@ function runPoc(): void {
     name: "inspect-docs.ts",
     content:
       [
-        'const search = await api.repo.searchText({ pattern: "transcript" });',
+        'const search = await api.repo.grep({ pattern: "transcript" });',
         'const prd = await api.repo.readFile({ path: "docs/prd.md" });',
         'await api.exec.run({ command: "bun docs/pocs/structured-session-state.poc.ts", cwd: "/repo/svvy" });',
         'await api.artifact.writeText({',
@@ -1017,7 +1053,7 @@ function runPoc(): void {
     turnId: turn1.id,
     threadId: task1.id,
     parentCommandId: executeTypescript.id,
-    toolName: "api.repo.searchText",
+    toolName: "repo.grep",
     executor: "execute_typescript",
     visibility: "trace",
     title: "Search docs",
@@ -1027,13 +1063,17 @@ function runPoc(): void {
   poc.finishCommand(searchDocs.id, {
     status: "succeeded",
     summary: "Found the old path language and outdated artifact handling.",
+    facts: {
+      pattern: "transcript",
+      matchCount: 2,
+    },
   });
 
   const readPrd = poc.createCommand({
     turnId: turn1.id,
     threadId: task1.id,
     parentCommandId: executeTypescript.id,
-    toolName: "api.repo.readFile",
+    toolName: "repo.readFile",
     executor: "execute_typescript",
     visibility: "trace",
     title: "Read PRD",
@@ -1043,14 +1083,18 @@ function runPoc(): void {
   poc.finishCommand(readPrd.id, {
     status: "succeeded",
     summary: "Loaded the PRD and identified the old four-path framing.",
+    facts: {
+      path: "docs/prd.md",
+      bytesRead: 0,
+    },
   });
 
   const runCommand = poc.createCommand({
     turnId: turn1.id,
     threadId: task1.id,
     parentCommandId: executeTypescript.id,
-    toolName: "api.exec.run",
-    executor: "runtime",
+    toolName: "exec.run",
+    executor: "execute_typescript",
     visibility: "trace",
     title: "Run host command",
     summary: "Run a command through the explicit host SDK execution path.",
@@ -1059,13 +1103,17 @@ function runPoc(): void {
   poc.finishCommand(runCommand.id, {
     status: "succeeded",
     summary: "Executed the explicit api.exec.run command path.",
+    facts: {
+      command: "bun",
+      exitCode: 0,
+    },
   });
 
   const writeResearchArtifact = poc.createCommand({
     turnId: turn1.id,
     threadId: task1.id,
     parentCommandId: executeTypescript.id,
-    toolName: "api.artifact.writeText",
+    toolName: "artifact.writeText",
     executor: "execute_typescript",
     visibility: "summary",
     title: "Write research notes",
@@ -1075,11 +1123,21 @@ function runPoc(): void {
   poc.finishCommand(writeResearchArtifact.id, {
     status: "succeeded",
     summary: "Wrote a compact note about the outdated terminology and state model drift.",
+    facts: {
+      artifactName: "architecture-audit.md",
+    },
   });
 
   poc.finishCommand(executeTypescript.id, {
     status: "succeeded",
     summary: "Completed generic inspection through execute_typescript and nested api.* calls.",
+    facts: {
+      repoReads: 1,
+      repoSearches: 1,
+      execRuns: 1,
+      artifactsCreated: 2,
+      childCommandCount: 4,
+    },
   });
   poc.createArtifact({
     sourceCommandId: writeResearchArtifact.id,
@@ -1266,6 +1324,7 @@ function runPoc(): void {
   console.log(`Thread ids: ${sessionView.threadIds.join(", ")}`);
   console.log(`Counts: ${JSON.stringify(sessionView.counts, null, 2)}`);
   console.log(`Current wait: ${JSON.stringify(sessionView.wait, null, 2)}`);
+  console.log(`Command rollups: ${JSON.stringify(sessionView.commandRollups, null, 2)}`);
   console.log(
     `Workflow summaries: ${snapshot.workflows.map((workflow) => `${workflow.workflowName}=${workflow.status}`).join(", ")}`,
   );

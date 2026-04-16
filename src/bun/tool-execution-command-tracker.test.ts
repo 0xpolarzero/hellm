@@ -150,7 +150,7 @@ describe("tool execution command tracker", () => {
     expect(snapshot.commands).toHaveLength(0);
   });
 
-  it("marks dangling tracked commands as failed or cancelled", () => {
+  it("ignores execute_typescript because the runtime records its own parent and child commands", () => {
     const store = createStore();
     const tracker = createToolExecutionCommandTracker({
       store,
@@ -159,6 +159,31 @@ describe("tool execution command tracker", () => {
 
     tracker.handleToolExecutionStart({
       toolCallId: "tool-call-4",
+      toolName: "execute_typescript",
+      args: { typescriptCode: 'return { ok: true };' },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-4",
+      toolName: "execute_typescript",
+      result: {
+        content: [{ type: "text", text: '{"success":true}' }],
+      },
+      isError: false,
+    });
+
+    const snapshot = store.getSessionState("session-tool-tracker");
+    expect(snapshot.commands).toHaveLength(0);
+  });
+
+  it("marks dangling tracked commands as failed or cancelled", () => {
+    const store = createStore();
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext: createPromptContext(store),
+    });
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-5",
       toolName: "read",
       args: { filePath: "README.md" },
     });

@@ -11,7 +11,7 @@
   - make sure we read AGENTS.md/CLAUDE.md/etc from repo, root
   - make sure we read stuff in .agents/, etc?
 
-- figure out reliable diff tracking for both the full session and individual threads; `changedFiles` is not enough, so we need the right snapshot/checkpoint model and likely git-backed diffing semantics
+- figure out reliable diff tracking for both the full session and individual threads; flat changed-file lists are not enough, so we need the right snapshot/checkpoint model and likely git-backed diffing semantics
 
 - nice moat but need to nail it:
   - CI as a verification check on every session
@@ -21,7 +21,7 @@
 
 - use sandboxing separate from environment 
   - https://x.com/nicoalbanese10/status/2043745569278251112
-  - keep the initial `execute_typescript` implementation unsandboxed; sandboxing should be a later hardening layer around the same `tools.*` contract, not a different execution model
+  - keep the initial `execute_typescript` implementation unsandboxed; sandboxing should be a later hardening layer around the same `execute_typescript` and `api.*` contract, not a different execution model
 
 - integration with jjhub/codeplane would make sense, for instance:
   - every time a piece of work in a session is done and orchestrator considers we run CI workflow, it takes a jj snapshot and executes the CI on jjhub/codeplane
@@ -30,3 +30,7 @@
 - need to figure out a way to nail observability, as in having a good idea of what is happening inside a session with a super high-level overview; both for what subagents/workflows are running, what context made in into which agent, and what is the overall status
   - maybe a good starting point is to run a small model alongside the orchestrator visiting the transcript/session state at frequent intervals and appending a one-sentence high-level overview
   - show list of files read and websites visited for a session; basically everything that made it into the context
+
+- write javascript tools api in Effect internally
+
+- use jj instead of git inside api.*

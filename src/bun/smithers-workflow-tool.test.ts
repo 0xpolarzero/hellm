@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
@@ -8,26 +11,37 @@ import * as realSmithersWorkflowBridge from "./smithers-workflow-bridge";
 
 const actualSmithersWorkflowBridge = { ...realSmithersWorkflowBridge };
 
-const WORKSPACE = {
-  id: "/repo/svvy",
-  label: "svvy",
-  cwd: "/repo/svvy",
-} as const;
-
 const stores: StructuredSessionStateStore[] = [];
+const tempDirs: string[] = [];
 
 afterEach(() => {
   while (stores.length > 0) {
     stores.pop()?.close();
+  }
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) {
+      rmSync(dir, { force: true, recursive: true });
+    }
   }
   mock.module("./smithers-workflow-bridge", () => actualSmithersWorkflowBridge);
   mock.restore();
   mock.clearAllMocks();
 });
 
-function createStore() {
+function createWorkspaceRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "svvy-smithers-tool-"));
+  tempDirs.push(root);
+  return root;
+}
+
+function createStore(workspaceCwd: string) {
   const store = createStructuredSessionStateStore({
-    workspace: WORKSPACE,
+    workspace: {
+      id: workspaceCwd,
+      label: "svvy",
+      cwd: workspaceCwd,
+    },
   });
   store.upsertPiSession({
     sessionId: "session-smithers-tool",
@@ -75,9 +89,10 @@ async function importToolModule() {
 describe("smithers workflow tool", () => {
   it("requires an active prompt runtime", async () => {
     const { createStartWorkflowTool } = await importToolModule();
+    const workspaceCwd = createWorkspaceRoot();
     const tool = createStartWorkflowTool({
       runtime: { current: null },
-      store: createStore(),
+      store: createStore(workspaceCwd),
     });
 
     await expect(
@@ -104,7 +119,7 @@ describe("smithers workflow tool", () => {
     }));
 
     const { createStartWorkflowTool } = await importToolModule();
-    const store = createStore();
+    const store = createStore(createWorkspaceRoot());
     const runtime = createRuntime(store);
     const tool = createStartWorkflowTool({
       runtime,
@@ -191,7 +206,7 @@ describe("smithers workflow tool", () => {
     }));
 
     const { createStartWorkflowTool } = await importToolModule();
-    const store = createStore();
+    const store = createStore(createWorkspaceRoot());
     const runtime = createRuntime(store);
     const tool = createStartWorkflowTool({
       runtime,
@@ -238,7 +253,7 @@ describe("smithers workflow tool", () => {
     }));
 
     const { createStartWorkflowTool } = await importToolModule();
-    const store = createStore();
+    const store = createStore(createWorkspaceRoot());
     const tool = createStartWorkflowTool({
       runtime: createRuntime(store),
       store,

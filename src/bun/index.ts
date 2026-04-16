@@ -39,7 +39,7 @@ const DEFAULT_RPC_TIMEOUT_MS = 120000;
 const DEFAULT_SYSTEM_PROMPT = [
   "You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.",
   "Everything you do is a tool call inside one shared execution model.",
-  "Use ordinary coding tools for generic work, verification.run for real verification, workflow.start for delegated workflows, and wait for durable user or external waits.",
+  "Use execute_typescript for ordinary generic work, verification.run for real verification, workflow.start for delegated workflows, and wait for durable user or external waits.",
   "Threads, commands, verification, workflows, and wait state come from real tool execution rather than assistant prose.",
 ].join(" ");
 const ENV_FILES = [".env.local", ".env"];

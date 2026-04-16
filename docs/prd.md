@@ -88,7 +88,7 @@ That includes:
 
 The goal is consistency and lower conceptual overhead. Generic work should not splinter into many unrelated ad hoc surfaces when a single typed TypeScript tool can do the job more clearly. It also should not pretend that one deterministic script can summarize unseen text or replace normal orchestrator back-and-forth when the task needs a sequence of observations and decisions.
 
-Inside `execute_typescript`, the runtime injects `api.*` as a host SDK. The SDK includes explicit `api.exec.run` for command execution. Every submitted snippet is persisted as a file-backed artifact in the workspace artifact directory, and the runtime must compile or typecheck the snippet before execution. Structured diagnostics must be produced, and invalid snippets must not run.
+Inside `execute_typescript`, the runtime injects `api.*` as a host SDK. `api.*` is the observable capability surface for external effects and facts, not a hard permission boundary. The SDK includes explicit `api.exec.run` for command execution. Nested `api.*` calls produce child command facts for traceability, while the enclosing `execute_typescript` attempt remains the main semantic unit. Every submitted snippet is persisted as a file-backed artifact in the workspace artifact directory, and the runtime must compile or typecheck the snippet before execution. Structured diagnostics must be produced, and invalid snippets must not run.
 
 ### 4. Native Control Tools Stay Small And Explicit
 
@@ -227,7 +227,7 @@ Smithers is not:
 
 It is not a separate top-level product mode.
 
-The runtime inside `execute_typescript` exposes `api.*` host capabilities.
+The runtime inside `execute_typescript` exposes observable `api.*` host capabilities.
 
 ## Users And Primary Jobs
 
@@ -396,14 +396,21 @@ This is the product-facing execution surface the orchestrator reasons about.
 
 ### Generic Capability Surface Inside `execute_typescript`
 
-Inside `execute_typescript`, the runtime should expose a typed object API as `api.*` host capabilities.
+Inside `execute_typescript`, the runtime should expose a typed object API as observable `api.*` host capabilities.
 
 The exact capability list may evolve, but the shape should look like:
 
 ```ts
 await api.repo.readFile({ path });
-await api.repo.searchText({ pattern });
+await api.repo.readFiles({ paths });
+await api.repo.grep({ pattern, glob });
+await api.repo.glob({ pattern });
 await api.git.status({});
+await api.git.diff({});
+await api.git.log({});
+await api.git.show({});
+await api.git.branch({});
+await api.git.mergeBase({});
 await api.web.search({ query });
 await api.artifact.writeText({ name, text });
 await api.exec.run({ command, cwd });
@@ -411,7 +418,7 @@ await api.exec.run({ command, cwd });
 
 This is the adopted direction for consistency. Every submitted snippet is persisted as a file-backed artifact in the workspace artifact directory, with path metadata that can be indexed by SQLite. Before any run, the runtime must typecheck or compile the snippet, emit structured diagnostics, and block execution when the snippet is invalid.
 
-The concrete day-one `api.*` inventory is defined in the `execute_typescript` companion spec. It should stay function-first, namespace-based, and generic where useful rather than drifting into class-based clients or hidden control-flow helpers.
+The concrete day-one `api.*` inventory is defined in the `execute_typescript` companion spec. It should stay function-first, namespace-based, and generic where useful rather than drifting into class-based clients or hidden control-flow helpers. The repo namespace should read like workspace fs and search utilities with singular and plural reads, and the git namespace should use curated command-shaped names such as `status`, `diff`, `log`, `show`, `branch`, `mergeBase`, `fetch`, `pull`, `push`, `add`, `commit`, `switch`, `checkout`, `restore`, `rebase`, `cherryPick`, `stash`, and `tag`.
 
 ### Native Control Tool Boundaries
 
@@ -809,11 +816,12 @@ The product adopts one default generic execution tool:
 - tool name: `execute_typescript`
 - input shape: `typescriptCode`
 - output shape: `{ success, result, logs, error }`
-- capability model: typed `api.*` host capabilities injected by the runtime
+- capability model: typed observable `api.*` host capabilities injected by the runtime
 - `api.exec.run` is part of the SDK and is the explicit command-execution path
 - every attempted snippet is persisted as a file-backed artifact in `.svvy/artifacts/<sessionId>/<artifactId>-<slug>` so the UI can inspect it, including failed attempts
 - invalid snippets must be typechecked or compiled first, emit structured diagnostics, and not run
 - `execute_typescript` is a deterministic host-SDK execution surface; meaningful semantic synthesis may span more than one tool call or turn when the active agent needs to inspect, reason, then write
+- nested `api.*` calls remain child command facts under the parent `execute_typescript` attempt, so UI rollups can stay parent-first while trace inspectors expose the detailed chain of calls
 
 Code mode is available:
 

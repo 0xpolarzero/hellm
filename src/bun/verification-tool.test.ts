@@ -9,12 +9,6 @@ import {
 import { createVerifyRunTool } from "./verification-tool";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 
-const WORKSPACE = {
-  id: "/repo/svvy",
-  label: "svvy",
-  cwd: "/repo/svvy",
-} as const;
-
 const stores: StructuredSessionStateStore[] = [];
 const tempDirs: string[] = [];
 
@@ -30,9 +24,19 @@ afterEach(() => {
   }
 });
 
-function createStore() {
+function createWorkspaceRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "svvy-verify-tool-"));
+  tempDirs.push(root);
+  return root;
+}
+
+function createStore(workspaceCwd: string) {
   const store = createStructuredSessionStateStore({
-    workspace: WORKSPACE,
+    workspace: {
+      id: workspaceCwd,
+      label: "svvy",
+      cwd: workspaceCwd,
+    },
   });
   store.upsertPiSession({
     sessionId: "session-verify-tool",
@@ -75,10 +79,11 @@ function createRuntime(store: StructuredSessionStateStore): PromptExecutionRunti
 
 describe("verification tool", () => {
   it("requires an active prompt runtime", async () => {
+    const workspaceCwd = createWorkspaceRoot();
     const tool = createVerifyRunTool({
-      cwd: process.cwd(),
+      cwd: workspaceCwd,
       runtime: { current: null },
-      store: createStore(),
+      store: createStore(workspaceCwd),
     });
 
     await expect(tool.execute("tool-call-1", { kind: "typecheck" })).rejects.toThrow(
@@ -87,9 +92,8 @@ describe("verification tool", () => {
   });
 
   it("runs test verifications and records the structured command, verification, and episode", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "svvy-verify-tool-"));
-    tempDirs.push(tempDir);
-    const target = join(tempDir, "verify-run.test.ts");
+    const workspaceCwd = createWorkspaceRoot();
+    const target = join(workspaceCwd, "verify-run.test.ts");
     writeFileSync(
       target,
       [
@@ -101,9 +105,9 @@ describe("verification tool", () => {
       ].join("\n"),
     );
 
-    const store = createStore();
+    const store = createStore(workspaceCwd);
     const tool = createVerifyRunTool({
-      cwd: process.cwd(),
+      cwd: workspaceCwd,
       runtime: createRuntime(store),
       store,
     });
@@ -185,9 +189,10 @@ describe("verification tool", () => {
   });
 
   it("rejects unsupported targets for non-test verifications", async () => {
-    const store = createStore();
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore(workspaceCwd);
     const tool = createVerifyRunTool({
-      cwd: process.cwd(),
+      cwd: workspaceCwd,
       runtime: createRuntime(store),
       store,
     });

@@ -44,7 +44,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Execute Typescript Work Surface",
     status: "in-progress",
     summary:
-      "Provides the default generic top-level work surface with injected api.* host capabilities, explicit api.exec.run, preflight typecheck or compile diagnostics, and file-backed snippet artifacts that gate invalid execution.",
+      "Provides the default generic top-level work surface with observable typed api.* host capabilities, explicit api.exec.run, workspace-fs-style repo reads and searches, curated git command names, preflight typecheck or compile diagnostics, file-backed snippet artifacts for every attempt, and parent-first rollups over nested child command facts.",
     sourceSpecs: ["docs/prd.md", "docs/specs/execute-typescript.spec.md"],
   },
   {
@@ -76,7 +76,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Session State Overlay",
     status: "in-progress",
     summary:
-      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, command, episode, verification, workflow, artifact, wait, lifecycle event records, file-backed artifact indexing, and metadata-first session summaries that survive reload.",
+      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, command, episode, verification, workflow, artifact, wait, and lifecycle event records, normalized command facts for rollups and drill-down, file-backed artifact indexing, and metadata-first session summaries that survive reload.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -84,7 +84,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Turn And Command State",
     status: "in-progress",
     summary:
-      "Tracks each user turn and every tool call, including execute_typescript snippets and nested api.* calls, as durable state with status, executor ownership, parent-child linkage, attempts, and trace-versus-surface visibility.",
+      "Tracks each user turn and every tool call, including execute_typescript snippets and nested api.* child command facts, as durable state with status, executor ownership, parent-child linkage, attempts, and trace-versus-surface visibility under parent execute_typescript rollups.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {

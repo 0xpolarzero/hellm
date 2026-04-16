@@ -6,19 +6,17 @@
 - Status: adopted architecture direction for the generic execution tool
 - Scope of this document:
   - define the role of `execute_typescript` in the product
-  - specify the tool contract and capability model
-  - define its relationship to native control tools
-  - define what is intentionally not part of the first implementation
+  - specify the stable tool contract and runtime flow
+  - define the day-one `api.*` surface
+  - define which child-command facts are stored and how they surface in the UI
 
 ## Purpose
 
-`svvy` needs one consistent generic work surface for ordinary typed capability use.
+`svvy` needs one consistent generic work surface for bounded repository work.
 
 The adopted answer is `execute_typescript`.
 
-It is the product's generic execution tool for deterministic typed capability composition.
-
-The point is to let the orchestrator and delegated workers express bounded generic work as a short typed TypeScript program when that is clearer and more reliable than many low-level tool round trips.
+It is the product's deterministic TypeScript runner for composing observable host capabilities through a typed `api.*` surface.
 
 ## Product Fit
 
@@ -31,31 +29,13 @@ tool call -> command -> handler -> events -> structured state -> UI
 Inside that model:
 
 - `execute_typescript` is the default generic work surface
-- `workflow.start`, `workflow.resume`, `verification.run`, and `wait` remain native control tools
+- `workflow.start`, `workflow.resume`, `verification.run`, and `wait` remain native top-level control tools
 
 `execute_typescript` is therefore:
 
 - a top-level tool
 - the default way to perform ordinary generic work
-- the product's deterministic program-runner for generic capability composition
-
-## Adopted Decisions
-
-The adopted `svvy` direction is:
-
-- one top-level tool named `execute_typescript`
-- TypeScript code as the input payload
-- a typed `api.*` SDK injected by the runtime
-- day-one namespaces for `api.repo.*`, `api.git.*`, `api.exec.run`, `api.artifact.*`, and `api.web.*`
-- first-implementation focus on the stable tool contract, typed SDK, compile/typecheck gating, and file-backed artifacts
-- every attempted snippet is persisted as a file-backed artifact before execution starts, including failures
-- artifact files are indexed by SQLite metadata and path records
-- compile/typecheck happens before execution, and structured diagnostics are returned when static checks fail
-- availability both to the orchestrator and to delegated Smithers work when generic composition is the right execution unit
-- workflow, verification, and waiting remain explicit native control tools above the SDK surface
-- hooks may call `execute_typescript` when generic capability composition is the right unit of work
-
-Nothing below should be read as leaving those points open.
+- the parent semantic unit for bounded scripted capability composition
 
 ## Tool Contract
 
@@ -101,98 +81,326 @@ type ExecuteTypescriptResult = {
 };
 ```
 
-The top-level `success`, `result`, `logs`, and `error` contract stays stable. Static failures should surface structured diagnostics before any runtime execution begins.
+The top-level `{ success, result, logs, error }` contract stays stable.
 
-## Capability Model
+The submitted snippet artifact is durable product state, not a required tool return field.
 
-### Adopted Surface
+## Execution Boundary
 
-Inside `execute_typescript`, capabilities should be injected as a typed `api` object.
+Use `execute_typescript` for bounded generic work such as:
 
-The shape should look like:
+- reading files
+- reading several files and reducing them into structured output
+- repo search and tree inspection
+- git inspection and small git mutations
+- artifact creation
+- bounded process execution through `api.exec.run`
+- web lookups
+- pure in-memory TypeScript control flow, parsing, filtering, grouping, and formatting between `api.*` calls
+
+Do not use `execute_typescript` to replace top-level control-flow tools:
+
+- `workflow.start`
+- `workflow.resume`
+- `verification.run`
+- `wait`
+
+Those actions change product-owned execution state and remain native tools.
+
+## Observable Capability Boundary
+
+Inside `execute_typescript`, `api.*` is the product's observable capability surface.
+
+That means:
+
+- workspace reads and writes should go through `api.repo.*`
+- git work should go through `api.git.*`
+- process execution should go through `api.exec.run`
+- artifact creation should go through `api.artifact.*`
+- web access should go through `api.web.*`
+
+Pure TypeScript inside the snippet remains available for local computation.
+
+The product does not try to decompose arbitrary in-memory code into separate durable facts.
+
+The product does record `api.*` calls because they are the semantic boundary where repo, git, web, artifact, and subprocess activity becomes observable and worth surfacing.
+
+This is an observability rule, not a permission claim.
+
+## Mandatory Runtime Flow
+
+The runtime flow for one `execute_typescript` call is:
+
+1. create one parent command for `execute_typescript`
+2. persist the exact submitted TypeScript snippet as a file-backed artifact before execution starts
+3. write SQLite artifact metadata and path indexes for that snippet
+4. prepare the injected typed `api.*` surface and helper context
+5. compile or typecheck the submitted code
+6. if static diagnostics fail, return them without executing the program
+7. otherwise execute the program
+8. record every nested `api.*` call as a child command
+9. capture logs, structured errors, and durable outputs
+10. synthesize parent summary facts and update structured state
+11. return `{ success, result, logs, error }`
+
+The important guarantees are:
+
+- the parent `execute_typescript` call is one command
+- every attempted run persists its exact submitted source
+- invalid code never executes
+- nested `api.*` calls are durable trace facts
+- the parent command remains the main semantic unit
+
+## Why Child Commands Exist
+
+The snippet artifact answers:
+
+- what code was submitted
+
+Child commands answer:
+
+- what happened when that code ran
+
+The stored snippet is necessary but not sufficient for inspection or recovery.
+
+The UI and selectors need durable facts such as:
+
+- which files were read
+- which files were written or deleted
+- which git command ran
+- whether a commit or push happened
+- which subprocess failed
+- which artifacts were created
+
+Those facts should not require transcript replay or speculative re-execution of the saved snippet.
+
+## Day-One `api.*` Surface
+
+The day-one SDK should be typed, namespace-based, and close to the underlying concepts.
+
+Rules:
+
+- all repo paths are workspace-relative unless stated otherwise
+- singular helpers stay for one-path operations, and plural helpers batch several known paths
+- camelCase is used when JavaScript identifiers cannot match the underlying command spelling exactly
+- the runtime injects one object named `api`
+- the runtime exposes the same surface to the orchestrator and to delegated workers
+
+### Representative Usage
 
 ```ts
-await api.repo.readFile({ path: "docs/prd.md" });
-await api.repo.searchText({ pattern: "workflow.start" });
-await api.git.status({});
-await api.web.search({ query: "smithers orchestration patterns" });
-await api.artifact.writeText({ name: "summary.md", text: "..." });
-await api.exec.run({ command: "bun", args: ["test"], cwd: "." });
+const docs = await api.repo.readFiles({
+  paths: ["docs/prd.md", "docs/features.ts"],
+});
+
+const matches = await api.repo.grep({
+  pattern: "execute_typescript",
+  glob: "docs/**/*.md",
+});
+
+const status = await api.git.status({});
+
+await api.artifact.writeText({
+  name: "summary.md",
+  text: JSON.stringify({ docs, matches, status }, null, 2),
+});
+
+await api.exec.run({
+  command: "bun",
+  args: ["test", "src/bun/execute-typescript-tool.test.ts"],
+});
 ```
 
-The exact namespaces may evolve, but the model should stay namespaced and typed.
-
-### Day-One API Shape
-
-The day-one host SDK should be explicit enough that the agent can rely on it without guessing.
-
-The initial shape should be function-first, namespace-based, and generic where that materially improves correctness:
+### Type Shape
 
 ```ts
+type RepoTextFile = {
+  path: string;
+  text: string;
+};
+
+type RepoStat = {
+  path: string;
+  exists: boolean;
+  kind: "file" | "directory" | "missing";
+  sizeBytes?: number;
+};
+
+type RepoWriteResult = {
+  path: string;
+  bytes: number;
+};
+
+type RepoGrepMatch = {
+  path: string;
+  line: number;
+  text: string;
+};
+
+type GitFileChange = {
+  path: string;
+  change: "added" | "modified" | "deleted" | "renamed" | "untracked";
+  previousPath?: string;
+};
+
+type GitCommitSummary = {
+  sha: string;
+  subject: string;
+  author?: string;
+  authoredAt?: string;
+};
+
+type GitCommandResult = {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+};
+
+type ArtifactWriteResult = {
+  artifactId: string;
+  path: string;
+};
+
 type SvvyApi = {
   repo: {
-    readFile(input: { path: string }): Promise<{ path: string; text: string }>;
+    readFile(input: { path: string }): Promise<RepoTextFile>;
+    readFiles(input: { paths: string[] }): Promise<{ files: RepoTextFile[] }>;
     readJson<T>(input: { path: string }): Promise<{ path: string; value: T }>;
     writeFile(input: {
       path: string;
       text: string;
       createDirectories?: boolean;
-    }): Promise<{ path: string; bytes: number }>;
+    }): Promise<RepoWriteResult>;
     writeJson<T>(input: {
       path: string;
       value: T;
       pretty?: boolean;
       createDirectories?: boolean;
-    }): Promise<{ path: string; bytes: number }>;
-    deleteFile(input: { path: string }): Promise<{ path: string; deleted: boolean }>;
-    listFiles(input?: { glob?: string }): Promise<{ paths: string[] }>;
-    searchText(input: {
+    }): Promise<RepoWriteResult>;
+    unlink(input: { path: string }): Promise<{ path: string; deleted: boolean }>;
+    stat(input: { path: string }): Promise<RepoStat>;
+    glob(input: {
+      pattern: string;
+      cwd?: string;
+      includeDirectories?: boolean;
+      maxResults?: number;
+    }): Promise<{ paths: string[] }>;
+    grep(input: {
       pattern: string;
       glob?: string;
       maxResults?: number;
-    }): Promise<{
-      matches: Array<{ path: string; line: number; text: string }>;
-    }>;
-    stat(input: { path: string }): Promise<{
-      exists: boolean;
-      isFile: boolean;
-      isDirectory: boolean;
-    }>;
+      caseSensitive?: boolean;
+      regex?: boolean;
+    }): Promise<{ matches: RepoGrepMatch[] }>;
   };
 
   git: {
-    status(input?: {}): Promise<{
+    status(input?: { paths?: string[] }): Promise<{
       branch?: string;
-      files: Array<{
-        path: string;
-        change: "added" | "modified" | "deleted" | "renamed";
-        previousPath?: string;
-      }>;
+      files: GitFileChange[];
+      ahead?: number;
+      behind?: number;
     }>;
-    diff(input?: { paths?: string[]; cached?: boolean }): Promise<{ text: string }>;
-    changedFiles(input?: { paths?: string[] }): Promise<{
-      files: Array<{
-        path: string;
-        change: "added" | "modified" | "deleted" | "renamed";
-        previousPath?: string;
-      }>;
-    }>;
-    currentBranch(input?: {}): Promise<{ branch?: string }>;
-    recentCommits(input?: { limit?: number }): Promise<{
-      commits: Array<{ sha: string; subject: string; author?: string; authoredAt?: string }>;
-    }>;
-    showCommit(input: { sha: string }): Promise<{
-      sha: string;
-      subject: string;
-      body?: string;
-      diff?: string;
-    }>;
-    readFileAtRef(input: { path: string; ref: string }): Promise<{
-      path: string;
+    diff(input?: {
+      paths?: string[];
+      cached?: boolean;
+      baseRef?: string;
+      headRef?: string;
+    }): Promise<{ text: string }>;
+    log(input?: {
+      ref?: string;
+      limit?: number;
+    }): Promise<{ commits: GitCommitSummary[] }>;
+    show(input: {
       ref: string;
-      text: string;
+      path?: string;
+    }): Promise<{ text: string }>;
+    branch(input?: {
+      all?: boolean;
+      verbose?: boolean;
+    }): Promise<{
+      current?: string;
+      branches: Array<{
+        name: string;
+        current: boolean;
+        upstream?: string;
+      }>;
     }>;
-    mergeBase(input: { baseRef: string; headRef: string }): Promise<{ sha?: string }>;
+    mergeBase(input: {
+      baseRef: string;
+      headRef: string;
+    }): Promise<{ sha?: string }>;
+    fetch(input?: {
+      remote?: string;
+      refspecs?: string[];
+      prune?: boolean;
+    }): Promise<GitCommandResult>;
+    pull(input?: {
+      remote?: string;
+      branch?: string;
+      rebase?: boolean;
+    }): Promise<GitCommandResult>;
+    push(input?: {
+      remote?: string;
+      branch?: string;
+      setUpstream?: boolean;
+      forceWithLease?: boolean;
+      tags?: boolean;
+    }): Promise<GitCommandResult>;
+    add(input: {
+      paths?: string[];
+      all?: boolean;
+      update?: boolean;
+    }): Promise<GitCommandResult>;
+    commit(input: {
+      message: string;
+      all?: boolean;
+      allowEmpty?: boolean;
+      amend?: boolean;
+    }): Promise<GitCommandResult & { sha?: string }>;
+    switch(input: {
+      branch: string;
+      create?: boolean;
+      startPoint?: string;
+    }): Promise<GitCommandResult>;
+    checkout(input: {
+      ref?: string;
+      paths?: string[];
+      createBranch?: string;
+    }): Promise<GitCommandResult>;
+    restore(input: {
+      paths: string[];
+      source?: string;
+      staged?: boolean;
+      worktree?: boolean;
+    }): Promise<GitCommandResult>;
+    rebase(input: {
+      upstream?: string;
+      branch?: string;
+      continue?: boolean;
+      abort?: boolean;
+    }): Promise<GitCommandResult>;
+    cherryPick(input: {
+      commits?: string[];
+      continue?: boolean;
+      abort?: boolean;
+      noCommit?: boolean;
+    }): Promise<GitCommandResult>;
+    stash(input?: {
+      subcommand?: "push" | "pop" | "apply" | "drop" | "list" | "show";
+      stash?: string;
+      message?: string;
+      includeUntracked?: boolean;
+    }): Promise<GitCommandResult>;
+    tag(input?: {
+      name?: string;
+      target?: string;
+      annotate?: boolean;
+      message?: string;
+      delete?: boolean;
+      list?: boolean;
+      pattern?: string;
+    }): Promise<GitCommandResult>;
   };
 
   exec: {
@@ -210,280 +418,228 @@ type SvvyApi = {
   };
 
   artifact: {
-    writeText(input: { name: string; text: string }): Promise<{
-      artifactId: string;
+    writeText(input: {
+      name: string;
+      text: string;
+    }): Promise<ArtifactWriteResult>;
+    writeJson<T>(input: {
+      name: string;
+      value: T;
+      pretty?: boolean;
+    }): Promise<ArtifactWriteResult>;
+    attachFile(input: {
       path: string;
-    }>;
-    writeJson<T>(input: { name: string; value: T; pretty?: boolean }): Promise<{
-      artifactId: string;
-      path: string;
-    }>;
-    attachFile(input: { path: string; name?: string }): Promise<{
-      artifactId: string;
-      path: string;
-    }>;
+      name?: string;
+    }): Promise<ArtifactWriteResult>;
   };
 
   web: {
-    search(input: { query: string; maxResults?: number }): Promise<{
+    search(input: {
+      query: string;
+      maxResults?: number;
+    }): Promise<{
       results: Array<{ title: string; url: string; snippet: string }>;
     }>;
-    fetchText(input: { url: string }): Promise<{ url: string; text: string }>;
+    fetchText(input: {
+      url: string;
+    }): Promise<{ url: string; text: string }>;
   };
 };
 ```
 
-This should be treated as the concrete day-one inventory unless a later design pass changes it intentionally.
-
-### API Rules
-
-The host SDK should follow these rules:
-
-- one injected object named `api`
-- function-first namespaces, not class-based clients
-- generics where they improve type certainty, especially JSON reads and writes
-- process execution exposed through `api.exec.run`
-- product-level control flow kept in top-level tools such as `workflow.start`, `workflow.resume`, `verification.run`, and `wait`
-- SDK capabilities provided through the typed runtime surface rather than ambient language or runtime globals
-
-If the API grows later, it should still preserve the same model:
-
-- one top-level `execute_typescript` tool
-- one injected `api.*` SDK
-- native control tools kept separate from ordinary capability calls
-
-### Generic Capability Categories
-
-The first capability categories should cover ordinary generic work:
-
-- repository and filesystem reads and writes
-- text search and tree inspection
-- git inspection
-- web lookups
-- artifact creation
-- explicit bounded process execution through `api.exec.run`
-
-These are examples of likely functions, not a frozen exhaustive list.
-
-## Native Control Tool Boundary
-
-The adopted top-level tool surface is:
-
-- `execute_typescript`
-- `workflow.start`
-- `workflow.resume`
-- `verification.run`
-- `wait`
-
-The boundary is:
-
-- ordinary generic work goes through `execute_typescript`
-- product-level control-flow changes stay in native control tools
-
-`workflow.start`, `workflow.resume`, `verification.run`, and `wait` do not belong inside `api.*`.
-
-Keeping them explicit preserves a clean mental model:
-
-- `execute_typescript` composes generic capability calls
-- native control tools change top-level runtime state
-
-## Execution Flow
-
-The runtime flow for one `execute_typescript` call should be:
-
-1. create a parent command for `execute_typescript`
-2. persist the exact submitted TypeScript snippet as a file-backed artifact before execution starts
-3. write SQLite artifact metadata and path indexes for that snippet
-4. prepare the injected `api.*` surface and TypeScript helper context
-5. compile and typecheck the submitted code
-6. if static diagnostics fail, return them without running the program
-7. otherwise execute the provided TypeScript program
-8. record each nested API call as a child command
-9. return `{ success, result, logs, error }`
-10. write lifecycle events and update structured state
-
-The important behavior is:
-
-- the parent `execute_typescript` call is one command
-- each nested capability call is also a command
-- nested calls usually use `visibility = "trace"` unless promoted deliberately
-- failed attempts still keep the exact submitted snippet as a durable artifact
-
-## Command And Artifact Requirements
-
-`execute_typescript` must integrate with the structured command model defined in the structured-session-state spec.
-
-### Parent Command
+## Command Model
 
 Each top-level `execute_typescript` invocation creates one parent command with:
 
 - `toolName = "execute_typescript"`
-- `executor = "orchestrator"` or the delegated worker's equivalent top-level executor
-- `visibility = "summary"` or `surface` when the call itself is user-meaningful
+- `executor = "orchestrator"` or the delegated worker equivalent
+- `visibility = "summary"` or `surface` when the parent run itself is a primary user-facing action
 
-### Child Commands
+Each nested `api.*` call creates one child command with:
 
-Each nested capability call creates a child command such as:
-
-- `repo.readFile`
-- `repo.searchText`
-- `git.status`
-- `web.search`
-- `artifact.writeText`
-- `exec.run`
-
-These child commands should normally use:
-
+- `parentCommandId` pointing at the parent `execute_typescript` command
 - `executor = "execute_typescript"`
-- `visibility = "trace"` for low-level reads
-- `visibility = "summary"` when the nested call creates a durable user-meaningful output such as an artifact
+- `toolName` matching the namespace and method, such as `repo.readFile` or `git.commit`
+- normalized facts describing what happened
 
-### Logs And Errors
+Day-one child commands should use only:
 
-Console output, structured diagnostics, and runtime failures should be captured into:
+- `trace`
+- `summary`
 
-- command summaries
-- events
-- artifacts when the output is worth retaining
-- episodes when the work is meaningful and concluded
+Day-one child commands should not use `surface`.
 
-### Source Snippet Capture
+The parent command is the surfaced or summarized unit.
 
-Every attempted `execute_typescript` invocation should persist the exact submitted TypeScript snippet as a file-backed artifact in the dedicated workspace artifact directory.
+## Observable Facts And Default UI Surfacing
+
+Every child command is durable and visible in nested trace inspection.
+
+The tables below describe what is additionally surfaced by default beyond trace.
+
+The runtime should store normalized facts, not full raw payloads, on child commands.
+
+Large raw payloads such as file contents, diffs, fetched text, or full stdout and stderr are not promoted into child-command facts by default. This rule applies to child-command outputs, not to the submitted snippet itself, which is always stored as a file-backed artifact.
+
+If a large payload matters beyond immediate execution, the runtime or the agent should retain it as an artifact.
+
+### `api.repo.*`
+
+| Method | Durable child-command facts | Extra default surfacing beyond trace |
+| --- | --- | --- |
+| `repo.readFile` | `path`, `bytesRead` | Parent rollup only. |
+| `repo.readFiles` | `paths`, `fileCount`, `totalBytesRead` | Parent rollup only. |
+| `repo.readJson` | `path` | Parent rollup only. |
+| `repo.writeFile` | `path`, `bytesWritten` | Parent summary-visible write. |
+| `repo.writeJson` | `path`, `bytesWritten` | Parent summary-visible write. |
+| `repo.unlink` | `path`, `deleted` | Parent summary-visible write. |
+| `repo.stat` | `path`, `exists`, `kind`, `sizeBytes?` | Trace only unless it fails. |
+| `repo.glob` | `pattern`, `resultCount`, `cwd?` | Parent rollup only. |
+| `repo.grep` | `pattern`, `glob?`, `matchCount`, `pathCount` | Parent rollup only. |
+
+### `api.git.*`
+
+| Method | Durable child-command facts | Extra default surfacing beyond trace |
+| --- | --- | --- |
+| `git.status` | `branch`, `changedFileCount`, `ahead`, `behind` | Parent rollup only. |
+| `git.diff` | `paths?`, `cached`, `baseRef?`, `headRef?`, `diffBytes` | Parent rollup only. |
+| `git.log` | `ref?`, `limit`, `commitCount` | Parent rollup only. |
+| `git.show` | `ref`, `path?`, `bytesRead` | Parent rollup only. |
+| `git.branch` | `current`, `branchCount` | Parent rollup only. |
+| `git.mergeBase` | `baseRef`, `headRef`, `sha?` | Parent rollup only. |
+| `git.fetch` | `remote?`, `refspecCount`, `prune` | Parent summary-visible sync action and failure. |
+| `git.pull` | `remote?`, `branch?`, `rebase` | Parent summary-visible sync action and failure. |
+| `git.push` | `remote?`, `branch?`, `setUpstream`, `forceWithLease`, `tags` | Parent summary-visible sync action and failure. |
+| `git.add` | `paths?`, `all`, `update` | Parent summary-visible write. |
+| `git.commit` | `messageSummary`, `sha?`, `all`, `allowEmpty`, `amend` | Parent summary-visible write. |
+| `git.switch` | `branch`, `create`, `startPoint?` | Parent summary-visible branch change. |
+| `git.checkout` | `ref?`, `paths?`, `createBranch?` | Parent summary-visible branch or file restore action. |
+| `git.restore` | `paths`, `source?`, `staged`, `worktree` | Parent summary-visible write. |
+| `git.rebase` | `upstream?`, `branch?`, `mode` | Parent summary-visible action and failure. |
+| `git.cherryPick` | `commitCount`, `noCommit`, `mode` | Parent summary-visible action and failure. |
+| `git.stash` | `subcommand`, `stash?`, `message?` | `list` and `show` contribute to parent rollup only; mutating subcommands are parent summary-visible. |
+| `git.tag` | `name?`, `target?`, `annotate`, `delete`, `list`, `pattern?` | `list` contributes to parent rollup only; create or delete actions are parent summary-visible. |
+
+### `api.exec.run`
+
+| Method | Durable child-command facts | Extra default surfacing beyond trace |
+| --- | --- | --- |
+| `exec.run` | `command`, `args`, `cwd`, `timeoutMs?`, `exitCode`, `stdoutBytes`, `stderrBytes` | Parent rollup on success. Parent summary-visible on non-zero exit, timeout, or retained output artifact. |
+
+### `api.artifact.*`
+
+| Method | Durable child-command facts | Extra default surfacing beyond trace |
+| --- | --- | --- |
+| `artifact.writeText` | `artifactId`, `name`, `path`, `bytesWritten` | Parent summary-visible plus first-class artifact record. |
+| `artifact.writeJson` | `artifactId`, `name`, `path`, `bytesWritten` | Parent summary-visible plus first-class artifact record. |
+| `artifact.attachFile` | `artifactId`, `name`, `path` | Parent summary-visible plus first-class artifact record. |
+
+### `api.web.*`
+
+| Method | Durable child-command facts | Extra default surfacing beyond trace |
+| --- | --- | --- |
+| `web.search` | `query`, `resultCount` | Parent rollup only. |
+| `web.fetchText` | `url`, `bytesRead` | Parent rollup only. Failures become parent summary-visible. |
+
+### Parent Rollups
+
+The parent `execute_typescript` command should synthesize compact rollups from child facts such as:
+
+- `Read 3 files`
+- `Searched 18 files and found 4 matches`
+- `Wrote 2 files`
+- `Created 1 artifact`
+- `Ran 1 subprocess`
+- `Git: branch main, 5 changed files`
+- `Git: committed abc123 and pushed origin/main`
+
+The parent is the summary and inspection entry point.
+
+Child commands stay nested by default and do not become separate top-level session or sidebar objects.
+
+## Artifact And Diagnostics Rules
+
+### Submitted Snippet Artifact
+
+Every attempted `execute_typescript` invocation must persist the exact submitted TypeScript snippet as a file-backed artifact in the dedicated workspace artifact directory.
 
 This includes:
 
 - successful executions
-- typecheck or validation failures before execution
-- runtime failures after execution starts
+- compile or typecheck failures
+- runtime failures
 
-The reason is product clarity:
-
-- the UI must be able to show the exact code that was attempted
-- retries and debugging should refer to durable stored source rather than reconstructed transcript text
-- delegated and ordinary execution should follow the same inspection model
-
-That snippet artifact should be created before execution begins so failed runs still retain their submitted code.
-
-## Prompting And Type Exposure
-
-The prompt and type-exposure layer should do three things:
-
-1. explain when to use `execute_typescript`
-2. document the available `api.*` namespaces
-3. provide generated TypeScript signatures or stubs for the injected capabilities
-
-The goal is not to dump every capability detail into the prompt blindly.
-
-The goal is to expose enough typed structure that the model can write short correct programs reliably.
-
-## SDK Shape
-
-The injected host surface should stay function-first and namespace-based.
-
-Prefer:
-
-- `api.repo.readFile(...)`
-- `api.git.status(...)`
-- `api.exec.run(...)`
-
-Do not introduce class-based clients such as `new GitClient().status()` unless the runtime later proves a real stateful seam is necessary.
-
-## Artifact Storage Policy
-
-All artifacts created through this surface should be file-backed in a dedicated workspace artifact directory.
-
-The default layout should be:
+The default layout is:
 
 - `.svvy/artifacts/<sessionId>/<artifactId>-<slug>`
 
-The directory should be gitignored.
+SQLite stores metadata and path indexes for lookup.
 
-SQLite should store metadata and path indexes, not become the primary payload store for artifact bodies.
+### Diagnostics
 
-## Reasoning Boundary
+Compile and typecheck failures must:
 
-`execute_typescript` runs deterministic code against the injected `api.*` SDK.
+- be returned as structured diagnostics in `error.diagnostics`
+- be stored as durable command facts
+- block runtime execution
 
-It is not a hidden nested model call.
+### Output Artifacts
 
-That means:
+The runtime may retain additional artifacts for:
 
-- the active agent may use one `execute_typescript` call to inspect or gather data
-- reason over that returned result in the normal agent loop
-- then issue another `execute_typescript` call to write a summary artifact or make a change
+- large stdout or stderr payloads
+- generated summaries
+- exported reports
+- durable logs
+- retained fetched or derived outputs
 
-Do not expect one `execute_typescript` program to semantically summarize arbitrary unseen text without the agent first observing the relevant inputs and making a separate model decision.
+The rule is:
 
-## What `execute_typescript` Should Be Used For
+- normalized facts stay on the child command
+- durable large payloads go to artifacts
 
-Use `execute_typescript` when the work is:
+## Agent-Facing Guidance
 
-- composed of several generic capability calls
-- easier to express as a short program than as a long tool-call transcript
-- primarily about repository inspection, transformation, or data flow
-- bounded enough that a script is the right unit of execution
+The prompt and type-exposure layer should make these rules explicit:
 
-Examples:
+1. use `execute_typescript` for bounded generic work
+2. use `api.*` for all observable external work
+3. use pure TypeScript for local data shaping between `api.*` calls
+4. use native control tools for workflow, verification, and waiting
+5. write an artifact when a large payload or durable output matters beyond immediate execution
 
-- read a set of docs files, extract targeted sections, and return a structured intermediate result
-- search the repo for API usage, group findings, and return a compact result
-- read a config file, transform it, and write a generated helper file
-- write a summary artifact from data the agent already gathered in a previous step
-- perform a web lookup plus repo inspection and combine the results
+The runtime should expose generated TypeScript declarations or equivalent JSDoc for the injected `api` object so the model can discover the real surface instead of guessing.
 
-## What `execute_typescript` Should Not Be Used For
+## Delegated Usage
 
-Do not use `execute_typescript` as a substitute for:
-
-- starting or resuming a delegated workflow
-- launching top-level verification work
-- marking the session as waiting
-- hiding control-flow changes inside `api.*`
-
-Those are native control-tool or runtime concerns.
-
-## Delegated Workflow Usage
-
-The same `execute_typescript` primitive should be available inside delegated Smithers work when generic typed capability composition is useful there too.
+The same `execute_typescript` primitive should be available inside delegated Smithers work when generic typed capability composition is the right unit of work.
 
 That means:
 
 - workflow steps may call `execute_typescript`
 - hooks may call `execute_typescript`
-- the capability model should stay the same
-- the command model should still record parent and child commands
-- workflow usage must not fork into a second inconsistent code-execution API
+- the `api.*` surface stays the same
+- the parent and child command model stays the same
+- snippet artifacts, child command facts, and parent rollups stay the same
 
 ## First Implementation Focus
 
 The first implementation should concentrate on:
 
-- the stable `execute_typescript` input and output contract
-- the typed day-one `api.*` inventory
-- bounded process execution through `api.exec.run`
-- compile/typecheck-before-run diagnostics
-- file-backed artifact persistence and SQLite indexing
+- the stable input and output contract
+- compile or typecheck before execution
+- snippet artifact persistence and SQLite indexing
+- the day-one typed `api.*` surface
+- parent and child command recording
+- normalized child-command facts and parent rollups
+- artifact retention for logs and durable outputs when needed
 - reuse of the same primitive inside delegated Smithers work
-- a later hardening path for execution isolation without changing the high-level tool contract
 
-## Rollout Guidance
-
-The rollout should be:
-
-1. implement the stable `execute_typescript` input and output contract
-2. implement a typed injected `api.*` surface for the first generic capability categories
-3. record parent and child commands for every invocation
-4. persist the submitted TypeScript snippet as a file-backed artifact before execution and index it in SQLite
-5. compile and typecheck before runtime execution, returning structured diagnostics on failure
-6. capture logs, errors, and meaningful outputs into artifacts and episodes
-7. reuse the same primitive inside delegated Smithers work
-8. treat sandboxing as later hardening work rather than as an architecture blocker
+Later hardening such as stricter sandboxing may change how the runtime is isolated, but it should not change the top-level tool contract or the parent-first observability model.
 
 ## Sources
 
 ### Local Sources
 
 - [PRD](../prd.md)
-- [Execution Model](../execution-model.md)
 - [Structured Session State Spec](./structured-session-state.spec.md)

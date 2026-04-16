@@ -2,7 +2,7 @@
 
 ## Status
 
-- Date: 2026-04-15
+- Date: 2026-04-16
 - Status: adopted direction for the next structured session state refactor
 - Reference implementation: [POC](../pocs/structured-session-state.poc.ts)
 
@@ -36,9 +36,11 @@ This document defines:
 
 ## Reference Rule
 
-The executable reference for this spec is [docs/pocs/structured-session-state.poc.ts](../pocs/structured-session-state.poc.ts).
+The executable reference sketch for this spec is [docs/pocs/structured-session-state.poc.ts](../pocs/structured-session-state.poc.ts).
 
-If this spec and the POC ever disagree, that is a bug in the spec and should be fixed immediately.
+The spec is canonical for product behavior and storage semantics.
+
+If this spec and the POC ever disagree, the POC should be reconciled to the spec rather than narrowing the spec to match a stale sketch.
 
 ## Adopted Direction
 
@@ -46,13 +48,14 @@ If this spec and the POC ever disagree, that is a bug in the spec and should be 
 - Keep Smithers as the canonical delegated workflow execution substrate.
 - Add `svvy`-owned structured product state above those substrates.
 - Model turns and commands explicitly.
-- Treat every tool call as a command.
+- Treat every tool call as a `CommandRecord`.
 - Make `execute_typescript` the default generic work surface.
 - Treat `execute_typescript` as the single default generic top-level tool.
 - Inject `api.*` as the host SDK inside `execute_typescript`.
 - Include explicit `api.exec.run` in the host SDK.
 - Compile or typecheck before run, emit structured diagnostics, and block invalid execution.
 - Persist every submitted `execute_typescript` snippet as a file-backed artifact in the workspace artifact directory.
+- Treat every top-level `execute_typescript` invocation as one parent command record and every nested `api.*` call as a child command record.
 - Keep only a very small set of native control tools for workflow, verification, and wait.
 - Remove arbitrary agent-facing structured-state write tools from the product contract.
 - Drive durable facts from real runtime handlers and bridge events, not transcript heuristics.
@@ -66,7 +69,7 @@ The product should model the durable things that actually affect routing, inspec
 
 That means:
 
-- keep first-class records for turns, threads, commands, episodes, verification runs, workflows, artifacts, and lifecycle events
+- keep first-class records for turns, threads, `CommandRecord`s, episodes, verification runs, workflows, artifacts, and lifecycle events
 - keep file-backed artifact metadata and path indexes alongside those records
 - do not split every human-readable summary into a large bespoke schema
 - keep Smithers internals inside Smithers unless `svvy` truly needs a top-level summary of them
@@ -192,6 +195,7 @@ type StructuredSessionState = {
     attempts: number;
     title: string;
     summary: string;
+    facts: Record<string, unknown> | null;
     error: string | null;
     startedAt: string;
     updatedAt: string;
@@ -298,11 +302,11 @@ The product needs a durable answer to:
 - whether it is active, failed, complete, or waiting
 - whether it is waiting on internal child work or on user or external input
 
-### Command
+### CommandRecord
 
-Commands are the center of the new model.
+`CommandRecord`s are the center of the new model.
 
-Every tool call becomes a command record.
+Every tool call becomes a `CommandRecord`.
 
 This gives the system a durable answer to:
 
@@ -312,6 +316,16 @@ This gives the system a durable answer to:
 - how commands nest
 - which commands are trace-only versus surfaced work
 - which command-scoped artifacts, including submitted `execute_typescript` snippets, belong to the attempt
+
+Top-level `execute_typescript` invocations are parent `CommandRecord`s.
+
+Nested `api.*` calls inside `execute_typescript` are child `CommandRecord`s. They keep durable trace facts for UI observability and semantic understanding of repo, git, web, artifact, and exec activity.
+
+Native control tools do not go through the nested `api.*` surface. They remain top-level `CommandRecord`s with their own records and selectors.
+
+The parent `execute_typescript` command is the main semantic unit. Its summary and surfaced facts should be synthesized from child activity where that activity materially changes the result, while child commands remain nested trace facts by default.
+
+Child commands should keep normalized facts such as paths, counts, refs, exit codes, artifact ids, and summarized outcomes. Large raw payloads belong in artifacts when they need durable retention.
 
 ### Episode
 
@@ -330,6 +344,8 @@ Workflow records exist because the product needs a top-level durable summary of 
 ### Artifact
 
 Artifacts exist because generated outputs, logs, exported details, and submitted `execute_typescript` snippets need stable file-backed durable handles.
+
+Every submitted `execute_typescript` snippet is also a file-backed artifact, including failed attempts.
 
 ### Event
 
@@ -467,9 +483,9 @@ If no runnable work remains, the runtime must also set `session.wait`.
 
 ## Command Model
 
-Commands are the universal durable representation of tool calls.
+`CommandRecord`s are the universal durable representation of tool calls.
 
-### Command Fields
+### CommandRecord Fields
 
 | Field | Why it exists |
 | --- | --- |
@@ -484,12 +500,13 @@ Commands are the universal durable representation of tool calls.
 | `attempts` | Records retry count without requiring a separate attempt table in the first slice. |
 | `title` | Compact human-readable label. |
 | `summary` | Compact durable explanation of the command's purpose or outcome. |
+| `facts` | Stores normalized tool-specific facts used for parent rollups and inspector drill-down without depending on raw payloads or transcript replay. |
 | `error` | Stores terminal failure text when needed. |
 | `startedAt` | Enables ordering and duration reasoning. |
 | `updatedAt` | Enables recency-based selectors. |
 | `finishedAt` | Marks terminal completion, failure, or cancellation. Waiting commands keep `finishedAt = null`. |
 
-### Command Visibility
+### CommandRecord Visibility
 
 The adopted visibility levels are:
 
@@ -499,13 +516,15 @@ The adopted visibility levels are:
 
 Use them this way:
 
-- low-level repo or web capability calls inside `execute_typescript` are usually `trace`
+- low-level repo or web reads inside `execute_typescript` are usually `trace`
+- material writes, artifact creation, and failed execs should usually roll up as `summary` facts under the parent `execute_typescript` command
 - generated artifacts or meaningful intermediate outputs may be `summary`
 - workflow, verification, and wait commands are normally `surface`
+- child `api.*` commands remain nested detail by default and do not become separate top-level session or sidebar objects unless a higher-level parent rollup surfaces the outcome
 
 This lets the system record everything durably without turning every file read into a top-level UI object.
 
-### Command Executor
+### CommandRecord Executor
 
 The adopted executor labels are:
 
@@ -517,7 +536,7 @@ The adopted executor labels are:
 
 These exist so ownership and debugging are explicit.
 
-### Command Status
+### CommandRecord Status
 
 The adopted statuses are:
 
@@ -528,7 +547,7 @@ The adopted statuses are:
 - `failed`
 - `cancelled`
 
-### Command Retry Policy
+### CommandRecord Retry Policy
 
 Retries are handler policy, not model improvisation.
 
@@ -639,6 +658,8 @@ Most artifacts are attached to episodes.
 
 Some artifacts, such as submitted `execute_typescript` snippets and compile diagnostics, originate at command scope first and may later be attached to an episode.
 
+Every submitted `execute_typescript` snippet is also a file-backed artifact, including failed attempts.
+
 ### Artifact Fields
 
 | Field | Why it exists |
@@ -651,6 +672,8 @@ Some artifacts, such as submitted `execute_typescript` snippets and compile diag
 | `path` | Workspace artifact path inside the dedicated artifact directory. |
 | `content` | Optional inline preview content for small artifacts and the POC. |
 | `createdAt` | Orders artifact creation. |
+
+The real implementation must keep SQLite metadata and path indexing for every snippet artifact so the runtime and UI can resolve source, preview, and drill-down information without transcript replay.
 
 ## Event Model
 
@@ -734,6 +757,7 @@ The adopted session summary selector returns:
 - `counts`
 - `threadIdsByStatus`
 - `threadIds`
+- parent command rollups for `execute_typescript` and native control tools
 
 ### Derived Fields
 
@@ -743,6 +767,7 @@ The following are derived, not stored:
 - counts
 - thread status buckets
 - thread ordering
+- parent command summary rollups
 
 ### `sessionStatus` Derivation
 
@@ -764,12 +789,16 @@ The main session UI should surface all threads and primarily read:
 - verification records
 - artifacts
 - session wait state
+- parent `execute_typescript` command records and their synthesized rollups
+- native control-tool command records
+- child `api.*` command records only in nested drill-down views by default
 
-Commands should be exposed with their `visibility` respected:
+Command records should be exposed with their `visibility` respected:
 
-- `surface` commands may become visible cards or primary timeline items
-- `summary` commands may appear in summaries or inspectors
-- `trace` commands should remain drill-down detail by default
+- `surface` command records may become visible cards or primary timeline items
+- `summary` command records may appear in summaries or inspectors, and child summaries should stay nested under their parent `execute_typescript` command by default
+- `trace` command records should remain drill-down detail by default
+- child `api.*` command records should stay nested under their parent `execute_typescript` command by default
 
 ## Real Storage Shape
 
@@ -874,6 +903,7 @@ The `command` table should store:
 - attempts
 - title
 - summary
+- normalized facts payload
 - nullable error
 - timestamps
 
@@ -1001,10 +1031,15 @@ The exact method names may change. The ownership boundaries should not.
 ### Write-Side Rules
 
 - every tool call must create a command record
-- nested capability calls inside `execute_typescript` must create child command records
+- top-level `execute_typescript` calls must create parent command records
+- nested capability calls inside `execute_typescript` must create child command records with durable trace facts
+- workflow, verification, and wait remain native control-tool records and must not be modeled as nested `api.*` calls
 - every `execute_typescript` attempt must persist its submitted snippet as a file-backed artifact before execution
+- every submitted snippet must be indexed in SQLite by artifact path and metadata
+- normalized child-command facts must be stored so parent read models can synthesize rollups without transcript replay
+- large raw outputs that need durable retention should be written as artifacts instead of inflated command facts
 - compile or typecheck diagnostics must be written as structured facts and invalid snippets must not run
-- `trace` commands must still be durable even if they are not promoted into primary UI surfaces
+- `trace` command records must still be durable even if they are not promoted into primary UI surfaces
 - a workflow record must only be created from a real Smithers run with a real `smithersRunId`
 - a verification record must only be created from a real verification outcome
 - a thread may depend on other threads or carry a user or external wait, but it must not carry both at once

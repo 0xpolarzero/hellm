@@ -6,7 +6,13 @@ import type {
   StructuredSessionStateStore,
 } from "./structured-session-state";
 
-const SPECIALIZED_TOOL_NAMES = new Set(["verification.run", "workflow.start", "wait"]);
+const SPECIALIZED_TOOL_NAMES = new Set([
+  "execute_typescript",
+  "verification.run",
+  "workflow.start",
+  "workflow.resume",
+  "wait",
+]);
 
 export interface ToolExecutionCommandTracker {
   handleToolExecutionStart(input: {
