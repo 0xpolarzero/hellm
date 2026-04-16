@@ -246,6 +246,177 @@ describe("structured session state SQLite persistence", () => {
     ]);
   });
 
+  it("resets legacy structured-session sqlite state instead of migrating it", () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-structured-sqlite-legacy-"));
+    tempDirs.push(root);
+    const databasePath = join(root, "structured-session-state.sqlite");
+    const workspaceCwd = root;
+
+    const legacyDb = new Database(databasePath);
+    legacyDb.exec(`
+      PRAGMA user_version = 2;
+
+      CREATE TABLE workspace (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        cwd TEXT NOT NULL
+      );
+
+      CREATE TABLE session (
+        session_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        provider TEXT,
+        model TEXT,
+        reasoning_effort TEXT,
+        message_count INTEGER NOT NULL,
+        pi_status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        wait_thread_id TEXT,
+        wait_kind TEXT,
+        wait_reason TEXT,
+        wait_resume_when TEXT,
+        wait_since TEXT
+      );
+
+      CREATE TABLE turn (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        request_summary TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT
+      );
+
+      CREATE TABLE thread (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        parent_thread_id TEXT,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        objective TEXT NOT NULL,
+        status TEXT NOT NULL,
+        depends_on_thread_ids TEXT NOT NULL,
+        wait_kind TEXT,
+        wait_reason TEXT,
+        wait_resume_when TEXT,
+        wait_since TEXT,
+        started_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT
+      );
+
+      CREATE TABLE command (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        parent_command_id TEXT,
+        tool_name TEXT NOT NULL,
+        executor TEXT NOT NULL,
+        visibility TEXT NOT NULL,
+        status TEXT NOT NULL,
+        attempts INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        error TEXT,
+        started_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT
+      );
+
+      CREATE TABLE episode (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE artifact (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        episode_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        path TEXT,
+        content TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_artifact_session ON artifact(session_id);
+      CREATE INDEX idx_artifact_episode ON artifact(episode_id);
+
+      INSERT INTO workspace (id, label, cwd)
+      VALUES ('legacy-workspace', 'legacy', 'legacy');
+
+      INSERT INTO session (
+        session_id,
+        title,
+        provider,
+        model,
+        reasoning_effort,
+        message_count,
+        pi_status,
+        created_at,
+        updated_at,
+        wait_thread_id,
+        wait_kind,
+        wait_reason,
+        wait_resume_when,
+        wait_since
+      ) VALUES (
+        'legacy-session',
+        'Legacy Session',
+        'openai',
+        'gpt-5.4',
+        'high',
+        1,
+        'idle',
+        '2026-04-14T11:55:00.000Z',
+        '2026-04-14T11:55:00.000Z',
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL
+      );
+    `);
+    legacyDb.close();
+
+    const store = createStructuredSessionStateStore({
+      workspace: {
+        id: workspaceCwd,
+        label: "svvy",
+        cwd: workspaceCwd,
+      },
+      databasePath,
+      now: createDeterministicClock(),
+    });
+    openStores.push(store);
+    closeTrackedStore(store);
+
+    const reopenedDb = new Database(databasePath);
+    const sessionCount = reopenedDb
+      .query(`SELECT COUNT(*) AS count FROM session`)
+      .get() as { count: number };
+    const artifactColumns = reopenedDb
+      .query(`PRAGMA table_info(artifact)`)
+      .all() as Array<{ name: string }>;
+    const commandColumns = reopenedDb
+      .query(`PRAGMA table_info(command)`)
+      .all() as Array<{ name: string }>;
+    reopenedDb.close();
+
+    expect(sessionCount.count).toBe(0);
+    expect(artifactColumns.map((column) => column.name)).toContain("source_command_id");
+    expect(commandColumns.map((column) => column.name)).toContain("facts_json");
+  });
+
   it("writes artifacts into the workspace-scoped artifact directory with persisted path metadata", () => {
     const { store, workspaceCwd } = createSqliteStore();
     seedSession(store, {

@@ -449,7 +449,6 @@ interface StructuredEventRow {
 }
 
 const DEFAULT_DATABASE_PATH = ":memory:";
-const SCHEMA_VERSION = 5;
 const ID_COUNTER_TABLES = [
   { table: "turn", column: "id", prefix: "turn" },
   { table: "thread", column: "id", prefix: "thread" },
@@ -1565,37 +1564,70 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   private ensureSchema(): void {
-    const currentVersion =
-      ((this.db.query("PRAGMA user_version").get() as { user_version?: number } | null)
-        ?.user_version as number | undefined) ?? 0;
-
-    if (currentVersion === SCHEMA_VERSION) {
-      return;
-    }
-
     this.db.exec("PRAGMA foreign_keys = OFF;");
-    if (currentVersion === 4) {
-      this.migrateSchemaFromV4ToV5();
-      this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+    try {
+      if (this.hasCurrentSchema()) {
+        return;
+      }
+
+      this.db.exec("BEGIN IMMEDIATE;");
+      try {
+        this.dropSchema();
+        this.createSchema();
+        this.db.exec("COMMIT;");
+      } catch (error) {
+        this.db.exec("ROLLBACK;");
+        throw error;
+      }
+    } finally {
       this.db.exec("PRAGMA foreign_keys = ON;");
-      return;
     }
-    if (currentVersion === 3) {
-      this.migrateSchemaFromV3ToV4();
-      this.migrateSchemaFromV4ToV5();
-      this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
-      this.db.exec("PRAGMA foreign_keys = ON;");
-      return;
-    }
-    if (currentVersion === 2) {
-      this.migrateSchemaFromV2ToV3();
-      this.migrateSchemaFromV3ToV4();
-      this.migrateSchemaFromV4ToV5();
-      this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
-      this.db.exec("PRAGMA foreign_keys = ON;");
-      return;
-    }
+  }
+
+  private hasCurrentSchema(): boolean {
+    return (
+      this.hasTable("workspace") &&
+      this.hasTable("session") &&
+      this.hasTable("turn") &&
+      this.hasTable("thread") &&
+      this.hasTable("command") &&
+      this.hasTable("episode") &&
+      this.hasTable("artifact") &&
+      this.hasTable("verification") &&
+      this.hasTable("workflow") &&
+      this.hasTable("domain_event") &&
+      this.hasColumns("artifact", ["source_command_id"]) &&
+      this.hasColumns("command", ["facts_json"]) &&
+      this.hasIndex("artifact", "idx_artifact_session_path")
+    );
+  }
+
+  private hasTable(name: string): boolean {
+    const row = this.db
+      .query(
+        `SELECT name
+         FROM sqlite_master
+         WHERE type = 'table' AND name = ?
+         LIMIT 1`,
+      )
+      .get(name) as { name: string } | null;
+    return row !== null;
+  }
+
+  private hasColumns(tableName: string, columns: string[]): boolean {
+    const rows = this.db.query(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+    const names = new Set(rows.map((row) => row.name));
+    return columns.every((column) => names.has(column));
+  }
+
+  private hasIndex(tableName: string, indexName: string): boolean {
+    const rows = this.db.query(`PRAGMA index_list(${tableName})`).all() as Array<{ name: string }>;
+    return rows.some((row) => row.name === indexName);
+  }
+
+  private dropSchema(): void {
     this.db.exec(`
+      DROP TABLE IF EXISTS artifact_v2;
       DROP TABLE IF EXISTS domain_event;
       DROP TABLE IF EXISTS artifact;
       DROP TABLE IF EXISTS episode;
@@ -1607,6 +1639,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       DROP TABLE IF EXISTS session;
       DROP TABLE IF EXISTS workspace;
     `);
+  }
+
+  private createSchema(): void {
     this.db.exec(`
       CREATE TABLE workspace (
         id TEXT PRIMARY KEY,
@@ -1777,69 +1812,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         FOREIGN KEY(session_id) REFERENCES session(session_id) ON DELETE CASCADE
       );
       CREATE INDEX idx_domain_event_session ON domain_event(session_id);
-    `);
-    this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
-    this.db.exec("PRAGMA foreign_keys = ON;");
-  }
-
-  private migrateSchemaFromV2ToV3(): void {
-    this.db.exec(`
-      ALTER TABLE artifact RENAME TO artifact_v2;
-
-      CREATE TABLE artifact (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        episode_id TEXT,
-        source_command_id TEXT,
-        kind TEXT NOT NULL,
-        name TEXT NOT NULL,
-        path TEXT,
-        content TEXT,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY(session_id) REFERENCES session(session_id) ON DELETE CASCADE,
-        FOREIGN KEY(episode_id) REFERENCES episode(id) ON DELETE SET NULL,
-        FOREIGN KEY(source_command_id) REFERENCES command(id) ON DELETE SET NULL
-      );
-      CREATE INDEX idx_artifact_session ON artifact(session_id);
-      CREATE INDEX idx_artifact_episode ON artifact(episode_id);
-      CREATE INDEX idx_artifact_source_command ON artifact(source_command_id);
-
-      INSERT INTO artifact (
-        id,
-        session_id,
-        episode_id,
-        source_command_id,
-        kind,
-        name,
-        path,
-        content,
-        created_at
-      )
-      SELECT
-        id,
-        session_id,
-        episode_id,
-        NULL,
-        kind,
-        name,
-        path,
-        content,
-        created_at
-      FROM artifact_v2;
-
-      DROP TABLE artifact_v2;
-    `);
-  }
-
-  private migrateSchemaFromV3ToV4(): void {
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_artifact_session_path ON artifact(session_id, path);
-    `);
-  }
-
-  private migrateSchemaFromV4ToV5(): void {
-    this.db.exec(`
-      ALTER TABLE command ADD COLUMN facts_json TEXT;
     `);
   }
 
