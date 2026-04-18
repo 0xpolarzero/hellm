@@ -51,7 +51,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Handler Thread Surfaces",
     status: "in-progress",
     summary:
-      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, can receive direct user messages, and emit one final terminal episode back to the orchestrator.",
+      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, can receive direct user messages before and after handoff, and can return control to the orchestrator multiple times over their lifetime through ordered handoff episodes.",
     sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -99,7 +99,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Turn And Command State",
     status: "in-progress",
     summary:
-      "Tracks every turn on the orchestrator surface and handler thread surfaces, plus every tool call including execute_typescript snippets and nested api.* child command facts, as durable state with lifecycle status, ownership, linkage, attempts, and trace-versus-surface visibility.",
+      "Tracks every turn on the orchestrator surface and handler thread surfaces, including each turn's top-level turn decision, plus every tool call including execute_typescript snippets and nested api.* child command facts, as durable state with lifecycle status, ownership, linkage, attempts, and trace-versus-surface visibility.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -107,15 +107,15 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Handler Threads",
     status: "in-progress",
     summary:
-      "Tracks delegated handler threads as durable interactive surfaces with backing pi session ids, objective, lifecycle status, wait state, worktree context, and linkage to multiple workflow runs over the thread's lifetime.",
+      "Tracks delegated handler threads as durable interactive surfaces with backing pi session ids, objective, current objective status, wait state, worktree context, and linkage to multiple workflow runs and multiple handoff episodes over the thread's lifetime.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
     id: "durable-episodes",
-    name: "Durable Final Episodes",
+    name: "Durable Episodes",
     status: "in-progress",
     summary:
-      "Stores reusable terminal semantic outputs as first-class episode records, with one final episode per completed thread, including orchestrator-local threads when substantive local work completes, while tool runs keep their own command summaries and artifacts.",
+      "Stores reusable semantic outputs as first-class episode records, with handler threads able to emit multiple ordered handoff episodes over their lifetime as the semantic half of returning control to the orchestrator, including orchestrator-local episodes when substantive local work completes, while tool runs keep their own command summaries and artifacts.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {

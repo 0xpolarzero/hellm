@@ -46,6 +46,7 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Keep Smithers as the canonical workflow execution substrate.
 - Add `svvy`-owned structured product state above those substrates.
 - Model turns, handler threads, workflow runs, commands, episodes, artifacts, verification, and waits explicitly.
+- Persist one top-level per-turn decision for every surface, with orchestrator routing decisions and handler supervision decisions sharing one field.
 - Treat every tool call as a `CommandRecord`.
 - Make `execute_typescript` the default generic work surface.
 - Treat every top-level `execute_typescript` invocation as one parent command record and every nested `api.*` call as a child command record.
@@ -53,7 +54,7 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Drive durable facts from real runtime handlers and bridge events, not transcript heuristics.
 - Keep workflow-run state separate from handler-thread state.
 - Treat a handler thread as one delegated objective that may supervise many workflow runs over its lifetime.
-- Treat the handler thread's final terminal episode as the normal semantic handoff back to the orchestrator.
+- Treat handler-thread episodes as durable handoff summaries that are emitted whenever a thread gives control back to the orchestrator.
 - Do not model internal workflow pauses as separate episodes.
 - Use selectors and metadata-first read models instead of making the UI reconstruct state from storage details or transcripts.
 
@@ -97,7 +98,7 @@ Smithers remains canonical for:
 - turns and handler-thread records
 - workflow-run records projected into the session model
 - command records
-- final episodes
+- episodes, including handler-thread handoff episodes
 - verification records
 - artifacts and artifact indexes
 - session summary read models and selectors
@@ -133,6 +134,15 @@ type StructuredSessionState = {
     surfacePiSessionId: string;
     threadId: string | null;
     requestSummary: string;
+    turnDecision:
+      | "pending"
+      | "reply"
+      | "execute_typescript"
+      | "clarify"
+      | "thread.start"
+      | "workflow.start"
+      | "workflow.resume"
+      | "handoff";
     status: "running" | "waiting" | "completed" | "failed";
     startedAt: string;
     updatedAt: string;
@@ -318,11 +328,17 @@ Episodes are the durable semantic outputs reused later by the orchestrator and s
 
 In the delegated model, the most important invariant is:
 
-- one handler thread produces zero or one terminal episode
+- a handler thread may emit many handoff episodes over time
+- each handoff episode marks one moment where that thread returned control to the orchestrator
 
 Waiting inside a handler thread does not create a wait episode.
 
-The terminal episode is created only when that delegated objective actually finishes or definitively fails.
+A handoff episode is created only when that delegated objective reaches a terminal state for the current active work span.
+
+The terminal handoff back to the orchestrator is:
+
+- the thread's terminal durable state
+- the latest handoff episode emitted by that thread
 
 ### Verification
 
@@ -360,7 +376,7 @@ These rules are adopted:
 - one thread contains many turns over time
 - one thread contains many commands
 - one thread contains many workflow runs
-- one thread contains zero or one terminal episode
+- one thread may contain many episodes over time
 - one workflow run belongs to exactly one thread
 - one workflow run may have many commands and artifacts
 - one artifact may link to a thread, a workflow run, a command, or any combination that is semantically useful
@@ -375,10 +391,24 @@ These rules are adopted:
 | `surfacePiSessionId` | Identifies which interactive surface received the message. |
 | `threadId` | Links the turn to a handler thread when the target surface is delegated work. `null` means the main orchestrator surface. |
 | `requestSummary` | Compact durable description of what the request was. |
+| `turnDecision` | Captures the top-level action this surface chose for the turn without forcing later reconstruction from commands or transcript text. |
 | `status` | Whether the request is still running, waiting, completed, or failed. |
 | `startedAt` | Enables ordering and duration reasoning. |
 | `updatedAt` | Enables recency-based selectors. |
 | `finishedAt` | Marks terminal completion or failure. |
+
+### Turn Decision
+
+Every turn should persist one explicit surface-level turn decision.
+
+Use `turnDecision` this way:
+
+- `pending` is allowed only between turn creation and the moment the surface chooses how to proceed
+- orchestrator turns persist session-level routing decisions such as `reply`, `execute_typescript`, `clarify`, or `thread.start`
+- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `workflow.start`, `workflow.resume`, or `handoff`
+- this symmetry is intentional even though only orchestrator turns own session-level routing
+- the turn decision is the top-level classification of the turn, not a replacement for command records
+- linkage to spawned threads, workflow runs, artifacts, and episodes still belongs in their own records plus linked commands
 
 ## Thread Model
 
@@ -397,7 +427,7 @@ These rules are adopted:
 | `latestWorkflowRunId` | Points to the latest workflow run under this thread for quick selectors. |
 | `startedAt` | Orders thread creation. |
 | `updatedAt` | Enables recency-based selectors. |
-| `finishedAt` | Marks terminal completion, failure, or cancellation. |
+| `finishedAt` | Marks when the current active work span most recently became completed, failed, or cancelled. Clear it if later work resumes in the same thread. |
 
 ### Thread Status Semantics
 
@@ -405,13 +435,19 @@ Use thread status this way:
 
 - `running` while the handler thread is actively supervising the delegated objective, including while a Smithers workflow run is executing
 - `waiting` when the delegated objective is blocked on user or external input
-- `completed` when the delegated objective reached a successful terminal result and emitted its episode
-- `failed` when the delegated objective terminated unsuccessfully and emitted its final failure episode
+- `completed` when the delegated objective reached a successful terminal result and emitted a handoff episode
+- `failed` when the delegated objective terminated unsuccessfully and emitted a failure handoff episode
 - `cancelled` when the delegated objective was intentionally cancelled
 
-Waiting is not terminal.
+These statuses describe the objective state, not whether the thread surface can still receive direct messages.
 
-A waiting thread may later return to `running` and eventually terminate with its one final episode.
+Waiting is not terminal for the objective state.
+
+A completed, failed, or cancelled thread surface remains directly interactive after handoff.
+
+A follow-up chat turn may leave thread status unchanged.
+
+A follow-up work turn may move a completed, failed, or cancelled thread back to `running`, preserving earlier handoff episodes as durable history.
 
 ## Workflow Run Model
 
@@ -441,7 +477,7 @@ Use workflow-run status this way:
 
 Do not confuse workflow-run termination with thread termination.
 
-A thread may survive several workflow runs before it reaches its one final terminal episode.
+A thread may survive several workflow runs before it emits a handoff episode, and it may later supervise more runs after a follow-up turn reactivates work on the same objective.
 
 ## Command Model
 
@@ -523,7 +559,7 @@ Instead:
 | Field | Why it exists |
 | --- | --- |
 | `id` | Stable episode handle. |
-| `threadId` | Links the episode to the completed thread that authored it. |
+| `threadId` | Links the episode to the thread that authored that handoff point. |
 | `sourceCommandId` | Optional provenance link to the most relevant command when that linkage matters. It does not mean the command emitted the episode. |
 | `title` | Compact label for lists and cards. |
 | `summary` | Short durable digest. |
@@ -538,12 +574,17 @@ They are not the main machine-readable routing contract.
 
 The machine-readable routing and lifecycle contract belongs in:
 
+- turn decision
 - thread status
 - thread wait state
 - workflow-run state
 - command facts
 
-The episode is the normal semantic handoff back to the orchestrator.
+For handler threads, an episode is the semantic half of a handoff back to the orchestrator.
+
+The control-plane half is the thread's current terminal durable state plus its durable links to workflow runs, commands, artifacts, and waits.
+
+Handler-thread episodes are ordered durable handoff points, not a promise that the thread surface becomes unreadable or unaddressable afterward.
 
 Commands, including `execute_typescript`, may produce their own summaries and artifacts.
 
@@ -693,7 +734,7 @@ The main session UI should primarily read:
 - handler threads
 - thread status and wait state
 - latest workflow-run state per thread
-- terminal episodes
+- latest handoff episodes and episode history
 - artifacts
 - verification summaries
 
@@ -717,20 +758,20 @@ Recommended implementation rules:
 - every row should carry `session_id`
 - `thread.surface_pi_session_id` should be unique
 - `workflow_run.smithers_run_id` should be unique
-- `episode.thread_id` should be unique for handler-thread terminal episodes in the first slice
+- `episode.thread_id` should be indexed for ordered lookups; it should not be unique because a thread may hand control back more than once over its lifetime
 - artifact tables should preserve path indexes for file-backed lookups
 
 ## Responsibility Split
 
 Write responsibility is:
 
-- ordinary orchestrator-turn and root command writes belong to the `svvy` runtime
-- handler-thread turn and command writes belong to the `svvy` runtime over pi thread surfaces
+- ordinary orchestrator-turn writes, including turn decisions, and root command writes belong to the `svvy` runtime
+- handler-thread turn writes, including turn decisions, and command writes belong to the `svvy` runtime over pi thread surfaces
 - workflow-run writes belong to the Smithers bridge
 - verification writes belong to the runtime or bridge that interprets verification-shaped workflow outputs
 - wait writes belong to the `svvy` runtime
 
-No runtime component may synthesize thread, workflow-run, verification, or wait facts from transcript prose after the fact.
+No runtime component may synthesize `turnDecision`, thread, workflow-run, verification, or wait facts from transcript prose after the fact.
 
 ## Invariants
 
@@ -740,7 +781,9 @@ The implementation must enforce these invariants:
 - a handler thread owns exactly one backing `surfacePiSessionId`
 - a thread may have many workflow runs over time
 - a handler thread may wait and resume many times
-- a handler thread produces at most one final terminal episode
+- a handler thread remains message-addressable after handing control back
+- a completed, failed, or cancelled thread may later return to `running`
+- a new handoff episode may be created only when a thread reaches another terminal objective state
 - a thread may be waiting only on user or external input, not on a fake wait episode
 - `session.wait` must be cleared when runnable work exists again
 - a turn must end in exactly one of: `completed`, `failed`, or `waiting`

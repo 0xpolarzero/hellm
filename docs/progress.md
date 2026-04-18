@@ -34,7 +34,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Support workflow-run records that allow many runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
 - [x] Persist workflow-run records with run id, workflow name, template or preset metadata, status, summary, and timestamps. Commit(s): `fff54d7`, `f53c9b8`, `43a26cb`
 - [x] Persist artifact references independently from transcript parsing at thread, workflow-run, and command scope. Commit(s): `fff54d7`
-- [x] Persist terminal episode records as the final semantic output of a completed handler thread. Commit(s): `fff54d7`, `59fc34e`
+- [ ] Persist ordered handoff episode records each time a handler thread returns control to the orchestrator, while preserving earlier handoff points for later follow-up turns.
 - [x] Persist session wait state as a frontier-level summary derived from surface and thread wait state. Commit(s): `fff54d7`, `f53c9b8`, `43a26cb`
 - [x] Drive structured session state only from explicit runtime producers or tool events. Commit(s): `fff54d7`, `59fc34e`, `43a26cb`
 - [x] Reconstruct workspace and session summaries from structured state on app load. Commit(s): `b510857`, `fff54d7`
@@ -55,14 +55,14 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Persist normalized child-command facts for nested `api.*` calls while the parent `execute_typescript` attempt remains the main semantic unit. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Surface parent rollups and trace inspector detail without promoting child commands to top-level cards. Commit(s): `5b0a223`
 
-## 3. Turn Routing And Delegation
+## 3. Turn Decisions And Delegation
 
-- [ ] Persist a per-turn routing result for the orchestrator surface.
+- [ ] Persist a per-turn top-level decision for orchestrator and handler-thread surfaces, using one shared model across routing and supervision.
 - [x] Build a POC turn flow from message targeting to surface turn creation and command recording. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Implement direct surface targeting so a pane send goes to either the orchestrator surface or a handler-thread surface. Commit(s): `f53c9b8`
 - [x] Add `thread.start` as the orchestrator-side delegation primitive. Commit(s): `f53c9b8`
 - [ ] Implement minimal orchestrator routing for local reply, local `execute_typescript`, clarification, and `thread.start`.
-- [ ] Re-enter the orchestrator from terminal handler-thread episodes and durable thread state instead of raw transcript scanning.
+- [ ] Re-enter orchestrator control from the handler-thread latest handoff, using durable thread state plus the latest handoff episode instead of raw transcript scanning.
 
 ## 4. Handler Threads
 
@@ -70,7 +70,9 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Persist handler-thread lifecycle transitions for running, waiting, completed, failed, and cancelled states. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Let handler threads receive direct user messages through the same surface model as the orchestrator. Commit(s): `f53c9b8`
 - [x] Make handler-thread wait and resume happen inside the thread itself instead of bouncing through the orchestrator by default. Commit(s): `f53c9b8`
-- [x] Ensure each handler thread emits at most one final terminal episode. Commit(s): `fff54d7`, `59fc34e`
+- [ ] Keep handed-back handler threads directly interactive for follow-up chat without forcing a new thread.
+- [ ] Let a handed-back thread move from completed or failed back to running when objective work resumes.
+- [ ] Preserve earlier handoff points in thread history when the same thread later returns control again.
 - [ ] Allow the orchestrator to inspect a handler thread on demand without making that the default reconciliation path.
 
 ## 5. Workflow Supervision Foundations
@@ -78,7 +80,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Build a POC handler thread that selects a workflow template or preset, runs it, and regains control on completion.
 - [x] Define the workflow-run request envelope from a handler thread to Smithers. Commit(s): `f53c9b8`
 - [ ] Create a durable workflow-run record as soon as the supervising handler thread has a concrete Smithers run id.
-- [ ] Build a POC one-task workflow under a handler thread that returns to the thread and then emits a final episode.
+- [ ] Build a POC one-task workflow under a handler thread that returns to the thread and then emits a handoff episode.
 - [x] Allow handler threads to call `workflow.start`. Commit(s): `f53c9b8`
 - [x] Allow handler threads to call `workflow.resume`. Commit(s): `f53c9b8`
 - [x] Resume handler-thread control when a workflow run completes, fails, or pauses. Commit(s): `f53c9b8`
@@ -115,7 +117,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Build a POC threads-and-episodes read model from structured state in the main session view.
 - [ ] Render handler-thread lists from structured thread data.
 - [ ] Show thread objective, status, latest workflow-run summary, and blocked reason in the main session view.
-- [ ] Render the final terminal episode for a selected thread.
+- [ ] Render the latest handoff episode for a selected thread while preserving earlier handoff points in the thread history.
 - [ ] Render thread- and workflow-run-linked artifacts before relying on transcript reconstruction.
 - [ ] Render a verification summary block for the selected thread or session.
 - [ ] Restore selected session, selected thread surface, and inspector selection after restart.
@@ -190,7 +192,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Build a POC one-shot headless entrypoint that reuses desktop orchestration code.
 - [ ] Define the headless one-shot input contract.
 - [ ] Return structured output for an ordinary headless turn.
-- [ ] Return structured output for a delegated headless objective and its final episode.
+- [ ] Return structured output for a delegated headless objective and its latest handoff episode.
 - [ ] Emit thread, workflow-run, episode, and artifact references in headless results.
 - [ ] Reuse the same orchestrator and state model as desktop execution.
 

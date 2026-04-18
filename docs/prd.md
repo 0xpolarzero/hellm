@@ -219,7 +219,7 @@ The difference is responsibility, not UI class:
 - the orchestrator owns strategy
 - a handler thread owns one delegated objective
 
-### 9. One Final Episode Per Handler Thread
+### 9. Handoff Episodes And Persistent Thread Surfaces
 
 Episodes are the main reusable semantic outputs.
 
@@ -227,9 +227,10 @@ In the adopted delegated model:
 
 - a handler thread may run through many internal workflow runs
 - a handler thread may wait, resume, rerun, and repair internally
-- the handler thread emits exactly one final terminal episode back to the orchestrator
+- a handler thread returns control to the orchestrator by reaching a terminal objective state and emitting a handoff episode
+- the thread surface remains open for later inspection, direct follow-up chat, and resumed work on that same objective
 
-That final episode is the normal handoff used by the orchestrator for reconciliation.
+That handoff is the thread's terminal durable state plus the latest handoff episode it emits.
 
 Tool calls may still produce command summaries, traces, and artifacts.
 
@@ -242,15 +243,16 @@ The episode should be:
 - compact enough to reuse later
 - semantically richer than raw logs
 
-The machine-readable lifecycle state that drives routing belongs in thread and workflow-run records, not in a large bespoke episode schema.
+The machine-readable lifecycle state that drives routing and supervision belongs in turn, thread, and workflow-run records, not in a large bespoke episode schema.
 
 ### 10. Workflow Internals Stay Available But Not Default
 
 The orchestrator should normally reason from:
 
 - the handler thread objective
+- the thread's terminal durable state
 - durable workflow-run state
-- the final episode returned by that thread
+- the latest handoff episode emitted by that thread
 
 It must still be able to inspect the underlying handler thread, artifacts, and command traces when needed.
 
@@ -364,7 +366,7 @@ It is responsible for:
 - understanding the user's objective
 - deciding whether local action is enough or a handler thread should be spawned
 - tracking which delegated objectives exist
-- receiving final episodes from completed handler threads
+- receiving handoffs from handler threads when they return control
 - deciding what to say next in the main conversation
 
 ### Handler Thread
@@ -377,7 +379,7 @@ It owns:
 - the workflow selection or authoring path for that objective
 - the internal clarification loop for that objective
 - workflow run supervision
-- the final episode returned to the orchestrator
+- zero or more handoffs returned to the orchestrator over that thread's lifetime
 
 Each handler thread should have:
 
@@ -386,7 +388,7 @@ Each handler thread should have:
 - its own direct conversation history
 - durable lifecycle status
 - zero or more workflow runs
-- zero or one terminal episode
+- zero or more handoff episodes
 
 ### Workflow Run
 
@@ -431,11 +433,13 @@ That means:
 
 Turns exist because a user or system message opened a real unit of work in one surface.
 
+Each turn should also persist that surface's top-level turn decision so session-level routing and delegated supervision do not need to be reconstructed from transcript prose or low-level command sequences.
+
 ### Episode
 
 An episode is the durable semantic output reused later by the orchestrator or shown to the user.
 
-For delegated handler threads, the terminal episode should capture:
+For delegated handler threads, a handoff episode should capture:
 
 - the delegated objective
 - what was concluded or delivered
@@ -494,7 +498,7 @@ Every user request goes through one orchestrator-controlled product loop:
 1. load current workspace, session, thread, workflow-run, episode, artifact, verification, and wait context
 2. identify the target surface of the message
 3. open a new turn for that surface
-4. let that surface decide its next tool call or direct response
+4. let that surface choose and persist its top-level turn decision, then decide its next tool call or direct response
 5. execute tools through the correct runtime handler
 6. record commands, events, workflow-run state, artifacts, and wait state
 7. update structured state
@@ -505,7 +509,7 @@ Every user request goes through one orchestrator-controlled product loop:
 When the target surface is the main orchestrator:
 
 1. understand the new request in the context of existing durable state
-2. decide whether the request can be handled locally or needs delegation
+2. decide and persist whether the request can be handled locally or needs delegation
 3. if local:
    - answer directly
    - or use `execute_typescript`
@@ -513,24 +517,32 @@ When the target surface is the main orchestrator:
 4. if delegated:
    - call `thread.start`
    - hand off the delegated objective to a handler thread
-5. later reconcile the final episode returned by that handler thread
+5. later reconcile the handler thread's latest handoff: thread durable state plus the latest handoff episode
 
 ### Handler Thread Loop
 
 When the target surface is a handler thread:
 
 1. understand the delegated objective and current thread state
-2. decide whether to:
+2. decide and persist whether to:
+   - reply directly inside the thread
+   - use `execute_typescript`
    - reuse a workflow template
    - reuse or complete a preset
    - author a custom workflow
    - resume an existing paused workflow run
    - ask the user for clarification
-   - finalize the objective with a terminal episode
+   - hand control back with a handoff episode
 3. run or resume workflow execution as needed
 4. regain control when the workflow run completes, fails, or pauses
 5. continue supervising until the objective is truly finished
-6. emit exactly one terminal episode back to the orchestrator
+6. when appropriate, return control to the orchestrator by reaching a terminal objective state and emitting a handoff episode
+
+If a thread already handed control back earlier:
+
+- a direct follow-up question may be answered inside that same thread without reopening the orchestrator loop
+- resumed objective work may move the thread back to `running`
+- a later return to the orchestrator should produce another handoff episode
 
 ### Clarification And Waiting
 
@@ -549,7 +561,7 @@ In the adopted delegated model:
 
 There is no separate "wait episode" for delegated handler threads.
 
-The wait belongs in thread and workflow-run state until the handler thread eventually reaches a terminal result.
+The wait belongs in thread and workflow-run state until the handler thread eventually reaches another handoff point.
 
 ### Failures And Recovery
 
@@ -560,7 +572,7 @@ The intended behavior is:
 - a workflow run fails
 - the handler thread regains control
 - the handler thread may inspect artifacts, edit the workflow, repair inputs, rerun, resume, ask the user, or terminate
-- only the final terminal outcome is handed back to the orchestrator as the thread's episode
+- only the handler thread's handoff is returned to the orchestrator: terminal thread state plus the latest handoff episode
 
 If a workflow run dies before its own planned finalization path, the bridge must still surface durable failure state back to the supervising handler thread.
 
@@ -612,6 +624,7 @@ The design is successful when:
 - delegated work happens inside handler threads that feel like real interactive surfaces
 - all substantive delegated execution flows through Smithers workflows
 - handler threads can repair, clarify, and rerun internally before returning control
+- handed-back threads remain open for follow-up chat and resumed work on the same objective
 - the user can understand the current state of the session, threads, and workflows from durable state
 - meaningful delegated work terminates in reusable episodes instead of transcript archaeology
 - pi remains the runtime substrate and Smithers remains the delegated workflow engine rather than replacing the product shell
