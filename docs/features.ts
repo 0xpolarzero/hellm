@@ -115,7 +115,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Durable Final Episodes",
     status: "in-progress",
     summary:
-      "Stores reusable terminal semantic outputs as first-class episode records, with one final episode per completed handler thread and optional root-surface episodes when substantive work completes locally.",
+      "Stores reusable terminal semantic outputs as first-class episode records, with one final episode per completed thread, including orchestrator-local threads when substantive local work completes, while tool runs keep their own command summaries and artifacts.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {

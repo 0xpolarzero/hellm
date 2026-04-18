@@ -84,7 +84,9 @@ type CommandRecord = {
 
 type EpisodeRecord = {
   id: string;
-  threadId: string | null;
+  threadId: string;
+  // Provenance only: a command may be the most relevant source for the final episode,
+  // but commands still keep their own summaries and do not emit episodes themselves.
   sourceCommandId: string | null;
   title: string;
   summary: string;

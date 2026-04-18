@@ -231,6 +231,10 @@ In the adopted delegated model:
 
 That final episode is the normal handoff used by the orchestrator for reconciliation.
 
+Tool calls may still produce command summaries, traces, and artifacts.
+
+Those are not episodes.
+
 The episode should be:
 
 - durable

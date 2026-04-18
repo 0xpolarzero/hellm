@@ -74,7 +74,7 @@ flowchart TD
         Commands["Record commands and parent-child linkage"]
         Events["Append lifecycle events"]
         Artifacts["Persist file-backed artifacts and SQLite metadata"]
-        State["Update turns, threads, workflow runs, episodes, verification records, artifacts, and wait state"]
+        State["Update turns, commands, threads, workflow runs, verification records, artifacts, wait state, and any terminal episodes"]
     end
 
     subgraph ReadModels["Read Models"]
@@ -228,5 +228,6 @@ That means build, test, lint, and related checks can still have structured verif
 - `workflow.start` and `workflow.resume` are primarily used inside handler threads.
 - runtime handlers and bridges write durable facts from real execution; agents do not mutate product state through arbitrary write tools.
 - child `api.*` calls remain nested command facts under a parent `execute_typescript` command.
+- tool-run summaries stay on command records and artifacts; ordinary tool calls do not emit episodes.
 - workflow runs are durable execution records under a handler thread.
 - episodes are the main reusable semantic outputs returned to the orchestrator.

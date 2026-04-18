@@ -207,7 +207,7 @@ type StructuredSessionState = {
 
   episodes: Array<{
     id: string;
-    threadId: string | null;
+    threadId: string;
     sourceCommandId: string | null;
     title: string;
     summary: string;
@@ -310,6 +310,7 @@ They answer:
 - whether it started, succeeded, failed, or is waiting
 - how commands nest
 - which commands are trace-only versus surfaced work
+- what summary belongs to that tool run without inventing an episode for it
 
 ### Episode
 
@@ -522,8 +523,8 @@ Instead:
 | Field | Why it exists |
 | --- | --- |
 | `id` | Stable episode handle. |
-| `threadId` | Links the episode to the completed handler thread that produced it. `null` is reserved for substantive orchestrator-local work if needed later. |
-| `sourceCommandId` | Links the episode to the most relevant command when that linkage matters. |
+| `threadId` | Links the episode to the completed thread that authored it. |
+| `sourceCommandId` | Optional provenance link to the most relevant command when that linkage matters. It does not mean the command emitted the episode. |
 | `title` | Compact label for lists and cards. |
 | `summary` | Short durable digest. |
 | `body` | The reusable semantic content. |
@@ -543,6 +544,10 @@ The machine-readable routing and lifecycle contract belongs in:
 - command facts
 
 The episode is the normal semantic handoff back to the orchestrator.
+
+Commands, including `execute_typescript`, may produce their own summaries and artifacts.
+
+Those command-level summaries are not episodes.
 
 ## Verification Model
 

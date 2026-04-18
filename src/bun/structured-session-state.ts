@@ -128,7 +128,7 @@ export interface StructuredCommandRecord {
 export interface StructuredEpisodeRecord {
   id: string;
   sessionId: string;
-  threadId: string | null;
+  threadId: string;
   sourceCommandId: string | null;
   kind: StructuredEpisodeKind;
   title: string;
@@ -304,7 +304,7 @@ export interface StructuredSessionStateStore {
     error?: string | null;
   }): StructuredCommandRecord;
   createEpisode(input: {
-    threadId: string | null;
+    threadId: string;
     sourceCommandId?: string | null;
     kind?: StructuredEpisodeKind;
     title: string;
@@ -610,7 +610,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
     const threadId = input.threadId ?? null;
     const thread = threadId ? this.mustFindThreadRow(threadId) : null;
-    if (threadId) {
+    if (threadId && thread) {
       if (thread.status === "waiting" || thread.wait_kind) {
         this.db
           .query(
@@ -1073,34 +1073,24 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   createEpisode(input: {
-    threadId: string | null;
+    threadId: string;
     sourceCommandId?: string | null;
     kind?: StructuredEpisodeKind;
     title: string;
     summary: string;
     body: string;
   }): StructuredEpisodeRecord {
-    const sourceCommand = input.sourceCommandId ? this.mustFindCommandRow(input.sourceCommandId) : null;
-    const sessionId =
-      input.threadId !== null
-        ? this.mustFindThreadRow(input.threadId).session_id
-        : sourceCommand?.session_id ?? null;
+    const thread = this.mustFindThreadRow(input.threadId);
+    const sessionId = thread.session_id;
 
-    if (!sessionId) {
-      throw new Error("Episode creation requires a thread or source command session.");
+    if (!isTerminalThreadStatus(thread.status)) {
+      throw new Error("Terminal episodes can only be created once the thread is terminal.");
     }
-
-    if (input.threadId !== null) {
-      const thread = this.mustFindThreadRow(input.threadId);
-      if (!isTerminalThreadStatus(thread.status)) {
-        throw new Error("Terminal episodes can only be created once the thread is terminal.");
-      }
-      const existing = this.db
-        .query(`SELECT id FROM episode WHERE thread_id = ? LIMIT 1`)
-        .get(input.threadId) as { id: string } | undefined;
-      if (existing) {
-        throw new Error("Thread already has a final episode.");
-      }
+    const existing = this.db
+      .query(`SELECT id FROM episode WHERE thread_id = ? LIMIT 1`)
+      .get(input.threadId) as { id: string } | undefined;
+    if (existing) {
+      throw new Error("Thread already has a final episode.");
     }
 
     const episodeId = createId("episode");
@@ -1900,6 +1890,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   private mapEpisode(row: EpisodeRow): StructuredEpisodeRecord {
+    if (row.thread_id === null) {
+      throw new Error(`Structured episode ${row.id} is missing its thread ownership.`);
+    }
+
     return {
       id: row.id,
       sessionId: row.session_id,

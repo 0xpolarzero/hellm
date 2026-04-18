@@ -28,7 +28,6 @@ import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import type {
   StructuredCommandExecutor,
   StructuredCommandVisibility,
-  StructuredEpisodeKind,
   StructuredSessionStateStore,
 } from "./structured-session-state";
 
@@ -103,11 +102,8 @@ const WRAPPER_SUFFIX = "}";
 const WRAPPER_LINE_OFFSET = 1;
 
 type ExecuteTypescriptContext = {
-  sessionId: string;
   turnId: string;
   threadId: string;
-  promptText: string;
-  rootEpisodeKind: StructuredEpisodeKind;
   executor?: StructuredCommandExecutor;
   visibility?: StructuredCommandVisibility;
 };
@@ -175,11 +171,8 @@ export function createExecuteTypescriptTool(
         signal,
         typescriptCode: params.typescriptCode,
         context: {
-          sessionId: runtime.sessionId,
           turnId: runtime.turnId,
           threadId: runtime.rootThreadId,
-          promptText: runtime.promptText,
-          rootEpisodeKind: runtime.rootEpisodeKind,
         },
         runCommand: options.runCommand,
         webSearch: options.webSearch,
@@ -263,15 +256,6 @@ async function runExecuteTypescript(input: {
         diagnostics: preflight.errors,
       },
     };
-    createResultEpisode({
-      store: input.store,
-      threadId: input.context.threadId,
-      sourceCommandId: parentCommand.id,
-      kind: "analysis",
-      result,
-      promptText: input.context.promptText,
-      rootEpisodeKind: input.context.rootEpisodeKind,
-    });
     return result;
   }
 
@@ -319,15 +303,6 @@ async function runExecuteTypescript(input: {
       result: resultValue,
       logs: logs.length > 0 ? logs : undefined,
     };
-    createResultEpisode({
-      store: input.store,
-      threadId: input.context.threadId,
-      sourceCommandId: parentCommand.id,
-      kind: input.context.rootEpisodeKind,
-      result,
-      promptText: input.context.promptText,
-      rootEpisodeKind: input.context.rootEpisodeKind,
-    });
     return result;
   } catch (error) {
     const logsArtifact =
@@ -363,62 +338,8 @@ async function runExecuteTypescript(input: {
         line: getRuntimeErrorLine(error),
       },
     };
-    createResultEpisode({
-      store: input.store,
-      threadId: input.context.threadId,
-      sourceCommandId: parentCommand.id,
-      kind: "analysis",
-      result,
-      promptText: input.context.promptText,
-      rootEpisodeKind: input.context.rootEpisodeKind,
-    });
     return result;
   }
-}
-
-function createResultEpisode(input: {
-  store: StructuredSessionStateStore;
-  threadId: string;
-  sourceCommandId: string;
-  kind: StructuredEpisodeKind;
-  result: ExecuteTypescriptResult;
-  promptText: string;
-  rootEpisodeKind: StructuredEpisodeKind;
-}): void {
-  const title = input.result.success
-    ? summarizePrompt(input.promptText)
-    : "execute_typescript failed";
-  const summary = input.result.success
-    ? summarizeResult(input.result.result)
-    : (input.result.error?.message ?? "execute_typescript failed.");
-  const body = input.result.success
-    ? JSON.stringify(
-        {
-          success: true,
-          result: input.result.result ?? null,
-          logs: input.result.logs ?? [],
-        },
-        null,
-        2,
-      )
-    : JSON.stringify(
-        {
-          success: false,
-          error: input.result.error ?? null,
-          logs: input.result.logs ?? [],
-        },
-        null,
-        2,
-      );
-
-  input.store.createEpisode({
-    threadId: null,
-    sourceCommandId: input.sourceCommandId,
-    kind: input.result.success ? input.kind : "analysis",
-    title,
-    summary,
-    body,
-  });
 }
 
 function compileAndTypecheck(typescriptCode: string): {
@@ -1655,14 +1576,6 @@ function summarizeResult(value: unknown): string {
     return "execute_typescript completed successfully.";
   }
   return preview.length <= 160 ? preview : `${preview.slice(0, 159).trimEnd()}…`;
-}
-
-function summarizePrompt(text: string): string {
-  const collapsed = text.replace(/\s+/g, " ").trim();
-  if (!collapsed) {
-    return "execute_typescript";
-  }
-  return collapsed.length <= 72 ? collapsed : `${collapsed.slice(0, 71).trimEnd()}…`;
 }
 
 function parseGitStatusPorcelainV2(output: string): {

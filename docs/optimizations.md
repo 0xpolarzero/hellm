@@ -446,7 +446,7 @@ Preferred direction:
 PRD pressure:
 
 - code mode is available on both direct and delegated paths
-- code-mode events and traces must be captured into episodes and artifacts
+- code-mode events and traces must be captured as command records, command summaries, trace facts, and artifacts; only the supervising surface may later produce a terminal episode
 
 Optimization requirement:
 

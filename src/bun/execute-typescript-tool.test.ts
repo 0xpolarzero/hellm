@@ -140,12 +140,7 @@ describe("execute_typescript tool", () => {
     expect(existsSync(snippetArtifact!.path!)).toBe(true);
     expect(readFileSync(snippetArtifact!.path!, "utf8")).toBe("const title: string = 42;");
     expect(existsSync(diagnosticsArtifact!.path!)).toBe(true);
-    expect(snapshot.episodes).toEqual([
-      expect.objectContaining({
-        sourceCommandId: snapshot.commands[0]!.id,
-        kind: "analysis",
-      }),
-    ]);
+    expect(snapshot.episodes).toEqual([]);
   });
 
   it("runs a scripted task through injected api namespaces and records nested command traces", async () => {
@@ -239,12 +234,44 @@ describe("execute_typescript tool", () => {
     const summaryArtifact = snapshot.artifacts.find((artifact) => artifact.name === "summary.md");
     expect(summaryArtifact?.path).toBeDefined();
     expect(readFileSync(summaryArtifact!.path!, "utf8")).toBe("alpha:clean");
-    expect(snapshot.episodes).toEqual([
+    expect(snapshot.episodes).toEqual([]);
+  });
+
+  it("keeps runtime failures in command state instead of emitting episodes", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-runtime-failure", workspaceCwd);
+    const runtime = createRuntime(
+      store,
+      "session-runtime-failure",
+      "Run execute_typescript and keep the failure on the command",
+    );
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+    });
+
+    const result = await tool.execute("tool-call-runtime-failure", {
+      typescriptCode: 'throw new Error("boom");',
+    });
+
+    expect(result.details).toMatchObject({
+      success: false,
+      error: {
+        message: "boom",
+        stage: "runtime",
+      },
+    });
+
+    const snapshot = store.getSessionState("session-runtime-failure");
+    expect(snapshot.commands).toEqual([
       expect.objectContaining({
-        sourceCommandId: parentCommand!.id,
-        kind: "analysis",
+        toolName: "execute_typescript",
+        status: "failed",
+        error: "boom",
       }),
     ]);
+    expect(snapshot.episodes).toEqual([]);
   });
 
   it("supports the fs-style repo surface and records normalized facts for each child command", async () => {
