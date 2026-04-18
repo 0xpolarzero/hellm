@@ -10,6 +10,7 @@ import type {
   ActiveSessionState,
   ActiveSessionSummaryState,
   CreateSessionRequest,
+  PromptTarget,
   SendPromptRequest,
   SessionMutationResponse,
   WorkspaceSessionSummary,
@@ -89,12 +90,15 @@ export interface ChatRuntime {
   workspaceLabel: string;
   branch?: string;
   activeSessionId?: string;
+  activeSurface: PromptTarget;
   sessions: WorkspaceSessionSummary[];
   dispose: () => void;
   subscribe: (listener: ChatRuntimeListener) => () => void;
   listSessions: () => Promise<WorkspaceSessionSummary[]>;
   createSession: (request?: CreateSessionRequest) => Promise<void>;
   openSession: (sessionId: string) => Promise<void>;
+  openSurface: (target: PromptTarget) => Promise<void>;
+  resetSurfaceTarget: () => Promise<void>;
   renameSession: (sessionId: string, title: string) => Promise<void>;
   forkSession: (sessionId: string, title?: string) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
@@ -132,6 +136,13 @@ function createFailureMessage(
 
 function initializeStorage(): ChatStorage {
   return createChatStorage();
+}
+
+function createOrchestratorSurfaceTarget(surfaceSessionId: string): PromptTarget {
+  return {
+    surface: "orchestrator",
+    surfaceSessionId,
+  };
 }
 
 function convertToLlm(messages: AgentMessage[]): Message[] {
@@ -217,6 +228,8 @@ export async function createChatRuntime(
   const listeners = new Set<ChatRuntimeListener>();
   let sessions: WorkspaceSessionSummary[] = [];
   let activeSessionId: string | undefined;
+  let activeSurface: PromptTarget | undefined;
+  let orchestratorSurfaceSessionId: string | undefined;
   let promptDispatchInFlight = false;
   let disposed = false;
 
@@ -261,7 +274,7 @@ export async function createChatRuntime(
   };
 
   const syncSessionModel = async (modelId: string): Promise<void> => {
-    const sessionId = agent.sessionId;
+    const sessionId = activeSurface?.surfaceSessionId ?? agent.sessionId;
     if (!sessionId) return;
 
     try {
@@ -275,7 +288,7 @@ export async function createChatRuntime(
   };
 
   const syncSessionThoughtLevel = async (level: ReasoningEffort): Promise<void> => {
-    const sessionId = agent.sessionId;
+    const sessionId = activeSurface?.surfaceSessionId ?? agent.sessionId;
     if (!sessionId) return;
 
     try {
@@ -292,6 +305,10 @@ export async function createChatRuntime(
     applyActiveSessionState(agent, payload);
     activeSessionId = payload.session.id;
     sessions = upsertWorkspaceSessionSummary(sessions, payload.session);
+    if (!activeSurface) {
+      activeSurface = createOrchestratorSurfaceTarget(payload.session.id);
+      orchestratorSurfaceSessionId = payload.session.id;
+    }
   };
 
   const applyActiveSessionSummary = (payload: ActiveSessionSummaryState): void => {
@@ -306,6 +323,10 @@ export async function createChatRuntime(
     );
     agent.setThinkingLevel(payload.reasoningEffort);
     sessions = upsertWorkspaceSessionSummary(sessions, payload.session);
+    if (!activeSurface) {
+      activeSurface = createOrchestratorSurfaceTarget(payload.session.id);
+      orchestratorSurfaceSessionId = payload.session.id;
+    }
   };
 
   const refreshSessions = async (): Promise<WorkspaceSessionSummary[]> => {
@@ -321,10 +342,16 @@ export async function createChatRuntime(
     mutation?: { sessionId: string; title?: string; deleted?: boolean },
   ): Promise<void> => {
     if (response.activeSession) {
+      if (mutation?.deleted) {
+        activeSurface = createOrchestratorSurfaceTarget(response.activeSession.session.id);
+        orchestratorSurfaceSessionId = response.activeSession.session.id;
+      }
       applyActiveSessionSnapshot(response.activeSession);
     } else if (response.activeSessionId && response.activeSessionId !== activeSessionId) {
       const nextActive = await rpcClient.request.getActiveSession();
       if (nextActive) {
+        activeSurface = createOrchestratorSurfaceTarget(nextActive.session.id);
+        orchestratorSurfaceSessionId = nextActive.session.id;
         applyActiveSessionSnapshot(nextActive);
       }
     }
@@ -343,6 +370,21 @@ export async function createChatRuntime(
   const openActiveSession = async (payload: ActiveSessionState): Promise<void> => {
     applyActiveSessionSnapshot(payload);
     emit();
+  };
+
+  const resolveActiveSurface = (): PromptTarget => {
+    if (activeSurface) {
+      return activeSurface;
+    }
+
+    const surfaceSessionId = agent.sessionId ?? activeSessionId;
+    if (!surfaceSessionId) {
+      throw new Error("Expected an active surface session before sending a prompt.");
+    }
+
+    activeSurface = createOrchestratorSurfaceTarget(surfaceSessionId);
+    orchestratorSurfaceSessionId = surfaceSessionId;
+    return activeSurface;
   };
 
   const syncSettledActiveSessionState = async (sessionId?: string): Promise<void> => {
@@ -383,13 +425,15 @@ export async function createChatRuntime(
     const reasoningEffort =
       (streamOptions?.reasoning as ReasoningEffort | undefined) ??
       DEFAULT_CHAT_SETTINGS.reasoningEffort;
+    const promptTarget = resolveActiveSurface();
     const request: SendPromptRequest = {
       streamId: createRpcStreamId(),
       messages: context.messages as Message[],
       provider: model.provider,
       model: model.id,
       reasoningEffort,
-      sessionId: agent.sessionId,
+      sessionId: promptTarget.surfaceSessionId,
+      target: promptTarget,
       systemPrompt: context.systemPrompt,
     };
     const provider = request.provider ?? DEFAULT_CHAT_SETTINGS.provider;
@@ -473,6 +517,13 @@ export async function createChatRuntime(
         streamSessionId = response.sessionId;
         agent.sessionId = response.sessionId;
         activeSessionId = response.sessionId;
+        activeSurface = response.target ?? {
+          ...promptTarget,
+          surfaceSessionId: response.sessionId,
+        };
+        if (activeSurface.surface === "orchestrator") {
+          orchestratorSurfaceSessionId = activeSurface.surfaceSessionId;
+        }
         emit();
 
         if (streamOptions?.signal?.aborted) {
@@ -530,6 +581,8 @@ export async function createChatRuntime(
   await syncProviderAuthPromise;
 
   if (currentActiveSession) {
+    activeSurface = createOrchestratorSurfaceTarget(currentActiveSession.session.id);
+    orchestratorSurfaceSessionId = currentActiveSession.session.id;
     applyActiveSessionSnapshot(currentActiveSession);
   } else if (initialCatalog.sessions.length > 0) {
     const [firstSession] = initialCatalog.sessions;
@@ -537,9 +590,13 @@ export async function createChatRuntime(
       throw new Error("Expected an initial session to open.");
     }
     const initialSession = await rpcClient.request.openSession({ sessionId: firstSession.id });
+    activeSurface = createOrchestratorSurfaceTarget(initialSession.session.id);
+    orchestratorSurfaceSessionId = initialSession.session.id;
     applyActiveSessionSnapshot(initialSession);
   } else {
     const createdSession = await rpcClient.request.createSession({});
+    activeSurface = createOrchestratorSurfaceTarget(createdSession.session.id);
+    orchestratorSurfaceSessionId = createdSession.session.id;
     applyActiveSessionSnapshot(createdSession);
   }
 
@@ -551,6 +608,9 @@ export async function createChatRuntime(
     branch: workspaceInfo.branch,
     get activeSessionId() {
       return activeSessionId;
+    },
+    get activeSurface() {
+      return resolveActiveSurface();
     },
     get sessions() {
       return sessions;
@@ -569,11 +629,74 @@ export async function createChatRuntime(
     listSessions: refreshSessions,
     createSession: async (request = {}) => {
       const session = await rpcClient.request.createSession(request);
+      activeSurface = createOrchestratorSurfaceTarget(session.session.id);
+      orchestratorSurfaceSessionId = session.session.id;
       await openActiveSession(session);
     },
     openSession: async (sessionId) => {
-      if (activeSessionId === sessionId) return;
+      if (
+        activeSessionId === sessionId &&
+        activeSurface?.surface === "orchestrator" &&
+        activeSurface.surfaceSessionId === sessionId
+      ) {
+        return;
+      }
+
       const session = await rpcClient.request.openSession({ sessionId });
+      activeSurface = createOrchestratorSurfaceTarget(sessionId);
+      orchestratorSurfaceSessionId = sessionId;
+      await openActiveSession(session);
+    },
+    openSurface: async (target) => {
+      const normalizedTarget: PromptTarget = {
+        surface: target.surface,
+        surfaceSessionId: target.surfaceSessionId,
+        ...(target.threadId ? { threadId: target.threadId } : {}),
+      };
+
+      if (
+        activeSessionId === normalizedTarget.surfaceSessionId &&
+        agent.sessionId === normalizedTarget.surfaceSessionId
+      ) {
+        activeSurface = normalizedTarget;
+        if (normalizedTarget.surface === "orchestrator") {
+          orchestratorSurfaceSessionId = normalizedTarget.surfaceSessionId;
+        }
+        emit();
+        return;
+      }
+
+      const session = await rpcClient.request.openSession({
+        sessionId: normalizedTarget.surfaceSessionId,
+      });
+      activeSurface = normalizedTarget;
+      if (normalizedTarget.surface === "orchestrator") {
+        orchestratorSurfaceSessionId = normalizedTarget.surfaceSessionId;
+      }
+      await openActiveSession(session);
+    },
+    resetSurfaceTarget: async () => {
+      const sessionId =
+        orchestratorSurfaceSessionId ?? activeSessionId ?? agent.sessionId ?? activeSurface?.surfaceSessionId;
+      if (!sessionId) {
+        return;
+      }
+
+      const nextSurface = createOrchestratorSurfaceTarget(sessionId);
+      if (
+        activeSessionId === sessionId &&
+        activeSurface?.surface === "orchestrator" &&
+        activeSurface.surfaceSessionId === sessionId
+      ) {
+        activeSurface = nextSurface;
+        orchestratorSurfaceSessionId = sessionId;
+        emit();
+        return;
+      }
+
+      const session = await rpcClient.request.openSession({ sessionId });
+      activeSurface = nextSurface;
+      orchestratorSurfaceSessionId = sessionId;
       await openActiveSession(session);
     },
     renameSession: async (sessionId, title) => {
@@ -582,6 +705,8 @@ export async function createChatRuntime(
     },
     forkSession: async (sessionId, title) => {
       const session = await rpcClient.request.forkSession({ sessionId, title });
+      activeSurface = createOrchestratorSurfaceTarget(session.session.id);
+      orchestratorSurfaceSessionId = session.session.id;
       await openActiveSession(session);
     },
     deleteSession: async (sessionId) => {

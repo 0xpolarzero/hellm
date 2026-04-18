@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
 import {
   getModel,
@@ -26,6 +26,7 @@ import type {
   CreateSessionRequest,
   ForkSessionRequest,
   ListSessionsResponse,
+  PromptTarget,
   SessionMutationResponse,
   WorkspaceSessionSummary,
 } from "../mainview/chat-rpc";
@@ -57,11 +58,12 @@ import {
 } from "./smithers-workflow-bridge";
 import { createStartWorkflowTool } from "./smithers-workflow-tool";
 import { createExecuteTypescriptTool } from "./execute-typescript-tool";
-import { createVerifyRunTool } from "./verification-tool";
+import { createResumeWorkflowTool } from "./smithers-workflow-tool";
 import { createWaitTool } from "./wait-tool";
 import { resolveApiKey } from "./auth-store";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
 import { resolveWorkspaceCwd } from "./workspace-context";
+import { createStartThreadTool } from "./thread-start-tool";
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
   input: 0,
@@ -105,6 +107,7 @@ export interface SessionDefaults {
 
 export interface SendAgentPromptOptions extends SessionDefaults {
   sessionId?: string;
+  target?: PromptTarget;
   messages: Message[];
   onEvent: (event: AssistantMessageEvent) => void;
 }
@@ -149,6 +152,10 @@ export class WorkspaceSessionCatalog {
       },
       databasePath: join(this.sessionDir, STRUCTURED_SESSION_DB_FILENAME),
     });
+  }
+
+  private get threadSurfaceDir(): string {
+    return join(this.sessionDir, "threads");
   }
 
   async dispose(): Promise<void> {
@@ -361,7 +368,10 @@ export class WorkspaceSessionCatalog {
     };
   }
 
-  async sendPrompt(options: SendAgentPromptOptions): Promise<{ sessionId: string }> {
+  async sendPrompt(options: SendAgentPromptOptions): Promise<{
+    sessionId: string;
+    target?: PromptTarget;
+  }> {
     const session = await this.ensureSessionForPrompt(options);
     if (session.activePrompt) {
       throw new Error(`Session ${session.sessionId} is already streaming.`);
@@ -369,13 +379,16 @@ export class WorkspaceSessionCatalog {
 
     session.abortRequested = false;
     session.activePrompt = true;
-    const promptExecution = this.createPromptExecutionContext(session, options.messages);
+    const promptExecution = this.createPromptExecutionContext(session, options);
 
     setTimeout(() => {
       void this.runAgentPrompt(session, options, promptExecution);
     }, 0);
 
-    return { sessionId: session.sessionId };
+    return {
+      sessionId: session.sessionId,
+      target: options.target,
+    };
   }
 
   async cancelPrompt(sessionId: string): Promise<void> {
@@ -480,7 +493,7 @@ export class WorkspaceSessionCatalog {
 
     const sessionFile = await this.getSessionFileForId(sessionId);
     return this.activateManagedSession({
-      sessionManager: SessionManager.open(sessionFile!, this.sessionDir),
+      sessionManager: SessionManager.open(sessionFile!, dirname(sessionFile!)),
       systemPrompt: systemPrompt || this.activeSession?.systemPrompt || "",
     });
   }
@@ -545,6 +558,7 @@ export class WorkspaceSessionCatalog {
       systemPrompt,
       agentDir: this.agentDir,
       structuredSessionStore: this.structuredSessionStore,
+      createHandlerThread: this.createHandlerThread.bind(this),
     });
     this.activeSession = nextSession;
     return nextSession;
@@ -558,6 +572,7 @@ export class WorkspaceSessionCatalog {
       ...options,
       agentDir: this.agentDir,
       structuredSessionStore: this.structuredSessionStore,
+      createHandlerThread: this.createHandlerThread.bind(this),
     });
     this.activeSession = session;
     return session;
@@ -667,7 +682,7 @@ export class WorkspaceSessionCatalog {
 
   private refreshSmithersWorkflowProjections(): void {
     for (const session of this.structuredSessionStore.listSessionStates()) {
-      for (const workflow of session.workflows) {
+      for (const workflow of session.workflowRuns ?? session.workflows) {
         const thread = session.threads.find((entry) => entry.id === workflow.threadId);
         if (!thread) {
           continue;
@@ -679,7 +694,7 @@ export class WorkspaceSessionCatalog {
             workflow.status === "failed" ||
             workflow.status === "cancelled"
           ) {
-            this.reconcileTerminalWorkflowProjection(session, workflow, thread);
+            this.reconcileTerminalWorkflowProjection(workflow, thread);
             continue;
           }
 
@@ -722,67 +737,44 @@ export class WorkspaceSessionCatalog {
     }
 
     if (projection.status === "running") {
-      if (
-        thread.status !== "running" ||
-        thread.wait !== null ||
-        thread.dependsOnThreadIds.length > 0
-      ) {
+      if (thread.status !== "running" || thread.wait !== null) {
         this.structuredSessionStore.updateThread({
           threadId: thread.id,
           status: "running",
+          wait: null,
         });
       }
-      if (thread.parentThreadId) {
-        this.setParentThreadDependencyWaiting(thread.sessionId, thread.parentThreadId, thread.id);
+      if (session.session.wait?.threadId === thread.id) {
+        this.structuredSessionStore.clearSessionWait({
+          sessionId: thread.sessionId,
+        });
       }
       return;
     }
 
     this.reconcileTerminalWorkflowProjection(
-      session,
       { ...workflow, status: projection.status, summary: projection.summary },
       thread,
     );
   }
 
   private reconcileTerminalWorkflowProjection(
-    session: StructuredSessionSnapshot,
-    workflow: StructuredSessionSnapshot["workflows"][number],
+    _workflow: StructuredSessionSnapshot["workflows"][number],
     thread: StructuredSessionSnapshot["threads"][number],
   ): void {
-    const hasWorkflowEpisode = session.episodes.some(
-      (episode) =>
-        episode.threadId === thread.id &&
-        episode.kind === "workflow" &&
-        episode.sourceCommandId === workflow.commandId,
-    );
-    if (!hasWorkflowEpisode) {
-      this.structuredSessionStore.createEpisode({
+    if (!isTerminalThreadStatus(thread.status)) {
+      this.structuredSessionStore.updateThread({
         threadId: thread.id,
-        sourceCommandId: workflow.commandId,
-        kind: "workflow",
-        title:
-          workflow.status === "completed"
-            ? "Delegated workflow completed"
-            : workflow.status === "cancelled"
-              ? "Delegated workflow cancelled"
-              : "Delegated workflow failed",
-        summary: workflow.summary,
-        body: workflow.summary,
+        status: "running",
+        wait: null,
       });
     }
 
-    this.structuredSessionStore.updateThread({
-      threadId: thread.id,
-      status:
-        workflow.status === "completed"
-          ? "completed"
-          : workflow.status === "cancelled"
-            ? "cancelled"
-            : "failed",
-    });
-    if (thread.parentThreadId) {
-      this.releaseParentThreadDependency(thread.sessionId, thread.parentThreadId, thread.id);
+    const liveSession = this.structuredSessionStore.getSessionState(thread.sessionId);
+    if (liveSession.session.wait?.threadId === thread.id) {
+      this.structuredSessionStore.clearSessionWait({
+        sessionId: thread.sessionId,
+      });
     }
   }
 
@@ -802,9 +794,6 @@ export class WorkspaceSessionCatalog {
         status: "waiting",
         wait: waiting,
       });
-    }
-    if (thread.parentThreadId) {
-      this.setParentThreadDependencyWaiting(thread.sessionId, thread.parentThreadId, thread.id);
     }
 
     const liveSession = this.structuredSessionStore.getSessionState(thread.sessionId);
@@ -848,105 +837,49 @@ export class WorkspaceSessionCatalog {
     return session.threads.every((thread) => thread.id === threadId || thread.status !== "running");
   }
 
-  private setParentThreadDependencyWaiting(
-    sessionId: string,
-    parentThreadId: string,
-    childThreadId: string,
-  ): void {
-    const parentThread = this.structuredSessionStore
-      .getSessionState(sessionId)
-      .threads.find((thread) => thread.id === parentThreadId);
-    if (!parentThread || isTerminalThreadStatus(parentThread.status)) {
-      return;
-    }
-
-    if (parentThread.status === "waiting" && parentThread.wait) {
-      return;
-    }
-
-    const nextDependsOn =
-      parentThread.status === "waiting" && !parentThread.wait
-        ? [...new Set([...parentThread.dependsOnThreadIds, childThreadId])]
-        : [childThreadId];
-    if (
-      parentThread.status === "waiting" &&
-      !parentThread.wait &&
-      parentThread.dependsOnThreadIds.length === nextDependsOn.length &&
-      parentThread.dependsOnThreadIds.every((value, index) => value === nextDependsOn[index])
-    ) {
-      return;
-    }
-
-    this.structuredSessionStore.updateThread({
-      threadId: parentThread.id,
-      status: "waiting",
-      dependsOnThreadIds: nextDependsOn,
-    });
-  }
-
-  private releaseParentThreadDependency(
-    sessionId: string,
-    parentThreadId: string,
-    childThreadId: string,
-  ): void {
-    const parentThread = this.structuredSessionStore
-      .getSessionState(sessionId)
-      .threads.find((thread) => thread.id === parentThreadId);
-    if (!parentThread || isTerminalThreadStatus(parentThread.status)) {
-      return;
-    }
-
-    if (parentThread.status !== "waiting" || parentThread.wait) {
-      return;
-    }
-    if (!parentThread.dependsOnThreadIds.includes(childThreadId)) {
-      return;
-    }
-
-    const remaining = parentThread.dependsOnThreadIds.filter((id) => id !== childThreadId);
-    if (remaining.length === 0) {
-      this.structuredSessionStore.updateThread({
-        threadId: parentThread.id,
-        status: "running",
-      });
-      return;
-    }
-
-    this.structuredSessionStore.updateThread({
-      threadId: parentThread.id,
-      status: "waiting",
-      dependsOnThreadIds: remaining,
-    });
-  }
-
   private createPromptExecutionContext(
     session: ManagedSession,
-    promptMessages: readonly Message[],
+    options: SendAgentPromptOptions,
   ): PromptExecutionContext | null {
-    const promptText = getLatestUserPromptText(promptMessages);
+    const promptText = getLatestUserPromptText(options.messages);
     if (!promptText) {
       return null;
     }
 
     try {
-      const legacySummary = this.buildLegacySummaryFromManagedSession(session);
-      this.upsertStructuredPiSession(legacySummary);
+      const target = options.target;
+      const structuredSessionId = this.resolveStructuredSessionIdForPrompt({
+        surfaceSessionId: session.sessionId,
+        target,
+      });
+      if (structuredSessionId === session.sessionId) {
+        const legacySummary = this.buildLegacySummaryFromManagedSession(session);
+        this.upsertStructuredPiSession(legacySummary);
+      }
       const requestSummary = summarizePromptForTurn(promptText);
       const turn = this.structuredSessionStore.startTurn({
-        sessionId: session.sessionId,
+        sessionId: structuredSessionId,
+        surfacePiSessionId: session.sessionId,
+        threadId: target?.surface === "thread" ? target.threadId ?? null : null,
         requestSummary,
       });
-      const rootThread = this.structuredSessionStore.createThread({
-        turnId: turn.id,
-        kind: "task",
-        title: requestSummary,
-        objective: promptText,
-      });
+      const rootThreadId =
+        target?.surface === "thread" && target.threadId
+          ? target.threadId
+          : this.structuredSessionStore.createThread({
+              turnId: turn.id,
+              surfacePiSessionId: session.sessionId,
+              title: requestSummary,
+              objective: promptText,
+            }).id;
 
       return createPromptExecutionContext({
-        sessionId: session.sessionId,
+        sessionId: structuredSessionId,
         turnId: turn.id,
-        rootThreadId: rootThread.id,
+        surfacePiSessionId: session.sessionId,
+        surfaceThreadId: rootThreadId,
+        surfaceKind: target?.surface === "thread" ? "handler" : "orchestrator",
+        rootThreadId,
         promptText,
         rootEpisodeKind: inferRootEpisodeKind(promptText),
       });
@@ -954,6 +887,22 @@ export class WorkspaceSessionCatalog {
       console.error("Failed to start prompt execution state:", error);
       return null;
     }
+  }
+
+  private resolveStructuredSessionIdForPrompt(input: {
+    surfaceSessionId: string;
+    target?: PromptTarget;
+  }): string {
+    if (input.target?.surface === "thread" && input.target.threadId) {
+      const match = this.structuredSessionStore
+        .listSessionStates()
+        .find((session) => session.threads.some((thread) => thread.id === input.target?.threadId));
+      if (match) {
+        return match.session.id;
+      }
+    }
+
+    return input.surfaceSessionId;
   }
 
   private async getSessionFileForId(
@@ -964,10 +913,12 @@ export class WorkspaceSessionCatalog {
       return this.activeSession.session.sessionManager.getSessionFile();
     }
 
-    const sessions = await SessionManager.list(this.cwd, this.sessionDir);
-    const match = sessions.find((info) => info.id === sessionId);
-    if (match) {
-      return match.path;
+    for (const sessionDir of [this.sessionDir, this.threadSurfaceDir]) {
+      const sessions = await SessionManager.list(this.cwd, sessionDir);
+      const match = sessions.find((info) => info.id === sessionId);
+      if (match) {
+        return match.path;
+      }
     }
 
     if (!required) {
@@ -975,6 +926,33 @@ export class WorkspaceSessionCatalog {
     }
 
     throw new Error(`Session ${sessionId} not found.`);
+  }
+
+  private async createHandlerThread(input: {
+    sessionId: string;
+    turnId: string;
+    parentThreadId: string;
+    parentSurfacePiSessionId: string;
+    title: string;
+    objective: string;
+  }) {
+    const parentSessionFile = await this.getSessionFileForId(input.parentSurfacePiSessionId);
+    const threadSessionManager = SessionManager.forkFrom(
+      parentSessionFile!,
+      this.cwd,
+      this.threadSurfaceDir,
+    );
+    if (input.title.trim()) {
+      threadSessionManager.appendSessionInfo(input.title.trim());
+    }
+
+    return this.structuredSessionStore.createThread({
+      turnId: input.turnId,
+      parentThreadId: input.parentThreadId,
+      surfacePiSessionId: threadSessionManager.getSessionId(),
+      title: input.title,
+      objective: input.objective,
+    });
   }
 
   private async runAgentPrompt(
@@ -1130,25 +1108,7 @@ export class WorkspaceSessionCatalog {
       }
 
       const assistantText = messageToPlainText(message).trim();
-      if (assistantText) {
-        this.structuredSessionStore.createEpisode({
-          threadId: promptContext.rootThreadId,
-          kind: promptContext.sessionWaitApplied ? "clarification" : promptContext.rootEpisodeKind,
-          title: promptContext.sessionWaitApplied
-            ? "Waiting for follow-up"
-            : rootThread.title || summarizePromptForTurn(promptContext.promptText),
-          summary: summarizePromptForTurn(assistantText),
-          body: assistantText,
-        });
-      }
-
       if (promptContext.sessionWaitApplied) {
-        if (rootThread.status === "running") {
-          this.structuredSessionStore.updateThread({
-            threadId: rootThread.id,
-            status: "completed",
-          });
-        }
         this.structuredSessionStore.finishTurn({
           turnId: promptContext.turnId,
           status: "waiting",
@@ -1160,6 +1120,16 @@ export class WorkspaceSessionCatalog {
         this.structuredSessionStore.updateThread({
           threadId: rootThread.id,
           status: "completed",
+        });
+      }
+
+      if (assistantText) {
+        this.structuredSessionStore.createEpisode({
+          threadId: promptContext.rootThreadId,
+          kind: promptContext.rootEpisodeKind,
+          title: rootThread.title || summarizePromptForTurn(promptContext.promptText),
+          summary: summarizePromptForTurn(assistantText),
+          body: assistantText,
         });
       }
 
@@ -1237,6 +1207,7 @@ async function createManagedSession(
   options: CreateManagedSessionOptions & {
     agentDir: string;
     structuredSessionStore: StructuredSessionStateStore;
+    createHandlerThread: WorkspaceSessionCatalog["createHandlerThread"];
   },
 ): Promise<ManagedSession> {
   mkdirSync(options.agentDir, { recursive: true });
@@ -1252,12 +1223,18 @@ async function createManagedSession(
       runtime: promptExecutionRuntime,
       store: options.structuredSessionStore,
     }),
-    createVerifyRunTool({
-      cwd: options.sessionManager.getCwd(),
+    createStartThreadTool({
+      runtime: promptExecutionRuntime,
+      store: options.structuredSessionStore,
+      bridge: {
+        createHandlerThread: options.createHandlerThread,
+      },
+    }),
+    createStartWorkflowTool({
       runtime: promptExecutionRuntime,
       store: options.structuredSessionStore,
     }),
-    createStartWorkflowTool({
+    createResumeWorkflowTool({
       runtime: promptExecutionRuntime,
       store: options.structuredSessionStore,
     }),

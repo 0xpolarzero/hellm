@@ -10,6 +10,7 @@ import type { ChatStorage, CustomProvider } from "./chat-storage";
 import type {
   ActiveSessionState,
   ActiveSessionSummaryState,
+  PromptTarget,
   SessionMutationResponse,
   WorkspaceSessionSummary,
 } from "./chat-rpc";
@@ -90,7 +91,7 @@ function createSummary(
   title: string,
   preview: string,
   reasoning: ActiveSessionState["reasoningEffort"] = "medium",
-  options: { includeModelMetadata?: boolean } = {},
+  options: { includeModelMetadata?: boolean; parentSessionId?: string } = {},
 ): WorkspaceSessionSummary {
   const includeModelMetadata = options.includeModelMetadata ?? true;
   return {
@@ -101,6 +102,7 @@ function createSummary(
     updatedAt: "2026-04-10T10:05:00.000Z",
     messageCount: 2,
     status: "idle",
+    ...(options.parentSessionId ? { parentSessionId: options.parentSessionId } : {}),
     wait: null,
     counts: {
       turns: 0,
@@ -176,7 +178,9 @@ function createFakeRpc(
   options: { metadataOnlyListSessions?: boolean } = {},
 ): {
   client: ChatRuntimeRpcClient;
+  sentPromptRequests: Array<{ sessionId?: string; target?: PromptTarget }>;
   sentPromptSessions: string[];
+  openedSessions: string[];
   requestCounts: {
     listSessions: number;
     getActiveSession: number;
@@ -190,6 +194,8 @@ function createFakeRpc(
     initialSessions.map((session) => [session.session.id, cloneActiveSession(session)]),
   );
   let activeSessionId = initialSessions[0]?.session.id;
+  const openedSessions: string[] = [];
+  const sentPromptRequests: Array<{ sessionId?: string; target?: PromptTarget }> = [];
   const sentPromptSessions: string[] = [];
   const requestCounts = {
     listSessions: 0,
@@ -245,6 +251,7 @@ function createFakeRpc(
         return cloneActiveSession(created);
       },
       openSession: async ({ sessionId }: { sessionId: string }) => {
+        openedSessions.push(sessionId);
         activeSessionId = sessionId;
         return cloneActiveSession(sessionsById.get(sessionId)!);
       },
@@ -276,7 +283,12 @@ function createFakeRpc(
         sessionId?: string;
         streamId: string;
         messages: AgentMessage[];
+        target?: PromptTarget;
       }) => {
+        sentPromptRequests.push({
+          sessionId: request.sessionId,
+          target: request.target,
+        });
         sentPromptSessions.push(request.sessionId ?? "");
         const assistant = assistantMessage("Session-specific reply");
         const session = sessionsById.get(request.sessionId!)!;
@@ -315,7 +327,10 @@ function createFakeRpc(
             });
           }
         });
-        return { sessionId: request.sessionId! };
+        return {
+          sessionId: request.sessionId!,
+          target: request.target,
+        };
       },
       setSessionModel: async ({ sessionId }: { sessionId: string; model: string }) => ({
         ok: true,
@@ -345,7 +360,7 @@ function createFakeRpc(
     },
   };
 
-  return { client, sentPromptSessions, requestCounts };
+  return { client, sentPromptRequests, sentPromptSessions, openedSessions, requestCounts };
 }
 
 function createFakeRpcWithToolUse(
@@ -426,6 +441,7 @@ function createFakeRpcWithToolUse(
         sessionId?: string;
         streamId: string;
         messages: AgentMessage[];
+        target?: PromptTarget;
       }) => {
         const toolAssistant: AssistantMessage = {
           ...assistantMessage("Using the artifacts tool."),
@@ -452,7 +468,10 @@ function createFakeRpcWithToolUse(
           }
         });
 
-        return { sessionId: request.sessionId ?? session.session.id };
+        return {
+          sessionId: request.sessionId ?? session.session.id,
+          target: request.target,
+        };
       },
       setSessionModel: async ({ sessionId }: { sessionId: string; model: string }) => ({
         ok: true,
@@ -528,7 +547,7 @@ function createMemoryStorage(): ChatStorage {
 describe("createChatRuntime", () => {
   it("hydrates sessions, switches the active transcript, and keeps prompts scoped to the selected session", async () => {
     const { createChatRuntime } = await import("./chat-runtime");
-    const { client, sentPromptSessions, requestCounts } = createFakeRpc([
+    const { client, sentPromptRequests, sentPromptSessions, requestCounts } = createFakeRpc([
       createActiveSession(
         "session-1",
         "First",
@@ -565,6 +584,13 @@ describe("createChatRuntime", () => {
     await runtime.agent.prompt("continue");
     await runtime.agent.waitForIdle();
     expect(sentPromptSessions.at(-1)).toBe("session-2");
+    expect(sentPromptRequests.at(-1)).toEqual({
+      sessionId: "session-2",
+      target: {
+        surface: "orchestrator",
+        surfaceSessionId: "session-2",
+      },
+    });
     expect(requestCounts.listSessions).toBe(1);
     expect(requestCounts.getActiveSession).toBe(2);
     expect(requestCounts.getActiveSessionSummary).toBe(1);
@@ -634,6 +660,78 @@ describe("createChatRuntime", () => {
           message.content[0].text === "second reply",
       ),
     ).toBe(true);
+
+    runtime.dispose();
+  });
+
+  it("can bind the single pane to a handler-thread surface and route prompts directly there", async () => {
+    const { createChatRuntime } = await import("./chat-runtime");
+    const threadSession = createActiveSession(
+      "thread-session-1",
+      "Handler Thread",
+      [userMessage("worker context"), assistantMessage("worker ready")],
+      "medium",
+    );
+    threadSession.session.parentSessionId = "session-1";
+    const { client, openedSessions, sentPromptRequests } = createFakeRpc([
+      createActiveSession(
+        "session-1",
+        "Orchestrator",
+        [userMessage("main"), assistantMessage("main reply")],
+        "medium",
+      ),
+      threadSession,
+    ]);
+
+    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
+
+    expect(runtime.activeSurface).toEqual({
+      surface: "orchestrator",
+      surfaceSessionId: "session-1",
+    });
+
+    await runtime.openSurface({
+      surface: "thread",
+      surfaceSessionId: "thread-session-1",
+      threadId: "thread-123",
+    });
+
+    expect(openedSessions.at(-1)).toBe("thread-session-1");
+    expect(runtime.activeSessionId).toBe("thread-session-1");
+    expect(runtime.activeSurface).toEqual({
+      surface: "thread",
+      surfaceSessionId: "thread-session-1",
+      threadId: "thread-123",
+    });
+    expect(
+      runtime.agent.state.messages.some(
+        (message) =>
+          message.role === "assistant" &&
+          message.content[0]?.type === "text" &&
+          message.content[0].text === "worker ready",
+      ),
+    ).toBe(true);
+
+    await runtime.agent.prompt("status?");
+    await runtime.agent.waitForIdle();
+
+    expect(sentPromptRequests.at(-1)).toEqual({
+      sessionId: "thread-session-1",
+      target: {
+        surface: "thread",
+        surfaceSessionId: "thread-session-1",
+        threadId: "thread-123",
+      },
+    });
+
+    await runtime.resetSurfaceTarget();
+
+    expect(openedSessions.at(-1)).toBe("session-1");
+    expect(runtime.activeSessionId).toBe("session-1");
+    expect(runtime.activeSurface).toEqual({
+      surface: "orchestrator",
+      surfaceSessionId: "session-1",
+    });
 
     runtime.dispose();
   });

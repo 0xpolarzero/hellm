@@ -167,7 +167,7 @@ function seedCommandRollupSession(
   });
   const thread = store.createThread({
     turnId: turn.id,
-    kind: "task",
+    surfacePiSessionId: sessionId,
     title: `Inspect ${title}`,
     objective: `Inspect ${title} command rollups.`,
   });
@@ -292,7 +292,13 @@ describe("WorkspaceSessionCatalog", () => {
       const [options] = createAgentSessionSpy.mock.calls[0] ?? [];
       expect(options?.tools).toEqual([]);
       expect(options?.customTools?.map((tool) => tool.name).toSorted()).toEqual(
-        ["execute_typescript", "verification.run", "workflow.start", "wait"].toSorted(),
+        [
+          "execute_typescript",
+          "thread.start",
+          "workflow.start",
+          "workflow.resume",
+          "wait",
+        ].toSorted(),
       );
     } finally {
       createAgentSessionSpy.mockRestore();
@@ -675,7 +681,7 @@ describe("WorkspaceSessionCatalog", () => {
         status: "completed",
       });
       expect(snapshot.threads[0]).toMatchObject({
-        kind: "task",
+        surfacePiSessionId: created.session.id,
         status: "completed",
         parentThreadId: null,
       });
@@ -686,8 +692,8 @@ describe("WorkspaceSessionCatalog", () => {
       expect(snapshot.events.map((event) => event.kind)).toEqual([
         "turn.started",
         "thread.created",
-        "episode.created",
         "thread.finished",
+        "episode.created",
         "turn.completed",
       ]);
     } finally {
@@ -710,7 +716,7 @@ describe("WorkspaceSessionCatalog", () => {
       });
       const waitingThread = store.createThread({
         turnId: turn.id,
-        kind: "workflow",
+        surfacePiSessionId: "pi-thread-blocked-dependencies",
         title: "Pause for input",
         objective: "Wait for a durable session wait.",
       });
@@ -728,7 +734,7 @@ describe("WorkspaceSessionCatalog", () => {
       });
       const waitingOn = store.setSessionWait({
         sessionId: created.session.id,
-        threadId: waitingThread.id,
+        owner: { kind: "thread", threadId: waitingThread.id },
         ...wait,
       });
 
@@ -765,7 +771,7 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("reconciles parent dependency waits for long-lived workflow refreshes", async () => {
+  it("reconciles long-lived Smithers workflow refreshes onto the handler thread", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const created = await catalog.createSession({ title: "Workflow Refresh" }, DEFAULTS);
@@ -775,24 +781,17 @@ describe("WorkspaceSessionCatalog", () => {
     try {
       const turn = store.startTurn({
         sessionId: created.session.id,
-        requestSummary: "Refresh workflow dependency state",
+        requestSummary: "Refresh workflow state on the handler thread",
       });
-      const rootThread = store.createThread({
+      const handlerThread = store.createThread({
         turnId: turn.id,
-        kind: "task",
-        title: "Coordinate workflow",
-        objective: "Track the long-lived workflow from the parent task.",
-      });
-      const workflowThread = store.createThread({
-        turnId: turn.id,
-        parentThreadId: rootThread.id,
-        kind: "workflow",
-        title: "Delegated workflow",
-        objective: "Represent a long-lived workflow child thread.",
+        surfacePiSessionId: "pi-thread-workflow-refresh",
+        title: "Supervise workflow",
+        objective: "Keep the handler thread in control while Smithers runs.",
       });
       const command = store.createCommand({
         turnId: turn.id,
-        threadId: workflowThread.id,
+        threadId: handlerThread.id,
         toolName: "workflow.start",
         executor: "smithers",
         visibility: "surface",
@@ -800,17 +799,19 @@ describe("WorkspaceSessionCatalog", () => {
         summary: "Start the delegated workflow.",
       });
       const workflow = store.recordWorkflow({
-        threadId: workflowThread.id,
+        threadId: handlerThread.id,
         commandId: command.id,
         smithersRunId: "run-refresh-123",
         workflowName: "implement-feature",
+        templateId: "single_task",
         status: "running",
         summary: "Workflow started.",
       });
 
       const snapshot = getStructuredSessionState(catalog, created.session.id);
-      const childThread = snapshot.threads.find((thread) => thread.id === workflowThread.id)!;
-      const workflowRecord = snapshot.workflows.find((entry) => entry.id === workflow.id)!;
+      const handlerThreadRecord = snapshot.threads.find((thread) => thread.id === handlerThread.id)!;
+      const workflowRecord =
+        (snapshot.workflowRuns ?? snapshot.workflows).find((entry) => entry.id === workflow.id)!;
       const run: SmithersRunState = {
         runId: workflow.smithersRunId,
         workflowName: workflow.workflowName,
@@ -836,24 +837,23 @@ describe("WorkspaceSessionCatalog", () => {
           ) => void;
         }
       ).refreshSmithersWaitingWorkflowProjection(
-        childThread,
+        handlerThreadRecord,
         workflowRecord,
         run,
         "implement-feature run run-refresh-123 is waiting for an external event.",
       );
 
       const waitingSnapshot = getStructuredSessionState(catalog, created.session.id);
-      expect(waitingSnapshot.threads.find((thread) => thread.id === rootThread.id)).toMatchObject({
-        status: "waiting",
-        dependsOnThreadIds: [workflowThread.id],
-      });
       expect(
-        waitingSnapshot.threads.find((thread) => thread.id === workflowThread.id)?.wait,
+        waitingSnapshot.threads.find((thread) => thread.id === handlerThread.id),
       ).toMatchObject({
-        kind: "external",
+        status: "waiting",
+        wait: {
+          kind: "external",
+        },
       });
       expect(waitingSnapshot.session.wait).toMatchObject({
-        threadId: workflowThread.id,
+        threadId: handlerThread.id,
         kind: "external",
       });
 
@@ -866,22 +866,13 @@ describe("WorkspaceSessionCatalog", () => {
 
       const resumedSnapshot = getStructuredSessionState(catalog, created.session.id);
       expect(resumedSnapshot.session.wait).toBeNull();
-      expect(resumedSnapshot.threads.find((thread) => thread.id === rootThread.id)).toMatchObject({
-        status: "running",
-        dependsOnThreadIds: [],
-      });
       expect(
-        resumedSnapshot.threads.find((thread) => thread.id === workflowThread.id),
+        resumedSnapshot.threads.find((thread) => thread.id === handlerThread.id),
       ).toMatchObject({
-        status: "completed",
+        status: "running",
         wait: null,
       });
-      expect(resumedSnapshot.episodes).toEqual([
-        expect.objectContaining({
-          threadId: workflowThread.id,
-          kind: "workflow",
-        }),
-      ]);
+      expect(resumedSnapshot.episodes).toEqual([]);
     } finally {
       await catalog.dispose();
     }

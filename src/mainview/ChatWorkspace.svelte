@@ -62,6 +62,7 @@
   let windowWidth = $state(0);
   let sessions = $state<WorkspaceSessionSummary[]>([]);
   let activeSessionId = $state<string | undefined>(undefined);
+  let activeSurface = $state<ChatRuntime["activeSurface"] | null>(null);
   let sidebarError = $state<string | undefined>(undefined);
   let sidebarHidden = $state(false);
   let sidebarWidth = $state(DEFAULT_SIDEBAR_WIDTH);
@@ -90,6 +91,14 @@
   const effectiveSidebarWidth = $derived(clampSidebarWidth(sidebarWidth, windowWidth));
   const visibleSessions = $derived(sortVisibleSessionsByRecency(sessions));
   const currentSession = $derived(sessions.find((session) => session.id === activeSessionId) ?? null);
+  const currentSurface = $derived(activeSurface ?? runtime.activeSurface);
+  const currentSurfaceLabel = $derived.by(() => {
+    if (currentSurface?.surface === "thread") {
+      return `Messaging handler thread ${currentSurface.threadId ?? currentSurface.surfaceSessionId}`;
+    }
+
+    return "Messaging orchestrator";
+  });
   const usageText = $derived(formatUsage(conversation.usage));
   const summaryMessageCount = $derived(conversationSummary.messageCount);
   const toolCallCount = $derived(conversationSummary.toolCallCount);
@@ -207,6 +216,7 @@
   function syncRuntimeState() {
     sessions = [...runtime.sessions];
     activeSessionId = runtime.activeSessionId;
+    activeSurface = runtime.activeSurface;
   }
 
   function syncArtifacts(snapshot: ArtifactsSnapshot) {
@@ -328,6 +338,10 @@
     await runSessionMutation(() => runtime.forkSession(session.id));
   }
 
+  async function handleResetSurfaceTarget() {
+    await runSessionMutation(() => runtime.resetSurfaceTarget());
+  }
+
   function handleDeleteSession(session: WorkspaceSessionSummary) {
     deleteTarget = session;
   }
@@ -347,7 +361,7 @@
         text: input,
         sentAt: Date.now(),
         workspaceId: runtime.workspaceId,
-        sessionId: runtime.agent.sessionId ?? undefined,
+        sessionId: runtime.activeSurface.surfaceSessionId,
       });
       promptHistory = [...promptHistory, entry];
     } catch (error) {
@@ -532,9 +546,20 @@
       <header class="workspace-main-header">
         <div class="workspace-main-copy">
           <h2 class="workspace-main-title">{currentSession?.title ?? "New Session"}</h2>
+          <p class="workspace-main-subtitle">{currentSurfaceLabel}</p>
         </div>
 
         <div class="workspace-main-meta">
+          {#if currentSurface?.surface === "thread"}
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={promptBusy || mutatingSession}
+              onclick={() => void handleResetSurfaceTarget()}
+            >
+              Return to orchestrator
+            </Button>
+          {/if}
           <Badge tone={workspaceStatusTone}>{workspaceStatusText}</Badge>
           <span>{summaryMessageCount} turns</span>
           <span>{toolCallCount} tool runs</span>
@@ -839,7 +864,8 @@
 
   .workspace-main-copy {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: flex-start;
     min-width: 0;
   }
 
@@ -852,6 +878,16 @@
     font-size: 0.96rem;
     font-weight: 700;
     letter-spacing: -0.03em;
+  }
+
+  .workspace-main-subtitle {
+    margin: 0.24rem 0 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.74rem;
+    color: var(--ui-text-tertiary);
   }
 
   .workspace-main-meta {

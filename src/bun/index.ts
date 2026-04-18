@@ -6,6 +6,7 @@ import { basename, join } from "node:path";
 import type {
   AuthStateResponse,
   ChatRPCSchema,
+  PromptTarget,
   ProviderAuthInfo,
   SendPromptRequest,
 } from "../mainview/chat-rpc";
@@ -359,7 +360,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         recordBridgeEvent("session.deleted", { sessionId });
         return result;
       },
-      sendPrompt: async (payload: SendPromptRequest): Promise<{ sessionId: string }> => {
+      sendPrompt: async (payload: SendPromptRequest): Promise<{ sessionId: string; target?: PromptTarget }> => {
         const resolved = resolveSendDefaults(payload);
 
         if (supportsOAuth(resolved.provider)) {
@@ -390,6 +391,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
 
         const session = await workspaceSessionCatalog.sendPrompt({
           sessionId: payload.sessionId,
+          target: payload.target,
           provider: resolved.provider,
           model: model.id,
           thinkingLevel: resolved.reasoningEffort,
@@ -436,7 +438,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           provider: resolved.provider,
           sessionId,
         });
-        return { sessionId };
+        return { sessionId, target: session.target ?? payload.target };
       },
       cancelPrompt: async ({ sessionId }: { sessionId: string }): Promise<{ ok: boolean }> => {
         await workspaceSessionCatalog.cancelPrompt(sessionId);

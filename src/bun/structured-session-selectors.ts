@@ -6,12 +6,13 @@ import type {
   StructuredThreadRecord,
   StructuredThreadStatus,
   StructuredTurnRecord,
-  StructuredWorkflowRecord,
+  StructuredWorkflowRunRecord,
 } from "./structured-session-state";
 
 export interface StructuredCommandRollup {
   commandId: string;
-  threadId: string;
+  threadId: string | null;
+  workflowRunId?: string | null;
   toolName: string;
   visibility: "summary" | "surface";
   status: StructuredCommandRecord["status"];
@@ -31,6 +32,7 @@ export interface StructuredSessionView {
     commands: number;
     episodes: number;
     verifications: number;
+    workflowRuns?: number;
     workflows: number;
     artifacts: number;
     events: number;
@@ -41,23 +43,26 @@ export interface StructuredSessionView {
     failed: string[];
   };
   threadIds: string[];
+  latestEpisodePreview?: string | null;
+  latestWorkflowRunSummary?: string | null;
   commandRollups: StructuredCommandRollup[];
 }
 
 export interface StructuredSessionSummaryProjection {
   sessionId: string;
   title: string;
-  preview: string;
+  sessionStatus?: StructuredSessionStatus;
   status: StructuredSessionStatus;
+  preview: string;
   updatedAt: string;
   counts: StructuredSessionView["counts"];
   wait: StructuredSessionSnapshot["session"]["wait"];
   threadIds: StructuredSessionView["threadIds"];
+  latestEpisodePreview?: string | null;
+  latestWorkflowRunSummary?: string | null;
 }
 
-function getUpdatedAt(
-  record: Pick<StructuredThreadRecord | StructuredTurnRecord, "updatedAt">,
-): number {
+function getUpdatedAt(record: Pick<StructuredThreadRecord | StructuredTurnRecord, "updatedAt">): number {
   return Date.parse(record.updatedAt);
 }
 
@@ -76,21 +81,21 @@ function getMostRecentVerificationSummary(session: StructuredSessionSnapshot): s
   );
 }
 
-function getMostRecentWorkflow(
+function getMostRecentWorkflowRun(
   session: StructuredSessionSnapshot,
-): StructuredWorkflowRecord | null {
+): StructuredWorkflowRunRecord | null {
   return (
-    session.workflows.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ??
-    null
+    (session.workflowRuns ?? session.workflows)
+      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null
   );
 }
 
-function getMostRecentActiveWorkflow(
+function getMostRecentActiveWorkflowRun(
   session: StructuredSessionSnapshot,
-): StructuredWorkflowRecord | null {
+): StructuredWorkflowRunRecord | null {
   return (
-    session.workflows
-      .filter((workflow) => workflow.status === "running" || workflow.status === "waiting")
+    (session.workflowRuns ?? session.workflows)
+      .filter((workflowRun) => workflowRun.status === "running" || workflowRun.status === "waiting")
       .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null
   );
 }
@@ -121,7 +126,8 @@ function buildCommandRollups(
     .filter(isCommandRollupSource)
     .map((command) => ({
       commandId: command.id,
-      threadId: command.threadId,
+      threadId: command.threadId ?? null,
+      workflowRunId: command.workflowRunId ?? null,
       toolName: command.toolName,
       visibility: command.visibility,
       status: command.status,
@@ -144,10 +150,6 @@ function describeWaitingThread(thread: StructuredThreadRecord): string {
     return `Waiting: ${thread.wait.reason}`;
   }
 
-  if (thread.dependsOnThreadIds.length > 0) {
-    return `Waiting on dependencies: ${thread.title}`;
-  }
-
   return `Waiting: ${thread.title}`;
 }
 
@@ -164,15 +166,23 @@ function formatEpisodePreview(episode: StructuredEpisodeRecord): string {
   }
 }
 
+function deriveLatestEpisodePreview(session: StructuredSessionSnapshot): string | null {
+  return getMostRecentEpisode(session)?.summary ?? null;
+}
+
+function deriveLatestWorkflowRunSummary(session: StructuredSessionSnapshot): string | null {
+  return getMostRecentWorkflowRun(session)?.summary ?? null;
+}
+
 function derivePreview(session: StructuredSessionSnapshot): string {
   const commandRollups = buildCommandRollups(session.commands);
   if (session.session.wait) {
     return `Waiting: ${session.session.wait.reason}`;
   }
 
-  const activeWorkflow = getMostRecentActiveWorkflow(session);
-  if (activeWorkflow) {
-    return `Workflow: ${activeWorkflow.summary}`;
+  const activeWorkflowRun = getMostRecentActiveWorkflowRun(session);
+  if (activeWorkflowRun) {
+    return `Workflow: ${activeWorkflowRun.summary}`;
   }
 
   const latestEpisode = getMostRecentEpisode(session);
@@ -190,14 +200,14 @@ function derivePreview(session: StructuredSessionSnapshot): string {
     return `Verification: ${latestVerificationSummary}`;
   }
 
+  const latestWorkflowRun = getMostRecentWorkflowRun(session);
+  if (latestWorkflowRun) {
+    return `Workflow: ${latestWorkflowRun.summary}`;
+  }
+
   const latestThread = getMostRecentThread(session);
   if (latestThread?.status === "waiting") {
     return describeWaitingThread(latestThread);
-  }
-
-  const latestWorkflow = getMostRecentWorkflow(session);
-  if (latestWorkflow) {
-    return `Workflow: ${latestWorkflow.summary}`;
   }
 
   if (latestThread) {
@@ -215,7 +225,9 @@ function deriveUpdatedAt(session: StructuredSessionSnapshot): string {
     ...session.commands.map((command) => Date.parse(command.updatedAt)),
     ...session.episodes.map((episode) => Date.parse(episode.createdAt)),
     ...session.verifications.map((verification) => Date.parse(verification.finishedAt)),
-    ...session.workflows.map((workflow) => Date.parse(workflow.updatedAt)),
+    ...(session.workflowRuns ?? session.workflows).map((workflowRun) =>
+      Date.parse(workflowRun.updatedAt),
+    ),
     ...session.artifacts.map((artifact) => Date.parse(artifact.createdAt)),
     ...session.events.map((event) => Date.parse(event.at)),
     ...(session.session.wait ? [Date.parse(session.session.wait.since)] : []),
@@ -228,9 +240,7 @@ function deriveUpdatedAt(session: StructuredSessionSnapshot): string {
 function getLatestFailureTimestamp(session: StructuredSessionSnapshot): number | null {
   const failures = [
     ...session.turns.filter((turn) => turn.status === "failed").map((turn) => getUpdatedAt(turn)),
-    ...session.threads
-      .filter((thread) => thread.status === "failed")
-      .map((thread) => getUpdatedAt(thread)),
+    ...session.threads.filter((thread) => thread.status === "failed").map((thread) => getUpdatedAt(thread)),
   ].filter((value) => Number.isFinite(value));
 
   return failures.length > 0 ? Math.max(...failures) : null;
@@ -239,7 +249,7 @@ function getLatestFailureTimestamp(session: StructuredSessionSnapshot): number |
 export function deriveStructuredSessionStatus(input: {
   wait: StructuredSessionSnapshot["session"]["wait"];
   turns: Pick<StructuredTurnRecord, "status" | "updatedAt">[];
-  threads: Pick<StructuredThreadRecord, "status" | "updatedAt" | "dependsOnThreadIds">[];
+  threads: Array<Pick<StructuredThreadRecord, "status" | "updatedAt">>;
 }): StructuredSessionStatus {
   if (input.wait) {
     return "waiting";
@@ -249,24 +259,8 @@ export function deriveStructuredSessionStatus(input: {
     return "running";
   }
 
-  if (
-    input.threads.some(
-      (thread) => thread.status === "waiting" && thread.dependsOnThreadIds.length > 0,
-    )
-  ) {
-    return "running";
-  }
-
-  const latestFailure = [
-    ...input.turns.filter((turn) => turn.status === "failed").map((turn) => getUpdatedAt(turn)),
-    ...input.threads
-      .filter((thread) => thread.status === "failed")
-      .map((thread) => getUpdatedAt(thread)),
-  ]
-    .filter((value) => Number.isFinite(value))
-    .toSorted((left, right) => right - left)[0];
-
-  if (typeof latestFailure === "number") {
+  const latestThread = input.threads.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+  if (latestThread?.status === "failed") {
     return "error";
   }
 
@@ -278,6 +272,8 @@ export function buildStructuredSessionView(
 ): StructuredSessionView {
   const grouped = groupThreadIdsByStatus(session.threads);
   const commandRollups = buildCommandRollups(session.commands);
+  const latestEpisodePreview = deriveLatestEpisodePreview(session);
+  const latestWorkflowRunSummary = deriveLatestWorkflowRunSummary(session);
 
   return {
     title: session.pi.title,
@@ -290,7 +286,6 @@ export function buildStructuredSessionView(
       threads: session.threads.map((thread) => ({
         status: thread.status,
         updatedAt: thread.updatedAt,
-        dependsOnThreadIds: thread.dependsOnThreadIds,
       })),
     }),
     wait: structuredClone(session.session.wait),
@@ -300,12 +295,15 @@ export function buildStructuredSessionView(
       commands: session.commands.length,
       episodes: session.episodes.length,
       verifications: session.verifications.length,
-      workflows: session.workflows.length,
+      workflowRuns: (session.workflowRuns ?? session.workflows).length,
+      workflows: (session.workflowRuns ?? session.workflows).length,
       artifacts: session.artifacts.length,
       events: session.events.length,
     },
     threadIdsByStatus: grouped,
     threadIds: deriveThreadIds(session.threads),
+    latestEpisodePreview,
+    latestWorkflowRunSummary,
     commandRollups,
   };
 }
@@ -318,12 +316,15 @@ export function buildStructuredSessionSummaryProjection(
   return {
     sessionId: session.pi.sessionId,
     title: view.title,
-    preview: derivePreview(session),
+    sessionStatus: view.sessionStatus,
     status: view.sessionStatus,
+    preview: derivePreview(session),
     updatedAt: deriveUpdatedAt(session),
     counts: view.counts,
     wait: view.wait,
     threadIds: view.threadIds,
+    latestEpisodePreview: view.latestEpisodePreview,
+    latestWorkflowRunSummary: view.latestWorkflowRunSummary,
   };
 }
 
@@ -353,7 +354,7 @@ export function hasStructuredSessionFacts(session: StructuredSessionSnapshot): b
     buildCommandRollups(session.commands).length > 0 ||
     session.episodes.length > 0 ||
     session.verifications.length > 0 ||
-    session.workflows.length > 0 ||
+    (session.workflowRuns ?? session.workflows).length > 0 ||
     session.artifacts.length > 0 ||
     session.events.length > 0
   );

@@ -10,7 +10,7 @@ import type {
   StructuredThreadStatus,
   StructuredTurnRecord,
   StructuredVerificationRecord,
-  StructuredWorkflowRecord,
+  StructuredWorkflowRunRecord,
 } from "./structured-session-state";
 import {
   buildStructuredSessionSummaryProjection,
@@ -28,6 +28,7 @@ type StructuredSessionSnapshotFixture = Omit<
   | "commands"
   | "episodes"
   | "verifications"
+  | "workflowRuns"
   | "workflows"
   | "artifacts"
   | "events"
@@ -37,7 +38,7 @@ type StructuredSessionSnapshotFixture = Omit<
   commands?: Partial<StructuredCommandRecord>[];
   episodes?: Partial<StructuredEpisodeRecord>[];
   verifications?: Partial<StructuredVerificationRecord>[];
-  workflows?: Partial<StructuredWorkflowRecord>[];
+  workflowRuns?: Partial<StructuredWorkflowRunRecord>[];
   artifacts?: Partial<StructuredArtifactRecord>[];
   events?: Partial<StructuredLifecycleEventRecord>[];
 };
@@ -51,7 +52,7 @@ function createSessionSnapshot(
     commands: overrideCommands,
     episodes: overrideEpisodes,
     verifications: overrideVerifications,
-    workflows: overrideWorkflows,
+    workflowRuns: overrideWorkflowRuns,
     artifacts: overrideArtifacts,
     events: overrideEvents,
     ...rest
@@ -62,11 +63,13 @@ function createSessionSnapshot(
       const base: StructuredTurnRecord = {
         id: "turn-001",
         sessionId: "session-selectors",
+        surfacePiSessionId: "session-selectors",
+        threadId: null,
         requestSummary: "Selector turn",
         status: "completed",
-        startedAt: "2026-04-14T07:00:00.000Z",
-        updatedAt: "2026-04-14T07:01:00.000Z",
-        finishedAt: "2026-04-14T07:01:00.000Z",
+        startedAt: "2026-04-18T07:00:00.000Z",
+        updatedAt: "2026-04-18T07:01:00.000Z",
+        finishedAt: "2026-04-18T07:01:00.000Z",
       };
       return { ...base, ...turn };
     }) ?? [];
@@ -78,15 +81,15 @@ function createSessionSnapshot(
         sessionId: "session-selectors",
         turnId: "turn-001",
         parentThreadId: null,
-        kind: "task",
+        surfacePiSessionId: `pi-thread-00${index + 1}`,
         title: "Selector thread",
         objective: "Selector objective",
         status: "completed" as StructuredThreadStatus,
-        dependsOnThreadIds: [],
         wait: null,
-        startedAt: "2026-04-14T07:00:00.000Z",
-        updatedAt: "2026-04-14T07:01:00.000Z",
-        finishedAt: "2026-04-14T07:01:00.000Z",
+        latestWorkflowRunId: null,
+        startedAt: "2026-04-18T07:00:00.000Z",
+        updatedAt: "2026-04-18T07:01:00.000Z",
+        finishedAt: "2026-04-18T07:01:00.000Z",
       };
       return { ...base, ...thread };
     }) ?? [];
@@ -97,10 +100,12 @@ function createSessionSnapshot(
         id: `command-00${index + 1}`,
         sessionId: "session-selectors",
         turnId: "turn-001",
+        surfacePiSessionId: "pi-thread-001",
         threadId: "thread-001",
+        workflowRunId: null,
         parentCommandId: null,
         toolName: "execute_typescript",
-        executor: "execute_typescript",
+        executor: "handler",
         visibility: "trace",
         status: "succeeded",
         attempts: 1,
@@ -108,9 +113,9 @@ function createSessionSnapshot(
         summary: "Selector command summary",
         facts: null,
         error: null,
-        startedAt: "2026-04-14T07:00:30.000Z",
-        updatedAt: "2026-04-14T07:01:00.000Z",
-        finishedAt: "2026-04-14T07:01:00.000Z",
+        startedAt: "2026-04-18T07:00:30.000Z",
+        updatedAt: "2026-04-18T07:01:00.000Z",
+        finishedAt: "2026-04-18T07:01:00.000Z",
       };
       return { ...base, ...command };
     }) ?? [];
@@ -126,8 +131,7 @@ function createSessionSnapshot(
         title: "Selector episode",
         summary: "Selector episode summary",
         body: "Selector body",
-        artifactIds: [],
-        createdAt: "2026-04-14T07:01:00.000Z",
+        createdAt: "2026-04-18T07:01:00.000Z",
       };
       return { ...base, ...episode };
     }) ?? [];
@@ -138,33 +142,36 @@ function createSessionSnapshot(
         id: `verification-00${index + 1}`,
         sessionId: "session-selectors",
         threadId: "thread-002",
+        workflowRunId: "workflow-001",
         commandId: "command-002",
         kind: "test",
         status: "passed",
         summary: "Verification summary",
         command: "bun test",
-        startedAt: "2026-04-14T07:01:30.000Z",
-        finishedAt: "2026-04-14T07:02:00.000Z",
+        startedAt: "2026-04-18T07:01:30.000Z",
+        finishedAt: "2026-04-18T07:02:00.000Z",
       };
       return { ...base, ...verification };
     }) ?? [];
 
-  const workflows =
-    overrideWorkflows?.map((workflow, index) => {
-      const base: StructuredWorkflowRecord = {
+  const workflowRuns =
+    overrideWorkflowRuns?.map((workflowRun, index) => {
+      const base: StructuredWorkflowRunRecord = {
         id: `workflow-00${index + 1}`,
         sessionId: "session-selectors",
         threadId: "thread-003",
         commandId: "command-003",
         smithersRunId: `smithers-run-${index + 1}`,
         workflowName: "selector-workflow",
+        templateId: "single_task",
+        presetId: null,
         status: "running",
         summary: "Workflow summary",
-        startedAt: "2026-04-14T07:02:30.000Z",
-        updatedAt: "2026-04-14T07:03:00.000Z",
+        startedAt: "2026-04-18T07:02:30.000Z",
+        updatedAt: "2026-04-18T07:03:00.000Z",
         finishedAt: null,
       };
-      return { ...base, ...workflow };
+      return { ...base, ...workflowRun };
     }) ?? [];
 
   const artifacts =
@@ -172,13 +179,14 @@ function createSessionSnapshot(
       const base: StructuredArtifactRecord = {
         id: `artifact-00${index + 1}`,
         sessionId: "session-selectors",
-        episodeId: "episode-001",
+        threadId: "thread-001",
+        workflowRunId: null,
         sourceCommandId: "command-001",
         kind: "text",
         name: `artifact-${index + 1}.md`,
         path: undefined,
         content: "artifact content",
-        createdAt: "2026-04-14T07:01:30.000Z",
+        createdAt: "2026-04-18T07:01:30.000Z",
       };
       return { ...base, ...artifact };
     }) ?? [];
@@ -188,7 +196,7 @@ function createSessionSnapshot(
       const base: StructuredLifecycleEventRecord = {
         id: `event-00${index + 1}`,
         sessionId: "session-selectors",
-        at: "2026-04-14T07:00:00.000Z",
+        at: "2026-04-18T07:00:00.000Z",
         kind: "session.created",
         subject: { kind: "session", id: "session-selectors" },
       };
@@ -210,11 +218,12 @@ function createSessionSnapshot(
       reasoningEffort: "high",
       messageCount: 7,
       status: "idle",
-      createdAt: "2026-04-14T07:00:00.000Z",
-      updatedAt: "2026-04-14T07:10:00.000Z",
+      createdAt: "2026-04-18T07:00:00.000Z",
+      updatedAt: "2026-04-18T07:10:00.000Z",
     } satisfies StructuredPiSessionRecord,
     session: {
       id: "session-selectors",
+      orchestratorPiSessionId: "session-selectors",
       wait: null,
     },
     turns,
@@ -222,7 +231,8 @@ function createSessionSnapshot(
     commands,
     episodes,
     verifications,
-    workflows,
+    workflowRuns,
+    workflows: workflowRuns,
     artifacts,
     events,
     ...rest,
@@ -230,15 +240,16 @@ function createSessionSnapshot(
 }
 
 describe("structured session selectors", () => {
-  it("derives session status from wait, running work, dependency waits, failures, and idle state", () => {
+  it("derives session status from wait, running work, latest failed thread, and idle state", () => {
     expect(
       deriveStructuredSessionStatus({
         wait: {
+          owner: { kind: "thread", threadId: "thread-001" },
           threadId: "thread-001",
           kind: "user",
           reason: "Need clarification",
           resumeWhen: "Resume on answer",
-          since: "2026-04-14T10:00:00.000Z",
+          since: "2026-04-18T10:00:00.000Z",
         },
         turns: [],
         threads: [],
@@ -252,22 +263,7 @@ describe("structured session selectors", () => {
         threads: [
           {
             status: "running",
-            updatedAt: "2026-04-14T10:05:00.000Z",
-            dependsOnThreadIds: [],
-          },
-        ],
-      }),
-    ).toBe("running");
-
-    expect(
-      deriveStructuredSessionStatus({
-        wait: null,
-        turns: [],
-        threads: [
-          {
-            status: "waiting",
-            updatedAt: "2026-04-14T10:04:00.000Z",
-            dependsOnThreadIds: ["thread-002"],
+            updatedAt: "2026-04-18T10:05:00.000Z",
           },
         ],
       }),
@@ -279,14 +275,17 @@ describe("structured session selectors", () => {
         turns: [
           {
             status: "failed",
-            updatedAt: "2026-04-14T10:00:00.000Z",
+            updatedAt: "2026-04-18T10:00:00.000Z",
           },
         ],
         threads: [
           {
             status: "completed",
-            updatedAt: "2026-04-14T10:01:00.000Z",
-            dependsOnThreadIds: [],
+            updatedAt: "2026-04-18T10:01:00.000Z",
+          },
+          {
+            status: "failed",
+            updatedAt: "2026-04-18T10:02:00.000Z",
           },
         ],
       }),
@@ -299,74 +298,68 @@ describe("structured session selectors", () => {
         threads: [
           {
             status: "completed",
-            updatedAt: "2026-04-14T10:05:00.000Z",
-            dependsOnThreadIds: [],
+            updatedAt: "2026-04-18T10:05:00.000Z",
           },
         ],
       }),
     ).toBe("idle");
   });
 
-  it("builds a session view with structured counts, buckets, and startedAt thread ordering", () => {
+  it("builds a session view with workflow-run-centric counts and summary fields", () => {
     const snapshot = createSessionSnapshot({
       session: {
         id: "session-selectors",
+        orchestratorPiSessionId: "session-selectors",
         wait: {
+          owner: { kind: "thread", threadId: "thread-003" },
           threadId: "thread-003",
           kind: "external",
           reason: "Need workflow ownership decision",
           resumeWhen: "Resume when the rollout owner is confirmed.",
-          since: "2026-04-14T10:03:00.000Z",
+          since: "2026-04-18T10:03:00.000Z",
         },
       },
       turns: [
         {
           id: "turn-001",
           status: "completed",
-          updatedAt: "2026-04-14T10:01:00.000Z",
+          updatedAt: "2026-04-18T10:01:00.000Z",
         },
       ],
       threads: [
         {
           id: "thread-003",
-          kind: "workflow",
           title: "Workflow objective",
           objective: "Workflow body",
           status: "waiting",
-          dependsOnThreadIds: [],
           wait: {
             kind: "external",
             reason: "Need clarification",
             resumeWhen: "Resume when the user decides ownership.",
-            since: "2026-04-14T10:03:00.000Z",
+            since: "2026-04-18T10:03:00.000Z",
           },
-          startedAt: "2026-04-14T10:02:30.000Z",
-          updatedAt: "2026-04-14T10:03:00.000Z",
+          latestWorkflowRunId: "workflow-001",
+          startedAt: "2026-04-18T10:02:30.000Z",
+          updatedAt: "2026-04-18T10:03:00.000Z",
           finishedAt: null,
         },
         {
           id: "thread-001",
-          kind: "task",
           title: "Direct objective",
           objective: "Direct body",
           status: "completed",
-          dependsOnThreadIds: [],
-          wait: null,
-          startedAt: "2026-04-14T10:00:00.000Z",
-          updatedAt: "2026-04-14T10:01:00.000Z",
-          finishedAt: "2026-04-14T10:01:00.000Z",
+          startedAt: "2026-04-18T10:00:00.000Z",
+          updatedAt: "2026-04-18T10:01:00.000Z",
+          finishedAt: "2026-04-18T10:01:00.000Z",
         },
         {
           id: "thread-002",
-          kind: "verification",
           title: "Verification objective",
           objective: "Verification body",
           status: "failed",
-          dependsOnThreadIds: [],
-          wait: null,
-          startedAt: "2026-04-14T10:00:30.000Z",
-          updatedAt: "2026-04-14T10:02:00.000Z",
-          finishedAt: "2026-04-14T10:02:00.000Z",
+          startedAt: "2026-04-18T10:00:30.000Z",
+          updatedAt: "2026-04-18T10:02:00.000Z",
+          finishedAt: "2026-04-18T10:02:00.000Z",
         },
       ],
       commands: [
@@ -381,12 +374,12 @@ describe("structured session selectors", () => {
             artifactsCreated: 1,
           },
           threadId: "thread-001",
-          updatedAt: "2026-04-14T10:01:00.000Z",
+          updatedAt: "2026-04-18T10:01:00.000Z",
         },
         {
           id: "command-002",
           parentCommandId: "command-001",
-          toolName: "repo.readFile",
+          toolName: "api.repo.readFile",
           visibility: "trace",
           title: "Read docs/prd.md",
           summary: "Loaded docs/prd.md.",
@@ -394,7 +387,7 @@ describe("structured session selectors", () => {
             path: "docs/prd.md",
           },
           threadId: "thread-001",
-          updatedAt: "2026-04-14T10:00:30.000Z",
+          updatedAt: "2026-04-18T10:00:30.000Z",
         },
       ],
       episodes: [
@@ -403,45 +396,46 @@ describe("structured session selectors", () => {
           threadId: "thread-001",
           kind: "analysis",
           summary: "Direct summary",
-          createdAt: "2026-04-14T10:01:00.000Z",
+          createdAt: "2026-04-18T10:01:00.000Z",
         },
         {
           id: "episode-002",
           threadId: "thread-003",
           kind: "workflow",
-          summary: "Workflow summary",
-          createdAt: "2026-04-14T10:03:30.000Z",
+          summary: "Workflow episode summary",
+          createdAt: "2026-04-18T10:03:30.000Z",
         },
       ],
       verifications: [
         {
           id: "verification-001",
           threadId: "thread-002",
+          workflowRunId: "workflow-002",
           summary: "Verification failed",
-          finishedAt: "2026-04-14T10:02:00.000Z",
+          finishedAt: "2026-04-18T10:02:00.000Z",
         },
       ],
-      workflows: [
+      workflowRuns: [
         {
           id: "workflow-001",
           threadId: "thread-003",
           status: "waiting",
           summary: "Workflow waiting for clarification",
-          updatedAt: "2026-04-14T10:03:00.000Z",
+          updatedAt: "2026-04-18T10:03:00.000Z",
         },
       ],
       artifacts: [
         {
           id: "artifact-001",
-          episodeId: "episode-001",
+          threadId: "thread-001",
           sourceCommandId: "command-001",
-          createdAt: "2026-04-14T10:01:30.000Z",
+          createdAt: "2026-04-18T10:01:30.000Z",
         },
       ],
       events: [
         {
           id: "event-001",
-          at: "2026-04-14T10:00:00.000Z",
+          at: "2026-04-18T10:00:00.000Z",
         },
       ],
     });
@@ -457,6 +451,7 @@ describe("structured session selectors", () => {
         commands: 2,
         episodes: 2,
         verifications: 1,
+        workflowRuns: 1,
         workflows: 1,
         artifacts: 1,
         events: 1,
@@ -467,17 +462,20 @@ describe("structured session selectors", () => {
         failed: ["thread-002"],
       },
       threadIds: ["thread-001", "thread-002", "thread-003"],
+      latestEpisodePreview: "Workflow episode summary",
+      latestWorkflowRunSummary: "Workflow waiting for clarification",
       commandRollups: [
         {
           commandId: "command-001",
           threadId: "thread-001",
+          workflowRunId: null,
           toolName: "execute_typescript",
           visibility: "summary",
           status: "succeeded",
           title: "Inspect docs",
           summary: "Read 2 files and created 1 artifact.",
           childCount: 1,
-          updatedAt: "2026-04-14T10:01:00.000Z",
+          updatedAt: "2026-04-18T10:01:00.000Z",
         },
       ],
     });
@@ -486,28 +484,32 @@ describe("structured session selectors", () => {
     expect(summary).toEqual({
       sessionId: "session-selectors",
       title: "Selector Session",
-      preview: "Waiting: Need workflow ownership decision",
+      sessionStatus: "waiting",
       status: "waiting",
-      updatedAt: "2026-04-14T10:03:30.000Z",
+      preview: "Waiting: Need workflow ownership decision",
+      updatedAt: "2026-04-18T10:03:30.000Z",
       counts: view.counts,
       wait: snapshot.session.wait,
       threadIds: view.threadIds,
+      latestEpisodePreview: "Workflow episode summary",
+      latestWorkflowRunSummary: "Workflow waiting for clarification",
     });
   });
 
-  it("prefers active workflows, then episodes, then verification summaries in the sidebar preview", () => {
+  it("prefers active workflow runs, then terminal episodes, then verification summaries in preview", () => {
     const workflowSnapshot = createSessionSnapshot({
       session: {
         id: "session-workflow-preview",
+        orchestratorPiSessionId: "session-workflow-preview",
         wait: null,
       },
-      workflows: [
+      workflowRuns: [
         {
           id: "workflow-300",
           threadId: "thread-300",
           status: "running",
           summary: "Delegated workflow is running.",
-          updatedAt: "2026-04-14T10:03:00.000Z",
+          updatedAt: "2026-04-18T10:03:00.000Z",
         },
       ],
       episodes: [
@@ -516,66 +518,64 @@ describe("structured session selectors", () => {
           threadId: "thread-300",
           kind: "workflow",
           summary: "Workflow episode summary",
-          createdAt: "2026-04-14T10:04:00.000Z",
-        },
-      ],
-      verifications: [
-        {
-          id: "verification-300",
-          threadId: "thread-301",
-          summary: "Verification summary",
-          finishedAt: "2026-04-14T10:02:00.000Z",
+          createdAt: "2026-04-18T10:04:00.000Z",
         },
       ],
     });
     const workflowSummary = buildStructuredSessionSummaryProjection(workflowSnapshot);
     expect(workflowSummary.preview).toBe("Workflow: Delegated workflow is running.");
+    expect(workflowSummary.latestWorkflowRunSummary).toBe("Delegated workflow is running.");
 
     const episodeSnapshot = createSessionSnapshot({
       session: {
         id: "session-episode-preview",
+        orchestratorPiSessionId: "session-episode-preview",
         wait: null,
       },
-      workflows: [],
+      workflowRuns: [],
       episodes: [
         {
           id: "episode-400",
           threadId: "thread-400",
           kind: "verification",
           summary: "Verification completed successfully.",
-          createdAt: "2026-04-14T10:04:00.000Z",
+          createdAt: "2026-04-18T10:04:00.000Z",
         },
       ],
       verifications: [
         {
           id: "verification-400",
           threadId: "thread-401",
+          workflowRunId: "workflow-401",
           summary: "Older verification summary",
-          finishedAt: "2026-04-14T10:02:00.000Z",
+          finishedAt: "2026-04-18T10:02:00.000Z",
         },
       ],
     });
     const episodeSummary = buildStructuredSessionSummaryProjection(episodeSnapshot);
     expect(episodeSummary.preview).toBe("Verification: Verification completed successfully.");
+    expect(episodeSummary.latestEpisodePreview).toBe("Verification completed successfully.");
 
     const waitingSnapshot = createSessionSnapshot({
       session: {
         id: "session-waiting-preview",
+        orchestratorPiSessionId: "session-waiting-preview",
         wait: {
+          owner: { kind: "thread", threadId: "thread-500" },
           threadId: "thread-500",
           kind: "user",
           reason: "Need clarification before workflow resume.",
           resumeWhen: "Resume when the rollout owner is confirmed.",
-          since: "2026-04-14T10:03:00.000Z",
+          since: "2026-04-18T10:03:00.000Z",
         },
       },
-      workflows: [
+      workflowRuns: [
         {
           id: "workflow-500",
           threadId: "thread-500",
           status: "waiting",
           summary: "Workflow waiting for clarification.",
-          updatedAt: "2026-04-14T10:03:00.000Z",
+          updatedAt: "2026-04-18T10:03:00.000Z",
         },
       ],
     });
@@ -599,10 +599,11 @@ describe("structured session selectors", () => {
     });
   });
 
-  it("detects facts and latest failure context from the new structured records", () => {
+  it("detects facts and latest failure context from workflow-run-centric records", () => {
     const empty = createSessionSnapshot({
       session: {
         id: "session-empty",
+        orchestratorPiSessionId: "session-empty",
         wait: null,
       },
       turns: [],
@@ -610,7 +611,7 @@ describe("structured session selectors", () => {
       commands: [],
       episodes: [],
       verifications: [],
-      workflows: [],
+      workflowRuns: [],
       artifacts: [],
       events: [],
     });
@@ -619,6 +620,7 @@ describe("structured session selectors", () => {
     const snapshot = createSessionSnapshot({
       session: {
         id: "session-facts",
+        orchestratorPiSessionId: "session-facts",
         wait: null,
       },
       turns: [
@@ -626,7 +628,7 @@ describe("structured session selectors", () => {
           id: "turn-failed",
           status: "failed",
           requestSummary: "Investigate failure",
-          updatedAt: "2026-04-14T10:06:00.000Z",
+          updatedAt: "2026-04-18T10:06:00.000Z",
         },
       ],
       threads: [
@@ -635,21 +637,29 @@ describe("structured session selectors", () => {
           status: "failed",
           title: "Thread failure context",
           objective: "Thread objective",
-          updatedAt: "2026-04-14T10:07:00.000Z",
-          startedAt: "2026-04-14T10:06:30.000Z",
-          finishedAt: "2026-04-14T10:07:00.000Z",
+          updatedAt: "2026-04-18T10:07:00.000Z",
+          startedAt: "2026-04-18T10:06:30.000Z",
+          finishedAt: "2026-04-18T10:07:00.000Z",
         },
       ],
       commands: [
         {
           id: "command-900",
-          updatedAt: "2026-04-14T10:07:00.000Z",
+          updatedAt: "2026-04-18T10:07:00.000Z",
+        },
+      ],
+      workflowRuns: [
+        {
+          id: "workflow-900",
+          threadId: "thread-failed",
+          summary: "Workflow failed.",
+          updatedAt: "2026-04-18T10:07:00.000Z",
         },
       ],
       events: [
         {
           id: "event-900",
-          at: "2026-04-14T10:07:00.000Z",
+          at: "2026-04-18T10:07:00.000Z",
         },
       ],
     });

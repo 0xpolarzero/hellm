@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -7,7 +7,7 @@ import {
   type StructuredSessionStateStore,
 } from "./structured-session-state";
 import { createVerifyRunTool } from "./verification-tool";
-import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import { createPromptExecutionContext, type PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 
 const stores: StructuredSessionStateStore[] = [];
 const tempDirs: string[] = [];
@@ -56,29 +56,28 @@ function createStore(workspaceCwd: string) {
 function createRuntime(store: StructuredSessionStateStore): PromptExecutionRuntimeHandle {
   const turn = store.startTurn({
     sessionId: "session-verify-tool",
-    requestSummary: "Run verification",
+    requestSummary: "Attempt deprecated verification tool",
   });
   const rootThread = store.createThread({
     turnId: turn.id,
     kind: "task",
-    title: "Run verification",
-    objective: "Use verification.run from the prompt execution context.",
+    title: "Attempt deprecated verification tool",
+    objective: "The compatibility shim should reject native verification execution.",
   });
 
   return {
-    current: {
+    current: createPromptExecutionContext({
       sessionId: "session-verify-tool",
       turnId: turn.id,
-      rootThreadId: rootThread.id,
+      surfaceThreadId: rootThread.id,
       promptText: "Run verification",
-      rootEpisodeKind: "analysis",
-      sessionWaitApplied: false,
-    },
+      defaultEpisodeKind: "analysis",
+    }),
   };
 }
 
 describe("verification tool", () => {
-  it("requires an active prompt runtime", async () => {
+  it("still requires an active prompt runtime", async () => {
     const workspaceCwd = createWorkspaceRoot();
     const tool = createVerifyRunTool({
       cwd: workspaceCwd,
@@ -91,117 +90,24 @@ describe("verification tool", () => {
     );
   });
 
-  it("runs test verifications and records the structured command, verification, and episode", async () => {
+  it("rejects direct native verification and points callers to workflow-based verification", async () => {
     const workspaceCwd = createWorkspaceRoot();
-    const target = join(workspaceCwd, "verify-run.test.ts");
-    writeFileSync(
-      target,
-      [
-        'import { expect, test } from "bun:test";',
-        'test("tool verification fixture", () => {',
-        "  expect(1 + 1).toBe(2);",
-        "});",
-        "",
-      ].join("\n"),
+    const store = createStore(workspaceCwd);
+    const tool = createVerifyRunTool({
+      cwd: workspaceCwd,
+      runtime: createRuntime(store),
+      store,
+    });
+
+    await expect(tool.execute("tool-call-2", { kind: "test" })).rejects.toThrow(
+      "verification.run is deprecated. Start or resume a verification workflow template or preset instead.",
     );
 
-    const store = createStore(workspaceCwd);
-    const tool = createVerifyRunTool({
-      cwd: workspaceCwd,
-      runtime: createRuntime(store),
-      store,
-    });
-
-    const result = await tool.execute("tool-call-2", {
-      kind: "test",
-      target,
-    });
-    const details = result.details as {
-      ok: boolean;
-      status: string;
-      cancelled: boolean;
-      exitCode: number;
-      commandId: string;
-      verificationId: string;
-      threadId: string;
-      summary: string;
-    };
-
-    expect(details).toMatchObject({
-      ok: true,
-      status: "passed",
-      cancelled: false,
-      exitCode: 0,
-    });
-    expect(details.commandId).toBeTruthy();
-    expect(details.verificationId).toBeTruthy();
-    expect(details.threadId).toBeTruthy();
-    expect(details.summary).toContain("passed");
-
     const snapshot = store.getSessionState("session-verify-tool");
-    const [rootThread, verificationThread] = snapshot.threads;
-    expect(snapshot.turns).toHaveLength(1);
-    expect(snapshot.threads).toHaveLength(2);
-    expect(snapshot.commands).toHaveLength(1);
-    expect(snapshot.verifications).toHaveLength(1);
-    expect(snapshot.episodes).toHaveLength(1);
-    expect(snapshot.artifacts.length).toBeGreaterThanOrEqual(1);
-    expect(rootThread?.status).toBe("running");
-    expect(rootThread?.dependsOnThreadIds).toEqual([]);
-    expect(verificationThread?.kind).toBe("verification");
-    expect(verificationThread?.parentThreadId).toBe(rootThread?.id);
-    expect(snapshot.commands[0]?.threadId).toBe(verificationThread?.id);
-    expect(snapshot.verifications[0]?.threadId).toBe(verificationThread?.id);
-    expect(snapshot.episodes[0]?.sourceCommandId).toBe(snapshot.commands[0]?.id);
-    expect(
-      snapshot.events.filter(
-        (event) => event.subject.kind === "thread" && event.subject.id === rootThread?.id,
-      ),
-    ).toEqual([
-      expect.objectContaining({
-        kind: "thread.created",
-      }),
-      expect.objectContaining({
-        kind: "thread.updated",
-        data: {
-          status: "waiting",
-          dependsOnThreadIds: [verificationThread?.id],
-          wait: null,
-        },
-      }),
-      expect.objectContaining({
-        kind: "thread.updated",
-        data: {
-          status: "running",
-          dependsOnThreadIds: [],
-          wait: null,
-        },
-      }),
-    ]);
-
-    const detail = store.getThreadDetail(verificationThread!.id);
-    expect(detail.commands.map((entry) => entry.id)).toEqual([snapshot.commands[0]!.id]);
-    expect(detail.verifications.map((entry) => entry.id)).toEqual([snapshot.verifications[0]!.id]);
-    expect(detail.episodes.map((entry) => entry.id)).toEqual([snapshot.episodes[0]!.id]);
-    expect(
-      detail.artifacts.every((entry) => entry.sourceCommandId === snapshot.commands[0]!.id),
-    ).toBe(true);
-  });
-
-  it("rejects unsupported targets for non-test verifications", async () => {
-    const workspaceCwd = createWorkspaceRoot();
-    const store = createStore(workspaceCwd);
-    const tool = createVerifyRunTool({
-      cwd: workspaceCwd,
-      runtime: createRuntime(store),
-      store,
-    });
-
-    await expect(
-      tool.execute("tool-call-3", {
-        kind: "lint",
-        target: "src/bun",
-      }),
-    ).rejects.toThrow("verification.run does not accept target for lint.");
+    expect(snapshot.threads).toHaveLength(1);
+    expect(snapshot.commands).toHaveLength(0);
+    expect(snapshot.verifications).toHaveLength(0);
+    expect(snapshot.episodes).toHaveLength(0);
+    expect(snapshot.artifacts).toHaveLength(0);
   });
 });

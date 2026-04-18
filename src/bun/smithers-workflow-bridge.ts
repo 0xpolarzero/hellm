@@ -217,6 +217,12 @@ export function readSmithersRunState(options: {
       ...runRow,
       nodeCounts,
     };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/no such table: _smithers_runs|no such table: _smithers_nodes/i.test(message)) {
+      return null;
+    }
+    throw error;
   } finally {
     db.close();
   }

@@ -412,7 +412,7 @@ function createResultEpisode(input: {
       );
 
   input.store.createEpisode({
-    threadId: input.threadId,
+    threadId: null,
     sourceCommandId: input.sourceCommandId,
     kind: input.result.success ? input.kind : "analysis",
     title,

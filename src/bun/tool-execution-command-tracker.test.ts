@@ -54,9 +54,41 @@ function createPromptContext(store: StructuredSessionStateStore) {
   return createPromptExecutionContext({
     sessionId: "session-tool-tracker",
     turnId: turn.id,
-    rootThreadId: rootThread.id,
+    surfaceThreadId: rootThread.id,
     promptText: "Track tool commands",
   });
+}
+
+function createHandlerPromptContext(store: StructuredSessionStateStore) {
+  const turn = store.startTurn({
+    sessionId: "session-tool-tracker",
+    requestSummary: "Track handler-thread tool commands",
+  });
+  const orchestratorThread = store.createThread({
+    turnId: turn.id,
+    kind: "task",
+    title: "Plan follow-up work",
+    objective: "Delegate and supervise work through a handler thread.",
+  });
+  const handlerThread = store.createThread({
+    turnId: turn.id,
+    parentThreadId: orchestratorThread.id,
+    kind: "task",
+    title: "Inspect the workspace",
+    objective: "Run delegated commands from the handler thread surface.",
+  });
+
+  return {
+    orchestratorThreadId: orchestratorThread.id,
+    handlerThreadId: handlerThread.id,
+    promptContext: createPromptExecutionContext({
+      sessionId: "session-tool-tracker",
+      turnId: turn.id,
+      surfaceThreadId: handlerThread.id,
+      surfaceKind: "handler",
+      promptText: "Inspect the workspace",
+    }),
+  };
 }
 
 describe("tool execution command tracker", () => {
@@ -89,6 +121,38 @@ describe("tool execution command tracker", () => {
         visibility: "summary",
         status: "succeeded",
         summary: "M src/bun/session-catalog.ts",
+      }),
+    ]);
+  });
+
+  it("records generic tool executions against the active surface thread", () => {
+    const store = createStore();
+    const { handlerThreadId, promptContext } = createHandlerPromptContext(store);
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext,
+    });
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-surface",
+      toolName: "read",
+      args: { filePath: "docs/prd.md" },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-surface",
+      toolName: "read",
+      result: {
+        content: [{ type: "text", text: "Loaded docs/prd.md" }],
+      },
+      isError: false,
+    });
+
+    const snapshot = store.getSessionState("session-tool-tracker");
+    expect(snapshot.commands).toEqual([
+      expect.objectContaining({
+        toolName: "read",
+        threadId: handlerThreadId,
+        summary: "Loaded docs/prd.md",
       }),
     ]);
   });
@@ -134,20 +198,56 @@ describe("tool execution command tracker", () => {
 
     tracker.handleToolExecutionStart({
       toolCallId: "tool-call-3",
-      toolName: "verification.run",
-      args: { kind: "test" },
+      toolName: "thread.start",
+      args: { objective: "Inspect the workspace" },
     });
     tracker.handleToolExecutionEnd({
       toolCallId: "tool-call-3",
-      toolName: "verification.run",
+      toolName: "thread.start",
       result: {
-        content: [{ type: "text", text: "verification passed" }],
+        content: [{ type: "text", text: '{"threadId":"thread-2"}' }],
       },
       isError: false,
     });
 
     const snapshot = store.getSessionState("session-tool-tracker");
     expect(snapshot.commands).toHaveLength(0);
+  });
+
+  it("does not treat verification.run as a native control tool anymore", () => {
+    const store = createStore();
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext: createPromptContext(store),
+    });
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-verify",
+      toolName: "verification.run",
+      args: { kind: "test" },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-verify",
+      toolName: "verification.run",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: "verification.run is deprecated. Use workflow.start instead.",
+          },
+        ],
+      },
+      isError: true,
+    });
+
+    const snapshot = store.getSessionState("session-tool-tracker");
+    expect(snapshot.commands).toEqual([
+      expect.objectContaining({
+        toolName: "verification.run",
+        status: "failed",
+        error: "verification.run is deprecated. Use workflow.start instead.",
+      }),
+    ]);
   });
 
   it("ignores execute_typescript because the runtime records its own parent and child commands", () => {

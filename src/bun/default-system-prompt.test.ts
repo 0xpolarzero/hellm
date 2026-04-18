@@ -15,4 +15,15 @@ describe("default system prompt", () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain("Do not import or assume Node.js built-ins");
     expect(DEFAULT_SYSTEM_PROMPT).toContain("api.exec.run({ command, args, cwd, timeoutMs, env })");
   });
+
+  it("describes the orchestrator and handler-thread tool split", () => {
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("thread.start");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("workflow.start and workflow.resume");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("Inside handler threads");
+  });
+
+  it("steers verification toward workflow templates instead of a native verification tool", () => {
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("Verification is workflow-shaped execution");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("not a native verification.run path");
+  });
 });

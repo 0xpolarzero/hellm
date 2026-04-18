@@ -8,7 +8,7 @@ import type {
 
 const SPECIALIZED_TOOL_NAMES = new Set([
   "execute_typescript",
-  "verification.run",
+  "thread.start",
   "workflow.start",
   "workflow.resume",
   "wait",
@@ -45,7 +45,7 @@ export function createToolExecutionCommandTracker(options: {
 
       const command = options.store.createCommand({
         turnId: options.promptContext.turnId,
-        threadId: options.promptContext.rootThreadId,
+        threadId: options.promptContext.surfaceThreadId ?? options.promptContext.rootThreadId,
         toolName: input.toolName,
         executor: inferExecutor(input.toolName),
         visibility: inferVisibility(input.toolName),

@@ -3,6 +3,13 @@ import type { AssistantMessageEvent, Message } from "@mariozechner/pi-ai";
 import type { ChatDefaults, ReasoningEffort } from "./chat-settings";
 
 export type AuthKeyType = "apikey" | "oauth" | "env" | "none";
+export type PromptSurfaceKind = "orchestrator" | "thread";
+
+export interface PromptTarget {
+  surface: PromptSurfaceKind;
+  surfaceSessionId: string;
+  threadId?: string;
+}
 
 export interface SendPromptRequest {
   streamId: string;
@@ -11,11 +18,13 @@ export interface SendPromptRequest {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   sessionId?: string;
+  target?: PromptTarget;
   systemPrompt?: string;
 }
 
 export interface SendPromptResponse {
   sessionId: string;
+  target?: PromptTarget;
 }
 
 export interface SetSessionModelRequest {
@@ -64,7 +73,8 @@ export type SessionStatus = "idle" | "running" | "waiting" | "error";
 
 export interface WorkspaceCommandRollup {
   commandId: string;
-  threadId: string;
+  threadId: string | null;
+  workflowRunId?: string | null;
   toolName: string;
   visibility: "summary" | "surface";
   status: "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
@@ -89,7 +99,7 @@ export interface WorkspaceSessionSummary {
   provider?: string;
   thinkingLevel?: string;
   wait?: {
-    threadId: string;
+    threadId?: string;
     kind: "user" | "external";
     reason: string;
     resumeWhen: string;

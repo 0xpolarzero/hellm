@@ -1,8 +1,12 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import type { Static } from "@sinclair/typebox";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import type {
+  StructuredSessionSnapshot,
   StructuredSessionStateStore,
   StructuredWaitState,
   StructuredWorkflowStatus,
@@ -10,10 +14,18 @@ import type {
 import {
   readSmithersWorkflowProjectionInput,
   startImplementFeatureWorkflow,
+  type SmithersWorkflowProjectionInput,
   type StartImplementFeatureWorkflowOptions,
+  type StartSmithersWorkflowResult,
 } from "./smithers-workflow-bridge";
 
 export const START_WORKFLOW_TOOL_NAME = "workflow.start";
+export const RESUME_WORKFLOW_TOOL_NAME = "workflow.resume";
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const DEFAULT_WORKFLOWS_DIR = resolve(REPO_ROOT, "workflows");
+const DEFAULT_SMITHERS_BIN = resolve(DEFAULT_WORKFLOWS_DIR, "node_modules/.bin/smithers");
+const IMPLEMENT_FEATURE_WORKFLOW = "definitions/implement-feature.tsx";
 
 const onMaxReachedSchema = Type.Union([Type.Literal("return-last"), Type.Literal("fail")]);
 
@@ -32,222 +44,198 @@ export const startWorkflowParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const resumeWorkflowParamsSchema = Type.Object(
+  {
+    workflowName: Type.Optional(Type.Literal("implement-feature")),
+    runId: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
 export type StartWorkflowParams = Static<typeof startWorkflowParamsSchema>;
+export type ResumeWorkflowParams = Static<typeof resumeWorkflowParamsSchema>;
 
-const START_WORKFLOW_DESCRIPTION = [
-  "Start a real delegated workflow and record it as a workflow command, workflow thread, and workflow record.",
-  "The current implementation supports the Smithers implement-feature workflow under the generic workflow.start surface.",
-].join(" ");
+type ResumeImplementFeatureWorkflowOptions = {
+  repoRoot?: string;
+  smithersBin?: string;
+  smithersCwd?: string;
+  runId: string;
+};
 
-export function createStartWorkflowTool(options: {
+export interface WorkflowToolBridge {
+  startImplementFeatureWorkflow(
+    options: StartImplementFeatureWorkflowOptions,
+  ): Promise<StartSmithersWorkflowResult>;
+  resumeImplementFeatureWorkflow(
+    options: ResumeImplementFeatureWorkflowOptions,
+  ): Promise<StartSmithersWorkflowResult>;
+  readSmithersWorkflowProjectionInput(input: { runId: string }): SmithersWorkflowProjectionInput | null;
+}
+
+type StartWorkflowToolOptions = {
   runtime: PromptExecutionRuntimeHandle;
   store: StructuredSessionStateStore;
-}): AgentTool<typeof startWorkflowParamsSchema, Record<string, unknown>> {
+  bridge?: WorkflowToolBridge;
+};
+
+type ResumeWorkflowToolOptions = StartWorkflowToolOptions;
+
+type WorkflowExecutionMode = "start" | "resume";
+
+type WorkflowRunRecord = {
+  id: string;
+  threadId: string;
+  commandId: string;
+  smithersRunId: string;
+  workflowName: string;
+  status: StructuredWorkflowStatus;
+  summary: string;
+};
+
+type WorkflowToolResultDetails = {
+  ok: boolean;
+  resumed: boolean;
+  runId?: string;
+  handlerThreadId: string;
+  commandId: string;
+  workflowRunId?: string | null;
+  workflowId?: string | null;
+  status?: StructuredWorkflowStatus;
+  summary?: string;
+  stdout?: string;
+  stderr?: string;
+  error?: string;
+  sessionWaitApplied: boolean;
+  persisted: boolean;
+};
+
+type WorkflowThreadContext = {
+  handlerThreadId: string;
+  workflowRun: WorkflowRunRecord | null;
+};
+
+type WorkflowStoreCompat = StructuredSessionStateStore & {
+  createCommand(input: Record<string, unknown>): { id: string };
+  createArtifact(input: Record<string, unknown>): unknown;
+  recordWorkflow(input: Record<string, unknown>): WorkflowRunRecord;
+  updateWorkflow(input: Record<string, unknown>): WorkflowRunRecord;
+  setSessionWait(input: Record<string, unknown>): unknown;
+};
+
+type ThreadOwnedWait = {
+  owner?: {
+    kind: "thread";
+    threadId: string;
+  } | {
+    kind: "orchestrator";
+  };
+  threadId?: string | null;
+};
+
+type WorkflowSnapshot = StructuredSessionSnapshot & {
+  workflowRuns?: WorkflowRunRecord[];
+  workflows: WorkflowRunRecord[];
+  session: StructuredSessionSnapshot["session"] & {
+    wait: (StructuredSessionSnapshot["session"]["wait"] & ThreadOwnedWait) | null;
+  };
+};
+
+const START_WORKFLOW_DESCRIPTION = [
+  "Start a real delegated Smithers workflow under the current surface.",
+  "This tool should normally be used from a handler thread, not directly from the orchestrator surface.",
+].join(" ");
+
+const RESUME_WORKFLOW_DESCRIPTION = [
+  "Resume an existing delegated Smithers workflow under the current surface.",
+  "Use the original Smithers run id so the handler thread can continue supervising the same delegated workflow.",
+].join(" ");
+
+const DEFAULT_WORKFLOW_BRIDGE: WorkflowToolBridge = {
+  startImplementFeatureWorkflow,
+  resumeImplementFeatureWorkflow,
+  readSmithersWorkflowProjectionInput,
+};
+
+export function createStartWorkflowTool(
+  options: StartWorkflowToolOptions,
+): AgentTool<typeof startWorkflowParamsSchema, Record<string, unknown>> {
   return {
     label: "Workflow",
     name: START_WORKFLOW_TOOL_NAME,
     description: START_WORKFLOW_DESCRIPTION,
     parameters: startWorkflowParamsSchema,
     execute: async (_toolCallId, params) => {
-      const runtime = options.runtime.current;
-      if (!runtime) {
-        throw new Error(`${START_WORKFLOW_TOOL_NAME} can only run during an active prompt.`);
-      }
-
-      const normalized = normalizeParams(params);
-      const workflowThread = options.store.createThread({
-        turnId: runtime.turnId,
-        parentThreadId: runtime.rootThreadId,
-        kind: "workflow",
-        title: "Run implement-feature workflow",
-        objective: buildWorkflowObjective(normalized),
-      });
-      const command = options.store.createCommand({
-        turnId: runtime.turnId,
-        threadId: workflowThread.id,
-        toolName: START_WORKFLOW_TOOL_NAME,
-        executor: "smithers",
-        visibility: "surface",
-        title: "Start delegated workflow",
-        summary: "Launch the delegated workflow in Smithers.",
-      });
-      options.store.startCommand(command.id);
-      setParentThreadDependencyWaiting({
+      const runtime = requireActiveRuntime(options.runtime, START_WORKFLOW_TOOL_NAME);
+      const bridge = options.bridge ?? DEFAULT_WORKFLOW_BRIDGE;
+      const normalized = normalizeStartParams(params);
+      const context = resolveWorkflowThreadContext({
         store: options.store,
         sessionId: runtime.sessionId,
-        parentThreadId: runtime.rootThreadId,
-        childThreadId: workflowThread.id,
+        surfaceThreadId: runtime.surfaceThreadId ?? runtime.rootThreadId,
       });
 
-      try {
-        const started = await startImplementFeatureWorkflow(normalized);
-        const projection = (await waitForProjectionInput(
-          started.runId,
-          readSmithersWorkflowProjectionInput,
-        )) ?? {
-          status: "running" satisfies StructuredWorkflowStatus,
-          summary: `implement-feature run ${started.runId} started.`,
-        };
-
-        const workflow = options.store.recordWorkflow({
-          threadId: workflowThread.id,
-          commandId: command.id,
-          smithersRunId: started.runId,
-          workflowName: "implement-feature",
-          status: projection.status,
-          summary: projection.summary,
-        });
-        let episodeId: string | null = null;
-
-        if (projection.status === "waiting") {
-          const wait = buildWorkflowWaitState(projection.summary);
-          options.store.updateThread({
-            threadId: workflowThread.id,
-            status: "waiting",
-            wait,
-          });
-          if (canSessionWait(options.store, runtime.sessionId, workflowThread.id)) {
-            options.store.setSessionWait({
-              sessionId: runtime.sessionId,
-              threadId: workflowThread.id,
-              kind: wait.kind,
-              reason: wait.reason,
-              resumeWhen: wait.resumeWhen,
-            });
-            runtime.sessionWaitApplied = true;
-          }
-        } else {
-          options.store.updateThread({
-            threadId: workflowThread.id,
-            status:
-              projection.status === "running"
-                ? "running"
-                : mapWorkflowThreadStatus(projection.status),
-          });
-          if (projection.status !== "running") {
-            episodeId = options.store.createEpisode({
-              threadId: workflowThread.id,
-              sourceCommandId: command.id,
-              kind: "workflow",
-              title:
-                projection.status === "completed"
-                  ? "Delegated workflow completed"
-                  : projection.status === "cancelled"
-                    ? "Delegated workflow cancelled"
-                    : "Delegated workflow failed",
-              summary: projection.summary,
-              body: projection.summary,
-            }).id;
-          }
-        }
-        recordWorkflowArtifacts({
-          store: options.store,
-          commandId: command.id,
-          episodeId,
-          workflowName: "implement-feature",
-          runId: started.runId,
-          status: projection.status,
-          summary: projection.summary,
-          stdout: started.stdout,
-          stderr: started.stderr,
-        });
-        if (
-          projection.status === "completed" ||
-          projection.status === "failed" ||
-          projection.status === "cancelled"
-        ) {
-          releaseParentThreadDependency({
-            store: options.store,
-            sessionId: runtime.sessionId,
-            parentThreadId: runtime.rootThreadId,
-            childThreadId: workflowThread.id,
-          });
-        }
-
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "succeeded",
-          summary: projection.summary,
-        });
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                ok: true,
-                runId: started.runId,
-                threadId: workflowThread.id,
-                commandId: command.id,
-                workflowId: workflow.id,
-                status: workflow.status,
-                summary: workflow.summary,
-              }),
-            },
-          ],
-          details: {
-            ok: true,
-            runId: started.runId,
-            threadId: workflowThread.id,
-            commandId: command.id,
-            workflowId: workflow.id,
-            status: workflow.status,
-            summary: workflow.summary,
-            stdout: started.stdout,
-            stderr: started.stderr,
-          },
-        };
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Failed to start delegated workflow.";
-        options.store.createArtifact({
-          sourceCommandId: command.id,
-          kind: "text",
-          name: "implement-feature-workflow.error.txt",
-          content: message,
-        });
-        options.store.finishCommand({
-          commandId: command.id,
-          status: "failed",
-          summary: "Failed to start delegated workflow.",
-          error: message,
-        });
-        options.store.updateThread({
-          threadId: workflowThread.id,
-          status: "failed",
-        });
-        releaseParentThreadDependency({
-          store: options.store,
-          sessionId: runtime.sessionId,
-          parentThreadId: runtime.rootThreadId,
-          childThreadId: workflowThread.id,
-        });
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                ok: false,
-                threadId: workflowThread.id,
-                commandId: command.id,
-                error: message,
-              }),
-            },
-          ],
-          details: {
-            ok: false,
-            threadId: workflowThread.id,
-            commandId: command.id,
-            error: message,
-          },
-        };
-      }
+      return await executeWorkflowCommand({
+        mode: "start",
+        runtime,
+        store: options.store,
+        bridge,
+        context,
+        commandTitle: "Start delegated workflow",
+        commandSummary: "Launch the delegated workflow in Smithers.",
+        startRun: () => bridge.startImplementFeatureWorkflow(normalized),
+      });
     },
   };
 }
 
-function normalizeParams(params: StartWorkflowParams): StartImplementFeatureWorkflowOptions {
+export function createResumeWorkflowTool(
+  options: ResumeWorkflowToolOptions,
+): AgentTool<typeof resumeWorkflowParamsSchema, Record<string, unknown>> {
+  return {
+    label: "Workflow Resume",
+    name: RESUME_WORKFLOW_TOOL_NAME,
+    description: RESUME_WORKFLOW_DESCRIPTION,
+    parameters: resumeWorkflowParamsSchema,
+    execute: async (_toolCallId, params) => {
+      const runtime = requireActiveRuntime(options.runtime, RESUME_WORKFLOW_TOOL_NAME);
+      const bridge = options.bridge ?? DEFAULT_WORKFLOW_BRIDGE;
+      const normalized = normalizeResumeParams(params);
+      const context = resolveWorkflowThreadContext({
+        store: options.store,
+        sessionId: runtime.sessionId,
+        surfaceThreadId: runtime.surfaceThreadId ?? runtime.rootThreadId,
+        runId: normalized.runId,
+      });
+
+      return await executeWorkflowCommand({
+        mode: "resume",
+        runtime,
+        store: options.store,
+        bridge,
+        context,
+        commandTitle: "Resume delegated workflow",
+        commandSummary: `Resume delegated workflow run ${normalized.runId}.`,
+        startRun: () =>
+          bridge.resumeImplementFeatureWorkflow({
+            runId: normalized.runId,
+          }),
+      });
+    },
+  };
+}
+
+function requireActiveRuntime(
+  runtimeHandle: PromptExecutionRuntimeHandle,
+  toolName: string,
+) {
+  const runtime = runtimeHandle.current;
+  if (!runtime) {
+    throw new Error(`${toolName} can only run during an active prompt.`);
+  }
+  return runtime;
+}
+
+function normalizeStartParams(params: StartWorkflowParams): StartImplementFeatureWorkflowOptions {
   return {
     specPath: params.specPath.trim(),
     pocPath: params.pocPath.trim(),
@@ -260,8 +248,300 @@ function normalizeParams(params: StartWorkflowParams): StartImplementFeatureWork
   };
 }
 
-function buildWorkflowObjective(input: StartImplementFeatureWorkflowOptions): string {
-  return `Run implement-feature for ${input.specPath} using ${input.pocPath}.`;
+function normalizeResumeParams(params: ResumeWorkflowParams): ResumeWorkflowParams {
+  return {
+    workflowName: params.workflowName,
+    runId: params.runId.trim(),
+  };
+}
+
+function resolveWorkflowThreadContext(input: {
+  store: StructuredSessionStateStore;
+  sessionId: string;
+  surfaceThreadId: string;
+  runId?: string;
+}): WorkflowThreadContext {
+  const snapshot = getWorkflowSnapshot(input.store, input.sessionId);
+  mustFindThread(snapshot, input.surfaceThreadId);
+
+  return {
+    handlerThreadId: input.surfaceThreadId,
+    workflowRun: input.runId
+      ? findWorkflowRunForHandler(snapshot, input.surfaceThreadId, input.runId)
+      : null,
+  };
+}
+
+async function executeWorkflowCommand(input: {
+  mode: WorkflowExecutionMode;
+  runtime: NonNullable<PromptExecutionRuntimeHandle["current"]>;
+  store: StructuredSessionStateStore;
+  bridge: WorkflowToolBridge;
+  context: WorkflowThreadContext;
+  commandTitle: string;
+  commandSummary: string;
+  startRun: () => Promise<StartSmithersWorkflowResult>;
+}): Promise<{ content: Array<{ type: "text"; text: string }>; details: WorkflowToolResultDetails }> {
+  input.runtime.sessionWaitApplied = false;
+  const compatStore = input.store as WorkflowStoreCompat;
+  const command = compatStore.createCommand({
+    turnId: input.runtime.turnId,
+    surfacePiSessionId: input.runtime.surfacePiSessionId,
+    threadId: input.context.handlerThreadId,
+    workflowRunId: input.context.workflowRun?.id ?? null,
+    toolName: input.mode === "start" ? START_WORKFLOW_TOOL_NAME : RESUME_WORKFLOW_TOOL_NAME,
+    executor: "smithers",
+    visibility: "surface",
+    title: input.commandTitle,
+    summary: input.commandSummary,
+  });
+  input.store.startCommand(command.id);
+
+  try {
+    const started = await input.startRun();
+    const projection =
+      (await waitForProjectionInput(started.runId, input.bridge.readSmithersWorkflowProjectionInput)) ??
+      {
+        status: "running" satisfies StructuredWorkflowStatus,
+        summary:
+          input.mode === "resume"
+            ? `implement-feature run ${started.runId} resumed.`
+            : `implement-feature run ${started.runId} started.`,
+      };
+
+    const workflowRun =
+      persistWorkflowRun({
+        store: input.store,
+        existingWorkflowRun:
+          input.context.workflowRun ??
+          findWorkflowRunForHandler(
+            getWorkflowSnapshot(input.store, input.runtime.sessionId),
+            input.context.handlerThreadId,
+            started.runId,
+          ),
+        handlerThreadId: input.context.handlerThreadId,
+        commandId: command.id,
+        runId: started.runId,
+        workflowName: "implement-feature",
+        status: projection.status,
+        summary: projection.summary,
+      }) ?? null;
+
+    reconcileHandlerThreadState({
+      store: input.store,
+      runtime: input.runtime,
+      handlerThreadId: input.context.handlerThreadId,
+      workflowStatus: projection.status,
+      summary: projection.summary,
+    });
+
+    recordWorkflowArtifacts({
+      store: input.store,
+      threadId: input.context.handlerThreadId,
+      workflowRunId: workflowRun?.id ?? null,
+      commandId: command.id,
+      workflowName: "implement-feature",
+      runId: started.runId,
+      status: projection.status,
+      summary: projection.summary,
+      stdout: started.stdout,
+      stderr: started.stderr,
+    });
+    input.store.finishCommand({
+      commandId: command.id,
+      status: "succeeded",
+      summary: projection.summary,
+      facts: {
+        runId: started.runId,
+        workflowRunId: workflowRun?.id ?? null,
+        status: projection.status,
+        persisted: workflowRun !== null,
+      },
+    });
+
+    return toToolResponse({
+      ok: true,
+      resumed: input.mode === "resume",
+      runId: started.runId,
+      handlerThreadId: input.context.handlerThreadId,
+      commandId: command.id,
+      workflowRunId: workflowRun?.id ?? null,
+      workflowId: workflowRun?.id ?? null,
+      status: workflowRun?.status ?? projection.status,
+      summary: workflowRun?.summary ?? projection.summary,
+      stdout: started.stdout,
+      stderr: started.stderr,
+      sessionWaitApplied: input.runtime.sessionWaitApplied,
+      persisted: workflowRun !== null,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : input.mode === "resume"
+          ? "Failed to resume delegated workflow."
+          : "Failed to start delegated workflow.";
+
+    clearThreadOwnedSessionWait(input.store, input.runtime.sessionId, input.context.handlerThreadId);
+    input.store.updateThread({
+      threadId: input.context.handlerThreadId,
+      status: "running",
+    });
+    input.store.createArtifact({
+      threadId: input.context.handlerThreadId,
+      workflowRunId: input.context.workflowRun?.id ?? null,
+      sourceCommandId: command.id,
+      kind: "text",
+      name: "implement-feature-workflow.error.txt",
+      content: message,
+    });
+    input.store.finishCommand({
+      commandId: command.id,
+      status: "failed",
+      summary: message,
+      error: message,
+      facts: {
+        workflowRunId: input.context.workflowRun?.id ?? null,
+        persisted: false,
+      },
+    });
+
+    return toToolResponse({
+      ok: false,
+      resumed: input.mode === "resume",
+      handlerThreadId: input.context.handlerThreadId,
+      commandId: command.id,
+      workflowRunId: input.context.workflowRun?.id ?? null,
+      workflowId: input.context.workflowRun?.id ?? null,
+      error: message,
+      sessionWaitApplied: input.runtime.sessionWaitApplied,
+      persisted: false,
+    });
+  }
+}
+
+function reconcileHandlerThreadState(input: {
+  store: StructuredSessionStateStore;
+  runtime: NonNullable<PromptExecutionRuntimeHandle["current"]>;
+  handlerThreadId: string;
+  workflowStatus: StructuredWorkflowStatus;
+  summary: string;
+}): void {
+  if (input.workflowStatus === "waiting") {
+    const wait = buildWorkflowWaitState(input.summary);
+    input.store.updateThread({
+      threadId: input.handlerThreadId,
+      status: "waiting",
+      wait,
+    });
+    if (canSessionWait(input.store, input.runtime.sessionId, input.handlerThreadId)) {
+      (input.store as WorkflowStoreCompat).setSessionWait({
+        sessionId: input.runtime.sessionId,
+        owner: {
+          kind: "thread",
+          threadId: input.handlerThreadId,
+        },
+        threadId: input.handlerThreadId,
+        kind: wait.kind,
+        reason: wait.reason,
+        resumeWhen: wait.resumeWhen,
+      });
+      input.runtime.sessionWaitApplied = true;
+      return;
+    }
+
+    clearThreadOwnedSessionWait(input.store, input.runtime.sessionId, input.handlerThreadId);
+    input.runtime.sessionWaitApplied = false;
+    return;
+  }
+
+  clearThreadOwnedSessionWait(input.store, input.runtime.sessionId, input.handlerThreadId);
+  input.store.updateThread({
+    threadId: input.handlerThreadId,
+    status: "running",
+  });
+  input.runtime.sessionWaitApplied = false;
+}
+
+function toToolResponse(details: WorkflowToolResultDetails) {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(details),
+      },
+    ],
+    details,
+  };
+}
+
+function persistWorkflowRun(input: {
+  store: StructuredSessionStateStore;
+  existingWorkflowRun: WorkflowRunRecord | null;
+  handlerThreadId: string;
+  commandId: string;
+  runId: string;
+  workflowName: string;
+  status: StructuredWorkflowStatus;
+  summary: string;
+}): WorkflowRunRecord | null {
+  const compatStore = input.store as WorkflowStoreCompat;
+  try {
+    if (input.existingWorkflowRun) {
+      return compatStore.updateWorkflow({
+        workflowId: input.existingWorkflowRun.id,
+        commandId: input.commandId,
+        status: input.status,
+        summary: input.summary,
+      }) as WorkflowRunRecord;
+    }
+
+    return compatStore.recordWorkflow({
+      threadId: input.handlerThreadId,
+      commandId: input.commandId,
+      smithersRunId: input.runId,
+      workflowName: input.workflowName,
+      status: input.status,
+      summary: input.summary,
+    }) as WorkflowRunRecord;
+  } catch (error) {
+    if (isLegacyWorkflowThreadConstraintError(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function mustFindThread(snapshot: WorkflowSnapshot, threadId: string) {
+  const thread = snapshot.threads.find((candidate) => candidate.id === threadId);
+  if (!thread) {
+    throw new Error(`Structured thread not found for prompt surface: ${threadId}`);
+  }
+  return thread;
+}
+
+function getWorkflowSnapshot(
+  store: StructuredSessionStateStore,
+  sessionId: string,
+): WorkflowSnapshot {
+  return store.getSessionState(sessionId) as WorkflowSnapshot;
+}
+
+function getWorkflowRuns(snapshot: WorkflowSnapshot): WorkflowRunRecord[] {
+  return (snapshot.workflowRuns ?? snapshot.workflows ?? []) as WorkflowRunRecord[];
+}
+
+function findWorkflowRunForHandler(
+  snapshot: WorkflowSnapshot,
+  handlerThreadId: string,
+  runId: string,
+): WorkflowRunRecord | null {
+  return (
+    getWorkflowRuns(snapshot).find(
+      (workflowRun) =>
+        workflowRun.threadId === handlerThreadId && workflowRun.smithersRunId === runId,
+    ) ?? null
+  );
 }
 
 function buildWorkflowWaitState(summary: string): StructuredWaitState {
@@ -278,111 +558,47 @@ function canSessionWait(
   sessionId: string,
   threadId: string,
 ): boolean {
-  const snapshot = store.getSessionState(sessionId);
+  const snapshot = getWorkflowSnapshot(store, sessionId);
   return snapshot.threads.every((thread) => thread.id === threadId || thread.status !== "running");
 }
 
-function mapWorkflowThreadStatus(
-  status: StructuredWorkflowStatus,
-): "waiting" | "completed" | "failed" | "cancelled" {
-  switch (status) {
-    case "waiting":
-      return "waiting";
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    case "cancelled":
-      return "cancelled";
-    case "running":
-      throw new Error("Running workflow status should not map through mapWorkflowThreadStatus.");
-  }
-}
-
-function setParentThreadDependencyWaiting(input: {
-  store: StructuredSessionStateStore;
-  sessionId: string;
-  parentThreadId: string;
-  childThreadId: string;
-}): void {
-  const parentThread = input.store
-    .getSessionState(input.sessionId)
-    .threads.find((thread) => thread.id === input.parentThreadId);
-  if (!parentThread || isTerminalThreadStatus(parentThread.status)) {
+function clearThreadOwnedSessionWait(
+  store: StructuredSessionStateStore,
+  sessionId: string,
+  handlerThreadId: string,
+): void {
+  const wait = getWorkflowSnapshot(store, sessionId).session.wait;
+  if (getWaitOwnerThreadId(wait) !== handlerThreadId) {
     return;
   }
 
-  if (parentThread.status === "waiting" && parentThread.wait) {
-    return;
-  }
-
-  const nextDependsOn =
-    parentThread.status === "waiting" && !parentThread.wait
-      ? [...new Set([...parentThread.dependsOnThreadIds, input.childThreadId])]
-      : [input.childThreadId];
-  if (
-    parentThread.status === "waiting" &&
-    !parentThread.wait &&
-    parentThread.dependsOnThreadIds.length === nextDependsOn.length &&
-    parentThread.dependsOnThreadIds.every((value, index) => value === nextDependsOn[index])
-  ) {
-    return;
-  }
-
-  input.store.updateThread({
-    threadId: parentThread.id,
-    status: "waiting",
-    dependsOnThreadIds: nextDependsOn,
+  store.clearSessionWait({
+    sessionId,
   });
 }
 
-function releaseParentThreadDependency(input: {
-  store: StructuredSessionStateStore;
-  sessionId: string;
-  parentThreadId: string;
-  childThreadId: string;
-}): void {
-  const parentThread = input.store
-    .getSessionState(input.sessionId)
-    .threads.find((thread) => thread.id === input.parentThreadId);
-  if (!parentThread || isTerminalThreadStatus(parentThread.status)) {
-    return;
+function getWaitOwnerThreadId(wait: WorkflowSnapshot["session"]["wait"]): string | null {
+  if (!wait) {
+    return null;
   }
-
-  if (parentThread.status !== "waiting" || parentThread.wait) {
-    return;
+  if (wait.owner?.kind === "thread") {
+    return wait.owner.threadId;
   }
-  if (!parentThread.dependsOnThreadIds.includes(input.childThreadId)) {
-    return;
-  }
-
-  const remaining = parentThread.dependsOnThreadIds.filter((id) => id !== input.childThreadId);
-  if (remaining.length === 0) {
-    input.store.updateThread({
-      threadId: parentThread.id,
-      status: "running",
-    });
-    return;
-  }
-
-  input.store.updateThread({
-    threadId: parentThread.id,
-    status: "waiting",
-    dependsOnThreadIds: remaining,
-  });
+  return wait.threadId ?? null;
 }
 
-function isTerminalThreadStatus(
-  status: "running" | "waiting" | "completed" | "failed" | "cancelled",
-): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
+function isLegacyWorkflowThreadConstraintError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /workflow records require workflow threads|does not belong to workflow thread/i.test(
+    message,
+  );
 }
 
 async function waitForProjectionInput(
   runId: string,
-  readProjectionInput: typeof readSmithersWorkflowProjectionInput,
+  readProjectionInput: WorkflowToolBridge["readSmithersWorkflowProjectionInput"],
   timeoutMs = 5_000,
-): Promise<ReturnType<typeof readSmithersWorkflowProjectionInput>> {
+): Promise<ReturnType<WorkflowToolBridge["readSmithersWorkflowProjectionInput"]>> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const projection = readProjectionInput({ runId });
@@ -397,8 +613,9 @@ async function waitForProjectionInput(
 
 function recordWorkflowArtifacts(input: {
   store: StructuredSessionStateStore;
+  threadId: string;
+  workflowRunId: string | null;
   commandId: string;
-  episodeId: string | null;
   workflowName: string;
   runId: string;
   status: StructuredWorkflowStatus;
@@ -406,8 +623,11 @@ function recordWorkflowArtifacts(input: {
   stdout: string;
   stderr: string;
 }): void {
-  input.store.createArtifact({
-    episodeId: input.episodeId,
+  const compatStore = input.store as WorkflowStoreCompat;
+
+  compatStore.createArtifact({
+    threadId: input.threadId,
+    workflowRunId: input.workflowRunId,
     sourceCommandId: input.commandId,
     kind: "json",
     name: `${input.workflowName}-workflow.result.json`,
@@ -424,8 +644,9 @@ function recordWorkflowArtifacts(input: {
   });
 
   if (input.stdout.trim()) {
-    input.store.createArtifact({
-      episodeId: input.episodeId,
+    compatStore.createArtifact({
+      threadId: input.threadId,
+      workflowRunId: input.workflowRunId,
       sourceCommandId: input.commandId,
       kind: "log",
       name: `${input.workflowName}-workflow.stdout.log`,
@@ -434,12 +655,70 @@ function recordWorkflowArtifacts(input: {
   }
 
   if (input.stderr.trim()) {
-    input.store.createArtifact({
-      episodeId: input.episodeId,
+    compatStore.createArtifact({
+      threadId: input.threadId,
+      workflowRunId: input.workflowRunId,
       sourceCommandId: input.commandId,
       kind: "log",
       name: `${input.workflowName}-workflow.stderr.log`,
       content: input.stderr,
     });
   }
+}
+
+async function resumeImplementFeatureWorkflow(
+  options: ResumeImplementFeatureWorkflowOptions,
+): Promise<StartSmithersWorkflowResult> {
+  const smithersBin = options.smithersBin ?? DEFAULT_SMITHERS_BIN;
+  const smithersCwd = options.smithersCwd ?? DEFAULT_WORKFLOWS_DIR;
+  const repoRoot = options.repoRoot ?? REPO_ROOT;
+
+  if (!existsSync(smithersBin)) {
+    throw new Error(`Smithers binary not found at ${smithersBin}`);
+  }
+
+  const proc = Bun.spawn(
+    [
+      smithersBin,
+      "up",
+      IMPLEMENT_FEATURE_WORKFLOW,
+      "--detach",
+      "true",
+      "--resume",
+      "true",
+      "--run-id",
+      options.runId,
+      "--root",
+      repoRoot,
+    ],
+    {
+      cwd: smithersCwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout ? new Response(proc.stdout).text() : Promise.resolve(""),
+    proc.stderr ? new Response(proc.stderr).text() : Promise.resolve(""),
+    proc.exited,
+  ]);
+
+  const cleanStdout = stripAnsi(stdout);
+  const cleanStderr = stripAnsi(stderr);
+  if (exitCode !== 0) {
+    throw new Error(cleanStderr || cleanStdout || "Failed to resume Smithers workflow.");
+  }
+
+  return {
+    runId: options.runId,
+    stdout: cleanStdout,
+    stderr: cleanStderr,
+  };
+}
+
+function stripAnsi(value: string) {
+  const escape = String.fromCharCode(0x1b);
+  return value.replace(new RegExp(`${escape}\\[[0-9;]*[A-Za-z]`, "g"), "");
 }
