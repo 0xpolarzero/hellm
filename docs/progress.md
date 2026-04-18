@@ -70,10 +70,10 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Persist handler-thread lifecycle transitions for running, waiting, completed, failed, and cancelled states. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Let handler threads receive direct user messages through the same surface model as the orchestrator. Commit(s): `f53c9b8`
 - [x] Make handler-thread wait and resume happen inside the thread itself instead of bouncing through the orchestrator by default. Commit(s): `f53c9b8`
-- [ ] Keep handed-back handler threads directly interactive for follow-up chat without forcing a new thread.
+- [x] Keep handed-back handler threads directly interactive for follow-up chat without forcing a new thread. Commit(s): `ba5c3f0`
 - [x] Let a handed-back thread move from completed or failed back to running when objective work resumes. Commit(s): `d323012`
 - [x] Preserve earlier handoff points in thread history when the same thread later returns control again. Commit(s): `d323012`
-- [ ] Allow the orchestrator to inspect a handler thread on demand without making that the default reconciliation path.
+- [x] Allow the orchestrator to inspect a handler thread on demand without making that the default reconciliation path. Commit(s): `ba5c3f0`
 
 ## 5. Workflow Supervision Foundations
 
