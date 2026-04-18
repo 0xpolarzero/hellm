@@ -1004,14 +1004,14 @@ export class WorkspaceSessionCatalog {
     objective: string;
   }) {
     const parentSessionFile = await this.getSessionFileForId(input.parentSurfacePiSessionId);
-    const threadSessionManager = SessionManager.forkFrom(
-      parentSessionFile!,
-      this.cwd,
-      this.threadSurfaceDir,
-    );
+    const threadSessionManager = SessionManager.create(this.cwd, this.threadSurfaceDir);
+    threadSessionManager.newSession({
+      parentSession: parentSessionFile,
+    });
     if (input.title.trim()) {
       threadSessionManager.appendSessionInfo(input.title.trim());
     }
+    persistSessionManagerSnapshot(threadSessionManager);
 
     return this.structuredSessionStore.createThread({
       turnId: input.turnId,
@@ -1328,19 +1328,7 @@ export class WorkspaceSessionCatalog {
   }
 
   private persistManagedSessionSnapshot(session: ManagedSession): void {
-    const sessionFile = session.session.sessionManager.getSessionFile();
-    if (!sessionFile) {
-      return;
-    }
-
-    const header = session.session.sessionManager.getHeader();
-    if (!header) {
-      return;
-    }
-
-    const entries = session.session.sessionManager.getEntries();
-    const lines = [header, ...entries].map((entry) => JSON.stringify(entry));
-    writeFileSync(sessionFile, `${lines.join("\n")}\n`);
+    persistSessionManagerSnapshot(session.session.sessionManager);
   }
 }
 
@@ -2175,6 +2163,22 @@ function createPromptSyncCursor(messages: Message[]): PromptSyncCursor {
     messageCount: messages.length,
     boundarySignature: hashPromptMessageSequence(messages),
   };
+}
+
+function persistSessionManagerSnapshot(sessionManager: SessionManager): void {
+  const sessionFile = sessionManager.getSessionFile();
+  if (!sessionFile) {
+    return;
+  }
+
+  const header = sessionManager.getHeader();
+  if (!header) {
+    return;
+  }
+
+  const entries = sessionManager.getEntries();
+  const lines = [header, ...entries].map((entry) => JSON.stringify(entry));
+  writeFileSync(sessionFile, `${lines.join("\n")}\n`);
 }
 
 function hashPromptMessageSequence(messages: Message[], limit = messages.length): string {

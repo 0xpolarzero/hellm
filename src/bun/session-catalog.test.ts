@@ -1050,6 +1050,54 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("creates a fresh handler-thread session without cloning the orchestrator transcript", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Fresh Thread Session" }, DEFAULTS);
+    const store = getStructuredSessionStore(catalog);
+
+    const seedTurn = store.startTurn({
+      sessionId: created.session.id,
+      requestSummary: "Delegate the parser fix",
+    });
+    const orchestratorThread = store.createThread({
+      turnId: seedTurn.id,
+      surfacePiSessionId: created.session.id,
+      title: "Delegate the parser fix",
+      objective: "Open a handler thread for the parser fix.",
+    });
+
+    try {
+      const handlerThread = await (
+        catalog as unknown as {
+          createHandlerThread(input: {
+            sessionId: string;
+            turnId: string;
+            parentThreadId: string;
+            parentSurfacePiSessionId: string;
+            title: string;
+            objective: string;
+          }): Promise<{ id: string; surfacePiSessionId: string }>;
+        }
+      ).createHandlerThread({
+        sessionId: created.session.id,
+        turnId: seedTurn.id,
+        parentThreadId: orchestratorThread.id,
+        parentSurfacePiSessionId: created.session.id,
+        title: "Parser fix thread",
+        objective: "Patch the parser bug and add regression coverage.",
+      });
+
+      const threadSurface = await catalog.openSession(handlerThread.surfacePiSessionId);
+
+      expect(threadSurface.session.parentSessionId).toBe(created.session.id);
+      expect(threadSurface.messages).toEqual([]);
+      expect(threadSurface.session.messageCount).toBe(0);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
   it("lists and inspects delegated handler threads on demand without changing orchestrator reconciliation", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
