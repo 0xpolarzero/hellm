@@ -34,7 +34,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Support workflow-run records that allow many runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
 - [x] Persist workflow-run records with run id, workflow name, template or preset metadata, status, summary, and timestamps. Commit(s): `fff54d7`, `f53c9b8`, `43a26cb`
 - [x] Persist artifact references independently from transcript parsing at thread, workflow-run, and command scope. Commit(s): `fff54d7`
-- [ ] Persist ordered handoff episode records each time a handler thread returns control to the orchestrator, while preserving earlier handoff points for later follow-up turns.
+- [x] Persist ordered handoff episode records each time a handler thread returns control to the orchestrator, while preserving earlier handoff points for later follow-up turns. Commit(s): `d323012`
 - [x] Persist session wait state as a frontier-level summary derived from surface and thread wait state. Commit(s): `fff54d7`, `f53c9b8`, `43a26cb`
 - [x] Drive structured session state only from explicit runtime producers or tool events. Commit(s): `fff54d7`, `59fc34e`, `43a26cb`
 - [x] Reconstruct workspace and session summaries from structured state on app load. Commit(s): `b510857`, `fff54d7`
@@ -57,12 +57,12 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 
 ## 3. Turn Decisions And Delegation
 
-- [ ] Persist a per-turn top-level decision for orchestrator and handler-thread surfaces, using one shared model across routing and supervision.
+- [x] Persist a per-turn top-level decision for orchestrator and handler-thread surfaces, using one shared model across routing and supervision. Commit(s): `d323012`
 - [x] Build a POC turn flow from message targeting to surface turn creation and command recording. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Implement direct surface targeting so a pane send goes to either the orchestrator surface or a handler-thread surface. Commit(s): `f53c9b8`
 - [x] Add `thread.start` as the orchestrator-side delegation primitive. Commit(s): `f53c9b8`
-- [ ] Implement minimal orchestrator routing for local reply, local `execute_typescript`, clarification, and `thread.start`.
-- [ ] Re-enter orchestrator control from the handler-thread latest handoff, using durable thread state plus the latest handoff episode instead of raw transcript scanning.
+- [x] Implement minimal orchestrator routing for local reply, local `execute_typescript`, clarification, and `thread.start`. Commit(s): `d323012`
+- [x] Re-enter orchestrator control from the handler-thread latest handoff, using durable thread state plus the latest handoff episode instead of raw transcript scanning. Commit(s): `d323012`
 
 ## 4. Handler Threads
 
@@ -71,8 +71,8 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Let handler threads receive direct user messages through the same surface model as the orchestrator. Commit(s): `f53c9b8`
 - [x] Make handler-thread wait and resume happen inside the thread itself instead of bouncing through the orchestrator by default. Commit(s): `f53c9b8`
 - [ ] Keep handed-back handler threads directly interactive for follow-up chat without forcing a new thread.
-- [ ] Let a handed-back thread move from completed or failed back to running when objective work resumes.
-- [ ] Preserve earlier handoff points in thread history when the same thread later returns control again.
+- [x] Let a handed-back thread move from completed or failed back to running when objective work resumes. Commit(s): `d323012`
+- [x] Preserve earlier handoff points in thread history when the same thread later returns control again. Commit(s): `d323012`
 - [ ] Allow the orchestrator to inspect a handler thread on demand without making that the default reconciliation path.
 
 ## 5. Workflow Supervision Foundations
