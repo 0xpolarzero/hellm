@@ -121,7 +121,15 @@ type EventRecord = {
   at: string;
   kind: string;
   subject: {
-    kind: "session" | "turn" | "thread" | "workflowRun" | "command" | "episode" | "verification" | "artifact";
+    kind:
+      | "session"
+      | "turn"
+      | "thread"
+      | "workflowRun"
+      | "command"
+      | "episode"
+      | "verification"
+      | "artifact";
     id: string;
   };
   data?: Record<string, unknown>;
@@ -196,7 +204,8 @@ const state: StructuredSessionState = {
       id: "turn-thread-2",
       surfacePiSessionId: "pi-thread-session-1",
       threadId: "thread-1",
-      requestSummary: "Clarification from the user about how workflow pause and resume should behave.",
+      requestSummary:
+        "Clarification from the user about how workflow pause and resume should behave.",
       status: "completed",
       startedAt: now("09:12"),
       updatedAt: now("09:20"),
@@ -209,7 +218,8 @@ const state: StructuredSessionState = {
       parentThreadId: null,
       surfacePiSessionId: "pi-thread-session-1",
       title: "Workflow Execution Design",
-      objective: "Own the delegated design task and supervise workflow selection, pause, resume, and final synthesis.",
+      objective:
+        "Own the delegated design task and supervise workflow selection, pause, resume, and final synthesis.",
       status: "completed",
       wait: null,
       latestWorkflowRunId: "run-2",
@@ -227,7 +237,8 @@ const state: StructuredSessionState = {
       templateId: "single_task",
       presetId: null,
       status: "waiting",
-      summary: "Paused for clarification about whether the handler thread or orchestrator owns workflow resume decisions.",
+      summary:
+        "Paused for clarification about whether the handler thread or orchestrator owns workflow resume decisions.",
       startedAt: now("09:03"),
       updatedAt: now("09:11"),
       finishedAt: null,
@@ -300,7 +311,8 @@ const state: StructuredSessionState = {
       status: "succeeded",
       attempts: 1,
       title: "Start repaired workflow run",
-      summary: "Started the repaired workflow run after clarification and completed the delegated objective.",
+      summary:
+        "Started the repaired workflow run after clarification and completed the delegated objective.",
       facts: { smithersRunId: "smithers-run-102" },
       error: null,
       startedAt: now("09:14"),
@@ -314,9 +326,9 @@ const state: StructuredSessionState = {
       threadId: "thread-1",
       sourceCommandId: "cmd-3",
       title: "Workflow Execution Design Finalized",
-      summary: "Settled that the orchestrator delegates to handler threads, handler threads supervise Smithers workflow runs, and each completed handler thread returns one final episode.",
-      body:
-        "The delegated objective should live inside a handler thread backed by pi. That handler thread may reuse a template, use a preset, author a custom workflow, rerun after repair, and resume after clarification. Smithers owns workflow execution, while the handler thread owns the delegated objective lifecycle until it emits one final terminal episode back to the orchestrator.",
+      summary:
+        "Settled that the orchestrator delegates to handler threads, handler threads supervise Smithers workflow runs, and each completed handler thread returns one final episode.",
+      body: "The delegated objective should live inside a handler thread backed by pi. That handler thread may reuse a template, use a preset, author a custom workflow, rerun after repair, and resume after clarification. Smithers owns workflow execution, while the handler thread owns the delegated objective lifecycle until it emits one final terminal episode back to the orchestrator.",
       createdAt: now("09:20"),
     },
   ],

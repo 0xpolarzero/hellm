@@ -674,7 +674,7 @@ describe("WorkspaceSessionCatalog", () => {
       expect(snapshot.commands).toHaveLength(0);
       expect(snapshot.episodes).toHaveLength(1);
       expect(snapshot.verifications).toHaveLength(0);
-      expect(snapshot.workflows).toHaveLength(0);
+      expect(snapshot.workflowRuns).toHaveLength(0);
       expect(snapshot.session.wait).toBeNull();
       expect(snapshot.turns[0]).toMatchObject({
         requestSummary: "Explain the parser",
@@ -741,7 +741,13 @@ describe("WorkspaceSessionCatalog", () => {
       const sessions = await catalog.listSessions();
       const summary = sessions.sessions.find((session) => session.id === created.session.id);
       expect(summary?.status).toBe("waiting");
-      expect(summary?.wait).toEqual(waitingOn);
+      expect(summary?.wait).toEqual({
+        threadId: waitingThread.id,
+        kind: waitingOn.kind,
+        reason: waitingOn.reason,
+        resumeWhen: waitingOn.resumeWhen,
+        since: waitingOn.since,
+      });
       expect(summary?.preview).toBe("Waiting: Need clarification before continuing.");
       expect(summary?.counts).toMatchObject({
         turns: 1,
@@ -809,9 +815,10 @@ describe("WorkspaceSessionCatalog", () => {
       });
 
       const snapshot = getStructuredSessionState(catalog, created.session.id);
-      const handlerThreadRecord = snapshot.threads.find((thread) => thread.id === handlerThread.id)!;
-      const workflowRecord =
-        (snapshot.workflowRuns ?? snapshot.workflows).find((entry) => entry.id === workflow.id)!;
+      const handlerThreadRecord = snapshot.threads.find(
+        (thread) => thread.id === handlerThread.id,
+      )!;
+      const workflowRecord = snapshot.workflowRuns.find((entry) => entry.id === workflow.id)!;
       const run: SmithersRunState = {
         runId: workflow.smithersRunId,
         workflowName: workflow.workflowName,
@@ -831,7 +838,7 @@ describe("WorkspaceSessionCatalog", () => {
         catalog as unknown as {
           refreshSmithersWaitingWorkflowProjection: (
             thread: StructuredSessionSnapshot["threads"][number],
-            workflow: StructuredSessionSnapshot["workflows"][number],
+            workflow: StructuredSessionSnapshot["workflowRuns"][number],
             run: SmithersRunState,
             summary: string,
           ) => void;
@@ -853,7 +860,7 @@ describe("WorkspaceSessionCatalog", () => {
         },
       });
       expect(waitingSnapshot.session.wait).toMatchObject({
-        threadId: handlerThread.id,
+        owner: { kind: "thread", threadId: handlerThread.id },
         kind: "external",
       });
 

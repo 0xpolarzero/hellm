@@ -677,7 +677,10 @@ export async function createChatRuntime(
     },
     resetSurfaceTarget: async () => {
       const sessionId =
-        orchestratorSurfaceSessionId ?? activeSessionId ?? agent.sessionId ?? activeSurface?.surfaceSessionId;
+        orchestratorSurfaceSessionId ??
+        activeSessionId ??
+        agent.sessionId ??
+        activeSurface?.surfaceSessionId;
       if (!sessionId) {
         return;
       }

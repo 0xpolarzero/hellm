@@ -17,7 +17,7 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "Use thread.start when the orchestrator needs to delegate a bounded objective into a handler thread.",
   "Inside handler threads, use workflow.start and workflow.resume to supervise Smithers workflow runs.",
   "Use wait for durable user or external waits.",
-  "Verification is workflow-shaped execution through workflow templates or presets such as verification workflows, not a native verification.run path.",
+  "Verification is workflow-shaped execution through workflow templates or presets such as verification workflows.",
   "Threads, commands, verification, workflows, and wait state come from real tool execution rather than assistant prose.",
   EXECUTE_TYPESCRIPT_PROMPT_SECTION,
 ].join("\n\n");

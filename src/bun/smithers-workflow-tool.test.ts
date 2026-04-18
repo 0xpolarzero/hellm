@@ -13,7 +13,10 @@ import {
   createStartWorkflowTool,
   type WorkflowToolBridge,
 } from "./smithers-workflow-tool";
-import { createPromptExecutionContext, type PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import {
+  createPromptExecutionContext,
+  type PromptExecutionRuntimeHandle,
+} from "./prompt-execution-context";
 
 const stores: StructuredSessionStateStore[] = [];
 const tempDirs: string[] = [];
@@ -43,13 +46,14 @@ type TestWaitState = {
 };
 
 type TestSessionWait = TestWaitState & {
-  owner: {
-    kind: "thread";
-    threadId: string;
-  } | {
-    kind: "orchestrator";
-  };
-  threadId: string | null;
+  owner:
+    | {
+        kind: "thread";
+        threadId: string;
+      }
+    | {
+        kind: "orchestrator";
+      };
 };
 
 type TestTurn = {
@@ -129,7 +133,7 @@ type TestArtifact = {
   createdAt: string;
 };
 
-type CompatHarness = {
+type ToolHarness = {
   store: StructuredSessionStateStore;
   runtime: PromptExecutionRuntimeHandle;
   handlerThreadId: string;
@@ -143,7 +147,6 @@ type CompatHarness = {
     threads: TestThread[];
     commands: TestCommand[];
     workflowRuns: TestWorkflowRun[];
-    workflows: TestWorkflowRun[];
     episodes: unknown[];
     artifacts: TestArtifact[];
   };
@@ -155,7 +158,7 @@ function createWorkspaceRoot(): string {
   return root;
 }
 
-function createLegacyStore(workspaceCwd: string) {
+function createStore(workspaceCwd: string) {
   const store = createStructuredSessionStateStore({
     workspace: {
       id: workspaceCwd,
@@ -178,58 +181,22 @@ function createLegacyStore(workspaceCwd: string) {
   return store;
 }
 
-function createLegacyHandlerRuntime(store: StructuredSessionStateStore): {
-  runtime: PromptExecutionRuntimeHandle;
-  rootThreadId: string;
-  handlerThreadId: string;
-} {
-  const turn = store.startTurn({
-    sessionId: "session-smithers-tool",
-    requestSummary: "Delegate the implement-feature workflow through a handler thread.",
-  });
-  const rootThread = store.createThread({
-    turnId: turn.id,
-    kind: "task",
-    title: "Plan delegated workflow",
-    objective: "Keep the orchestrator focused on high-level coordination.",
-  });
-  const handlerThread = store.createThread({
-    turnId: turn.id,
-    parentThreadId: rootThread.id,
-    kind: "task",
-    title: "Supervise delegated workflow",
-    objective: "Start and resume the delegated workflow from the handler surface.",
-  });
-
-  return {
-    runtime: {
-      current: createPromptExecutionContext({
-        sessionId: "session-smithers-tool",
-        turnId: turn.id,
-        surfacePiSessionId: "pi-thread-smithers-tool",
-        surfaceThreadId: handlerThread.id,
-        surfaceKind: "handler",
-        promptText: "Delegate the implement-feature workflow.",
-        defaultEpisodeKind: "change",
-      }),
-    },
-    rootThreadId: rootThread.id,
-    handlerThreadId: handlerThread.id,
-  };
-}
-
 function createBridge(overrides?: Partial<WorkflowToolBridge>): WorkflowToolBridge {
   return {
-    startImplementFeatureWorkflow: overrides?.startImplementFeatureWorkflow ?? (async () => ({
-      runId: "run-default",
-      stdout: "workflow started",
-      stderr: "",
-    })),
-    resumeImplementFeatureWorkflow: overrides?.resumeImplementFeatureWorkflow ?? (async ({ runId }) => ({
-      runId,
-      stdout: "workflow resumed",
-      stderr: "",
-    })),
+    startImplementFeatureWorkflow:
+      overrides?.startImplementFeatureWorkflow ??
+      (async () => ({
+        runId: "run-default",
+        stdout: "workflow started",
+        stderr: "",
+      })),
+    resumeImplementFeatureWorkflow:
+      overrides?.resumeImplementFeatureWorkflow ??
+      (async ({ runId }) => ({
+        runId,
+        stdout: "workflow resumed",
+        stderr: "",
+      })),
     readSmithersWorkflowProjectionInput:
       overrides?.readSmithersWorkflowProjectionInput ??
       (() => ({
@@ -239,7 +206,7 @@ function createBridge(overrides?: Partial<WorkflowToolBridge>): WorkflowToolBrid
   };
 }
 
-function createCompatHarness(): CompatHarness {
+function createHarness(): ToolHarness {
   let counter = 0;
   const nextId = (prefix: string) => `${prefix}-${String(++counter).padStart(3, "0")}`;
   const nextTimestamp = () => `2026-04-18T09:00:${String(counter).padStart(2, "0")}.000Z`;
@@ -360,33 +327,26 @@ function createCompatHarness(): CompatHarness {
         thread.status === "completed" || thread.status === "failed" || thread.status === "cancelled"
           ? nextTimestamp()
           : null;
-      if (thread.status !== "waiting" && sessionWait?.owner.kind === "thread" && sessionWait.owner.threadId === thread.id) {
+      if (
+        thread.status !== "waiting" &&
+        sessionWait?.owner.kind === "thread" &&
+        sessionWait.owner.threadId === thread.id
+      ) {
         sessionWait = null;
       }
       return thread;
     },
     setSessionWait(input: {
       sessionId: string;
-      owner?: TestSessionWait["owner"];
-      threadId?: string;
+      owner: TestSessionWait["owner"];
       kind: StructuredWaitKind;
       reason: string;
       resumeWhen: string;
     }) {
       void input.sessionId;
-      const owner =
-        input.owner ??
-        (input.threadId
-          ? {
-              kind: "thread" as const,
-              threadId: input.threadId,
-            }
-          : {
-              kind: "orchestrator" as const,
-            });
+      const owner = input.owner;
       sessionWait = {
         owner,
-        threadId: owner.kind === "thread" ? owner.threadId : null,
         kind: input.kind,
         reason: input.reason,
         resumeWhen: input.resumeWhen,
@@ -406,14 +366,12 @@ function createCompatHarness(): CompatHarness {
       path?: string;
       content?: string;
     }) {
-      const command =
-        input.sourceCommandId
-          ? commands.find((entry) => entry.id === input.sourceCommandId) ?? null
-          : null;
-      const workflowRun =
-        input.workflowRunId
-          ? workflowRuns.find((entry) => entry.id === input.workflowRunId) ?? null
-          : null;
+      const command = input.sourceCommandId
+        ? (commands.find((entry) => entry.id === input.sourceCommandId) ?? null)
+        : null;
+      const workflowRun = input.workflowRunId
+        ? (workflowRuns.find((entry) => entry.id === input.workflowRunId) ?? null)
+        : null;
       const artifact: TestArtifact = {
         id: nextId("artifact"),
         sessionId: "session-smithers-tool",
@@ -516,7 +474,6 @@ function createCompatHarness(): CompatHarness {
         episodes: [],
         verifications: [],
         workflowRuns: workflowRuns.map((entry) => ({ ...entry })),
-        workflows: workflowRuns.map((entry) => ({ ...entry })),
         artifacts: artifacts.map((entry) => ({ ...entry })),
         events: [],
       };
@@ -538,7 +495,8 @@ function createCompatHarness(): CompatHarness {
       }),
     },
     handlerThreadId: threads[0]!.id,
-    getSnapshot: () => store.getSessionState("session-smithers-tool") as ReturnType<CompatHarness["getSnapshot"]>,
+    getSnapshot: () =>
+      store.getSessionState("session-smithers-tool") as ReturnType<ToolHarness["getSnapshot"]>,
   };
 }
 
@@ -547,7 +505,7 @@ describe("smithers workflow tool", () => {
     const workspaceCwd = createWorkspaceRoot();
     const tool = createStartWorkflowTool({
       runtime: { current: null },
-      store: createLegacyStore(workspaceCwd),
+      store: createStore(workspaceCwd),
     });
 
     await expect(
@@ -570,7 +528,7 @@ describe("smithers workflow tool", () => {
         summary: "Need approval before the workflow can continue.",
       })),
     });
-    const harness = createCompatHarness();
+    const harness = createHarness();
     const tool = createStartWorkflowTool({
       runtime: harness.runtime,
       store: harness.store,
@@ -612,7 +570,6 @@ describe("smithers workflow tool", () => {
         status: "waiting",
       }),
     ]);
-    expect(snapshot.workflows).toEqual(snapshot.workflowRuns);
     expect(snapshot.threads[0]).toMatchObject({
       id: harness.handlerThreadId,
       status: "waiting",
@@ -624,7 +581,6 @@ describe("smithers workflow tool", () => {
     });
     expect(snapshot.session.wait).toMatchObject({
       owner: { kind: "thread", threadId: harness.handlerThreadId },
-      threadId: harness.handlerThreadId,
       kind: "external",
       reason: "Need approval before the workflow can continue.",
     });
@@ -655,7 +611,7 @@ describe("smithers workflow tool", () => {
         summary: "Workflow completed successfully.",
       })),
     });
-    const harness = createCompatHarness();
+    const harness = createHarness();
     const tool = createStartWorkflowTool({
       runtime: harness.runtime,
       store: harness.store,
@@ -693,7 +649,7 @@ describe("smithers workflow tool", () => {
   });
 
   it("workflow.resume updates the matching handler-owned workflow run instead of creating a child-thread replacement", async () => {
-    const harness = createCompatHarness();
+    const harness = createHarness();
     const startTool = createStartWorkflowTool({
       runtime: harness.runtime,
       store: harness.store,
@@ -759,7 +715,9 @@ describe("smithers workflow tool", () => {
       summary: "Workflow resumed and completed successfully.",
     });
     expect(snapshot.commands).toHaveLength(2);
-    expect(snapshot.commands.every((command) => command.threadId === harness.handlerThreadId)).toBe(true);
+    expect(snapshot.commands.every((command) => command.threadId === harness.handlerThreadId)).toBe(
+      true,
+    );
     expect(snapshot.threads[0]?.latestWorkflowRunId).toBe(snapshot.workflowRuns[0]?.id);
     expect(snapshot.threads[0]?.status).toBe("running");
     expect(snapshot.session.wait).toBeNull();
@@ -767,7 +725,7 @@ describe("smithers workflow tool", () => {
   });
 
   it("supports multiple workflow runs over time on the same handler thread", async () => {
-    const harness = createCompatHarness();
+    const harness = createHarness();
     const tool = createStartWorkflowTool({
       runtime: harness.runtime,
       store: harness.store,
@@ -798,79 +756,12 @@ describe("smithers workflow tool", () => {
       "run-1",
       "run-2",
     ]);
-    expect(snapshot.workflowRuns.every((workflowRun) => workflowRun.threadId === harness.handlerThreadId)).toBe(true);
+    expect(
+      snapshot.workflowRuns.every(
+        (workflowRun) => workflowRun.threadId === harness.handlerThreadId,
+      ),
+    ).toBe(true);
     expect(snapshot.threads[0]?.latestWorkflowRunId).toBe(snapshot.workflowRuns[1]?.id);
     expect(snapshot.episodes).toHaveLength(0);
-  });
-
-  it("falls back cleanly on the legacy store without recreating child workflow threads", async () => {
-    const bridge = createBridge({
-      startImplementFeatureWorkflow: mock(async () => ({
-        runId: "run-legacy-123",
-        stdout: "workflow started",
-        stderr: "",
-      })),
-      readSmithersWorkflowProjectionInput: mock(() => ({
-        status: "waiting" as const,
-        summary: "Need approval before the workflow can continue.",
-      })),
-    });
-    const store = createLegacyStore(createWorkspaceRoot());
-    const legacyCompatStore = store as StructuredSessionStateStore & {
-      recordWorkflow: StructuredSessionStateStore["recordWorkflow"];
-      updateWorkflow: StructuredSessionStateStore["updateWorkflow"];
-    };
-    legacyCompatStore.recordWorkflow = (() => {
-      throw new Error("workflow records require workflow threads");
-    }) as StructuredSessionStateStore["recordWorkflow"];
-    legacyCompatStore.updateWorkflow = (() => {
-      throw new Error("workflow records require workflow threads");
-    }) as StructuredSessionStateStore["updateWorkflow"];
-    const { runtime, rootThreadId, handlerThreadId } = createLegacyHandlerRuntime(store);
-    const tool = createStartWorkflowTool({
-      runtime,
-      store,
-      bridge,
-    });
-
-    const result = await tool.execute("tool-call-8", {
-      specPath: "docs/specs/structured-session-state.spec.md",
-      pocPath: "docs/pocs/structured-session-state.poc.ts",
-    });
-
-    expect(result.details).toMatchObject({
-      ok: true,
-      resumed: false,
-      runId: "run-legacy-123",
-      handlerThreadId,
-      workflowRunId: null,
-      workflowId: null,
-      status: "waiting",
-      summary: "Need approval before the workflow can continue.",
-      sessionWaitApplied: false,
-      persisted: false,
-    });
-
-    const snapshot = store.getSessionState("session-smithers-tool");
-    expect(snapshot.threads).toHaveLength(2);
-    expect(snapshot.threads.find((thread) => thread.id === rootThreadId)?.status).toBe("running");
-    expect(snapshot.threads.find((thread) => thread.id === handlerThreadId)).toMatchObject({
-      status: "waiting",
-      wait: {
-        kind: "external",
-        reason: "Need approval before the workflow can continue.",
-      },
-    });
-    expect(snapshot.commands).toEqual([
-      expect.objectContaining({
-        toolName: "workflow.start",
-        threadId: handlerThreadId,
-        status: "succeeded",
-      }),
-    ]);
-    expect(snapshot.workflows).toHaveLength(0);
-    expect(snapshot.episodes).toHaveLength(0);
-    expect(snapshot.session.wait).toBeNull();
-    expect(runtime.current?.sessionWaitApplied).toBe(false);
   });
 });

@@ -46,7 +46,6 @@ function createRuntime(store: StructuredSessionStateStore): PromptExecutionRunti
   });
   const rootThread = store.createThread({
     turnId: turn.id,
-    kind: "task",
     title: "Clarify rollout",
     objective: "Pause until the user clarifies the rollout strategy.",
   });
@@ -118,7 +117,7 @@ describe("wait tool", () => {
       },
     });
     expect(snapshot.session.wait).toMatchObject({
-      threadId: snapshot.threads[0]!.id,
+      owner: { kind: "thread", threadId: snapshot.threads[0]!.id },
       kind: "user",
       reason: "Need clarification about rollout.",
       resumeWhen: "Resume when the user answers the rollout question.",

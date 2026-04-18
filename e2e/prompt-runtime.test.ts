@@ -1,12 +1,8 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { rm } from "node:fs/promises";
-import { basename, join } from "node:path";
 import type { AssistantMessage, StopReason, ToolCall, Usage } from "@mariozechner/pi-ai";
-import { createStructuredSessionStateStore } from "../src/bun/structured-session-state";
 import { createHomeDir, ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 import {
-  assistantTextMessage,
-  getTestSessionDir,
   seedSessions,
   toolCall,
   toolResultMessage,
@@ -103,117 +99,6 @@ async function launchSeededApp<T>(
     if (ownsHomeDir) {
       await rm(homeDir, { force: true, recursive: true });
     }
-  }
-}
-
-async function seedPersistedVerificationSession(
-  homeDir: string,
-  workspaceDir: string,
-): Promise<void> {
-  const verificationTarget = "src/bun/verification-tool.test.ts";
-  const verificationCall = toolCall("verification.run", {
-    kind: "test",
-    target: verificationTarget,
-  });
-  const title = "Verification Runtime";
-  const seededSessions = await seedSessions(
-    homeDir,
-    [
-      {
-        title,
-        messages: [
-          userMessage("Run verification in this prompt", TIMESTAMP),
-          assistantTextMessage("Running verification now.", {
-            provider: "zai",
-            model: "glm-5-turbo",
-            stopReason: "toolUse",
-            timestamp: TIMESTAMP + 1,
-            toolCalls: [verificationCall],
-          }),
-          toolResultMessage(verificationCall.id, "verification.run", "test verification passed.", {
-            timestamp: TIMESTAMP + 2,
-          }),
-        ],
-      },
-    ],
-    workspaceDir,
-  );
-  const sessionId = seededSessions[0]?.id;
-  if (!sessionId) {
-    throw new Error("Failed to seed verification session for prompt runtime e2e.");
-  }
-
-  const store = createStructuredSessionStateStore({
-    workspace: {
-      id: workspaceDir,
-      label: basename(workspaceDir),
-      cwd: workspaceDir,
-    },
-    databasePath: join(getTestSessionDir(homeDir, workspaceDir), "structured-session-state.sqlite"),
-  });
-
-  try {
-    store.upsertPiSession({
-      sessionId,
-      title,
-      provider: "zai",
-      model: "glm-5-turbo",
-      reasoningEffort: "medium",
-      messageCount: 4,
-      status: "idle",
-      createdAt: new Date(TIMESTAMP).toISOString(),
-      updatedAt: new Date(TIMESTAMP + 3).toISOString(),
-    });
-
-    const turn = store.startTurn({
-      sessionId,
-      requestSummary: "Run verification in this prompt",
-    });
-
-    const verificationThread = store.createThread({
-      turnId: turn.id,
-      kind: "verification",
-      title: title,
-      objective: `Run verification for ${basename(verificationTarget)}`,
-    });
-
-    const verificationCommand = store.createCommand({
-      turnId: turn.id,
-      threadId: verificationThread.id,
-      toolName: "verification.run",
-      executor: "verification",
-      visibility: "surface",
-      title: "Run verification",
-      summary: `Run verification for ${basename(verificationTarget)}`,
-    });
-
-    store.startCommand(verificationCommand.id);
-    store.recordVerification({
-      threadId: verificationThread.id,
-      commandId: verificationCommand.id,
-      kind: "test",
-      status: "passed",
-      summary: "test verification passed.",
-      command: `bun test -- ${verificationTarget}`,
-    });
-
-    store.finishCommand({
-      commandId: verificationCommand.id,
-      status: "succeeded",
-      summary: "test verification passed.",
-    });
-
-    store.updateThread({
-      threadId: verificationThread.id,
-      status: "completed",
-    });
-
-    store.finishTurn({
-      turnId: turn.id,
-      status: "completed",
-    });
-  } finally {
-    store.close();
   }
 }
 
@@ -349,33 +234,6 @@ test("transcript rendering shows execute_typescript bodies on tool cards", async
         'const result = await api.exec.run({ command: "ls", args: ["-la"] });',
       );
       expect(toolBody).toContain("console.log(result.stdout);");
-    },
-  );
-});
-
-test("persisted verification state renders in the browser transcript and session summary", async () => {
-  await launchSeededApp(
-    {
-      beforeLaunch: async ({ homeDir, workspaceDir }) => {
-        await seedPersistedVerificationSession(homeDir, workspaceDir);
-      },
-    },
-    async ({ page }) => {
-      await page.locator(".tool-row").waitFor({ state: "visible", timeout: 60_000 });
-      await page.locator(".workspace-main-title").waitFor({ state: "visible", timeout: 60_000 });
-      expect((await page.locator(".workspace-main-title").textContent())?.trim()).toBe(
-        "Verification Runtime",
-      );
-      expect((await page.locator(".tool-result .tool-status").textContent())?.trim()).toBe(
-        "Complete",
-      );
-
-      expect(await page.locator(".tool-row").count()).toBe(1);
-      await page.locator(".tool-result .result-details summary").first().click({ force: true });
-      await page.getByText("test verification passed.", { exact: false }).waitFor({
-        state: "visible",
-        timeout: 60_000,
-      });
     },
   );
 });

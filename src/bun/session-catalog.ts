@@ -578,7 +578,7 @@ export class WorkspaceSessionCatalog {
     return session;
   }
 
-  private buildLegacySummaryFromManagedSession(session: ManagedSession): WorkspaceSessionSummary {
+  private buildLiveSummaryFromManagedSession(session: ManagedSession): WorkspaceSessionSummary {
     const header = session.session.sessionManager.getHeader();
     return projectWorkspaceSessionSummary({
       id: session.sessionId,
@@ -599,10 +599,10 @@ export class WorkspaceSessionCatalog {
   }
 
   private buildSummaryFromManagedSession(session: ManagedSession): WorkspaceSessionSummary {
-    const legacySummary = this.buildLegacySummaryFromManagedSession(session);
-    this.upsertStructuredPiSession(legacySummary);
+    const liveSummary = this.buildLiveSummaryFromManagedSession(session);
+    this.upsertStructuredPiSession(liveSummary);
     return this.decorateSummaryWithStructuredProjection(
-      legacySummary,
+      liveSummary,
       session.activePrompt ? "running" : undefined,
     );
   }
@@ -672,7 +672,7 @@ export class WorkspaceSessionCatalog {
       preview: structuredSummary.preview || summary.preview,
       status: statusOverride ?? structuredSummary.status,
       updatedAt: structuredSummary.updatedAt,
-      wait: structuredSummary.wait,
+      wait: projectWorkspaceWait(structuredSummary.wait),
       counts: structuredSummary.counts,
       threadIdsByStatus: view.threadIdsByStatus,
       threadIds: structuredSummary.threadIds,
@@ -682,7 +682,7 @@ export class WorkspaceSessionCatalog {
 
   private refreshSmithersWorkflowProjections(): void {
     for (const session of this.structuredSessionStore.listSessionStates()) {
-      for (const workflow of session.workflowRuns ?? session.workflows) {
+      for (const workflow of session.workflowRuns) {
         const thread = session.threads.find((entry) => entry.id === workflow.threadId);
         if (!thread) {
           continue;
@@ -708,7 +708,7 @@ export class WorkspaceSessionCatalog {
 
   private refreshSmithersWorkflowProjection(
     session: StructuredSessionSnapshot,
-    workflow: StructuredSessionSnapshot["workflows"][number],
+    workflow: StructuredSessionSnapshot["workflowRuns"][number],
   ): void {
     const run = readSmithersRunState({
       runId: workflow.smithersRunId,
@@ -744,7 +744,7 @@ export class WorkspaceSessionCatalog {
           wait: null,
         });
       }
-      if (session.session.wait?.threadId === thread.id) {
+      if (getThreadOwnedWaitId(session.session.wait) === thread.id) {
         this.structuredSessionStore.clearSessionWait({
           sessionId: thread.sessionId,
         });
@@ -759,7 +759,7 @@ export class WorkspaceSessionCatalog {
   }
 
   private reconcileTerminalWorkflowProjection(
-    _workflow: StructuredSessionSnapshot["workflows"][number],
+    _workflow: StructuredSessionSnapshot["workflowRuns"][number],
     thread: StructuredSessionSnapshot["threads"][number],
   ): void {
     if (!isTerminalThreadStatus(thread.status)) {
@@ -771,7 +771,7 @@ export class WorkspaceSessionCatalog {
     }
 
     const liveSession = this.structuredSessionStore.getSessionState(thread.sessionId);
-    if (liveSession.session.wait?.threadId === thread.id) {
+    if (getThreadOwnedWaitId(liveSession.session.wait) === thread.id) {
       this.structuredSessionStore.clearSessionWait({
         sessionId: thread.sessionId,
       });
@@ -780,7 +780,7 @@ export class WorkspaceSessionCatalog {
 
   private refreshSmithersWaitingWorkflowProjection(
     thread: StructuredSessionSnapshot["threads"][number],
-    workflow: StructuredSessionSnapshot["workflows"][number],
+    workflow: StructuredSessionSnapshot["workflowRuns"][number],
     run: SmithersRunState,
     summary: string,
   ): void {
@@ -801,20 +801,23 @@ export class WorkspaceSessionCatalog {
     if (this.canSessionWaitOnThread(liveSession, thread.id)) {
       const activeWait = liveSession.session.wait;
       if (
-        activeWait?.threadId !== thread.id ||
-        activeWait.kind !== waiting.kind ||
-        activeWait.reason !== waiting.reason ||
-        activeWait.resumeWhen !== waiting.resumeWhen
+        getThreadOwnedWaitId(activeWait) !== thread.id ||
+        activeWait?.kind !== waiting.kind ||
+        activeWait?.reason !== waiting.reason ||
+        activeWait?.resumeWhen !== waiting.resumeWhen
       ) {
         this.structuredSessionStore.setSessionWait({
           sessionId: thread.sessionId,
-          threadId: thread.id,
+          owner: {
+            kind: "thread",
+            threadId: thread.id,
+          },
           kind: waiting.kind,
           reason: waiting.reason,
           resumeWhen: waiting.resumeWhen,
         });
       }
-    } else if (liveSession.session.wait?.threadId === thread.id) {
+    } else if (getThreadOwnedWaitId(liveSession.session.wait) === thread.id) {
       this.structuredSessionStore.clearSessionWait({
         sessionId: thread.sessionId,
       });
@@ -830,7 +833,7 @@ export class WorkspaceSessionCatalog {
   }
 
   private canSessionWaitOnThread(session: StructuredSessionSnapshot, threadId: string): boolean {
-    if (session.session.wait && session.session.wait.threadId !== threadId) {
+    if (session.session.wait && getThreadOwnedWaitId(session.session.wait) !== threadId) {
       return false;
     }
 
@@ -853,14 +856,14 @@ export class WorkspaceSessionCatalog {
         target,
       });
       if (structuredSessionId === session.sessionId) {
-        const legacySummary = this.buildLegacySummaryFromManagedSession(session);
-        this.upsertStructuredPiSession(legacySummary);
+        const liveSummary = this.buildLiveSummaryFromManagedSession(session);
+        this.upsertStructuredPiSession(liveSummary);
       }
       const requestSummary = summarizePromptForTurn(promptText);
       const turn = this.structuredSessionStore.startTurn({
         sessionId: structuredSessionId,
         surfacePiSessionId: session.sessionId,
-        threadId: target?.surface === "thread" ? target.threadId ?? null : null,
+        threadId: target?.surface === "thread" ? (target.threadId ?? null) : null,
         requestSummary,
       });
       const rootThreadId =
@@ -1478,6 +1481,30 @@ function getStatusFromSessionEntry(entry: unknown): WorkspaceSessionSummary["sta
   }
 
   return undefined;
+}
+
+function getThreadOwnedWaitId(wait: StructuredSessionSnapshot["session"]["wait"]): string | null {
+  if (!wait || wait.owner.kind !== "thread") {
+    return null;
+  }
+
+  return wait.owner.threadId;
+}
+
+function projectWorkspaceWait(
+  wait: StructuredSessionSnapshot["session"]["wait"],
+): WorkspaceSessionSummary["wait"] {
+  if (!wait) {
+    return null;
+  }
+
+  return {
+    threadId: getThreadOwnedWaitId(wait) ?? undefined,
+    kind: wait.kind,
+    reason: wait.reason,
+    resumeWhen: wait.resumeWhen,
+    since: wait.since,
+  };
 }
 
 function syncAuthStorage(authStorage: AuthStorage): void {

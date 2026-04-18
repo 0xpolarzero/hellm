@@ -360,7 +360,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         recordBridgeEvent("session.deleted", { sessionId });
         return result;
       },
-      sendPrompt: async (payload: SendPromptRequest): Promise<{ sessionId: string; target?: PromptTarget }> => {
+      sendPrompt: async (
+        payload: SendPromptRequest,
+      ): Promise<{ sessionId: string; target?: PromptTarget }> => {
         const resolved = resolveSendDefaults(payload);
 
         if (supportsOAuth(resolved.provider)) {

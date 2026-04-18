@@ -1,10 +1,9 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 export type StructuredSessionStatus = "idle" | "running" | "waiting" | "error";
 export type StructuredTurnStatus = "running" | "waiting" | "completed" | "failed";
-export type StructuredThreadKind = "task" | "workflow" | "verification";
 export type StructuredThreadStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
 export type StructuredWaitKind = "user" | "external";
 export type StructuredCommandExecutor =
@@ -71,7 +70,6 @@ export type StructuredSessionWaitOwner =
 
 export interface StructuredSessionWaitState extends StructuredWaitState {
   owner: StructuredSessionWaitOwner;
-  threadId?: string;
 }
 
 export interface StructuredTurnRecord {
@@ -167,8 +165,6 @@ export interface StructuredWorkflowRunRecord {
   finishedAt: string | null;
 }
 
-export type StructuredWorkflowRecord = StructuredWorkflowRunRecord;
-
 export interface StructuredArtifactRecord {
   id: string;
   sessionId: string;
@@ -190,7 +186,6 @@ export type StructuredEventSubjectKind =
   | "episode"
   | "verification"
   | "workflowRun"
-  | "workflow"
   | "artifact";
 
 export interface StructuredLifecycleEventRecord {
@@ -219,7 +214,6 @@ export interface StructuredSessionSnapshot {
   episodes: StructuredEpisodeRecord[];
   verifications: StructuredVerificationRecord[];
   workflowRuns: StructuredWorkflowRunRecord[];
-  workflows: StructuredWorkflowRunRecord[];
   artifacts: StructuredArtifactRecord[];
   events: StructuredLifecycleEventRecord[];
 }
@@ -232,7 +226,6 @@ export interface StructuredThreadDetail {
   verifications: StructuredVerificationRecord[];
   workflowRuns: StructuredWorkflowRunRecord[];
   latestWorkflowRun: StructuredWorkflowRunRecord | null;
-  workflow: StructuredWorkflowRunRecord | null;
   artifacts: StructuredArtifactRecord[];
 }
 
@@ -257,7 +250,6 @@ export interface StructuredSessionStateStore {
   createThread(input: {
     turnId: string;
     parentThreadId?: string | null;
-    kind?: StructuredThreadKind;
     surfacePiSessionId?: string;
     title: string;
     objective: string;
@@ -273,8 +265,7 @@ export interface StructuredSessionStateStore {
   }): StructuredThreadRecord;
   setSessionWait(input: {
     sessionId: string;
-    owner?: StructuredSessionWaitOwner;
-    threadId?: string;
+    owner: StructuredSessionWaitOwner;
     kind: StructuredWaitKind;
     reason: string;
     resumeWhen: string;
@@ -314,7 +305,6 @@ export interface StructuredSessionStateStore {
   createArtifact(input: {
     threadId?: string | null;
     workflowRunId?: string | null;
-    episodeId?: string | null;
     sourceCommandId?: string | null;
     kind: StructuredArtifactKind;
     name?: string;
@@ -342,6 +332,7 @@ export interface StructuredSessionStateStore {
   }): StructuredWorkflowRunRecord;
   updateWorkflow(input: {
     workflowId: string;
+    commandId?: string;
     status: StructuredWorkflowStatus;
     summary: string;
   }): StructuredWorkflowRunRecord;
@@ -506,7 +497,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const databasePath = options.databasePath ?? MEMORY_DATABASE;
     if (databasePath !== MEMORY_DATABASE) {
       mkdirSync(dirname(databasePath), { recursive: true });
-      resetLegacyDatabaseIfNeeded(databasePath);
     }
 
     this.db = new Database(databasePath);
@@ -640,7 +630,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     }
 
     const turnId = createId("turn");
-    const surfacePiSessionId = input.surfacePiSessionId ?? thread?.surface_pi_session_id ?? input.sessionId;
+    const surfacePiSessionId =
+      input.surfacePiSessionId ?? thread?.surface_pi_session_id ?? input.sessionId;
     this.db
       .query(
         `INSERT INTO turn (
@@ -712,7 +703,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   createThread(input: {
     turnId: string;
     parentThreadId?: string | null;
-    kind?: StructuredThreadKind;
     surfacePiSessionId?: string;
     title: string;
     objective: string;
@@ -793,7 +783,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const nextTitle = input.title ?? existing.title;
     const nextObjective = input.objective ?? existing.objective;
     const nextWorktree =
-      input.worktree === undefined ? existing.worktree : input.worktree ?? null;
+      input.worktree === undefined ? existing.worktree : (input.worktree ?? null);
     const finishedAt = isTerminalThreadStatus(nextStatus) ? timestamp : null;
 
     this.db
@@ -839,14 +829,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   setSessionWait(input: {
     sessionId: string;
-    owner?: StructuredSessionWaitOwner;
-    threadId?: string;
+    owner: StructuredSessionWaitOwner;
     kind: StructuredWaitKind;
     reason: string;
     resumeWhen: string;
   }): StructuredSessionWaitState {
     const session = this.mustFindSessionRow(input.sessionId);
-    const owner = resolveSessionWaitOwner(input.owner, input.threadId);
+    const owner = input.owner;
     if (owner.kind === "thread") {
       this.mustFindThreadRow(owner.threadId);
       const hasOtherRunningThread = this.queryThreadRows(session.session_id).some(
@@ -855,7 +844,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       if (hasOtherRunningThread) {
         throw new Error("Cannot set session wait while other runnable thread work remains.");
       }
-    } else if (this.queryThreadRows(session.session_id).some((thread) => thread.status === "running")) {
+    } else if (
+      this.queryThreadRows(session.session_id).some((thread) => thread.status === "running")
+    ) {
       throw new Error("Cannot set orchestrator session wait while runnable thread work remains.");
     }
 
@@ -1034,8 +1025,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const existing = this.mustFindCommandRow(input.commandId);
     const timestamp = this.now();
     const visibility = input.visibility ?? existing.visibility;
-    const factsJson =
-      input.facts === undefined ? existing.facts_json : toJson(input.facts ?? null);
+    const factsJson = input.facts === undefined ? existing.facts_json : toJson(input.facts ?? null);
     const finishedAt = input.status === "waiting" ? null : timestamp;
 
     this.db
@@ -1135,40 +1125,28 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   createArtifact(input: {
     threadId?: string | null;
     workflowRunId?: string | null;
-    episodeId?: string | null;
     sourceCommandId?: string | null;
     kind: StructuredArtifactKind;
     name?: string;
     path?: string;
     content?: string;
   }): StructuredArtifactRecord {
-    const episode = input.episodeId ? this.mustFindEpisodeRow(input.episodeId) : null;
-    const sourceCommand = input.sourceCommandId ? this.mustFindCommandRow(input.sourceCommandId) : null;
+    const sourceCommand = input.sourceCommandId
+      ? this.mustFindCommandRow(input.sourceCommandId)
+      : null;
     const workflowRun =
       input.workflowRunId != null ? this.mustFindWorkflowRunRow(input.workflowRunId) : null;
 
-    const threadId =
-      input.threadId ??
-      workflowRun?.thread_id ??
-      sourceCommand?.thread_id ??
-      episode?.thread_id ??
-      null;
+    const threadId = input.threadId ?? workflowRun?.thread_id ?? sourceCommand?.thread_id ?? null;
     const thread = threadId ? this.mustFindThreadRow(threadId) : null;
     const workflowRunId =
-      input.workflowRunId ??
-      sourceCommand?.workflow_run_id ??
-      workflowRun?.id ??
-      null;
-    const sourceCommandId = input.sourceCommandId ?? episode?.source_command_id ?? null;
+      input.workflowRunId ?? sourceCommand?.workflow_run_id ?? workflowRun?.id ?? null;
+    const sourceCommandId = input.sourceCommandId ?? null;
     const sessionId =
-      thread?.session_id ??
-      workflowRun?.session_id ??
-      sourceCommand?.session_id ??
-      episode?.session_id ??
-      null;
+      thread?.session_id ?? workflowRun?.session_id ?? sourceCommand?.session_id ?? null;
 
     if (!sessionId) {
-      throw new Error("Artifact creation requires thread, workflow run, command, or episode ownership.");
+      throw new Error("Artifact creation requires thread, workflow run, or command ownership.");
     }
 
     const artifactId = createId("artifact");
@@ -1362,21 +1340,27 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   updateWorkflow(input: {
     workflowId: string;
+    commandId?: string;
     status: StructuredWorkflowStatus;
     summary: string;
   }): StructuredWorkflowRunRecord {
     const existing = this.mustFindWorkflowRunRow(input.workflowId);
+    if (input.commandId) {
+      this.mustFindCommandRow(input.commandId);
+    }
     const timestamp = this.now();
     this.db
       .query(
         `UPDATE workflow_run
-         SET status = ?,
+         SET command_id = ?,
+             status = ?,
              summary = ?,
              updated_at = ?,
              finished_at = ?
          WHERE id = ?`,
       )
       .run(
+        input.commandId ?? existing.command_id,
         input.status,
         input.summary,
         timestamp,
@@ -1415,7 +1399,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       episodes: this.queryEpisodeRecords(sessionId),
       verifications: this.queryVerificationRecords(sessionId),
       workflowRuns,
-      workflows: workflowRuns,
       artifacts: this.queryArtifactRecords(sessionId),
       events: this.queryEventRecords(sessionId),
     };
@@ -1446,7 +1429,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       ),
       workflowRuns,
       latestWorkflowRun,
-      workflow: latestWorkflowRun,
       artifacts: this.queryArtifactRowsByThread(threadId).map((row) => this.mapArtifact(row)),
     };
   }
@@ -1488,9 +1470,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   private getSessionRow(sessionId: string): SessionRow | undefined {
-    return this.db
-      .query(`SELECT * FROM session WHERE session_id = ?`)
-      .get(sessionId) as SessionRow | undefined;
+    return this.db.query(`SELECT * FROM session WHERE session_id = ?`).get(sessionId) as
+      | SessionRow
+      | undefined;
   }
 
   private mustFindSessionRow(sessionId: string): SessionRow {
@@ -1510,9 +1492,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   private mustFindThreadRow(threadId: string): ThreadRow {
-    const row = this.db
-      .query(`SELECT * FROM thread WHERE id = ?`)
-      .get(threadId) as ThreadRow | undefined;
+    const row = this.db.query(`SELECT * FROM thread WHERE id = ?`).get(threadId) as
+      | ThreadRow
+      | undefined;
     if (!row) {
       throw new Error(`Structured thread not found: ${threadId}`);
     }
@@ -1520,9 +1502,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   private mustFindCommandRow(commandId: string): CommandRow {
-    const row = this.db
-      .query(`SELECT * FROM command WHERE id = ?`)
-      .get(commandId) as CommandRow | undefined;
+    const row = this.db.query(`SELECT * FROM command WHERE id = ?`).get(commandId) as
+      | CommandRow
+      | undefined;
     if (!row) {
       throw new Error(`Structured command not found: ${commandId}`);
     }
@@ -1530,9 +1512,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   private mustFindEpisodeRow(episodeId: string): EpisodeRow {
-    const row = this.db
-      .query(`SELECT * FROM episode WHERE id = ?`)
-      .get(episodeId) as EpisodeRow | undefined;
+    const row = this.db.query(`SELECT * FROM episode WHERE id = ?`).get(episodeId) as
+      | EpisodeRow
+      | undefined;
     if (!row) {
       throw new Error(`Structured episode not found: ${episodeId}`);
     }
@@ -1540,9 +1522,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   private mustFindWorkflowRunRow(workflowId: string): WorkflowRunRow {
-    const row = this.db
-      .query(`SELECT * FROM workflow_run WHERE id = ?`)
-      .get(workflowId) as WorkflowRunRow | undefined;
+    const row = this.db.query(`SELECT * FROM workflow_run WHERE id = ?`).get(workflowId) as
+      | WorkflowRunRow
+      | undefined;
     if (!row) {
       throw new Error(`Structured workflow run not found: ${workflowId}`);
     }
@@ -1566,9 +1548,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   private mustFindVerificationRecord(verificationId: string): StructuredVerificationRecord {
-    const row = this.db
-      .query(`SELECT * FROM verification WHERE id = ?`)
-      .get(verificationId) as VerificationRow | undefined;
+    const row = this.db.query(`SELECT * FROM verification WHERE id = ?`).get(verificationId) as
+      | VerificationRow
+      | undefined;
     if (!row) {
       throw new Error(`Structured verification not found: ${verificationId}`);
     }
@@ -1580,9 +1562,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   private mustFindArtifactRecord(artifactId: string): StructuredArtifactRecord {
-    const row = this.db
-      .query(`SELECT * FROM artifact WHERE id = ?`)
-      .get(artifactId) as ArtifactRow | undefined;
+    const row = this.db.query(`SELECT * FROM artifact WHERE id = ?`).get(artifactId) as
+      | ArtifactRow
+      | undefined;
     if (!row) {
       throw new Error(`Structured artifact not found: ${artifactId}`);
     }
@@ -1812,7 +1794,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
     return {
       owner,
-      threadId: row.wait_thread_id ?? undefined,
       kind: row.wait_kind,
       reason: row.wait_reason,
       resumeWhen: row.wait_resume_when,
@@ -2120,57 +2101,6 @@ function initializeSchema(db: Database): void {
   `);
 }
 
-function resetLegacyDatabaseIfNeeded(databasePath: string): void {
-  if (!existsSync(databasePath)) {
-    return;
-  }
-
-  let db: Database | null = null;
-  try {
-    db = new Database(databasePath);
-    const hasSessionTable = tableExists(db, "session");
-    const hasThreadTable = tableExists(db, "thread");
-    const hasArtifactTable = tableExists(db, "artifact");
-    const hasCommandTable = tableExists(db, "command");
-    const hasWorkflowRunTable = tableExists(db, "workflow_run");
-    const shouldReset =
-      (hasSessionTable && !columnExists(db, "session", "orchestrator_pi_session_id")) ||
-      (hasSessionTable && !columnExists(db, "session", "wait_owner_kind")) ||
-      (hasThreadTable && !columnExists(db, "thread", "surface_pi_session_id")) ||
-      (hasThreadTable && !columnExists(db, "thread", "latest_workflow_run_id")) ||
-      (hasCommandTable && !columnExists(db, "command", "workflow_run_id")) ||
-      (hasArtifactTable && !columnExists(db, "artifact", "thread_id")) ||
-      (hasArtifactTable && !columnExists(db, "artifact", "workflow_run_id")) ||
-      (hasSessionTable && !hasWorkflowRunTable);
-
-    db.close();
-    db = null;
-
-    if (shouldReset) {
-      unlinkSync(databasePath);
-    }
-  } catch {
-    try {
-      db?.close();
-    } catch {
-      // Ignore close failures on a broken database file.
-    }
-    unlinkSync(databasePath);
-  }
-}
-
-function tableExists(db: Database, tableName: string): boolean {
-  const row = db
-    .query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`)
-    .get(tableName) as { name: string } | undefined;
-  return Boolean(row);
-}
-
-function columnExists(db: Database, tableName: string, columnName: string): boolean {
-  const rows = db.query(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
-  return rows.some((row) => row.name === columnName);
-}
-
 function createId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
@@ -2195,19 +2125,6 @@ function isTerminalThreadStatus(status: StructuredThreadStatus): boolean {
 
 function isTerminalWorkflowStatus(status: StructuredWorkflowStatus): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
-}
-
-function resolveSessionWaitOwner(
-  owner: StructuredSessionWaitOwner | undefined,
-  threadId: string | undefined,
-): StructuredSessionWaitOwner {
-  if (owner) {
-    return owner;
-  }
-  if (threadId) {
-    return { kind: "thread", threadId };
-  }
-  return { kind: "orchestrator" };
 }
 
 function resolveArtifactPath(input: {

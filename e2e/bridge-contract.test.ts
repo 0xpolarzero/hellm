@@ -1,6 +1,7 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { basename } from "node:path";
+import { DEFAULT_SYSTEM_PROMPT } from "../src/bun/default-system-prompt";
 import { ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 import { assistantTextMessage, seedProviderApiKeys, seedSessions, userMessage } from "./support";
 
@@ -205,8 +206,7 @@ test("bridge state snapshot and app.ready expose the workspace/default/provider/
       provider: PROMPT_PROVIDER,
       model: PROMPT_MODEL,
       reasoningEffort: "medium",
-      systemPrompt:
-        "You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app. Everything you do is a tool call inside one shared execution model. Use ordinary coding tools for generic work, verification.run for real verification, workflow.start for delegated workflows, and wait for durable user or external waits. Threads, commands, verification, workflows, and wait state come from real tool execution rather than assistant prose.",
+      systemPrompt: DEFAULT_SYSTEM_PROMPT,
     });
     expect(snapshot.providers.total).toBeGreaterThan(10);
     expect(snapshot.providers.connected).toBe(1);

@@ -239,7 +239,6 @@ describe("structured session state write API", () => {
       runOne.id,
       runTwo.id,
     ]);
-    expect(snapshot.workflows.map((workflowRun) => workflowRun.id)).toEqual([runOne.id, runTwo.id]);
     expect(snapshot.verifications).toEqual([
       expect.objectContaining({
         id: verification.id,
@@ -274,7 +273,6 @@ describe("structured session state write API", () => {
     ]);
     expect(detail.workflowRuns.map((entry) => entry.id)).toEqual([runOne.id, runTwo.id]);
     expect(detail.latestWorkflowRun?.id).toBe(runTwo.id);
-    expect(detail.workflow?.id).toBe(runTwo.id);
     expect(detail.episodes.map((entry) => entry.id)).toEqual([episode.id]);
     expect(detail.artifacts.map((entry) => entry.id)).toEqual([workflowArtifact.id]);
     expect(snapshot.events.map((event) => event.kind)).toEqual([
@@ -394,7 +392,6 @@ describe("structured session state write API", () => {
 
     expect(sessionWait).toEqual({
       owner: { kind: "thread", threadId: waitingThread.id },
-      threadId: waitingThread.id,
       ...wait,
       since: expect.any(String),
     });
@@ -430,7 +427,6 @@ describe("structured session state write API", () => {
 
     expect(waitingOn).toEqual({
       owner: { kind: "orchestrator" },
-      threadId: undefined,
       kind: "user",
       reason: "Need the user to choose the execution mode",
       resumeWhen: "Resume when the user chooses the execution mode.",
@@ -507,7 +503,7 @@ describe("structured session state write API", () => {
     expect(verification.commandId).toBe(verificationCommand.id);
   });
 
-  it("maps legacy episode-linked artifact callers onto thread ownership", () => {
+  it("keeps artifact ownership thread-based after an episode exists", () => {
     const store = createStore();
     seedSession(store, "session-artifacts");
 
@@ -539,7 +535,7 @@ describe("structured session state write API", () => {
       threadId: thread.id,
       status: "completed",
     });
-    const episode = store.createEpisode({
+    store.createEpisode({
       threadId: thread.id,
       sourceCommandId: command.id,
       title: "Final episode",
@@ -547,7 +543,7 @@ describe("structured session state write API", () => {
       body: "Thread completed.",
     });
     const artifact = store.createArtifact({
-      episodeId: episode.id,
+      threadId: thread.id,
       sourceCommandId: command.id,
       kind: "text",
       name: "notes.md",
@@ -557,6 +553,8 @@ describe("structured session state write API", () => {
     expect(artifact.threadId).toBe(thread.id);
     expect(artifact.workflowRunId).toBeNull();
     expect(artifact.sourceCommandId).toBe(command.id);
-    expect(store.getThreadDetail(thread.id).artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
+    expect(store.getThreadDetail(thread.id).artifacts.map((entry) => entry.id)).toEqual([
+      artifact.id,
+    ]);
   });
 });

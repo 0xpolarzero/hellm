@@ -171,7 +171,7 @@ The important guarantees are:
 - nested `api.*` calls are durable trace facts
 - the parent command remains the main semantic unit
 - the tool writes command summaries, trace facts, and artifacts, but does not emit episodes itself
-- delegated verification should be expressed through workflow templates or presets rather than a separate native verification command
+- delegated verification should be expressed through workflow templates or presets
 
 ## Why Child Commands Exist
 

@@ -46,7 +46,6 @@ function createPromptContext(store: StructuredSessionStateStore) {
   });
   const rootThread = store.createThread({
     turnId: turn.id,
-    kind: "task",
     title: "Track tool commands",
     objective: "Persist prompt tool executions through the shared command seam.",
   });
@@ -66,14 +65,12 @@ function createHandlerPromptContext(store: StructuredSessionStateStore) {
   });
   const orchestratorThread = store.createThread({
     turnId: turn.id,
-    kind: "task",
     title: "Plan follow-up work",
     objective: "Delegate and supervise work through a handler thread.",
   });
   const handlerThread = store.createThread({
     turnId: turn.id,
     parentThreadId: orchestratorThread.id,
-    kind: "task",
     title: "Inspect the workspace",
     objective: "Run delegated commands from the handler thread surface.",
   });
@@ -212,42 +209,6 @@ describe("tool execution command tracker", () => {
 
     const snapshot = store.getSessionState("session-tool-tracker");
     expect(snapshot.commands).toHaveLength(0);
-  });
-
-  it("does not treat verification.run as a native control tool anymore", () => {
-    const store = createStore();
-    const tracker = createToolExecutionCommandTracker({
-      store,
-      promptContext: createPromptContext(store),
-    });
-
-    tracker.handleToolExecutionStart({
-      toolCallId: "tool-call-verify",
-      toolName: "verification.run",
-      args: { kind: "test" },
-    });
-    tracker.handleToolExecutionEnd({
-      toolCallId: "tool-call-verify",
-      toolName: "verification.run",
-      result: {
-        content: [
-          {
-            type: "text",
-            text: "verification.run is deprecated. Use workflow.start instead.",
-          },
-        ],
-      },
-      isError: true,
-    });
-
-    const snapshot = store.getSessionState("session-tool-tracker");
-    expect(snapshot.commands).toEqual([
-      expect.objectContaining({
-        toolName: "verification.run",
-        status: "failed",
-        error: "verification.run is deprecated. Use workflow.start instead.",
-      }),
-    ]);
   });
 
   it("ignores execute_typescript because the runtime records its own parent and child commands", () => {

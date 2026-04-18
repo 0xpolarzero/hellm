@@ -69,7 +69,9 @@ export interface WorkflowToolBridge {
   resumeImplementFeatureWorkflow(
     options: ResumeImplementFeatureWorkflowOptions,
   ): Promise<StartSmithersWorkflowResult>;
-  readSmithersWorkflowProjectionInput(input: { runId: string }): SmithersWorkflowProjectionInput | null;
+  readSmithersWorkflowProjectionInput(input: {
+    runId: string;
+  }): SmithersWorkflowProjectionInput | null;
 }
 
 type StartWorkflowToolOptions = {
@@ -112,32 +114,6 @@ type WorkflowToolResultDetails = {
 type WorkflowThreadContext = {
   handlerThreadId: string;
   workflowRun: WorkflowRunRecord | null;
-};
-
-type WorkflowStoreCompat = StructuredSessionStateStore & {
-  createCommand(input: Record<string, unknown>): { id: string };
-  createArtifact(input: Record<string, unknown>): unknown;
-  recordWorkflow(input: Record<string, unknown>): WorkflowRunRecord;
-  updateWorkflow(input: Record<string, unknown>): WorkflowRunRecord;
-  setSessionWait(input: Record<string, unknown>): unknown;
-};
-
-type ThreadOwnedWait = {
-  owner?: {
-    kind: "thread";
-    threadId: string;
-  } | {
-    kind: "orchestrator";
-  };
-  threadId?: string | null;
-};
-
-type WorkflowSnapshot = StructuredSessionSnapshot & {
-  workflowRuns?: WorkflowRunRecord[];
-  workflows: WorkflowRunRecord[];
-  session: StructuredSessionSnapshot["session"] & {
-    wait: (StructuredSessionSnapshot["session"]["wait"] & ThreadOwnedWait) | null;
-  };
 };
 
 const START_WORKFLOW_DESCRIPTION = [
@@ -224,10 +200,7 @@ export function createResumeWorkflowTool(
   };
 }
 
-function requireActiveRuntime(
-  runtimeHandle: PromptExecutionRuntimeHandle,
-  toolName: string,
-) {
+function requireActiveRuntime(runtimeHandle: PromptExecutionRuntimeHandle, toolName: string) {
   const runtime = runtimeHandle.current;
   if (!runtime) {
     throw new Error(`${toolName} can only run during an active prompt.`);
@@ -281,10 +254,12 @@ async function executeWorkflowCommand(input: {
   commandTitle: string;
   commandSummary: string;
   startRun: () => Promise<StartSmithersWorkflowResult>;
-}): Promise<{ content: Array<{ type: "text"; text: string }>; details: WorkflowToolResultDetails }> {
+}): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  details: WorkflowToolResultDetails;
+}> {
   input.runtime.sessionWaitApplied = false;
-  const compatStore = input.store as WorkflowStoreCompat;
-  const command = compatStore.createCommand({
+  const command = input.store.createCommand({
     turnId: input.runtime.turnId,
     surfacePiSessionId: input.runtime.surfacePiSessionId,
     threadId: input.context.handlerThreadId,
@@ -299,15 +274,16 @@ async function executeWorkflowCommand(input: {
 
   try {
     const started = await input.startRun();
-    const projection =
-      (await waitForProjectionInput(started.runId, input.bridge.readSmithersWorkflowProjectionInput)) ??
-      {
-        status: "running" satisfies StructuredWorkflowStatus,
-        summary:
-          input.mode === "resume"
-            ? `implement-feature run ${started.runId} resumed.`
-            : `implement-feature run ${started.runId} started.`,
-      };
+    const projection = (await waitForProjectionInput(
+      started.runId,
+      input.bridge.readSmithersWorkflowProjectionInput,
+    )) ?? {
+      status: "running" satisfies StructuredWorkflowStatus,
+      summary:
+        input.mode === "resume"
+          ? `implement-feature run ${started.runId} resumed.`
+          : `implement-feature run ${started.runId} started.`,
+    };
 
     const workflowRun =
       persistWorkflowRun({
@@ -382,7 +358,11 @@ async function executeWorkflowCommand(input: {
           ? "Failed to resume delegated workflow."
           : "Failed to start delegated workflow.";
 
-    clearThreadOwnedSessionWait(input.store, input.runtime.sessionId, input.context.handlerThreadId);
+    clearThreadOwnedSessionWait(
+      input.store,
+      input.runtime.sessionId,
+      input.context.handlerThreadId,
+    );
     input.store.updateThread({
       threadId: input.context.handlerThreadId,
       status: "running",
@@ -435,13 +415,12 @@ function reconcileHandlerThreadState(input: {
       wait,
     });
     if (canSessionWait(input.store, input.runtime.sessionId, input.handlerThreadId)) {
-      (input.store as WorkflowStoreCompat).setSessionWait({
+      input.store.setSessionWait({
         sessionId: input.runtime.sessionId,
         owner: {
           kind: "thread",
           threadId: input.handlerThreadId,
         },
-        threadId: input.handlerThreadId,
         kind: wait.kind,
         reason: wait.reason,
         resumeWhen: wait.resumeWhen,
@@ -485,34 +464,26 @@ function persistWorkflowRun(input: {
   status: StructuredWorkflowStatus;
   summary: string;
 }): WorkflowRunRecord | null {
-  const compatStore = input.store as WorkflowStoreCompat;
-  try {
-    if (input.existingWorkflowRun) {
-      return compatStore.updateWorkflow({
-        workflowId: input.existingWorkflowRun.id,
-        commandId: input.commandId,
-        status: input.status,
-        summary: input.summary,
-      }) as WorkflowRunRecord;
-    }
-
-    return compatStore.recordWorkflow({
-      threadId: input.handlerThreadId,
+  if (input.existingWorkflowRun) {
+    return input.store.updateWorkflow({
+      workflowId: input.existingWorkflowRun.id,
       commandId: input.commandId,
-      smithersRunId: input.runId,
-      workflowName: input.workflowName,
       status: input.status,
       summary: input.summary,
     }) as WorkflowRunRecord;
-  } catch (error) {
-    if (isLegacyWorkflowThreadConstraintError(error)) {
-      return null;
-    }
-    throw error;
   }
+
+  return input.store.recordWorkflow({
+    threadId: input.handlerThreadId,
+    commandId: input.commandId,
+    smithersRunId: input.runId,
+    workflowName: input.workflowName,
+    status: input.status,
+    summary: input.summary,
+  }) as WorkflowRunRecord;
 }
 
-function mustFindThread(snapshot: WorkflowSnapshot, threadId: string) {
+function mustFindThread(snapshot: StructuredSessionSnapshot, threadId: string) {
   const thread = snapshot.threads.find((candidate) => candidate.id === threadId);
   if (!thread) {
     throw new Error(`Structured thread not found for prompt surface: ${threadId}`);
@@ -523,16 +494,16 @@ function mustFindThread(snapshot: WorkflowSnapshot, threadId: string) {
 function getWorkflowSnapshot(
   store: StructuredSessionStateStore,
   sessionId: string,
-): WorkflowSnapshot {
-  return store.getSessionState(sessionId) as WorkflowSnapshot;
+): StructuredSessionSnapshot {
+  return store.getSessionState(sessionId);
 }
 
-function getWorkflowRuns(snapshot: WorkflowSnapshot): WorkflowRunRecord[] {
-  return (snapshot.workflowRuns ?? snapshot.workflows ?? []) as WorkflowRunRecord[];
+function getWorkflowRuns(snapshot: StructuredSessionSnapshot): WorkflowRunRecord[] {
+  return snapshot.workflowRuns as WorkflowRunRecord[];
 }
 
 function findWorkflowRunForHandler(
-  snapshot: WorkflowSnapshot,
+  snapshot: StructuredSessionSnapshot,
   handlerThreadId: string,
   runId: string,
 ): WorkflowRunRecord | null {
@@ -577,21 +548,14 @@ function clearThreadOwnedSessionWait(
   });
 }
 
-function getWaitOwnerThreadId(wait: WorkflowSnapshot["session"]["wait"]): string | null {
+function getWaitOwnerThreadId(wait: StructuredSessionSnapshot["session"]["wait"]): string | null {
   if (!wait) {
     return null;
   }
-  if (wait.owner?.kind === "thread") {
+  if (wait.owner.kind === "thread") {
     return wait.owner.threadId;
   }
-  return wait.threadId ?? null;
-}
-
-function isLegacyWorkflowThreadConstraintError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /workflow records require workflow threads|does not belong to workflow thread/i.test(
-    message,
-  );
+  return null;
 }
 
 async function waitForProjectionInput(
@@ -623,9 +587,7 @@ function recordWorkflowArtifacts(input: {
   stdout: string;
   stderr: string;
 }): void {
-  const compatStore = input.store as WorkflowStoreCompat;
-
-  compatStore.createArtifact({
+  input.store.createArtifact({
     threadId: input.threadId,
     workflowRunId: input.workflowRunId,
     sourceCommandId: input.commandId,
@@ -644,7 +606,7 @@ function recordWorkflowArtifacts(input: {
   });
 
   if (input.stdout.trim()) {
-    compatStore.createArtifact({
+    input.store.createArtifact({
       threadId: input.threadId,
       workflowRunId: input.workflowRunId,
       sourceCommandId: input.commandId,
@@ -655,7 +617,7 @@ function recordWorkflowArtifacts(input: {
   }
 
   if (input.stderr.trim()) {
-    compatStore.createArtifact({
+    input.store.createArtifact({
       threadId: input.threadId,
       workflowRunId: input.workflowRunId,
       sourceCommandId: input.commandId,

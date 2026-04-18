@@ -64,7 +64,6 @@ function createRuntime(
   });
   const rootThread = store.createThread({
     turnId: turn.id,
-    kind: "task",
     title: "Execute code mode task",
     objective: promptText,
   });

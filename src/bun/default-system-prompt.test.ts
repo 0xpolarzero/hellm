@@ -22,8 +22,8 @@ describe("default system prompt", () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain("Inside handler threads");
   });
 
-  it("steers verification toward workflow templates instead of a native verification tool", () => {
+  it("steers verification toward workflow templates", () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain("Verification is workflow-shaped execution");
-    expect(DEFAULT_SYSTEM_PROMPT).toContain("not a native verification.run path");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("workflow templates or presets");
   });
 });

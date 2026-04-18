@@ -236,7 +236,7 @@ The user should not need to reload the app or open a modal just to resume an exi
 
 At narrow widths, the left nav should collapse into a drawer or overlay panel.
 
-The current stacked sidebar layout in `ChatWorkspace.svelte` can be a transitional basis, but the session list must remain accessible as navigation, not be demoted to a static metrics panel.
+The narrow-width layout should preserve the session list as real navigation, not demote it to a static metrics panel.
 
 ## Session Status Model
 

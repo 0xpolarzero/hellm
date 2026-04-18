@@ -2,7 +2,10 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import type { Static } from "@sinclair/typebox";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
-import type { StructuredSessionStateStore, StructuredThreadRecord } from "./structured-session-state";
+import type {
+  StructuredSessionStateStore,
+  StructuredThreadRecord,
+} from "./structured-session-state";
 
 export const START_THREAD_TOOL_NAME = "thread.start";
 

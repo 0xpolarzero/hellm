@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { Database } from "bun:sqlite";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -185,8 +184,10 @@ describe("structured session state SQLite persistence", () => {
 
     expect(afterReload).toEqual(beforeReload);
     expect(afterReload.session.orchestratorPiSessionId).toBe("session-persist");
-    expect(afterReload.workflowRuns.map((workflowRun) => workflowRun.id)).toEqual([runOne.id, runTwo.id]);
-    expect(afterReload.workflows.map((workflowRun) => workflowRun.id)).toEqual([runOne.id, runTwo.id]);
+    expect(afterReload.workflowRuns.map((workflowRun) => workflowRun.id)).toEqual([
+      runOne.id,
+      runTwo.id,
+    ]);
     expect(afterReload.verifications).toEqual([
       expect.objectContaining({
         id: verification.id,
@@ -207,139 +208,11 @@ describe("structured session state SQLite persistence", () => {
         threadId: handlerThread.id,
       }),
     ]);
-    expect(detail.workflowRuns.map((workflowRun) => workflowRun.id)).toEqual([runOne.id, runTwo.id]);
+    expect(detail.workflowRuns.map((workflowRun) => workflowRun.id)).toEqual([
+      runOne.id,
+      runTwo.id,
+    ]);
     expect(detail.latestWorkflowRun?.id).toBe(runTwo.id);
-  });
-
-  it("resets legacy structured-session sqlite state instead of migrating it", () => {
-    const root = mkdtempSync(join(tmpdir(), "svvy-structured-sqlite-legacy-"));
-    tempDirs.push(root);
-    const databasePath = join(root, "structured-session-state.sqlite");
-    const workspaceCwd = root;
-
-    const legacyDb = new Database(databasePath);
-    legacyDb.exec(`
-      CREATE TABLE workspace (
-        id TEXT PRIMARY KEY,
-        label TEXT NOT NULL,
-        cwd TEXT NOT NULL
-      );
-
-      CREATE TABLE session (
-        session_id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        provider TEXT,
-        model TEXT,
-        reasoning_effort TEXT,
-        message_count INTEGER NOT NULL,
-        pi_status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        wait_thread_id TEXT,
-        wait_kind TEXT,
-        wait_reason TEXT,
-        wait_resume_when TEXT,
-        wait_since TEXT
-      );
-
-      CREATE TABLE thread (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        turn_id TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        depends_on_thread_ids TEXT NOT NULL
-      );
-
-      CREATE TABLE workflow (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        thread_id TEXT NOT NULL UNIQUE,
-        smithers_run_id TEXT NOT NULL
-      );
-
-      CREATE TABLE artifact (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        episode_id TEXT NOT NULL
-      );
-
-      INSERT INTO workspace (id, label, cwd)
-      VALUES ('legacy-workspace', 'legacy', 'legacy');
-
-      INSERT INTO session (
-        session_id,
-        title,
-        provider,
-        model,
-        reasoning_effort,
-        message_count,
-        pi_status,
-        created_at,
-        updated_at,
-        wait_thread_id,
-        wait_kind,
-        wait_reason,
-        wait_resume_when,
-        wait_since
-      ) VALUES (
-        'legacy-session',
-        'Legacy Session',
-        'openai',
-        'gpt-5.4',
-        'high',
-        1,
-        'idle',
-        '2026-04-18T11:55:00.000Z',
-        '2026-04-18T11:55:00.000Z',
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL
-      );
-    `);
-    legacyDb.close();
-
-    const store = createStructuredSessionStateStore({
-      workspace: {
-        id: workspaceCwd,
-        label: "svvy",
-        cwd: workspaceCwd,
-      },
-      databasePath,
-      now: createDeterministicClock(),
-    });
-    openStores.push(store);
-    closeTrackedStore(store);
-
-    const reopenedDb = new Database(databasePath);
-    const sessionCount = reopenedDb.query(`SELECT COUNT(*) AS count FROM session`).get() as {
-      count: number;
-    };
-    const sessionColumns = reopenedDb
-      .query(`PRAGMA table_info(session)`)
-      .all() as Array<{ name: string }>;
-    const threadColumns = reopenedDb.query(`PRAGMA table_info(thread)`).all() as Array<{ name: string }>;
-    const commandColumns = reopenedDb
-      .query(`PRAGMA table_info(command)`)
-      .all() as Array<{ name: string }>;
-    const artifactColumns = reopenedDb
-      .query(`PRAGMA table_info(artifact)`)
-      .all() as Array<{ name: string }>;
-    const workflowRunTables = reopenedDb
-      .query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'workflow_run'`)
-      .all() as Array<{ name: string }>;
-    reopenedDb.close();
-
-    expect(sessionCount.count).toBe(0);
-    expect(sessionColumns.map((column) => column.name)).toContain("orchestrator_pi_session_id");
-    expect(sessionColumns.map((column) => column.name)).toContain("wait_owner_kind");
-    expect(threadColumns.map((column) => column.name)).toContain("surface_pi_session_id");
-    expect(threadColumns.map((column) => column.name)).toContain("latest_workflow_run_id");
-    expect(commandColumns.map((column) => column.name)).toContain("workflow_run_id");
-    expect(artifactColumns.map((column) => column.name)).toContain("thread_id");
-    expect(artifactColumns.map((column) => column.name)).toContain("workflow_run_id");
-    expect(workflowRunTables).toEqual([{ name: "workflow_run" }]);
   });
 
   it("writes artifacts into the workspace-scoped artifact directory with persisted ownership metadata", () => {
@@ -544,10 +417,8 @@ describe("structured session state SQLite persistence", () => {
     const beta = states.find((state) => state.session.id === "session-beta")!;
 
     expect(alpha.workflowRuns).toHaveLength(0);
-    expect(alpha.workflows).toHaveLength(0);
     expect(alpha.episodes).toHaveLength(1);
     expect(beta.workflowRuns).toHaveLength(1);
-    expect(beta.workflows).toHaveLength(1);
     expect(beta.threads[0]?.latestWorkflowRunId).toBe(beta.workflowRuns[0]?.id);
   });
 });

@@ -69,7 +69,10 @@ export function createWaitTool(options: {
       try {
         options.store.setSessionWait({
           sessionId: runtime.sessionId,
-          threadId: runtime.rootThreadId,
+          owner: {
+            kind: "thread",
+            threadId: runtime.rootThreadId,
+          },
           kind,
           reason,
           resumeWhen,

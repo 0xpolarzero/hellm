@@ -29,7 +29,6 @@ type StructuredSessionSnapshotFixture = Omit<
   | "episodes"
   | "verifications"
   | "workflowRuns"
-  | "workflows"
   | "artifacts"
   | "events"
 > & {
@@ -232,7 +231,6 @@ function createSessionSnapshot(
     episodes,
     verifications,
     workflowRuns,
-    workflows: workflowRuns,
     artifacts,
     events,
     ...rest,
@@ -245,7 +243,6 @@ describe("structured session selectors", () => {
       deriveStructuredSessionStatus({
         wait: {
           owner: { kind: "thread", threadId: "thread-001" },
-          threadId: "thread-001",
           kind: "user",
           reason: "Need clarification",
           resumeWhen: "Resume on answer",
@@ -312,7 +309,6 @@ describe("structured session selectors", () => {
         orchestratorPiSessionId: "session-selectors",
         wait: {
           owner: { kind: "thread", threadId: "thread-003" },
-          threadId: "thread-003",
           kind: "external",
           reason: "Need workflow ownership decision",
           resumeWhen: "Resume when the rollout owner is confirmed.",
@@ -451,7 +447,6 @@ describe("structured session selectors", () => {
         commands: 2,
         episodes: 2,
         verifications: 1,
-        workflowRuns: 1,
         workflows: 1,
         artifacts: 1,
         events: 1,
@@ -562,7 +557,6 @@ describe("structured session selectors", () => {
         orchestratorPiSessionId: "session-waiting-preview",
         wait: {
           owner: { kind: "thread", threadId: "thread-500" },
-          threadId: "thread-500",
           kind: "user",
           reason: "Need clarification before workflow resume.",
           resumeWhen: "Resume when the rollout owner is confirmed.",

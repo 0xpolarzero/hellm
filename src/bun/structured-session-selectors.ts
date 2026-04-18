@@ -32,7 +32,6 @@ export interface StructuredSessionView {
     commands: number;
     episodes: number;
     verifications: number;
-    workflowRuns?: number;
     workflows: number;
     artifacts: number;
     events: number;
@@ -62,7 +61,9 @@ export interface StructuredSessionSummaryProjection {
   latestWorkflowRunSummary?: string | null;
 }
 
-function getUpdatedAt(record: Pick<StructuredThreadRecord | StructuredTurnRecord, "updatedAt">): number {
+function getUpdatedAt(
+  record: Pick<StructuredThreadRecord | StructuredTurnRecord, "updatedAt">,
+): number {
   return Date.parse(record.updatedAt);
 }
 
@@ -85,8 +86,9 @@ function getMostRecentWorkflowRun(
   session: StructuredSessionSnapshot,
 ): StructuredWorkflowRunRecord | null {
   return (
-    (session.workflowRuns ?? session.workflows)
-      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null
+    session.workflowRuns.toSorted((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt),
+    )[0] ?? null
   );
 }
 
@@ -94,7 +96,7 @@ function getMostRecentActiveWorkflowRun(
   session: StructuredSessionSnapshot,
 ): StructuredWorkflowRunRecord | null {
   return (
-    (session.workflowRuns ?? session.workflows)
+    session.workflowRuns
       .filter((workflowRun) => workflowRun.status === "running" || workflowRun.status === "waiting")
       .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null
   );
@@ -225,9 +227,7 @@ function deriveUpdatedAt(session: StructuredSessionSnapshot): string {
     ...session.commands.map((command) => Date.parse(command.updatedAt)),
     ...session.episodes.map((episode) => Date.parse(episode.createdAt)),
     ...session.verifications.map((verification) => Date.parse(verification.finishedAt)),
-    ...(session.workflowRuns ?? session.workflows).map((workflowRun) =>
-      Date.parse(workflowRun.updatedAt),
-    ),
+    ...session.workflowRuns.map((workflowRun) => Date.parse(workflowRun.updatedAt)),
     ...session.artifacts.map((artifact) => Date.parse(artifact.createdAt)),
     ...session.events.map((event) => Date.parse(event.at)),
     ...(session.session.wait ? [Date.parse(session.session.wait.since)] : []),
@@ -240,7 +240,9 @@ function deriveUpdatedAt(session: StructuredSessionSnapshot): string {
 function getLatestFailureTimestamp(session: StructuredSessionSnapshot): number | null {
   const failures = [
     ...session.turns.filter((turn) => turn.status === "failed").map((turn) => getUpdatedAt(turn)),
-    ...session.threads.filter((thread) => thread.status === "failed").map((thread) => getUpdatedAt(thread)),
+    ...session.threads
+      .filter((thread) => thread.status === "failed")
+      .map((thread) => getUpdatedAt(thread)),
   ].filter((value) => Number.isFinite(value));
 
   return failures.length > 0 ? Math.max(...failures) : null;
@@ -259,7 +261,9 @@ export function deriveStructuredSessionStatus(input: {
     return "running";
   }
 
-  const latestThread = input.threads.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+  const latestThread = input.threads.toSorted((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  )[0];
   if (latestThread?.status === "failed") {
     return "error";
   }
@@ -295,8 +299,7 @@ export function buildStructuredSessionView(
       commands: session.commands.length,
       episodes: session.episodes.length,
       verifications: session.verifications.length,
-      workflowRuns: (session.workflowRuns ?? session.workflows).length,
-      workflows: (session.workflowRuns ?? session.workflows).length,
+      workflows: session.workflowRuns.length,
       artifacts: session.artifacts.length,
       events: session.events.length,
     },
@@ -354,7 +357,7 @@ export function hasStructuredSessionFacts(session: StructuredSessionSnapshot): b
     buildCommandRollups(session.commands).length > 0 ||
     session.episodes.length > 0 ||
     session.verifications.length > 0 ||
-    (session.workflowRuns ?? session.workflows).length > 0 ||
+    session.workflowRuns.length > 0 ||
     session.artifacts.length > 0 ||
     session.events.length > 0
   );
