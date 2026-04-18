@@ -88,7 +88,7 @@ function loadEnvFile(filePath: string): void {
 }
 
 function loadRuntimeEnv(): void {
-  const cwd = process.cwd();
+  const cwd = resolveWorkspaceCwd();
   for (const file of ENV_FILES) {
     loadEnvFile(join(cwd, file));
   }

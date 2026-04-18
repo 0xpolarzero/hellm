@@ -71,8 +71,10 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
 }
 
 try {
+  const workspaceCwd = process.cwd();
+
   viteProcess = Bun.spawn(VITE_DEV_COMMAND, {
-    cwd: process.cwd(),
+    cwd: workspaceCwd,
     env: process.env,
     stdio: ["inherit", "inherit", "inherit"],
   });
@@ -83,10 +85,11 @@ try {
   await runChecked(VITE_BUILD_COMMAND);
 
   appProcess = Bun.spawn(ELECTROBUN_DEV_COMMAND, {
-    cwd: process.cwd(),
+    cwd: workspaceCwd,
     env: {
       ...process.env,
       SVVY_VITE_DEV_SERVER: "wait",
+      SVVY_WORKSPACE_CWD: workspaceCwd,
     },
     stdio: ["inherit", "inherit", "inherit"],
   });
