@@ -62,6 +62,15 @@ type TestTurn = {
   threadId: string | null;
   surfacePiSessionId: string;
   requestSummary: string;
+  turnDecision:
+    | "pending"
+    | "reply"
+    | "execute_typescript"
+    | "clarify"
+    | "thread.start"
+    | "workflow.start"
+    | "workflow.resume"
+    | "handoff";
   status: "running" | "waiting" | "completed" | "failed";
   startedAt: string;
   updatedAt: string;
@@ -218,6 +227,7 @@ function createHarness(): ToolHarness {
       threadId: "thread-handler-001",
       surfacePiSessionId: "pi-thread-smithers-tool",
       requestSummary: "Supervise the Smithers workflow from the handler thread.",
+      turnDecision: "pending",
       status: "running",
       startedAt: nextTimestamp(),
       updatedAt: nextTimestamp(),
@@ -282,6 +292,22 @@ function createHarness(): ToolHarness {
       };
       commands.push(command);
       return command;
+    },
+    setTurnDecision(input: {
+      turnId: string;
+      decision: TestTurn["turnDecision"];
+      onlyIfPending?: boolean;
+    }) {
+      const turn = turns.find((entry) => entry.id === input.turnId);
+      if (!turn) {
+        throw new Error(`Unknown turn: ${input.turnId}`);
+      }
+      if (input.onlyIfPending && turn.turnDecision !== "pending") {
+        return turn;
+      }
+      turn.turnDecision = input.decision;
+      turn.updatedAt = nextTimestamp();
+      return turn;
     },
     startCommand(commandId: string) {
       const command = commands.find((entry) => entry.id === commandId);
@@ -554,6 +580,7 @@ describe("smithers workflow tool", () => {
     expect(harness.runtime.current?.sessionWaitApplied).toBe(true);
 
     const snapshot = harness.getSnapshot();
+    expect(snapshot.turns[0]?.turnDecision).toBe("workflow.start");
     expect(snapshot.threads).toHaveLength(1);
     expect("kind" in snapshot.threads[0]!).toBe(false);
     expect(snapshot.commands).toEqual([
@@ -635,6 +662,7 @@ describe("smithers workflow tool", () => {
     });
 
     const snapshot = harness.getSnapshot();
+    expect(snapshot.turns[0]?.turnDecision).toBe("workflow.start");
     expect(snapshot.threads[0]).toMatchObject({
       status: "running",
       wait: null,
@@ -704,6 +732,7 @@ describe("smithers workflow tool", () => {
     });
 
     const snapshot = harness.getSnapshot();
+    expect(snapshot.turns[0]?.turnDecision).toBe("workflow.start");
     expect(snapshot.threads).toHaveLength(1);
     expect(snapshot.workflowRuns).toHaveLength(1);
     expect(snapshot.workflowRuns[0]).toMatchObject({

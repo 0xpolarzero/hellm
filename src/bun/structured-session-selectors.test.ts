@@ -66,6 +66,7 @@ function createSessionSnapshot(
         surfacePiSessionId: "session-selectors",
         threadId: null,
         requestSummary: "Selector turn",
+        turnDecision: "reply",
         status: "completed",
         startedAt: "2026-04-18T07:00:00.000Z",
         updatedAt: "2026-04-18T07:01:00.000Z",

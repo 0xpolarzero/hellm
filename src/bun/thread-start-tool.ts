@@ -51,6 +51,12 @@ export function createStartThreadTool(options: {
         throw new Error(`${START_THREAD_TOOL_NAME} can only run during an active prompt.`);
       }
 
+      options.store.setTurnDecision({
+        turnId: runtime.turnId,
+        decision: "thread.start",
+        onlyIfPending: true,
+      });
+
       const objective = params.objective.trim();
       const title = params.title?.trim() || objective;
       const command = options.store.createCommand({

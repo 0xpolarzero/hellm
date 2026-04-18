@@ -879,6 +879,11 @@ export class WorkspaceSessionCatalog {
         const liveSummary = this.buildLiveSummaryFromManagedSession(session);
         this.upsertStructuredPiSession(liveSummary);
       }
+      const preTurnSnapshot = this.getStructuredSnapshot(structuredSessionId);
+      const targetThread =
+        target?.surface === "thread" && target.threadId
+          ? (preTurnSnapshot?.threads.find((thread) => thread.id === target.threadId) ?? null)
+          : null;
       const requestSummary = summarizePromptForTurn(promptText);
       const turn = this.structuredSessionStore.startTurn({
         sessionId: structuredSessionId,
@@ -905,6 +910,13 @@ export class WorkspaceSessionCatalog {
         rootThreadId,
         promptText,
         rootEpisodeKind: inferRootEpisodeKind(promptText),
+        threadWasTerminalAtStart: targetThread
+          ? isTerminalThreadStatus(targetThread.status)
+          : false,
+        durableSurfaceContext:
+          target?.surface === "thread"
+            ? undefined
+            : buildOrchestratorDurablePromptContext(preTurnSnapshot),
       });
     } catch (error) {
       console.error("Failed to start prompt execution state:", error);
@@ -1021,7 +1033,12 @@ export class WorkspaceSessionCatalog {
       try {
         syncAuthStorage(session.authStorage);
 
-        const promptText = buildPromptText(session, options.messages, options.systemPrompt);
+        const promptText = buildPromptText(
+          session,
+          options.messages,
+          options.systemPrompt,
+          promptContext,
+        );
         if (!promptText) {
           throw new Error("No user message to send.");
         }
@@ -1131,7 +1148,20 @@ export class WorkspaceSessionCatalog {
       }
 
       const assistantText = messageToPlainText(message).trim();
+      const turn = snapshot.turns.find((entry) => entry.id === promptContext.turnId);
+      if (!turn) {
+        return;
+      }
+
       if (promptContext.sessionWaitApplied) {
+        const wait = getEffectiveTurnWait(snapshot, rootThread.id);
+        this.persistPendingTurnDecision({
+          promptContext,
+          turnDecision: turn.turnDecision,
+          assistantText,
+          wait,
+          handoffCreated: false,
+        });
         this.structuredSessionStore.finishTurn({
           turnId: promptContext.turnId,
           status: "waiting",
@@ -1139,22 +1169,51 @@ export class WorkspaceSessionCatalog {
         return;
       }
 
-      if (rootThread.status === "running") {
+      let handoffCreated = false;
+      const shouldCreateHandlerHandoff = shouldCreateHandlerHandoffEpisode({
+        promptContext,
+        turnDecision: turn.turnDecision,
+        assistantText,
+      });
+      const shouldCreateEpisode =
+        promptContext.surfaceKind === "handler"
+          ? shouldCreateHandlerHandoff
+          : assistantText.length > 0;
+
+      if (shouldCreateEpisode && rootThread.status === "running") {
         this.structuredSessionStore.updateThread({
           threadId: rootThread.id,
           status: "completed",
         });
       }
 
-      if (assistantText) {
+      const finalizedSnapshot = this.structuredSessionStore.getSessionState(
+        promptContext.sessionId,
+      );
+      const finalizedThread = finalizedSnapshot.threads.find(
+        (thread) => thread.id === promptContext.rootThreadId,
+      );
+      if (!finalizedThread) {
+        return;
+      }
+
+      if (assistantText && shouldCreateEpisode && isTerminalThreadStatus(finalizedThread.status)) {
         this.structuredSessionStore.createEpisode({
           threadId: promptContext.rootThreadId,
           kind: promptContext.rootEpisodeKind,
-          title: rootThread.title || summarizePromptForTurn(promptContext.promptText),
+          title: finalizedThread.title || summarizePromptForTurn(promptContext.promptText),
           summary: summarizePromptForTurn(assistantText),
           body: assistantText,
         });
+        handoffCreated = true;
       }
+
+      this.persistPendingTurnDecision({
+        promptContext,
+        turnDecision: turn.turnDecision,
+        assistantText,
+        handoffCreated,
+      });
 
       this.structuredSessionStore.finishTurn({
         turnId: promptContext.turnId,
@@ -1184,6 +1243,15 @@ export class WorkspaceSessionCatalog {
           status: "failed",
         });
       }
+      const turn = snapshot.turns.find((entry) => entry.id === promptContext.turnId);
+      if (turn) {
+        this.persistPendingTurnDecision({
+          promptContext,
+          turnDecision: turn.turnDecision,
+          assistantText: "",
+          handoffCreated: false,
+        });
+      }
       this.structuredSessionStore.finishTurn({
         turnId: promptContext.turnId,
         status: "failed",
@@ -1191,6 +1259,24 @@ export class WorkspaceSessionCatalog {
     } catch (error) {
       console.error("Failed to mark prompt execution failure:", error);
     }
+  }
+
+  private persistPendingTurnDecision(input: {
+    promptContext: PromptExecutionContext;
+    turnDecision: StructuredSessionSnapshot["turns"][number]["turnDecision"];
+    assistantText: string;
+    wait?: StructuredWaitState | null;
+    handoffCreated: boolean;
+  }): void {
+    if (input.turnDecision !== "pending") {
+      return;
+    }
+
+    this.structuredSessionStore.setTurnDecision({
+      turnId: input.promptContext.turnId,
+      decision: inferPendingTurnDecision(input),
+      onlyIfPending: true,
+    });
   }
 
   private syncManagedState(session: ManagedSession): void {
@@ -1527,6 +1613,160 @@ function projectWorkspaceWait(
   };
 }
 
+function getEffectiveTurnWait(
+  snapshot: StructuredSessionSnapshot,
+  threadId: string,
+): StructuredWaitState | null {
+  const thread = snapshot.threads.find((entry) => entry.id === threadId) ?? null;
+  if (!thread) {
+    return null;
+  }
+
+  if (getThreadOwnedWaitId(snapshot.session.wait) === threadId) {
+    return (
+      thread.wait ?? {
+        kind: snapshot.session.wait!.kind,
+        reason: snapshot.session.wait!.reason,
+        resumeWhen: snapshot.session.wait!.resumeWhen,
+        since: snapshot.session.wait!.since,
+      }
+    );
+  }
+
+  return thread.wait;
+}
+
+function shouldCreateHandlerHandoffEpisode(input: {
+  promptContext: PromptExecutionContext;
+  turnDecision: StructuredSessionSnapshot["turns"][number]["turnDecision"];
+  assistantText: string;
+}): boolean {
+  if (input.assistantText.length === 0) {
+    return false;
+  }
+
+  if (!input.promptContext.threadWasTerminalAtStart) {
+    return true;
+  }
+
+  return isResumedWorkTurnDecision(input.turnDecision);
+}
+
+function isResumedWorkTurnDecision(
+  decision: StructuredSessionSnapshot["turns"][number]["turnDecision"],
+): boolean {
+  return (
+    decision === "execute_typescript" ||
+    decision === "thread.start" ||
+    decision === "workflow.start" ||
+    decision === "workflow.resume"
+  );
+}
+
+function inferPendingTurnDecision(input: {
+  promptContext: PromptExecutionContext;
+  assistantText: string;
+  wait?: StructuredWaitState | null;
+  handoffCreated: boolean;
+}): Exclude<StructuredSessionSnapshot["turns"][number]["turnDecision"], "pending"> {
+  if (input.promptContext.surfaceKind === "handler" && input.handoffCreated) {
+    return "handoff";
+  }
+
+  if (input.wait?.kind === "user") {
+    return "clarify";
+  }
+
+  if (looksLikeClarificationReply(input.assistantText)) {
+    return "clarify";
+  }
+
+  return "reply";
+}
+
+function looksLikeClarificationReply(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized || !normalized.includes("?")) {
+    return false;
+  }
+
+  return /\b(clarify|confirm|which|what|where|when|who|need|missing|provide|share|answer)\b/i.test(
+    normalized,
+  );
+}
+
+function buildOrchestratorDurablePromptContext(
+  snapshot: StructuredSessionSnapshot | null,
+): string | undefined {
+  if (!snapshot) {
+    return undefined;
+  }
+
+  const handoffs = snapshot.threads
+    .filter((thread) => thread.surfacePiSessionId !== snapshot.session.orchestratorPiSessionId)
+    .map((thread) => {
+      const latestEpisode =
+        snapshot.episodes
+          .filter((episode) => episode.threadId === thread.id)
+          .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+      if (!latestEpisode) {
+        return null;
+      }
+
+      const latestWorkflow =
+        snapshot.workflowRuns.find(
+          (workflowRun) => workflowRun.id === thread.latestWorkflowRunId,
+        ) ?? null;
+
+      return {
+        thread,
+        latestEpisode,
+        latestWorkflow,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .toSorted((left, right) =>
+      right.latestEpisode.createdAt.localeCompare(left.latestEpisode.createdAt),
+    )
+    .slice(0, 6);
+
+  if (handoffs.length === 0) {
+    return undefined;
+  }
+
+  const parts = ["Latest handler-thread handoffs from durable state:"];
+  for (const handoff of handoffs) {
+    parts.push(
+      `Thread ${handoff.thread.id} (${collapsePromptContextValue(handoff.thread.title, 80)})`,
+    );
+    parts.push(`Status: ${handoff.thread.status}`);
+    parts.push(`Objective: ${collapsePromptContextValue(handoff.thread.objective, 220)}`);
+    if (handoff.latestWorkflow) {
+      parts.push(
+        `Latest workflow: ${collapsePromptContextValue(handoff.latestWorkflow.summary, 220)}`,
+      );
+    }
+    parts.push(
+      `Latest handoff summary: ${collapsePromptContextValue(handoff.latestEpisode.summary, 220)}`,
+    );
+    parts.push(
+      `Latest handoff body: ${collapsePromptContextValue(handoff.latestEpisode.body, 320)}`,
+    );
+    parts.push("");
+  }
+
+  return parts.join("\n").trim();
+}
+
+function collapsePromptContextValue(value: string, limit: number): string {
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= limit) {
+    return collapsed;
+  }
+
+  return `${collapsed.slice(0, limit - 1).trimEnd()}…`;
+}
+
 function syncAuthStorage(authStorage: AuthStorage): void {
   for (const provider of getProviders()) {
     const apiKey = resolveApiKey(provider);
@@ -1819,25 +2059,45 @@ function buildPromptText(
   session: ManagedSession,
   messages: Message[],
   systemPrompt?: string,
+  promptContext?: PromptExecutionContext | null,
 ): string {
-  if (!canAppendLatestUserTurn(session.promptSyncCursor, messages)) {
+  const durableSurfaceContext = promptContext?.durableSurfaceContext?.trim() || undefined;
+  if (!durableSurfaceContext && !canAppendLatestUserTurn(session.promptSyncCursor, messages)) {
     return buildTranscript(systemPrompt, messages);
+  }
+
+  if (durableSurfaceContext && !canAppendLatestUserTurn(session.promptSyncCursor, messages)) {
+    return buildTranscript(systemPrompt, messages, durableSurfaceContext);
   }
 
   const nextMessage = messages[session.promptSyncCursor.messageCount];
   if (!nextMessage || nextMessage.role !== "user") {
-    return buildTranscript(systemPrompt, messages);
+    return buildTranscript(systemPrompt, messages, durableSurfaceContext);
   }
 
-  return messageToPlainText(nextMessage);
+  if (!durableSurfaceContext) {
+    return messageToPlainText(nextMessage);
+  }
+
+  return buildTranscript(systemPrompt, [nextMessage], durableSurfaceContext);
 }
 
-function buildTranscript(systemPrompt: string | undefined, messages: Message[]): string {
+function buildTranscript(
+  systemPrompt: string | undefined,
+  messages: Message[],
+  durableSurfaceContext?: string,
+): string {
   const parts: string[] = [];
   const prompt = systemPrompt?.trim();
   if (prompt) {
     parts.push("System:");
     parts.push(prompt);
+    parts.push("");
+  }
+
+  if (durableSurfaceContext?.trim()) {
+    parts.push("Durable Surface Context:");
+    parts.push(durableSurfaceContext.trim());
     parts.push("");
   }
 

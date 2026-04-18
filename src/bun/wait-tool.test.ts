@@ -58,6 +58,7 @@ function createRuntime(store: StructuredSessionStateStore): PromptExecutionRunti
       promptText: "Wait for user input",
       rootEpisodeKind: "clarification",
       sessionWaitApplied: false,
+      threadWasTerminalAtStart: false,
     },
   };
 }
@@ -99,6 +100,7 @@ describe("wait tool", () => {
     expect(runtime.current?.sessionWaitApplied).toBe(true);
 
     const snapshot = store.getSessionState("session-wait-tool");
+    expect(snapshot.turns[0]?.turnDecision).toBe("clarify");
     expect(snapshot.commands).toEqual([
       expect.objectContaining({
         toolName: "wait",

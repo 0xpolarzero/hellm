@@ -13,6 +13,8 @@ export interface PromptExecutionContext {
   promptText: string;
   rootEpisodeKind: StructuredEpisodeKind;
   sessionWaitApplied: boolean;
+  threadWasTerminalAtStart: boolean;
+  durableSurfaceContext?: string;
 }
 
 export interface PromptExecutionRuntimeHandle {
@@ -29,6 +31,8 @@ export function createPromptExecutionContext(input: {
   rootThreadId?: string;
   promptText: string;
   rootEpisodeKind?: StructuredEpisodeKind;
+  threadWasTerminalAtStart?: boolean;
+  durableSurfaceContext?: string;
 }): PromptExecutionContext {
   const surfaceThreadId = input.surfaceThreadId ?? input.rootThreadId;
   if (!surfaceThreadId) {
@@ -48,5 +52,7 @@ export function createPromptExecutionContext(input: {
     promptText: input.promptText,
     rootEpisodeKind: defaultEpisodeKind,
     sessionWaitApplied: false,
+    threadWasTerminalAtStart: input.threadWasTerminalAtStart ?? false,
+    durableSurfaceContext: input.durableSurfaceContext,
   };
 }

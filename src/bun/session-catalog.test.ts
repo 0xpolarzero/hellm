@@ -861,6 +861,7 @@ describe("WorkspaceSessionCatalog", () => {
       expect(snapshot.session.wait).toBeNull();
       expect(snapshot.turns[0]).toMatchObject({
         requestSummary: "Explain the parser",
+        turnDecision: "reply",
         status: "completed",
       });
       expect(snapshot.threads[0]).toMatchObject({
@@ -877,8 +878,76 @@ describe("WorkspaceSessionCatalog", () => {
         "thread.created",
         "thread.finished",
         "episode.created",
+        "turn.decision",
         "turn.completed",
       ]);
+    } finally {
+      promptSpy.mockRestore();
+      await catalog.dispose();
+    }
+  });
+
+  it("injects latest durable handler handoffs into orchestrator prompt assembly", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Handoff Context" }, DEFAULTS);
+    const store = getStructuredSessionStore(catalog);
+    const seedTurn = store.startTurn({
+      sessionId: created.session.id,
+      requestSummary: "Delegate the parser fix",
+    });
+    const orchestratorThread = store.createThread({
+      turnId: seedTurn.id,
+      surfacePiSessionId: created.session.id,
+      title: "Delegate the parser fix",
+      objective: "Open a handler thread for the parser fix.",
+    });
+    const handlerThread = store.createThread({
+      turnId: seedTurn.id,
+      parentThreadId: orchestratorThread.id,
+      surfacePiSessionId: "pi-thread-parser-fix",
+      title: "Parser fix thread",
+      objective: "Patch the parser bug and add regression coverage.",
+    });
+    store.updateThread({
+      threadId: handlerThread.id,
+      status: "completed",
+    });
+    store.createEpisode({
+      threadId: handlerThread.id,
+      kind: "change",
+      title: "Parser fix handoff",
+      summary: "Patched the parser bug and added regression coverage.",
+      body: "Changed parser state transitions and added a regression test for the failing case.",
+    });
+    store.finishTurn({
+      turnId: seedTurn.id,
+      status: "completed",
+    });
+
+    const prompt = userMessage("What should we do next?");
+    const { promptTexts, promptSpy } = installPromptSpy(catalog, [
+      {
+        user: prompt,
+        assistant: assistantMessage("We can validate the parser fix and land it."),
+      },
+    ]);
+
+    try {
+      await catalog.sendPrompt({
+        ...DEFAULTS,
+        messages: [prompt],
+        onEvent: () => {},
+      });
+
+      await waitFor(() => promptTexts.length === 1);
+      expect(promptTexts[0]).toContain("Durable Surface Context:");
+      expect(promptTexts[0]).toContain("Latest handler-thread handoffs from durable state:");
+      expect(promptTexts[0]).toContain("Parser fix thread");
+      expect(promptTexts[0]).toContain("Patched the parser bug and added regression coverage.");
+      expect(promptTexts[0]).toContain(
+        "Changed parser state transitions and added a regression test for the failing case.",
+      );
     } finally {
       promptSpy.mockRestore();
       await catalog.dispose();

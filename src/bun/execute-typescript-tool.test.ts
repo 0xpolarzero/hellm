@@ -76,6 +76,7 @@ function createRuntime(
       promptText,
       rootEpisodeKind: "analysis",
       sessionWaitApplied: false,
+      threadWasTerminalAtStart: false,
     },
   };
 }
@@ -122,6 +123,7 @@ describe("execute_typescript tool", () => {
     });
 
     const snapshot = store.getSessionState("session-static-failure");
+    expect(snapshot.turns[0]?.turnDecision).toBe("execute_typescript");
     expect(snapshot.commands).toEqual([
       expect.objectContaining({
         toolName: "execute_typescript",
@@ -183,6 +185,7 @@ describe("execute_typescript tool", () => {
     });
 
     const snapshot = store.getSessionState("session-success");
+    expect(snapshot.turns[0]?.turnDecision).toBe("execute_typescript");
     const [parentCommand, ...childCommands] = snapshot.commands;
     expect(parentCommand).toMatchObject({
       toolName: "execute_typescript",

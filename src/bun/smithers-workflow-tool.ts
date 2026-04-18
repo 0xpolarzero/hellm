@@ -142,6 +142,12 @@ export function createStartWorkflowTool(
     parameters: startWorkflowParamsSchema,
     execute: async (_toolCallId, params) => {
       const runtime = requireActiveRuntime(options.runtime, START_WORKFLOW_TOOL_NAME);
+      options.store.setTurnDecision({
+        turnId: runtime.turnId,
+        decision: "workflow.start",
+        onlyIfPending: true,
+      });
+      ensureRunnableHandlerThread(options.store, runtime.sessionId, runtime.surfaceThreadId);
       const bridge = options.bridge ?? DEFAULT_WORKFLOW_BRIDGE;
       const normalized = normalizeStartParams(params);
       const context = resolveWorkflowThreadContext({
@@ -174,6 +180,12 @@ export function createResumeWorkflowTool(
     parameters: resumeWorkflowParamsSchema,
     execute: async (_toolCallId, params) => {
       const runtime = requireActiveRuntime(options.runtime, RESUME_WORKFLOW_TOOL_NAME);
+      options.store.setTurnDecision({
+        turnId: runtime.turnId,
+        decision: "workflow.resume",
+        onlyIfPending: true,
+      });
+      ensureRunnableHandlerThread(options.store, runtime.sessionId, runtime.surfaceThreadId);
       const bridge = options.bridge ?? DEFAULT_WORKFLOW_BRIDGE;
       const normalized = normalizeResumeParams(params);
       const context = resolveWorkflowThreadContext({
@@ -206,6 +218,31 @@ function requireActiveRuntime(runtimeHandle: PromptExecutionRuntimeHandle, toolN
     throw new Error(`${toolName} can only run during an active prompt.`);
   }
   return runtime;
+}
+
+function ensureRunnableHandlerThread(
+  store: StructuredSessionStateStore,
+  sessionId: string,
+  threadId: string | undefined,
+): void {
+  if (!threadId) {
+    return;
+  }
+
+  const thread = store.getSessionState(sessionId).threads.find((entry) => entry.id === threadId);
+  if (!thread) {
+    return;
+  }
+
+  if (thread.status === "running" && thread.wait === null) {
+    return;
+  }
+
+  store.updateThread({
+    threadId,
+    status: "running",
+    wait: null,
+  });
 }
 
 function normalizeStartParams(params: StartWorkflowParams): StartImplementFeatureWorkflowOptions {

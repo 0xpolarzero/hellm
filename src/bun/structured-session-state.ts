@@ -4,6 +4,15 @@ import { basename, dirname, join } from "node:path";
 
 export type StructuredSessionStatus = "idle" | "running" | "waiting" | "error";
 export type StructuredTurnStatus = "running" | "waiting" | "completed" | "failed";
+export type StructuredTurnDecision =
+  | "pending"
+  | "reply"
+  | "execute_typescript"
+  | "clarify"
+  | "thread.start"
+  | "workflow.start"
+  | "workflow.resume"
+  | "handoff";
 export type StructuredThreadStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
 export type StructuredWaitKind = "user" | "external";
 export type StructuredCommandExecutor =
@@ -78,6 +87,7 @@ export interface StructuredTurnRecord {
   surfacePiSessionId: string;
   threadId: string | null;
   requestSummary: string;
+  turnDecision: StructuredTurnDecision;
   status: StructuredTurnStatus;
   startedAt: string;
   updatedAt: string;
@@ -243,6 +253,11 @@ export interface StructuredSessionStateStore {
     threadId?: string | null;
     requestSummary: string;
   }): StructuredTurnRecord;
+  setTurnDecision(input: {
+    turnId: string;
+    decision: Exclude<StructuredTurnDecision, "pending">;
+    onlyIfPending?: boolean;
+  }): StructuredTurnRecord;
   finishTurn(input: {
     turnId: string;
     status: Exclude<StructuredTurnStatus, "running">;
@@ -367,6 +382,7 @@ type TurnRow = {
   surface_pi_session_id: string;
   thread_id: string | null;
   request_summary: string;
+  turn_decision: StructuredTurnDecision;
   status: StructuredTurnStatus;
   started_at: string;
   updated_at: string;
@@ -640,11 +656,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            surface_pi_session_id,
            thread_id,
            request_summary,
+           turn_decision,
            status,
            started_at,
            updated_at,
            finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         turnId,
@@ -652,6 +669,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         surfacePiSessionId,
         threadId,
         input.requestSummary,
+        "pending",
         "running",
         timestamp,
         timestamp,
@@ -667,6 +685,43 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     });
 
     return this.mustFindTurnRecord(turnId);
+  }
+
+  setTurnDecision(input: {
+    turnId: string;
+    decision: Exclude<StructuredTurnDecision, "pending">;
+    onlyIfPending?: boolean;
+  }): StructuredTurnRecord {
+    const existing = this.mustFindTurnRow(input.turnId);
+    if (input.onlyIfPending && existing.turn_decision !== "pending") {
+      return this.mustFindTurnRecord(input.turnId);
+    }
+
+    if (existing.turn_decision === input.decision) {
+      return this.mustFindTurnRecord(input.turnId);
+    }
+
+    const timestamp = this.now();
+    this.db
+      .query(
+        `UPDATE turn
+         SET turn_decision = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(input.decision, timestamp, input.turnId);
+
+    this.recordEvent({
+      sessionId: existing.session_id,
+      kind: "turn.decision",
+      subjectKind: "turn",
+      subjectId: input.turnId,
+      at: timestamp,
+      data: {
+        decision: input.decision,
+      },
+    });
+
+    return this.mustFindTurnRecord(input.turnId);
   }
 
   finishTurn(input: {
@@ -1075,12 +1130,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
     if (!isTerminalThreadStatus(thread.status)) {
       throw new Error("Terminal episodes can only be created once the thread is terminal.");
-    }
-    const existing = this.db
-      .query(`SELECT id FROM episode WHERE thread_id = ? LIMIT 1`)
-      .get(input.threadId) as { id: string } | undefined;
-    if (existing) {
-      throw new Error("Thread already has a final episode.");
     }
 
     const episodeId = createId("episode");
@@ -1808,6 +1857,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       surfacePiSessionId: row.surface_pi_session_id,
       threadId: row.thread_id,
       requestSummary: row.request_summary,
+      turnDecision: row.turn_decision,
       status: row.status,
       startedAt: row.started_at,
       updatedAt: row.updated_at,
@@ -1986,6 +2036,7 @@ function initializeSchema(db: Database): void {
       surface_pi_session_id TEXT NOT NULL,
       thread_id TEXT,
       request_summary TEXT NOT NULL,
+      turn_decision TEXT NOT NULL DEFAULT 'pending',
       status TEXT NOT NULL,
       started_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,

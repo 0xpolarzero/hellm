@@ -165,6 +165,13 @@ export function createExecuteTypescriptTool(
         throw new Error(`${EXECUTE_TYPESCRIPT_TOOL_NAME} can only run during an active prompt.`);
       }
 
+      options.store.setTurnDecision({
+        turnId: runtime.turnId,
+        decision: "execute_typescript",
+        onlyIfPending: true,
+      });
+      ensureRunnableSurfaceThread(options.store, runtime.sessionId, runtime.rootThreadId);
+
       const result = await runExecuteTypescript({
         cwd: options.cwd,
         store: options.store,
@@ -190,6 +197,27 @@ export function createExecuteTypescriptTool(
       };
     },
   };
+}
+
+function ensureRunnableSurfaceThread(
+  store: StructuredSessionStateStore,
+  sessionId: string,
+  threadId: string,
+): void {
+  const thread = store.getSessionState(sessionId).threads.find((entry) => entry.id === threadId);
+  if (!thread) {
+    return;
+  }
+
+  if (thread.status === "running" && thread.wait === null) {
+    return;
+  }
+
+  store.updateThread({
+    threadId,
+    status: "running",
+    wait: null,
+  });
 }
 
 async function runExecuteTypescript(input: {

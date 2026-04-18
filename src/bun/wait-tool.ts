@@ -40,6 +40,12 @@ export function createWaitTool(options: {
       }
 
       const kind = normalizeWaitKind(params.kind);
+      options.store.setTurnDecision({
+        turnId: runtime.turnId,
+        decision: kind === "user" ? "clarify" : "reply",
+        onlyIfPending: true,
+      });
+      ensureRunnableSurfaceThread(options.store, runtime.sessionId, runtime.rootThreadId);
       const reason = params.reason.trim();
       const resumeWhen = params.resumeWhen.trim();
       const command = options.store.createCommand({
@@ -124,6 +130,27 @@ export function createWaitTool(options: {
       };
     },
   };
+}
+
+function ensureRunnableSurfaceThread(
+  store: StructuredSessionStateStore,
+  sessionId: string,
+  threadId: string,
+): void {
+  const thread = store.getSessionState(sessionId).threads.find((entry) => entry.id === threadId);
+  if (!thread) {
+    return;
+  }
+
+  if (thread.status === "running" && thread.wait === null) {
+    return;
+  }
+
+  store.updateThread({
+    threadId,
+    status: "running",
+    wait: null,
+  });
 }
 
 function normalizeWaitKind(kind: StructuredWaitKind | undefined): StructuredWaitKind {

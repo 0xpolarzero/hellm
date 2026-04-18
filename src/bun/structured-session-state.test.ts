@@ -61,6 +61,35 @@ describe("structured session state write API", () => {
     return store;
   }
 
+  it("persists explicit per-turn decisions", () => {
+    const store = createStore();
+    seedSession(store, "session-turn-decisions");
+
+    const turn = store.startTurn({
+      sessionId: "session-turn-decisions",
+      requestSummary: "Route a turn through execute_typescript",
+    });
+    expect(store.getSessionState("session-turn-decisions").turns[0]?.turnDecision).toBe("pending");
+
+    store.setTurnDecision({
+      turnId: turn.id,
+      decision: "execute_typescript",
+      onlyIfPending: true,
+    });
+    store.finishTurn({
+      turnId: turn.id,
+      status: "completed",
+    });
+
+    expect(store.getSessionState("session-turn-decisions").turns).toEqual([
+      expect.objectContaining({
+        id: turn.id,
+        turnDecision: "execute_typescript",
+        status: "completed",
+      }),
+    ]);
+  });
+
   it("writes surface-aware turns, handler threads, multiple workflow runs, and a single terminal episode", () => {
     const store = createStore();
     seedSession(store, "session-model");
@@ -297,7 +326,7 @@ describe("structured session state write API", () => {
     ]);
   });
 
-  it("enforces terminal episodes and one final episode per thread", () => {
+  it("enforces terminal episodes and preserves ordered handoff history per thread", () => {
     const store = createStore();
     seedSession(store, "session-episodes");
 
@@ -347,16 +376,17 @@ describe("structured session state write API", () => {
       summary: "The thread completed.",
       body: "The thread completed.",
     });
-
-    expect(() =>
-      store.createEpisode({
-        threadId: thread.id,
-        title: "Duplicate episode",
-        summary: "This should fail.",
-        body: "Duplicate terminal episode.",
-      }),
-    ).toThrow(/already has a final episode/i);
+    const secondEpisode = store.createEpisode({
+      threadId: thread.id,
+      title: "Follow-up episode",
+      summary: "The thread returned control again.",
+      body: "A later handoff should preserve the earlier handoff history.",
+    });
     expect(episode.threadId).toBe(thread.id);
+    expect(store.getThreadDetail(thread.id).episodes.map((entry) => entry.id)).toEqual([
+      episode.id,
+      secondEpisode.id,
+    ]);
   });
 
   it("tracks thread-owned session wait and clears it when runnable work exists again", () => {
