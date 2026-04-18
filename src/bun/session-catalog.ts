@@ -28,6 +28,7 @@ import type {
   ListSessionsResponse,
   PromptTarget,
   SessionMutationResponse,
+  WorkspaceCommandInspector,
   WorkspaceSessionSummary,
 } from "../mainview/chat-rpc";
 import { DEFAULT_CHAT_SETTINGS } from "../mainview/chat-settings";
@@ -36,6 +37,7 @@ import {
   projectWorkspaceSessionSummaryFromInfo,
 } from "./session-projection";
 import {
+  buildStructuredCommandInspector,
   buildStructuredSessionSummaryProjection,
   buildStructuredSessionView,
   hasStructuredSessionFacts,
@@ -223,6 +225,24 @@ export class WorkspaceSessionCatalog {
     }
 
     return this.buildActiveSessionSummary(this.activeSession);
+  }
+
+  async getCommandInspector(input: {
+    sessionId: string;
+    commandId: string;
+  }): Promise<WorkspaceCommandInspector> {
+    this.refreshSmithersWorkflowProjections();
+    const snapshot = this.getStructuredSnapshot(input.sessionId);
+    if (!snapshot) {
+      throw new Error(`Structured session not found: ${input.sessionId}`);
+    }
+
+    const inspector = buildStructuredCommandInspector(snapshot, input.commandId);
+    if (!inspector) {
+      throw new Error(`Structured command not found: ${input.commandId}`);
+    }
+
+    return inspector;
   }
 
   async createSession(

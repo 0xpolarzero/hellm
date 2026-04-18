@@ -359,6 +359,9 @@ describe("WorkspaceSessionCatalog", () => {
       title: "Inspect Inactive rollups",
       summary: "Read the structured session for Inactive rollups.",
       childCount: 1,
+      summaryChildCount: 0,
+      traceChildCount: 1,
+      summaryChildren: [],
     });
     expect(activeSummary?.commandRollups?.[0]).toMatchObject({
       commandId: expect.any(String),
@@ -369,7 +372,187 @@ describe("WorkspaceSessionCatalog", () => {
       title: "Inspect Active rollups",
       summary: "Read the structured session for Active rollups.",
       childCount: 1,
+      summaryChildCount: 0,
+      traceChildCount: 1,
+      summaryChildren: [],
     });
+  });
+
+  it("returns command inspector detail for active and reopened sessions", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const active = await catalog.createSession({ title: "Inspector Session" }, DEFAULTS);
+
+    const store = getStructuredSessionStore(catalog);
+    const timestamp = new Date().toISOString();
+    store.upsertPiSession({
+      sessionId: active.session.id,
+      title: "Inspector Session",
+      provider: DEFAULTS.provider,
+      model: DEFAULTS.model,
+      reasoningEffort: DEFAULTS.thinkingLevel,
+      messageCount: 2,
+      status: "idle",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    const turn = store.startTurn({
+      sessionId: active.session.id,
+      requestSummary: "Inspect execute_typescript rollups",
+    });
+    const thread = store.createThread({
+      turnId: turn.id,
+      surfacePiSessionId: active.session.id,
+      title: "Inspect execute_typescript rollups",
+      objective: "Inspect execute_typescript rollups",
+    });
+    const parentCommand = store.createCommand({
+      turnId: turn.id,
+      threadId: thread.id,
+      toolName: "execute_typescript",
+      executor: "orchestrator",
+      visibility: "summary",
+      title: "Inspect execute_typescript",
+      summary: "Read docs and created 1 artifact.",
+      facts: {
+        repoReads: 1,
+        artifactsCreated: 1,
+      },
+    });
+    const traceChild = store.createCommand({
+      turnId: turn.id,
+      threadId: thread.id,
+      parentCommandId: parentCommand.id,
+      toolName: "repo.readFile",
+      executor: "execute_typescript",
+      visibility: "trace",
+      title: "Read docs/prd.md",
+      summary: "Loaded docs/prd.md.",
+      facts: {
+        path: "docs/prd.md",
+        bytesRead: 10,
+      },
+    });
+    const summaryChild = store.createCommand({
+      turnId: turn.id,
+      threadId: thread.id,
+      parentCommandId: parentCommand.id,
+      toolName: "artifact.writeText",
+      executor: "execute_typescript",
+      visibility: "summary",
+      title: "Create summary.md",
+      summary: "Created summary.md.",
+      facts: {
+        artifactId: "artifact-child",
+        name: "summary.md",
+      },
+    });
+
+    store.finishCommand({
+      commandId: traceChild.id,
+      status: "succeeded",
+      summary: "Loaded docs/prd.md.",
+      facts: {
+        path: "docs/prd.md",
+        bytesRead: 10,
+      },
+    });
+    store.finishCommand({
+      commandId: summaryChild.id,
+      status: "succeeded",
+      summary: "Created summary.md.",
+      facts: {
+        artifactId: "artifact-child",
+        name: "summary.md",
+      },
+    });
+    store.createArtifact({
+      threadId: thread.id,
+      sourceCommandId: parentCommand.id,
+      kind: "text",
+      name: "execute-typescript.ts",
+      content: 'return "ok";',
+    });
+    store.createArtifact({
+      threadId: thread.id,
+      sourceCommandId: summaryChild.id,
+      kind: "file",
+      name: "summary.md",
+      content: "summary",
+    });
+    store.finishCommand({
+      commandId: parentCommand.id,
+      status: "succeeded",
+      summary: "Read docs and created 1 artifact.",
+      facts: {
+        repoReads: 1,
+        artifactsCreated: 1,
+      },
+    });
+    store.updateThread({
+      threadId: thread.id,
+      status: "completed",
+    });
+    store.finishTurn({
+      turnId: turn.id,
+      status: "completed",
+    });
+
+    const activeInspector = await catalog.getCommandInspector({
+      sessionId: active.session.id,
+      commandId: parentCommand.id,
+    });
+    expect(activeInspector).toMatchObject({
+      commandId: parentCommand.id,
+      title: "Inspect execute_typescript",
+      summaryChildCount: 1,
+      traceChildCount: 1,
+      summaryChildren: [
+        expect.objectContaining({
+          commandId: summaryChild.id,
+          toolName: "artifact.writeText",
+        }),
+      ],
+      traceChildren: [
+        expect.objectContaining({
+          commandId: traceChild.id,
+          toolName: "repo.readFile",
+        }),
+      ],
+    });
+
+    await catalog.dispose();
+
+    const reopenedCatalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    try {
+      const reopenedInspector = await reopenedCatalog.getCommandInspector({
+        sessionId: active.session.id,
+        commandId: parentCommand.id,
+      });
+      expect(reopenedInspector).toMatchObject({
+        commandId: parentCommand.id,
+        summaryChildCount: 1,
+        traceChildCount: 1,
+        artifacts: [
+          expect.objectContaining({
+            name: "execute-typescript.ts",
+          }),
+        ],
+        summaryChildren: [
+          expect.objectContaining({
+            commandId: summaryChild.id,
+            artifacts: [
+              expect.objectContaining({
+                name: "summary.md",
+              }),
+            ],
+          }),
+        ],
+      });
+    } finally {
+      await reopenedCatalog.dispose();
+    }
   });
 
   it("lists inactive sessions from metadata only while keeping the active session rich", async () => {

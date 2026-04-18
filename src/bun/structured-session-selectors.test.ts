@@ -13,6 +13,7 @@ import type {
   StructuredWorkflowRunRecord,
 } from "./structured-session-state";
 import {
+  buildStructuredCommandInspector,
   buildStructuredSessionSummaryProjection,
   buildStructuredSessionView,
   deriveStructuredSessionStatus,
@@ -470,6 +471,9 @@ describe("structured session selectors", () => {
           title: "Inspect docs",
           summary: "Read 2 files and created 1 artifact.",
           childCount: 1,
+          summaryChildCount: 0,
+          traceChildCount: 1,
+          summaryChildren: [],
           updatedAt: "2026-04-18T10:01:00.000Z",
         },
       ],
@@ -488,6 +492,158 @@ describe("structured session selectors", () => {
       threadIds: view.threadIds,
       latestEpisodePreview: "Workflow episode summary",
       latestWorkflowRunSummary: "Workflow waiting for clarification",
+    });
+  });
+
+  it("builds a command inspector with parent artifacts plus summary and trace child detail", () => {
+    const snapshot = createSessionSnapshot({
+      commands: [
+        {
+          id: "command-parent",
+          toolName: "execute_typescript",
+          visibility: "summary",
+          title: "Inspect docs",
+          summary: "Read 2 files and created 1 artifact.",
+          facts: {
+            repoReads: 2,
+            artifactsCreated: 1,
+          },
+          threadId: "thread-001",
+          startedAt: "2026-04-18T10:00:10.000Z",
+          updatedAt: "2026-04-18T10:01:00.000Z",
+          finishedAt: "2026-04-18T10:01:00.000Z",
+        },
+        {
+          id: "command-summary-child",
+          parentCommandId: "command-parent",
+          toolName: "artifact.writeText",
+          visibility: "summary",
+          title: "Create summary.md",
+          summary: "Created summary.md.",
+          facts: {
+            artifactId: "artifact-child",
+            name: "summary.md",
+          },
+          threadId: "thread-001",
+          startedAt: "2026-04-18T10:00:30.000Z",
+          updatedAt: "2026-04-18T10:00:40.000Z",
+          finishedAt: "2026-04-18T10:00:40.000Z",
+        },
+        {
+          id: "command-trace-child",
+          parentCommandId: "command-parent",
+          toolName: "repo.readFile",
+          visibility: "trace",
+          title: "Read docs/prd.md",
+          summary: "Loaded docs/prd.md.",
+          facts: {
+            path: "docs/prd.md",
+            bytesRead: 12,
+          },
+          threadId: "thread-001",
+          startedAt: "2026-04-18T10:00:15.000Z",
+          updatedAt: "2026-04-18T10:00:20.000Z",
+          finishedAt: "2026-04-18T10:00:20.000Z",
+        },
+      ],
+      artifacts: [
+        {
+          id: "artifact-parent",
+          threadId: "thread-001",
+          sourceCommandId: "command-parent",
+          kind: "text",
+          name: "execute-typescript.ts",
+          path: "/repo/svvy/.svvy/artifacts/execute-typescript.ts",
+          createdAt: "2026-04-18T10:00:11.000Z",
+        },
+        {
+          id: "artifact-child",
+          threadId: "thread-001",
+          sourceCommandId: "command-summary-child",
+          kind: "file",
+          name: "summary.md",
+          path: "/repo/svvy/.svvy/artifacts/summary.md",
+          createdAt: "2026-04-18T10:00:39.000Z",
+        },
+      ],
+    });
+
+    const inspector = buildStructuredCommandInspector(snapshot, "command-trace-child");
+    expect(inspector).toEqual({
+      commandId: "command-parent",
+      threadId: "thread-001",
+      workflowRunId: null,
+      toolName: "execute_typescript",
+      visibility: "summary",
+      status: "succeeded",
+      title: "Inspect docs",
+      summary: "Read 2 files and created 1 artifact.",
+      facts: {
+        repoReads: 2,
+        artifactsCreated: 1,
+      },
+      error: null,
+      startedAt: "2026-04-18T10:00:10.000Z",
+      updatedAt: "2026-04-18T10:01:00.000Z",
+      finishedAt: "2026-04-18T10:01:00.000Z",
+      artifacts: [
+        {
+          artifactId: "artifact-parent",
+          kind: "text",
+          name: "execute-typescript.ts",
+          path: "/repo/svvy/.svvy/artifacts/execute-typescript.ts",
+          createdAt: "2026-04-18T10:00:11.000Z",
+        },
+      ],
+      childCount: 2,
+      summaryChildCount: 1,
+      traceChildCount: 1,
+      summaryChildren: [
+        {
+          commandId: "command-summary-child",
+          toolName: "artifact.writeText",
+          status: "succeeded",
+          title: "Create summary.md",
+          summary: "Created summary.md.",
+          error: null,
+          visibility: "summary",
+          facts: {
+            artifactId: "artifact-child",
+            name: "summary.md",
+          },
+          startedAt: "2026-04-18T10:00:30.000Z",
+          updatedAt: "2026-04-18T10:00:40.000Z",
+          finishedAt: "2026-04-18T10:00:40.000Z",
+          artifacts: [
+            {
+              artifactId: "artifact-child",
+              kind: "file",
+              name: "summary.md",
+              path: "/repo/svvy/.svvy/artifacts/summary.md",
+              createdAt: "2026-04-18T10:00:39.000Z",
+            },
+          ],
+        },
+      ],
+      traceChildren: [
+        {
+          commandId: "command-trace-child",
+          toolName: "repo.readFile",
+          status: "succeeded",
+          title: "Read docs/prd.md",
+          summary: "Loaded docs/prd.md.",
+          error: null,
+          visibility: "trace",
+          facts: {
+            path: "docs/prd.md",
+            bytesRead: 12,
+          },
+          startedAt: "2026-04-18T10:00:15.000Z",
+          updatedAt: "2026-04-18T10:00:20.000Z",
+          finishedAt: "2026-04-18T10:00:20.000Z",
+          artifacts: [],
+        },
+      ],
     });
   });
 

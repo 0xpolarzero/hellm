@@ -12,6 +12,7 @@ import type {
   ActiveSessionSummaryState,
   PromptTarget,
   SessionMutationResponse,
+  WorkspaceCommandInspector,
   WorkspaceSessionSummary,
 } from "./chat-rpc";
 import type { PromptHistoryEntry } from "./prompt-history";
@@ -129,6 +130,70 @@ function createSummary(
   };
 }
 
+function createCommandInspector(
+  commandId = "command-1",
+  toolName = "execute_typescript",
+): WorkspaceCommandInspector {
+  return {
+    commandId,
+    threadId: "thread-1",
+    workflowRunId: null,
+    toolName,
+    visibility: "summary",
+    status: "succeeded",
+    title: "Inspect docs",
+    summary: "Read docs and created 1 artifact.",
+    facts: {
+      repoReads: 1,
+      artifactsCreated: 1,
+    },
+    error: null,
+    startedAt: "2026-04-10T10:00:00.000Z",
+    updatedAt: "2026-04-10T10:05:00.000Z",
+    finishedAt: "2026-04-10T10:05:00.000Z",
+    artifacts: [],
+    childCount: 2,
+    summaryChildCount: 1,
+    traceChildCount: 1,
+    summaryChildren: [
+      {
+        commandId: "command-summary-1",
+        toolName: "artifact.writeText",
+        visibility: "summary",
+        status: "succeeded",
+        title: "Create summary.md",
+        summary: "Created summary.md.",
+        error: null,
+        facts: {
+          name: "summary.md",
+        },
+        startedAt: "2026-04-10T10:01:00.000Z",
+        updatedAt: "2026-04-10T10:02:00.000Z",
+        finishedAt: "2026-04-10T10:02:00.000Z",
+        artifacts: [],
+      },
+    ],
+    traceChildren: [
+      {
+        commandId: "command-trace-1",
+        toolName: "repo.readFile",
+        visibility: "trace",
+        status: "succeeded",
+        title: "Read docs/prd.md",
+        summary: "Loaded docs/prd.md.",
+        error: null,
+        facts: {
+          path: "docs/prd.md",
+        },
+        startedAt: "2026-04-10T10:00:30.000Z",
+        updatedAt: "2026-04-10T10:00:40.000Z",
+        finishedAt: "2026-04-10T10:00:40.000Z",
+        artifacts: [],
+      },
+    ],
+  };
+}
+
 function createActiveSession(
   id: string,
   title: string,
@@ -175,7 +240,10 @@ function stripSummaryMetadata(summary: WorkspaceSessionSummary): WorkspaceSessio
 
 function createFakeRpc(
   initialSessions: ActiveSessionState[],
-  options: { metadataOnlyListSessions?: boolean } = {},
+  options: {
+    metadataOnlyListSessions?: boolean;
+    commandInspector?: WorkspaceCommandInspector;
+  } = {},
 ): {
   client: ChatRuntimeRpcClient;
   sentPromptRequests: Array<{ sessionId?: string; target?: PromptTarget }>;
@@ -185,6 +253,7 @@ function createFakeRpc(
     listSessions: number;
     getActiveSession: number;
     getActiveSessionSummary: number;
+    getCommandInspector: number;
   };
 } {
   const listeners = new Set<
@@ -201,6 +270,7 @@ function createFakeRpc(
     listSessions: 0,
     getActiveSession: 0,
     getActiveSessionSummary: 0,
+    getCommandInspector: 0,
   };
 
   const listSessions = () => ({
@@ -242,6 +312,10 @@ function createFakeRpc(
         return activeSessionId
           ? cloneActiveSessionSummary(sessionsById.get(activeSessionId)!)
           : null;
+      },
+      getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
+        requestCounts.getCommandInspector += 1;
+        return structuredClone(options.commandInspector ?? createCommandInspector(commandId));
       },
       createSession: async ({ title }: { title?: string }) => {
         const id = `session-${sessionsById.size + 1}`;
@@ -372,6 +446,7 @@ function createFakeRpcWithToolUse(
     listSessions: number;
     getActiveSession: number;
     getActiveSessionSummary: number;
+    getCommandInspector: number;
   };
 } {
   const listeners = new Set<
@@ -388,6 +463,7 @@ function createFakeRpcWithToolUse(
     listSessions: 0,
     getActiveSession: 0,
     getActiveSessionSummary: 0,
+    getCommandInspector: 0,
   };
 
   const client: ChatRuntimeRpcClient = {
@@ -425,6 +501,10 @@ function createFakeRpcWithToolUse(
           };
         }
         return cloneActiveSessionSummary(session);
+      },
+      getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
+        requestCounts.getCommandInspector += 1;
+        return createCommandInspector(commandId);
       },
       createSession: async () => cloneActiveSession(session),
       openSession: async () => cloneActiveSession(session),
@@ -806,6 +886,23 @@ describe("createChatRuntime", () => {
     expect(runtime.sessions.find((session) => session.id === "session-1")?.preview).toBe(
       "Tool use finished.",
     );
+
+    runtime.dispose();
+  });
+
+  it("requests structured command inspector detail for the current session", async () => {
+    const { createChatRuntime } = await import("./chat-runtime");
+    const inspector = createCommandInspector("command-77");
+    const { client, requestCounts } = createFakeRpc(
+      [createActiveSession("session-1", "Inspector", [userMessage("inspect")], "medium")],
+      { commandInspector: inspector },
+    );
+
+    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
+    const detail = await runtime.getCommandInspector("command-77");
+
+    expect(requestCounts.getCommandInspector).toBe(1);
+    expect(detail).toEqual(inspector);
 
     runtime.dispose();
   });

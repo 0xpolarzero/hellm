@@ -306,6 +306,18 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       getActiveSessionSummary: async () => {
         return await workspaceSessionCatalog.getActiveSessionSummary();
       },
+      getCommandInspector: async ({
+        sessionId,
+        commandId,
+      }: {
+        sessionId: string;
+        commandId: string;
+      }) => {
+        return await workspaceSessionCatalog.getCommandInspector({
+          sessionId,
+          commandId,
+        });
+      },
       createSession: async ({
         title,
         parentSessionId,

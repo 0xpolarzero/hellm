@@ -1,4 +1,5 @@
 import type {
+  StructuredArtifactRecord,
   StructuredCommandRecord,
   StructuredEpisodeRecord,
   StructuredSessionSnapshot,
@@ -8,6 +9,15 @@ import type {
   StructuredTurnRecord,
   StructuredWorkflowRunRecord,
 } from "./structured-session-state";
+
+export interface StructuredCommandRollupChild {
+  commandId: string;
+  toolName: string;
+  status: StructuredCommandRecord["status"];
+  title: string;
+  summary: string;
+  error: string | null;
+}
 
 export interface StructuredCommandRollup {
   commandId: string;
@@ -19,7 +29,49 @@ export interface StructuredCommandRollup {
   title: string;
   summary: string;
   childCount: number;
+  summaryChildCount: number;
+  traceChildCount: number;
+  summaryChildren: StructuredCommandRollupChild[];
   updatedAt: string;
+}
+
+export interface StructuredCommandArtifactLink {
+  artifactId: string;
+  kind: StructuredArtifactRecord["kind"];
+  name: string;
+  path?: string;
+  createdAt: string;
+}
+
+export interface StructuredCommandInspectorChild extends StructuredCommandRollupChild {
+  visibility: StructuredCommandRecord["visibility"];
+  facts: Record<string, unknown> | null;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  artifacts: StructuredCommandArtifactLink[];
+}
+
+export interface StructuredCommandInspector {
+  commandId: string;
+  threadId: string | null;
+  workflowRunId?: string | null;
+  toolName: string;
+  visibility: StructuredCommandRecord["visibility"];
+  status: StructuredCommandRecord["status"];
+  title: string;
+  summary: string;
+  facts: Record<string, unknown> | null;
+  error: string | null;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  artifacts: StructuredCommandArtifactLink[];
+  childCount: number;
+  summaryChildCount: number;
+  traceChildCount: number;
+  summaryChildren: StructuredCommandInspectorChild[];
+  traceChildren: StructuredCommandInspectorChild[];
 }
 
 export interface StructuredSessionView {
@@ -121,23 +173,99 @@ function isCommandRollupSource(
   );
 }
 
-function buildCommandRollups(
+function compareCommandChronology(
+  left: Pick<StructuredCommandRecord, "startedAt" | "updatedAt">,
+  right: Pick<StructuredCommandRecord, "startedAt" | "updatedAt">,
+): number {
+  const startedAtComparison = left.startedAt.localeCompare(right.startedAt);
+  if (startedAtComparison !== 0) {
+    return startedAtComparison;
+  }
+
+  return left.updatedAt.localeCompare(right.updatedAt);
+}
+
+function getChildCommands(
   commands: StructuredSessionSnapshot["commands"],
-): StructuredCommandRollup[] {
+  parentCommandId: string,
+): StructuredCommandRecord[] {
   return commands
-    .filter(isCommandRollupSource)
-    .map((command) => ({
-      commandId: command.id,
-      threadId: command.threadId ?? null,
-      workflowRunId: command.workflowRunId ?? null,
-      toolName: command.toolName,
-      visibility: command.visibility,
-      status: command.status,
-      title: command.title,
-      summary: command.summary,
-      childCount: commands.filter((candidate) => candidate.parentCommandId === command.id).length,
-      updatedAt: command.updatedAt,
+    .filter((candidate) => candidate.parentCommandId === parentCommandId)
+    .toSorted(compareCommandChronology);
+}
+
+function buildCommandRollupChild(command: StructuredCommandRecord): StructuredCommandRollupChild {
+  return {
+    commandId: command.id,
+    toolName: command.toolName,
+    status: command.status,
+    title: command.title,
+    summary: command.summary,
+    error: command.error,
+  };
+}
+
+function buildCommandArtifactLinks(
+  artifacts: StructuredSessionSnapshot["artifacts"],
+  commandId: string,
+): StructuredCommandArtifactLink[] {
+  return artifacts
+    .filter((artifact) => artifact.sourceCommandId === commandId)
+    .map((artifact) => ({
+      artifactId: artifact.id,
+      kind: artifact.kind,
+      name: artifact.name,
+      path: artifact.path,
+      createdAt: artifact.createdAt,
     }))
+    .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+function buildCommandInspectorChild(
+  command: StructuredCommandRecord,
+  artifacts: StructuredSessionSnapshot["artifacts"],
+): StructuredCommandInspectorChild {
+  return {
+    ...buildCommandRollupChild(command),
+    visibility: command.visibility,
+    facts: command.facts,
+    startedAt: command.startedAt,
+    updatedAt: command.updatedAt,
+    finishedAt: command.finishedAt,
+    artifacts: buildCommandArtifactLinks(artifacts, command.id),
+  };
+}
+
+function buildCommandRollups(
+  session: Pick<StructuredSessionSnapshot, "commands">,
+): StructuredCommandRollup[] {
+  return session.commands
+    .filter(isCommandRollupSource)
+    .map((command) => {
+      const childCommands = getChildCommands(session.commands, command.id);
+      const summaryChildren = childCommands
+        .filter((childCommand) => childCommand.visibility !== "trace")
+        .map((childCommand) => buildCommandRollupChild(childCommand));
+      const traceChildCount = childCommands.filter(
+        (childCommand) => childCommand.visibility === "trace",
+      ).length;
+
+      return {
+        commandId: command.id,
+        threadId: command.threadId ?? null,
+        workflowRunId: command.workflowRunId ?? null,
+        toolName: command.toolName,
+        visibility: command.visibility,
+        status: command.status,
+        title: command.title,
+        summary: command.summary,
+        childCount: childCommands.length,
+        summaryChildCount: summaryChildren.length,
+        traceChildCount,
+        summaryChildren,
+        updatedAt: command.updatedAt,
+      };
+    })
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
@@ -177,7 +305,7 @@ function deriveLatestWorkflowRunSummary(session: StructuredSessionSnapshot): str
 }
 
 function derivePreview(session: StructuredSessionSnapshot): string {
-  const commandRollups = buildCommandRollups(session.commands);
+  const commandRollups = buildCommandRollups(session);
   if (session.session.wait) {
     return `Waiting: ${session.session.wait.reason}`;
   }
@@ -275,7 +403,7 @@ export function buildStructuredSessionView(
   session: StructuredSessionSnapshot,
 ): StructuredSessionView {
   const grouped = groupThreadIdsByStatus(session.threads);
-  const commandRollups = buildCommandRollups(session.commands);
+  const commandRollups = buildCommandRollups(session);
   const latestEpisodePreview = deriveLatestEpisodePreview(session);
   const latestWorkflowRunSummary = deriveLatestWorkflowRunSummary(session);
 
@@ -354,13 +482,58 @@ export function hasStructuredSessionFacts(session: StructuredSessionSnapshot): b
     session.session.wait !== null ||
     session.turns.length > 0 ||
     session.threads.length > 0 ||
-    buildCommandRollups(session.commands).length > 0 ||
+    buildCommandRollups(session).length > 0 ||
     session.episodes.length > 0 ||
     session.verifications.length > 0 ||
     session.workflowRuns.length > 0 ||
     session.artifacts.length > 0 ||
     session.events.length > 0
   );
+}
+
+export function buildStructuredCommandInspector(
+  session: StructuredSessionSnapshot,
+  commandId: string,
+): StructuredCommandInspector | null {
+  const commandsById = new Map(session.commands.map((command) => [command.id, command]));
+  let parentCommand = commandsById.get(commandId) ?? null;
+  while (parentCommand?.parentCommandId) {
+    parentCommand = commandsById.get(parentCommand.parentCommandId) ?? null;
+  }
+
+  if (!parentCommand) {
+    return null;
+  }
+
+  const childCommands = getChildCommands(session.commands, parentCommand.id);
+  const summaryChildren = childCommands
+    .filter((childCommand) => childCommand.visibility !== "trace")
+    .map((childCommand) => buildCommandInspectorChild(childCommand, session.artifacts));
+  const traceChildren = childCommands
+    .filter((childCommand) => childCommand.visibility === "trace")
+    .map((childCommand) => buildCommandInspectorChild(childCommand, session.artifacts));
+
+  return {
+    commandId: parentCommand.id,
+    threadId: parentCommand.threadId ?? null,
+    workflowRunId: parentCommand.workflowRunId ?? null,
+    toolName: parentCommand.toolName,
+    visibility: parentCommand.visibility,
+    status: parentCommand.status,
+    title: parentCommand.title,
+    summary: parentCommand.summary,
+    facts: parentCommand.facts,
+    error: parentCommand.error,
+    startedAt: parentCommand.startedAt,
+    updatedAt: parentCommand.updatedAt,
+    finishedAt: parentCommand.finishedAt,
+    artifacts: buildCommandArtifactLinks(session.artifacts, parentCommand.id),
+    childCount: childCommands.length,
+    summaryChildCount: summaryChildren.length,
+    traceChildCount: traceChildren.length,
+    summaryChildren,
+    traceChildren,
+  };
 }
 
 export function getLatestFailureContext(session: StructuredSessionSnapshot): string | null {

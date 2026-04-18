@@ -1,3 +1,5 @@
+import { cp, mkdir, readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { Page } from "electrobun-browser-tools";
 import {
   createIsolatedHomeDir,
@@ -13,6 +15,7 @@ const PROJECT_DIR = process.cwd();
 const APP_WORKSPACE_DIR = resolveElectrobunWorkspaceDir(PROJECT_DIR);
 const FALLBACK_APP_ID = "svvy";
 const FALLBACK_APP_READY_PATTERN = /^svvy desktop app started$/;
+const PREPARED_HOME_SNAPSHOT_DIRNAME = ".svvy-e2e-launch-snapshot";
 
 const parseBridgeMetadata = (() => {
   const parseJsonBridgeMetadata = createJsonBridgeMetadataParser("svvy bridge:");
@@ -87,11 +90,66 @@ export async function launchSvvyApp(options: SvvyAppLaunchOptions = {}): Promise
   return await launchElectrobunApp(createLaunchOptions(options));
 }
 
+function getPreparedHomeSnapshotDir(homeDir: string): string {
+  return join(homeDir, PREPARED_HOME_SNAPSHOT_DIRNAME);
+}
+
+async function snapshotPreparedHomeDir(homeDir: string): Promise<void> {
+  const snapshotDir = getPreparedHomeSnapshotDir(homeDir);
+  await rm(snapshotDir, { force: true, recursive: true });
+  await mkdir(snapshotDir, { recursive: true });
+
+  const entries = await readdir(homeDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === PREPARED_HOME_SNAPSHOT_DIRNAME) {
+      continue;
+    }
+
+    await cp(join(homeDir, entry.name), join(snapshotDir, entry.name), {
+      recursive: true,
+    });
+  }
+}
+
+async function restorePreparedHomeDir(homeDir: string): Promise<void> {
+  const snapshotDir = getPreparedHomeSnapshotDir(homeDir);
+
+  const entries = await readdir(homeDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === PREPARED_HOME_SNAPSHOT_DIRNAME) {
+      continue;
+    }
+
+    await rm(join(homeDir, entry.name), { force: true, recursive: true });
+  }
+
+  const snapshotEntries = await readdir(snapshotDir, { withFileTypes: true });
+  for (const entry of snapshotEntries) {
+    await cp(join(snapshotDir, entry.name), join(homeDir, entry.name), {
+      recursive: true,
+    });
+  }
+}
+
 function createLaunchOptions(options: SvvyAppLaunchOptions) {
   const workspaceDir = options.workspaceDir ?? APP_WORKSPACE_DIR;
+  const preparedHomeDirs = new Set<string>();
 
   return {
-    beforeLaunch: options.beforeLaunch,
+    beforeLaunch: async (context: {
+      homeDir: string;
+      runtimeEnv: NodeJS.ProcessEnv;
+      workspaceDir: string;
+    }) => {
+      if (preparedHomeDirs.has(context.homeDir)) {
+        await restorePreparedHomeDir(context.homeDir);
+        return;
+      }
+
+      await options.beforeLaunch?.(context);
+      await snapshotPreparedHomeDir(context.homeDir);
+      preparedHomeDirs.add(context.homeDir);
+    },
     bridgeMetadata: BRIDGE_METADATA,
     env: options.env,
     homeDir: options.homeDir,

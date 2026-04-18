@@ -13,6 +13,7 @@ import type {
   PromptTarget,
   SendPromptRequest,
   SessionMutationResponse,
+  WorkspaceCommandInspector,
   WorkspaceSessionSummary,
 } from "./chat-rpc";
 import { createChatStorage, type ChatStorage } from "./chat-storage";
@@ -59,6 +60,7 @@ export interface ChatRuntimeRpcClient {
     listSessions: typeof rpc.request.listSessions;
     getActiveSession: typeof rpc.request.getActiveSession;
     getActiveSessionSummary: typeof rpc.request.getActiveSessionSummary;
+    getCommandInspector: typeof rpc.request.getCommandInspector;
     createSession: typeof rpc.request.createSession;
     openSession: typeof rpc.request.openSession;
     renameSession: typeof rpc.request.renameSession;
@@ -95,6 +97,10 @@ export interface ChatRuntime {
   dispose: () => void;
   subscribe: (listener: ChatRuntimeListener) => () => void;
   listSessions: () => Promise<WorkspaceSessionSummary[]>;
+  getCommandInspector: (
+    commandId: string,
+    sessionId?: string,
+  ) => Promise<WorkspaceCommandInspector>;
   createSession: (request?: CreateSessionRequest) => Promise<void>;
   openSession: (sessionId: string) => Promise<void>;
   openSurface: (target: PromptTarget) => Promise<void>;
@@ -335,6 +341,25 @@ export async function createChatRuntime(
     sessions = response.sessions;
     emit();
     return sessions;
+  };
+
+  const getCommandInspector = async (
+    commandId: string,
+    sessionId = activeSessionId ?? agent.sessionId,
+  ): Promise<WorkspaceCommandInspector> => {
+    if (!sessionId) {
+      throw new Error("Expected an active session before inspecting a command.");
+    }
+
+    const inspector = await rpcClient.request.getCommandInspector({
+      sessionId,
+      commandId,
+    });
+    if (!inspector) {
+      throw new Error(`Structured command not found: ${commandId}`);
+    }
+
+    return inspector;
   };
 
   const applySessionMutation = async (
@@ -627,6 +652,7 @@ export async function createChatRuntime(
       };
     },
     listSessions: refreshSessions,
+    getCommandInspector,
     createSession: async (request = {}) => {
       const session = await rpcClient.request.createSession(request);
       activeSurface = createOrchestratorSurfaceTarget(session.session.id);

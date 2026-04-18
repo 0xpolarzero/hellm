@@ -71,6 +71,15 @@ export interface ProviderAuthInfo {
 
 export type SessionStatus = "idle" | "running" | "waiting" | "error";
 
+export interface WorkspaceCommandRollupChild {
+  commandId: string;
+  toolName: string;
+  status: "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+  title: string;
+  summary: string;
+  error: string | null;
+}
+
 export interface WorkspaceCommandRollup {
   commandId: string;
   threadId: string | null;
@@ -81,7 +90,49 @@ export interface WorkspaceCommandRollup {
   title: string;
   summary: string;
   childCount: number;
+  summaryChildCount: number;
+  traceChildCount: number;
+  summaryChildren: WorkspaceCommandRollupChild[];
   updatedAt: string;
+}
+
+export interface WorkspaceCommandArtifactLink {
+  artifactId: string;
+  kind: "text" | "log" | "json" | "file";
+  name: string;
+  path?: string;
+  createdAt: string;
+}
+
+export interface WorkspaceCommandInspectorChild extends WorkspaceCommandRollupChild {
+  visibility: "trace" | "summary" | "surface";
+  facts: Record<string, unknown> | null;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  artifacts: WorkspaceCommandArtifactLink[];
+}
+
+export interface WorkspaceCommandInspector {
+  commandId: string;
+  threadId: string | null;
+  workflowRunId?: string | null;
+  toolName: string;
+  visibility: "trace" | "summary" | "surface";
+  status: "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+  title: string;
+  summary: string;
+  facts: Record<string, unknown> | null;
+  error: string | null;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  artifacts: WorkspaceCommandArtifactLink[];
+  childCount: number;
+  summaryChildCount: number;
+  traceChildCount: number;
+  summaryChildren: WorkspaceCommandInspectorChild[];
+  traceChildren: WorkspaceCommandInspectorChild[];
 }
 
 export interface WorkspaceSessionSummary {
@@ -197,6 +248,10 @@ export interface ChatRPCSchema {
       getActiveSessionSummary: {
         params: undefined;
         response: ActiveSessionSummaryState | null;
+      };
+      getCommandInspector: {
+        params: { sessionId: string; commandId: string };
+        response: WorkspaceCommandInspector | null;
       };
       createSession: {
         params: CreateSessionRequest;
