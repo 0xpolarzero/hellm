@@ -34,6 +34,19 @@ export function sessionStatusTone(status: SessionStatus): "neutral" | "warning" 
   }
 }
 
+export function formatSessionStatusLabel(summary: WorkspaceSessionSummary): string {
+  switch (summary.status) {
+    case "running":
+      return summary.threadIdsByStatus?.running.length ? "Threading" : "Running";
+    case "waiting":
+      return "Waiting";
+    case "error":
+      return "Error";
+    default:
+      return "Idle";
+  }
+}
+
 export function formatSessionModel(summary: WorkspaceSessionSummary): string {
   if (summary.provider && summary.modelId) {
     return `${summary.provider}:${summary.modelId}`;

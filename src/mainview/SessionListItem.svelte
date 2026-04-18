@@ -1,7 +1,7 @@
 <script lang="ts">
   import EllipsisVerticalIcon from "@lucide/svelte/icons/ellipsis-vertical";
   import type { WorkspaceSessionSummary } from "./chat-rpc";
-  import { formatRelativeSessionTime } from "./session-format";
+  import { formatRelativeSessionTime, formatSessionStatusLabel } from "./session-format";
   import Button from "./ui/Button.svelte";
 
   type Props = {
@@ -47,19 +47,6 @@
   function closeIfFocusLeaves(nextTarget: EventTarget | null) {
     if (!(nextTarget instanceof Node) || !menuRoot?.contains(nextTarget)) {
       menuOpen = false;
-    }
-  }
-
-  function getStatusLabel(status: WorkspaceSessionSummary["status"]): string {
-    switch (status) {
-      case "running":
-        return "Running";
-      case "waiting":
-        return "Waiting";
-      case "error":
-        return "Error";
-      default:
-        return "Idle";
     }
   }
 
@@ -132,7 +119,7 @@
         {#if session.status !== "idle"}
           <span class={`session-status status-${session.status}`.trim()}>
             <span class="session-status-dot"></span>
-            {getStatusLabel(session.status)}
+            {formatSessionStatusLabel(session)}
           </span>
         {/if}
         {#if session.parentSessionId}
