@@ -35,7 +35,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Durable Artifact Storage",
     status: "in-progress",
     summary:
-      "Moves artifacts into a dedicated workspace artifact directory with SQLite metadata and path indexing, including submitted execute_typescript snippets for every attempt.",
+      "Moves artifacts into a dedicated workspace artifact directory with SQLite metadata and path indexing, including submitted execute_typescript snippets for every attempt and workflow-related logs and exports.",
     sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -43,15 +43,31 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Execute Typescript Work Surface",
     status: "in-progress",
     summary:
-      "Provides the default generic top-level work surface with observable typed api.* host capabilities, a generated JSDoc-rich SDK declaration embedded in the system prompt and reused for static checking, explicit api.exec.run, workspace-fs-style repo reads and searches, curated git command names, preflight typecheck or compile diagnostics, file-backed snippet artifacts for every attempt, inline transcript visibility into submitted execute_typescript bodies, and parent-first rollups over nested child command facts.",
+      "Provides the default generic top-level work surface with observable typed api.* host capabilities, a generated JSDoc-rich SDK declaration embedded in the system prompt and reused for static checking, explicit api.exec.run, workspace-fs-style repo reads and searches, curated git command names, preflight typecheck or compile diagnostics, file-backed snippet artifacts for every attempt, and parent-first rollups over nested child command facts.",
     sourceSpecs: ["docs/prd.md", "docs/specs/execute-typescript.spec.md"],
+  },
+  {
+    id: "handler-thread-surfaces",
+    name: "Delegated Handler Thread Surfaces",
+    status: "in-progress",
+    summary:
+      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, can receive direct user messages, and emit one final terminal episode back to the orchestrator.",
+    sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
+  },
+  {
+    id: "workflow-library",
+    name: "Workflow Templates And Presets",
+    status: "in-progress",
+    summary:
+      "Defines structural Smithers workflow templates such as `single_task`, `sequential_pipeline`, `fanout_join`, and `verification_run`, plus reusable presets and one-off authored workflows supervised by handler threads.",
+    sourceSpecs: ["docs/prd.md"],
   },
   {
     id: "workflow-hooks",
     name: "Repo-Local Workflow Hooks",
     status: "in-progress",
     summary:
-      "Wraps consequential delegated workflows with repo-local preflight and validation hooks that can use execute_typescript without flattening workflow control into api.* helpers.",
+      "Wraps consequential workflow runs with repo-local preflight and validation hooks that can use execute_typescript without flattening workflow control into api.* helpers or bypassing handler-thread supervision.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-hooks.spec.md"],
   },
   {
@@ -75,7 +91,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Session State Overlay",
     status: "in-progress",
     summary:
-      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, command, episode, verification, workflow, artifact, wait, and lifecycle event records, normalized command facts for rollups and drill-down, file-backed artifact indexing, and metadata-first session summaries that survive reload.",
+      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, workflow-run, command, episode, artifact, verification, wait, and lifecycle event records plus metadata-first read models that survive reload.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -83,23 +99,23 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Turn And Command State",
     status: "in-progress",
     summary:
-      "Tracks each user turn and every tool call, including execute_typescript snippets and nested api.* child command facts, as durable state with status, executor ownership, parent-child linkage, attempts, and trace-versus-surface visibility under parent execute_typescript rollups.",
+      "Tracks every turn on the orchestrator surface and handler thread surfaces, plus every tool call including execute_typescript snippets and nested api.* child command facts, as durable state with lifecycle status, ownership, linkage, attempts, and trace-versus-surface visibility.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
     id: "session-threads",
-    name: "Structured Session Threads",
+    name: "Structured Handler Threads",
     status: "in-progress",
     summary:
-      "Tracks task, workflow, and verification work items as durable threads with parent-child linkage, objective, lifecycle status, dependency waits, user or external waits, and timestamps.",
+      "Tracks delegated handler threads as durable interactive surfaces with backing pi session ids, objective, lifecycle status, wait state, worktree context, and linkage to multiple workflow runs over the thread's lifetime.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
     id: "durable-episodes",
-    name: "Durable Episodes",
+    name: "Durable Final Episodes",
     status: "in-progress",
     summary:
-      "Stores reusable semantic outputs as first-class episode records with kind, summary, body, source command linkage, and artifact references for orchestrator reuse and user inspection.",
+      "Stores reusable terminal semantic outputs as first-class episode records, with one final episode per completed handler thread and optional root-surface episodes when substantive work completes locally.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -107,23 +123,23 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Verification Records",
     status: "in-progress",
     summary:
-      "Captures command-linked verification runs as first-class state with kind, passed/failed/cancelled outcome, summary, optional command, and timestamps that influence routing.",
+      "Captures verification outcomes produced by verification-shaped workflow runs as first-class state with kind, status, summary, and timestamps that influence routing and support specialized UI.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
-    id: "workflow-records",
-    name: "Delegated Workflow Records",
+    id: "workflow-run-records",
+    name: "Delegated Workflow Run Records",
     status: "in-progress",
     summary:
-      "Stores one top-level svvy-side record for each delegated Smithers workflow with source command linkage, run id, workflow name, running/waiting/completed/failed/cancelled status, summary, and lifecycle timestamps.",
+      "Stores one svvy-side record for each Smithers workflow run under a handler thread, including run identity, template or preset metadata, status, summary, timestamps, and related artifacts and command history.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
     id: "session-wait-state",
-    name: "Session Wait State",
+    name: "Session And Thread Wait State",
     status: "in-progress",
     summary:
-      "Represents user and external blocking conditions explicitly through thread-local wait state and whole-session wait state, while keeping internal dependency waits on thread dependency links instead of conflating them with product pause behavior.",
+      "Represents user and external blocking conditions explicitly through surface-local wait state and whole-session frontier wait state without inventing wait episodes or relying on transcript inference.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -131,7 +147,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Metadata-First Session Read Models",
     status: "in-progress",
     summary:
-      "Derives idle/running/waiting/error session status, counts, ordered thread ids, and compact summary data from structured state and artifact metadata for sidebar, navigation, and restart recovery without transcript replay.",
+      "Derives idle, running, waiting, and error session status, counts, ordered thread ids, and compact summary data from structured state and artifact metadata for sidebar, navigation, and restart recovery without transcript replay.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -139,7 +155,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workflow Inspector Surface",
     status: "in-progress",
     summary:
-      "Provides a read-only live graph inspector for delegated workflow runs, with node drill-down and pane-based inspection.",
+      "Provides a read-only live graph inspector for workflow runs, with node drill-down, template-aware presentation, and pane-based inspection.",
     sourceSpecs: ["docs/prd.md"],
   },
 ];

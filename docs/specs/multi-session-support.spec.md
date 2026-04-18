@@ -146,7 +146,7 @@ The first implementation should preserve the current mental model:
 - one desktop window is attached to one workspace
 - that workspace can contain many sessions
 - one workspace window may show multiple interactive surfaces in a persisted pane layout
-- any pane may host a session surface, subagent session, or workflow surface
+- any pane may host an orchestrator session surface, a handler thread surface, or a workflow inspector surface
 
 This is simpler and better aligned with the current app than copying a multi-project icon rail immediately.
 
@@ -225,7 +225,7 @@ When a session is selected:
 - the main conversation timeline rehydrates from that session
 - artifacts are hydrated from that session's structured artifact metadata and file-backed paths
 - model and reasoning controls reflect that session's current state
-- the composer targets that session
+- the composer in that pane targets that surface
 - any currently visible session-specific badges, waiting state, thread summaries, and inspector content swap with the selection
 
 The user should not need to reload the app or open a modal just to resume an existing session.

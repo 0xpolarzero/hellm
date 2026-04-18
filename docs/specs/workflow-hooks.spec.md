@@ -2,45 +2,46 @@
 
 ## Status
 
-- Date: 2026-04-16
+- Date: 2026-04-18
 - Status: adopted direction for repo-local workflow hooks
 - Scope of this document:
   - define the target product behavior for repo-local workflow hooks
-  - explain how hooks fit into the shared command model
+  - explain how hooks fit into the handler-thread plus workflow-run model
   - pin the first-slice hook boundary and the remaining open details
 
 ## Purpose
 
-`svvy` needs a repo-local way to inject project-specific policy and context into consequential delegated workflows without turning the product into a rigid static workflow engine.
+`svvy` needs a repo-local way to inject project-specific policy and context into consequential workflow runs without turning the product into a rigid static workflow engine.
 
 ## Product Fit
 
 The PRD and execution model define:
 
 - one shared command model
-- `workflow.start` and `workflow.resume` as native control tools
+- handler threads as the delegated-objective unit
+- `workflow.start` and `workflow.resume` as native control tools normally used inside handler threads
 - Smithers as the delegated workflow executor
 - repo-local workflow hooks under `.svvy/`
 
 Workflow hooks are therefore:
 
-- policy around delegated workflow commands
+- policy around workflow runs launched from handler threads
 - not a separate execution path
 - not a replacement for orchestrator routing
-- not a way to turn control tools into `api.*` helpers
+- not a way to flatten control tools into `api.*` helpers
 
 ## Adopted Direction
 
 The adopted `svvy` direction is:
 
 - repo-local workflow hooks live under a `.svvy/` configuration surface
-- consequential delegated workflows may be wrapped by two repo-local hooks:
+- consequential workflow runs may be wrapped by two repo-local hooks:
   - `preflight`
   - `validation`
 - hooks are part of product behavior, not one-off implementation glue
 - hooks may use `execute_typescript` for generic context gathering or synthesis work
-- hooks should shape workflow behavior without replacing orchestrator routing
-- hook outputs should be durable enough to affect workflow execution, workflow records, episodes, and later debugging
+- hooks should shape workflow behavior without replacing handler-thread supervision
+- hook outputs should be durable enough to affect workflow execution, workflow-run records, artifacts, and later debugging
 
 ## Consequential Workflow Policy
 
@@ -50,7 +51,7 @@ The first intended policy boundary is:
 - heavy work
 - other delegated execution where repo-local policy should apply by default
 
-These are the workflows that should normally pick up preflight and validation behavior.
+These are the workflow runs that should normally pick up preflight and validation behavior.
 
 ## Placement In The Execution Model
 
@@ -58,16 +59,16 @@ Hooks live around `workflow.start` and `workflow.resume`.
 
 In practice that means:
 
-- the orchestrator decides to call `workflow.start` or `workflow.resume`
-- the workflow handler discovers and runs any configured hooks
+- a handler thread decides to call `workflow.start` or `workflow.resume`
+- the workflow tooling discovers and runs any configured hooks
 - hook execution emits durable command and event facts
-- hook outputs may affect workflow status, workflow summary, artifacts, and resulting episodes
+- hook outputs may affect workflow-run status, workflow summary, artifacts, and the handler thread's eventual terminal episode
 - if a hook needs generic computation, it may use `execute_typescript`
-- if a hook needs to change product-level control flow, it must stay on the native control tools
+- if a hook needs to change product-level control flow, it must stay on native control tools
 
 ## Preflight Hook
 
-The preflight hook runs near the beginning of a consequential workflow.
+The preflight hook runs near the beginning of a consequential workflow run.
 
 Its purpose is to prepare the workflow with repo-local context or policy before the main delegated work executes.
 
@@ -83,27 +84,27 @@ Adopted behavioral expectations:
 - preflight runs before the main workflow body
 - preflight may produce structured outputs for later workflow steps
 - preflight should be visible in workflow-related command history and debugging surfaces
-- preflight may create artifacts and influence the initial workflow summary
+- preflight may create artifacts and influence the initial workflow-run summary
 
 ## Validation Hook
 
-The validation hook runs near the end of a consequential workflow.
+The validation hook runs near the end of a consequential workflow run.
 
-Its purpose is to apply repo-local validation before the workflow result is treated as complete.
+Its purpose is to apply repo-local validation before a candidate result is accepted by the supervising handler thread as complete.
 
 Current intended uses include:
 
 - enforcing repo-specific checks
 - attaching a final validation step to consequential workflow runs
 - producing explicit guidance about what to do when validation fails
-- shaping whether the workflow is considered successful, waiting, or failed
+- shaping whether the workflow run is considered successful, waiting, or failed
 
 Adopted behavioral expectations:
 
 - validation runs after the main workflow body reaches a terminal candidate result
 - validation may emit artifacts, structured outputs, and failure guidance
-- validation results should influence normalized workflow outcome, not just appear as logs
-- validation should be inspectable in workflow-related command history, workflow records, and resulting episodes
+- validation results should influence normalized workflow-run outcome, not just appear as logs
+- validation should be inspectable in workflow-related command history, workflow-run records, and the handler thread's final episode context
 
 ## Hook Inputs And Execution Style
 
@@ -125,8 +126,8 @@ The product requirement is flexibility, not a single hook authoring format in v1
 Hooks should integrate with the structured session state model as follows:
 
 - hook execution should create commands and lifecycle events
-- meaningful hook outputs should be capturable in artifacts and episodes
-- hook failures should influence workflow status rather than only showing up as hidden logs
+- meaningful hook outputs should be capturable in artifacts
+- hook failures should influence workflow-run status rather than only showing up as hidden logs
 - hook behavior should be understandable from the session UI and workflow inspection surfaces
 
 Hooks must not bypass the shared command model or write arbitrary state directly.
@@ -136,10 +137,11 @@ Hooks must not bypass the shared command model or write arbitrary state directly
 This feature is not trying to:
 
 - replace the orchestrator with a repo-defined static plan
+- replace the handler thread with a repo-defined static plan
 - force every request through hooks
 - turn repo policy into an opaque hidden side effect
 - require one fixed scripting format before practical experience exists
-- flatten workflow, verification, or wait control into `api.*`
+- flatten workflow or wait control into `api.*`
 
 ## Open Details
 
@@ -148,8 +150,8 @@ These points are directionally important but still intentionally open:
 - the exact `.svvy/` file format
 - whether hook authoring is prompt-first, script-first, or hybrid
 - how hook outputs are typed and passed into downstream workflow steps
-- the exact failure semantics for validation in partially successful workflows
-- how much preflight output should be projected back into the orchestrator versus only into downstream workflow steps
+- the exact failure semantics for validation in partially successful workflow runs
+- how much hook output should be projected back into the supervising handler thread versus only into downstream workflow steps
 
 ## Sources
 

@@ -29,7 +29,7 @@ tool call -> command -> handler -> events -> structured state -> UI
 Inside that model:
 
 - `execute_typescript` is the default generic work surface
-- `workflow.start`, `workflow.resume`, `verification.run`, and `wait` remain native top-level control tools
+- `thread.start`, `workflow.start`, `workflow.resume`, and `wait` remain native top-level control tools
 
 `execute_typescript` is therefore:
 
@@ -118,9 +118,9 @@ Use `execute_typescript` for bounded generic work such as:
 
 Do not use `execute_typescript` to replace top-level control-flow tools:
 
+- `thread.start`
 - `workflow.start`
 - `workflow.resume`
-- `verification.run`
 - `wait`
 
 Those actions change product-owned execution state and remain native tools.
@@ -170,6 +170,7 @@ The important guarantees are:
 - invalid code never executes
 - nested `api.*` calls are durable trace facts
 - the parent command remains the main semantic unit
+- delegated verification should be expressed through workflow templates or presets rather than a separate native verification command
 
 ## Why Child Commands Exist
 
@@ -204,7 +205,7 @@ Rules:
 - singular helpers stay for one-path operations, and plural helpers batch several known paths
 - camelCase is used when JavaScript identifiers cannot match the underlying command spelling exactly
 - the runtime injects one object named `api`
-- the runtime exposes the same surface to the orchestrator and to delegated workers
+- the runtime exposes the same surface to the orchestrator, handler threads, and workflow tasks that are allowed to use `execute_typescript`
 
 ### Representative Usage
 
@@ -437,7 +438,7 @@ type SvvyApi = {
 Each top-level `execute_typescript` invocation creates one parent command with:
 
 - `toolName = "execute_typescript"`
-- `executor = "orchestrator"` or the delegated worker equivalent
+- `executor = "orchestrator"` or the supervising handler-thread equivalent
 - `visibility = "summary"` or `surface` when the parent run itself is a primary user-facing action
 
 Each nested `api.*` call creates one child command with:

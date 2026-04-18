@@ -2,25 +2,23 @@
 
 ## Status
 
-- Date: 2026-04-16
-- Status: adopted direction for the next structured session state refactor
+- Date: 2026-04-18
+- Status: adopted direction for the structured session state model
 - Reference implementation: [POC](../pocs/structured-session-state.poc.ts)
 
 ## Purpose
 
-`svvy` needs explicit product state above the `pi` transcript and beside Smithers workflow state.
+`svvy` needs explicit product state above pi transcript state and beside Smithers workflow state.
 
 Without that layer, the product has to keep inferring important facts from raw message history or transcript replay:
 
-- which request is currently being handled
-- which threads exist and how they relate
+- which interactive surfaces exist in a session
+- which delegated handler threads exist and what objective each owns
+- which workflow runs happened under each handler thread
 - which tool calls happened
 - which work finished
 - which work failed
-- which work is only waiting on another internal work item
 - which work is waiting on the user or an external prerequisite
-- what verification happened
-- which delegated workflow is in flight
 - which durable outputs should be reused on the next turn
 
 This spec defines the adopted structured state model that fixes that problem.
@@ -32,7 +30,7 @@ This document defines:
 - the adopted structured session state model
 - the exact concepts covered by that model
 - the ownership boundaries for those concepts
-- the shape of the POC and its intended SQLite-backed implementation
+- the shape of the reference POC and its intended SQLite-backed implementation
 
 ## Reference Rule
 
@@ -44,23 +42,19 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 
 ## Adopted Direction
 
-- Keep `pi` as the canonical transcript and runtime substrate.
-- Keep Smithers as the canonical delegated workflow execution substrate.
+- Keep `pi` as the canonical transcript and runtime substrate for the main orchestrator surface and delegated handler thread surfaces.
+- Keep Smithers as the canonical workflow execution substrate.
 - Add `svvy`-owned structured product state above those substrates.
-- Model turns and commands explicitly.
+- Model turns, handler threads, workflow runs, commands, episodes, artifacts, verification, and waits explicitly.
 - Treat every tool call as a `CommandRecord`.
 - Make `execute_typescript` the default generic work surface.
-- Treat `execute_typescript` as the single default generic top-level tool.
-- Inject `api.*` as the host SDK inside `execute_typescript`.
-- Include explicit `api.exec.run` in the host SDK.
-- Compile or typecheck before run, emit structured diagnostics, and block invalid execution.
-- Persist every submitted `execute_typescript` snippet as a file-backed artifact in the workspace artifact directory.
 - Treat every top-level `execute_typescript` invocation as one parent command record and every nested `api.*` call as a child command record.
-- Keep only a very small set of native control tools for workflow, verification, and wait.
-- Remove arbitrary agent-facing structured-state write tools from the product contract.
+- Keep only a very small set of native control tools for thread spawning, workflow control, and wait.
 - Drive durable facts from real runtime handlers and bridge events, not transcript heuristics.
-- Distinguish thread dependency waits from user or external waits.
-- Treat whole-session waiting as a derived product state backed by an explicit session wait record.
+- Keep workflow-run state separate from handler-thread state.
+- Treat a handler thread as one delegated objective that may supervise many workflow runs over its lifetime.
+- Treat the handler thread's final terminal episode as the normal semantic handoff back to the orchestrator.
+- Do not model internal workflow pauses as separate episodes.
 - Use selectors and metadata-first read models instead of making the UI reconstruct state from storage details or transcripts.
 
 ## Core Modeling Rule
@@ -69,7 +63,7 @@ The product should model the durable things that actually affect routing, inspec
 
 That means:
 
-- keep first-class records for turns, threads, `CommandRecord`s, episodes, verification runs, workflows, artifacts, and lifecycle events
+- keep first-class records for turns, threads, workflow runs, commands, episodes, verification runs, artifacts, and lifecycle events
 - keep file-backed artifact metadata and path indexes alongside those records
 - do not split every human-readable summary into a large bespoke schema
 - keep Smithers internals inside Smithers unless `svvy` truly needs a top-level summary of them
@@ -83,30 +77,31 @@ That means:
 
 - transcript history
 - runtime conversation behavior
-- session tree lineage
+- session and sub-session lineage
 - provider and runtime substrate behavior
 
 ### Smithers
 
 Smithers remains canonical for:
 
-- delegated workflow internals
+- workflow execution internals
 - workflow nodes, attempts, retries, and internal event history
+- durable workflow resume mechanics
 
 ### `svvy`
 
 `svvy` is canonical for:
 
 - product-level session state
-- turns and all threads
+- orchestrator and handler-thread projection
+- turns and handler-thread records
+- workflow-run records projected into the session model
 - command records
-- episodes
+- final episodes
 - verification records
-- top-level workflow records
-- artifacts
+- artifacts and artifact indexes
 - session summary read models and selectors
-- wait state
-- lightweight lifecycle events and selectors
+- wait state and lifecycle selectors
 
 ## Adopted Conceptual Model
 
@@ -121,21 +116,11 @@ type StructuredSessionState = {
     artifactDir: string;
   };
 
-  pi: {
-    sessionId: string;
-    title: string;
-    provider?: string;
-    model?: string;
-    reasoningEffort?: string;
-    messageCount: number;
-    createdAt: string;
-    updatedAt: string;
-  };
-
   session: {
     id: string;
+    orchestratorPiSessionId: string;
     wait: null | {
-      threadId: string;
+      owner: { kind: "orchestrator" } | { kind: "thread"; threadId: string };
       kind: "user" | "external";
       reason: string;
       resumeWhen: string;
@@ -145,6 +130,8 @@ type StructuredSessionState = {
 
   turns: Array<{
     id: string;
+    surfacePiSessionId: string;
+    threadId: string | null;
     requestSummary: string;
     status: "running" | "waiting" | "completed" | "failed";
     startedAt: string;
@@ -154,19 +141,33 @@ type StructuredSessionState = {
 
   threads: Array<{
     id: string;
-    turnId: string;
     parentThreadId: string | null;
-    kind: "task" | "workflow" | "verification";
+    surfacePiSessionId: string;
     title: string;
     objective: string;
     status: "running" | "waiting" | "completed" | "failed" | "cancelled";
-    dependsOnThreadIds: string[];
     wait: null | {
       kind: "user" | "external";
       reason: string;
       resumeWhen: string;
       since: string;
     };
+    worktree?: string;
+    latestWorkflowRunId: string | null;
+    startedAt: string;
+    updatedAt: string;
+    finishedAt: string | null;
+  }>;
+
+  workflowRuns: Array<{
+    id: string;
+    threadId: string;
+    smithersRunId: string;
+    workflowName: string;
+    templateId: string | null;
+    presetId: string | null;
+    status: "running" | "waiting" | "completed" | "failed" | "cancelled";
+    summary: string;
     startedAt: string;
     updatedAt: string;
     finishedAt: string | null;
@@ -175,15 +176,17 @@ type StructuredSessionState = {
   commands: Array<{
     id: string;
     turnId: string;
-    threadId: string;
+    surfacePiSessionId: string;
+    threadId: string | null;
+    workflowRunId: string | null;
     parentCommandId: string | null;
     toolName: string;
     executor:
       | "orchestrator"
+      | "handler"
       | "execute_typescript"
       | "runtime"
-      | "smithers"
-      | "verification";
+      | "smithers";
     visibility: "trace" | "summary" | "surface";
     status:
       | "requested"
@@ -204,44 +207,29 @@ type StructuredSessionState = {
 
   episodes: Array<{
     id: string;
-    threadId: string;
+    threadId: string | null;
     sourceCommandId: string | null;
-    kind: "analysis" | "change" | "verification" | "workflow" | "clarification";
     title: string;
     summary: string;
     body: string;
-    artifactIds: string[];
     createdAt: string;
   }>;
 
   verifications: Array<{
     id: string;
     threadId: string;
-    commandId: string;
-    kind: "build" | "test" | "lint" | "integration" | "manual" | string;
+    workflowRunId: string;
+    kind: string;
     status: "passed" | "failed" | "cancelled";
     summary: string;
-    command?: string;
     startedAt: string;
     finishedAt: string;
   }>;
 
-  workflows: Array<{
-    id: string;
-    threadId: string;
-    commandId: string;
-    smithersRunId: string;
-    workflowName: string;
-    status: "running" | "waiting" | "completed" | "failed" | "cancelled";
-    summary: string;
-    startedAt: string;
-    updatedAt: string;
-    finishedAt: string | null;
-  }>;
-
   artifacts: Array<{
     id: string;
-    episodeId: string | null;
+    threadId: string | null;
+    workflowRunId: string | null;
     sourceCommandId: string | null;
     kind: "text" | "log" | "json" | "file";
     name: string;
@@ -255,15 +243,7 @@ type StructuredSessionState = {
     at: string;
     kind: string;
     subject: {
-      kind:
-        | "session"
-        | "turn"
-        | "thread"
-        | "command"
-        | "episode"
-        | "verification"
-        | "workflow"
-        | "artifact";
+      kind: "session" | "turn" | "thread" | "workflowRun" | "command" | "episode" | "verification" | "artifact";
       id: string;
     };
     data?: Record<string, unknown>;
@@ -275,148 +255,125 @@ type StructuredSessionState = {
 
 ### Session
 
-The session record stores product-wide wait state because the product needs an explicit durable answer to one question:
+The session record exists because the product needs one durable container that ties together:
 
-Is the whole active frontier blocked on user or external input?
-
-Session summaries and counts should be derived from the structured records and artifact metadata, not reconstructed from transcript text.
+- the main orchestrator surface
+- delegated handler threads
+- workflow-run history
+- summary and wait state
 
 ### Turn
 
-Turns exist because a user request is a real product boundary.
+Turns exist because a request is a real product boundary inside one interactive surface.
 
 The system needs a durable answer to:
 
-- which request opened this work
+- which surface received the request
 - whether the request is still running
-- whether it ended in a final response or a wait state
+- whether it finished, failed, or is waiting
 
 ### Thread
 
-Threads are visible bounded work items.
+Threads are the durable delegated-objective records.
 
-The product needs a durable answer to:
+They exist because the product needs a durable answer to:
 
-- what work exists
-- what kind of work it is
-- whether it is active, failed, complete, or waiting
-- whether it is waiting on internal child work or on user or external input
+- which delegated objectives exist
+- which pi-backed interactive surface owns each objective
+- whether that delegated objective is active, waiting, complete, or failed
+- which workflow run was most recent under that thread
+
+A thread is not itself a workflow run.
+
+It is the supervising pi-backed interactive surface for that delegated objective.
+
+### Workflow Run
+
+Workflow-run records exist because the product needs a top-level durable summary of Smithers executions without copying Smithers internals into `svvy`.
+
+They answer:
+
+- how many workflow runs happened under a thread
+- which template or preset was used
+- which Smithers run id corresponds to each execution
+- whether the latest execution completed, failed, or paused
 
 ### CommandRecord
 
-`CommandRecord`s are the center of the new model.
+`CommandRecord`s are the universal durable representation of tool calls.
 
-Every tool call becomes a `CommandRecord`.
-
-This gives the system a durable answer to:
+They answer:
 
 - which tool was called
-- who executed it
+- which surface and thread called it
+- which workflow run it belonged to, if any
 - whether it started, succeeded, failed, or is waiting
 - how commands nest
 - which commands are trace-only versus surfaced work
-- which command-scoped artifacts, including submitted `execute_typescript` snippets, belong to the attempt
-
-Top-level `execute_typescript` invocations are parent `CommandRecord`s.
-
-Nested `api.*` calls inside `execute_typescript` are child `CommandRecord`s. They keep durable trace facts for UI observability and semantic understanding of repo, git, web, artifact, and exec activity.
-
-Native control tools do not go through the nested `api.*` surface. They remain top-level `CommandRecord`s with their own records and selectors.
-
-The parent `execute_typescript` command is the main semantic unit. Its summary and surfaced facts should be synthesized from child activity where that activity materially changes the result, while child commands remain nested trace facts by default.
-
-Child commands should keep normalized facts such as paths, counts, refs, exit codes, artifact ids, and summarized outcomes. Large raw payloads belong in artifacts when they need durable retention.
 
 ### Episode
 
-Episodes are the durable semantic outputs the orchestrator should reuse.
+Episodes are the durable semantic outputs reused later by the orchestrator and shown to the user.
 
-They exist because the durable output of a work item should not be trapped inside raw transcript text.
+In the delegated model, the most important invariant is:
+
+- one handler thread produces zero or one terminal episode
+
+Waiting inside a handler thread does not create a wait episode.
+
+The terminal episode is created only when that delegated objective actually finishes or definitively fails.
 
 ### Verification
 
-Verification records exist because verification changes routing and is not just display data.
-
-### Workflow
-
-Workflow records exist because the product needs a top-level durable summary of a delegated Smithers run without copying Smithers internals into `svvy`.
+Verification records exist because build, test, lint, and related checks still need structured product state even though they now execute as workflow-shaped delegated work.
 
 ### Artifact
 
-Artifacts exist because generated outputs, logs, exported details, and submitted `execute_typescript` snippets need stable file-backed durable handles.
+Artifacts exist because generated outputs, logs, submitted `execute_typescript` snippets, workflow exports, and related files need stable file-backed durable handles.
 
-Every submitted `execute_typescript` snippet is also a file-backed artifact, including failed attempts.
+Artifacts are thread- and command-addressable first.
+
+They should not depend on episode attachments to exist.
 
 ### Event
 
 Events exist as a small append-only lifecycle ledger.
 
-They are not the only source of truth. Current state records remain canonical.
+They are not the only source of truth.
+
+Current-state records remain canonical.
 
 ## Cardinality Rules
 
-These rules are adopted for the next structured-state slice:
+These rules are adopted:
 
 - one session contains many turns
 - one session contains many threads
+- one session contains many workflow runs
 - one session contains many commands
 - one session contains many episodes
-- one session contains many verifications
-- one session contains many workflow records
 - one session contains many artifacts
-- one session contains many lifecycle events
-- one turn contains many threads
-- one turn contains many commands
+- one turn belongs to exactly one surface
+- one turn may belong to the orchestrator surface or to one handler thread surface
+- one thread owns exactly one backing `surfacePiSessionId`
+- one thread contains many turns over time
 - one thread contains many commands
-- one thread contains many episodes
-- one thread contains zero or many verifications
-- one workflow record belongs to exactly one workflow thread
-- one artifact may link directly to the command that produced it
-- one artifact may also be attached to one episode for semantic reuse
-
-## Session Wait Model
-
-The only adopted session-level field owned by `svvy` in this slice is `session.wait`.
-
-That is intentional.
-
-Everything else that can be derived should stay derived.
-
-### `session.wait`
-
-`session.wait` exists only when:
-
-- progress is blocked on user or external input
-- no runnable work remains in the active frontier
-
-It contains:
-
-- `threadId`: the thread responsible for the wait
-- `kind`: `user` or `external`
-- `reason`: why the session is waiting
-- `resumeWhen`: what must happen before the session can continue
-- `since`: when the wait started
-
-### Why `session.wait` Is Separate From Thread State
-
-The product must distinguish:
-
-- a thread waiting on another thread
-- a thread waiting on user or external input while other work still exists
-- the whole session waiting because no runnable work remains
-
-`session.wait` is how the product marks the third case explicitly.
+- one thread contains many workflow runs
+- one thread contains zero or one terminal episode
+- one workflow run belongs to exactly one thread
+- one workflow run may have many commands and artifacts
+- one artifact may link to a thread, a workflow run, a command, or any combination that is semantically useful
 
 ## Turn Model
-
-Turns are the top-level correlation roots for user requests.
 
 ### Turn Fields
 
 | Field | Why it exists |
 | --- | --- |
 | `id` | Stable handle for correlation and resume. |
-| `requestSummary` | Compact durable description of what the user asked. |
+| `surfacePiSessionId` | Identifies which interactive surface received the message. |
+| `threadId` | Links the turn to a handler thread when the target surface is delegated work. `null` means the main orchestrator surface. |
+| `requestSummary` | Compact durable description of what the request was. |
 | `status` | Whether the request is still running, waiting, completed, or failed. |
 | `startedAt` | Enables ordering and duration reasoning. |
 | `updatedAt` | Enables recency-based selectors. |
@@ -424,66 +381,68 @@ Turns are the top-level correlation roots for user requests.
 
 ## Thread Model
 
-Threads are the main visible work containers inside a session.
-
 ### Thread Fields
 
 | Field | Why it exists |
 | --- | --- |
-| `id` | Stable handle for linking related records and selectors. |
-| `turnId` | Links the thread back to the user request that created it. |
-| `parentThreadId` | Represents parent-child work structure without inventing role agents. |
-| `kind` | Distinguishes ordinary task work, workflow work, and verification work. |
-| `title` | Compact label for UI cards and lists. |
-| `objective` | Captures what this work item is trying to achieve. |
-| `status` | Captures the lifecycle state of the work item. |
-| `dependsOnThreadIds` | Represents internal orchestration dependencies. |
+| `id` | Stable delegated-objective handle. |
+| `parentThreadId` | Allows future thread-to-thread delegation or grouping without forcing it into v1. |
+| `surfacePiSessionId` | Links the thread to the backing pi conversation surface. |
+| `title` | Compact human-readable label. |
+| `objective` | Durable statement of what this thread owns. |
+| `status` | Captures lifecycle state for the delegated objective. |
 | `wait` | Captures user or external wait details for the thread itself. |
-| `startedAt` | Enables ordering and duration reasoning. |
+| `worktree` | Records the bound worktree when relevant. |
+| `latestWorkflowRunId` | Points to the latest workflow run under this thread for quick selectors. |
+| `startedAt` | Orders thread creation. |
 | `updatedAt` | Enables recency-based selectors. |
 | `finishedAt` | Marks terminal completion, failure, or cancellation. |
 
-### Thread Kind Meaning
+### Thread Status Semantics
 
-`task`
+Use thread status this way:
 
-Ordinary orchestrator-owned work in the current session.
+- `running` while the handler thread is actively supervising the delegated objective, including while a Smithers workflow run is executing
+- `waiting` when the delegated objective is blocked on user or external input
+- `completed` when the delegated objective reached a successful terminal result and emitted its episode
+- `failed` when the delegated objective terminated unsuccessfully and emitted its final failure episode
+- `cancelled` when the delegated objective was intentionally cancelled
 
-`workflow`
+Waiting is not terminal.
 
-A delegated Smithers workflow represented as a visible work item.
+A waiting thread may later return to `running` and eventually terminate with its one final episode.
 
-`verification`
+## Workflow Run Model
 
-A visible verification run represented as a work item.
+### Workflow Run Fields
 
-### Thread Dependency Waiting
+| Field | Why it exists |
+| --- | --- |
+| `id` | Stable local workflow-run handle. |
+| `threadId` | Links the run to the handler thread that owns it. |
+| `smithersRunId` | Canonical link back to Smithers. |
+| `workflowName` | Product-visible workflow identifier. |
+| `templateId` | Records which structural template was used when relevant. |
+| `presetId` | Records which preset was used when relevant. |
+| `status` | Captures current top-level run status. |
+| `summary` | Short top-level summary of the run state. |
+| `startedAt` | Start time of the run. |
+| `updatedAt` | Most recent state transition time. |
+| `finishedAt` | Terminal completion, failure, or cancellation time. |
 
-`dependsOnThreadIds` is the durable representation of internal orchestration waiting.
+### Workflow Run Status Semantics
 
-Use it when:
+Use workflow-run status this way:
 
-- a task thread is waiting on a workflow thread
-- a task thread is waiting on a verification thread
-- a workflow thread is waiting on child work represented as threads
+- `running` while the Smithers run is alive and making progress
+- `waiting` when the Smithers run itself reaches a durable pause condition
+- `completed`, `failed`, or `cancelled` when the Smithers run reaches a terminal outcome
 
-This is not the same as whole-session waiting.
+Do not confuse workflow-run termination with thread termination.
 
-### Thread User Or External Waiting
-
-`thread.wait` represents a real user or external prerequisite tied to that thread.
-
-Use it when:
-
-- the thread needs clarification
-- a required input is missing
-- an external system or prerequisite must change before the thread can continue
-
-If no runnable work remains, the runtime must also set `session.wait`.
+A thread may survive several workflow runs before it reaches its one final terminal episode.
 
 ## Command Model
-
-`CommandRecord`s are the universal durable representation of tool calls.
 
 ### CommandRecord Fields
 
@@ -491,7 +450,9 @@ If no runnable work remains, the runtime must also set `session.wait`.
 | --- | --- |
 | `id` | Stable command handle. |
 | `turnId` | Links the command to the triggering request. |
-| `threadId` | Links the command to the visible work item it belongs to. |
+| `surfacePiSessionId` | Identifies which interactive surface executed the command. |
+| `threadId` | Links the command to the delegated thread when relevant. |
+| `workflowRunId` | Links the command to the owning workflow run when relevant. |
 | `parentCommandId` | Represents nested command structure. |
 | `toolName` | Names the tool that was called. |
 | `executor` | Identifies which runtime component executed the command. |
@@ -500,7 +461,7 @@ If no runnable work remains, the runtime must also set `session.wait`.
 | `attempts` | Records retry count without requiring a separate attempt table in the first slice. |
 | `title` | Compact human-readable label. |
 | `summary` | Compact durable explanation of the command's purpose or outcome. |
-| `facts` | Stores normalized tool-specific facts used for parent rollups and inspector drill-down without depending on raw payloads or transcript replay. |
+| `facts` | Stores normalized tool-specific facts used for rollups and drill-down. |
 | `error` | Stores terminal failure text when needed. |
 | `startedAt` | Enables ordering and duration reasoning. |
 | `updatedAt` | Enables recency-based selectors. |
@@ -517,24 +478,19 @@ The adopted visibility levels are:
 Use them this way:
 
 - low-level repo or web reads inside `execute_typescript` are usually `trace`
-- material writes, artifact creation, and failed execs should usually roll up as `summary` facts under the parent `execute_typescript` command
-- generated artifacts or meaningful intermediate outputs may be `summary`
-- workflow, verification, and wait commands are normally `surface`
-- child `api.*` commands remain nested detail by default and do not become separate top-level session or sidebar objects unless a higher-level parent rollup surfaces the outcome
-
-This lets the system record everything durably without turning every file read into a top-level UI object.
+- material writes, artifact creation, and failed execs usually roll up as `summary`
+- `thread.start`, `workflow.start`, `workflow.resume`, and `wait` are normally `surface`
+- child `api.*` commands remain nested detail by default
 
 ### CommandRecord Executor
 
 The adopted executor labels are:
 
 - `orchestrator`
+- `handler`
 - `execute_typescript`
 - `runtime`
 - `smithers`
-- `verification`
-
-These exist so ownership and debugging are explicit.
 
 ### CommandRecord Status
 
@@ -549,67 +505,63 @@ The adopted statuses are:
 
 ### CommandRecord Retry Policy
 
-Retries are handler policy, not model improvisation.
+Retries are handler or bridge policy, not model improvisation.
 
 The first slice does not introduce a first-class `command_attempt` table.
 
 Instead:
 
 - the command record persists `attempts`
-- lifecycle events should capture retries when they matter
+- lifecycle events capture retries when they matter
 - a later slice may split retries into separate attempt records if the product truly needs that detail
 
 ## Episode Model
-
-Episodes are the durable semantic outputs reused by the orchestrator and shown to the user.
 
 ### Episode Fields
 
 | Field | Why it exists |
 | --- | --- |
 | `id` | Stable episode handle. |
-| `threadId` | Links the episode to the work item that produced it. |
+| `threadId` | Links the episode to the completed handler thread that produced it. `null` is reserved for substantive orchestrator-local work if needed later. |
 | `sourceCommandId` | Links the episode to the most relevant command when that linkage matters. |
-| `kind` | States what sort of outcome the episode represents. |
 | `title` | Compact label for lists and cards. |
 | `summary` | Short durable digest. |
 | `body` | The reusable semantic content. |
-| `artifactIds` | Links durable output files and logs. |
 | `createdAt` | Orders the episode in the session lifecycle. |
 
-### Episode Kind Meaning
+### Episode Meaning
 
-The adopted kinds are:
+Episodes are intentionally simple.
 
-- `analysis`
-- `change`
-- `verification`
-- `workflow`
-- `clarification`
+They are not the main machine-readable routing contract.
+
+The machine-readable routing and lifecycle contract belongs in:
+
+- thread status
+- thread wait state
+- workflow-run state
+- command facts
+
+The episode is the normal semantic handoff back to the orchestrator.
 
 ## Verification Model
-
-Verifications are first-class records because verification changes routing and next actions.
 
 ### Verification Fields
 
 | Field | Why it exists |
 | --- | --- |
 | `id` | Stable verification handle. |
-| `threadId` | Links the verification to the visible work item that owns it. |
-| `commandId` | Links the record to the `verification.run` command that produced it. |
+| `threadId` | Links the verification to the handler thread that owns it. |
+| `workflowRunId` | Links the verification to the workflow run that produced it. |
 | `kind` | Identifies the verification type. |
 | `status` | Captures pass, fail, or cancelled outcome. |
 | `summary` | Gives the orchestrator and UI a concise outcome summary. |
-| `command` | Optionally stores the executed command for rerun and auditability. |
 | `startedAt` | Records start time. |
 | `finishedAt` | Records finish time. |
 
-### Verification Kind
-
 Verification kind is intentionally open-ended.
 
-The built-in defaults are:
+Built-in defaults may include:
 
 - `build`
 - `test`
@@ -617,55 +569,15 @@ The built-in defaults are:
 - `integration`
 - `manual`
 
-Any string is allowed because real repositories often have domain-specific checks.
-
-## Workflow Record Model
-
-Workflow records are top-level `svvy` records for delegated Smithers runs.
-
-They are not copies of Smithers internals.
-
-### Workflow Fields
-
-| Field | Why it exists |
-| --- | --- |
-| `id` | Stable local handle. |
-| `threadId` | Links the workflow record to its workflow thread. |
-| `commandId` | Links the record to the `workflow.start` or `workflow.resume` command that created or resumed it. |
-| `smithersRunId` | Canonical link back to Smithers. |
-| `workflowName` | Product-visible identifier of the workflow type. |
-| `status` | Current top-level workflow status. |
-| `summary` | Short top-level summary of the workflow state. |
-| `startedAt` | Start time of the workflow record. |
-| `updatedAt` | Most recent state transition time. |
-| `finishedAt` | Terminal completion, failure, or cancellation time. |
-
-### Workflow Status Semantics
-
-Use workflow status this way:
-
-- `running` while the delegated run is alive and making progress
-- `waiting` only when the delegated run itself reaches a durable pause condition
-- `completed`, `failed`, or `cancelled` only when the delegated run reaches a terminal outcome
-
-Do not use top-level workflow status to represent every internal milestone join or child wait. That detail remains inside Smithers unless `svvy` truly needs a top-level summary of it.
-
 ## Artifact Model
-
-Artifacts are durable file-backed outputs.
-
-Most artifacts are attached to episodes.
-
-Some artifacts, such as submitted `execute_typescript` snippets and compile diagnostics, originate at command scope first and may later be attached to an episode.
-
-Every submitted `execute_typescript` snippet is also a file-backed artifact, including failed attempts.
 
 ### Artifact Fields
 
 | Field | Why it exists |
 | --- | --- |
 | `id` | Stable artifact handle. |
-| `episodeId` | Optionally links the artifact to the episode that reuses or surfaces it. |
+| `threadId` | Links the artifact to the owning thread when relevant. |
+| `workflowRunId` | Links the artifact to the workflow run that produced it when relevant. |
 | `sourceCommandId` | Links the artifact back to the command attempt that produced it. |
 | `kind` | Distinguishes text, log, json, and file outputs. |
 | `name` | Human-readable artifact label. |
@@ -673,13 +585,9 @@ Every submitted `execute_typescript` snippet is also a file-backed artifact, inc
 | `content` | Optional inline preview content for small artifacts and the POC. |
 | `createdAt` | Orders artifact creation. |
 
-The real implementation must keep SQLite metadata and path indexing for every snippet artifact so the runtime and UI can resolve source, preview, and drill-down information without transcript replay.
+Every submitted `execute_typescript` snippet must land in this table as a file-backed artifact before execution begins.
 
 ## Event Model
-
-The event log is a small append-only lifecycle ledger.
-
-Current state records remain canonical.
 
 ### Event Fields
 
@@ -702,14 +610,14 @@ The precise list may grow, but the first adopted set is:
 - `thread.created`
 - `thread.updated`
 - `thread.finished`
+- `workflowRun.created`
+- `workflowRun.updated`
 - `command.requested`
 - `command.started`
 - `command.waiting`
 - `command.finished`
 - `episode.created`
 - `verification.recorded`
-- `workflow.recorded`
-- `workflow.updated`
 - `artifact.created`
 - `session.wait.started`
 - `session.wait.cleared`
@@ -718,399 +626,126 @@ The precise list may grow, but the first adopted set is:
 
 Waiting is a shared lifecycle concept, not a separate execution subsystem.
 
-### Internal Dependency Waiting
+### Thread Wait
 
-Use thread dependency waiting when work is blocked only on another visible work item:
+Use `thread.wait` when a handler thread needs:
 
-- set `thread.status = "waiting"`
-- populate `thread.dependsOnThreadIds`
-- leave `thread.wait = null`
-- do not set `session.wait`
+- user clarification
+- external input
 
-### User Or External Waiting
-
-Use user or external waiting when a real prerequisite outside the active runnable frontier exists:
+Rules:
 
 - set `thread.status = "waiting"`
 - populate `thread.wait`
-- clear `thread.dependsOnThreadIds`
-- set `session.wait` only when no runnable work remains
+- do not create a wait episode
+- clear `thread.wait` when runnable work resumes in that thread
 
-### Session Wait Rule
+### Session Wait
 
-`session.wait` must only exist when:
+`session.wait` exists only when the whole active frontier is blocked.
 
-- some thread is waiting on `thread.wait`
-- there are no runnable threads left
+Use it when:
+
+- some interactive surface is waiting on user or external input
+- there are no runnable surfaces left in the session
+
+`session.wait` must point back to the owner:
+
+- the orchestrator surface
+- or one handler thread
 
 ## Derived Read Model
 
-The POC deliberately distinguishes canonical stored facts from derived selectors.
+The stored facts remain canonical.
 
-### Session View
+Selectors should derive the main session view and sidebar data from those facts.
 
-The adopted session summary selector returns:
+### Session Summary
+
+The adopted session summary selector should return:
 
 - `title`
 - `sessionStatus`
 - `wait`
 - `counts`
-- `threadIdsByStatus`
 - `threadIds`
-- parent command rollups for `execute_typescript` and native control tools
+- `latestEpisodePreview`
+- `latestWorkflowRunSummary`
 
-### Derived Fields
+### Session Status Rules
 
-The following are derived, not stored:
-
-- `sessionStatus`
-- counts
-- thread status buckets
-- thread ordering
-- parent command summary rollups
-
-### `sessionStatus` Derivation
-
-The current derived rule is:
+The summary selector should derive session status in this order:
 
 1. if `session.wait` exists, the session status is `waiting`
 2. else if any thread is `running`, the session status is `running`
-3. else if any thread is `waiting` with non-empty `dependsOnThreadIds`, the session status is `running`
-4. else if the latest updated turn or thread is `failed`, the session status is `error`
-5. otherwise the session status is `idle`
+3. else if the latest updated thread is `failed`, the session status is `error`
+4. else the session status is `idle`
 
-### Thread Surface Rule
+### Main Session View
 
-The main session UI should surface all threads and primarily read:
+The main session UI should primarily read:
 
-- threads
-- episodes
-- workflow records
-- verification records
+- handler threads
+- thread status and wait state
+- latest workflow-run state per thread
+- terminal episodes
 - artifacts
-- session wait state
-- parent `execute_typescript` command records and their synthesized rollups
-- native control-tool command records
-- child `api.*` command records only in nested drill-down views by default
+- verification summaries
 
-Command records should be exposed with their `visibility` respected:
+Transcript replay is not an allowed mechanism for these product surfaces once structured writes exist.
 
-- `surface` command records may become visible cards or primary timeline items
-- `summary` command records may appear in summaries or inspectors, and child summaries should stay nested under their parent `execute_typescript` command by default
-- `trace` command records should remain drill-down detail by default
-- child `api.*` command records should stay nested under their parent `execute_typescript` command by default
+## SQLite Notes
 
-## Real Storage Shape
+The real implementation should store session-scoped rows for:
 
-The POC uses one JSON file because that is the smallest executable proof.
-
-The real implementation should use one workspace-scoped SQLite database plus a dedicated workspace artifact directory.
-
-### Why Workspace-Scoped SQLite
-
-- the product already supports multiple sessions inside one workspace
-- SQLite is a good fit for a small local durable product overlay
-- the read patterns are query-oriented rather than transcript-oriented
-- the state should survive restarts without replaying chat history
-- artifact lookup should be path-indexed from SQLite rows into the workspace artifact directory
-
-### Session Scoping Rule
-
-The POC models one session at a time.
-
-The real database must be multi-session aware.
-
-That means the real schema must scope turn, thread, command, episode, verification, workflow, artifact, and event rows by `session_id`, even though the POC omits repeated `session_id` fields for clarity.
-
-### Recommended Tables
-
-The real first-slice schema should be roughly:
-
-- `workspace`
-- `session`
 - `turn`
 - `thread`
+- `workflow_run`
 - `command`
 - `episode`
 - `verification`
-- `workflow`
 - `artifact`
-- `domain_event`
+- `event`
 
-### Recommended Responsibility Of `session`
+Recommended implementation rules:
 
-The `session` table should store:
+- every row should carry `session_id`
+- `thread.surface_pi_session_id` should be unique
+- `workflow_run.smithers_run_id` should be unique
+- `episode.thread_id` should be unique for handler-thread terminal episodes in the first slice
+- artifact tables should preserve path indexes for file-backed lookups
 
-- `svvy` session identity
-- mirrored `pi` session identity
-- mirrored session title
-- mirrored provider
-- mirrored model
-- mirrored reasoning effort
-- mirrored message count
-- mirrored `pi` created time
-- mirrored `pi` updated time
-- nullable wait thread id
-- nullable wait kind
-- nullable wait reason
-- nullable wait resume condition
-- nullable wait since time
+## Responsibility Split
 
-The product-facing session status, counts, and session summaries should be derived at read time from structured records and artifact metadata.
+Write responsibility is:
 
-### Recommended Responsibility Of `turn`
+- ordinary orchestrator-turn and root command writes belong to the `svvy` runtime
+- handler-thread turn and command writes belong to the `svvy` runtime over pi thread surfaces
+- workflow-run writes belong to the Smithers bridge
+- verification writes belong to the runtime or bridge that interprets verification-shaped workflow outputs
+- wait writes belong to the `svvy` runtime
 
-The `turn` table should store:
+No runtime component may synthesize thread, workflow-run, verification, or wait facts from transcript prose after the fact.
 
-- turn identity
-- parent `session_id`
-- request summary
-- status
-- timestamps
+## Invariants
 
-### Recommended Responsibility Of `thread`
+The implementation must enforce these invariants:
 
-The `thread` table should store:
-
-- thread identity
-- parent `session_id`
-- parent `turn_id`
-- nullable `parent_thread_id`
-- thread kind
-- title
-- objective
-- status
-- dependency thread ids
-- nullable wait kind
-- nullable wait reason
-- nullable wait resume condition
-- nullable wait since time
-- timestamps
-
-### Recommended Responsibility Of `command`
-
-The `command` table should store:
-
-- command identity
-- parent `session_id`
-- parent `turn_id`
-- parent `thread_id`
-- nullable `parent_command_id`
-- tool name
-- executor
-- visibility
-- status
-- attempts
-- title
-- summary
-- normalized facts payload
-- nullable error
-- timestamps
-
-### Recommended Responsibility Of `episode`
-
-The `episode` table should store:
-
-- episode identity
-- parent `session_id`
-- parent `thread_id`
-- nullable source `command_id`
-- kind
-- title
-- summary
-- body
-- timestamps
-
-### Recommended Responsibility Of `verification`
-
-The `verification` table should store:
-
-- verification identity
-- parent `session_id`
-- parent `thread_id`
-- source `command_id`
-- kind
-- status
-- summary
-- optional command
-- timestamps
-
-### Recommended Responsibility Of `workflow`
-
-The `workflow` table should store:
-
-- workflow identity
-- parent `session_id`
-- parent `thread_id`
-- source `command_id`
-- Smithers run id
-- workflow name
-- status
-- summary
-- timestamps
-
-`thread_id` should be unique in this table for the first slice because each workflow thread should own exactly one top-level workflow record.
-
-### Recommended Responsibility Of `artifact`
-
-The `artifact` table should store:
-
-- artifact identity
-- parent `session_id`
-- nullable parent `episode_id`
-- optional source `command_id`
-- kind
-- name
-- workspace artifact path
-- metadata and path-index fields for SQLite lookup
-- optional inline preview content for small artifacts
-- timestamps
-
-Every submitted `execute_typescript` snippet should land in this table as a file-backed artifact in the dedicated workspace artifact directory before execution begins. Those snippet artifacts should link directly to their source command, and they may also be attached to a later episode when the runtime produces a meaningful semantic output.
-
-### Recommended Responsibility Of `domain_event`
-
-The `domain_event` table should store:
-
-- event identity
-- parent `session_id`
-- subject kind
-- subject id
-- event kind
-- timestamp
-- optional serialized payload
-
-It should stay intentionally small.
-
-## Write Responsibilities
-
-The agent-facing tool surface is:
-
-- `execute_typescript`
-- `workflow.start`
-- `workflow.resume`
-- `verification.run`
-- `wait`
-
-Those tools request actions.
-
-They are not arbitrary state-write tools.
-
-### Runtime-Side Write API
-
-The runtime and bridges should expose internal operations roughly equivalent to:
-
-- `openTurn`
-- `finishTurn`
-- `createThread`
-- `updateThread`
-- `setThreadDependencies`
-- `setThreadWait`
-- `clearThreadWait`
-- `setSessionWait`
-- `clearSessionWait`
-- `createCommand`
-- `startCommand`
-- `finishCommand`
-- `createEpisode`
-- `createArtifact`
-- `recordVerification`
-- `recordWorkflow`
-- `updateWorkflow`
-
-The exact method names may change. The ownership boundaries should not.
-
-### Write Ownership Rules
-
-- ordinary task-thread and generic command writes belong to the `svvy` runtime
-- workflow thread lifecycle and workflow record writes belong to the Smithers bridge
-- verification thread lifecycle and verification record writes belong to the verification bridge
-- session wait writes belong to the `svvy` runtime
-- no runtime component may synthesize verification, workflow, or wait facts from transcript prose after the fact
-
-### Write-Side Rules
-
-- every tool call must create a command record
-- top-level `execute_typescript` calls must create parent command records
-- nested capability calls inside `execute_typescript` must create child command records with durable trace facts
-- workflow, verification, and wait remain native control-tool records and must not be modeled as nested `api.*` calls
-- every `execute_typescript` attempt must persist its submitted snippet as a file-backed artifact before execution
-- every submitted snippet must be indexed in SQLite by artifact path and metadata
-- normalized child-command facts must be stored so parent read models can synthesize rollups without transcript replay
-- large raw outputs that need durable retention should be written as artifacts instead of inflated command facts
-- compile or typecheck diagnostics must be written as structured facts and invalid snippets must not run
-- `trace` command records must still be durable even if they are not promoted into primary UI surfaces
-- a workflow record must only be created from a real Smithers run with a real `smithersRunId`
-- a verification record must only be created from a real verification outcome
-- a thread may depend on other threads or carry a user or external wait, but it must not carry both at once
+- every tool call creates exactly one command record
+- a handler thread owns exactly one backing `surfacePiSessionId`
+- a thread may have many workflow runs over time
+- a handler thread may wait and resume many times
+- a handler thread produces at most one final terminal episode
+- a thread may be waiting only on user or external input, not on a fake wait episode
 - `session.wait` must be cleared when runnable work exists again
 - a turn must end in exactly one of: `completed`, `failed`, or `waiting`
-- handlers own retry policy; command records should update `attempts` accordingly
-- structured writes must come from explicit runtime or bridge events, not prompt text, assistant prose, or transcript heuristics
 
-## Synchronization With `pi`
+## Non-Goals
 
-`pi` remains canonical for transcript history.
+This spec does not attempt to:
 
-Structured state should not depend on transcript replay once structured writes exist.
-
-Transcript replay is not an allowed mechanism for session-summary, navigation, command-state, verification-state, workflow-state, or wait-state updates once structured writes exist for those surfaces. Session summaries and navigation read models must instead be built from structured records, selectors, and artifact metadata.
-
-The mirrored `pi` metadata exists for product querying convenience only.
-
-It does not replace `pi` as the transcript substrate.
-
-## Synchronization With Smithers
-
-Smithers remains canonical for workflow internals.
-
-Structured state should only store the top-level workflow record needed by the top-level `svvy` product model.
-
-That means:
-
-- keep the top-level `smithersRunId`
-- keep top-level workflow status and summary
-- do not copy Smithers node graphs or attempt details into `svvy` structured state
-
-Workflow records must originate from actual Smithers lifecycle events rather than keyword inference or synthetic placeholder ids.
-
-## Scope Boundaries
-
-### Diff Tracking
-
-Diff tracking requires its own model for:
-
-- whole-session diffs
-- per-thread diffs
-
-That model is outside the scope of this spec.
-
-### Transcript Migration
-
-Transcript-only backfill into this structured model is outside the scope of this spec.
-
-### Full Workflow Internals
-
-Smithers node graphs, retry branches, and deep internal workflow provenance are outside the scope of this spec unless a later product requirement proves they belong in `svvy` state rather than only in Smithers inspection surfaces.
-
-## Rollout Guidance
-
-The rollout should be:
-
-1. treat the POC as the executable semantic reference
-2. implement the SQLite schema that represents the same facts relationally
-3. wire ordinary generic work through command recording around `execute_typescript`
-4. wire workflow, verification, and wait handlers to the same command model
-5. switch UI selectors to structured reads where available
-6. handle diff tracking and deeper artifact or workflow provenance as separate design work
-
-When diff tracking lands, it should support both thread-level and session-global views derived from durable `api.*` write activity and repository state, rather than from transcript parsing.
-
-## Sources
-
-### Local Sources
-
-- [PRD](../prd.md)
-- [Execution Model](../execution-model.md)
-- [Product Features](../features.ts)
-- [Structured Session State POC](../pocs/structured-session-state.poc.ts)
+- copy full Smithers node internals into `svvy`
+- make the episode schema carry all machine-readable routing state
+- flatten handler-thread and workflow-run state into one record type
+- rely on transcript replay for session summary, navigation, or wait state
+- define the exact final desktop UI layout

@@ -27,10 +27,30 @@
   - every time a piece of work in a session is done and orchestrator considers we run CI workflow, it takes a jj snapshot and executes the CI on jjhub/codeplane
   - we don't git commit anymore (or maybe git mode/automatic—jj—mode) where orchestrator decides when to snapshot and push to run ci in cloud
 
-- need to figure out a way to nail observability, as in having a good idea of what is happening inside a session with a super high-level overview; both for what subagents/workflows are running, what context made in into which agent, and what is the overall status
+- need to figure out a way to nail observability, as in having a good idea of what is happening inside a session with a super high-level overview; both for what handler threads and workflow runs are active, what context made it into which worker, and what is the overall status
   - maybe a good starting point is to run a small model alongside the orchestrator visiting the transcript/session state at frequent intervals and appending a one-sentence high-level overview
   - show list of files read and websites visited for a session; basically everything that made it into the context
 
 - write javascript tools api in Effect internally
 
 - use jj instead of git inside api.*
+
+- handler-thread context mode needs an explicit design pass:
+  - maybe a handler thread can be spawned either with fresh context (only the orchestrator handoff) or full context (a short-lived fork of the current session context/history)
+  - this might be useful when a worker needs broader discussion history or shared assumptions instead of a tightly scoped handoff
+  - need to decide whether this is actually worth the extra context cost and ambiguity
+  - if we keep it, the orchestrator needs a clear policy for when to choose fresh-context versus full-context delegation
+
+- self-improving worker recovery idea:
+  - if the orchestrator judges an episode as suspicious, low-confidence, inconsistent, or otherwise weird, it could proactively spawn a reviewer workflow
+  - that reviewer would inspect the prior worker's transcript/artifacts/outputs, explain what likely went wrong, and suggest escalation to the user if it judges it is/might be an upstream issue
+  - this could become a useful recovery pattern instead of treating every bad worker result as a dead end; basically agents handle suspected bugs -> suggesting an issue to open on github
+
+- workflow reuse capture:
+  - one-off authored workflows might later prove valuable enough to keep
+  - a useful product path could be a "save as template" action from a workflow surface
+  - that flow could clean up the workflow for reuse, decide whether a preset also makes sense, and save the result as a reusable template or preset
+
+- workflow-template-specific UI:
+  - some workflow templates may justify specialized UI treatment instead of a generic workflow card
+  - verification is the obvious first example because build/test/lint state often wants purpose-built display and progress semantics
