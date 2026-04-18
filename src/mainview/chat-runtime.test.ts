@@ -13,6 +13,8 @@ import type {
   PromptTarget,
   SessionMutationResponse,
   WorkspaceCommandInspector,
+  WorkspaceHandlerThreadInspector,
+  WorkspaceHandlerThreadSummary,
   WorkspaceSessionSummary,
 } from "./chat-rpc";
 import type { PromptHistoryEntry } from "./prompt-history";
@@ -194,6 +196,83 @@ function createCommandInspector(
   };
 }
 
+function createHandlerThreadSummary(threadId = "thread-1"): WorkspaceHandlerThreadSummary {
+  return {
+    threadId,
+    surfaceSessionId: `thread-session-${threadId}`,
+    title: "Parser fix thread",
+    objective: "Patch the parser bug and add regression coverage.",
+    status: "completed",
+    wait: null,
+    startedAt: "2026-04-10T10:00:00.000Z",
+    updatedAt: "2026-04-10T10:05:00.000Z",
+    finishedAt: "2026-04-10T10:05:00.000Z",
+    commandCount: 1,
+    workflowRunCount: 1,
+    episodeCount: 1,
+    artifactCount: 1,
+    verificationCount: 1,
+    latestWorkflowRun: {
+      workflowRunId: "workflow-1",
+      workflowName: "verification_run",
+      status: "completed",
+      summary: "Verification passed.",
+      updatedAt: "2026-04-10T10:04:30.000Z",
+    },
+    latestEpisode: {
+      episodeId: "episode-1",
+      kind: "change",
+      title: "Latest handoff",
+      summary: "Patched the parser transitions and added regression coverage.",
+      createdAt: "2026-04-10T10:05:00.000Z",
+    },
+  };
+}
+
+function createHandlerThreadInspector(threadId = "thread-1"): WorkspaceHandlerThreadInspector {
+  const summary = createHandlerThreadSummary(threadId);
+  return {
+    ...summary,
+    commandRollups: [
+      {
+        commandId: "command-77",
+        threadId,
+        workflowRunId: null,
+        toolName: "execute_typescript",
+        visibility: "summary",
+        status: "succeeded",
+        title: "Patch parser transitions",
+        summary: "Updated parser transitions and added regression coverage.",
+        childCount: 1,
+        summaryChildCount: 1,
+        traceChildCount: 0,
+        summaryChildren: [
+          {
+            commandId: "command-78",
+            toolName: "artifact.writeText",
+            status: "succeeded",
+            title: "Write parser test",
+            summary: "Created parser regression test coverage.",
+            error: null,
+          },
+        ],
+        updatedAt: "2026-04-10T10:04:00.000Z",
+      },
+    ],
+    workflowRuns: [summary.latestWorkflowRun!],
+    episodes: [summary.latestEpisode!],
+    artifacts: [
+      {
+        artifactId: "artifact-1",
+        kind: "file",
+        name: "parser-regression.test.ts",
+        path: "/tmp/svvy/.svvy/artifacts/parser-regression.test.ts",
+        createdAt: "2026-04-10T10:03:30.000Z",
+      },
+    ],
+  };
+}
+
 function createActiveSession(
   id: string,
   title: string,
@@ -243,6 +322,8 @@ function createFakeRpc(
   options: {
     metadataOnlyListSessions?: boolean;
     commandInspector?: WorkspaceCommandInspector;
+    handlerThreads?: WorkspaceHandlerThreadSummary[];
+    handlerThreadInspector?: WorkspaceHandlerThreadInspector;
   } = {},
 ): {
   client: ChatRuntimeRpcClient;
@@ -254,6 +335,8 @@ function createFakeRpc(
     getActiveSession: number;
     getActiveSessionSummary: number;
     getCommandInspector: number;
+    listHandlerThreads: number;
+    getHandlerThreadInspector: number;
   };
 } {
   const listeners = new Set<
@@ -271,6 +354,8 @@ function createFakeRpc(
     getActiveSession: 0,
     getActiveSessionSummary: 0,
     getCommandInspector: 0,
+    listHandlerThreads: 0,
+    getHandlerThreadInspector: 0,
   };
 
   const listSessions = () => ({
@@ -316,6 +401,18 @@ function createFakeRpc(
       getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
         requestCounts.getCommandInspector += 1;
         return structuredClone(options.commandInspector ?? createCommandInspector(commandId));
+      },
+      listHandlerThreads: async ({ sessionId }: { sessionId: string }) => {
+        requestCounts.listHandlerThreads += 1;
+        return structuredClone(
+          options.handlerThreads ?? [createHandlerThreadSummary(`thread-for-${sessionId}`)],
+        );
+      },
+      getHandlerThreadInspector: async ({ threadId }: { sessionId: string; threadId: string }) => {
+        requestCounts.getHandlerThreadInspector += 1;
+        return structuredClone(
+          options.handlerThreadInspector ?? createHandlerThreadInspector(threadId),
+        );
       },
       createSession: async ({ title }: { title?: string }) => {
         const id = `session-${sessionsById.size + 1}`;
@@ -447,6 +544,8 @@ function createFakeRpcWithToolUse(
     getActiveSession: number;
     getActiveSessionSummary: number;
     getCommandInspector: number;
+    listHandlerThreads: number;
+    getHandlerThreadInspector: number;
   };
 } {
   const listeners = new Set<
@@ -464,6 +563,8 @@ function createFakeRpcWithToolUse(
     getActiveSession: 0,
     getActiveSessionSummary: 0,
     getCommandInspector: 0,
+    listHandlerThreads: 0,
+    getHandlerThreadInspector: 0,
   };
 
   const client: ChatRuntimeRpcClient = {
@@ -505,6 +606,14 @@ function createFakeRpcWithToolUse(
       getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
         requestCounts.getCommandInspector += 1;
         return createCommandInspector(commandId);
+      },
+      listHandlerThreads: async () => {
+        requestCounts.listHandlerThreads += 1;
+        return [createHandlerThreadSummary()];
+      },
+      getHandlerThreadInspector: async ({ threadId }: { sessionId: string; threadId: string }) => {
+        requestCounts.getHandlerThreadInspector += 1;
+        return createHandlerThreadInspector(threadId);
       },
       createSession: async () => cloneActiveSession(session),
       openSession: async () => cloneActiveSession(session),
@@ -902,6 +1011,59 @@ describe("createChatRuntime", () => {
     const detail = await runtime.getCommandInspector("command-77");
 
     expect(requestCounts.getCommandInspector).toBe(1);
+    expect(detail).toEqual(inspector);
+
+    runtime.dispose();
+  });
+
+  it("lists handler-thread summaries for the current session", async () => {
+    const { createChatRuntime } = await import("./chat-runtime");
+    const handlerThreads = [
+      createHandlerThreadSummary("thread-123"),
+      {
+        ...createHandlerThreadSummary("thread-456"),
+        status: "waiting",
+        wait: {
+          kind: "user",
+          reason: "Need clarification before continuing.",
+          resumeWhen: "Resume when the user answers.",
+          since: "2026-04-10T10:06:00.000Z",
+        },
+      },
+    ] satisfies WorkspaceHandlerThreadSummary[];
+    const { client, requestCounts } = createFakeRpc(
+      [createActiveSession("session-1", "Threads", [userMessage("inspect threads")], "medium")],
+      { handlerThreads },
+    );
+
+    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
+    const summaries = await runtime.listHandlerThreads();
+
+    expect(requestCounts.listHandlerThreads).toBe(1);
+    expect(summaries).toEqual(handlerThreads);
+
+    runtime.dispose();
+  });
+
+  it("requests handler-thread inspector detail for the current session", async () => {
+    const { createChatRuntime } = await import("./chat-runtime");
+    const inspector = createHandlerThreadInspector("thread-123");
+    const { client, requestCounts } = createFakeRpc(
+      [
+        createActiveSession(
+          "session-1",
+          "Thread Inspector",
+          [userMessage("inspect thread")],
+          "medium",
+        ),
+      ],
+      { handlerThreadInspector: inspector },
+    );
+
+    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
+    const detail = await runtime.getHandlerThreadInspector("thread-123");
+
+    expect(requestCounts.getHandlerThreadInspector).toBe(1);
     expect(detail).toEqual(inspector);
 
     runtime.dispose();

@@ -23,6 +23,8 @@
     WorkspaceCommandArtifactLink,
     WorkspaceCommandInspector,
     WorkspaceCommandRollup,
+    WorkspaceHandlerThreadInspector,
+    WorkspaceHandlerThreadSummary,
     WorkspaceSessionSummary,
   } from "./chat-rpc";
   import type { PromptHistoryEntry } from "./prompt-history";
@@ -91,12 +93,22 @@
   let commandInspectorError = $state<string | undefined>(undefined);
   let commandInspectorLoading = $state(false);
   let commandInspectorCommandId = $state<string | null>(null);
+  let handlerThreads = $state<WorkspaceHandlerThreadSummary[]>([]);
+  let handlerThreadsLoading = $state(false);
+  let handlerThreadsError = $state<string | undefined>(undefined);
+  let showThreadInspector = $state(false);
+  let threadInspector = $state<WorkspaceHandlerThreadInspector | null>(null);
+  let threadInspectorError = $state<string | undefined>(undefined);
+  let threadInspectorLoading = $state(false);
+  let threadInspectorThreadId = $state<string | null>(null);
 
   let sidebarResizePointerId: number | null = null;
   let sidebarResizeOriginX = 0;
   let sidebarResizeOriginWidth = DEFAULT_SIDEBAR_WIDTH;
   let copyTranscriptResetTimer: ReturnType<typeof setTimeout> | null = null;
   let commandInspectorSessionId: string | null = null;
+  let handlerThreadLoadToken = 0;
+  let threadInspectorSessionId: string | null = null;
 
   const conversation = $derived(projectConversation(messages));
   const conversationSummary = $derived(projectConversationSummary(conversation, streamMessage));
@@ -150,6 +162,10 @@
     }
   });
   const commandInspectorSections = $derived(getCommandInspectorSections(commandInspector));
+  const showHandlerThreadPanel = $derived(
+    currentSurface?.surface === "orchestrator" &&
+      (handlerThreadsLoading || !!handlerThreadsError || handlerThreads.length > 0),
+  );
 
   function clearCopyTranscriptResetTimer() {
     if (!copyTranscriptResetTimer) return;
@@ -452,6 +468,15 @@
     commandInspectorSessionId = null;
   }
 
+  function closeThreadInspector() {
+    showThreadInspector = false;
+    threadInspector = null;
+    threadInspectorError = undefined;
+    threadInspectorLoading = false;
+    threadInspectorThreadId = null;
+    threadInspectorSessionId = null;
+  }
+
   function getCommandStatusLabel(
     status: WorkspaceCommandRollup["status"] | WorkspaceCommandInspector["status"],
   ): string {
@@ -462,6 +487,58 @@
     status: WorkspaceCommandRollup["status"] | WorkspaceCommandInspector["status"],
   ): string {
     return getWorkspaceCommandStatusPresentation(status).tone;
+  }
+
+  function getThreadStatusLabel(
+    status: WorkspaceHandlerThreadSummary["status"] | WorkspaceHandlerThreadInspector["status"],
+  ): string {
+    switch (status) {
+      case "running":
+        return "Running";
+      case "waiting":
+        return "Waiting";
+      case "completed":
+        return "Completed";
+      case "failed":
+        return "Failed";
+      default:
+        return "Cancelled";
+    }
+  }
+
+  function getThreadStatusTone(
+    status: WorkspaceHandlerThreadSummary["status"] | WorkspaceHandlerThreadInspector["status"],
+  ): "neutral" | "info" | "success" | "warning" | "danger" {
+    switch (status) {
+      case "running":
+        return "info";
+      case "waiting":
+        return "warning";
+      case "completed":
+        return "success";
+      case "failed":
+        return "danger";
+      default:
+        return "neutral";
+    }
+  }
+
+  function getHandlerThreadPreview(
+    thread: WorkspaceHandlerThreadSummary | WorkspaceHandlerThreadInspector,
+  ): string {
+    if (thread.wait) {
+      return thread.wait.reason;
+    }
+
+    if (thread.latestEpisode) {
+      return thread.latestEpisode.summary;
+    }
+
+    if (thread.latestWorkflowRun) {
+      return thread.latestWorkflowRun.summary;
+    }
+
+    return thread.objective;
   }
 
   function formatCommandFacts(facts: Record<string, unknown> | null | undefined): string | null {
@@ -510,6 +587,58 @@
     }
   }
 
+  async function handleOpenHandlerThread(
+    thread: Pick<WorkspaceHandlerThreadSummary, "threadId" | "surfaceSessionId">,
+  ) {
+    closeThreadInspector();
+    await runSessionMutation(() =>
+      runtime.openSurface({
+        surface: "thread",
+        surfaceSessionId: thread.surfaceSessionId,
+        threadId: thread.threadId,
+      }),
+    );
+  }
+
+  async function handleInspectHandlerThread(thread: WorkspaceHandlerThreadSummary) {
+    const session = currentSession;
+    if (!session) {
+      return;
+    }
+
+    showThreadInspector = true;
+    threadInspector = null;
+    threadInspectorError = undefined;
+    threadInspectorLoading = true;
+    threadInspectorThreadId = thread.threadId;
+    threadInspectorSessionId = session.id;
+
+    try {
+      const inspector = await runtime.getHandlerThreadInspector(thread.threadId, session.id);
+      if (threadInspectorThreadId !== thread.threadId || threadInspectorSessionId !== session.id) {
+        return;
+      }
+
+      threadInspector = inspector;
+    } catch (error) {
+      if (threadInspectorThreadId !== thread.threadId || threadInspectorSessionId !== session.id) {
+        return;
+      }
+
+      threadInspectorError =
+        error instanceof Error ? error.message : "Unable to inspect this handler thread.";
+    } finally {
+      if (threadInspectorThreadId === thread.threadId && threadInspectorSessionId === session.id) {
+        threadInspectorLoading = false;
+      }
+    }
+  }
+
+  async function handleInspectThreadCommand(commandId: string) {
+    closeThreadInspector();
+    await handleInspectCommand(commandId);
+  }
+
   $effect(() => {
     const sessionId = currentSession?.id ?? null;
     if (!commandInspectorSessionId || !sessionId || sessionId === commandInspectorSessionId) {
@@ -517,6 +646,53 @@
     }
 
     closeCommandInspector();
+  });
+
+  $effect(() => {
+    const sessionId = currentSession?.id ?? null;
+    if (!threadInspectorSessionId || !sessionId || sessionId === threadInspectorSessionId) {
+      return;
+    }
+
+    closeThreadInspector();
+  });
+
+  $effect(() => {
+    const session = currentSession;
+    const surface = currentSurface?.surface;
+    if (!session || surface !== "orchestrator") {
+      handlerThreads = [];
+      handlerThreadsError = undefined;
+      handlerThreadsLoading = false;
+      return;
+    }
+
+    const loadToken = ++handlerThreadLoadToken;
+    handlerThreadsLoading = true;
+    handlerThreadsError = undefined;
+    void runtime
+      .listHandlerThreads(session.id)
+      .then((nextThreads) => {
+        if (loadToken !== handlerThreadLoadToken) {
+          return;
+        }
+
+        handlerThreads = nextThreads;
+      })
+      .catch((error) => {
+        if (loadToken !== handlerThreadLoadToken) {
+          return;
+        }
+
+        handlerThreadsError =
+          error instanceof Error ? error.message : "Unable to load delegated handler threads.";
+        handlerThreads = [];
+      })
+      .finally(() => {
+        if (loadToken === handlerThreadLoadToken) {
+          handlerThreadsLoading = false;
+        }
+      });
   });
 
   syncRuntimeState();
@@ -680,6 +856,88 @@
 
       <section class="chat-pane" id="conversation">
         <div class="chat-pane-shell">
+          {#if showHandlerThreadPanel}
+            <section class="handler-thread-panel" aria-label="Delegated handler threads">
+              <header class="handler-thread-header">
+                <div>
+                  <p class="handler-thread-eyebrow">Delegated Threads</p>
+                  <h3>
+                    {handlerThreads.length}
+                    {handlerThreads.length === 1 ? " thread" : " threads"}
+                  </h3>
+                </div>
+                <p class="handler-thread-copy">
+                  Reopen a handed-back thread for follow-up chat or inspect its durable state
+                  without routing every orchestrator turn through the full thread transcript.
+                </p>
+              </header>
+
+              {#if handlerThreadsLoading}
+                <p class="handler-thread-empty">Loading delegated thread summaries…</p>
+              {:else if handlerThreadsError}
+                <p class="handler-thread-empty error">{handlerThreadsError}</p>
+              {:else}
+                <div class="handler-thread-list">
+                  {#each handlerThreads as thread (thread.threadId)}
+                    <article class="handler-thread-card">
+                      <div class="handler-thread-card-top">
+                        <div class="handler-thread-card-copy">
+                          <strong>{thread.title}</strong>
+                          <p>{thread.objective}</p>
+                        </div>
+                        <Badge tone={getThreadStatusTone(thread.status)}>
+                          {getThreadStatusLabel(thread.status)}
+                        </Badge>
+                      </div>
+
+                      <p class="handler-thread-preview">{getHandlerThreadPreview(thread)}</p>
+
+                      <div class="handler-thread-pills">
+                        <span>
+                          {thread.workflowRunCount}
+                          {thread.workflowRunCount === 1 ? " workflow" : " workflows"}
+                        </span>
+                        <span>
+                          {thread.episodeCount}
+                          {thread.episodeCount === 1 ? " handoff" : " handoffs"}
+                        </span>
+                        <span>
+                          {thread.commandCount}
+                          {thread.commandCount === 1 ? " command" : " commands"}
+                        </span>
+                        {#if thread.verificationCount > 0}
+                          <span>
+                            {thread.verificationCount}
+                            {thread.verificationCount === 1 ? " verification" : " verifications"}
+                          </span>
+                        {/if}
+                      </div>
+
+                      <div class="handler-thread-actions">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={promptBusy || mutatingSession}
+                          onclick={() => void handleInspectHandlerThread(thread)}
+                        >
+                          Inspect
+                        </Button>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          disabled={promptBusy || mutatingSession}
+                          onclick={() => void handleOpenHandlerThread(thread)}
+                        >
+                          Open thread
+                        </Button>
+                      </div>
+                    </article>
+                  {/each}
+                </div>
+              {/if}
+            </section>
+          {/if}
+
           {#if currentCommandRollups.length > 0}
             <section class="structured-command-panel" aria-label="Structured command rollups">
               <header class="structured-command-header">
@@ -879,6 +1137,228 @@
           Delete
         </Button>
       </div>
+    </div>
+  </Dialog>
+{/if}
+
+{#if showThreadInspector}
+  <Dialog
+    eyebrow="Handler Thread"
+    title={threadInspector?.title ?? "Inspect Handler Thread"}
+    description="Inspect the delegated thread state, handoff history, workflow runs, artifacts, and command rollups without making full thread inspection the default orchestrator reconciliation path."
+    width="lg"
+    onClose={closeThreadInspector}
+  >
+    <div class="thread-inspector">
+      {#if threadInspectorLoading}
+        <p class="thread-inspector-empty">Loading delegated thread detail…</p>
+      {:else if threadInspectorError}
+        <p class="thread-inspector-empty error">{threadInspectorError}</p>
+      {:else if threadInspector}
+        <section class="thread-inspector-summary">
+          <div class="thread-inspector-summary-top">
+            <div class="thread-inspector-summary-copy">
+              <strong>{threadInspector.title}</strong>
+              <p>{threadInspector.objective}</p>
+            </div>
+            <div class="thread-inspector-summary-meta">
+              <Badge tone={getThreadStatusTone(threadInspector.status)}>
+                {getThreadStatusLabel(threadInspector.status)}
+              </Badge>
+              <span>{formatTimestamp(threadInspector.updatedAt)}</span>
+            </div>
+          </div>
+
+          <div class="thread-inspector-pills">
+            <span>
+              {threadInspector.workflowRunCount}
+              {threadInspector.workflowRunCount === 1 ? " workflow" : " workflows"}
+            </span>
+            <span>
+              {threadInspector.episodeCount}
+              {threadInspector.episodeCount === 1 ? " handoff" : " handoffs"}
+            </span>
+            <span>
+              {threadInspector.commandCount}
+              {threadInspector.commandCount === 1 ? " command" : " commands"}
+            </span>
+            {#if threadInspector.verificationCount > 0}
+              <span>
+                {threadInspector.verificationCount}
+                {threadInspector.verificationCount === 1 ? " verification" : " verifications"}
+              </span>
+            {/if}
+            <span>{threadInspector.threadId}</span>
+          </div>
+
+          {#if threadInspector.wait}
+            <p class="thread-inspector-wait">
+              Waiting on {threadInspector.wait.kind}: {threadInspector.wait.reason}
+            </p>
+          {/if}
+
+          {#if threadInspector.latestEpisode}
+            <div class="thread-inspector-highlight">
+              <span>Latest handoff</span>
+              <p>{threadInspector.latestEpisode.summary}</p>
+            </div>
+          {/if}
+
+          {#if threadInspector.latestWorkflowRun}
+            <div class="thread-inspector-highlight">
+              <span>Latest workflow</span>
+              <p>{threadInspector.latestWorkflowRun.summary}</p>
+            </div>
+          {/if}
+
+          <div class="thread-inspector-actions">
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={promptBusy || mutatingSession}
+              onclick={() => void handleOpenHandlerThread(threadInspector)}
+            >
+              Open thread
+            </Button>
+          </div>
+        </section>
+
+        {#if threadInspector.commandRollups.length > 0}
+          <section class="thread-inspector-section">
+            <header class="thread-inspector-section-header">
+              <div>
+                <h3>Command Rollups</h3>
+                <p>Inspect thread-local parent commands without flattening child steps into the main session timeline.</p>
+              </div>
+              <span>{threadInspector.commandRollups.length}</span>
+            </header>
+
+            <div class="thread-inspector-command-list">
+              {#each threadInspector.commandRollups as rollup (rollup.commandId)}
+                <article class="thread-inspector-command">
+                  <div class="thread-inspector-command-top">
+                    <div class="thread-inspector-command-copy">
+                      <strong>{rollup.title}</strong>
+                      <span>{rollup.toolName}</span>
+                    </div>
+                    <div class="thread-inspector-command-meta">
+                      <span class={`structured-command-status tone-${getCommandStatusTone(rollup.status)}`.trim()}>
+                        {getCommandStatusLabel(rollup.status)}
+                      </span>
+                      <span>{formatTimestamp(rollup.updatedAt)}</span>
+                    </div>
+                  </div>
+                  <p>{rollup.summary}</p>
+                  <div class="thread-inspector-command-footer">
+                    <span>
+                      {rollup.summaryChildCount}
+                      {rollup.summaryChildCount === 1 ? " rollup detail" : " rollup details"}
+                    </span>
+                    <span>
+                      {rollup.traceChildCount}
+                      {rollup.traceChildCount === 1 ? " trace step" : " trace steps"}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onclick={() => void handleInspectThreadCommand(rollup.commandId)}
+                    >
+                      Inspect command
+                    </Button>
+                  </div>
+                </article>
+              {/each}
+            </div>
+          </section>
+        {/if}
+
+        {#if threadInspector.workflowRuns.length > 0}
+          <section class="thread-inspector-section">
+            <header class="thread-inspector-section-header">
+              <div>
+                <h3>Workflow Runs</h3>
+                <p>Each workflow run stays attached to the supervising handler thread lifecycle.</p>
+              </div>
+              <span>{threadInspector.workflowRuns.length}</span>
+            </header>
+
+            <div class="thread-inspector-timeline">
+              {#each threadInspector.workflowRuns as workflowRun (workflowRun.workflowRunId)}
+                <article class="thread-inspector-timeline-item">
+                  <div class="thread-inspector-timeline-top">
+                    <strong>{workflowRun.workflowName}</strong>
+                    <Badge tone={getThreadStatusTone(workflowRun.status)}>
+                      {getThreadStatusLabel(workflowRun.status)}
+                    </Badge>
+                  </div>
+                  <p>{workflowRun.summary}</p>
+                  <span>{formatTimestamp(workflowRun.updatedAt)}</span>
+                </article>
+              {/each}
+            </div>
+          </section>
+        {/if}
+
+        {#if threadInspector.episodes.length > 0}
+          <section class="thread-inspector-section">
+            <header class="thread-inspector-section-header">
+              <div>
+                <h3>Handoff History</h3>
+                <p>Earlier handoff points remain durable so follow-up work can reuse the same thread.</p>
+              </div>
+              <span>{threadInspector.episodes.length}</span>
+            </header>
+
+            <div class="thread-inspector-timeline">
+              {#each threadInspector.episodes as episode (episode.episodeId)}
+                <article class="thread-inspector-timeline-item">
+                  <div class="thread-inspector-timeline-top">
+                    <strong>{episode.title}</strong>
+                    <span>{episode.kind}</span>
+                  </div>
+                  <p>{episode.summary}</p>
+                  <span>{formatTimestamp(episode.createdAt)}</span>
+                </article>
+              {/each}
+            </div>
+          </section>
+        {/if}
+
+        {#if threadInspector.artifacts.length > 0}
+          <section class="thread-inspector-section">
+            <header class="thread-inspector-section-header">
+              <div>
+                <h3>Artifacts</h3>
+                <p>Thread-linked artifacts remain available even after the thread hands back control.</p>
+              </div>
+              <span>{threadInspector.artifacts.length}</span>
+            </header>
+
+            <div class="command-inspector-artifact-list">
+              {#each threadInspector.artifacts as artifact (artifact.artifactId)}
+                <div class="command-inspector-artifact">
+                  <div class="command-inspector-artifact-copy">
+                    <strong>{artifact.name}</strong>
+                    <span>{artifact.kind}</span>
+                    {#if artifact.path}
+                      <code>{artifact.path}</code>
+                    {/if}
+                  </div>
+                  {#if canOpenArtifactLink(artifact)}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onclick={() => handleOpenArtifact(artifact.name)}
+                    >
+                      Open
+                    </Button>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          </section>
+        {/if}
+      {/if}
     </div>
   </Dialog>
 {/if}
@@ -1251,6 +1731,7 @@
     box-shadow: var(--ui-shadow-soft);
   }
 
+  .handler-thread-panel,
   .structured-command-panel {
     display: grid;
     gap: 0.72rem;
@@ -1265,6 +1746,7 @@
       color-mix(in oklab, var(--ui-surface-subtle) 54%, transparent);
   }
 
+  .handler-thread-header,
   .structured-command-header {
     display: flex;
     align-items: flex-start;
@@ -1272,12 +1754,16 @@
     gap: 1rem;
   }
 
+  .handler-thread-header h3,
+  .handler-thread-eyebrow,
+  .handler-thread-copy,
   .structured-command-header h3,
   .structured-command-eyebrow,
   .structured-command-copy {
     margin: 0;
   }
 
+  .handler-thread-eyebrow,
   .structured-command-eyebrow {
     font-size: 0.64rem;
     font-family: var(--font-mono);
@@ -1286,6 +1772,7 @@
     color: var(--ui-text-tertiary);
   }
 
+  .handler-thread-header h3,
   .structured-command-header h3 {
     margin-top: 0.18rem;
     font-size: 0.86rem;
@@ -1294,11 +1781,29 @@
     color: var(--ui-text-primary);
   }
 
+  .handler-thread-copy,
   .structured-command-copy {
     max-width: 28rem;
     font-size: 0.72rem;
     line-height: 1.5;
     color: var(--ui-text-secondary);
+  }
+
+  .handler-thread-list {
+    display: grid;
+    gap: 0.55rem;
+    max-height: 18rem;
+    overflow: auto;
+    padding-right: 0.1rem;
+  }
+
+  .handler-thread-card {
+    display: grid;
+    gap: 0.62rem;
+    padding: 0.8rem 0.85rem;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 84%, transparent);
+    border-radius: var(--ui-radius-md);
+    background: color-mix(in oklab, var(--ui-surface-raised) 92%, transparent);
   }
 
   .structured-command-list {
@@ -1338,8 +1843,13 @@
     box-shadow: var(--ui-focus-ring);
   }
 
+  .handler-thread-card-top,
   .structured-command-card-top,
   .structured-command-card-footer,
+  .thread-inspector-summary-top,
+  .thread-inspector-command-top,
+  .thread-inspector-timeline-top,
+  .thread-inspector-section-header,
   .command-inspector-summary-top,
   .command-inspector-child-top,
   .command-inspector-artifact {
@@ -1349,7 +1859,10 @@
     gap: 0.85rem;
   }
 
+  .handler-thread-card-copy,
   .structured-command-card-copy,
+  .thread-inspector-summary-copy,
+  .thread-inspector-command-copy,
   .command-inspector-summary-copy,
   .command-inspector-child-copy,
   .command-inspector-artifact-copy {
@@ -1359,7 +1872,10 @@
     min-width: 0;
   }
 
+  .handler-thread-card-copy strong,
   .structured-command-card-copy strong,
+  .thread-inspector-summary-copy strong,
+  .thread-inspector-command-copy strong,
   .command-inspector-summary-copy strong,
   .command-inspector-child-copy strong {
     font-size: 0.8rem;
@@ -1368,7 +1884,13 @@
     color: var(--ui-text-primary);
   }
 
+  .handler-thread-card-copy p,
+  .handler-thread-preview,
   .structured-command-card-copy span,
+  .thread-inspector-summary-copy p,
+  .thread-inspector-highlight p,
+  .thread-inspector-command p,
+  .thread-inspector-timeline-item p,
   .command-inspector-summary-copy p,
   .structured-command-summary,
   .command-inspector-child-summary,
@@ -1379,7 +1901,14 @@
     color: var(--ui-text-secondary);
   }
 
+  .handler-thread-pills,
+  .handler-thread-actions,
   .structured-command-card-meta,
+  .thread-inspector-summary-meta,
+  .thread-inspector-pills,
+  .thread-inspector-actions,
+  .thread-inspector-command-meta,
+  .thread-inspector-command-footer,
   .command-inspector-summary-meta,
   .command-inspector-child-meta,
   .command-inspector-child-footer,
@@ -1420,7 +1949,36 @@
     color: var(--ui-text-primary);
   }
 
+  .handler-thread-preview,
+  .thread-inspector-highlight p,
+  .thread-inspector-command p,
+  .thread-inspector-timeline-item p {
+    color: var(--ui-text-primary);
+  }
+
+  .handler-thread-pills span,
+  .thread-inspector-pills span,
+  .thread-inspector-command-footer span,
+  .command-inspector-pills span,
+  .command-inspector-child-footer span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1rem;
+    padding: 0.14rem 0.42rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--ui-surface-subtle) 84%, transparent);
+  }
+
+  .handler-thread-actions,
+  .thread-inspector-actions,
+  .thread-inspector-command-footer {
+    justify-content: flex-end;
+  }
+
   .structured-command-highlights,
+  .thread-inspector-highlight,
+  .thread-inspector-command-list,
+  .thread-inspector-timeline,
   .command-inspector-sections,
   .command-inspector-child-list,
   .command-inspector-artifact-list {
@@ -1428,6 +1986,10 @@
     gap: 0.45rem;
   }
 
+  .thread-inspector-summary,
+  .thread-inspector-section,
+  .thread-inspector-command,
+  .thread-inspector-timeline-item,
   .structured-command-highlight,
   .command-inspector-child,
   .command-inspector-summary,
@@ -1436,6 +1998,40 @@
     border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
     border-radius: var(--ui-radius-md);
     background: color-mix(in oklab, var(--ui-surface) 94%, transparent);
+  }
+
+  .thread-inspector-highlight,
+  .thread-inspector-command,
+  .thread-inspector-timeline-item {
+    padding: 0.72rem 0.76rem;
+  }
+
+  .thread-inspector-highlight span,
+  .thread-inspector-section-header p,
+  .thread-inspector-timeline-item span,
+  .thread-inspector-timeline-top span {
+    font-size: 0.7rem;
+    color: var(--ui-text-secondary);
+  }
+
+  .thread-inspector-section-header {
+    margin-bottom: 0.72rem;
+  }
+
+  .thread-inspector-section-header h3,
+  .thread-inspector-section-header p {
+    margin: 0;
+  }
+
+  .thread-inspector-section-header h3 {
+    font-size: 0.82rem;
+    font-weight: 660;
+    color: var(--ui-text-primary);
+  }
+
+  .thread-inspector-section-header > span {
+    font-size: 0.7rem;
+    color: var(--ui-text-tertiary);
   }
 
   .structured-command-highlight {
@@ -1458,30 +2054,27 @@
     color: var(--ui-text-tertiary);
   }
 
+  .thread-inspector,
   .command-inspector {
     display: grid;
     gap: 0.85rem;
   }
 
+  .thread-inspector-summary,
+  .thread-inspector-section,
   .command-inspector-summary,
   .command-inspector-section {
     padding: 0.84rem 0.9rem;
   }
 
+  .thread-inspector-summary-copy p,
   .command-inspector-summary-copy p {
     max-width: 44rem;
   }
 
-  .command-inspector-pills span,
-  .command-inspector-child-footer span {
-    display: inline-flex;
-    align-items: center;
-    min-height: 1rem;
-    padding: 0.14rem 0.42rem;
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--ui-surface-subtle) 84%, transparent);
-  }
-
+  .handler-thread-empty,
+  .thread-inspector-empty,
+  .thread-inspector-wait,
   .command-inspector-error,
   .command-inspector-empty {
     margin: 0;
@@ -1494,6 +2087,8 @@
     color: color-mix(in oklab, var(--ui-danger) 80%, var(--ui-text-primary));
   }
 
+  .handler-thread-empty,
+  .thread-inspector-empty,
   .command-inspector-empty {
     padding: 0.9rem;
     border-radius: var(--ui-radius-md);
@@ -1501,6 +2096,8 @@
     background: color-mix(in oklab, var(--ui-surface-subtle) 72%, transparent);
   }
 
+  .handler-thread-empty.error,
+  .thread-inspector-empty.error,
   .command-inspector-empty.error {
     border-color: color-mix(in oklab, var(--ui-danger) 32%, transparent);
     background: color-mix(in oklab, var(--ui-danger-soft) 72%, transparent);

@@ -135,6 +135,53 @@ export interface WorkspaceCommandInspector {
   traceChildren: WorkspaceCommandInspectorChild[];
 }
 
+export interface WorkspaceHandlerThreadWorkflowSummary {
+  workflowRunId: string;
+  workflowName: string;
+  status: "running" | "waiting" | "completed" | "failed" | "cancelled";
+  summary: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceHandlerThreadEpisodeSummary {
+  episodeId: string;
+  kind: "analysis" | "change" | "verification" | "workflow" | "clarification";
+  title: string;
+  summary: string;
+  createdAt: string;
+}
+
+export interface WorkspaceHandlerThreadSummary {
+  threadId: string;
+  surfaceSessionId: string;
+  title: string;
+  objective: string;
+  status: "running" | "waiting" | "completed" | "failed" | "cancelled";
+  wait: {
+    kind: "user" | "external";
+    reason: string;
+    resumeWhen: string;
+    since: string;
+  } | null;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  commandCount: number;
+  workflowRunCount: number;
+  episodeCount: number;
+  artifactCount: number;
+  verificationCount: number;
+  latestWorkflowRun: WorkspaceHandlerThreadWorkflowSummary | null;
+  latestEpisode: WorkspaceHandlerThreadEpisodeSummary | null;
+}
+
+export interface WorkspaceHandlerThreadInspector extends WorkspaceHandlerThreadSummary {
+  commandRollups: WorkspaceCommandRollup[];
+  workflowRuns: WorkspaceHandlerThreadWorkflowSummary[];
+  episodes: WorkspaceHandlerThreadEpisodeSummary[];
+  artifacts: WorkspaceCommandArtifactLink[];
+}
+
 export interface WorkspaceSessionSummary {
   id: string;
   title: string;
@@ -252,6 +299,14 @@ export interface ChatRPCSchema {
       getCommandInspector: {
         params: { sessionId: string; commandId: string };
         response: WorkspaceCommandInspector | null;
+      };
+      listHandlerThreads: {
+        params: { sessionId: string };
+        response: WorkspaceHandlerThreadSummary[];
+      };
+      getHandlerThreadInspector: {
+        params: { sessionId: string; threadId: string };
+        response: WorkspaceHandlerThreadInspector | null;
       };
       createSession: {
         params: CreateSessionRequest;

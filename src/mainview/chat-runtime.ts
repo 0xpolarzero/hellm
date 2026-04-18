@@ -10,6 +10,8 @@ import type {
   ActiveSessionState,
   ActiveSessionSummaryState,
   CreateSessionRequest,
+  WorkspaceHandlerThreadInspector,
+  WorkspaceHandlerThreadSummary,
   PromptTarget,
   SendPromptRequest,
   SessionMutationResponse,
@@ -61,6 +63,8 @@ export interface ChatRuntimeRpcClient {
     getActiveSession: typeof rpc.request.getActiveSession;
     getActiveSessionSummary: typeof rpc.request.getActiveSessionSummary;
     getCommandInspector: typeof rpc.request.getCommandInspector;
+    listHandlerThreads: typeof rpc.request.listHandlerThreads;
+    getHandlerThreadInspector: typeof rpc.request.getHandlerThreadInspector;
     createSession: typeof rpc.request.createSession;
     openSession: typeof rpc.request.openSession;
     renameSession: typeof rpc.request.renameSession;
@@ -101,6 +105,11 @@ export interface ChatRuntime {
     commandId: string,
     sessionId?: string,
   ) => Promise<WorkspaceCommandInspector>;
+  listHandlerThreads: (sessionId?: string) => Promise<WorkspaceHandlerThreadSummary[]>;
+  getHandlerThreadInspector: (
+    threadId: string,
+    sessionId?: string,
+  ) => Promise<WorkspaceHandlerThreadInspector>;
   createSession: (request?: CreateSessionRequest) => Promise<void>;
   openSession: (sessionId: string) => Promise<void>;
   openSurface: (target: PromptTarget) => Promise<void>;
@@ -357,6 +366,35 @@ export async function createChatRuntime(
     });
     if (!inspector) {
       throw new Error(`Structured command not found: ${commandId}`);
+    }
+
+    return inspector;
+  };
+
+  const listHandlerThreads = async (
+    sessionId = activeSessionId ?? agent.sessionId,
+  ): Promise<WorkspaceHandlerThreadSummary[]> => {
+    if (!sessionId) {
+      throw new Error("Expected an active session before listing handler threads.");
+    }
+
+    return await rpcClient.request.listHandlerThreads({ sessionId });
+  };
+
+  const getHandlerThreadInspector = async (
+    threadId: string,
+    sessionId = activeSessionId ?? agent.sessionId,
+  ): Promise<WorkspaceHandlerThreadInspector> => {
+    if (!sessionId) {
+      throw new Error("Expected an active session before inspecting a handler thread.");
+    }
+
+    const inspector = await rpcClient.request.getHandlerThreadInspector({
+      sessionId,
+      threadId,
+    });
+    if (!inspector) {
+      throw new Error(`Delegated handler thread not found: ${threadId}`);
     }
 
     return inspector;
@@ -653,6 +691,8 @@ export async function createChatRuntime(
     },
     listSessions: refreshSessions,
     getCommandInspector,
+    listHandlerThreads,
+    getHandlerThreadInspector,
     createSession: async (request = {}) => {
       const session = await rpcClient.request.createSession(request);
       activeSurface = createOrchestratorSurfaceTarget(session.session.id);

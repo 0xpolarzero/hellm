@@ -51,7 +51,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Handler Thread Surfaces",
     status: "in-progress",
     summary:
-      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, can receive direct user messages before and after handoff, and can return control to the orchestrator multiple times over their lifetime through ordered handoff episodes.",
+      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, can receive direct user messages before and after handoff, can be inspected on demand without becoming the default reconciliation path, and can return control to the orchestrator multiple times over their lifetime through ordered handoff episodes.",
     sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
   },
   {

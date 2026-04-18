@@ -29,6 +29,8 @@ import type {
   PromptTarget,
   SessionMutationResponse,
   WorkspaceCommandInspector,
+  WorkspaceHandlerThreadInspector,
+  WorkspaceHandlerThreadSummary,
   WorkspaceSessionSummary,
 } from "../mainview/chat-rpc";
 import { DEFAULT_CHAT_SETTINGS } from "../mainview/chat-settings";
@@ -38,6 +40,8 @@ import {
 } from "./session-projection";
 import {
   buildStructuredCommandInspector,
+  buildStructuredHandlerThreadInspector,
+  buildStructuredHandlerThreadSummaries,
   buildStructuredSessionSummaryProjection,
   buildStructuredSessionView,
   hasStructuredSessionFacts,
@@ -240,6 +244,34 @@ export class WorkspaceSessionCatalog {
     const inspector = buildStructuredCommandInspector(snapshot, input.commandId);
     if (!inspector) {
       throw new Error(`Structured command not found: ${input.commandId}`);
+    }
+
+    return inspector;
+  }
+
+  async listHandlerThreads(input: { sessionId: string }): Promise<WorkspaceHandlerThreadSummary[]> {
+    this.refreshSmithersWorkflowProjections();
+    const snapshot = this.getStructuredSnapshot(input.sessionId);
+    if (!snapshot) {
+      throw new Error(`Structured session not found: ${input.sessionId}`);
+    }
+
+    return buildStructuredHandlerThreadSummaries(snapshot);
+  }
+
+  async getHandlerThreadInspector(input: {
+    sessionId: string;
+    threadId: string;
+  }): Promise<WorkspaceHandlerThreadInspector> {
+    this.refreshSmithersWorkflowProjections();
+    const snapshot = this.getStructuredSnapshot(input.sessionId);
+    if (!snapshot) {
+      throw new Error(`Structured session not found: ${input.sessionId}`);
+    }
+
+    const inspector = buildStructuredHandlerThreadInspector(snapshot, input.threadId);
+    if (!inspector) {
+      throw new Error(`Delegated handler thread not found: ${input.threadId}`);
     }
 
     return inspector;

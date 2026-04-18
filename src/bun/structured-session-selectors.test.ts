@@ -14,6 +14,8 @@ import type {
 } from "./structured-session-state";
 import {
   buildStructuredCommandInspector,
+  buildStructuredHandlerThreadInspector,
+  buildStructuredHandlerThreadSummaries,
   buildStructuredSessionSummaryProjection,
   buildStructuredSessionView,
   deriveStructuredSessionStatus,
@@ -646,6 +648,249 @@ describe("structured session selectors", () => {
         },
       ],
     });
+  });
+
+  it("projects delegated handler-thread summaries and inspector detail without pulling in orchestrator-local threads", () => {
+    const snapshot = createSessionSnapshot({
+      session: {
+        id: "session-thread-summary",
+        orchestratorPiSessionId: "session-thread-summary",
+        wait: null,
+      },
+      threads: [
+        {
+          id: "thread-local",
+          surfacePiSessionId: "session-thread-summary",
+          title: "Local reply",
+          objective: "Answer in orchestrator",
+          status: "completed",
+          updatedAt: "2026-04-18T10:01:00.000Z",
+        },
+        {
+          id: "thread-handler",
+          surfacePiSessionId: "pi-thread-handler",
+          title: "Parser fix thread",
+          objective: "Patch the parser bug and add regression coverage.",
+          status: "completed",
+          latestWorkflowRunId: "workflow-handler-2",
+          updatedAt: "2026-04-18T10:04:30.000Z",
+          finishedAt: "2026-04-18T10:04:30.000Z",
+        },
+      ],
+      commands: [
+        {
+          id: "command-handler-parent",
+          threadId: "thread-handler",
+          toolName: "execute_typescript",
+          visibility: "summary",
+          title: "Patch parser transitions",
+          summary: "Updated parser transitions and wrote a regression test.",
+          updatedAt: "2026-04-18T10:03:20.000Z",
+          startedAt: "2026-04-18T10:03:00.000Z",
+          finishedAt: "2026-04-18T10:03:20.000Z",
+        },
+        {
+          id: "command-handler-child",
+          threadId: "thread-handler",
+          parentCommandId: "command-handler-parent",
+          toolName: "artifact.writeText",
+          visibility: "summary",
+          title: "Write parser test",
+          summary: "Created parser regression coverage.",
+          updatedAt: "2026-04-18T10:03:10.000Z",
+          startedAt: "2026-04-18T10:03:05.000Z",
+          finishedAt: "2026-04-18T10:03:10.000Z",
+        },
+      ],
+      episodes: [
+        {
+          id: "episode-handler-1",
+          threadId: "thread-handler",
+          kind: "change",
+          title: "First handoff",
+          summary: "Patched the parser state transitions.",
+          createdAt: "2026-04-18T10:03:30.000Z",
+        },
+        {
+          id: "episode-handler-2",
+          threadId: "thread-handler",
+          kind: "change",
+          title: "Latest handoff",
+          summary: "Added parser regression coverage and handed back the thread.",
+          createdAt: "2026-04-18T10:04:30.000Z",
+        },
+      ],
+      workflowRuns: [
+        {
+          id: "workflow-handler-1",
+          threadId: "thread-handler",
+          workflowName: "single_task",
+          status: "completed",
+          summary: "Patched parser transitions.",
+          updatedAt: "2026-04-18T10:03:25.000Z",
+        },
+        {
+          id: "workflow-handler-2",
+          threadId: "thread-handler",
+          workflowName: "verification_run",
+          status: "completed",
+          summary: "Verification passed after adding regression coverage.",
+          updatedAt: "2026-04-18T10:04:10.000Z",
+        },
+      ],
+      verifications: [
+        {
+          id: "verification-handler-1",
+          threadId: "thread-handler",
+          workflowRunId: "workflow-handler-2",
+          summary: "Regression coverage passed.",
+          finishedAt: "2026-04-18T10:04:10.000Z",
+        },
+      ],
+      artifacts: [
+        {
+          id: "artifact-handler-1",
+          threadId: "thread-handler",
+          sourceCommandId: "command-handler-parent",
+          kind: "file",
+          name: "parser-regression.test.ts",
+          path: "/repo/svvy/.svvy/artifacts/parser-regression.test.ts",
+          createdAt: "2026-04-18T10:03:12.000Z",
+        },
+      ],
+    });
+
+    expect(buildStructuredHandlerThreadSummaries(snapshot)).toEqual([
+      {
+        threadId: "thread-handler",
+        surfaceSessionId: "pi-thread-handler",
+        title: "Parser fix thread",
+        objective: "Patch the parser bug and add regression coverage.",
+        status: "completed",
+        wait: null,
+        startedAt: "2026-04-18T07:00:00.000Z",
+        updatedAt: "2026-04-18T10:04:30.000Z",
+        finishedAt: "2026-04-18T10:04:30.000Z",
+        commandCount: 2,
+        workflowRunCount: 2,
+        episodeCount: 2,
+        artifactCount: 1,
+        verificationCount: 1,
+        latestWorkflowRun: {
+          workflowRunId: "workflow-handler-2",
+          workflowName: "verification_run",
+          status: "completed",
+          summary: "Verification passed after adding regression coverage.",
+          updatedAt: "2026-04-18T10:04:10.000Z",
+        },
+        latestEpisode: {
+          episodeId: "episode-handler-2",
+          kind: "change",
+          title: "Latest handoff",
+          summary: "Added parser regression coverage and handed back the thread.",
+          createdAt: "2026-04-18T10:04:30.000Z",
+        },
+      },
+    ]);
+
+    expect(buildStructuredHandlerThreadInspector(snapshot, "thread-handler")).toEqual({
+      threadId: "thread-handler",
+      surfaceSessionId: "pi-thread-handler",
+      title: "Parser fix thread",
+      objective: "Patch the parser bug and add regression coverage.",
+      status: "completed",
+      wait: null,
+      startedAt: "2026-04-18T07:00:00.000Z",
+      updatedAt: "2026-04-18T10:04:30.000Z",
+      finishedAt: "2026-04-18T10:04:30.000Z",
+      commandCount: 2,
+      workflowRunCount: 2,
+      episodeCount: 2,
+      artifactCount: 1,
+      verificationCount: 1,
+      latestWorkflowRun: {
+        workflowRunId: "workflow-handler-2",
+        workflowName: "verification_run",
+        status: "completed",
+        summary: "Verification passed after adding regression coverage.",
+        updatedAt: "2026-04-18T10:04:10.000Z",
+      },
+      latestEpisode: {
+        episodeId: "episode-handler-2",
+        kind: "change",
+        title: "Latest handoff",
+        summary: "Added parser regression coverage and handed back the thread.",
+        createdAt: "2026-04-18T10:04:30.000Z",
+      },
+      commandRollups: [
+        {
+          commandId: "command-handler-parent",
+          threadId: "thread-handler",
+          workflowRunId: null,
+          toolName: "execute_typescript",
+          visibility: "summary",
+          status: "succeeded",
+          title: "Patch parser transitions",
+          summary: "Updated parser transitions and wrote a regression test.",
+          childCount: 1,
+          summaryChildCount: 1,
+          traceChildCount: 0,
+          summaryChildren: [
+            {
+              commandId: "command-handler-child",
+              toolName: "artifact.writeText",
+              status: "succeeded",
+              title: "Write parser test",
+              summary: "Created parser regression coverage.",
+              error: null,
+            },
+          ],
+          updatedAt: "2026-04-18T10:03:20.000Z",
+        },
+      ],
+      workflowRuns: [
+        {
+          workflowRunId: "workflow-handler-2",
+          workflowName: "verification_run",
+          status: "completed",
+          summary: "Verification passed after adding regression coverage.",
+          updatedAt: "2026-04-18T10:04:10.000Z",
+        },
+        {
+          workflowRunId: "workflow-handler-1",
+          workflowName: "single_task",
+          status: "completed",
+          summary: "Patched parser transitions.",
+          updatedAt: "2026-04-18T10:03:25.000Z",
+        },
+      ],
+      episodes: [
+        {
+          episodeId: "episode-handler-2",
+          kind: "change",
+          title: "Latest handoff",
+          summary: "Added parser regression coverage and handed back the thread.",
+          createdAt: "2026-04-18T10:04:30.000Z",
+        },
+        {
+          episodeId: "episode-handler-1",
+          kind: "change",
+          title: "First handoff",
+          summary: "Patched the parser state transitions.",
+          createdAt: "2026-04-18T10:03:30.000Z",
+        },
+      ],
+      artifacts: [
+        {
+          artifactId: "artifact-handler-1",
+          kind: "file",
+          name: "parser-regression.test.ts",
+          path: "/repo/svvy/.svvy/artifacts/parser-regression.test.ts",
+          createdAt: "2026-04-18T10:03:12.000Z",
+        },
+      ],
+    });
+    expect(buildStructuredHandlerThreadInspector(snapshot, "thread-local")).toBeNull();
   });
 
   it("prefers active workflow runs, then terminal episodes, then verification summaries in preview", () => {

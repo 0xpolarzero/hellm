@@ -954,6 +954,211 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("keeps a handed-back handler thread directly interactive for follow-up chat without opening a new thread", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Follow-up Thread" }, DEFAULTS);
+    const store = getStructuredSessionStore(catalog);
+
+    const seedTurn = store.startTurn({
+      sessionId: created.session.id,
+      requestSummary: "Delegate the parser fix",
+    });
+    const orchestratorThread = store.createThread({
+      turnId: seedTurn.id,
+      surfacePiSessionId: created.session.id,
+      title: "Delegate the parser fix",
+      objective: "Open a handler thread for the parser fix.",
+    });
+    const handlerThread = await (
+      catalog as unknown as {
+        createHandlerThread(input: {
+          sessionId: string;
+          turnId: string;
+          parentThreadId: string;
+          parentSurfacePiSessionId: string;
+          title: string;
+          objective: string;
+        }): Promise<{ id: string; surfacePiSessionId: string }>;
+      }
+    ).createHandlerThread({
+      sessionId: created.session.id,
+      turnId: seedTurn.id,
+      parentThreadId: orchestratorThread.id,
+      parentSurfacePiSessionId: created.session.id,
+      title: "Parser fix thread",
+      objective: "Patch the parser bug and add regression coverage.",
+    });
+    store.updateThread({
+      threadId: handlerThread.id,
+      status: "completed",
+    });
+    store.createEpisode({
+      threadId: handlerThread.id,
+      kind: "change",
+      title: "Parser fix handoff",
+      summary: "Patched the parser bug and handed the objective back.",
+      body: "Patched the parser bug and handed the objective back.",
+    });
+    store.finishTurn({
+      turnId: seedTurn.id,
+      status: "completed",
+    });
+
+    const followUpText = "Why did you choose that parser transition?";
+    const followUp = userMessage(followUpText);
+    const { promptTexts, promptSpy } = installPromptSpy(catalog, [
+      {
+        user: followUp,
+        assistant: assistantMessage("That transition preserves the parser cursor invariant."),
+      },
+    ]);
+
+    try {
+      await catalog.sendPrompt({
+        ...DEFAULTS,
+        sessionId: handlerThread.surfacePiSessionId,
+        target: {
+          surface: "thread",
+          surfaceSessionId: handlerThread.surfacePiSessionId,
+          threadId: handlerThread.id,
+        },
+        messages: [followUp],
+        onEvent: () => {},
+      });
+
+      await waitFor(() => promptTexts.length === 1);
+      const snapshot = getStructuredSessionState(catalog, created.session.id);
+      const followUpTurn = snapshot.turns.find((turn) => turn.requestSummary === followUpText);
+      const persistedThread = snapshot.threads.find((thread) => thread.id === handlerThread.id);
+
+      expect(promptTexts[0]).toContain(`User:\n${followUpText}`);
+      expect(snapshot.threads).toHaveLength(2);
+      expect(snapshot.episodes).toHaveLength(1);
+      expect(followUpTurn).toMatchObject({
+        threadId: handlerThread.id,
+        status: "completed",
+        turnDecision: "reply",
+      });
+      expect(persistedThread).toMatchObject({
+        id: handlerThread.id,
+        status: "completed",
+      });
+    } finally {
+      promptSpy.mockRestore();
+      await catalog.dispose();
+    }
+  });
+
+  it("lists and inspects delegated handler threads on demand without changing orchestrator reconciliation", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Inspect Threads" }, DEFAULTS);
+    const store = getStructuredSessionStore(catalog);
+
+    try {
+      const turn = store.startTurn({
+        sessionId: created.session.id,
+        requestSummary: "Delegate parser fix",
+      });
+      store.createThread({
+        turnId: turn.id,
+        surfacePiSessionId: created.session.id,
+        title: "Orchestrator local work",
+        objective: "Keep the main surface local.",
+      });
+      const handlerThread = store.createThread({
+        turnId: turn.id,
+        parentThreadId: null,
+        surfacePiSessionId: "pi-thread-parser-fix",
+        title: "Parser fix thread",
+        objective: "Patch the parser bug and add regression coverage.",
+      });
+      const command = store.createCommand({
+        turnId: turn.id,
+        threadId: handlerThread.id,
+        toolName: "execute_typescript",
+        executor: "execute_typescript",
+        visibility: "summary",
+        title: "Patch parser transitions",
+        summary: "Updated parser transitions and added a regression test.",
+      });
+      store.finishCommand({
+        commandId: command.id,
+        status: "succeeded",
+        summary: "Updated parser transitions and added a regression test.",
+      });
+      store.recordWorkflow({
+        threadId: handlerThread.id,
+        commandId: command.id,
+        smithersRunId: "run-parser-fix",
+        workflowName: "verification_run",
+        templateId: "verification_run",
+        status: "completed",
+        summary: "Verification passed.",
+      });
+      store.updateThread({
+        threadId: handlerThread.id,
+        status: "completed",
+      });
+      store.createEpisode({
+        threadId: handlerThread.id,
+        kind: "change",
+        title: "Parser fix handoff",
+        summary: "Patched the parser transitions and handed back the thread.",
+        body: "Patched the parser transitions and handed back the thread.",
+      });
+      store.finishTurn({
+        turnId: turn.id,
+        status: "completed",
+      });
+
+      const summaries = await catalog.listHandlerThreads({ sessionId: created.session.id });
+      expect(summaries).toEqual([
+        expect.objectContaining({
+          threadId: handlerThread.id,
+          surfaceSessionId: "pi-thread-parser-fix",
+          title: "Parser fix thread",
+          status: "completed",
+          latestEpisode: expect.objectContaining({
+            summary: "Patched the parser transitions and handed back the thread.",
+          }),
+          latestWorkflowRun: expect.objectContaining({
+            summary: "Verification passed.",
+          }),
+        }),
+      ]);
+
+      const inspector = await catalog.getHandlerThreadInspector({
+        sessionId: created.session.id,
+        threadId: handlerThread.id,
+      });
+      expect(inspector).toMatchObject({
+        threadId: handlerThread.id,
+        title: "Parser fix thread",
+        commandRollups: [
+          expect.objectContaining({
+            commandId: command.id,
+            summary: "Updated parser transitions and added a regression test.",
+          }),
+        ],
+        workflowRuns: [
+          expect.objectContaining({
+            workflowName: "verification_run",
+            summary: "Verification passed.",
+          }),
+        ],
+        episodes: [
+          expect.objectContaining({
+            summary: "Patched the parser transitions and handed back the thread.",
+          }),
+        ],
+      });
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
   it("projects durable session wait separately from thread wait", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);

@@ -318,6 +318,21 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           commandId,
         });
       },
+      listHandlerThreads: async ({ sessionId }: { sessionId: string }) => {
+        return await workspaceSessionCatalog.listHandlerThreads({ sessionId });
+      },
+      getHandlerThreadInspector: async ({
+        sessionId,
+        threadId,
+      }: {
+        sessionId: string;
+        threadId: string;
+      }) => {
+        return await workspaceSessionCatalog.getHandlerThreadInspector({
+          sessionId,
+          threadId,
+        });
+      },
       createSession: async ({
         title,
         parentSessionId,

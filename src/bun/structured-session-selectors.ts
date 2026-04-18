@@ -74,6 +74,48 @@ export interface StructuredCommandInspector {
   traceChildren: StructuredCommandInspectorChild[];
 }
 
+export interface StructuredHandlerThreadWorkflowSummary {
+  workflowRunId: string;
+  workflowName: string;
+  status: StructuredWorkflowRunRecord["status"];
+  summary: string;
+  updatedAt: string;
+}
+
+export interface StructuredHandlerThreadEpisodeSummary {
+  episodeId: string;
+  kind: StructuredEpisodeRecord["kind"];
+  title: string;
+  summary: string;
+  createdAt: string;
+}
+
+export interface StructuredHandlerThreadSummary {
+  threadId: string;
+  surfaceSessionId: string;
+  title: string;
+  objective: string;
+  status: StructuredThreadRecord["status"];
+  wait: StructuredThreadRecord["wait"];
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  commandCount: number;
+  workflowRunCount: number;
+  episodeCount: number;
+  artifactCount: number;
+  verificationCount: number;
+  latestWorkflowRun: StructuredHandlerThreadWorkflowSummary | null;
+  latestEpisode: StructuredHandlerThreadEpisodeSummary | null;
+}
+
+export interface StructuredHandlerThreadInspector extends StructuredHandlerThreadSummary {
+  commandRollups: StructuredCommandRollup[];
+  workflowRuns: StructuredHandlerThreadWorkflowSummary[];
+  episodes: StructuredHandlerThreadEpisodeSummary[];
+  artifacts: StructuredCommandArtifactLink[];
+}
+
 export interface StructuredSessionView {
   title: string;
   sessionStatus: StructuredSessionStatus;
@@ -221,6 +263,22 @@ function buildCommandArtifactLinks(
     .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
+function buildThreadArtifactLinks(
+  artifacts: StructuredSessionSnapshot["artifacts"],
+  threadId: string,
+): StructuredCommandArtifactLink[] {
+  return artifacts
+    .filter((artifact) => artifact.threadId === threadId)
+    .map((artifact) => ({
+      artifactId: artifact.id,
+      kind: artifact.kind,
+      name: artifact.name,
+      path: artifact.path,
+      createdAt: artifact.createdAt,
+    }))
+    .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
 function buildCommandInspectorChild(
   command: StructuredCommandRecord,
   artifacts: StructuredSessionSnapshot["artifacts"],
@@ -267,6 +325,110 @@ function buildCommandRollups(
       };
     })
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function isDelegatedHandlerThread(
+  session: StructuredSessionSnapshot,
+  thread: StructuredThreadRecord,
+): boolean {
+  return thread.surfacePiSessionId !== session.session.orchestratorPiSessionId;
+}
+
+function buildThreadWorkflowSummary(
+  workflowRun: StructuredWorkflowRunRecord,
+): StructuredHandlerThreadWorkflowSummary {
+  return {
+    workflowRunId: workflowRun.id,
+    workflowName: workflowRun.workflowName,
+    status: workflowRun.status,
+    summary: workflowRun.summary,
+    updatedAt: workflowRun.updatedAt,
+  };
+}
+
+function buildThreadEpisodeSummary(
+  episode: StructuredEpisodeRecord,
+): StructuredHandlerThreadEpisodeSummary {
+  return {
+    episodeId: episode.id,
+    kind: episode.kind,
+    title: episode.title,
+    summary: episode.summary,
+    createdAt: episode.createdAt,
+  };
+}
+
+function getThreadLatestWorkflowRun(
+  session: StructuredSessionSnapshot,
+  thread: StructuredThreadRecord,
+): StructuredWorkflowRunRecord | null {
+  const workflowRuns = session.workflowRuns.filter(
+    (workflowRun) => workflowRun.threadId === thread.id,
+  );
+  if (workflowRuns.length === 0) {
+    return null;
+  }
+
+  return (
+    workflowRuns.find((workflowRun) => workflowRun.id === thread.latestWorkflowRunId) ??
+    workflowRuns.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ??
+    null
+  );
+}
+
+function getThreadLatestEpisode(
+  session: StructuredSessionSnapshot,
+  threadId: string,
+): StructuredEpisodeRecord | null {
+  return (
+    session.episodes
+      .filter((episode) => episode.threadId === threadId)
+      .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null
+  );
+}
+
+function buildThreadCommandRollups(
+  session: StructuredSessionSnapshot,
+  threadId: string,
+): StructuredCommandRollup[] {
+  return buildCommandRollups({
+    commands: session.commands.filter((command) => command.threadId === threadId),
+  });
+}
+
+function buildHandlerThreadSummary(
+  session: StructuredSessionSnapshot,
+  thread: StructuredThreadRecord,
+): StructuredHandlerThreadSummary {
+  const workflowRuns = session.workflowRuns.filter(
+    (workflowRun) => workflowRun.threadId === thread.id,
+  );
+  const episodes = session.episodes.filter((episode) => episode.threadId === thread.id);
+  const artifacts = session.artifacts.filter((artifact) => artifact.threadId === thread.id);
+  const verifications = session.verifications.filter(
+    (verification) => verification.threadId === thread.id,
+  );
+  const latestWorkflowRun = getThreadLatestWorkflowRun(session, thread);
+  const latestEpisode = getThreadLatestEpisode(session, thread.id);
+
+  return {
+    threadId: thread.id,
+    surfaceSessionId: thread.surfacePiSessionId,
+    title: thread.title,
+    objective: thread.objective,
+    status: thread.status,
+    wait: structuredClone(thread.wait),
+    startedAt: thread.startedAt,
+    updatedAt: thread.updatedAt,
+    finishedAt: thread.finishedAt,
+    commandCount: session.commands.filter((command) => command.threadId === thread.id).length,
+    workflowRunCount: workflowRuns.length,
+    episodeCount: episodes.length,
+    artifactCount: artifacts.length,
+    verificationCount: verifications.length,
+    latestWorkflowRun: latestWorkflowRun ? buildThreadWorkflowSummary(latestWorkflowRun) : null,
+    latestEpisode: latestEpisode ? buildThreadEpisodeSummary(latestEpisode) : null,
+  };
 }
 
 function deriveThreadIds(threads: StructuredThreadRecord[]): string[] {
@@ -533,6 +695,42 @@ export function buildStructuredCommandInspector(
     traceChildCount: traceChildren.length,
     summaryChildren,
     traceChildren,
+  };
+}
+
+export function buildStructuredHandlerThreadSummaries(
+  session: StructuredSessionSnapshot,
+): StructuredHandlerThreadSummary[] {
+  return session.threads
+    .filter((thread) => isDelegatedHandlerThread(session, thread))
+    .map((thread) => buildHandlerThreadSummary(session, thread))
+    .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+export function buildStructuredHandlerThreadInspector(
+  session: StructuredSessionSnapshot,
+  threadId: string,
+): StructuredHandlerThreadInspector | null {
+  const thread = session.threads.find((candidate) => candidate.id === threadId) ?? null;
+  if (!thread || !isDelegatedHandlerThread(session, thread)) {
+    return null;
+  }
+
+  const workflowRuns = session.workflowRuns
+    .filter((workflowRun) => workflowRun.threadId === threadId)
+    .map((workflowRun) => buildThreadWorkflowSummary(workflowRun))
+    .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const episodes = session.episodes
+    .filter((episode) => episode.threadId === threadId)
+    .map((episode) => buildThreadEpisodeSummary(episode))
+    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+  return {
+    ...buildHandlerThreadSummary(session, thread),
+    commandRollups: buildThreadCommandRollups(session, threadId),
+    workflowRuns,
+    episodes,
+    artifacts: buildThreadArtifactLinks(session.artifacts, threadId),
   };
 }
 
