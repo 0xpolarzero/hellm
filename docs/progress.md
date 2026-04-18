@@ -5,9 +5,12 @@ Incremental roadmap from the current baseline to the shipped PRD.
 How to use this file:
 
 - Keep items small enough to land in a focused PR.
+- Treat this file as a roadmap and progress tracker, not a changelog.
 - Prefer adding new items next to the closest related step instead of appending unrelated backlog at the bottom.
 - Keep sections ordered by dependency: durable facts and execution before projection surfaces that depend on them.
 - When an item is done, change `[ ]` to `[x]` and append the landing commit hash or hashes.
+- Write the capability that should exist or now exists, not migration wording like "replace", "remove", or "rename" unless that action is itself the remaining work.
+- If the design changes, rewrite affected items to the new steady-state plan instead of leaving stale unchecked items from the old plan.
 - If an item starts reading like a subsystem instead of a step, split it before implementation.
 - For any big lift or unclear design, add a POC step immediately before the production implementation step.
 - Use POC steps to validate shape, constraints, and UX without prematurely locking the final architecture.
@@ -18,69 +21,69 @@ How to use this file:
 - [x] Add provider auth/settings support with local key storage and OAuth-backed access. Commit(s): `c118be7`, `6d757dc`
 - [x] Add the artifact projection panel in the desktop workbench. Commit(s): `1d9bc05`, `6d757dc`
 - [x] Add workspace-scoped prompt history recall in the composer. Commit(s): `cb1b7f1`
-- [x] Add multi-session workspace navigation and session switching/resume support. Commit(s): `pending local work / add landing hash when committed`
+- [x] Add multi-session workspace navigation and session switching/resume support. Commit(s): `b22a0c6`, `df1a7df`
 
 ## 1. Structured Session State
 
-Workflow-inspector UI work remains explicitly out of scope for this section and stays under section 16.
+Workflow-inspector UI work remains explicitly out of scope for this section and stays under section 17.
 
-- [x] Build a POC session overlay document and validate how it can sit above pi session data. Commit(s): `pending local work / add landing hash when committed`
-- [x] Persist a minimal structured session overlay root above pi session data. Commit(s): `pending local work / add landing hash when committed`
-- [ ] Add `surfacePiSessionId` linkage on turns so orchestrator-surface and handler-thread turns use one model.
-- [ ] Persist handler-thread records with title, objective, status, wait state, backing pi session id, and latest workflow-run linkage.
-- [ ] Replace the old one-thread-one-workflow assumption with workflow-run records that allow many runs under one handler thread.
-- [ ] Persist workflow-run records with run id, workflow name, template or preset metadata, status, summary, and timestamps.
-- [ ] Persist artifact references independently from transcript parsing at thread, workflow-run, and command scope.
-- [ ] Persist terminal episode records as the final semantic output of a completed handler thread.
-- [ ] Persist session wait state as a frontier-level summary derived from surface and thread wait state.
-- [ ] Remove transcript-derived fallback writes so structured session state only changes from explicit runtime producers or tool events.
-- [ ] Reconstruct workspace and session summaries from structured state on app load.
+- [x] Build a POC session overlay document and validate how it can sit above pi session data. Commit(s): `c432f4e`
+- [x] Persist a minimal structured session overlay root above pi session data. Commit(s): `b510857`, `fff54d7`
+- [x] Add `surfacePiSessionId` linkage on turns so orchestrator-surface and handler-thread turns use one model. Commit(s): `fff54d7`, `f53c9b8`
+- [x] Persist handler-thread records with title, objective, status, wait state, backing pi session id, and latest workflow-run linkage. Commit(s): `fff54d7`, `f53c9b8`
+- [x] Support workflow-run records that allow many runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
+- [x] Persist workflow-run records with run id, workflow name, template or preset metadata, status, summary, and timestamps. Commit(s): `fff54d7`, `f53c9b8`, `43a26cb`
+- [x] Persist artifact references independently from transcript parsing at thread, workflow-run, and command scope. Commit(s): `fff54d7`
+- [x] Persist terminal episode records as the final semantic output of a completed handler thread. Commit(s): `fff54d7`, `59fc34e`
+- [x] Persist session wait state as a frontier-level summary derived from surface and thread wait state. Commit(s): `fff54d7`, `f53c9b8`, `43a26cb`
+- [x] Drive structured session state only from explicit runtime producers or tool events. Commit(s): `fff54d7`, `59fc34e`, `43a26cb`
+- [x] Reconstruct workspace and session summaries from structured state on app load. Commit(s): `b510857`, `fff54d7`
 
 ## 2. `execute_typescript`
 
-- [x] Build a POC `execute_typescript` runtime with compile or typecheck-before-run diagnostics and the adopted TypeScript input/output contract.
-- [x] Expose a minimal `execute_typescript` tool with the adopted input/output contract and injected `api.*` surface.
-- [x] Persist each attempted snippet as a file-backed artifact before execution, with SQLite metadata and path indexing.
-- [x] Generate the first curated typed `api.*` capability namespaces for repo, git, web, artifact, and bounded exec work.
-- [x] Run a simple ordinary scripted task through `execute_typescript`.
-- [x] Build a POC artifact and tracing pipeline for code-mode execution.
-- [x] Capture code-mode logs and nested command traces as artifacts and structured command records.
-- [ ] Keep `thread.start`, `workflow.start`, `workflow.resume`, and `wait` as separate native control tools.
-- [ ] Limit day-one capabilities to the curated `api.*` surface defined by the spec, including explicit `api.exec.run`.
-- [ ] Expand the repo namespace to workspace-fs and search utilities with plural reads and structured listings.
-- [ ] Expand the git namespace to the settled command-shaped surface, including `status`, `diff`, `log`, `show`, `branch`, `mergeBase`, `fetch`, `pull`, `push`, `add`, `commit`, `switch`, `checkout`, `restore`, `rebase`, `cherryPick`, `stash`, and `tag`.
-- [ ] Persist normalized child-command facts for nested `api.*` calls while the parent `execute_typescript` attempt remains the main semantic unit.
+- [x] Build a POC `execute_typescript` runtime with compile or typecheck-before-run diagnostics and the adopted TypeScript input/output contract. Commit(s): `76cc8f3`, `b41e5e6`
+- [x] Expose a minimal `execute_typescript` tool with the adopted input/output contract and injected `api.*` surface. Commit(s): `76cc8f3`
+- [x] Persist each attempted snippet as a file-backed artifact before execution, with SQLite metadata and path indexing. Commit(s): `76cc8f3`, `fff54d7`
+- [x] Generate the first curated typed `api.*` capability namespaces for repo, git, web, artifact, and bounded exec work. Commit(s): `76cc8f3`, `29d8452`
+- [x] Run a simple ordinary scripted task through `execute_typescript`. Commit(s): `76cc8f3`
+- [x] Build a POC artifact and tracing pipeline for code-mode execution. Commit(s): `76cc8f3`
+- [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
+- [x] Keep `thread.start`, `workflow.start`, `workflow.resume`, and `wait` as separate native control tools. Commit(s): `f53c9b8`, `43a26cb`
+- [x] Limit day-one capabilities to the curated `api.*` surface defined by the spec, including explicit `api.exec.run`. Commit(s): `76cc8f3`, `29d8452`
+- [x] Expand the repo namespace to workspace-fs and search utilities with plural reads and structured listings. Commit(s): `76cc8f3`, `29d8452`
+- [x] Expand the git namespace to the settled command-shaped surface, including `status`, `diff`, `log`, `show`, `branch`, `mergeBase`, `fetch`, `pull`, `push`, `add`, `commit`, `switch`, `checkout`, `restore`, `rebase`, `cherryPick`, `stash`, and `tag`. Commit(s): `76cc8f3`, `29d8452`
+- [x] Persist normalized child-command facts for nested `api.*` calls while the parent `execute_typescript` attempt remains the main semantic unit. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [ ] Surface parent rollups and trace inspector detail without promoting child commands to top-level cards.
 
 ## 3. Turn Routing And Delegation
 
 - [ ] Persist a per-turn routing result for the orchestrator surface.
-- [ ] Build a POC turn flow from message targeting to surface turn creation and command recording.
-- [ ] Implement direct surface targeting so a pane send goes to either the orchestrator surface or a handler-thread surface.
-- [ ] Add `thread.start` as the orchestrator-side delegation primitive.
+- [x] Build a POC turn flow from message targeting to surface turn creation and command recording. Commit(s): `fff54d7`, `f53c9b8`
+- [x] Implement direct surface targeting so a pane send goes to either the orchestrator surface or a handler-thread surface. Commit(s): `f53c9b8`
+- [x] Add `thread.start` as the orchestrator-side delegation primitive. Commit(s): `f53c9b8`
 - [ ] Implement minimal orchestrator routing for local reply, local `execute_typescript`, clarification, and `thread.start`.
 - [ ] Re-enter the orchestrator from terminal handler-thread episodes and durable thread state instead of raw transcript scanning.
 
 ## 4. Handler Threads
 
-- [ ] Build a POC handler-thread spawn flow with objective handoff and a dedicated backing pi session.
-- [ ] Persist handler-thread lifecycle transitions for running, waiting, completed, failed, and cancelled states.
-- [ ] Let handler threads receive direct user messages through the same surface model as the orchestrator.
-- [ ] Make handler-thread wait and resume happen inside the thread itself instead of bouncing through the orchestrator by default.
-- [ ] Ensure each handler thread emits at most one final terminal episode.
+- [x] Build a POC handler-thread spawn flow with objective handoff and a dedicated backing pi session. Commit(s): `f53c9b8`
+- [x] Persist handler-thread lifecycle transitions for running, waiting, completed, failed, and cancelled states. Commit(s): `fff54d7`, `f53c9b8`
+- [x] Let handler threads receive direct user messages through the same surface model as the orchestrator. Commit(s): `f53c9b8`
+- [x] Make handler-thread wait and resume happen inside the thread itself instead of bouncing through the orchestrator by default. Commit(s): `f53c9b8`
+- [x] Ensure each handler thread emits at most one final terminal episode. Commit(s): `fff54d7`, `59fc34e`
 - [ ] Allow the orchestrator to inspect a handler thread on demand without making that the default reconciliation path.
 
 ## 5. Workflow Supervision Foundations
 
 - [ ] Build a POC handler thread that selects a workflow template or preset, runs it, and regains control on completion.
-- [ ] Define the workflow-run request envelope from a handler thread to Smithers.
-- [ ] Create a durable workflow-run record before delegated execution starts.
+- [x] Define the workflow-run request envelope from a handler thread to Smithers. Commit(s): `f53c9b8`
+- [ ] Create a durable workflow-run record as soon as the supervising handler thread has a concrete Smithers run id.
 - [ ] Build a POC one-task workflow under a handler thread that returns to the thread and then emits a final episode.
-- [ ] Allow handler threads to call `workflow.start`.
-- [ ] Allow handler threads to call `workflow.resume`.
-- [ ] Resume handler-thread control when a workflow run completes, fails, or pauses.
-- [ ] Support multiple workflow runs under one handler thread.
-- [ ] Persist latest-workflow-run linkage on the thread for summary selectors.
+- [x] Allow handler threads to call `workflow.start`. Commit(s): `f53c9b8`
+- [x] Allow handler threads to call `workflow.resume`. Commit(s): `f53c9b8`
+- [x] Resume handler-thread control when a workflow run completes, fails, or pauses. Commit(s): `f53c9b8`
+- [x] Support multiple workflow runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
+- [x] Persist latest-workflow-run linkage on the thread for summary selectors. Commit(s): `fff54d7`, `f53c9b8`
 - [ ] Guarantee that a workflow-run failure still returns durable failure state to the supervising handler thread even when the planned workflow finalization path does not run.
 
 ## 6. Workflow Templates And Presets

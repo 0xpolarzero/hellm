@@ -27,5 +27,12 @@
 - Treat explicit public Slate facts and PRD inferences separately.
 - Do not treat Smithers source as evidence of Slate internals; keep public Slate facts, PRD inferences, and Smithers-derived ideas clearly separated.
 - Update `docs/prd.md` whenever architecture, scope, or priorities change materially.
+- Treat product docs as source-of-truth documents, not changelogs. Keep them synced to the current resolved design and product surface rather than narrating migrations or preserving obsolete wording.
 - Treat `docs/features.ts` as the exhaustive feature inventory for the product delta`.
 - Update `docs/features.ts` whenever features are added, removed, renamed, split, merged, or materially revamped so it stays in sync with the real product surface.
+- Update `docs/progress.md` whenever roadmap reality changes materially.
+- Treat `docs/progress.md` as a forward-looking progress tracker, not a changelog. Write the capability that should exist or now exists, not migration phrasing like "replace", "remove", or "rename" unless that action is itself the remaining work.
+- When a `docs/progress.md` item is completed, tick it and add the landing commit hash or hashes immediately.
+- If a resolved design changes, rewrite the affected progress items to the new steady-state plan instead of leaving stale unchecked steps that describe the old plan.
+- Do not add or preserve legacy, backwards-compatibility, migration, compatibility, or schema-bridge code or docs unless the user explicitly asks for it.
+- When a design changes, delete obsolete paths rather than keeping fallback behavior, one-off migrations, compatibility aliases, legacy fixtures, or dual-schema support.
