@@ -257,6 +257,10 @@ export async function createChatRuntime(
     }
   };
 
+  const sleep = async (ms: number): Promise<void> => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  };
+
   const syncProviderAuth = async (providerId: string): Promise<boolean> => {
     const auth = await rpcClient.request.getProviderAuthState({ providerId });
     if (auth.connected) {
@@ -354,6 +358,36 @@ export async function createChatRuntime(
     sessions = response.sessions;
     emit();
     return sessions;
+  };
+
+  const followThreadSurfaceReturnToOrchestrator = async (threadSessionId: string): Promise<void> => {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (
+        disposed ||
+        activeSurface?.surface !== "thread" ||
+        activeSurface.surfaceSessionId !== threadSessionId
+      ) {
+        return;
+      }
+
+      const nextActive = await rpcClient.request.getActiveSessionSummary();
+      if (
+        nextActive &&
+        nextActive.session.id !== threadSessionId &&
+        !nextActive.session.parentSessionId
+      ) {
+        const nextSnapshot = await rpcClient.request.getActiveSession();
+        if (nextSnapshot && nextSnapshot.session.id === nextActive.session.id) {
+          activeSurface = createOrchestratorSurfaceTarget(nextSnapshot.session.id);
+          orchestratorSurfaceSessionId = nextSnapshot.session.id;
+          await openActiveSession(nextSnapshot);
+          await refreshSessions();
+          return;
+        }
+      }
+
+      await sleep(100);
+    }
   };
 
   const getCommandInspector = async (
@@ -568,7 +602,12 @@ export async function createChatRuntime(
       if (payload.event.type === "done" || payload.event.type === "error") {
         completed = true;
         cleanup();
-        void syncSettledActiveSessionState(streamSessionId);
+        const syncPromise = syncSettledActiveSessionState(streamSessionId);
+        void syncPromise;
+        if (promptTarget.surface === "thread" && streamSessionId) {
+          const threadSessionId = streamSessionId;
+          void syncPromise.then(() => followThreadSurfaceReturnToOrchestrator(threadSessionId));
+        }
       }
     };
 

@@ -69,6 +69,18 @@ function assistantMessage(text: string): AssistantMessage {
   };
 }
 
+async function waitFor(condition: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) {
+      return;
+    }
+    await Bun.sleep(10);
+  }
+
+  throw new Error("Timed out waiting for chat runtime state.");
+}
+
 function toolCall(name: string, argumentsValue: Record<string, unknown>): ToolCall {
   return {
     type: "toolCall",
@@ -732,6 +744,8 @@ function createFakeRpcWithThreadSidebarRefresh(): {
   thread.session.parentSessionId = "session-1";
 
   let activeSessionId = orchestrator.session.id;
+  let promptSettled = false;
+  let postThreadSummaryReads = 0;
   const requestCounts = {
     listSessions: 0,
     getActiveSession: 0,
@@ -770,6 +784,12 @@ function createFakeRpcWithThreadSidebarRefresh(): {
       },
       getActiveSessionSummary: async () => {
         requestCounts.getActiveSessionSummary += 1;
+        if (promptSettled && activeSessionId === thread.session.id) {
+          postThreadSummaryReads += 1;
+          if (postThreadSummaryReads >= 2) {
+            activeSessionId = orchestrator.session.id;
+          }
+        }
         return cloneActiveSessionSummary(getSession(activeSessionId));
       },
       getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
@@ -808,6 +828,7 @@ function createFakeRpcWithThreadSidebarRefresh(): {
         thread.messages = [...request.messages, finalAssistant];
         thread.session.preview = "Thread handed off.";
         thread.session.messageCount = thread.messages.length;
+        promptSettled = true;
 
         orchestrator.session.status = "idle";
         orchestrator.session.preview = "Thread handoff received.";
@@ -1136,9 +1157,10 @@ describe("createChatRuntime", () => {
     expect(requestCounts.listSessions).toBe(1);
     await runtime.agent.prompt("finish the objective");
     await runtime.agent.waitForIdle();
+    await waitFor(() => runtime.activeSurface.surface === "orchestrator");
 
-    expect(requestCounts.getActiveSessionSummary).toBe(1);
-    expect(requestCounts.listSessions).toBe(2);
+    expect(requestCounts.getActiveSessionSummary).toBeGreaterThanOrEqual(2);
+    expect(requestCounts.listSessions).toBeGreaterThanOrEqual(2);
     expect(runtime.sessions.find((session) => session.id === "session-1")).toMatchObject({
       status: "idle",
       preview: "Thread handoff received.",
@@ -1149,6 +1171,11 @@ describe("createChatRuntime", () => {
       },
     });
     expect(runtime.sessions.some((session) => session.id === "thread-session-1")).toBe(false);
+    expect(runtime.activeSessionId).toBe("session-1");
+    expect(runtime.activeSurface).toEqual({
+      surface: "orchestrator",
+      surfaceSessionId: "session-1",
+    });
 
     runtime.dispose();
   });
