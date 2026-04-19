@@ -2,7 +2,7 @@
 
 ## Status
 
-- Date: 2026-04-18
+- Date: 2026-04-19
 - Status: adopted direction for the structured session state model
 - Reference implementation: [POC](../pocs/structured-session-state.poc.ts)
 
@@ -52,6 +52,10 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Treat every top-level `execute_typescript` invocation as one parent command record and every nested `api.*` call as a child command record.
 - Keep only a very small set of native control tools for thread spawning, explicit thread handoff, workflow control, and wait.
 - Drive durable facts from real runtime handlers and bridge events, not transcript heuristics.
+- Use one explicit surface-target identity model with `workspaceSessionId`, `surfacePiSessionId`, and `threadId` instead of overloading `session.id`.
+- Use explicit backend-to-renderer session-sync events that carry the active surface target when prompt settlement or surface ownership changes; the renderer should not poll read APIs to guess when state caught up.
+- Keep status derivation and workflow lifecycle projection write-driven; do not overlay `activePrompt`, parse transcript files, or perform read-side Smithers repair writes.
+- Future Smithers lifecycle projection beyond explicit tool-boundary snapshots should arrive through bridge events rather than speculative read-side reconciliation.
 - Keep workflow-run state separate from handler-thread state.
 - Treat a handler thread as one delegated objective that may supervise many workflow runs over its lifetime.
 - Treat handler-thread episodes as durable handoff summaries that are emitted explicitly through `thread.handoff` whenever a thread gives control back to the orchestrator.
@@ -260,6 +264,27 @@ type StructuredSessionState = {
   }>;
 };
 ```
+
+## Surface Target Identity
+
+All bun-to-renderer runtime traffic should carry an explicit surface target:
+
+```ts
+type SurfaceTarget = {
+  workspaceSessionId: string;
+  surface: "orchestrator" | "thread";
+  surfacePiSessionId: string;
+  threadId?: string;
+};
+```
+
+Use it this way:
+
+- `workspaceSessionId` identifies the durable top-level session container
+- `surfacePiSessionId` identifies the currently addressed pi conversation surface
+- `threadId` identifies the delegated handler-thread record when `surface === "thread"`
+- session summaries expose `session.id === workspaceSessionId`
+- no component may overload `session.id` to mean `surfacePiSessionId`, even if the orchestrator currently reuses the same string for both values
 
 ## Why These Records Exist
 
@@ -727,6 +752,15 @@ The summary selector should derive session status in this order:
 3. else if the latest updated thread is `failed`, the session status is `error`
 4. else the session status is `idle`
 
+No other input participates in session status:
+
+- not live `activePrompt` flags
+- not transcript stop reasons
+- not transcript JSONL scans
+- not renderer-side overlays or repair state
+
+A currently open surface may still render live transcript streaming locally, but that does not create a second session-summary status source.
+
 ### Main Session View
 
 The main session UI should primarily read:
@@ -773,6 +807,13 @@ Write responsibility is:
 
 No runtime component may synthesize `turnDecision`, thread, workflow-run, verification, or wait facts from transcript prose after the fact.
 
+Read APIs and selectors are projection-only for lifecycle state:
+
+- they may read current durable facts and explicit active-surface state
+- they must not mutate thread, workflow-run, verification, or wait state during reads
+- they must not poll Smithers or parse transcript files to compensate for missing writes
+- they must not refresh pi session metadata as a side effect of summary reads; that metadata belongs on explicit session mutations and prompt-settlement writes
+
 ## Invariants
 
 The implementation must enforce these invariants:
@@ -796,4 +837,5 @@ This spec does not attempt to:
 - make the episode schema carry all machine-readable routing state
 - flatten handler-thread and workflow-run state into one record type
 - rely on transcript replay for session summary, navigation, or wait state
+- repair missing workflow lifecycle state through read-side polling or reconciliation
 - define the exact final desktop UI layout

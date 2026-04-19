@@ -249,7 +249,7 @@ export interface StructuredSessionStateStore {
   upsertPiSession(pi: StructuredPiSessionRecord): void;
   startTurn(input: {
     sessionId: string;
-    surfacePiSessionId?: string;
+    surfacePiSessionId: string;
     threadId?: string | null;
     requestSummary: string;
   }): StructuredTurnRecord;
@@ -607,7 +607,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   startTurn(input: {
     sessionId: string;
-    surfacePiSessionId?: string;
+    surfacePiSessionId: string;
     threadId?: string | null;
     requestSummary: string;
   }): StructuredTurnRecord {
@@ -646,8 +646,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     }
 
     const turnId = createId("turn");
-    const surfacePiSessionId =
-      input.surfacePiSessionId ?? thread?.surface_pi_session_id ?? input.sessionId;
     this.db
       .query(
         `INSERT INTO turn (
@@ -666,7 +664,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .run(
         turnId,
         input.sessionId,
-        surfacePiSessionId,
+        input.surfacePiSessionId,
         threadId,
         input.requestSummary,
         "pending",

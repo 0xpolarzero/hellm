@@ -344,6 +344,12 @@ Smithers is not:
 - the main conversation substrate
 - the owner of session-level routing decisions
 
+When `svvy` needs workflow lifecycle state, the intended seam is explicit Smithers bridge events that write workflow-run and thread facts into structured state.
+
+Until those bridge events exist for a lifecycle transition, `svvy` may rely only on explicit tool-boundary projections already emitted during `workflow.start` or `workflow.resume`.
+
+Read paths must not query Smithers to repair missing workflow state after the fact.
+
 ## Product Model
 
 ### Workspace
@@ -366,6 +372,20 @@ It contains:
 - one main orchestrator surface
 - zero or more delegated handler thread surfaces
 - durable state across those surfaces
+
+### Surface Identity
+
+The product carries three different identifiers and they are not interchangeable:
+
+- `workspaceSessionId`: the durable top-level session container id used for storage, summaries, navigation, and restart recovery
+- `surfacePiSessionId`: the pi session id for the currently addressed interactive surface
+- `threadId`: the durable handler-thread record id for the delegated objective; it exists only when the target surface is a handler thread
+
+Rules:
+
+- backend RPC calls and backend-to-renderer session-sync payloads must carry an explicit surface target rather than overloading `session.id`
+- `session.id` inside session summaries means `workspaceSessionId`
+- if the orchestrator surface currently happens to reuse the same string for `workspaceSessionId` and `surfacePiSessionId`, callers must treat that as an implementation detail rather than a shared identity contract
 
 ### Orchestrator Surface
 
@@ -515,7 +535,10 @@ Every user request goes through one orchestrator-controlled product loop:
 6. execute tools through the correct runtime handler
 7. record commands, events, workflow-run state, artifacts, and wait state
 8. update structured state
-9. render updated session and pane surfaces
+9. emit explicit session-sync events that carry the active surface target plus rehydration data whenever prompt settlement or background reconciliation changes what the UI should project
+10. render updated session and pane surfaces from those events plus durable state
+
+Read APIs and renderer code must not compensate for missing lifecycle writes with polling, transcript parsing, or inferred repair logic.
 
 ### Main Orchestrator Loop
 
@@ -615,6 +638,12 @@ Message targeting is simple:
 - if the pane shows a handler thread, the message goes to that handler thread
 
 This is shared surface behavior, not a thread-specific exception.
+
+Projection ownership is equally simple:
+
+- the backend owns active surface targeting and session summary projection
+- the renderer listens for explicit session-sync payloads and rehydrates from that target plus durable state
+- the renderer does not poll read APIs, inspect transcript files, or infer lifecycle changes from transcript mutations
 
 ## Workflow Inspection
 

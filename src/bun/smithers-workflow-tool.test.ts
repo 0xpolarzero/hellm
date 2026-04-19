@@ -542,6 +542,58 @@ describe("smithers workflow tool", () => {
     ).rejects.toThrow("workflow.start can only run during an active prompt.");
   });
 
+  it("does not poll for an initial Smithers projection and falls back to a running workflow", async () => {
+    const readSmithersWorkflowProjectionInput = mock(() => null);
+    const bridge = createBridge({
+      startImplementFeatureWorkflow: mock(async () => ({
+        runId: "run-no-projection",
+        stdout: "workflow started",
+        stderr: "",
+      })),
+      readSmithersWorkflowProjectionInput,
+    });
+    const harness = createHarness();
+    const tool = createStartWorkflowTool({
+      runtime: harness.runtime,
+      store: harness.store,
+      bridge,
+    });
+
+    const result = await tool.execute("tool-call-no-projection", {
+      specPath: "docs/specs/structured-session-state.spec.md",
+      pocPath: "docs/pocs/structured-session-state.poc.ts",
+    });
+
+    expect(readSmithersWorkflowProjectionInput).toHaveBeenCalledTimes(1);
+    expect(result.details).toMatchObject({
+      ok: true,
+      resumed: false,
+      runId: "run-no-projection",
+      handlerThreadId: harness.handlerThreadId,
+      status: "running",
+      summary: "implement-feature run run-no-projection started.",
+      sessionWaitApplied: false,
+      persisted: true,
+    });
+
+    const snapshot = harness.getSnapshot();
+    expect(snapshot.workflowRuns).toEqual([
+      expect.objectContaining({
+        threadId: harness.handlerThreadId,
+        smithersRunId: "run-no-projection",
+        status: "running",
+        summary: "implement-feature run run-no-projection started.",
+      }),
+    ]);
+    expect(snapshot.threads[0]).toMatchObject({
+      id: harness.handlerThreadId,
+      status: "running",
+      wait: null,
+      latestWorkflowRunId: snapshot.workflowRuns[0]?.id,
+    });
+    expect(snapshot.session.wait).toBeNull();
+  });
+
   it("records workflow.start directly on the handler thread and applies handler-owned wait", async () => {
     const bridge = createBridge({
       startImplementFeatureWorkflow: mock(async () => ({

@@ -99,7 +99,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Session State Overlay",
     status: "in-progress",
     summary:
-      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, workflow-run, command, episode, artifact, verification, wait, and lifecycle event records plus metadata-first read models that survive reload.",
+      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, workflow-run, command, episode, artifact, verification, wait, and lifecycle event records, explicit surface-target identity (`workspaceSessionId`, `surfacePiSessionId`, `threadId`), and backend-driven session-sync rehydration that survives reload.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -115,7 +115,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Handler Threads",
     status: "in-progress",
     summary:
-      "Tracks delegated handler threads as durable interactive surfaces with backing pi session ids, objective, current objective status, wait state, worktree context, and linkage to multiple workflow runs and multiple handoff episodes over the thread's lifetime.",
+      "Tracks delegated handler threads as durable interactive surfaces keyed separately from workspace session containers and pi surface ids, with objective, current objective status, wait state, worktree context, and linkage to multiple workflow runs and multiple handoff episodes over the thread's lifetime.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -139,7 +139,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Workflow Run Records",
     status: "in-progress",
     summary:
-      "Stores one svvy-side record for each Smithers workflow run under a handler thread, including run identity, template or preset metadata, status, summary, timestamps, and related artifacts and command history.",
+      "Stores one svvy-side record for each Smithers workflow run under a handler thread, including run identity, template or preset metadata, status, summary, timestamps, and related artifacts and command history, with lifecycle projection owned by explicit bridge or tool writes rather than read-side refresh.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -155,7 +155,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Metadata-First Session Read Models",
     status: "in-progress",
     summary:
-      "Derives idle, running, waiting, and error session status, counts, ordered thread ids, and compact summary data from structured state and artifact metadata for sidebar, navigation, and restart recovery without transcript replay.",
+      "Derives idle, running, waiting, and error session status, counts, ordered thread ids, and compact summary data from structured wait and thread state plus artifact metadata for sidebar, navigation, and restart recovery without transcript replay, transcript-file heuristics, or live prompt overlays.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {

@@ -92,7 +92,7 @@ export interface StructuredHandlerThreadEpisodeSummary {
 
 export interface StructuredHandlerThreadSummary {
   threadId: string;
-  surfaceSessionId: string;
+  surfacePiSessionId: string;
   title: string;
   objective: string;
   status: StructuredThreadRecord["status"];
@@ -413,7 +413,7 @@ function buildHandlerThreadSummary(
 
   return {
     threadId: thread.id,
-    surfaceSessionId: thread.surfacePiSessionId,
+    surfacePiSessionId: thread.surfacePiSessionId,
     title: thread.title,
     objective: thread.objective,
     status: thread.status,
@@ -540,7 +540,6 @@ function getLatestFailureTimestamp(session: StructuredSessionSnapshot): number |
 
 export function deriveStructuredSessionStatus(input: {
   wait: StructuredSessionSnapshot["session"]["wait"];
-  turns: Pick<StructuredTurnRecord, "status" | "updatedAt">[];
   threads: Array<Pick<StructuredThreadRecord, "status" | "updatedAt">>;
 }): StructuredSessionStatus {
   if (input.wait) {
@@ -576,11 +575,7 @@ export function buildStructuredSessionView(
     title: session.pi.title,
     sessionStatus: deriveStructuredSessionStatus({
       wait: session.session.wait,
-      turns: session.turns.map((turn) => ({
-        status: turn.status,
-        updatedAt: turn.updatedAt,
-      })),
-      threads: delegatedThreads.map((thread) => ({
+      threads: session.threads.map((thread) => ({
         status: thread.status,
         updatedAt: thread.updatedAt,
       })),

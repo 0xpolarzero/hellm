@@ -89,6 +89,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Resume handler-thread control when a workflow run completes, fails, or pauses. Commit(s): `f53c9b8`
 - [x] Support multiple workflow runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
 - [x] Persist latest-workflow-run linkage on the thread for summary selectors. Commit(s): `fff54d7`, `f53c9b8`
+- [ ] Emit explicit Smithers bridge lifecycle events that update workflow-run and handler-thread state without read-side refresh or polling.
 - [ ] Guarantee that a workflow-run failure still returns durable failure state to the supervising handler thread even when the planned workflow finalization path does not run.
 
 ## 6. Workflow Templates And Presets

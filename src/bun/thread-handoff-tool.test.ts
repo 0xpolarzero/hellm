@@ -42,6 +42,7 @@ function createStore() {
 function createHandlerRuntime(store: StructuredSessionStateStore): PromptExecutionRuntimeHandle {
   const turn = store.startTurn({
     sessionId: "session-thread-handoff-tool",
+    surfacePiSessionId: "session-thread-handoff-tool",
     requestSummary: "Hand control back from the thread",
   });
   const orchestratorThread = store.createThread({
@@ -85,6 +86,7 @@ function createHandlerRuntime(store: StructuredSessionStateStore): PromptExecuti
       surfacePiSessionId: "pi-thread-handoff-001",
       surfaceThreadId: handlerThread.id,
       surfaceKind: "handler",
+      defaultEpisodeKind: "change",
       rootThreadId: handlerThread.id,
       promptText: "Hand control back from the thread",
       rootEpisodeKind: "change",

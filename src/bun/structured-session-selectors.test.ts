@@ -252,7 +252,6 @@ describe("structured session selectors", () => {
           resumeWhen: "Resume on answer",
           since: "2026-04-18T10:00:00.000Z",
         },
-        turns: [],
         threads: [],
       }),
     ).toBe("waiting");
@@ -260,7 +259,6 @@ describe("structured session selectors", () => {
     expect(
       deriveStructuredSessionStatus({
         wait: null,
-        turns: [],
         threads: [
           {
             status: "running",
@@ -273,12 +271,6 @@ describe("structured session selectors", () => {
     expect(
       deriveStructuredSessionStatus({
         wait: null,
-        turns: [
-          {
-            status: "failed",
-            updatedAt: "2026-04-18T10:00:00.000Z",
-          },
-        ],
         threads: [
           {
             status: "completed",
@@ -295,7 +287,6 @@ describe("structured session selectors", () => {
     expect(
       deriveStructuredSessionStatus({
         wait: null,
-        turns: [],
         threads: [
           {
             status: "completed",
@@ -763,7 +754,7 @@ describe("structured session selectors", () => {
     expect(buildStructuredHandlerThreadSummaries(snapshot)).toEqual([
       {
         threadId: "thread-handler",
-        surfaceSessionId: "pi-thread-handler",
+        surfacePiSessionId: "pi-thread-handler",
         title: "Parser fix thread",
         objective: "Patch the parser bug and add regression coverage.",
         status: "completed",
@@ -795,7 +786,7 @@ describe("structured session selectors", () => {
 
     expect(buildStructuredHandlerThreadInspector(snapshot, "thread-handler")).toEqual({
       threadId: "thread-handler",
-      surfaceSessionId: "pi-thread-handler",
+      surfacePiSessionId: "pi-thread-handler",
       title: "Parser fix thread",
       objective: "Patch the parser bug and add regression coverage.",
       status: "completed",
@@ -893,7 +884,7 @@ describe("structured session selectors", () => {
     expect(buildStructuredHandlerThreadInspector(snapshot, "thread-local")).toBeNull();
   });
 
-  it("derives session sidebar status and thread counts from delegated handler threads only", () => {
+  it("derives session status from all structured threads while keeping delegated-thread counts separate", () => {
     const snapshot = createSessionSnapshot({
       session: {
         id: "session-sidebar",
@@ -922,7 +913,7 @@ describe("structured session selectors", () => {
     });
 
     expect(buildStructuredSessionView(snapshot)).toMatchObject({
-      sessionStatus: "idle",
+      sessionStatus: "running",
       counts: {
         threads: 1,
       },
@@ -935,7 +926,7 @@ describe("structured session selectors", () => {
     });
 
     expect(buildStructuredSessionSummaryProjection(snapshot)).toMatchObject({
-      status: "idle",
+      status: "running",
       counts: {
         threads: 1,
       },

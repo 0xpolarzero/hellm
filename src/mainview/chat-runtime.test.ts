@@ -9,9 +9,8 @@ import type {
 import type { ChatStorage, CustomProvider } from "./chat-storage";
 import type {
   ActiveSessionState,
-  ActiveSessionSummaryState,
   PromptTarget,
-  SessionEventMessage,
+  SessionSyncMessage,
   SessionMutationResponse,
   WorkspaceCommandInspector,
   WorkspaceHandlerThreadInspector,
@@ -99,6 +98,27 @@ function toolResultMessage(text: string): ToolResultMessage {
     timestamp: Date.now(),
     isError: false,
     content: [{ type: "text", text }],
+  };
+}
+
+function createOrchestratorTarget(workspaceSessionId: string): PromptTarget {
+  return {
+    workspaceSessionId,
+    surface: "orchestrator",
+    surfacePiSessionId: workspaceSessionId,
+  };
+}
+
+function createThreadTarget(
+  workspaceSessionId: string,
+  surfacePiSessionId: string,
+  threadId: string,
+): PromptTarget {
+  return {
+    workspaceSessionId,
+    surface: "thread",
+    surfacePiSessionId,
+    threadId,
   };
 }
 
@@ -212,7 +232,7 @@ function createCommandInspector(
 function createHandlerThreadSummary(threadId = "thread-1"): WorkspaceHandlerThreadSummary {
   return {
     threadId,
-    surfaceSessionId: `thread-session-${threadId}`,
+    surfacePiSessionId: `thread-session-${threadId}`,
     title: "Parser fix thread",
     objective: "Patch the parser bug and add regression coverage.",
     status: "completed",
@@ -291,7 +311,11 @@ function createActiveSession(
   title: string,
   messages: AgentMessage[],
   reasoning: ActiveSessionState["reasoningEffort"] = "medium",
-  options: { systemPrompt?: string; resolvedSystemPrompt?: string } = {},
+  options: {
+    systemPrompt?: string;
+    resolvedSystemPrompt?: string;
+    target?: PromptTarget;
+  } = {},
 ): ActiveSessionState {
   const lastMessage = messages.at(-1);
   const preview =
@@ -302,8 +326,11 @@ function createActiveSession(
           .join(" ")
       : "";
 
+  const target = options.target ?? createOrchestratorTarget(id);
+
   return {
     session: createSummary(id, title, preview, reasoning),
+    target,
     messages,
     provider: "openai",
     model: "gpt-4o",
@@ -318,9 +345,16 @@ function cloneActiveSession(session: ActiveSessionState): ActiveSessionState {
   return structuredClone(session);
 }
 
-function cloneActiveSessionSummary(session: ActiveSessionState): ActiveSessionSummaryState {
-  const { messages: _messages, ...summary } = cloneActiveSession(session);
-  return summary;
+function createSessionSyncMessage(
+  activeSession: ActiveSessionState,
+  sessions: WorkspaceSessionSummary[],
+  reason: SessionSyncMessage["reason"] = "prompt.settled",
+): SessionSyncMessage {
+  return {
+    reason,
+    activeSession: cloneActiveSession(activeSession),
+    sessions: structuredClone(sessions),
+  };
 }
 
 function stripSummaryMetadata(summary: WorkspaceSessionSummary): WorkspaceSessionSummary {
@@ -343,13 +377,12 @@ function createFakeRpc(
   } = {},
 ): {
   client: ChatRuntimeRpcClient;
-  sentPromptRequests: Array<{ sessionId?: string; target?: PromptTarget }>;
+  sentPromptRequests: Array<{ target: PromptTarget }>;
   sentPromptSessions: string[];
   openedSessions: string[];
   requestCounts: {
     listSessions: number;
     getActiveSession: number;
-    getActiveSessionSummary: number;
     getCommandInspector: number;
     listHandlerThreads: number;
     getHandlerThreadInspector: number;
@@ -358,40 +391,70 @@ function createFakeRpc(
   const streamListeners = new Set<
     (payload: { streamId: string; event: AssistantMessageEvent }) => void
   >();
-  const sessionListeners = new Set<(payload: SessionEventMessage) => void>();
-  const sessionsById = new Map(
-    initialSessions.map((session) => [session.session.id, cloneActiveSession(session)]),
+  const sessionSyncListeners = new Set<(payload: SessionSyncMessage) => void>();
+  const surfacesByPiSessionId = new Map(
+    initialSessions.map((session) => [session.target.surfacePiSessionId, cloneActiveSession(session)]),
   );
-  let activeSessionId = initialSessions[0]?.session.id;
+  let activeTarget = initialSessions[0]?.target ? structuredClone(initialSessions[0].target) : undefined;
   const openedSessions: string[] = [];
-  const sentPromptRequests: Array<{ sessionId?: string; target?: PromptTarget }> = [];
+  const sentPromptRequests: Array<{ target: PromptTarget }> = [];
   const sentPromptSessions: string[] = [];
   const requestCounts = {
     listSessions: 0,
     getActiveSession: 0,
-    getActiveSessionSummary: 0,
     getCommandInspector: 0,
     listHandlerThreads: 0,
     getHandlerThreadInspector: 0,
   };
 
+  const listWorkspaceSummaries = () => {
+    const summariesById = new Map<string, WorkspaceSessionSummary>();
+    for (const session of surfacesByPiSessionId.values()) {
+      if (!summariesById.has(session.session.id) || session.target.surface === "orchestrator") {
+        summariesById.set(
+          session.session.id,
+          options.metadataOnlyListSessions
+            ? stripSummaryMetadata(session.session)
+            : structuredClone(session.session),
+        );
+      }
+    }
+
+    return Array.from(summariesById.values());
+  };
+
+  const getSurface = (surfacePiSessionId: string) => {
+    const session = surfacesByPiSessionId.get(surfacePiSessionId);
+    if (!session) {
+      throw new Error(`Missing fake surface ${surfacePiSessionId}`);
+    }
+    return session;
+  };
+
+  const updateWorkspaceSummary = (
+    workspaceSessionId: string,
+    updater: (summary: WorkspaceSessionSummary) => void,
+  ) => {
+    for (const session of surfacesByPiSessionId.values()) {
+      if (session.session.id === workspaceSessionId) {
+        updater(session.session);
+      }
+    }
+  };
+
   const listSessions = () => ({
-    activeSessionId,
-    sessions: Array.from(sessionsById.values()).map((session) =>
-      options.metadataOnlyListSessions
-        ? stripSummaryMetadata(session.session)
-        : structuredClone(session.session),
-    ),
+    activeSessionId: activeTarget?.workspaceSessionId,
+    sessions: listWorkspaceSummaries(),
   });
 
   const getActiveSession = () => {
     requestCounts.getActiveSession += 1;
-    return activeSessionId ? cloneActiveSession(sessionsById.get(activeSessionId)!) : null;
+    return activeTarget ? cloneActiveSession(getSurface(activeTarget.surfacePiSessionId)) : null;
   };
 
   const mutation = (activeSession?: ActiveSessionState | null): SessionMutationResponse => ({
     ok: true,
-    activeSessionId,
+    activeSessionId: activeTarget?.workspaceSessionId,
     activeSession: activeSession ? cloneActiveSession(activeSession) : (activeSession ?? undefined),
   });
 
@@ -409,12 +472,6 @@ function createFakeRpc(
         return listSessions();
       },
       getActiveSession: async () => getActiveSession(),
-      getActiveSessionSummary: async () => {
-        requestCounts.getActiveSessionSummary += 1;
-        return activeSessionId
-          ? cloneActiveSessionSummary(sessionsById.get(activeSessionId)!)
-          : null;
-      },
       getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
         requestCounts.getCommandInspector += 1;
         return structuredClone(options.commandInspector ?? createCommandInspector(commandId));
@@ -432,57 +489,71 @@ function createFakeRpc(
         );
       },
       createSession: async ({ title }: { title?: string }) => {
-        const id = `session-${sessionsById.size + 1}`;
+        const id = `session-${surfacesByPiSessionId.size + 1}`;
         const created = createActiveSession(id, title ?? "New Session", [], "medium");
-        sessionsById.set(id, cloneActiveSession(created));
-        activeSessionId = id;
+        surfacesByPiSessionId.set(created.target.surfacePiSessionId, cloneActiveSession(created));
+        activeTarget = structuredClone(created.target);
         return cloneActiveSession(created);
       },
       openSession: async ({ sessionId }: { sessionId: string }) => {
         openedSessions.push(sessionId);
-        activeSessionId = sessionId;
-        return cloneActiveSession(sessionsById.get(sessionId)!);
+        activeTarget = createOrchestratorTarget(sessionId);
+        return cloneActiveSession(getSurface(sessionId));
+      },
+      openSurface: async ({ target }: { target: PromptTarget }) => {
+        openedSessions.push(target.surfacePiSessionId);
+        activeTarget = structuredClone(target);
+        const session = cloneActiveSession(getSurface(target.surfacePiSessionId));
+        session.target = structuredClone(target);
+        return session;
       },
       renameSession: async ({ sessionId, title }: { sessionId: string; title: string }) => {
-        const session = sessionsById.get(sessionId)!;
-        session.session.title = title;
+        updateWorkspaceSummary(sessionId, (summary) => {
+          summary.title = title;
+        });
         return mutation();
       },
       forkSession: async ({ sessionId, title }: { sessionId: string; title?: string }) => {
-        const source = sessionsById.get(sessionId)!;
-        const id = `session-${sessionsById.size + 1}`;
+        const source = getSurface(sessionId);
+        const id = `session-${surfacesByPiSessionId.size + 1}`;
         const forked = cloneActiveSession(source);
         forked.session.id = id;
         forked.session.title = title ?? `${source.session.title} fork`;
         forked.session.parentSessionId = sessionId;
-        sessionsById.set(id, forked);
-        activeSessionId = id;
+        forked.target = createOrchestratorTarget(id);
+        surfacesByPiSessionId.set(id, forked);
+        activeTarget = structuredClone(forked.target);
         return cloneActiveSession(forked);
       },
       deleteSession: async ({ sessionId }: { sessionId: string }) => {
-        sessionsById.delete(sessionId);
-        if (activeSessionId === sessionId) {
-          activeSessionId = Array.from(sessionsById.keys())[0];
-          return mutation(activeSessionId ? sessionsById.get(activeSessionId)! : null);
+        for (const [surfacePiSessionId, session] of surfacesByPiSessionId.entries()) {
+          if (session.session.id === sessionId) {
+            surfacesByPiSessionId.delete(surfacePiSessionId);
+          }
+        }
+        if (activeTarget?.workspaceSessionId === sessionId) {
+          const nextSurface = Array.from(surfacesByPiSessionId.values()).find(
+            (session) => session.target.surface === "orchestrator",
+          );
+          activeTarget = nextSurface ? structuredClone(nextSurface.target) : undefined;
+          return mutation(nextSurface ? cloneActiveSession(nextSurface) : null);
         }
         return mutation();
       },
       sendPrompt: async (request: {
-        sessionId?: string;
         streamId: string;
         messages: AgentMessage[];
-        target?: PromptTarget;
+        target: PromptTarget;
       }) => {
-        sentPromptRequests.push({
-          sessionId: request.sessionId,
-          target: request.target,
-        });
-        sentPromptSessions.push(request.sessionId ?? "");
+        sentPromptRequests.push({ target: structuredClone(request.target) });
+        sentPromptSessions.push(request.target.surfacePiSessionId);
         const assistant = assistantMessage("Session-specific reply");
-        const session = sessionsById.get(request.sessionId!)!;
+        const session = getSurface(request.target.surfacePiSessionId);
         session.messages = [...request.messages, assistant];
-        session.session.preview = "Session-specific reply";
-        session.session.messageCount = session.messages.length;
+        updateWorkspaceSummary(request.target.workspaceSessionId, (summary) => {
+          summary.preview = "Session-specific reply";
+          summary.messageCount = session.messages.length;
+        });
         queueMicrotask(() => {
           const partial = assistantMessage("");
           for (const listener of streamListeners) {
@@ -514,19 +585,37 @@ function createFakeRpc(
               event: { type: "done", reason: "stop", message: assistant },
             });
           }
+
+          for (const listener of sessionSyncListeners) {
+            listener(
+              createSessionSyncMessage(
+                session,
+                listSessions().sessions,
+              ),
+            );
+          }
         });
         return {
-          sessionId: request.sessionId!,
-          target: request.target,
+          target: structuredClone(request.target),
         };
       },
-      setSessionModel: async ({ sessionId }: { sessionId: string; model: string }) => ({
+      setSessionModel: async ({
+        surfacePiSessionId,
+      }: {
+        surfacePiSessionId: string;
+        model: string;
+      }) => ({
         ok: true,
-        sessionId,
+        sessionId: surfacePiSessionId,
       }),
-      setSessionThoughtLevel: async ({ sessionId }: { sessionId: string; level: string }) => ({
+      setSessionThoughtLevel: async ({
+        surfacePiSessionId,
+      }: {
+        surfacePiSessionId: string;
+        level: string;
+      }) => ({
         ok: true,
-        sessionId,
+        sessionId: surfacePiSessionId,
       }),
       cancelPrompt: async () => ({ ok: true }),
       listProviderAuths: async () => [
@@ -543,8 +632,8 @@ function createFakeRpc(
         );
         return;
       }
-      if (messageName === "sendSessionEvent") {
-        sessionListeners.add(listener as (payload: SessionEventMessage) => void);
+      if (messageName === "sendSessionSync") {
+        sessionSyncListeners.add(listener as (payload: SessionSyncMessage) => void);
       }
     },
     removeMessageListener: (messageName: string, listener: unknown) => {
@@ -554,8 +643,8 @@ function createFakeRpc(
         );
         return;
       }
-      if (messageName === "sendSessionEvent") {
-        sessionListeners.delete(listener as (payload: SessionEventMessage) => void);
+      if (messageName === "sendSessionSync") {
+        sessionSyncListeners.delete(listener as (payload: SessionSyncMessage) => void);
       }
     },
   };
@@ -565,13 +654,12 @@ function createFakeRpc(
 
 function createFakeRpcWithToolUse(
   initialSession: ActiveSessionState,
-  options: { summaryMode?: "summary" | "null" | "mismatch" } = {},
+  _options: { summaryMode?: "summary" | "null" | "mismatch" } = {},
 ): {
   client: ChatRuntimeRpcClient;
   requestCounts: {
     listSessions: number;
     getActiveSession: number;
-    getActiveSessionSummary: number;
     getCommandInspector: number;
     listHandlerThreads: number;
     getHandlerThreadInspector: number;
@@ -580,7 +668,7 @@ function createFakeRpcWithToolUse(
   const streamListeners = new Set<
     (payload: { streamId: string; event: AssistantMessageEvent }) => void
   >();
-  const sessionListeners = new Set<(payload: SessionEventMessage) => void>();
+  const sessionSyncListeners = new Set<(payload: SessionSyncMessage) => void>();
   const toolUse = toolCall("artifacts", {
     command: "create",
     filename: "tool-use.txt",
@@ -591,7 +679,6 @@ function createFakeRpcWithToolUse(
   const requestCounts = {
     listSessions: 0,
     getActiveSession: 0,
-    getActiveSessionSummary: 0,
     getCommandInspector: 0,
     listHandlerThreads: 0,
     getHandlerThreadInspector: 0,
@@ -617,22 +704,6 @@ function createFakeRpcWithToolUse(
         requestCounts.getActiveSession += 1;
         return cloneActiveSession(session);
       },
-      getActiveSessionSummary: async () => {
-        requestCounts.getActiveSessionSummary += 1;
-        if (options.summaryMode === "null") {
-          return null;
-        }
-        if (options.summaryMode === "mismatch") {
-          return {
-            ...cloneActiveSessionSummary(session),
-            session: {
-              ...cloneActiveSessionSummary(session).session,
-              id: `${session.session.id}-stale`,
-            },
-          };
-        }
-        return cloneActiveSessionSummary(session);
-      },
       getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
         requestCounts.getCommandInspector += 1;
         return createCommandInspector(commandId);
@@ -647,6 +718,7 @@ function createFakeRpcWithToolUse(
       },
       createSession: async () => cloneActiveSession(session),
       openSession: async () => cloneActiveSession(session),
+      openSurface: async () => cloneActiveSession(session),
       renameSession: async () => ({
         ok: true,
         activeSessionId: session.session.id,
@@ -657,10 +729,9 @@ function createFakeRpcWithToolUse(
         activeSessionId: session.session.id,
       }),
       sendPrompt: async (request: {
-        sessionId?: string;
         streamId: string;
         messages: AgentMessage[];
-        target?: PromptTarget;
+        target: PromptTarget;
       }) => {
         const toolAssistant: AssistantMessage = {
           ...assistantMessage("Using the artifacts tool."),
@@ -685,20 +756,37 @@ function createFakeRpcWithToolUse(
               event: { type: "done", reason: "stop", message: finalAssistant },
             });
           }
+          for (const listener of sessionSyncListeners) {
+            listener(
+              createSessionSyncMessage(
+                session,
+                [session.session],
+              ),
+            );
+          }
         });
 
         return {
-          sessionId: request.sessionId ?? session.session.id,
-          target: request.target,
+          target: structuredClone(request.target),
         };
       },
-      setSessionModel: async ({ sessionId }: { sessionId: string; model: string }) => ({
+      setSessionModel: async ({
+        surfacePiSessionId,
+      }: {
+        surfacePiSessionId: string;
+        model: string;
+      }) => ({
         ok: true,
-        sessionId,
+        sessionId: surfacePiSessionId,
       }),
-      setSessionThoughtLevel: async ({ sessionId }: { sessionId: string; level: string }) => ({
+      setSessionThoughtLevel: async ({
+        surfacePiSessionId,
+      }: {
+        surfacePiSessionId: string;
+        level: string;
+      }) => ({
         ok: true,
-        sessionId,
+        sessionId: surfacePiSessionId,
       }),
       cancelPrompt: async () => ({ ok: true }),
       listProviderAuths: async () => [
@@ -715,8 +803,8 @@ function createFakeRpcWithToolUse(
         );
         return;
       }
-      if (messageName === "sendSessionEvent") {
-        sessionListeners.add(listener as (payload: SessionEventMessage) => void);
+      if (messageName === "sendSessionSync") {
+        sessionSyncListeners.add(listener as (payload: SessionSyncMessage) => void);
       }
     },
     removeMessageListener: (messageName: string, listener: unknown) => {
@@ -726,8 +814,8 @@ function createFakeRpcWithToolUse(
         );
         return;
       }
-      if (messageName === "sendSessionEvent") {
-        sessionListeners.delete(listener as (payload: SessionEventMessage) => void);
+      if (messageName === "sendSessionSync") {
+        sessionSyncListeners.delete(listener as (payload: SessionSyncMessage) => void);
       }
     },
   };
@@ -740,7 +828,6 @@ function createFakeRpcWithThreadSidebarRefresh(): {
   requestCounts: {
     listSessions: number;
     getActiveSession: number;
-    getActiveSessionSummary: number;
     getCommandInspector: number;
     listHandlerThreads: number;
     getHandlerThreadInspector: number;
@@ -749,7 +836,7 @@ function createFakeRpcWithThreadSidebarRefresh(): {
   const streamListeners = new Set<
     (payload: { streamId: string; event: AssistantMessageEvent }) => void
   >();
-  const sessionListeners = new Set<(payload: SessionEventMessage) => void>();
+  const sessionSyncListeners = new Set<(payload: SessionSyncMessage) => void>();
   const orchestrator = createActiveSession(
     "session-1",
     "Orchestrator",
@@ -763,32 +850,25 @@ function createFakeRpcWithThreadSidebarRefresh(): {
     waiting: [],
     failed: [],
   };
+  const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
   const thread = createActiveSession(
-    "thread-session-1",
+    "session-1",
     "Handler Thread",
     [userMessage("status"), assistantMessage("Working on it.")],
     "medium",
+    { target: threadTarget },
   );
-  thread.session.parentSessionId = "session-1";
-
-  let activeSessionId = orchestrator.session.id;
-  let promptSettled = false;
-  let postThreadSummaryReads = 0;
+  let activeTarget = createOrchestratorTarget(orchestrator.session.id);
   const requestCounts = {
     listSessions: 0,
     getActiveSession: 0,
-    getActiveSessionSummary: 0,
     getCommandInspector: 0,
     listHandlerThreads: 0,
     getHandlerThreadInspector: 0,
   };
 
-  const getSession = (sessionId: string): ActiveSessionState => {
-    if (sessionId === thread.session.id) {
-      return thread;
-    }
-    return orchestrator;
-  };
+  const getActiveSurface = () =>
+    activeTarget.surface === "thread" ? cloneActiveSession(thread) : cloneActiveSession(orchestrator);
 
   const client: ChatRuntimeRpcClient = {
     request: {
@@ -808,17 +888,7 @@ function createFakeRpcWithThreadSidebarRefresh(): {
       },
       getActiveSession: async () => {
         requestCounts.getActiveSession += 1;
-        return cloneActiveSession(getSession(activeSessionId));
-      },
-      getActiveSessionSummary: async () => {
-        requestCounts.getActiveSessionSummary += 1;
-        if (promptSettled && activeSessionId === thread.session.id) {
-          postThreadSummaryReads += 1;
-          if (postThreadSummaryReads >= 2) {
-            activeSessionId = orchestrator.session.id;
-          }
-        }
-        return cloneActiveSessionSummary(getSession(activeSessionId));
+        return getActiveSurface();
       },
       getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
         requestCounts.getCommandInspector += 1;
@@ -834,8 +904,12 @@ function createFakeRpcWithThreadSidebarRefresh(): {
       },
       createSession: async () => cloneActiveSession(orchestrator),
       openSession: async ({ sessionId }: { sessionId: string }) => {
-        activeSessionId = sessionId;
-        return cloneActiveSession(getSession(sessionId));
+        activeTarget = createOrchestratorTarget(sessionId);
+        return cloneActiveSession(orchestrator);
+      },
+      openSurface: async ({ target }: { target: PromptTarget }) => {
+        activeTarget = structuredClone(target);
+        return cloneActiveSession(thread);
       },
       renameSession: async () => ({
         ok: true,
@@ -847,16 +921,13 @@ function createFakeRpcWithThreadSidebarRefresh(): {
         activeSessionId: orchestrator.session.id,
       }),
       sendPrompt: async (request: {
-        sessionId?: string;
         streamId: string;
         messages: AgentMessage[];
-        target?: PromptTarget;
+        target: PromptTarget;
       }) => {
         const finalAssistant = assistantMessage("Thread handed off.");
         thread.messages = [...request.messages, finalAssistant];
-        thread.session.preview = "Thread handed off.";
-        thread.session.messageCount = thread.messages.length;
-        promptSettled = true;
+        thread.target = structuredClone(request.target);
 
         orchestrator.session.status = "idle";
         orchestrator.session.preview = "Thread handoff received.";
@@ -875,20 +946,41 @@ function createFakeRpcWithThreadSidebarRefresh(): {
               event: { type: "done", reason: "stop", message: finalAssistant },
             });
           }
+
+          queueMicrotask(() => {
+            activeTarget = createOrchestratorTarget(orchestrator.session.id);
+            for (const listener of sessionSyncListeners) {
+              listener(
+                createSessionSyncMessage(
+                  orchestrator,
+                  [orchestrator.session],
+                ),
+              );
+            }
+          });
         });
 
         return {
-          sessionId: request.sessionId ?? thread.session.id,
-          target: request.target,
+          target: structuredClone(request.target),
         };
       },
-      setSessionModel: async ({ sessionId }: { sessionId: string; model: string }) => ({
+      setSessionModel: async ({
+        surfacePiSessionId,
+      }: {
+        surfacePiSessionId: string;
+        model: string;
+      }) => ({
         ok: true,
-        sessionId,
+        sessionId: surfacePiSessionId,
       }),
-      setSessionThoughtLevel: async ({ sessionId }: { sessionId: string; level: string }) => ({
+      setSessionThoughtLevel: async ({
+        surfacePiSessionId,
+      }: {
+        surfacePiSessionId: string;
+        level: string;
+      }) => ({
         ok: true,
-        sessionId,
+        sessionId: surfacePiSessionId,
       }),
       cancelPrompt: async () => ({ ok: true }),
       listProviderAuths: async () => [
@@ -905,8 +997,8 @@ function createFakeRpcWithThreadSidebarRefresh(): {
         );
         return;
       }
-      if (messageName === "sendSessionEvent") {
-        sessionListeners.add(listener as (payload: SessionEventMessage) => void);
+      if (messageName === "sendSessionSync") {
+        sessionSyncListeners.add(listener as (payload: SessionSyncMessage) => void);
       }
     },
     removeMessageListener: (messageName: string, listener: unknown) => {
@@ -916,8 +1008,8 @@ function createFakeRpcWithThreadSidebarRefresh(): {
         );
         return;
       }
-      if (messageName === "sendSessionEvent") {
-        sessionListeners.delete(listener as (payload: SessionEventMessage) => void);
+      if (messageName === "sendSessionSync") {
+        sessionSyncListeners.delete(listener as (payload: SessionSyncMessage) => void);
       }
     },
   };
@@ -930,7 +1022,6 @@ function createFakeRpcWithBackgroundOrchestratorResume(): {
   requestCounts: {
     listSessions: number;
     getActiveSession: number;
-    getActiveSessionSummary: number;
     getCommandInspector: number;
     listHandlerThreads: number;
     getHandlerThreadInspector: number;
@@ -939,7 +1030,7 @@ function createFakeRpcWithBackgroundOrchestratorResume(): {
   const streamListeners = new Set<
     (payload: { streamId: string; event: AssistantMessageEvent }) => void
   >();
-  const sessionListeners = new Set<(payload: SessionEventMessage) => void>();
+  const sessionSyncListeners = new Set<(payload: SessionSyncMessage) => void>();
   const orchestrator = createActiveSession(
     "session-1",
     "Orchestrator",
@@ -953,34 +1044,27 @@ function createFakeRpcWithBackgroundOrchestratorResume(): {
     waiting: [],
     failed: [],
   };
+  const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
   const thread = createActiveSession(
-    "thread-session-1",
+    "session-1",
     "Handler Thread",
     [userMessage("status"), assistantMessage("Working on it.")],
     "medium",
+    { target: threadTarget },
   );
-  thread.session.parentSessionId = "session-1";
-
-  let activeSessionId = orchestrator.session.id;
-  let promptSettled = false;
-  let postThreadSummaryReads = 0;
+  let activeTarget = createOrchestratorTarget(orchestrator.session.id);
   let emittedOrchestratorStart = false;
   let emittedOrchestratorDone = false;
   const requestCounts = {
     listSessions: 0,
     getActiveSession: 0,
-    getActiveSessionSummary: 0,
     getCommandInspector: 0,
     listHandlerThreads: 0,
     getHandlerThreadInspector: 0,
   };
 
-  const getSession = (sessionId: string): ActiveSessionState => {
-    if (sessionId === thread.session.id) {
-      return thread;
-    }
-    return orchestrator;
-  };
+  const getActiveSurface = () =>
+    activeTarget.surface === "thread" ? cloneActiveSession(thread) : cloneActiveSession(orchestrator);
 
   const client: ChatRuntimeRpcClient = {
     request: {
@@ -1000,64 +1084,7 @@ function createFakeRpcWithBackgroundOrchestratorResume(): {
       },
       getActiveSession: async () => {
         requestCounts.getActiveSession += 1;
-        return cloneActiveSession(getSession(activeSessionId));
-      },
-      getActiveSessionSummary: async () => {
-        requestCounts.getActiveSessionSummary += 1;
-        if (promptSettled && activeSessionId === thread.session.id) {
-          postThreadSummaryReads += 1;
-          if (postThreadSummaryReads >= 2) {
-            activeSessionId = orchestrator.session.id;
-            orchestrator.session.status = "running";
-            orchestrator.session.preview = "Reviewing thread handoff.";
-            orchestrator.session.threadIdsByStatus = {
-              running: [],
-              waiting: [],
-              failed: [],
-            };
-            if (!emittedOrchestratorStart) {
-              emittedOrchestratorStart = true;
-              queueMicrotask(() => {
-                const partial = assistantMessage("");
-                for (const listener of sessionListeners) {
-                  listener({
-                    sessionId: orchestrator.session.id,
-                    target: {
-                      surface: "orchestrator",
-                      surfaceSessionId: orchestrator.session.id,
-                    },
-                    event: { type: "start", partial },
-                  });
-                }
-
-                queueMicrotask(() => {
-                  if (emittedOrchestratorDone) {
-                    return;
-                  }
-                  emittedOrchestratorDone = true;
-                  const resumedAssistant = assistantMessage(
-                    "I reviewed the handoff and resumed orchestration.",
-                  );
-                  orchestrator.messages = [...orchestrator.messages, resumedAssistant];
-                  orchestrator.session.messageCount = orchestrator.messages.length;
-                  orchestrator.session.preview = "I reviewed the handoff and resumed orchestration.";
-                  orchestrator.session.status = "idle";
-                  for (const listener of sessionListeners) {
-                    listener({
-                      sessionId: orchestrator.session.id,
-                      target: {
-                        surface: "orchestrator",
-                        surfaceSessionId: orchestrator.session.id,
-                      },
-                      event: { type: "done", reason: "stop", message: resumedAssistant },
-                    });
-                  }
-                });
-              });
-            }
-          }
-        }
-        return cloneActiveSessionSummary(getSession(activeSessionId));
+        return getActiveSurface();
       },
       getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
         requestCounts.getCommandInspector += 1;
@@ -1073,8 +1100,12 @@ function createFakeRpcWithBackgroundOrchestratorResume(): {
       },
       createSession: async () => cloneActiveSession(orchestrator),
       openSession: async ({ sessionId }: { sessionId: string }) => {
-        activeSessionId = sessionId;
-        return cloneActiveSession(getSession(sessionId));
+        activeTarget = createOrchestratorTarget(sessionId);
+        return cloneActiveSession(orchestrator);
+      },
+      openSurface: async ({ target }: { target: PromptTarget }) => {
+        activeTarget = structuredClone(target);
+        return cloneActiveSession(thread);
       },
       renameSession: async () => ({
         ok: true,
@@ -1086,16 +1117,13 @@ function createFakeRpcWithBackgroundOrchestratorResume(): {
         activeSessionId: orchestrator.session.id,
       }),
       sendPrompt: async (request: {
-        sessionId?: string;
         streamId: string;
         messages: AgentMessage[];
-        target?: PromptTarget;
+        target: PromptTarget;
       }) => {
         const finalAssistant = assistantMessage("Thread handed off.");
         thread.messages = [...request.messages, finalAssistant];
-        thread.session.preview = "Thread handed off.";
-        thread.session.messageCount = thread.messages.length;
-        promptSettled = true;
+        thread.target = structuredClone(request.target);
 
         queueMicrotask(() => {
           const partial = assistantMessage("");
@@ -1106,20 +1134,72 @@ function createFakeRpcWithBackgroundOrchestratorResume(): {
               event: { type: "done", reason: "stop", message: finalAssistant },
             });
           }
+
+          if (!emittedOrchestratorStart) {
+            emittedOrchestratorStart = true;
+            activeTarget = createOrchestratorTarget(orchestrator.session.id);
+            orchestrator.session.status = "running";
+            orchestrator.session.preview = "Reviewing thread handoff.";
+            orchestrator.session.threadIdsByStatus = {
+              running: [],
+              waiting: [],
+              failed: [],
+            };
+            for (const listener of sessionSyncListeners) {
+              listener(
+                createSessionSyncMessage(
+                  orchestrator,
+                  [orchestrator.session],
+                  "background.started",
+                ),
+              );
+            }
+          }
+
+          queueMicrotask(() => {
+            if (emittedOrchestratorDone) {
+              return;
+            }
+            emittedOrchestratorDone = true;
+            const resumedAssistant = assistantMessage(
+              "I reviewed the handoff and resumed orchestration.",
+            );
+            orchestrator.messages = [...orchestrator.messages, resumedAssistant];
+            orchestrator.session.messageCount = orchestrator.messages.length;
+            orchestrator.session.preview = "I reviewed the handoff and resumed orchestration.";
+            orchestrator.session.status = "idle";
+            for (const listener of sessionSyncListeners) {
+              listener(
+                createSessionSyncMessage(
+                  orchestrator,
+                  [orchestrator.session],
+                ),
+              );
+            }
+          });
         });
 
         return {
-          sessionId: request.sessionId ?? thread.session.id,
-          target: request.target,
+          target: structuredClone(request.target),
         };
       },
-      setSessionModel: async ({ sessionId }: { sessionId: string; model: string }) => ({
+      setSessionModel: async ({
+        surfacePiSessionId,
+      }: {
+        surfacePiSessionId: string;
+        model: string;
+      }) => ({
         ok: true,
-        sessionId,
+        sessionId: surfacePiSessionId,
       }),
-      setSessionThoughtLevel: async ({ sessionId }: { sessionId: string; level: string }) => ({
+      setSessionThoughtLevel: async ({
+        surfacePiSessionId,
+      }: {
+        surfacePiSessionId: string;
+        level: string;
+      }) => ({
         ok: true,
-        sessionId,
+        sessionId: surfacePiSessionId,
       }),
       cancelPrompt: async () => ({ ok: true }),
       listProviderAuths: async () => [],
@@ -1134,8 +1214,8 @@ function createFakeRpcWithBackgroundOrchestratorResume(): {
         );
         return;
       }
-      if (messageName === "sendSessionEvent") {
-        sessionListeners.add(listener as (payload: SessionEventMessage) => void);
+      if (messageName === "sendSessionSync") {
+        sessionSyncListeners.add(listener as (payload: SessionSyncMessage) => void);
       }
     },
     removeMessageListener: (messageName: string, listener: unknown) => {
@@ -1145,8 +1225,8 @@ function createFakeRpcWithBackgroundOrchestratorResume(): {
         );
         return;
       }
-      if (messageName === "sendSessionEvent") {
-        sessionListeners.delete(listener as (payload: SessionEventMessage) => void);
+      if (messageName === "sendSessionSync") {
+        sessionSyncListeners.delete(listener as (payload: SessionSyncMessage) => void);
       }
     },
   };
@@ -1261,15 +1341,14 @@ describe("createChatRuntime", () => {
     await runtime.agent.waitForIdle();
     expect(sentPromptSessions.at(-1)).toBe("session-2");
     expect(sentPromptRequests.at(-1)).toEqual({
-      sessionId: "session-2",
       target: {
+        workspaceSessionId: "session-2",
         surface: "orchestrator",
-        surfaceSessionId: "session-2",
+        surfacePiSessionId: "session-2",
       },
     });
     expect(requestCounts.listSessions).toBe(1);
-    expect(requestCounts.getActiveSession).toBe(2);
-    expect(requestCounts.getActiveSessionSummary).toBe(1);
+    expect(requestCounts.getActiveSession).toBe(1);
     expect(runtime.sessions.find((session) => session.id === "session-2")?.preview).toBe(
       "Session-specific reply",
     );
@@ -1343,12 +1422,12 @@ describe("createChatRuntime", () => {
   it("can bind the single pane to a handler-thread surface and route prompts directly there", async () => {
     const { createChatRuntime } = await import("./chat-runtime");
     const threadSession = createActiveSession(
-      "thread-session-1",
+      "session-1",
       "Handler Thread",
       [userMessage("worker context"), assistantMessage("worker ready")],
       "medium",
+      { target: createThreadTarget("session-1", "thread-session-1", "thread-123") },
     );
-    threadSession.session.parentSessionId = "session-1";
     const { client, openedSessions, sentPromptRequests } = createFakeRpc([
       createActiveSession(
         "session-1",
@@ -1362,21 +1441,24 @@ describe("createChatRuntime", () => {
     const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
 
     expect(runtime.activeSurface).toEqual({
+      workspaceSessionId: "session-1",
       surface: "orchestrator",
-      surfaceSessionId: "session-1",
+      surfacePiSessionId: "session-1",
     });
 
     await runtime.openSurface({
+      workspaceSessionId: "session-1",
       surface: "thread",
-      surfaceSessionId: "thread-session-1",
+      surfacePiSessionId: "thread-session-1",
       threadId: "thread-123",
     });
 
     expect(openedSessions.at(-1)).toBe("thread-session-1");
-    expect(runtime.activeSessionId).toBe("thread-session-1");
+    expect(runtime.activeSessionId).toBe("session-1");
     expect(runtime.activeSurface).toEqual({
+      workspaceSessionId: "session-1",
       surface: "thread",
-      surfaceSessionId: "thread-session-1",
+      surfacePiSessionId: "thread-session-1",
       threadId: "thread-123",
     });
     expect(
@@ -1392,10 +1474,10 @@ describe("createChatRuntime", () => {
     await runtime.agent.waitForIdle();
 
     expect(sentPromptRequests.at(-1)).toEqual({
-      sessionId: "thread-session-1",
       target: {
+        workspaceSessionId: "session-1",
         surface: "thread",
-        surfaceSessionId: "thread-session-1",
+        surfacePiSessionId: "thread-session-1",
         threadId: "thread-123",
       },
     });
@@ -1405,21 +1487,23 @@ describe("createChatRuntime", () => {
     expect(openedSessions.at(-1)).toBe("session-1");
     expect(runtime.activeSessionId).toBe("session-1");
     expect(runtime.activeSurface).toEqual({
+      workspaceSessionId: "session-1",
       surface: "orchestrator",
-      surfaceSessionId: "session-1",
+      surfacePiSessionId: "session-1",
     });
 
     runtime.dispose();
   });
 
-  it("re-lists sidebar sessions after a thread-surface prompt settles so parent session status refreshes immediately", async () => {
+  it("applies a thread handoff session sync without polling for the orchestrator surface", async () => {
     const { createChatRuntime } = await import("./chat-runtime");
     const { client, requestCounts } = createFakeRpcWithThreadSidebarRefresh();
 
     const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
     await runtime.openSurface({
+      workspaceSessionId: "session-1",
       surface: "thread",
-      surfaceSessionId: "thread-session-1",
+      surfacePiSessionId: "thread-session-1",
       threadId: "thread-123",
     });
 
@@ -1428,8 +1512,7 @@ describe("createChatRuntime", () => {
     await runtime.agent.waitForIdle();
     await waitFor(() => runtime.activeSurface.surface === "orchestrator");
 
-    expect(requestCounts.getActiveSessionSummary).toBeGreaterThanOrEqual(2);
-    expect(requestCounts.listSessions).toBeGreaterThanOrEqual(2);
+    expect(requestCounts.listSessions).toBe(1);
     expect(runtime.sessions.find((session) => session.id === "session-1")).toMatchObject({
       status: "idle",
       preview: "Thread handoff received.",
@@ -1442,8 +1525,9 @@ describe("createChatRuntime", () => {
     expect(runtime.sessions.some((session) => session.id === "thread-session-1")).toBe(false);
     expect(runtime.activeSessionId).toBe("session-1");
     expect(runtime.activeSurface).toEqual({
+      workspaceSessionId: "session-1",
       surface: "orchestrator",
-      surfaceSessionId: "session-1",
+      surfacePiSessionId: "session-1",
     });
 
     runtime.dispose();
@@ -1455,8 +1539,9 @@ describe("createChatRuntime", () => {
 
     const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
     await runtime.openSurface({
+      workspaceSessionId: "session-1",
       surface: "thread",
-      surfaceSessionId: "thread-session-1",
+      surfacePiSessionId: "thread-session-1",
       threadId: "thread-123",
     });
 
@@ -1472,8 +1557,7 @@ describe("createChatRuntime", () => {
       ),
     );
 
-    expect(requestCounts.getActiveSessionSummary).toBeGreaterThanOrEqual(2);
-    expect(requestCounts.getActiveSession).toBeGreaterThanOrEqual(3);
+    expect(requestCounts.getActiveSession).toBe(1);
     expect(runtime.activeSessionId).toBe("session-1");
     expect(runtime.sessions.find((session) => session.id === "session-1")).toMatchObject({
       status: "idle",
@@ -1491,15 +1575,13 @@ describe("createChatRuntime", () => {
 
     const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
     expect(requestCounts.listSessions).toBe(1);
-    expect(requestCounts.getActiveSessionSummary).toBe(0);
     await runtime.agent.prompt("use a tool");
     await runtime.agent.waitForIdle();
     expect(requestCounts.listSessions).toBe(1);
-    expect(requestCounts.getActiveSessionSummary).toBe(1);
     expect(runtime.sessions.find((session) => session.id === "session-1")?.preview).toBe(
       "Tool use finished.",
     );
-    expect(requestCounts.getActiveSession).toBe(2);
+    expect(requestCounts.getActiveSession).toBe(1);
 
     expect(
       runtime.agent.state.messages.some(
@@ -1532,7 +1614,7 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("falls back to relisting the sidebar when the summary sync is missing or stale", async () => {
+  it("does not depend on summary polling when explicit session sync is present", async () => {
     const { createChatRuntime } = await import("./chat-runtime");
     const { client, requestCounts } = createFakeRpcWithToolUse(
       createActiveSession("session-1", "First", [userMessage("first")], "medium"),
@@ -1542,14 +1624,12 @@ describe("createChatRuntime", () => {
     const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
     expect(requestCounts.listSessions).toBe(1);
     expect(requestCounts.getActiveSession).toBe(1);
-    expect(requestCounts.getActiveSessionSummary).toBe(0);
 
     await runtime.agent.prompt("use a tool");
     await runtime.agent.waitForIdle();
 
-    expect(requestCounts.getActiveSessionSummary).toBe(1);
     expect(requestCounts.getActiveSession).toBe(1);
-    expect(requestCounts.listSessions).toBe(2);
+    expect(requestCounts.listSessions).toBe(1);
     expect(runtime.sessions.find((session) => session.id === "session-1")?.preview).toBe(
       "Tool use finished.",
     );

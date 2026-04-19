@@ -42,6 +42,7 @@ function createStore() {
 function createRuntime(store: StructuredSessionStateStore): PromptExecutionRuntimeHandle {
   const turn = store.startTurn({
     sessionId: "session-wait-tool",
+    surfacePiSessionId: "session-wait-tool",
     requestSummary: "Wait for user input",
   });
   const rootThread = store.createThread({
@@ -54,6 +55,10 @@ function createRuntime(store: StructuredSessionStateStore): PromptExecutionRunti
     current: {
       sessionId: "session-wait-tool",
       turnId: turn.id,
+      surfacePiSessionId: "session-wait-tool",
+      surfaceThreadId: rootThread.id,
+      surfaceKind: "orchestrator",
+      defaultEpisodeKind: "clarification",
       rootThreadId: rootThread.id,
       promptText: "Wait for user input",
       rootEpisodeKind: "clarification",

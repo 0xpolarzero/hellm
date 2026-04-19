@@ -85,6 +85,7 @@ describe("structured session state SQLite persistence", () => {
 
     const orchestratorTurn = first.store.startTurn({
       sessionId: "session-persist",
+      surfacePiSessionId: "session-persist",
       requestSummary: "Delegate the design task",
     });
     const handlerThread = first.store.createThread({
@@ -100,6 +101,7 @@ describe("structured session state SQLite persistence", () => {
 
     const handlerTurn = first.store.startTurn({
       sessionId: "session-persist",
+      surfacePiSessionId: handlerThread.surfacePiSessionId,
       threadId: handlerThread.id,
       requestSummary: "Run the workflow twice and emit the final episode",
     });
@@ -224,6 +226,7 @@ describe("structured session state SQLite persistence", () => {
 
     const turn = store.startTurn({
       sessionId: "session-artifact-files",
+      surfacePiSessionId: "session-artifact-files",
       requestSummary: "Persist file-backed artifacts",
     });
     const thread = store.createThread({
@@ -234,6 +237,7 @@ describe("structured session state SQLite persistence", () => {
     });
     const handlerTurn = store.startTurn({
       sessionId: "session-artifact-files",
+      surfacePiSessionId: thread.surfacePiSessionId,
       threadId: thread.id,
       requestSummary: "Persist a file-backed artifact from the handler surface",
     });
@@ -285,6 +289,7 @@ describe("structured session state SQLite persistence", () => {
 
     const turn = first.store.startTurn({
       sessionId: "session-waiting-persist",
+      surfacePiSessionId: "session-waiting-persist",
       requestSummary: "Persist session wait",
     });
     const thread = first.store.createThread({
@@ -345,6 +350,7 @@ describe("structured session state SQLite persistence", () => {
 
     const alphaTurn = store.startTurn({
       sessionId: "session-alpha",
+      surfacePiSessionId: "session-alpha",
       requestSummary: "Alpha work",
     });
     const alphaThread = store.createThread({
@@ -355,6 +361,7 @@ describe("structured session state SQLite persistence", () => {
     });
     const alphaHandlerTurn = store.startTurn({
       sessionId: "session-alpha",
+      surfacePiSessionId: alphaThread.surfacePiSessionId,
       threadId: alphaThread.id,
       requestSummary: "Handle alpha on the thread surface",
     });
@@ -381,6 +388,7 @@ describe("structured session state SQLite persistence", () => {
 
     const betaTurn = store.startTurn({
       sessionId: "session-beta",
+      surfacePiSessionId: "session-beta",
       requestSummary: "Beta work",
     });
     const betaThread = store.createThread({
@@ -391,6 +399,7 @@ describe("structured session state SQLite persistence", () => {
     });
     const betaHandlerTurn = store.startTurn({
       sessionId: "session-beta",
+      surfacePiSessionId: betaThread.surfacePiSessionId,
       threadId: betaThread.id,
       requestSummary: "Handle beta on the thread surface",
     });

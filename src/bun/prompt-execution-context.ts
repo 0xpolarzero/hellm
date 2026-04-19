@@ -5,10 +5,10 @@ export type PromptExecutionSurfaceKind = "orchestrator" | "handler";
 export interface PromptExecutionContext {
   sessionId: string;
   turnId: string;
-  surfacePiSessionId?: string;
-  surfaceThreadId?: string;
-  surfaceKind?: PromptExecutionSurfaceKind;
-  defaultEpisodeKind?: StructuredEpisodeKind;
+  surfacePiSessionId: string;
+  surfaceThreadId: string;
+  surfaceKind: PromptExecutionSurfaceKind;
+  defaultEpisodeKind: StructuredEpisodeKind;
   rootThreadId: string;
   promptText: string;
   rootEpisodeKind: StructuredEpisodeKind;
@@ -24,7 +24,7 @@ export interface PromptExecutionRuntimeHandle {
 export function createPromptExecutionContext(input: {
   sessionId: string;
   turnId: string;
-  surfacePiSessionId?: string;
+  surfacePiSessionId: string;
   surfaceThreadId?: string;
   surfaceKind?: PromptExecutionSurfaceKind;
   defaultEpisodeKind?: StructuredEpisodeKind;
@@ -44,7 +44,7 @@ export function createPromptExecutionContext(input: {
   return {
     sessionId: input.sessionId,
     turnId: input.turnId,
-    surfacePiSessionId: input.surfacePiSessionId ?? input.sessionId,
+    surfacePiSessionId: input.surfacePiSessionId,
     surfaceThreadId,
     surfaceKind: input.surfaceKind ?? "orchestrator",
     defaultEpisodeKind,

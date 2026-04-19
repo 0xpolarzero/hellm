@@ -67,6 +67,7 @@ describe("structured session state write API", () => {
 
     const turn = store.startTurn({
       sessionId: "session-turn-decisions",
+      surfacePiSessionId: "session-turn-decisions",
       requestSummary: "Route a turn through execute_typescript",
     });
     expect(store.getSessionState("session-turn-decisions").turns[0]?.turnDecision).toBe("pending");
@@ -96,6 +97,7 @@ describe("structured session state write API", () => {
 
     const orchestratorTurn = store.startTurn({
       sessionId: "session-model",
+      surfacePiSessionId: "session-model",
       requestSummary: "Delegate workflow execution design",
     });
     const handlerThread = store.createThread({
@@ -111,6 +113,7 @@ describe("structured session state write API", () => {
 
     const handlerTurn = store.startTurn({
       sessionId: "session-model",
+      surfacePiSessionId: handlerThread.surfacePiSessionId,
       threadId: handlerThread.id,
       requestSummary: "Reuse or author the workflow for the delegated task",
     });
@@ -332,6 +335,7 @@ describe("structured session state write API", () => {
 
     const turn = store.startTurn({
       sessionId: "session-episodes",
+      surfacePiSessionId: "session-episodes",
       requestSummary: "Complete a delegated thread",
     });
     const thread = store.createThread({
@@ -342,6 +346,7 @@ describe("structured session state write API", () => {
     });
     const handlerTurn = store.startTurn({
       sessionId: "session-episodes",
+      surfacePiSessionId: thread.surfacePiSessionId,
       threadId: thread.id,
       requestSummary: "Prepare the final handler episode",
     });
@@ -395,6 +400,7 @@ describe("structured session state write API", () => {
 
     const turn = store.startTurn({
       sessionId: "session-thread-wait",
+      surfacePiSessionId: "session-thread-wait",
       requestSummary: "Pause a handler thread",
     });
     const waitingThread = store.createThread({
@@ -445,6 +451,7 @@ describe("structured session state write API", () => {
 
     const turn = store.startTurn({
       sessionId: "session-orchestrator-wait",
+      surfacePiSessionId: "session-orchestrator-wait",
       requestSummary: "Wait at the orchestrator level",
     });
     const waitingOn = store.setSessionWait({
@@ -479,6 +486,7 @@ describe("structured session state write API", () => {
 
     const orchestratorTurn = store.startTurn({
       sessionId: "session-verification",
+      surfacePiSessionId: "session-verification",
       requestSummary: "Start a handler thread",
     });
     const thread = store.createThread({
@@ -489,6 +497,7 @@ describe("structured session state write API", () => {
     });
     const handlerTurn = store.startTurn({
       sessionId: "session-verification",
+      surfacePiSessionId: thread.surfacePiSessionId,
       threadId: thread.id,
       requestSummary: "Run workflow and verification",
     });
@@ -539,6 +548,7 @@ describe("structured session state write API", () => {
 
     const turn = store.startTurn({
       sessionId: "session-artifacts",
+      surfacePiSessionId: "session-artifacts",
       requestSummary: "Write artifacts after the thread completes",
     });
     const thread = store.createThread({
@@ -549,6 +559,7 @@ describe("structured session state write API", () => {
     });
     const handlerTurn = store.startTurn({
       sessionId: "session-artifacts",
+      surfacePiSessionId: thread.surfacePiSessionId,
       threadId: thread.id,
       requestSummary: "Write the terminal handler episode and artifact",
     });

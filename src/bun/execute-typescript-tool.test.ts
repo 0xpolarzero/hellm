@@ -60,6 +60,7 @@ function createRuntime(
 ): PromptExecutionRuntimeHandle {
   const turn = store.startTurn({
     sessionId,
+    surfacePiSessionId: sessionId,
     requestSummary: promptText,
   });
   const rootThread = store.createThread({
@@ -72,6 +73,10 @@ function createRuntime(
     current: {
       sessionId,
       turnId: turn.id,
+      surfacePiSessionId: sessionId,
+      surfaceThreadId: rootThread.id,
+      surfaceKind: "orchestrator",
+      defaultEpisodeKind: "analysis",
       rootThreadId: rootThread.id,
       promptText,
       rootEpisodeKind: "analysis",

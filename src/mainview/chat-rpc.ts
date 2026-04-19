@@ -6,8 +6,9 @@ export type AuthKeyType = "apikey" | "oauth" | "env" | "none";
 export type PromptSurfaceKind = "orchestrator" | "thread";
 
 export interface PromptTarget {
+  workspaceSessionId: string;
   surface: PromptSurfaceKind;
-  surfaceSessionId: string;
+  surfacePiSessionId: string;
   threadId?: string;
 }
 
@@ -17,23 +18,21 @@ export interface SendPromptRequest {
   provider?: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;
-  sessionId?: string;
-  target?: PromptTarget;
+  target: PromptTarget;
   systemPrompt?: string;
 }
 
 export interface SendPromptResponse {
-  sessionId: string;
-  target?: PromptTarget;
+  target: PromptTarget;
 }
 
 export interface SetSessionModelRequest {
-  sessionId: string;
+  surfacePiSessionId: string;
   model: string;
 }
 
 export interface SetSessionThoughtLevelRequest {
-  sessionId: string;
+  surfacePiSessionId: string;
   level: ReasoningEffort;
 }
 
@@ -42,14 +41,14 @@ export interface StreamEventMessage {
   event: AssistantMessageEvent;
 }
 
-export interface SessionEventMessage {
-  sessionId: string;
-  target: PromptTarget;
-  event: AssistantMessageEvent;
+export interface SessionSyncMessage {
+  reason: "prompt.settled" | "background.started";
+  activeSession: ActiveSessionState;
+  sessions: WorkspaceSessionSummary[];
 }
 
 export interface CancelPromptRequest {
-  sessionId: string;
+  surfacePiSessionId: string;
 }
 
 export interface ProviderAuthStateRequest {
@@ -159,7 +158,7 @@ export interface WorkspaceHandlerThreadEpisodeSummary {
 
 export interface WorkspaceHandlerThreadSummary {
   threadId: string;
-  surfaceSessionId: string;
+  surfacePiSessionId: string;
   title: string;
   objective: string;
   status: "running" | "waiting" | "completed" | "failed" | "cancelled";
@@ -230,16 +229,8 @@ export interface WorkspaceSessionSummary {
 
 export interface ActiveSessionState {
   session: WorkspaceSessionSummary;
+  target: PromptTarget;
   messages: AgentMessage[];
-  provider: string;
-  model: string;
-  reasoningEffort: ReasoningEffort;
-  systemPrompt: string;
-  resolvedSystemPrompt: string;
-}
-
-export interface ActiveSessionSummaryState {
-  session: WorkspaceSessionSummary;
   provider: string;
   model: string;
   reasoningEffort: ReasoningEffort;
@@ -259,6 +250,10 @@ export interface CreateSessionRequest {
 
 export interface OpenSessionRequest {
   sessionId: string;
+}
+
+export interface OpenSurfaceRequest {
+  target: PromptTarget;
 }
 
 export interface RenameSessionRequest {
@@ -300,10 +295,6 @@ export interface ChatRPCSchema {
         params: undefined;
         response: ActiveSessionState | null;
       };
-      getActiveSessionSummary: {
-        params: undefined;
-        response: ActiveSessionSummaryState | null;
-      };
       getCommandInspector: {
         params: { sessionId: string; commandId: string };
         response: WorkspaceCommandInspector | null;
@@ -322,6 +313,10 @@ export interface ChatRPCSchema {
       };
       openSession: {
         params: OpenSessionRequest;
+        response: ActiveSessionState;
+      };
+      openSurface: {
+        params: OpenSurfaceRequest;
         response: ActiveSessionState;
       };
       renameSession: {
@@ -375,7 +370,7 @@ export interface ChatRPCSchema {
     requests: Record<string, never>;
     messages: {
       sendStreamEvent: StreamEventMessage;
-      sendSessionEvent: SessionEventMessage;
+      sendSessionSync: SessionSyncMessage;
     };
   };
 }

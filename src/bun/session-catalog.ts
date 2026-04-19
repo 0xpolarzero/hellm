@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
@@ -23,12 +23,11 @@ import {
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type {
   ActiveSessionState,
-  ActiveSessionSummaryState,
   CreateSessionRequest,
   ForkSessionRequest,
   ListSessionsResponse,
   PromptTarget,
-  SessionEventMessage,
+  SessionSyncMessage,
   SessionMutationResponse,
   WorkspaceCommandInspector,
   WorkspaceHandlerThreadInspector,
@@ -59,11 +58,6 @@ import {
   type StructuredWaitState,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
-import {
-  mapSmithersRunStateToWorkflowProjectionInput,
-  readSmithersRunState,
-  type SmithersRunState,
-} from "./smithers-workflow-bridge";
 import { createStartWorkflowTool } from "./smithers-workflow-tool";
 import { createExecuteTypescriptTool } from "./execute-typescript-tool";
 import { createResumeWorkflowTool } from "./smithers-workflow-tool";
@@ -115,8 +109,7 @@ export interface SessionDefaults {
 }
 
 export interface SendAgentPromptOptions extends SessionDefaults {
-  sessionId?: string;
-  target?: PromptTarget;
+  target: PromptTarget;
   messages: Message[];
   onEvent: (event: AssistantMessageEvent) => void;
 }
@@ -140,10 +133,13 @@ interface PromptSyncCursor {
   boundarySignature: string;
 }
 
+type WorkspaceSessionInfo = Awaited<ReturnType<typeof SessionManager.list>>[number];
+
 export class WorkspaceSessionCatalog {
   private activeSession: ManagedSession | null = null;
+  private activeTarget: PromptTarget | null = null;
   private readonly structuredSessionStore: StructuredSessionStateStore;
-  private sessionEventListener: ((payload: SessionEventMessage) => void) | null = null;
+  private sessionSyncListener: ((payload: SessionSyncMessage) => void) | null = null;
 
   constructor(
     private readonly cwd: string = resolveWorkspaceCwd(),
@@ -174,47 +170,41 @@ export class WorkspaceSessionCatalog {
     this.structuredSessionStore.close();
   }
 
-  setSessionEventListener(listener: ((payload: SessionEventMessage) => void) | null): void {
-    this.sessionEventListener = listener;
+  setSessionSyncListener(listener: ((payload: SessionSyncMessage) => void) | null): void {
+    this.sessionSyncListener = listener;
   }
 
   async listSessions(): Promise<ListSessionsResponse> {
-    this.refreshSmithersWorkflowProjections();
     const infos = await SessionManager.list(this.cwd, this.sessionDir);
     const summaries = new Map<string, WorkspaceSessionSummary>();
+    const activeTarget = this.getActivePromptTarget();
 
     for (const info of infos) {
-      if (this.activeSession?.sessionId === info.id) {
+      if (
+        activeTarget?.surface === "orchestrator" &&
+        this.activeSession &&
+        this.activeSession.sessionId === info.id
+      ) {
         summaries.set(info.id, this.buildSummaryFromManagedSession(this.activeSession));
         continue;
       }
 
-      const projected = {
-        ...projectWorkspaceSessionSummaryFromInfo({
-          id: info.id,
-          name: info.name,
-          firstMessage: info.firstMessage,
-          created: info.created,
-          modified: info.modified,
-          messageCount: info.messageCount,
-          path: info.path,
-          parentSessionPath: info.parentSessionPath,
-        }),
-        status: getInactiveSessionStatus(info.path),
-      };
-      this.upsertStructuredPiSession(projected);
-      summaries.set(info.id, this.decorateSummaryWithStructuredProjection(projected));
+      summaries.set(info.id, this.buildSummaryFromSessionInfo(info));
     }
 
-    if (this.activeSession && !summaries.has(this.activeSession.sessionId)) {
+    if (
+      activeTarget?.surface === "orchestrator" &&
+      this.activeSession &&
+      !summaries.has(activeTarget.workspaceSessionId)
+    ) {
       summaries.set(
-        this.activeSession.sessionId,
+        activeTarget.workspaceSessionId,
         this.buildSummaryFromManagedSession(this.activeSession),
       );
     }
 
     return {
-      activeSessionId: this.activeSession?.sessionId,
+      activeSessionId: activeTarget?.workspaceSessionId,
       sessions: Array.from(summaries.values()).toSorted(
         (left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
       ),
@@ -222,28 +212,18 @@ export class WorkspaceSessionCatalog {
   }
 
   async getActiveSession(): Promise<ActiveSessionState | null> {
-    this.refreshSmithersWorkflowProjections();
-    if (!this.activeSession) {
+    const activeTarget = this.getActivePromptTarget();
+    if (!this.activeSession || !activeTarget) {
       return null;
     }
 
-    return this.buildActiveSessionState(this.activeSession);
-  }
-
-  async getActiveSessionSummary(): Promise<ActiveSessionSummaryState | null> {
-    this.refreshSmithersWorkflowProjections();
-    if (!this.activeSession) {
-      return null;
-    }
-
-    return this.buildActiveSessionSummary(this.activeSession);
+    return this.buildActiveSessionState(this.activeSession, activeTarget);
   }
 
   async getCommandInspector(input: {
     sessionId: string;
     commandId: string;
   }): Promise<WorkspaceCommandInspector> {
-    this.refreshSmithersWorkflowProjections();
     const snapshot = this.getStructuredSnapshot(input.sessionId);
     if (!snapshot) {
       throw new Error(`Structured session not found: ${input.sessionId}`);
@@ -258,7 +238,6 @@ export class WorkspaceSessionCatalog {
   }
 
   async listHandlerThreads(input: { sessionId: string }): Promise<WorkspaceHandlerThreadSummary[]> {
-    this.refreshSmithersWorkflowProjections();
     const snapshot = this.getStructuredSnapshot(input.sessionId);
     if (!snapshot) {
       throw new Error(`Structured session not found: ${input.sessionId}`);
@@ -271,7 +250,6 @@ export class WorkspaceSessionCatalog {
     sessionId: string;
     threadId: string;
   }): Promise<WorkspaceHandlerThreadInspector> {
-    this.refreshSmithersWorkflowProjections();
     const snapshot = this.getStructuredSnapshot(input.sessionId);
     if (!snapshot) {
       throw new Error(`Structured session not found: ${input.sessionId}`);
@@ -307,17 +285,29 @@ export class WorkspaceSessionCatalog {
       thinkingLevel: defaults.thinkingLevel,
       systemPrompt: defaults.systemPrompt,
     });
+    const target = this.buildOrchestratorPromptTarget(session.sessionId);
+    this.activeTarget = target;
+    this.syncStructuredPiSessionFromOrchestratorSession(session);
     this.persistManagedSessionSnapshot(session);
 
-    return this.buildActiveSessionState(session);
+    return this.buildActiveSessionState(session, target);
   }
 
   async openSession(sessionId: string, systemPrompt?: string): Promise<ActiveSessionState> {
-    const session = await this.openSessionInternal(
-      sessionId,
+    return this.openSurface(
+      this.buildOrchestratorPromptTarget(sessionId),
       systemPrompt ?? this.activeSession?.systemPrompt,
     );
-    return this.buildActiveSessionState(session);
+  }
+
+  async openSurface(target: PromptTarget, systemPrompt?: string): Promise<ActiveSessionState> {
+    this.assertValidPromptTarget(target);
+    const session = await this.openSurfaceSessionInternal(
+      target.surfacePiSessionId,
+      systemPrompt ?? this.activeSession?.systemPrompt,
+    );
+    this.activeTarget = structuredClone(target);
+    return this.buildActiveSessionState(session, target);
   }
 
   async renameSession(sessionId: string, title: string): Promise<SessionMutationResponse> {
@@ -326,16 +316,25 @@ export class WorkspaceSessionCatalog {
       throw new Error("Session title cannot be empty.");
     }
 
-    if (this.activeSession?.sessionId === sessionId) {
-      this.activeSession.session.sessionManager.appendSessionInfo(trimmedTitle);
+    const activeOrchestrator =
+      this.activeSession &&
+      this.activeTarget?.surface === "orchestrator" &&
+      this.activeTarget.workspaceSessionId === sessionId &&
+      this.activeSession.sessionId === this.activeTarget.surfacePiSessionId
+        ? this.activeSession
+        : null;
+
+    if (activeOrchestrator) {
+      activeOrchestrator.session.sessionManager.appendSessionInfo(trimmedTitle);
     } else {
       const sessionFile = await this.getSessionFileForId(sessionId);
       SessionManager.open(sessionFile!, this.sessionDir).appendSessionInfo(trimmedTitle);
     }
+    await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
 
     return {
       ok: true,
-      activeSessionId: this.activeSession?.sessionId,
+      activeSessionId: this.getActiveWorkspaceSessionId(),
     };
   }
 
@@ -348,7 +347,7 @@ export class WorkspaceSessionCatalog {
     const sourceSessionFile = await this.getSessionFileForId(request.sessionId, false);
     if (!sourceSessionFile || !existsSync(sourceSessionFile)) {
       const fallbackDefaults =
-        this.activeSession?.sessionId === request.sessionId
+        this.getActiveWorkspaceSessionId() === request.sessionId && this.activeSession
           ? {
               provider: this.activeSession.provider,
               model: this.activeSession.model,
@@ -372,23 +371,28 @@ export class WorkspaceSessionCatalog {
       sessionManager: forkedSessionManager,
       systemPrompt: defaults.systemPrompt,
     });
-    return this.buildActiveSessionState(session);
+    const target = this.buildOrchestratorPromptTarget(session.sessionId);
+    this.activeTarget = target;
+    this.syncStructuredPiSessionFromOrchestratorSession(session);
+    return this.buildActiveSessionState(session, target);
   }
 
   async deleteSession(
     sessionId: string,
     defaults: SessionDefaults,
   ): Promise<SessionMutationResponse> {
-    if (this.activeSession?.sessionId === sessionId && this.activeSession.activePrompt) {
+    const activeWorkspaceSessionId = this.getActiveWorkspaceSessionId();
+    if (activeWorkspaceSessionId === sessionId && this.activeSession?.activePrompt) {
       throw new Error("Cannot delete a session while it is streaming.");
     }
 
-    const deletingActiveSession = this.activeSession?.sessionId === sessionId;
+    const deletingActiveSession = activeWorkspaceSessionId === sessionId;
     const sessionFile = await this.getSessionFileForId(sessionId, false);
 
     if (deletingActiveSession) {
       this.activeSession?.session.dispose();
       this.activeSession = null;
+      this.activeTarget = null;
     }
 
     if (sessionFile && existsSync(sessionFile)) {
@@ -398,7 +402,7 @@ export class WorkspaceSessionCatalog {
     if (!deletingActiveSession) {
       return {
         ok: true,
-        activeSessionId: this.activeSession?.sessionId,
+        activeSessionId: this.getActiveWorkspaceSessionId(),
       };
     }
 
@@ -417,21 +421,21 @@ export class WorkspaceSessionCatalog {
       throw new Error("Expected a remaining session after deletion.");
     }
 
-    const nextActiveSession = await this.openSessionInternal(
-      nextSessionInfo.id,
+    const nextTarget = this.buildOrchestratorPromptTarget(nextSessionInfo.id);
+    const nextActiveSession = await this.openSurfaceSessionInternal(
+      nextTarget.surfacePiSessionId,
       defaults.systemPrompt,
     );
+    this.activeTarget = nextTarget;
     return {
       ok: true,
-      activeSessionId: nextActiveSession.sessionId,
-      activeSession: await this.buildActiveSessionState(nextActiveSession),
+      activeSessionId: nextTarget.workspaceSessionId,
+      activeSession: await this.buildActiveSessionState(nextActiveSession, nextTarget),
     };
   }
 
-  async sendPrompt(options: SendAgentPromptOptions): Promise<{
-    sessionId: string;
-    target?: PromptTarget;
-  }> {
+  async sendPrompt(options: SendAgentPromptOptions): Promise<{ target: PromptTarget }> {
+    this.assertValidPromptTarget(options.target);
     const session = await this.ensureSessionForPrompt(options);
     if (session.activePrompt) {
       throw new Error(`Session ${session.sessionId} is already streaming.`);
@@ -451,15 +455,14 @@ export class WorkspaceSessionCatalog {
     }, 0);
 
     return {
-      sessionId: session.sessionId,
-      target: options.target,
+      target: structuredClone(options.target),
     };
   }
 
-  async cancelPrompt(sessionId: string): Promise<void> {
+  async cancelPrompt(surfacePiSessionId: string): Promise<void> {
     if (
       !this.activeSession ||
-      this.activeSession.sessionId !== sessionId ||
+      this.activeSession.sessionId !== surfacePiSessionId ||
       !this.activeSession.activePrompt
     ) {
       return;
@@ -470,18 +473,18 @@ export class WorkspaceSessionCatalog {
   }
 
   async setSessionModel(
-    sessionId: string,
+    surfacePiSessionId: string,
     model: string,
   ): Promise<{ ok: boolean; sessionId: string }> {
-    if (!this.activeSession || this.activeSession.sessionId !== sessionId) {
-      return { ok: false, sessionId };
+    if (!this.activeSession || this.activeSession.sessionId !== surfacePiSessionId) {
+      return { ok: false, sessionId: surfacePiSessionId };
     }
 
     this.activeSession.model = model;
     this.activeSession.recreateOnNextPrompt = true;
 
     if (this.activeSession.activePrompt) {
-      return { ok: true, sessionId };
+      return { ok: true, sessionId: surfacePiSessionId };
     }
 
     try {
@@ -491,32 +494,38 @@ export class WorkspaceSessionCatalog {
         await this.activeSession.session.setModel(resolvedModel);
         this.activeSession.recreateOnNextPrompt = false;
         this.syncManagedState(this.activeSession);
+        if (this.activeTarget?.surface === "orchestrator") {
+          this.syncStructuredPiSessionFromOrchestratorSession(this.activeSession);
+        }
       }
     } catch {
       // Fall back to recreating on the next prompt.
     }
 
-    return { ok: true, sessionId };
+    return { ok: true, sessionId: surfacePiSessionId };
   }
 
   async setSessionThoughtLevel(
-    sessionId: string,
+    surfacePiSessionId: string,
     level: ThinkingLevel,
   ): Promise<{ ok: boolean; sessionId: string }> {
-    if (!this.activeSession || this.activeSession.sessionId !== sessionId) {
-      return { ok: false, sessionId };
+    if (!this.activeSession || this.activeSession.sessionId !== surfacePiSessionId) {
+      return { ok: false, sessionId: surfacePiSessionId };
     }
 
     this.activeSession.thinkingLevel = level;
 
     if (this.activeSession.activePrompt) {
       this.activeSession.recreateOnNextPrompt = true;
-      return { ok: true, sessionId };
+      return { ok: true, sessionId: surfacePiSessionId };
     }
 
     this.activeSession.session.setThinkingLevel(level);
     this.syncManagedState(this.activeSession);
-    return { ok: true, sessionId };
+    if (this.activeTarget?.surface === "orchestrator") {
+      this.syncStructuredPiSessionFromOrchestratorSession(this.activeSession);
+    }
+    return { ok: true, sessionId: surfacePiSessionId };
   }
 
   private assertCanSwitchSessions(): void {
@@ -526,37 +535,40 @@ export class WorkspaceSessionCatalog {
   }
 
   private async ensureSessionForPrompt(options: SendAgentPromptOptions): Promise<ManagedSession> {
-    if (options.sessionId) {
-      const session = await this.openSessionInternal(options.sessionId, options.systemPrompt);
+    if (!this.activeSession) {
+      const session = await this.openSurfaceSessionInternal(
+        options.target.surfacePiSessionId,
+        options.systemPrompt,
+      );
+      this.activeTarget = structuredClone(options.target);
       return this.prepareManagedSession(session, options);
     }
 
-    if (!this.activeSession) {
-      const session = await this.activateManagedSession({
-        sessionManager: SessionManager.create(this.cwd, this.sessionDir),
-        provider: options.provider,
-        model: options.model,
-        thinkingLevel: options.thinkingLevel,
-        systemPrompt: options.systemPrompt,
-      });
-      return session;
+    if (this.activeSession.sessionId !== options.target.surfacePiSessionId) {
+      const session = await this.openSurfaceSessionInternal(
+        options.target.surfacePiSessionId,
+        options.systemPrompt,
+      );
+      this.activeTarget = structuredClone(options.target);
+      return this.prepareManagedSession(session, options);
     }
 
+    this.activeTarget = structuredClone(options.target);
     return this.prepareManagedSession(this.activeSession, options);
   }
 
-  private async openSessionInternal(
-    sessionId: string,
+  private async openSurfaceSessionInternal(
+    surfacePiSessionId: string,
     systemPrompt = this.activeSession?.systemPrompt ?? "",
   ): Promise<ManagedSession> {
-    if (this.activeSession?.sessionId === sessionId) {
+    if (this.activeSession?.sessionId === surfacePiSessionId) {
       this.activeSession.systemPrompt = systemPrompt || this.activeSession.systemPrompt;
       return this.activeSession;
     }
 
     this.assertCanSwitchSessions();
 
-    const sessionFile = await this.getSessionFileForId(sessionId);
+    const sessionFile = await this.getSessionFileForId(surfacePiSessionId);
     return this.activateManagedSession({
       sessionManager: SessionManager.open(sessionFile!, dirname(sessionFile!)),
       systemPrompt: systemPrompt || this.activeSession?.systemPrompt || "",
@@ -658,46 +670,211 @@ export class WorkspaceSessionCatalog {
       provider: session.provider,
       modelId: session.model,
       thinkingLevel: session.thinkingLevel,
-      isActive: true,
-      isStreaming: session.activePrompt,
     });
   }
 
-  private buildSummaryFromManagedSession(session: ManagedSession): WorkspaceSessionSummary {
-    const liveSummary = this.buildLiveSummaryFromManagedSession(session);
-    this.upsertStructuredPiSession(liveSummary);
+  private buildSummaryFromManagedSession(
+    session: ManagedSession,
+  ): WorkspaceSessionSummary {
     return this.decorateSummaryWithStructuredProjection(
-      liveSummary,
-      session.activePrompt ? "running" : undefined,
+      this.buildLiveSummaryFromManagedSession(session),
     );
   }
 
-  private buildActiveSessionSummary(session: ManagedSession): ActiveSessionSummaryState {
+  private buildSummaryFromStructuredSnapshot(
+    snapshot: StructuredSessionSnapshot,
+  ): WorkspaceSessionSummary {
+    return this.decorateSummaryWithStructuredProjection(
+      this.projectSummaryFromStructuredSnapshot(snapshot),
+    );
+  }
+
+  private projectSummaryFromStructuredSnapshot(
+    snapshot: StructuredSessionSnapshot,
+  ): WorkspaceSessionSummary {
+    const baseSummary = projectWorkspaceSessionSummaryFromInfo({
+      id: snapshot.pi.sessionId,
+      name: snapshot.pi.title,
+      firstMessage: undefined,
+      created: snapshot.pi.createdAt,
+      modified: snapshot.pi.updatedAt,
+      messageCount: snapshot.pi.messageCount,
+      path: undefined,
+      parentSessionPath: undefined,
+    });
+
     return {
-      session: this.buildSummaryFromManagedSession(session),
+      ...baseSummary,
+      provider: snapshot.pi.provider,
+      modelId: snapshot.pi.model,
+      thinkingLevel: snapshot.pi.reasoningEffort,
+    };
+  }
+
+  private async buildWorkspaceSessionSummary(
+    workspaceSessionId: string,
+  ): Promise<WorkspaceSessionSummary> {
+    const activeTarget = this.getActivePromptTarget();
+    if (
+      activeTarget?.surface === "orchestrator" &&
+      activeTarget.workspaceSessionId === workspaceSessionId &&
+      this.activeSession &&
+      this.activeSession.sessionId === workspaceSessionId
+    ) {
+      return this.buildSummaryFromManagedSession(this.activeSession);
+    }
+
+    const infos = await SessionManager.list(this.cwd, this.sessionDir);
+    const info = infos.find((candidate) => candidate.id === workspaceSessionId);
+    if (info) {
+      return this.buildSummaryFromSessionInfo(info);
+    }
+
+    const snapshot = this.getStructuredSnapshot(workspaceSessionId);
+    if (snapshot) {
+      return this.buildSummaryFromStructuredSnapshot(snapshot);
+    }
+
+    throw new Error(`Workspace session ${workspaceSessionId} not found.`);
+  }
+
+  private async buildActiveSessionState(
+    session: ManagedSession,
+    target: PromptTarget,
+  ): Promise<ActiveSessionState> {
+    return {
+      session: await this.buildWorkspaceSessionSummary(target.workspaceSessionId),
+      target: structuredClone(target),
       provider: session.provider,
       model: session.model,
       reasoningEffort: session.thinkingLevel,
       systemPrompt: session.systemPrompt,
       resolvedSystemPrompt: getResolvedSystemPrompt(session),
-    };
-  }
-
-  private async buildActiveSessionState(session: ManagedSession): Promise<ActiveSessionState> {
-    return {
-      ...this.buildActiveSessionSummary(session),
       messages: structuredClone(session.session.agent.state.messages),
     };
   }
 
-  private upsertStructuredPiSession(summary: WorkspaceSessionSummary): void {
+  private async emitSessionSync(input: {
+    session: ManagedSession;
+    reason: SessionSyncMessage["reason"];
+    target: PromptTarget;
+  }): Promise<void> {
+    if (!this.sessionSyncListener) {
+      return;
+    }
+
     try {
+      const [activeSession, listed] = await Promise.all([
+        this.buildActiveSessionState(input.session, input.target),
+        this.listSessions(),
+      ]);
+      this.sessionSyncListener({
+        reason: input.reason,
+        activeSession,
+        sessions: listed.sessions,
+      });
+    } catch (error) {
+      console.error("Failed to emit session sync payload:", error);
+    }
+  }
+
+  private buildOrchestratorPromptTarget(workspaceSessionId: string): PromptTarget {
+    return {
+      workspaceSessionId,
+      surface: "orchestrator",
+      surfacePiSessionId: workspaceSessionId,
+    };
+  }
+
+  private resolvePromptTargetForSurfacePiSessionId(surfacePiSessionId: string): PromptTarget {
+    if (this.activeSession?.sessionId === surfacePiSessionId && this.activeTarget) {
+      return structuredClone(this.activeTarget);
+    }
+
+    for (const session of this.structuredSessionStore.listSessionStates()) {
+      const thread = session.threads.find(
+        (candidate) => candidate.surfacePiSessionId === surfacePiSessionId,
+      );
+      if (thread) {
+        return {
+          workspaceSessionId: session.session.id,
+          surface: "thread",
+          surfacePiSessionId,
+          threadId: thread.id,
+        };
+      }
+    }
+
+    return this.buildOrchestratorPromptTarget(surfacePiSessionId);
+  }
+
+  private getActivePromptTarget(): PromptTarget | null {
+    if (!this.activeSession) {
+      return null;
+    }
+
+    return this.activeTarget
+      ? structuredClone(this.activeTarget)
+      : this.resolvePromptTargetForSurfacePiSessionId(this.activeSession.sessionId);
+  }
+
+  private getActiveWorkspaceSessionId(): string | undefined {
+    return this.getActivePromptTarget()?.workspaceSessionId;
+  }
+
+  private assertValidPromptTarget(target: PromptTarget): void {
+    if (target.surface === "orchestrator") {
+      if (target.threadId) {
+        throw new Error("Orchestrator targets cannot include a handler thread id.");
+      }
+      if (target.surfacePiSessionId !== target.workspaceSessionId) {
+        throw new Error("Orchestrator target must use the workspace session id as its pi surface id.");
+      }
+      return;
+    }
+
+    if (!target.threadId) {
+      throw new Error("Handler thread targets must include a handler thread id.");
+    }
+
+    const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
+    const thread = snapshot?.threads.find((candidate) => candidate.id === target.threadId) ?? null;
+    if (!thread) {
+      throw new Error(`Structured handler thread not found: ${target.threadId}`);
+    }
+    if (thread.surfacePiSessionId !== target.surfacePiSessionId) {
+      throw new Error(
+        `Handler thread ${target.threadId} does not match pi surface ${target.surfacePiSessionId}.`,
+      );
+    }
+  }
+
+  private buildSummaryFromSessionInfo(info: WorkspaceSessionInfo): WorkspaceSessionSummary {
+    return this.decorateSummaryWithStructuredProjection(this.projectSummaryFromSessionInfo(info));
+  }
+
+  private projectSummaryFromSessionInfo(info: WorkspaceSessionInfo): WorkspaceSessionSummary {
+    return projectWorkspaceSessionSummaryFromInfo({
+      id: info.id,
+      name: info.name,
+      firstMessage: info.firstMessage,
+      created: info.created,
+      modified: info.modified,
+      messageCount: info.messageCount,
+      path: info.path,
+      parentSessionPath: info.parentSessionPath,
+    });
+  }
+
+  private syncStructuredPiSessionFromSummary(summary: WorkspaceSessionSummary): void {
+    try {
+      const snapshot = this.getStructuredSnapshot(summary.id);
       this.structuredSessionStore.upsertPiSession({
         sessionId: summary.id,
         title: summary.title,
-        provider: summary.provider,
-        model: summary.modelId,
-        reasoningEffort: summary.thinkingLevel,
+        provider: summary.provider ?? snapshot?.pi.provider,
+        model: summary.modelId ?? snapshot?.pi.model,
+        reasoningEffort: summary.thinkingLevel ?? snapshot?.pi.reasoningEffort,
         messageCount: summary.messageCount,
         status: summary.status,
         createdAt: summary.createdAt,
@@ -705,6 +882,37 @@ export class WorkspaceSessionCatalog {
       });
     } catch (error) {
       console.error("Failed to upsert structured session metadata:", error);
+    }
+  }
+
+  private syncStructuredPiSessionFromOrchestratorSession(session: ManagedSession): void {
+    this.syncStructuredPiSessionFromSummary(this.buildLiveSummaryFromManagedSession(session));
+  }
+
+  private async syncStructuredPiSessionFromWorkspaceSession(
+    workspaceSessionId: string,
+  ): Promise<void> {
+    const activeTarget = this.getActivePromptTarget();
+    if (
+      activeTarget?.surface === "orchestrator" &&
+      activeTarget.workspaceSessionId === workspaceSessionId &&
+      this.activeSession &&
+      this.activeSession.sessionId === workspaceSessionId
+    ) {
+      this.syncStructuredPiSessionFromOrchestratorSession(this.activeSession);
+      return;
+    }
+
+    const infos = await SessionManager.list(this.cwd, this.sessionDir);
+    const info = infos.find((candidate) => candidate.id === workspaceSessionId);
+    if (info) {
+      this.syncStructuredPiSessionFromSummary(this.projectSummaryFromSessionInfo(info));
+      return;
+    }
+
+    const snapshot = this.getStructuredSnapshot(workspaceSessionId);
+    if (snapshot) {
+      this.syncStructuredPiSessionFromSummary(this.projectSummaryFromStructuredSnapshot(snapshot));
     }
   }
 
@@ -718,15 +926,14 @@ export class WorkspaceSessionCatalog {
 
   private decorateSummaryWithStructuredProjection(
     summary: WorkspaceSessionSummary,
-    statusOverride?: WorkspaceSessionSummary["status"],
   ): WorkspaceSessionSummary {
     const snapshot = this.getStructuredSnapshot(summary.id);
     if (!snapshot) {
-      return statusOverride ? { ...summary, status: statusOverride } : summary;
+      return summary;
     }
 
     if (!hasStructuredSessionFacts(snapshot)) {
-      return statusOverride ? { ...summary, status: statusOverride } : summary;
+      return summary;
     }
 
     const structuredSummary = buildStructuredSessionSummaryProjection(snapshot);
@@ -734,176 +941,18 @@ export class WorkspaceSessionCatalog {
 
     return {
       ...summary,
-      title: structuredSummary.title || summary.title,
       preview: structuredSummary.preview || summary.preview,
-      status: statusOverride ?? structuredSummary.status,
-      updatedAt: structuredSummary.updatedAt,
+      status: structuredSummary.status,
+      updatedAt:
+        structuredSummary.updatedAt.localeCompare(summary.updatedAt) > 0
+          ? structuredSummary.updatedAt
+          : summary.updatedAt,
       wait: projectWorkspaceWait(structuredSummary.wait),
       counts: structuredSummary.counts,
       threadIdsByStatus: view.threadIdsByStatus,
       threadIds: structuredSummary.threadIds,
       commandRollups: view.commandRollups.length > 0 ? view.commandRollups : undefined,
     };
-  }
-
-  private refreshSmithersWorkflowProjections(): void {
-    for (const session of this.structuredSessionStore.listSessionStates()) {
-      for (const workflow of session.workflowRuns) {
-        const thread = session.threads.find((entry) => entry.id === workflow.threadId);
-        if (!thread) {
-          continue;
-        }
-
-        try {
-          if (
-            workflow.status === "completed" ||
-            workflow.status === "failed" ||
-            workflow.status === "cancelled"
-          ) {
-            this.reconcileTerminalWorkflowProjection(workflow, thread);
-            continue;
-          }
-
-          this.refreshSmithersWorkflowProjection(session, workflow);
-        } catch (error) {
-          console.error(`Failed to refresh Smithers workflow projection ${workflow.id}:`, error);
-        }
-      }
-    }
-  }
-
-  private refreshSmithersWorkflowProjection(
-    session: StructuredSessionSnapshot,
-    workflow: StructuredSessionSnapshot["workflowRuns"][number],
-  ): void {
-    const run = readSmithersRunState({
-      runId: workflow.smithersRunId,
-    });
-    if (!run) {
-      return;
-    }
-
-    const projection = mapSmithersRunStateToWorkflowProjectionInput(run);
-    const thread = session.threads.find((entry) => entry.id === workflow.threadId);
-    if (!thread) {
-      return;
-    }
-
-    if (workflow.status !== projection.status || workflow.summary !== projection.summary) {
-      this.structuredSessionStore.updateWorkflow({
-        workflowId: workflow.id,
-        status: projection.status,
-        summary: projection.summary,
-      });
-    }
-
-    if (projection.status === "waiting") {
-      this.refreshSmithersWaitingWorkflowProjection(thread, workflow, run, projection.summary);
-      return;
-    }
-
-    if (projection.status === "running") {
-      if (thread.status !== "running" || thread.wait !== null) {
-        this.structuredSessionStore.updateThread({
-          threadId: thread.id,
-          status: "running",
-          wait: null,
-        });
-      }
-      if (getThreadOwnedWaitId(session.session.wait) === thread.id) {
-        this.structuredSessionStore.clearSessionWait({
-          sessionId: thread.sessionId,
-        });
-      }
-      return;
-    }
-
-    this.reconcileTerminalWorkflowProjection(
-      { ...workflow, status: projection.status, summary: projection.summary },
-      thread,
-    );
-  }
-
-  private reconcileTerminalWorkflowProjection(
-    _workflow: StructuredSessionSnapshot["workflowRuns"][number],
-    thread: StructuredSessionSnapshot["threads"][number],
-  ): void {
-    if (!isTerminalThreadStatus(thread.status)) {
-      this.structuredSessionStore.updateThread({
-        threadId: thread.id,
-        status: "running",
-        wait: null,
-      });
-    }
-
-    const liveSession = this.structuredSessionStore.getSessionState(thread.sessionId);
-    if (getThreadOwnedWaitId(liveSession.session.wait) === thread.id) {
-      this.structuredSessionStore.clearSessionWait({
-        sessionId: thread.sessionId,
-      });
-    }
-  }
-
-  private refreshSmithersWaitingWorkflowProjection(
-    thread: StructuredSessionSnapshot["threads"][number],
-    workflow: StructuredSessionSnapshot["workflowRuns"][number],
-    run: SmithersRunState,
-    summary: string,
-  ): void {
-    const waiting = buildSmithersWaitingState(run);
-    if (
-      thread.status !== "waiting" ||
-      !matchesWaitState(thread.wait, waiting.kind, waiting.reason, waiting.resumeWhen)
-    ) {
-      this.structuredSessionStore.updateThread({
-        threadId: thread.id,
-        status: "waiting",
-        wait: waiting,
-      });
-    }
-
-    const liveSession = this.structuredSessionStore.getSessionState(thread.sessionId);
-
-    if (this.canSessionWaitOnThread(liveSession, thread.id)) {
-      const activeWait = liveSession.session.wait;
-      if (
-        getThreadOwnedWaitId(activeWait) !== thread.id ||
-        activeWait?.kind !== waiting.kind ||
-        activeWait?.reason !== waiting.reason ||
-        activeWait?.resumeWhen !== waiting.resumeWhen
-      ) {
-        this.structuredSessionStore.setSessionWait({
-          sessionId: thread.sessionId,
-          owner: {
-            kind: "thread",
-            threadId: thread.id,
-          },
-          kind: waiting.kind,
-          reason: waiting.reason,
-          resumeWhen: waiting.resumeWhen,
-        });
-      }
-    } else if (getThreadOwnedWaitId(liveSession.session.wait) === thread.id) {
-      this.structuredSessionStore.clearSessionWait({
-        sessionId: thread.sessionId,
-      });
-    }
-
-    if (workflow.status !== "waiting" || workflow.summary !== summary) {
-      this.structuredSessionStore.updateWorkflow({
-        workflowId: workflow.id,
-        status: "waiting",
-        summary,
-      });
-    }
-  }
-
-  private canSessionWaitOnThread(session: StructuredSessionSnapshot, threadId: string): boolean {
-    if (session.session.wait && getThreadOwnedWaitId(session.session.wait) !== threadId) {
-      return false;
-    }
-
-    return session.threads.every((thread) => thread.id === threadId || thread.status !== "running");
   }
 
   private createPromptExecutionContext(
@@ -917,13 +966,9 @@ export class WorkspaceSessionCatalog {
 
     try {
       const target = options.target;
-      const structuredSessionId = this.resolveStructuredSessionIdForPrompt({
-        surfaceSessionId: session.sessionId,
-        target,
-      });
+      const structuredSessionId = target.workspaceSessionId;
       if (structuredSessionId === session.sessionId) {
-        const liveSummary = this.buildLiveSummaryFromManagedSession(session);
-        this.upsertStructuredPiSession(liveSummary);
+        this.syncStructuredPiSessionFromOrchestratorSession(session);
       }
       let preTurnSnapshot = this.getStructuredSnapshot(structuredSessionId);
       let targetThread =
@@ -986,22 +1031,6 @@ export class WorkspaceSessionCatalog {
       console.error("Failed to start prompt execution state:", error);
       return null;
     }
-  }
-
-  private resolveStructuredSessionIdForPrompt(input: {
-    surfaceSessionId: string;
-    target?: PromptTarget;
-  }): string {
-    if (input.target?.surface === "thread" && input.target.threadId) {
-      const match = this.structuredSessionStore
-        .listSessionStates()
-        .find((session) => session.threads.some((thread) => thread.id === input.target?.threadId));
-      if (match) {
-        return match.session.id;
-      }
-    }
-
-    return input.surfaceSessionId;
   }
 
   private async getSessionFileForId(
@@ -1183,6 +1212,14 @@ export class WorkspaceSessionCatalog {
         session.abortRequested = false;
         session.activePrompt = false;
         this.syncManagedState(session);
+        if (options.target.surface === "orchestrator") {
+          this.syncStructuredPiSessionFromOrchestratorSession(session);
+        }
+        await this.emitSessionSync({
+          session,
+          reason: "prompt.settled",
+          target: options.target,
+        });
       }
     } finally {
       session.promptExecutionRuntime.current = null;
@@ -1216,42 +1253,35 @@ export class WorkspaceSessionCatalog {
     }
 
     const orchestratorSessionId = snapshot.session.orchestratorPiSessionId;
-    const orchestratorSession = await this.openSessionInternal(orchestratorSessionId, systemPrompt);
+    const target = this.buildOrchestratorPromptTarget(orchestratorSessionId);
+    const orchestratorSession = await this.openSurfaceSessionInternal(
+      target.surfacePiSessionId,
+      systemPrompt,
+    );
+    this.activeTarget = target;
     if (orchestratorSession.activePrompt) {
       return;
     }
 
     orchestratorSession.abortRequested = false;
     orchestratorSession.activePrompt = true;
+    await this.emitSessionSync({
+      session: orchestratorSession,
+      reason: "background.started",
+      target,
+    });
 
     const resumeMessage = createSyntheticUserMessage(
       buildOrchestratorHandoffResumePrompt(thread, latestEpisode),
     );
     const options: SendAgentPromptOptions = {
-      sessionId: orchestratorSession.sessionId,
-      target: {
-        surface: "orchestrator",
-        surfaceSessionId: orchestratorSession.sessionId,
-      },
+      target,
       provider: orchestratorSession.provider,
       model: orchestratorSession.model,
       thinkingLevel: orchestratorSession.thinkingLevel,
       systemPrompt: orchestratorSession.systemPrompt,
       messages: [...convertToLlmMessages(orchestratorSession.session.agent.state.messages), resumeMessage],
-      onEvent: (event) => {
-        if (event.type !== "start" && event.type !== "done" && event.type !== "error") {
-          return;
-        }
-
-        this.sessionEventListener?.({
-          sessionId: orchestratorSession.sessionId,
-          target: {
-            surface: "orchestrator",
-            surfaceSessionId: orchestratorSession.sessionId,
-          },
-          event,
-        });
-      },
+      onEvent: () => {},
     };
     const orchestratorPromptContext = this.createPromptExecutionContext(
       orchestratorSession,
@@ -1584,77 +1614,6 @@ function getLatestUserPromptText(messages: readonly Message[]): string | null {
   return null;
 }
 
-function getInactiveSessionStatus(
-  sessionFile: string | undefined,
-): WorkspaceSessionSummary["status"] {
-  if (!sessionFile || !existsSync(sessionFile)) {
-    return "idle";
-  }
-
-  try {
-    const content = readFileSync(sessionFile, "utf8");
-    const lines = content.trim().split("\n");
-
-    for (let index = lines.length - 1; index >= 0; index -= 1) {
-      const line = lines[index]?.trim();
-      if (!line) {
-        continue;
-      }
-
-      let entry: unknown;
-      try {
-        entry = JSON.parse(line);
-      } catch {
-        continue;
-      }
-
-      const status = getStatusFromSessionEntry(entry);
-      if (status) {
-        return status;
-      }
-    }
-  } catch {
-    return "idle";
-  }
-
-  return "idle";
-}
-
-function buildSmithersWaitingState(run: SmithersRunState): StructuredWaitState {
-  switch (run.status) {
-    case "waiting-approval":
-      return {
-        kind: "user",
-        reason: "Waiting for approval or clarification before the Smithers workflow can continue.",
-        resumeWhen: "Resume when the required approval or clarification is provided.",
-        since: new Date().toISOString(),
-      };
-    case "waiting-event":
-      return {
-        kind: "external",
-        reason: "Waiting for an external Smithers event before the workflow can continue.",
-        resumeWhen: "Resume when the required external Smithers event arrives.",
-        since: new Date().toISOString(),
-      };
-    default:
-      return {
-        kind: "external",
-        reason: "Waiting for the Smithers workflow to resume.",
-        resumeWhen: "Resume when the Smithers workflow reports progress again.",
-        since: new Date().toISOString(),
-      };
-  }
-}
-
-function matchesWaitState(
-  wait: StructuredSessionSnapshot["threads"][number]["wait"],
-  kind: "user" | "external",
-  reason: string,
-  resumeWhen: string,
-): boolean {
-  return wait?.kind === kind && wait.reason === reason && wait.resumeWhen === resumeWhen;
-}
-
 function isTerminalThreadStatus(
   status: StructuredSessionSnapshot["threads"][number]["status"],
 ): boolean {
@@ -1704,35 +1663,6 @@ function buildOrchestratorHandoffResumePrompt(
     `Latest handoff summary: ${episode.summary}`,
     "Reconcile the latest durable handoff from state for this thread and decide the next orchestrator action.",
   ].join("\n");
-}
-
-function getStatusFromSessionEntry(entry: unknown): WorkspaceSessionSummary["status"] | undefined {
-  if (!entry || typeof entry !== "object" || !("type" in entry) || entry.type !== "message") {
-    return undefined;
-  }
-
-  const message = "message" in entry ? entry.message : undefined;
-  if (!message || typeof message !== "object" || !("role" in message)) {
-    return undefined;
-  }
-
-  if (
-    message.role === "assistant" &&
-    "stopReason" in message &&
-    (message.stopReason === "error" || message.stopReason === "aborted")
-  ) {
-    return "error";
-  }
-
-  if (message.role === "toolResult" && "isError" in message && message.isError === true) {
-    return "error";
-  }
-
-  if (message.role === "user" || message.role === "assistant" || message.role === "toolResult") {
-    return "idle";
-  }
-
-  return undefined;
 }
 
 function getThreadOwnedWaitId(wait: StructuredSessionSnapshot["session"]["wait"]): string | null {

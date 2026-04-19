@@ -311,10 +311,11 @@ async function executeWorkflowCommand(input: {
 
   try {
     const started = await input.startRun();
-    const projection = (await waitForProjectionInput(
-      started.runId,
-      input.bridge.readSmithersWorkflowProjectionInput,
-    )) ?? {
+    // This is an explicit tool-boundary snapshot only. Ongoing Smithers lifecycle changes
+    // must arrive through a future bridge-event seam rather than read-side repair logic.
+    const projection = input.bridge.readSmithersWorkflowProjectionInput({
+      runId: started.runId,
+    }) ?? {
       status: "running" satisfies StructuredWorkflowStatus,
       summary:
         input.mode === "resume"
@@ -592,23 +593,6 @@ function getWaitOwnerThreadId(wait: StructuredSessionSnapshot["session"]["wait"]
   if (wait.owner.kind === "thread") {
     return wait.owner.threadId;
   }
-  return null;
-}
-
-async function waitForProjectionInput(
-  runId: string,
-  readProjectionInput: WorkflowToolBridge["readSmithersWorkflowProjectionInput"],
-  timeoutMs = 5_000,
-): Promise<ReturnType<WorkflowToolBridge["readSmithersWorkflowProjectionInput"]>> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const projection = readProjectionInput({ runId });
-    if (projection) {
-      return projection;
-    }
-    await Bun.sleep(100);
-  }
-
   return null;
 }
 

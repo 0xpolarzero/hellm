@@ -76,7 +76,7 @@ export function createStartThreadTool(options: {
           sessionId: runtime.sessionId,
           turnId: runtime.turnId,
           parentThreadId: runtime.rootThreadId,
-          parentSurfacePiSessionId: runtime.surfacePiSessionId ?? runtime.sessionId,
+          parentSurfacePiSessionId: runtime.surfacePiSessionId,
           title,
           objective,
         });

@@ -42,6 +42,7 @@ function createStore() {
 function createPromptContext(store: StructuredSessionStateStore) {
   const turn = store.startTurn({
     sessionId: "session-tool-tracker",
+    surfacePiSessionId: "session-tool-tracker",
     requestSummary: "Track tool commands",
   });
   const rootThread = store.createThread({
@@ -53,6 +54,7 @@ function createPromptContext(store: StructuredSessionStateStore) {
   return createPromptExecutionContext({
     sessionId: "session-tool-tracker",
     turnId: turn.id,
+    surfacePiSessionId: "session-tool-tracker",
     surfaceThreadId: rootThread.id,
     promptText: "Track tool commands",
   });
@@ -61,6 +63,7 @@ function createPromptContext(store: StructuredSessionStateStore) {
 function createHandlerPromptContext(store: StructuredSessionStateStore) {
   const turn = store.startTurn({
     sessionId: "session-tool-tracker",
+    surfacePiSessionId: "session-tool-tracker",
     requestSummary: "Track handler-thread tool commands",
   });
   const orchestratorThread = store.createThread({
@@ -81,6 +84,7 @@ function createHandlerPromptContext(store: StructuredSessionStateStore) {
     promptContext: createPromptExecutionContext({
       sessionId: "session-tool-tracker",
       turnId: turn.id,
+      surfacePiSessionId: handlerThread.surfacePiSessionId,
       surfaceThreadId: handlerThread.id,
       surfaceKind: "handler",
       promptText: "Inspect the workspace",

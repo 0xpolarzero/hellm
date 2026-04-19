@@ -6,13 +6,13 @@ import * as PiCodingAgent from "@mariozechner/pi-coding-agent";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Message, StopReason, ToolCall } from "@mariozechner/pi-ai";
+import type { PromptTarget, SessionSyncMessage } from "../mainview/chat-rpc";
 import {
   getSvvySessionDir,
   WorkspaceSessionCatalog,
   resolveRestoredSessionDefaults,
   type SessionDefaults,
 } from "./session-catalog";
-import type { SmithersRunState } from "./smithers-workflow-bridge";
 import type {
   StructuredSessionSnapshot,
   StructuredSessionStateStore,
@@ -120,6 +120,27 @@ function appendMessagesToSession(session: PromptableSession, messages: readonly 
   }
 }
 
+function createOrchestratorTarget(workspaceSessionId: string): PromptTarget {
+  return {
+    workspaceSessionId,
+    surface: "orchestrator",
+    surfacePiSessionId: workspaceSessionId,
+  };
+}
+
+function createThreadTarget(
+  workspaceSessionId: string,
+  surfacePiSessionId: string,
+  threadId: string,
+): PromptTarget {
+  return {
+    workspaceSessionId,
+    surface: "thread",
+    surfacePiSessionId,
+    threadId,
+  };
+}
+
 async function waitFor(condition: () => boolean, timeoutMs = 2_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -167,6 +188,7 @@ function seedCommandRollupSession(
 
   const turn = store.startTurn({
     sessionId,
+    surfacePiSessionId: sessionId,
     requestSummary: `Inspect ${title}`,
   });
   const thread = store.createThread({
@@ -426,6 +448,7 @@ describe("WorkspaceSessionCatalog", () => {
 
     const turn = store.startTurn({
       sessionId: active.session.id,
+      surfacePiSessionId: active.session.id,
       requestSummary: "Inspect execute_typescript rollups",
     });
     const thread = store.createThread({
@@ -635,7 +658,7 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("marks inactive failed sessions as error without rebuilding full context", async () => {
+  it("does not infer inactive session status from transcript files", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const inactive = createPersistedSession(cwd, sessionDir, {
       title: "Failed Session",
@@ -659,7 +682,7 @@ describe("WorkspaceSessionCatalog", () => {
       expect(inactiveSummary).toMatchObject({
         id: inactive.id,
         title: "Failed Session",
-        status: "error",
+        status: "idle",
       });
     } finally {
       openSpy.mockRestore();
@@ -697,7 +720,7 @@ describe("WorkspaceSessionCatalog", () => {
   it("reuses the synced boundary for an appended user turn", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    await catalog.createSession({ title: "Prompted" }, DEFAULTS);
+    const created = await catalog.createSession({ title: "Prompted" }, DEFAULTS);
 
     const firstUser = userMessage("Explain the parser");
     const firstAssistant = assistantMessage("Parser cursor synced.");
@@ -713,6 +736,7 @@ describe("WorkspaceSessionCatalog", () => {
 
       await catalog.sendPrompt({
         ...DEFAULTS,
+        target: createOrchestratorTarget(created.session.id),
         messages: [firstUser],
         onEvent: () => {},
       });
@@ -728,6 +752,7 @@ describe("WorkspaceSessionCatalog", () => {
 
       await catalog.sendPrompt({
         ...DEFAULTS,
+        target: createOrchestratorTarget(created.session.id),
         messages: [firstUser, firstAssistant, secondUser],
         onEvent: () => {},
       });
@@ -744,10 +769,69 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("emits an explicit session sync payload when a prompt settles", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Prompt Sync" }, DEFAULTS);
+
+    const syncs: SessionSyncMessage[] = [];
+    catalog.setSessionSyncListener((payload) => {
+      syncs.push(payload);
+    });
+
+    const prompt = userMessage("Explain the parser");
+    const reply = assistantMessage("Parser cursor synced.");
+    const { promptTexts, promptSpy } = installPromptSpy(catalog, [
+      { user: prompt, assistant: reply },
+    ]);
+
+    try {
+      await catalog.sendPrompt({
+        ...DEFAULTS,
+        target: createOrchestratorTarget(created.session.id),
+        messages: [prompt],
+        onEvent: () => {},
+      });
+
+      await waitFor(() => promptTexts.length === 1 && syncs.length === 1);
+
+      expect(syncs[0]).toMatchObject({
+        reason: "prompt.settled",
+        activeSession: {
+          target: {
+            workspaceSessionId: created.session.id,
+            surface: "orchestrator",
+            surfacePiSessionId: created.session.id,
+          },
+          session: {
+            title: "Prompt Sync",
+            preview: "Parser cursor synced.",
+            status: "idle",
+          },
+        },
+      });
+      expect(
+        syncs[0]?.activeSession.messages.some(
+          (message) =>
+            message.role === "assistant" &&
+            message.content[0]?.type === "text" &&
+            message.content[0].text === "Parser cursor synced.",
+        ),
+      ).toBe(true);
+      expect(syncs[0]?.sessions.find((session) => session.title === "Prompt Sync")).toMatchObject({
+        preview: "Parser cursor synced.",
+        status: "idle",
+      });
+    } finally {
+      promptSpy.mockRestore();
+      catalog.setSessionSyncListener(null);
+    }
+  });
+
   it("recreates the session when earlier history diverges", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    await catalog.createSession({ title: "Prompted" }, DEFAULTS);
+    const created = await catalog.createSession({ title: "Prompted" }, DEFAULTS);
 
     const originalUser = userMessage("Explain the parser");
     const firstAssistant = assistantMessage("Parser cursor synced.");
@@ -764,6 +848,7 @@ describe("WorkspaceSessionCatalog", () => {
 
       await catalog.sendPrompt({
         ...DEFAULTS,
+        target: createOrchestratorTarget(created.session.id),
         messages: [originalUser],
         onEvent: () => {},
       });
@@ -779,6 +864,7 @@ describe("WorkspaceSessionCatalog", () => {
 
       await catalog.sendPrompt({
         ...DEFAULTS,
+        target: createOrchestratorTarget(created.session.id),
         messages: [divergentUser, firstAssistant, secondUser],
         onEvent: () => {},
       });
@@ -800,7 +886,7 @@ describe("WorkspaceSessionCatalog", () => {
   it("keeps the prompt boundary usable after a prompt failure", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    await catalog.createSession({ title: "Prompted" }, DEFAULTS);
+    const created = await catalog.createSession({ title: "Prompted" }, DEFAULTS);
 
     const firstUser = userMessage("Explain the parser");
     const firstAssistant = assistantMessage("Prompt failed but the boundary stayed synced.");
@@ -820,6 +906,7 @@ describe("WorkspaceSessionCatalog", () => {
 
       await catalog.sendPrompt({
         ...DEFAULTS,
+        target: createOrchestratorTarget(created.session.id),
         messages: [firstUser],
         onEvent: () => {},
       });
@@ -835,6 +922,7 @@ describe("WorkspaceSessionCatalog", () => {
 
       await catalog.sendPrompt({
         ...DEFAULTS,
+        target: createOrchestratorTarget(created.session.id),
         messages: [firstUser, firstAssistant, secondUser],
         onEvent: () => {},
       });
@@ -869,6 +957,7 @@ describe("WorkspaceSessionCatalog", () => {
     try {
       await catalog.sendPrompt({
         ...DEFAULTS,
+        target: createOrchestratorTarget(created.session.id),
         messages: [prompt],
         onEvent: () => {},
       });
@@ -921,6 +1010,7 @@ describe("WorkspaceSessionCatalog", () => {
     const store = getStructuredSessionStore(catalog);
     const seedTurn = store.startTurn({
       sessionId: created.session.id,
+      surfacePiSessionId: created.session.id,
       requestSummary: "Delegate the parser fix",
     });
     const orchestratorThread = store.createThread({
@@ -963,6 +1053,7 @@ describe("WorkspaceSessionCatalog", () => {
     try {
       await catalog.sendPrompt({
         ...DEFAULTS,
+        target: createOrchestratorTarget(created.session.id),
         messages: [prompt],
         onEvent: () => {},
       });
@@ -990,6 +1081,7 @@ describe("WorkspaceSessionCatalog", () => {
 
     const seedTurn = store.startTurn({
       sessionId: created.session.id,
+      surfacePiSessionId: created.session.id,
       requestSummary: "Delegate the parser fix",
     });
     const orchestratorThread = store.createThread({
@@ -1030,12 +1122,11 @@ describe("WorkspaceSessionCatalog", () => {
     try {
       await catalog.sendPrompt({
         ...DEFAULTS,
-        sessionId: handlerThread.surfacePiSessionId,
-        target: {
-          surface: "thread",
-          surfaceSessionId: handlerThread.surfacePiSessionId,
-          threadId: handlerThread.id,
-        },
+        target: createThreadTarget(
+          created.session.id,
+          handlerThread.surfacePiSessionId,
+          handlerThread.id,
+        ),
         messages: [followUp],
         onEvent: () => {},
       });
@@ -1078,6 +1169,7 @@ describe("WorkspaceSessionCatalog", () => {
 
     const seedTurn = store.startTurn({
       sessionId: created.session.id,
+      surfacePiSessionId: created.session.id,
       requestSummary: "Delegate the parser fix",
     });
     const orchestratorThread = store.createThread({
@@ -1166,12 +1258,11 @@ describe("WorkspaceSessionCatalog", () => {
     try {
       await catalog.sendPrompt({
         ...DEFAULTS,
-        sessionId: handlerThread.surfacePiSessionId,
-        target: {
-          surface: "thread",
-          surfaceSessionId: handlerThread.surfacePiSessionId,
-          threadId: handlerThread.id,
-        },
+        target: createThreadTarget(
+          created.session.id,
+          handlerThread.surfacePiSessionId,
+          handlerThread.id,
+        ),
         messages: [closeThread],
         onEvent: () => {},
       });
@@ -1186,13 +1277,14 @@ describe("WorkspaceSessionCatalog", () => {
       expect(promptTexts[1]).toContain("Parser fix handoff");
       expect(promptTexts[1]).toContain("Patched the parser bug and handed the objective back.");
 
-      const activeSummary = await catalog.getActiveSessionSummary();
-      expect(activeSummary?.session.id).toBe(created.session.id);
+      const activeSession = await catalog.getActiveSession();
+      expect(activeSession?.session.id).toBe(created.session.id);
+      expect(activeSession?.target).toEqual(createOrchestratorTarget(created.session.id));
 
       const listed = await catalog.listSessions();
       const orchestratorSummary = listed.sessions.find((session) => session.id === created.session.id);
       expect(orchestratorSummary).toMatchObject({
-        status: "idle",
+        status: "running",
         threadIdsByStatus: {
           running: [],
           waiting: [],
@@ -1216,6 +1308,150 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("emits a background-started session sync when orchestrator reconciliation begins after handoff", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Sync After Handoff" }, DEFAULTS);
+    const store = getStructuredSessionStore(catalog);
+    const syncs: SessionSyncMessage[] = [];
+    catalog.setSessionSyncListener((payload) => {
+      syncs.push(payload);
+    });
+
+    const seedTurn = store.startTurn({
+      sessionId: created.session.id,
+      surfacePiSessionId: created.session.id,
+      requestSummary: "Delegate the parser fix",
+    });
+    const orchestratorThread = store.createThread({
+      turnId: seedTurn.id,
+      surfacePiSessionId: created.session.id,
+      title: "Delegate the parser fix",
+      objective: "Open a handler thread for the parser fix.",
+    });
+    const handlerThread = await (
+      catalog as unknown as {
+        createHandlerThread(input: {
+          sessionId: string;
+          turnId: string;
+          parentThreadId: string;
+          parentSurfacePiSessionId: string;
+          title: string;
+          objective: string;
+        }): Promise<{ id: string; surfacePiSessionId: string }>;
+      }
+    ).createHandlerThread({
+      sessionId: created.session.id,
+      turnId: seedTurn.id,
+      parentThreadId: orchestratorThread.id,
+      parentSurfacePiSessionId: created.session.id,
+      title: "Parser fix thread",
+      objective: "Patch the parser bug and add regression coverage.",
+    });
+
+    const promptTexts: string[] = [];
+    const closeThread = userMessage("Close this thread with a short summary");
+    const sessionPrototype = Object.getPrototypeOf(getManagedSessionHandle(catalog).session) as {
+      prompt: (promptText: string) => Promise<void>;
+    };
+    const promptSpy = spyOn(sessionPrototype, "prompt").mockImplementation(async function (
+      this: PromptableSession,
+      promptText: string,
+    ) {
+      promptTexts.push(promptText);
+
+      if (promptTexts.length === 1) {
+        const runtime = (
+          catalog as unknown as {
+            activeSession: { promptExecutionRuntime: { current: { rootThreadId: string; turnId: string } | null } };
+          }
+        ).activeSession.promptExecutionRuntime.current;
+        if (!runtime) {
+          throw new Error("Expected an active handler runtime before handoff.");
+        }
+
+        store.updateThread({
+          threadId: runtime.rootThreadId,
+          status: "completed",
+          wait: null,
+        });
+        store.createEpisode({
+          threadId: runtime.rootThreadId,
+          kind: "change",
+          title: "Parser fix handoff",
+          summary: "Patched the parser bug and handed the objective back.",
+          body: "Patched the parser bug, added regression coverage, and handed the objective back.",
+        });
+        store.setTurnDecision({
+          turnId: runtime.turnId,
+          decision: "handoff",
+        });
+
+        appendMessagesToSession(this, [
+          closeThread,
+          assistantMessage("I handed the parser fix back to the orchestrator."),
+        ]);
+        return;
+      }
+
+      if (promptTexts.length === 2) {
+        appendMessagesToSession(this, [
+          userMessage("System event: A handler thread emitted a durable handoff."),
+          assistantMessage("I reviewed the handoff and will validate the parser fix before landing it."),
+        ]);
+        return;
+      }
+
+      throw new Error("Unexpected prompt invocation.");
+    });
+
+    try {
+      await catalog.sendPrompt({
+        ...DEFAULTS,
+        target: createThreadTarget(
+          created.session.id,
+          handlerThread.surfacePiSessionId,
+          handlerThread.id,
+        ),
+        messages: [closeThread],
+        onEvent: () => {},
+      });
+
+      await waitFor(
+        () =>
+          syncs.some((payload) => payload.reason === "background.started") &&
+          syncs.some(
+            (payload) =>
+              payload.reason === "prompt.settled" &&
+              payload.activeSession.target.surface === "orchestrator" &&
+              payload.activeSession.session.preview ===
+                "I reviewed the handoff and will validate the parser fix before landing it.",
+          ),
+      );
+
+      const backgroundStarted = syncs.find((payload) => payload.reason === "background.started");
+      expect(backgroundStarted).toMatchObject({
+        reason: "background.started",
+        activeSession: {
+          target: {
+            workspaceSessionId: created.session.id,
+            surface: "orchestrator",
+            surfacePiSessionId: created.session.id,
+          },
+          session: {
+            id: created.session.id,
+            status: "running",
+            preview: "Patched the parser bug and handed the objective back.",
+          },
+        },
+      });
+    } finally {
+      promptSpy.mockRestore();
+      catalog.setSessionSyncListener(null);
+      await catalog.dispose();
+    }
+  });
+
   it("keeps a handed-back handler thread directly interactive for follow-up chat without opening a new thread", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
@@ -1224,6 +1460,7 @@ describe("WorkspaceSessionCatalog", () => {
 
     const seedTurn = store.startTurn({
       sessionId: created.session.id,
+      surfacePiSessionId: created.session.id,
       requestSummary: "Delegate the parser fix",
     });
     const orchestratorThread = store.createThread({
@@ -1279,12 +1516,11 @@ describe("WorkspaceSessionCatalog", () => {
     try {
       await catalog.sendPrompt({
         ...DEFAULTS,
-        sessionId: handlerThread.surfacePiSessionId,
-        target: {
-          surface: "thread",
-          surfaceSessionId: handlerThread.surfacePiSessionId,
-          threadId: handlerThread.id,
-        },
+        target: createThreadTarget(
+          created.session.id,
+          handlerThread.surfacePiSessionId,
+          handlerThread.id,
+        ),
         messages: [followUp],
         onEvent: () => {},
       });
@@ -1320,6 +1556,7 @@ describe("WorkspaceSessionCatalog", () => {
 
     const seedTurn = store.startTurn({
       sessionId: created.session.id,
+      surfacePiSessionId: created.session.id,
       requestSummary: "Delegate the parser fix",
     });
     const orchestratorThread = store.createThread({
@@ -1383,12 +1620,11 @@ describe("WorkspaceSessionCatalog", () => {
     try {
       await catalog.sendPrompt({
         ...DEFAULTS,
-        sessionId: handlerThread.surfacePiSessionId,
-        target: {
-          surface: "thread",
-          surfaceSessionId: handlerThread.surfacePiSessionId,
-          threadId: handlerThread.id,
-        },
+        target: createThreadTarget(
+          created.session.id,
+          handlerThread.surfacePiSessionId,
+          handlerThread.id,
+        ),
         messages: [reply],
         onEvent: () => {},
       });
@@ -1419,6 +1655,7 @@ describe("WorkspaceSessionCatalog", () => {
 
     const seedTurn = store.startTurn({
       sessionId: created.session.id,
+      surfacePiSessionId: created.session.id,
       requestSummary: "Delegate the parser fix",
     });
     const orchestratorThread = store.createThread({
@@ -1449,9 +1686,14 @@ describe("WorkspaceSessionCatalog", () => {
         objective: "Patch the parser bug and add regression coverage.",
       });
 
-      const threadSurface = await catalog.openSession(handlerThread.surfacePiSessionId);
+      const threadSurface = await catalog.openSurface(
+        createThreadTarget(created.session.id, handlerThread.surfacePiSessionId, handlerThread.id),
+      );
 
-      expect(threadSurface.session.parentSessionId).toBe(created.session.id);
+      expect(threadSurface.session.id).toBe(created.session.id);
+      expect(threadSurface.target).toEqual(
+        createThreadTarget(created.session.id, handlerThread.surfacePiSessionId, handlerThread.id),
+      );
       expect(threadSurface.messages).toEqual([]);
       expect(threadSurface.session.messageCount).toBe(0);
       expect(threadSurface.systemPrompt).toBe(DEFAULTS.systemPrompt);
@@ -1470,6 +1712,7 @@ describe("WorkspaceSessionCatalog", () => {
     try {
       const turn = store.startTurn({
         sessionId: created.session.id,
+        surfacePiSessionId: created.session.id,
         requestSummary: "Delegate parser fix",
       });
       store.createThread({
@@ -1528,7 +1771,7 @@ describe("WorkspaceSessionCatalog", () => {
       expect(summaries).toEqual([
         expect.objectContaining({
           threadId: handlerThread.id,
-          surfaceSessionId: "pi-thread-parser-fix",
+          surfacePiSessionId: "pi-thread-parser-fix",
           title: "Parser fix thread",
           status: "completed",
           latestEpisode: expect.objectContaining({
@@ -1580,6 +1823,7 @@ describe("WorkspaceSessionCatalog", () => {
     try {
       const turn = store.startTurn({
         sessionId: created.session.id,
+        surfacePiSessionId: created.session.id,
         requestSummary: "Wait on the user",
       });
       const waitingThread = store.createThread({
@@ -1645,7 +1889,7 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("reconciles long-lived Smithers workflow refreshes onto the handler thread", async () => {
+  it("does not mutate Smithers workflow state during read APIs", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const created = await catalog.createSession({ title: "Workflow Refresh" }, DEFAULTS);
@@ -1655,6 +1899,7 @@ describe("WorkspaceSessionCatalog", () => {
     try {
       const turn = store.startTurn({
         sessionId: created.session.id,
+        surfacePiSessionId: created.session.id,
         requestSummary: "Refresh workflow state on the handler thread",
       });
       const handlerThread = store.createThread({
@@ -1682,72 +1927,83 @@ describe("WorkspaceSessionCatalog", () => {
         summary: "Workflow started.",
       });
 
-      const snapshot = getStructuredSessionState(catalog, created.session.id);
-      const handlerThreadRecord = snapshot.threads.find(
-        (thread) => thread.id === handlerThread.id,
-      )!;
-      const workflowRecord = snapshot.workflowRuns.find((entry) => entry.id === workflow.id)!;
-      const run: SmithersRunState = {
-        runId: workflow.smithersRunId,
-        workflowName: workflow.workflowName,
-        workflowPath: "definitions/implement-feature.tsx",
-        status: "waiting-event",
-        createdAtMs: 1,
-        startedAtMs: 2,
-        finishedAtMs: null,
-        heartbeatAtMs: null,
-        vcsRoot: null,
-        vcsRevision: null,
-        errorJson: null,
-        nodeCounts: {},
-      };
-
-      (
-        catalog as unknown as {
-          refreshSmithersWaitingWorkflowProjection: (
-            thread: StructuredSessionSnapshot["threads"][number],
-            workflow: StructuredSessionSnapshot["workflowRuns"][number],
-            run: SmithersRunState,
-            summary: string,
-          ) => void;
-        }
-      ).refreshSmithersWaitingWorkflowProjection(
-        handlerThreadRecord,
-        workflowRecord,
-        run,
-        "implement-feature run run-refresh-123 is waiting for an external event.",
-      );
-
-      const waitingSnapshot = getStructuredSessionState(catalog, created.session.id);
-      expect(
-        waitingSnapshot.threads.find((thread) => thread.id === handlerThread.id),
-      ).toMatchObject({
+      store.updateWorkflow({
+        workflowId: workflow.id,
+        status: "waiting",
+        summary: "implement-feature run run-refresh-123 is waiting for an external event.",
+      });
+      store.updateThread({
+        threadId: handlerThread.id,
         status: "waiting",
         wait: {
           kind: "external",
+          reason: "Waiting for an external Smithers event before the workflow can continue.",
+          resumeWhen: "Resume when the required external Smithers event arrives.",
+          since: "2026-04-19T13:30:00.000Z",
         },
       });
-      expect(waitingSnapshot.session.wait).toMatchObject({
+      store.setSessionWait({
+        sessionId: created.session.id,
         owner: { kind: "thread", threadId: handlerThread.id },
         kind: "external",
+        reason: "Waiting for an external Smithers event before the workflow can continue.",
+        resumeWhen: "Resume when the required external Smithers event arrives.",
       });
 
-      store.updateWorkflow({
-        workflowId: workflow.id,
-        status: "completed",
-        summary: "Workflow completed after the external event arrived.",
-      });
+      const beforeReads = getStructuredSessionState(catalog, created.session.id);
+
       await catalog.listSessions();
-
-      const resumedSnapshot = getStructuredSessionState(catalog, created.session.id);
-      expect(resumedSnapshot.session.wait).toBeNull();
-      expect(
-        resumedSnapshot.threads.find((thread) => thread.id === handlerThread.id),
-      ).toMatchObject({
-        status: "running",
-        wait: null,
+      await catalog.getActiveSession();
+      await catalog.listHandlerThreads({ sessionId: created.session.id });
+      await catalog.getHandlerThreadInspector({
+        sessionId: created.session.id,
+        threadId: handlerThread.id,
       });
-      expect(resumedSnapshot.episodes).toEqual([]);
+
+      const afterReads = getStructuredSessionState(catalog, created.session.id);
+      expect(afterReads).toEqual(beforeReads);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("updates session metadata on explicit actions instead of summary reads", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Original Title" }, DEFAULTS);
+    const store = getStructuredSessionStore(catalog);
+
+    try {
+      const turn = store.startTurn({
+        sessionId: created.session.id,
+        surfacePiSessionId: created.session.id,
+        requestSummary: "Seed a structured summary projection",
+      });
+      store.finishTurn({
+        turnId: turn.id,
+        status: "completed",
+      });
+
+      await catalog.renameSession(created.session.id, "Renamed Title");
+
+      expect(getStructuredSessionState(catalog, created.session.id).pi.title).toBe("Renamed Title");
+
+      const upsertSpy = spyOn(store, "upsertPiSession");
+      try {
+        const listed = await catalog.listSessions();
+        const active = await catalog.getActiveSession();
+
+        expect(listed.sessions.find((session) => session.id === created.session.id)?.title).toBe(
+          "Renamed Title",
+        );
+        expect(active?.session.title).toBe("Renamed Title");
+        expect(upsertSpy).not.toHaveBeenCalled();
+        expect(getStructuredSessionState(catalog, created.session.id).pi.title).toBe(
+          "Renamed Title",
+        );
+      } finally {
+        upsertSpy.mockRestore();
+      }
     } finally {
       await catalog.dispose();
     }

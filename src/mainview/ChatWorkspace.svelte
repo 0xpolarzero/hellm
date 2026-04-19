@@ -123,7 +123,7 @@
   const currentSurface = $derived(activeSurface ?? runtime.activeSurface);
   const currentSurfaceLabel = $derived.by(() => {
     if (currentSurface?.surface === "thread") {
-      return `Messaging handler thread ${currentSurface.threadId ?? currentSurface.surfaceSessionId}`;
+      return `Messaging handler thread ${currentSurface.threadId ?? currentSurface.surfacePiSessionId}`;
     }
 
     return "Messaging orchestrator";
@@ -395,7 +395,7 @@
         text: input,
         sentAt: Date.now(),
         workspaceId: runtime.workspaceId,
-        sessionId: runtime.activeSurface.surfaceSessionId,
+        sessionId: runtime.activeSurface.workspaceSessionId,
       });
       promptHistory = [...promptHistory, entry];
     } catch (error) {
@@ -588,13 +588,19 @@
   }
 
   async function handleOpenHandlerThread(
-    thread: Pick<WorkspaceHandlerThreadSummary, "threadId" | "surfaceSessionId">,
+    thread: Pick<WorkspaceHandlerThreadSummary, "threadId" | "surfacePiSessionId">,
   ) {
+    const session = currentSession;
+    if (!session) {
+      return;
+    }
+
     closeThreadInspector();
     await runSessionMutation(() =>
       runtime.openSurface({
+        workspaceSessionId: session.id,
         surface: "thread",
-        surfaceSessionId: thread.surfaceSessionId,
+        surfacePiSessionId: thread.surfacePiSessionId,
         threadId: thread.threadId,
       }),
     );

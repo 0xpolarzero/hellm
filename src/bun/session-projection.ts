@@ -21,8 +21,6 @@ export interface ActiveSessionProjectionSource extends SessionSummaryBase {
   provider?: string;
   modelId?: string;
   thinkingLevel?: string;
-  isActive?: boolean;
-  isStreaming?: boolean;
 }
 
 export interface SessionInfoProjectionSource {
@@ -215,32 +213,6 @@ export function projectWorkspaceSessionSummaryFromInfo(
   );
 }
 
-export function deriveSessionStatus(
-  source: Pick<ActiveSessionProjectionSource, "messages" | "isActive" | "isStreaming">,
-): SessionStatus {
-  if (source.isActive && source.isStreaming) {
-    return "running";
-  }
-
-  const latest = getLatestVisibleMessage(source.messages);
-  if (!latest) {
-    return "idle";
-  }
-
-  if (
-    latest.role === "assistant" &&
-    (latest.stopReason === "error" || latest.stopReason === "aborted")
-  ) {
-    return "error";
-  }
-
-  if (latest.role === "toolResult" && latest.isError) {
-    return "error";
-  }
-
-  return "idle";
-}
-
 export function projectWorkspaceSessionSummary(
   source: ActiveSessionProjectionSource,
 ): WorkspaceSessionSummary {
@@ -254,7 +226,7 @@ export function projectWorkspaceSessionSummary(
   return buildWorkspaceSessionSummary(source, {
     title: getSessionTitle(source),
     preview: getSessionPreview(source),
-    status: deriveSessionStatus(source),
+    status: "idle" satisfies SessionStatus,
     updatedAt: latestUpdatedAt.toISOString(),
     provider: source.provider,
     modelId: source.modelId,
