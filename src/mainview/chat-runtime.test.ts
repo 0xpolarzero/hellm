@@ -11,6 +11,7 @@ import type {
   ActiveSessionState,
   ActiveSessionSummaryState,
   PromptTarget,
+  SessionEventMessage,
   SessionMutationResponse,
   WorkspaceCommandInspector,
   WorkspaceHandlerThreadInspector,
@@ -354,9 +355,10 @@ function createFakeRpc(
     getHandlerThreadInspector: number;
   };
 } {
-  const listeners = new Set<
+  const streamListeners = new Set<
     (payload: { streamId: string; event: AssistantMessageEvent }) => void
   >();
+  const sessionListeners = new Set<(payload: SessionEventMessage) => void>();
   const sessionsById = new Map(
     initialSessions.map((session) => [session.session.id, cloneActiveSession(session)]),
   );
@@ -483,7 +485,7 @@ function createFakeRpc(
         session.session.messageCount = session.messages.length;
         queueMicrotask(() => {
           const partial = assistantMessage("");
-          for (const listener of listeners) {
+          for (const listener of streamListeners) {
             listener({ streamId: request.streamId, event: { type: "start", partial } });
             listener({
               streamId: request.streamId,
@@ -534,15 +536,27 @@ function createFakeRpc(
       startOAuth: async () => ({ ok: true }),
       removeProviderAuth: async () => ({ ok: true }),
     },
-    addMessageListener: (_messageName: string, listener: unknown) => {
-      listeners.add(
-        listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-      );
+    addMessageListener: (messageName: string, listener: unknown) => {
+      if (messageName === "sendStreamEvent") {
+        streamListeners.add(
+          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+        );
+        return;
+      }
+      if (messageName === "sendSessionEvent") {
+        sessionListeners.add(listener as (payload: SessionEventMessage) => void);
+      }
     },
-    removeMessageListener: (_messageName: string, listener: unknown) => {
-      listeners.delete(
-        listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-      );
+    removeMessageListener: (messageName: string, listener: unknown) => {
+      if (messageName === "sendStreamEvent") {
+        streamListeners.delete(
+          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+        );
+        return;
+      }
+      if (messageName === "sendSessionEvent") {
+        sessionListeners.delete(listener as (payload: SessionEventMessage) => void);
+      }
     },
   };
 
@@ -563,9 +577,10 @@ function createFakeRpcWithToolUse(
     getHandlerThreadInspector: number;
   };
 } {
-  const listeners = new Set<
+  const streamListeners = new Set<
     (payload: { streamId: string; event: AssistantMessageEvent }) => void
   >();
+  const sessionListeners = new Set<(payload: SessionEventMessage) => void>();
   const toolUse = toolCall("artifacts", {
     command: "create",
     filename: "tool-use.txt",
@@ -663,7 +678,7 @@ function createFakeRpcWithToolUse(
 
         queueMicrotask(() => {
           const partial = assistantMessage("");
-          for (const listener of listeners) {
+          for (const listener of streamListeners) {
             listener({ streamId: request.streamId, event: { type: "start", partial } });
             listener({
               streamId: request.streamId,
@@ -693,15 +708,27 @@ function createFakeRpcWithToolUse(
       startOAuth: async () => ({ ok: true }),
       removeProviderAuth: async () => ({ ok: true }),
     },
-    addMessageListener: (_messageName: string, listener: unknown) => {
-      listeners.add(
-        listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-      );
+    addMessageListener: (messageName: string, listener: unknown) => {
+      if (messageName === "sendStreamEvent") {
+        streamListeners.add(
+          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+        );
+        return;
+      }
+      if (messageName === "sendSessionEvent") {
+        sessionListeners.add(listener as (payload: SessionEventMessage) => void);
+      }
     },
-    removeMessageListener: (_messageName: string, listener: unknown) => {
-      listeners.delete(
-        listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-      );
+    removeMessageListener: (messageName: string, listener: unknown) => {
+      if (messageName === "sendStreamEvent") {
+        streamListeners.delete(
+          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+        );
+        return;
+      }
+      if (messageName === "sendSessionEvent") {
+        sessionListeners.delete(listener as (payload: SessionEventMessage) => void);
+      }
     },
   };
 
@@ -719,9 +746,10 @@ function createFakeRpcWithThreadSidebarRefresh(): {
     getHandlerThreadInspector: number;
   };
 } {
-  const listeners = new Set<
+  const streamListeners = new Set<
     (payload: { streamId: string; event: AssistantMessageEvent }) => void
   >();
+  const sessionListeners = new Set<(payload: SessionEventMessage) => void>();
   const orchestrator = createActiveSession(
     "session-1",
     "Orchestrator",
@@ -840,7 +868,7 @@ function createFakeRpcWithThreadSidebarRefresh(): {
 
         queueMicrotask(() => {
           const partial = assistantMessage("");
-          for (const listener of listeners) {
+          for (const listener of streamListeners) {
             listener({ streamId: request.streamId, event: { type: "start", partial } });
             listener({
               streamId: request.streamId,
@@ -870,15 +898,256 @@ function createFakeRpcWithThreadSidebarRefresh(): {
       startOAuth: async () => ({ ok: true }),
       removeProviderAuth: async () => ({ ok: true }),
     },
-    addMessageListener: (_messageName: string, listener: unknown) => {
-      listeners.add(
-        listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-      );
+    addMessageListener: (messageName: string, listener: unknown) => {
+      if (messageName === "sendStreamEvent") {
+        streamListeners.add(
+          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+        );
+        return;
+      }
+      if (messageName === "sendSessionEvent") {
+        sessionListeners.add(listener as (payload: SessionEventMessage) => void);
+      }
     },
-    removeMessageListener: (_messageName: string, listener: unknown) => {
-      listeners.delete(
-        listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-      );
+    removeMessageListener: (messageName: string, listener: unknown) => {
+      if (messageName === "sendStreamEvent") {
+        streamListeners.delete(
+          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+        );
+        return;
+      }
+      if (messageName === "sendSessionEvent") {
+        sessionListeners.delete(listener as (payload: SessionEventMessage) => void);
+      }
+    },
+  };
+
+  return { client, requestCounts };
+}
+
+function createFakeRpcWithBackgroundOrchestratorResume(): {
+  client: ChatRuntimeRpcClient;
+  requestCounts: {
+    listSessions: number;
+    getActiveSession: number;
+    getActiveSessionSummary: number;
+    getCommandInspector: number;
+    listHandlerThreads: number;
+    getHandlerThreadInspector: number;
+  };
+} {
+  const streamListeners = new Set<
+    (payload: { streamId: string; event: AssistantMessageEvent }) => void
+  >();
+  const sessionListeners = new Set<(payload: SessionEventMessage) => void>();
+  const orchestrator = createActiveSession(
+    "session-1",
+    "Orchestrator",
+    [userMessage("delegate"), assistantMessage("Opened a handler thread.")],
+    "medium",
+  );
+  orchestrator.session.status = "running";
+  orchestrator.session.preview = "Opened a handler thread.";
+  orchestrator.session.threadIdsByStatus = {
+    running: ["thread-123"],
+    waiting: [],
+    failed: [],
+  };
+  const thread = createActiveSession(
+    "thread-session-1",
+    "Handler Thread",
+    [userMessage("status"), assistantMessage("Working on it.")],
+    "medium",
+  );
+  thread.session.parentSessionId = "session-1";
+
+  let activeSessionId = orchestrator.session.id;
+  let promptSettled = false;
+  let postThreadSummaryReads = 0;
+  let emittedOrchestratorStart = false;
+  let emittedOrchestratorDone = false;
+  const requestCounts = {
+    listSessions: 0,
+    getActiveSession: 0,
+    getActiveSessionSummary: 0,
+    getCommandInspector: 0,
+    listHandlerThreads: 0,
+    getHandlerThreadInspector: 0,
+  };
+
+  const getSession = (sessionId: string): ActiveSessionState => {
+    if (sessionId === thread.session.id) {
+      return thread;
+    }
+    return orchestrator;
+  };
+
+  const client: ChatRuntimeRpcClient = {
+    request: {
+      getDefaults: async () => ({ provider: "openai", model: "gpt-4o", reasoningEffort: "medium" }),
+      getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
+      getWorkspaceInfo: async () => ({
+        workspaceId: "/tmp/svvy",
+        workspaceLabel: "svvy",
+        branch: "main",
+      }),
+      listSessions: async () => {
+        requestCounts.listSessions += 1;
+        return {
+          activeSessionId: orchestrator.session.id,
+          sessions: [structuredClone(orchestrator.session)],
+        };
+      },
+      getActiveSession: async () => {
+        requestCounts.getActiveSession += 1;
+        return cloneActiveSession(getSession(activeSessionId));
+      },
+      getActiveSessionSummary: async () => {
+        requestCounts.getActiveSessionSummary += 1;
+        if (promptSettled && activeSessionId === thread.session.id) {
+          postThreadSummaryReads += 1;
+          if (postThreadSummaryReads >= 2) {
+            activeSessionId = orchestrator.session.id;
+            orchestrator.session.status = "running";
+            orchestrator.session.preview = "Reviewing thread handoff.";
+            orchestrator.session.threadIdsByStatus = {
+              running: [],
+              waiting: [],
+              failed: [],
+            };
+            if (!emittedOrchestratorStart) {
+              emittedOrchestratorStart = true;
+              queueMicrotask(() => {
+                const partial = assistantMessage("");
+                for (const listener of sessionListeners) {
+                  listener({
+                    sessionId: orchestrator.session.id,
+                    target: {
+                      surface: "orchestrator",
+                      surfaceSessionId: orchestrator.session.id,
+                    },
+                    event: { type: "start", partial },
+                  });
+                }
+
+                queueMicrotask(() => {
+                  if (emittedOrchestratorDone) {
+                    return;
+                  }
+                  emittedOrchestratorDone = true;
+                  const resumedAssistant = assistantMessage(
+                    "I reviewed the handoff and resumed orchestration.",
+                  );
+                  orchestrator.messages = [...orchestrator.messages, resumedAssistant];
+                  orchestrator.session.messageCount = orchestrator.messages.length;
+                  orchestrator.session.preview = "I reviewed the handoff and resumed orchestration.";
+                  orchestrator.session.status = "idle";
+                  for (const listener of sessionListeners) {
+                    listener({
+                      sessionId: orchestrator.session.id,
+                      target: {
+                        surface: "orchestrator",
+                        surfaceSessionId: orchestrator.session.id,
+                      },
+                      event: { type: "done", reason: "stop", message: resumedAssistant },
+                    });
+                  }
+                });
+              });
+            }
+          }
+        }
+        return cloneActiveSessionSummary(getSession(activeSessionId));
+      },
+      getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
+        requestCounts.getCommandInspector += 1;
+        return createCommandInspector(commandId);
+      },
+      listHandlerThreads: async () => {
+        requestCounts.listHandlerThreads += 1;
+        return [createHandlerThreadSummary("thread-123")];
+      },
+      getHandlerThreadInspector: async ({ threadId }: { sessionId: string; threadId: string }) => {
+        requestCounts.getHandlerThreadInspector += 1;
+        return createHandlerThreadInspector(threadId);
+      },
+      createSession: async () => cloneActiveSession(orchestrator),
+      openSession: async ({ sessionId }: { sessionId: string }) => {
+        activeSessionId = sessionId;
+        return cloneActiveSession(getSession(sessionId));
+      },
+      renameSession: async () => ({
+        ok: true,
+        activeSessionId: orchestrator.session.id,
+      }),
+      forkSession: async () => cloneActiveSession(orchestrator),
+      deleteSession: async () => ({
+        ok: true,
+        activeSessionId: orchestrator.session.id,
+      }),
+      sendPrompt: async (request: {
+        sessionId?: string;
+        streamId: string;
+        messages: AgentMessage[];
+        target?: PromptTarget;
+      }) => {
+        const finalAssistant = assistantMessage("Thread handed off.");
+        thread.messages = [...request.messages, finalAssistant];
+        thread.session.preview = "Thread handed off.";
+        thread.session.messageCount = thread.messages.length;
+        promptSettled = true;
+
+        queueMicrotask(() => {
+          const partial = assistantMessage("");
+          for (const listener of streamListeners) {
+            listener({ streamId: request.streamId, event: { type: "start", partial } });
+            listener({
+              streamId: request.streamId,
+              event: { type: "done", reason: "stop", message: finalAssistant },
+            });
+          }
+        });
+
+        return {
+          sessionId: request.sessionId ?? thread.session.id,
+          target: request.target,
+        };
+      },
+      setSessionModel: async ({ sessionId }: { sessionId: string; model: string }) => ({
+        ok: true,
+        sessionId,
+      }),
+      setSessionThoughtLevel: async ({ sessionId }: { sessionId: string; level: string }) => ({
+        ok: true,
+        sessionId,
+      }),
+      cancelPrompt: async () => ({ ok: true }),
+      listProviderAuths: async () => [],
+      setProviderApiKey: async () => ({ ok: true }),
+      startOAuth: async () => ({ ok: true }),
+      removeProviderAuth: async () => ({ ok: true }),
+    },
+    addMessageListener: (messageName: string, listener: unknown) => {
+      if (messageName === "sendStreamEvent") {
+        streamListeners.add(
+          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+        );
+        return;
+      }
+      if (messageName === "sendSessionEvent") {
+        sessionListeners.add(listener as (payload: SessionEventMessage) => void);
+      }
+    },
+    removeMessageListener: (messageName: string, listener: unknown) => {
+      if (messageName === "sendStreamEvent") {
+        streamListeners.delete(
+          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+        );
+        return;
+      }
+      if (messageName === "sendSessionEvent") {
+        sessionListeners.delete(listener as (payload: SessionEventMessage) => void);
+      }
     },
   };
 
@@ -1175,6 +1444,40 @@ describe("createChatRuntime", () => {
     expect(runtime.activeSurface).toEqual({
       surface: "orchestrator",
       surfaceSessionId: "session-1",
+    });
+
+    runtime.dispose();
+  });
+
+  it("keeps the orchestrator transcript in sync while a background handoff reconciliation turn settles", async () => {
+    const { createChatRuntime } = await import("./chat-runtime");
+    const { client, requestCounts } = createFakeRpcWithBackgroundOrchestratorResume();
+
+    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
+    await runtime.openSurface({
+      surface: "thread",
+      surfaceSessionId: "thread-session-1",
+      threadId: "thread-123",
+    });
+
+    await runtime.agent.prompt("finish the objective");
+    await runtime.agent.waitForIdle();
+    await waitFor(() => runtime.activeSurface.surface === "orchestrator");
+    await waitFor(() =>
+      runtime.agent.state.messages.some(
+        (message) =>
+          message.role === "assistant" &&
+          message.content[0]?.type === "text" &&
+          message.content[0].text === "I reviewed the handoff and resumed orchestration.",
+      ),
+    );
+
+    expect(requestCounts.getActiveSessionSummary).toBeGreaterThanOrEqual(2);
+    expect(requestCounts.getActiveSession).toBeGreaterThanOrEqual(3);
+    expect(runtime.activeSessionId).toBe("session-1");
+    expect(runtime.sessions.find((session) => session.id === "session-1")).toMatchObject({
+      status: "idle",
+      preview: "I reviewed the handoff and resumed orchestration.",
     });
 
     runtime.dispose();

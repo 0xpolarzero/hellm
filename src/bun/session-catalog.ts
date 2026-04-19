@@ -28,6 +28,7 @@ import type {
   ForkSessionRequest,
   ListSessionsResponse,
   PromptTarget,
+  SessionEventMessage,
   SessionMutationResponse,
   WorkspaceCommandInspector,
   WorkspaceHandlerThreadInspector,
@@ -142,6 +143,7 @@ interface PromptSyncCursor {
 export class WorkspaceSessionCatalog {
   private activeSession: ManagedSession | null = null;
   private readonly structuredSessionStore: StructuredSessionStateStore;
+  private sessionEventListener: ((payload: SessionEventMessage) => void) | null = null;
 
   constructor(
     private readonly cwd: string = resolveWorkspaceCwd(),
@@ -170,6 +172,10 @@ export class WorkspaceSessionCatalog {
     this.activeSession?.session.dispose();
     this.activeSession = null;
     this.structuredSessionStore.close();
+  }
+
+  setSessionEventListener(listener: ((payload: SessionEventMessage) => void) | null): void {
+    this.sessionEventListener = listener;
   }
 
   async listSessions(): Promise<ListSessionsResponse> {
@@ -1232,7 +1238,20 @@ export class WorkspaceSessionCatalog {
       thinkingLevel: orchestratorSession.thinkingLevel,
       systemPrompt: orchestratorSession.systemPrompt,
       messages: [...convertToLlmMessages(orchestratorSession.session.agent.state.messages), resumeMessage],
-      onEvent: () => {},
+      onEvent: (event) => {
+        if (event.type !== "start" && event.type !== "done" && event.type !== "error") {
+          return;
+        }
+
+        this.sessionEventListener?.({
+          sessionId: orchestratorSession.sessionId,
+          target: {
+            surface: "orchestrator",
+            surfaceSessionId: orchestratorSession.sessionId,
+          },
+          event,
+        });
+      },
     };
     const orchestratorPromptContext = this.createPromptExecutionContext(
       orchestratorSession,

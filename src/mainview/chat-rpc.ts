@@ -42,6 +42,12 @@ export interface StreamEventMessage {
   event: AssistantMessageEvent;
 }
 
+export interface SessionEventMessage {
+  sessionId: string;
+  target: PromptTarget;
+  event: AssistantMessageEvent;
+}
+
 export interface CancelPromptRequest {
   sessionId: string;
 }
@@ -369,6 +375,7 @@ export interface ChatRPCSchema {
     requests: Record<string, never>;
     messages: {
       sendStreamEvent: StreamEventMessage;
+      sendSessionEvent: SessionEventMessage;
     };
   };
 }

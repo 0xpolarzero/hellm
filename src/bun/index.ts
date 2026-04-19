@@ -566,6 +566,10 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
   },
 });
 
+workspaceSessionCatalog.setSessionEventListener((payload) => {
+  rpc.send.sendSessionEvent(payload);
+});
+
 const appMenu: Parameters<typeof ApplicationMenu.setApplicationMenu>[0] = [
   {
     label: "svvy",

@@ -10,6 +10,7 @@ import type {
   ActiveSessionState,
   ActiveSessionSummaryState,
   CreateSessionRequest,
+  SessionEventMessage,
   WorkspaceHandlerThreadInspector,
   WorkspaceHandlerThreadSummary,
   PromptTarget,
@@ -534,6 +535,44 @@ export async function createChatRuntime(
     emit();
   };
 
+  const syncBackgroundSessionEvent = async (payload: SessionEventMessage): Promise<void> => {
+    const shouldOpenVisibleSession =
+      activeSurface?.surfaceSessionId === payload.sessionId ||
+      (payload.target.surface === "orchestrator" &&
+        activeSurface?.surface === "thread" &&
+        orchestratorSurfaceSessionId === payload.sessionId);
+
+    if (!shouldOpenVisibleSession) {
+      await refreshSessions();
+      return;
+    }
+
+    const nextSnapshot = await rpcClient.request.getActiveSession();
+    if (!nextSnapshot || nextSnapshot.session.id !== payload.sessionId) {
+      await refreshSessions();
+      return;
+    }
+
+    activeSurface =
+      payload.target.surface === "orchestrator"
+        ? createOrchestratorSurfaceTarget(payload.sessionId)
+        : payload.target;
+    if (activeSurface.surface === "orchestrator") {
+      orchestratorSurfaceSessionId = payload.sessionId;
+    }
+
+    await openActiveSession(nextSnapshot);
+    await refreshSessions();
+  };
+
+  const sessionEventListener = (payload: SessionEventMessage) => {
+    if (payload.event.type !== "start" && payload.event.type !== "done" && payload.event.type !== "error") {
+      return;
+    }
+
+    void syncBackgroundSessionEvent(payload);
+  };
+
   const streamFromRpc: StreamFn = async (model, context, streamOptions) => {
     const stream = createAssistantMessageEventStream();
     const reasoningEffort =
@@ -719,6 +758,8 @@ export async function createChatRuntime(
     applyActiveSessionSnapshot(createdSession);
   }
 
+  rpcClient.addMessageListener("sendSessionEvent", sessionEventListener);
+
   const runtime: ChatRuntime = {
     agent,
     storage,
@@ -739,6 +780,7 @@ export async function createChatRuntime(
     },
     dispose: () => {
       disposed = true;
+      rpcClient.removeMessageListener("sendSessionEvent", sessionEventListener);
       listeners.clear();
     },
     subscribe: (listener) => {
