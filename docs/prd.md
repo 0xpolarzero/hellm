@@ -6,7 +6,7 @@ Ship `svvy` as an Electrobun desktop coding app with a pi-backed runtime, a visi
 
 ## Status
 
-- Date: 2026-04-18
+- Date: 2026-04-19
 - Status: target product PRD
 - Scope: this document defines the intended shipped product, not just the current bootstrap implementation
 
@@ -76,6 +76,12 @@ The target surface may be:
 - a delegated handler thread surface
 
 Everything the agent does is still driven through turns, tools, runtime handlers, and durable state.
+
+Before any target surface runs a turn through pi:
+
+- `svvy` must load that surface's resolved instructions through pi's real `systemPrompt` channel
+- synthesized prompt bodies may include durable surface context plus user, assistant, and tool transcript material when reconstruction is required, but they must not flatten the system prompt into `System:` transcript text
+- the UI should project the active system prompt as expandable surface metadata rather than as inline transcript prose
 
 ### 3. Handler Threads Are The Delegation Unit
 
@@ -503,12 +509,13 @@ Every user request goes through one orchestrator-controlled product loop:
 
 1. load current workspace, session, thread, workflow-run, episode, artifact, verification, and wait context
 2. identify the target surface of the message
-3. open a new turn for that surface
-4. let that surface choose and persist its top-level turn decision, then decide its next tool call or direct response
-5. execute tools through the correct runtime handler
-6. record commands, events, workflow-run state, artifacts, and wait state
-7. update structured state
-8. render updated session and pane surfaces
+3. resolve that surface's active system prompt and load it into pi's true `systemPrompt` channel before any transcript reconstruction
+4. open a new turn for that surface
+5. let that surface choose and persist its top-level turn decision, then decide its next tool call or direct response
+6. execute tools through the correct runtime handler
+7. record commands, events, workflow-run state, artifacts, and wait state
+8. update structured state
+9. render updated session and pane surfaces
 
 ### Main Orchestrator Loop
 

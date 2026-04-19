@@ -229,6 +229,7 @@ export interface ActiveSessionState {
   model: string;
   reasoningEffort: ReasoningEffort;
   systemPrompt: string;
+  resolvedSystemPrompt: string;
 }
 
 export interface ActiveSessionSummaryState {
@@ -237,6 +238,7 @@ export interface ActiveSessionSummaryState {
   model: string;
   reasoningEffort: ReasoningEffort;
   systemPrompt: string;
+  resolvedSystemPrompt: string;
 }
 
 export interface ListSessionsResponse {

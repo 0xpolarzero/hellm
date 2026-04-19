@@ -24,6 +24,14 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     sourceSpecs: ["docs/prd.md"],
   },
   {
+    id: "true-system-prompt-channel",
+    name: "True System Prompt Channel",
+    status: "in-progress",
+    summary:
+      "Loads svvy's orchestrator and handler-thread instructions through pi's real `systemPrompt` channel, keeps reconstructed prompt bodies limited to durable surface context plus transcript material, and renders the active system prompt as expandable session metadata instead of inline transcript text.",
+    sourceSpecs: ["docs/prd.md"],
+  },
+  {
     id: "artifacts-panel",
     name: "Artifacts Projection",
     status: "shipped",

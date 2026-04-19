@@ -13,6 +13,7 @@ import {
 import {
   AuthStorage,
   createAgentSession,
+  DefaultResourceLoader,
   ModelRegistry,
   SessionManager,
   SettingsManager,
@@ -116,7 +117,6 @@ export interface SendAgentPromptOptions extends SessionDefaults {
   sessionId?: string;
   target?: PromptTarget;
   messages: Message[];
-  includeSystemPromptInTranscript?: boolean;
   onEvent: (event: AssistantMessageEvent) => void;
 }
 
@@ -673,6 +673,7 @@ export class WorkspaceSessionCatalog {
       model: session.model,
       reasoningEffort: session.thinkingLevel,
       systemPrompt: session.systemPrompt,
+      resolvedSystemPrompt: getResolvedSystemPrompt(session),
     };
   }
 
@@ -1090,13 +1091,7 @@ export class WorkspaceSessionCatalog {
       try {
         syncAuthStorage(session.authStorage);
 
-        const promptText = buildPromptText(
-          session,
-          options.messages,
-          options.systemPrompt,
-          options.includeSystemPromptInTranscript ?? true,
-          promptContext,
-        );
+        const promptText = buildPromptText(session, options.messages, promptContext);
         if (!promptText) {
           throw new Error("No user message to send.");
         }
@@ -1236,7 +1231,6 @@ export class WorkspaceSessionCatalog {
       model: orchestratorSession.model,
       thinkingLevel: orchestratorSession.thinkingLevel,
       systemPrompt: orchestratorSession.systemPrompt,
-      includeSystemPromptInTranscript: false,
       messages: [...convertToLlmMessages(orchestratorSession.session.agent.state.messages), resumeMessage],
       onEvent: () => {},
     };
@@ -1449,6 +1443,13 @@ async function createManagedSession(
       ? modelRegistryFactory.create(authStorage, modelRegistryPath)
       : new modelRegistryFactory(authStorage, modelRegistryPath);
   const settingsManager = SettingsManager.create(options.sessionManager.getCwd(), options.agentDir);
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: options.sessionManager.getCwd(),
+    agentDir: options.agentDir,
+    settingsManager,
+    systemPromptOverride: () => options.systemPrompt,
+  });
+  await resourceLoader.reload();
   const restoredDefaults = resolveRestoredSessionDefaults(options.sessionManager, {
     provider: options.provider,
     model: options.model,
@@ -1470,6 +1471,7 @@ async function createManagedSession(
     thinkingLevel: restoredDefaults.thinkingLevel,
     tools: [],
     customTools,
+    resourceLoader,
   });
   const activeModel = session.agent.state.model ?? resolvedModel;
 
@@ -1513,6 +1515,11 @@ function convertToLlmMessages(messages: AgentMessage[]): Message[] {
   return messages.filter((message): message is Message => {
     return message.role === "user" || message.role === "assistant" || message.role === "toolResult";
   });
+}
+
+function getResolvedSystemPrompt(session: ManagedSession): string {
+  const resolved = session.session.agent.state.systemPrompt?.trim();
+  return resolved && resolved.length > 0 ? resolved : session.systemPrompt;
 }
 
 function flattenUserMessageContent(content: Message["content"]): string {
@@ -2206,44 +2213,31 @@ function getLatestAssistantMessage(messages: AgentMessage[]): AssistantMessage |
 function buildPromptText(
   session: ManagedSession,
   messages: Message[],
-  systemPrompt?: string,
-  includeSystemPromptInTranscript = true,
   promptContext?: PromptExecutionContext | null,
 ): string {
   const durableSurfaceContext = promptContext?.durableSurfaceContext?.trim() || undefined;
-  const serializedSystemPrompt = includeSystemPromptInTranscript ? systemPrompt : undefined;
   if (!durableSurfaceContext && !canAppendLatestUserTurn(session.promptSyncCursor, messages)) {
-    return buildTranscript(serializedSystemPrompt, messages);
+    return buildTranscript(messages);
   }
 
   if (durableSurfaceContext && !canAppendLatestUserTurn(session.promptSyncCursor, messages)) {
-    return buildTranscript(serializedSystemPrompt, messages, durableSurfaceContext);
+    return buildTranscript(messages, durableSurfaceContext);
   }
 
   const nextMessage = messages[session.promptSyncCursor.messageCount];
   if (!nextMessage || nextMessage.role !== "user") {
-    return buildTranscript(serializedSystemPrompt, messages, durableSurfaceContext);
+    return buildTranscript(messages, durableSurfaceContext);
   }
 
   if (!durableSurfaceContext) {
     return messageToPlainText(nextMessage);
   }
 
-  return buildTranscript(serializedSystemPrompt, [nextMessage], durableSurfaceContext);
+  return buildTranscript([nextMessage], durableSurfaceContext);
 }
 
-function buildTranscript(
-  systemPrompt: string | undefined,
-  messages: Message[],
-  durableSurfaceContext?: string,
-): string {
+function buildTranscript(messages: Message[], durableSurfaceContext?: string): string {
   const parts: string[] = [];
-  const prompt = systemPrompt?.trim();
-  if (prompt) {
-    parts.push("System:");
-    parts.push(prompt);
-    parts.push("");
-  }
 
   if (durableSurfaceContext?.trim()) {
     parts.push("Durable Surface Context:");

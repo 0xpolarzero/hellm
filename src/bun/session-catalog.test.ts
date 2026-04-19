@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import * as PiCodingAgent from "@mariozechner/pi-coding-agent";
@@ -42,6 +42,9 @@ function createWorkspaceFixture() {
   const cwd = join(root, "workspace");
   const agentDir = join(root, "agent");
   const sessionDir = getSvvySessionDir(cwd, agentDir);
+  mkdirSync(cwd, { recursive: true });
+  mkdirSync(agentDir, { recursive: true });
+  mkdirSync(sessionDir, { recursive: true });
   return { cwd, agentDir, sessionDir };
 }
 
@@ -91,6 +94,7 @@ type PromptableSession = {
     appendMessage(message: Message): void;
     state: {
       messages: Message[];
+      systemPrompt?: string;
     };
   };
   sessionManager: {
@@ -304,6 +308,28 @@ describe("WorkspaceSessionCatalog", () => {
     } finally {
       createAgentSessionSpy.mockRestore();
       await catalog?.dispose();
+    }
+  });
+
+  it("loads svvy's prompt into pi's real systemPrompt channel for the active session", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Prompt Channel" }, DEFAULTS);
+      const resolvedSystemPrompt = created.resolvedSystemPrompt;
+      const managedSession = getManagedSessionHandle(catalog);
+
+      expect(created.systemPrompt).toBe(DEFAULTS.systemPrompt);
+      expect(resolvedSystemPrompt).toContain(DEFAULTS.systemPrompt);
+      expect(resolvedSystemPrompt).toContain("Current date:");
+      expect(resolvedSystemPrompt).toContain(`Current working directory: ${cwd}`);
+      expect(resolvedSystemPrompt).not.toContain(
+        "You are an expert coding assistant operating inside pi",
+      );
+      expect(managedSession.session.agent.state.systemPrompt).toBe(resolvedSystemPrompt);
+    } finally {
+      await catalog.dispose();
     }
   });
 
@@ -696,7 +722,7 @@ describe("WorkspaceSessionCatalog", () => {
           promptTexts.length === 1 &&
           getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2,
       );
-      expect(promptTexts[0]).toContain("System:\nYou are svvy.");
+      expect(promptTexts[0]).not.toContain(DEFAULTS.systemPrompt);
       expect(promptTexts[0]).toContain("User:\nExplain the parser");
       expect(getManagedSessionHandle(catalog)).toBe(activeSession);
 
@@ -747,7 +773,7 @@ describe("WorkspaceSessionCatalog", () => {
           promptTexts.length === 1 &&
           getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2,
       );
-      expect(promptTexts[0]).toContain("System:\nYou are svvy.");
+      expect(promptTexts[0]).not.toContain(DEFAULTS.systemPrompt);
       expect(promptTexts[0]).toContain("User:\nExplain the parser");
       expect(getManagedSessionHandle(catalog)).toBe(activeSession);
 
@@ -762,7 +788,7 @@ describe("WorkspaceSessionCatalog", () => {
           promptTexts.length === 2 &&
           getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 4,
       );
-      expect(promptTexts[1]).toContain("System:\nYou are svvy.");
+      expect(promptTexts[1]).not.toContain(DEFAULTS.systemPrompt);
       expect(promptTexts[1]).toContain("User:\nExplain the parser, but differently");
       expect(promptTexts[1]).toContain("User:\nWhat changed?");
       expect(getManagedSessionHandle(catalog)).not.toBe(activeSession);
@@ -803,7 +829,7 @@ describe("WorkspaceSessionCatalog", () => {
           promptTexts.length === 1 &&
           getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 2,
       );
-      expect(promptTexts[0]).toContain("System:\nYou are svvy.");
+      expect(promptTexts[0]).not.toContain(DEFAULTS.systemPrompt);
       expect(promptTexts[0]).toContain("User:\nExplain the parser");
       expect(getManagedSessionHandle(catalog)).toBe(activeSession);
 
@@ -942,6 +968,7 @@ describe("WorkspaceSessionCatalog", () => {
       });
 
       await waitFor(() => promptTexts.length === 1);
+      expect(promptTexts[0]).not.toContain(DEFAULTS.systemPrompt);
       expect(promptTexts[0]).toContain("Durable Surface Context:");
       expect(promptTexts[0]).toContain("Latest handler-thread handoffs from durable state:");
       expect(promptTexts[0]).toContain("Parser fix thread");
@@ -1018,6 +1045,7 @@ describe("WorkspaceSessionCatalog", () => {
       const followUpTurn = snapshot.turns.find((turn) => turn.requestSummary === followUpText);
       const persistedThread = snapshot.threads.find((thread) => thread.id === handlerThread.id);
 
+      expect(promptTexts[0]).not.toContain(DEFAULTS.systemPrompt);
       expect(promptTexts[0]).toContain("Durable Surface Context:");
       expect(promptTexts[0]).toContain("Current interactive surface: handler thread.");
       expect(promptTexts[0]).toContain(
@@ -1151,8 +1179,9 @@ describe("WorkspaceSessionCatalog", () => {
       await waitFor(() => promptTexts.length === 2);
 
       expect(promptTexts[0]).toContain("Current interactive surface: handler thread.");
+      expect(promptTexts[0]).not.toContain(DEFAULTS.systemPrompt);
       expect(promptTexts[1]).toContain("System event: A handler thread emitted a durable handoff.");
-      expect(promptTexts[1]).not.toContain("System:\nYou are svvy.");
+      expect(promptTexts[1]).not.toContain(DEFAULTS.systemPrompt);
       expect(promptTexts[1]).toContain("Latest handler-thread handoffs from durable state:");
       expect(promptTexts[1]).toContain("Parser fix handoff");
       expect(promptTexts[1]).toContain("Patched the parser bug and handed the objective back.");
@@ -1357,6 +1386,7 @@ describe("WorkspaceSessionCatalog", () => {
       const snapshot = getStructuredSessionState(catalog, created.session.id);
       const persistedThread = snapshot.threads.find((thread) => thread.id === handlerThread.id);
 
+      expect(promptTexts[0]).not.toContain(DEFAULTS.systemPrompt);
       expect(promptTexts[0]).toContain(`User:\n${replyText}`);
       expect(snapshot.session.wait).toBeNull();
       expect(persistedThread).toMatchObject({
@@ -1413,6 +1443,8 @@ describe("WorkspaceSessionCatalog", () => {
       expect(threadSurface.session.parentSessionId).toBe(created.session.id);
       expect(threadSurface.messages).toEqual([]);
       expect(threadSurface.session.messageCount).toBe(0);
+      expect(threadSurface.systemPrompt).toBe(DEFAULTS.systemPrompt);
+      expect(threadSurface.resolvedSystemPrompt).toContain(DEFAULTS.systemPrompt);
     } finally {
       await catalog.dispose();
     }

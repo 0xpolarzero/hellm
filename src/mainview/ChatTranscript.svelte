@@ -17,13 +17,22 @@
 	type Props = {
 		conversation: ConversationProjection;
 		sessionId?: string;
+		systemPrompt?: string;
 		streamMessage?: AssistantMessage;
 		pendingToolCalls: ReadonlySet<string>;
 		isStreaming: boolean;
 		onOpenArtifact: (filename: string) => void;
 	};
 
-	let { conversation, sessionId, streamMessage, pendingToolCalls, isStreaming, onOpenArtifact }: Props = $props();
+	let {
+		conversation,
+		sessionId,
+		systemPrompt,
+		streamMessage,
+		pendingToolCalls,
+		isStreaming,
+		onOpenArtifact,
+	}: Props = $props();
 
 	let scroller = $state<HTMLDivElement | null>(null);
 	let thread = $state<HTMLDivElement | null>(null);
@@ -49,6 +58,7 @@
 	const shouldVirtualize = $derived(
 		conversation.visibleMessages.length >= MIN_VIRTUALIZED_MESSAGES,
 	);
+	const resolvedSystemPrompt = $derived(systemPrompt?.trim() || null);
 	const windowedMessages = $derived(
 		shouldVirtualize
 			? conversation.visibleMessages.slice(
@@ -249,6 +259,17 @@
 
 <div bind:this={scroller} class="chat-transcript" onscroll={handleScroll}>
 	<div bind:this={thread} class="chat-thread">
+		{#if resolvedSystemPrompt}
+			<article class="message-row system-row">
+				<div class="message-bubble assistant-bubble system-bubble">
+					<details class="thinking-block system-prompt-block">
+						<summary>System prompt</summary>
+						<pre>{resolvedSystemPrompt}</pre>
+					</details>
+				</div>
+			</article>
+		{/if}
+
 		<div
 			class:chat-thread-virtual={shouldVirtualize}
 			style={shouldVirtualize ? `height: ${transcriptWindow.totalHeight}px;` : undefined}
@@ -488,7 +509,8 @@
 	}
 
 	.assistant-row,
-	.tool-row {
+	.tool-row,
+	.system-row {
 		justify-content: flex-start;
 	}
 
@@ -527,6 +549,14 @@
 
 	.streaming {
 		border-style: dashed;
+	}
+
+	.system-bubble {
+		padding-top: 0.55rem;
+		padding-bottom: 0.55rem;
+		background:
+			linear-gradient(180deg, color-mix(in oklab, var(--ui-accent-soft) 20%, transparent), transparent),
+			color-mix(in oklab, var(--ui-surface-raised) 92%, var(--ui-surface));
 	}
 
 	.message-bubble header,
@@ -613,6 +643,12 @@
 		border: none;
 		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
 		background: transparent;
+	}
+
+	.system-prompt-block {
+		margin-top: 0;
+		padding-top: 0;
+		border-top: none;
 	}
 
 	.thinking-block summary,

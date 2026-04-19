@@ -97,6 +97,7 @@ export interface ChatRuntime {
   branch?: string;
   activeSessionId?: string;
   activeSurface: PromptTarget;
+  resolvedSystemPrompt: string;
   sessions: WorkspaceSessionSummary[];
   dispose: () => void;
   subscribe: (listener: ChatRuntimeListener) => () => void;
@@ -245,6 +246,7 @@ export async function createChatRuntime(
   let activeSessionId: string | undefined;
   let activeSurface: PromptTarget | undefined;
   let orchestratorSurfaceSessionId: string | undefined;
+  let resolvedSystemPrompt = "You are svvy, a pragmatic software engineering assistant.";
   let promptDispatchInFlight = false;
   let disposed = false;
 
@@ -319,6 +321,7 @@ export async function createChatRuntime(
   const applyActiveSessionSnapshot = (payload: ActiveSessionState): void => {
     applyActiveSessionState(agent, payload);
     activeSessionId = payload.session.id;
+    resolvedSystemPrompt = payload.resolvedSystemPrompt;
     sessions = upsertWorkspaceSessionSummary(sessions, payload.session);
     if (!activeSurface) {
       activeSurface = createOrchestratorSurfaceTarget(payload.session.id);
@@ -337,6 +340,7 @@ export async function createChatRuntime(
       ),
     );
     agent.setThinkingLevel(payload.reasoningEffort);
+    resolvedSystemPrompt = payload.resolvedSystemPrompt;
     sessions = upsertWorkspaceSessionSummary(sessions, payload.session);
     if (!activeSurface) {
       activeSurface = createOrchestratorSurfaceTarget(payload.session.id);
@@ -687,6 +691,9 @@ export async function createChatRuntime(
     },
     get activeSurface() {
       return resolveActiveSurface();
+    },
+    get resolvedSystemPrompt() {
+      return resolvedSystemPrompt;
     },
     get sessions() {
       return sessions;

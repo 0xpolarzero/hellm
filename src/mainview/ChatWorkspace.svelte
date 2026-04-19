@@ -441,7 +441,7 @@
       provider: activeModel.provider,
       model: activeModel.id,
       reasoningEffort: currentThinkingLevel,
-      systemPrompt: runtime.agent.state.systemPrompt,
+      systemPrompt: runtime.resolvedSystemPrompt,
       messages,
       streamMessage,
     });
@@ -1009,6 +1009,7 @@
           <ChatTranscript
             {conversation}
             sessionId={runtime.agent.sessionId}
+            systemPrompt={runtime.resolvedSystemPrompt}
             streamMessage={streamMessage ?? undefined}
             {pendingToolCalls}
             {isStreaming}

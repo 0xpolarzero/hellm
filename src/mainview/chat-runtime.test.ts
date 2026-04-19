@@ -278,6 +278,7 @@ function createActiveSession(
   title: string,
   messages: AgentMessage[],
   reasoning: ActiveSessionState["reasoningEffort"] = "medium",
+  options: { systemPrompt?: string; resolvedSystemPrompt?: string } = {},
 ): ActiveSessionState {
   const lastMessage = messages.at(-1);
   const preview =
@@ -294,7 +295,9 @@ function createActiveSession(
     provider: "openai",
     model: "gpt-4o",
     reasoningEffort: reasoning,
-    systemPrompt: "You are svvy.",
+    systemPrompt: options.systemPrompt ?? "You are svvy.",
+    resolvedSystemPrompt:
+      options.resolvedSystemPrompt ?? options.systemPrompt ?? "You are svvy.",
   };
 }
 
@@ -902,6 +905,32 @@ function createMemoryStorage(): ChatStorage {
 }
 
 describe("createChatRuntime", () => {
+  it("keeps the raw prompt for RPC sends while exposing the resolved system prompt for UI surfaces", async () => {
+    const { createChatRuntime } = await import("./chat-runtime");
+    const { client } = createFakeRpc([
+      createActiveSession(
+        "session-1",
+        "Prompt Channel",
+        [userMessage("inspect"), assistantMessage("done")],
+        "medium",
+        {
+          systemPrompt: "You are svvy.",
+          resolvedSystemPrompt:
+            "You are svvy.\n\n# Project Context\n\nCurrent date: 2026-04-19\nCurrent working directory: /tmp/svvy",
+        },
+      ),
+    ]);
+
+    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
+
+    expect(runtime.agent.state.systemPrompt).toBe("You are svvy.");
+    expect(runtime.resolvedSystemPrompt).toContain("You are svvy.");
+    expect(runtime.resolvedSystemPrompt).toContain("# Project Context");
+    expect(runtime.resolvedSystemPrompt).toContain("Current working directory: /tmp/svvy");
+
+    runtime.dispose();
+  });
+
   it("hydrates sessions, switches the active transcript, and keeps prompts scoped to the selected session", async () => {
     const { createChatRuntime } = await import("./chat-runtime");
     const { client, sentPromptRequests, sentPromptSessions, requestCounts } = createFakeRpc([
