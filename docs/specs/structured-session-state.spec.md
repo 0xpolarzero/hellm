@@ -57,6 +57,7 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Keep status derivation and workflow lifecycle projection write-driven; do not overlay `activePrompt`, parse transcript files, or perform read-side Smithers repair writes.
 - Future Smithers lifecycle projection beyond explicit tool-boundary snapshots should arrive through bridge events rather than speculative read-side reconciliation.
 - Keep workflow-run state separate from handler-thread state.
+- Derive active and latest workflow selectors from workflow-run state and recency rules rather than persisting a thread-level latest-workflow pointer.
 - Treat a handler thread as one delegated objective that may supervise many workflow runs over its lifetime.
 - Treat handler-thread episodes as durable handoff summaries that are emitted explicitly through `thread.handoff` whenever a thread gives control back to the orchestrator.
 - Do not model internal workflow pauses as separate episodes.
@@ -167,7 +168,6 @@ type StructuredSessionState = {
       since: string;
     };
     worktree?: string;
-    latestWorkflowRunId: string | null;
     startedAt: string;
     updatedAt: string;
     finishedAt: string | null;
@@ -449,7 +449,6 @@ Use `turnDecision` this way:
 | `status` | Captures lifecycle state for the delegated objective. |
 | `wait` | Captures user or external wait details for the thread itself. |
 | `worktree` | Records the bound worktree when relevant. |
-| `latestWorkflowRunId` | Points to the latest workflow run under this thread for quick selectors. |
 | `startedAt` | Orders thread creation. |
 | `updatedAt` | Enables recency-based selectors. |
 | `finishedAt` | Marks when the current active work span most recently became completed, failed, or cancelled. Clear it if later work resumes in the same thread. |

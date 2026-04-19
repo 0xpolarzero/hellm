@@ -80,15 +80,15 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 
 ## 5. Workflow Supervision Foundations
 
-- [ ] Build a POC handler thread that selects a workflow template or preset, runs it, and regains control on completion.
+- [ ] Build a POC handler thread that starts a concrete workflow, supervises it through completion, and regains control in the same thread.
 - [x] Define the workflow-run request envelope from a handler thread to Smithers. Commit(s): `f53c9b8`
-- [ ] Create a durable workflow-run record as soon as the supervising handler thread has a concrete Smithers run id.
+- [ ] Persist workflow-run supervision metadata, including reconnect cursor and handler-attention delivery state, as soon as the supervising handler thread has a concrete Smithers run id.
 - [ ] Build a POC one-task workflow under a handler thread that returns to the thread and then emits a handoff episode.
 - [x] Allow handler threads to call `workflow.start`. Commit(s): `f53c9b8`
 - [x] Allow handler threads to call `workflow.resume`. Commit(s): `f53c9b8`
-- [x] Resume handler-thread control when a workflow run completes, fails, or pauses. Commit(s): `f53c9b8`
+- [ ] Wake the supervising handler thread in a background turn when a workflow run completes, fails, pauses, or loses supervision transport.
 - [x] Support multiple workflow runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
-- [x] Persist latest-workflow-run linkage on the thread for summary selectors. Commit(s): `fff54d7`, `f53c9b8`
+- [ ] Derive active and latest workflow summaries from workflow-run state without a persisted thread-level latest pointer.
 - [ ] Emit explicit Smithers bridge lifecycle events that update workflow-run and handler-thread state without read-side refresh or polling.
 - [ ] Guarantee that a workflow-run failure still returns durable failure state to the supervising handler thread even when the planned workflow finalization path does not run.
 
