@@ -70,6 +70,7 @@ import { resolveApiKey } from "./auth-store";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
 import { resolveWorkspaceCwd } from "./workspace-context";
 import { createStartThreadTool } from "./thread-start-tool";
+import { createThreadHandoffTool } from "./thread-handoff-tool";
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
   input: 0,
@@ -115,6 +116,7 @@ export interface SendAgentPromptOptions extends SessionDefaults {
   sessionId?: string;
   target?: PromptTarget;
   messages: Message[];
+  includeSystemPromptInTranscript?: boolean;
   onEvent: (event: AssistantMessageEvent) => void;
 }
 
@@ -434,7 +436,12 @@ export class WorkspaceSessionCatalog {
     const promptExecution = this.createPromptExecutionContext(session, options);
 
     setTimeout(() => {
-      void this.runAgentPrompt(session, options, promptExecution);
+      void (async () => {
+        await this.runAgentPrompt(session, options, promptExecution);
+        await this.resumeOrchestratorAfterHandlerHandoff(promptExecution, session.systemPrompt);
+      })().catch((error) => {
+        console.error("Failed to continue orchestrator control after prompt execution:", error);
+      });
     }, 0);
 
     return {
@@ -911,11 +918,29 @@ export class WorkspaceSessionCatalog {
         const liveSummary = this.buildLiveSummaryFromManagedSession(session);
         this.upsertStructuredPiSession(liveSummary);
       }
-      const preTurnSnapshot = this.getStructuredSnapshot(structuredSessionId);
-      const targetThread =
+      let preTurnSnapshot = this.getStructuredSnapshot(structuredSessionId);
+      let targetThread =
         target?.surface === "thread" && target.threadId
           ? (preTurnSnapshot?.threads.find((thread) => thread.id === target.threadId) ?? null)
           : null;
+      if (
+        preTurnSnapshot &&
+        targetThread &&
+        shouldResumeThreadUserWaitOnPromptEntry({
+          thread: targetThread,
+          sessionWait: preTurnSnapshot.session.wait,
+        })
+      ) {
+        const resumedThreadId = targetThread.id;
+        this.structuredSessionStore.updateThread({
+          threadId: resumedThreadId,
+          status: "running",
+          wait: null,
+        });
+        preTurnSnapshot = this.getStructuredSnapshot(structuredSessionId);
+        targetThread =
+          preTurnSnapshot?.threads.find((thread) => thread.id === resumedThreadId) ?? null;
+      }
       const requestSummary = summarizePromptForTurn(promptText);
       const turn = this.structuredSessionStore.startTurn({
         sessionId: structuredSessionId,
@@ -946,8 +971,8 @@ export class WorkspaceSessionCatalog {
           ? isTerminalThreadStatus(targetThread.status)
           : false,
         durableSurfaceContext:
-          target?.surface === "thread"
-            ? undefined
+          target?.surface === "thread" && targetThread
+            ? buildHandlerDurablePromptContext(preTurnSnapshot, targetThread.id)
             : buildOrchestratorDurablePromptContext(preTurnSnapshot),
       });
     } catch (error) {
@@ -1069,6 +1094,7 @@ export class WorkspaceSessionCatalog {
           session,
           options.messages,
           options.systemPrompt,
+          options.includeSystemPromptInTranscript ?? true,
           promptContext,
         );
         if (!promptText) {
@@ -1162,6 +1188,65 @@ export class WorkspaceSessionCatalog {
     }
   }
 
+  private async resumeOrchestratorAfterHandlerHandoff(
+    promptContext: PromptExecutionContext | null,
+    systemPrompt: string,
+  ): Promise<void> {
+    if (!promptContext || promptContext.surfaceKind !== "handler") {
+      return;
+    }
+
+    const snapshot = this.getStructuredSnapshot(promptContext.sessionId);
+    if (!snapshot) {
+      return;
+    }
+
+    const turn = snapshot.turns.find((entry) => entry.id === promptContext.turnId);
+    if (!turn || turn.turnDecision !== "handoff" || turn.status !== "completed") {
+      return;
+    }
+
+    const thread = snapshot.threads.find((entry) => entry.id === promptContext.rootThreadId);
+    const latestEpisode = thread
+      ? getLatestThreadEpisode(snapshot, thread.id)
+      : null;
+    if (!thread || !latestEpisode) {
+      return;
+    }
+
+    const orchestratorSessionId = snapshot.session.orchestratorPiSessionId;
+    const orchestratorSession = await this.openSessionInternal(orchestratorSessionId, systemPrompt);
+    if (orchestratorSession.activePrompt) {
+      return;
+    }
+
+    orchestratorSession.abortRequested = false;
+    orchestratorSession.activePrompt = true;
+
+    const resumeMessage = createSyntheticUserMessage(
+      buildOrchestratorHandoffResumePrompt(thread, latestEpisode),
+    );
+    const options: SendAgentPromptOptions = {
+      sessionId: orchestratorSession.sessionId,
+      target: {
+        surface: "orchestrator",
+        surfaceSessionId: orchestratorSession.sessionId,
+      },
+      provider: orchestratorSession.provider,
+      model: orchestratorSession.model,
+      thinkingLevel: orchestratorSession.thinkingLevel,
+      systemPrompt: orchestratorSession.systemPrompt,
+      includeSystemPromptInTranscript: false,
+      messages: [...convertToLlmMessages(orchestratorSession.session.agent.state.messages), resumeMessage],
+      onEvent: () => {},
+    };
+    const orchestratorPromptContext = this.createPromptExecutionContext(
+      orchestratorSession,
+      options,
+    );
+    await this.runAgentPrompt(orchestratorSession, options, orchestratorPromptContext);
+  }
+
   private completePromptExecution(
     promptContext: PromptExecutionContext | null,
     message: AssistantMessage,
@@ -1175,10 +1260,6 @@ export class WorkspaceSessionCatalog {
       const rootThread = snapshot.threads.find(
         (thread) => thread.id === promptContext.rootThreadId,
       );
-      if (!rootThread) {
-        return;
-      }
-
       const assistantText = messageToPlainText(message).trim();
       const turn = snapshot.turns.find((entry) => entry.id === promptContext.turnId);
       if (!turn) {
@@ -1186,13 +1267,12 @@ export class WorkspaceSessionCatalog {
       }
 
       if (promptContext.sessionWaitApplied) {
-        const wait = getEffectiveTurnWait(snapshot, rootThread.id);
+        const wait = getEffectiveTurnWait(snapshot, promptContext.rootThreadId);
         this.persistPendingTurnDecision({
           promptContext,
           turnDecision: turn.turnDecision,
           assistantText,
           wait,
-          handoffCreated: false,
         });
         this.structuredSessionStore.finishTurn({
           turnId: promptContext.turnId,
@@ -1201,50 +1281,34 @@ export class WorkspaceSessionCatalog {
         return;
       }
 
-      let handoffCreated = false;
-      const shouldCreateHandlerHandoff = shouldCreateHandlerHandoffEpisode({
-        promptContext,
-        turnDecision: turn.turnDecision,
-        assistantText,
-      });
-      const shouldCreateEpisode =
-        promptContext.surfaceKind === "handler"
-          ? shouldCreateHandlerHandoff
-          : assistantText.length > 0;
-
-      if (shouldCreateEpisode && rootThread.status === "running") {
+      if (
+        promptContext.surfaceKind !== "handler" &&
+        assistantText &&
+        rootThread?.status === "running"
+      ) {
         this.structuredSessionStore.updateThread({
           threadId: rootThread.id,
           status: "completed",
         });
-      }
-
-      const finalizedSnapshot = this.structuredSessionStore.getSessionState(
-        promptContext.sessionId,
-      );
-      const finalizedThread = finalizedSnapshot.threads.find(
-        (thread) => thread.id === promptContext.rootThreadId,
-      );
-      if (!finalizedThread) {
-        return;
-      }
-
-      if (assistantText && shouldCreateEpisode && isTerminalThreadStatus(finalizedThread.status)) {
-        this.structuredSessionStore.createEpisode({
-          threadId: promptContext.rootThreadId,
-          kind: promptContext.rootEpisodeKind,
-          title: finalizedThread.title || summarizePromptForTurn(promptContext.promptText),
-          summary: summarizePromptForTurn(assistantText),
-          body: assistantText,
-        });
-        handoffCreated = true;
+        const finalizedThread =
+          this.structuredSessionStore
+            .getSessionState(promptContext.sessionId)
+            .threads.find((thread) => thread.id === promptContext.rootThreadId) ?? null;
+        if (finalizedThread && isTerminalThreadStatus(finalizedThread.status)) {
+          this.structuredSessionStore.createEpisode({
+            threadId: promptContext.rootThreadId,
+            kind: promptContext.rootEpisodeKind,
+            title: finalizedThread.title || summarizePromptForTurn(promptContext.promptText),
+            summary: summarizePromptForTurn(assistantText),
+            body: assistantText,
+          });
+        }
       }
 
       this.persistPendingTurnDecision({
         promptContext,
         turnDecision: turn.turnDecision,
         assistantText,
-        handoffCreated,
       });
 
       this.structuredSessionStore.finishTurn({
@@ -1281,7 +1345,6 @@ export class WorkspaceSessionCatalog {
           promptContext,
           turnDecision: turn.turnDecision,
           assistantText: "",
-          handoffCreated: false,
         });
       }
       this.structuredSessionStore.finishTurn({
@@ -1298,7 +1361,6 @@ export class WorkspaceSessionCatalog {
     turnDecision: StructuredSessionSnapshot["turns"][number]["turnDecision"];
     assistantText: string;
     wait?: StructuredWaitState | null;
-    handoffCreated: boolean;
   }): void {
     if (input.turnDecision !== "pending") {
       return;
@@ -1358,6 +1420,10 @@ async function createManagedSession(
       bridge: {
         createHandlerThread: options.createHandlerThread,
       },
+    }),
+    createThreadHandoffTool({
+      runtime: promptExecutionRuntime,
+      store: options.structuredSessionStore,
     }),
     createStartWorkflowTool({
       runtime: promptExecutionRuntime,
@@ -1466,6 +1532,14 @@ function flattenUserMessageContent(content: Message["content"]): string {
     })
     .filter(Boolean)
     .join("\n");
+}
+
+function createSyntheticUserMessage(text: string): Message {
+  return {
+    role: "user",
+    timestamp: Date.now(),
+    content: [{ type: "text", text }],
+  };
 }
 
 function getLatestUserPromptText(messages: readonly Message[]): string | null {
@@ -1580,6 +1654,32 @@ function inferRootEpisodeKind(promptText: string): PromptExecutionContext["rootE
     : "change";
 }
 
+function getLatestThreadEpisode(
+  snapshot: StructuredSessionSnapshot,
+  threadId: string,
+): StructuredSessionSnapshot["episodes"][number] | null {
+  return (
+    snapshot.episodes
+      .filter((episode) => episode.threadId === threadId)
+      .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null
+  );
+}
+
+function buildOrchestratorHandoffResumePrompt(
+  thread: StructuredSessionSnapshot["threads"][number],
+  episode: StructuredSessionSnapshot["episodes"][number],
+): string {
+  return [
+    "System event: A handler thread emitted a durable handoff.",
+    `Thread id: ${thread.id}`,
+    `Thread title: ${thread.title}`,
+    `Objective: ${thread.objective}`,
+    `Latest handoff title: ${episode.title}`,
+    `Latest handoff summary: ${episode.summary}`,
+    "Reconcile the latest durable handoff from state for this thread and decide the next orchestrator action.",
+  ].join("\n");
+}
+
 function getStatusFromSessionEntry(entry: unknown): WorkspaceSessionSummary["status"] | undefined {
   if (!entry || typeof entry !== "object" || !("type" in entry) || entry.type !== "message") {
     return undefined;
@@ -1656,43 +1756,10 @@ function getEffectiveTurnWait(
   return thread.wait;
 }
 
-function shouldCreateHandlerHandoffEpisode(input: {
-  promptContext: PromptExecutionContext;
-  turnDecision: StructuredSessionSnapshot["turns"][number]["turnDecision"];
-  assistantText: string;
-}): boolean {
-  if (input.assistantText.length === 0) {
-    return false;
-  }
-
-  if (!input.promptContext.threadWasTerminalAtStart) {
-    return true;
-  }
-
-  return isResumedWorkTurnDecision(input.turnDecision);
-}
-
-function isResumedWorkTurnDecision(
-  decision: StructuredSessionSnapshot["turns"][number]["turnDecision"],
-): boolean {
-  return (
-    decision === "execute_typescript" ||
-    decision === "thread.start" ||
-    decision === "workflow.start" ||
-    decision === "workflow.resume"
-  );
-}
-
 function inferPendingTurnDecision(input: {
-  promptContext: PromptExecutionContext;
   assistantText: string;
   wait?: StructuredWaitState | null;
-  handoffCreated: boolean;
 }): Exclude<StructuredSessionSnapshot["turns"][number]["turnDecision"], "pending"> {
-  if (input.promptContext.surfaceKind === "handler" && input.handoffCreated) {
-    return "handoff";
-  }
-
   if (input.wait?.kind === "user") {
     return "clarify";
   }
@@ -1712,6 +1779,20 @@ function looksLikeClarificationReply(text: string): boolean {
 
   return /\b(clarify|confirm|which|what|where|when|who|need|missing|provide|share|answer)\b/i.test(
     normalized,
+  );
+}
+
+function shouldResumeThreadUserWaitOnPromptEntry(input: {
+  thread: StructuredSessionSnapshot["threads"][number];
+  sessionWait: StructuredSessionSnapshot["session"]["wait"];
+}): boolean {
+  if (input.thread.wait?.kind === "user") {
+    return true;
+  }
+
+  return (
+    getThreadOwnedWaitId(input.sessionWait) === input.thread.id &&
+    input.sessionWait?.kind === "user"
   );
 }
 
@@ -1776,6 +1857,53 @@ function buildOrchestratorDurablePromptContext(
   }
 
   return parts.join("\n").trim();
+}
+
+function buildHandlerDurablePromptContext(
+  snapshot: StructuredSessionSnapshot | null,
+  threadId: string,
+): string | undefined {
+  if (!snapshot) {
+    return undefined;
+  }
+
+  const thread = snapshot.threads.find((entry) => entry.id === threadId) ?? null;
+  if (!thread) {
+    return undefined;
+  }
+
+  const latestWorkflow =
+    snapshot.workflowRuns.find((workflowRun) => workflowRun.id === thread.latestWorkflowRunId) ??
+    null;
+  const latestEpisode =
+    snapshot.episodes
+      .filter((episode) => episode.threadId === thread.id)
+      .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+
+  const parts = [
+    "Current interactive surface: handler thread.",
+    "You are currently inside the delegated handler-thread surface, not the orchestrator surface.",
+    `Thread id: ${thread.id}`,
+    `Title: ${collapsePromptContextValue(thread.title, 120)}`,
+    `Objective: ${collapsePromptContextValue(thread.objective, 280)}`,
+    `Current objective status: ${thread.status}`,
+    "Use thread.handoff only when you want to return control to the orchestrator with a durable episode.",
+    "Ordinary replies, clarification, and follow-up chat should stay inside this thread.",
+  ];
+
+  if (thread.wait) {
+    parts.push(`Current wait: ${thread.wait.kind} - ${collapsePromptContextValue(thread.wait.reason, 220)}`);
+  }
+
+  if (latestWorkflow) {
+    parts.push(`Latest workflow summary: ${collapsePromptContextValue(latestWorkflow.summary, 220)}`);
+  }
+
+  if (latestEpisode) {
+    parts.push(`Latest handoff summary: ${collapsePromptContextValue(latestEpisode.summary, 220)}`);
+  }
+
+  return parts.join("\n");
 }
 
 function collapsePromptContextValue(value: string, limit: number): string {
@@ -2079,27 +2207,29 @@ function buildPromptText(
   session: ManagedSession,
   messages: Message[],
   systemPrompt?: string,
+  includeSystemPromptInTranscript = true,
   promptContext?: PromptExecutionContext | null,
 ): string {
   const durableSurfaceContext = promptContext?.durableSurfaceContext?.trim() || undefined;
+  const serializedSystemPrompt = includeSystemPromptInTranscript ? systemPrompt : undefined;
   if (!durableSurfaceContext && !canAppendLatestUserTurn(session.promptSyncCursor, messages)) {
-    return buildTranscript(systemPrompt, messages);
+    return buildTranscript(serializedSystemPrompt, messages);
   }
 
   if (durableSurfaceContext && !canAppendLatestUserTurn(session.promptSyncCursor, messages)) {
-    return buildTranscript(systemPrompt, messages, durableSurfaceContext);
+    return buildTranscript(serializedSystemPrompt, messages, durableSurfaceContext);
   }
 
   const nextMessage = messages[session.promptSyncCursor.messageCount];
   if (!nextMessage || nextMessage.role !== "user") {
-    return buildTranscript(systemPrompt, messages, durableSurfaceContext);
+    return buildTranscript(serializedSystemPrompt, messages, durableSurfaceContext);
   }
 
   if (!durableSurfaceContext) {
     return messageToPlainText(nextMessage);
   }
 
-  return buildTranscript(systemPrompt, [nextMessage], durableSurfaceContext);
+  return buildTranscript(serializedSystemPrompt, [nextMessage], durableSurfaceContext);
 }
 
 function buildTranscript(

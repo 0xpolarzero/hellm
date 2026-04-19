@@ -18,8 +18,11 @@ describe("default system prompt", () => {
 
   it("describes the orchestrator and handler-thread tool split", () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain("thread.start");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("thread.handoff");
     expect(DEFAULT_SYSTEM_PROMPT).toContain("workflow.start and workflow.resume");
     expect(DEFAULT_SYSTEM_PROMPT).toContain("Inside handler threads");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("Ordinary replies inside a handler thread do not close it");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("immediately opens an orchestrator reconciliation turn");
   });
 
   it("steers verification toward workflow templates", () => {

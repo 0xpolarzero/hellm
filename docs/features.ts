@@ -51,7 +51,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Handler Thread Surfaces",
     status: "in-progress",
     summary:
-      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, can receive direct user messages before and after handoff, can be inspected on demand without becoming the default reconciliation path, and can return control to the orchestrator multiple times over their lifetime through ordered handoff episodes.",
+      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, stay multi-turn and directly messageable before and after handoff, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread.handoff` calls that append ordered handoff episodes over the thread's lifetime and immediately trigger a fresh orchestrator reconciliation turn.",
     sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -115,7 +115,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Durable Episodes",
     status: "in-progress",
     summary:
-      "Stores reusable semantic outputs as first-class episode records, with handler threads able to emit multiple ordered handoff episodes over their lifetime as the semantic half of returning control to the orchestrator, including orchestrator-local episodes when substantive local work completes, while tool runs keep their own command summaries and artifacts.",
+      "Stores reusable semantic outputs as first-class episode records, with handler threads able to emit multiple ordered handoff episodes over their lifetime through explicit `thread.handoff` calls as the semantic half of returning control to the orchestrator, including orchestrator-local episodes when substantive local work completes, while ordinary tool runs keep their own command summaries and artifacts.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {

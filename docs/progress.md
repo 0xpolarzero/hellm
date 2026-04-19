@@ -48,7 +48,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Run a simple ordinary scripted task through `execute_typescript`. Commit(s): `76cc8f3`
 - [x] Build a POC artifact and tracing pipeline for code-mode execution. Commit(s): `76cc8f3`
 - [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
-- [x] Keep `thread.start`, `workflow.start`, `workflow.resume`, and `wait` as separate native control tools. Commit(s): `f53c9b8`, `43a26cb`
+- [ ] Keep `thread.start`, `thread.handoff`, `workflow.start`, `workflow.resume`, and `wait` as separate native control tools.
 - [x] Limit day-one capabilities to the curated `api.*` surface defined by the spec, including explicit `api.exec.run`. Commit(s): `76cc8f3`, `29d8452`
 - [x] Expand the repo namespace to workspace-fs and search utilities with plural reads and structured listings. Commit(s): `76cc8f3`, `29d8452`
 - [x] Expand the git namespace to the settled command-shaped surface, including `status`, `diff`, `log`, `show`, `branch`, `mergeBase`, `fetch`, `pull`, `push`, `add`, `commit`, `switch`, `checkout`, `restore`, `rebase`, `cherryPick`, `stash`, and `tag`. Commit(s): `76cc8f3`, `29d8452`
@@ -74,6 +74,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Let a handed-back thread move from completed or failed back to running when objective work resumes. Commit(s): `d323012`
 - [x] Preserve earlier handoff points in thread history when the same thread later returns control again. Commit(s): `d323012`
 - [x] Allow the orchestrator to inspect a handler thread on demand without making that the default reconciliation path. Commit(s): `ba5c3f0`
+- [ ] Make `thread.handoff` the explicit handler-thread handoff path so ordinary handler replies stay interactive and multi-turn.
 
 ## 5. Workflow Supervision Foundations
 

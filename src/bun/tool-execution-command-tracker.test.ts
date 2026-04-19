@@ -211,6 +211,35 @@ describe("tool execution command tracker", () => {
     expect(snapshot.commands).toHaveLength(0);
   });
 
+  it("ignores thread.handoff because the handler-thread tool owns its structured writes", () => {
+    const store = createStore();
+    const { promptContext } = createHandlerPromptContext(store);
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext,
+    });
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-handoff",
+      toolName: "thread.handoff",
+      args: {
+        summary: "Delivered the delegated result.",
+        body: "Delivered the delegated result and handed control back.",
+      },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-handoff",
+      toolName: "thread.handoff",
+      result: {
+        content: [{ type: "text", text: '{"episodeId":"episode-2"}' }],
+      },
+      isError: false,
+    });
+
+    const snapshot = store.getSessionState("session-tool-tracker");
+    expect(snapshot.commands).toHaveLength(0);
+  });
+
   it("ignores execute_typescript because the runtime records its own parent and child commands", () => {
     const store = createStore();
     const tracker = createToolExecutionCommandTracker({

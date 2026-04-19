@@ -47,6 +47,7 @@ flowchart TD
     subgraph Tools["Tool Surface"]
         Generic["execute_typescript"]
         ThreadStart["thread.start"]
+        ThreadHandoff["thread.handoff"]
         WorkflowStart["workflow.start"]
         WorkflowResume["workflow.resume"]
         Wait["wait"]
@@ -65,7 +66,7 @@ flowchart TD
     end
 
     subgraph Runtime["Runtime Handlers"]
-        RuntimeHandler["svvy runtime handles execute_typescript, thread.start, and wait"]
+        RuntimeHandler["svvy runtime handles execute_typescript, thread.start, thread.handoff, and wait"]
         SmithersBridge["Smithers bridge handles workflow.start and workflow.resume"]
         ResumeHandler["Runtime resumes the supervising handler thread when a workflow run changes state"]
     end
@@ -74,7 +75,7 @@ flowchart TD
         Commands["Record commands and parent-child linkage"]
         Events["Append lifecycle events"]
         Artifacts["Persist file-backed artifacts and SQLite metadata"]
-        State["Update turns, commands, threads, workflow runs, verification records, artifacts, wait state, and any terminal episodes"]
+        State["Update turns, commands, threads, workflow runs, verification records, artifacts, wait state, and any episodes emitted by thread.handoff"]
     end
 
     subgraph ReadModels["Read Models"]
@@ -91,6 +92,7 @@ flowchart TD
 
     Decide --> Generic
     Decide --> ThreadStart
+    Decide --> ThreadHandoff
     Decide --> WorkflowStart
     Decide --> WorkflowResume
     Decide --> Wait
@@ -107,6 +109,7 @@ flowchart TD
     Api --> RuntimeHandler
 
     ThreadStart --> RuntimeHandler
+    ThreadHandoff --> RuntimeHandler
     WorkflowStart --> SmithersBridge
     WorkflowResume --> SmithersBridge
     Wait --> RuntimeHandler
@@ -155,11 +158,12 @@ Instead, it opens a handler thread for that delegated objective.
 
 Inside a handler thread, the normal choices are:
 
+- direct reply
 - `execute_typescript`
+- `thread.handoff`
 - `workflow.start`
 - `workflow.resume`
 - `wait`
-- final reply inside the thread
 
 The handler thread may:
 
@@ -168,7 +172,8 @@ The handler thread may:
 - author a custom workflow
 - rerun after repair
 - resume after clarification
-- terminate with a final episode
+- stay in normal multi-turn chat for ordinary replies
+- call `thread.handoff` when it wants to return control to the orchestrator with a durable episode
 
 ### 4. Workflow State Returns To The Handler Thread, Not The Orchestrator
 
@@ -184,19 +189,26 @@ After `workflow.start` or `workflow.resume`, the runtime parks that handler thre
 
 The handler thread then decides what to do next.
 
-The orchestrator only receives the final terminal outcome of that delegated objective through the thread's episode.
+The orchestrator only receives delegated handoff results when the handler thread explicitly emits them through `thread.handoff`.
 
-### 5. One Final Episode Per Handler Thread
+When that happens, the runtime should open an orchestrator turn to reconcile the latest durable handoff instead of waiting for another user-authored orchestrator message.
+
+### 5. Explicit Handoff Episodes
 
 The supervising handler thread may manage:
 
 - multiple workflow runs
 - multiple reruns
 - multiple clarification cycles
+- many ordinary direct chat turns
 
-but it should emit exactly one final terminal episode back to the orchestrator.
+Ordinary replies inside the thread do not emit episodes and do not close the delegated objective.
 
-That episode is the default reconciliation unit.
+When the handler thread wants to hand control back, it calls `thread.handoff`.
+
+Each `thread.handoff` emits one ordered handoff episode and marks the current objective span terminal, while the thread surface itself stays interactive for later follow-up.
+
+That explicit handoff is the default reconciliation unit.
 
 ### 6. Waiting Is A Lifecycle Status
 
@@ -224,10 +236,10 @@ That means build, test, lint, and related checks can still have structured verif
 
 - `execute_typescript` remains the default generic work surface.
 - `api.exec.run` remains the explicit bounded process execution capability inside `execute_typescript`.
-- `thread.start`, `workflow.start`, `workflow.resume`, and `wait` remain native control tools.
+- `thread.start`, `thread.handoff`, `workflow.start`, `workflow.resume`, and `wait` remain native control tools.
 - `workflow.start` and `workflow.resume` are primarily used inside handler threads.
 - runtime handlers and bridges write durable facts from real execution; agents do not mutate product state through arbitrary write tools.
 - child `api.*` calls remain nested command facts under a parent `execute_typescript` command.
-- tool-run summaries stay on command records and artifacts; ordinary tool calls do not emit episodes.
+- tool-run summaries stay on command records and artifacts; ordinary handler replies do not emit episodes.
 - workflow runs are durable execution records under a handler thread.
 - episodes are the main reusable semantic outputs returned to the orchestrator.

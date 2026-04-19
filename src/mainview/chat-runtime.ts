@@ -457,6 +457,9 @@ export async function createChatRuntime(
       return;
     }
 
+    const shouldRefreshSidebar =
+      activeSurface?.surface === "thread" || Boolean(nextActive.session.parentSessionId);
+
     if (sessionId && nextActive.session.id !== sessionId) {
       await refreshSessions();
       return;
@@ -475,11 +478,21 @@ export async function createChatRuntime(
       }
 
       applyActiveSessionSnapshot(nextSnapshot);
+      if (shouldRefreshSidebar || Boolean(nextSnapshot.session.parentSessionId)) {
+        await refreshSessions();
+        return;
+      }
+
       emit();
       return;
     }
 
     applyActiveSessionSummary(nextActive);
+    if (shouldRefreshSidebar) {
+      await refreshSessions();
+      return;
+    }
+
     emit();
   };
 

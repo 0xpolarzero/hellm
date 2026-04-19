@@ -294,6 +294,7 @@ describe("WorkspaceSessionCatalog", () => {
       expect(options?.customTools?.map((tool) => tool.name).toSorted()).toEqual(
         [
           "execute_typescript",
+          "thread.handoff",
           "thread.start",
           "workflow.start",
           "workflow.resume",
@@ -954,6 +955,227 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("keeps ordinary handler-thread replies interactive instead of auto-emitting a handoff episode", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Handler Reply" }, DEFAULTS);
+    const store = getStructuredSessionStore(catalog);
+
+    const seedTurn = store.startTurn({
+      sessionId: created.session.id,
+      requestSummary: "Delegate the parser fix",
+    });
+    const orchestratorThread = store.createThread({
+      turnId: seedTurn.id,
+      surfacePiSessionId: created.session.id,
+      title: "Delegate the parser fix",
+      objective: "Open a handler thread for the parser fix.",
+    });
+    const handlerThread = await (
+      catalog as unknown as {
+        createHandlerThread(input: {
+          sessionId: string;
+          turnId: string;
+          parentThreadId: string;
+          parentSurfacePiSessionId: string;
+          title: string;
+          objective: string;
+        }): Promise<{ id: string; surfacePiSessionId: string }>;
+      }
+    ).createHandlerThread({
+      sessionId: created.session.id,
+      turnId: seedTurn.id,
+      parentThreadId: orchestratorThread.id,
+      parentSurfacePiSessionId: created.session.id,
+      title: "Parser fix thread",
+      objective: "Patch the parser bug and add regression coverage.",
+    });
+
+    const followUpText = "What changed in the parser state machine?";
+    const followUp = userMessage(followUpText);
+    const { promptTexts, promptSpy } = installPromptSpy(catalog, [
+      {
+        user: followUp,
+        assistant: assistantMessage("I updated the transition that lost the parser cursor."),
+      },
+    ]);
+
+    try {
+      await catalog.sendPrompt({
+        ...DEFAULTS,
+        sessionId: handlerThread.surfacePiSessionId,
+        target: {
+          surface: "thread",
+          surfaceSessionId: handlerThread.surfacePiSessionId,
+          threadId: handlerThread.id,
+        },
+        messages: [followUp],
+        onEvent: () => {},
+      });
+
+      await waitFor(() => promptTexts.length === 1);
+      const snapshot = getStructuredSessionState(catalog, created.session.id);
+      const followUpTurn = snapshot.turns.find((turn) => turn.requestSummary === followUpText);
+      const persistedThread = snapshot.threads.find((thread) => thread.id === handlerThread.id);
+
+      expect(promptTexts[0]).toContain("Durable Surface Context:");
+      expect(promptTexts[0]).toContain("Current interactive surface: handler thread.");
+      expect(promptTexts[0]).toContain(
+        "You are currently inside the delegated handler-thread surface, not the orchestrator surface.",
+      );
+      expect(promptTexts[0]).toContain("Title: Parser fix thread");
+      expect(promptTexts[0]).toContain("Objective: Patch the parser bug and add regression coverage.");
+      expect(promptTexts[0]).toContain(`User:\n${followUpText}`);
+      expect(snapshot.episodes).toEqual([]);
+      expect(followUpTurn).toMatchObject({
+        threadId: handlerThread.id,
+        status: "completed",
+        turnDecision: "reply",
+      });
+      expect(persistedThread).toMatchObject({
+        id: handlerThread.id,
+        status: "running",
+      });
+    } finally {
+      promptSpy.mockRestore();
+      await catalog.dispose();
+    }
+  });
+
+  it("opens an orchestrator reconciliation turn immediately after a handler handoff", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Auto Reconcile" }, DEFAULTS);
+    const store = getStructuredSessionStore(catalog);
+
+    const seedTurn = store.startTurn({
+      sessionId: created.session.id,
+      requestSummary: "Delegate the parser fix",
+    });
+    const orchestratorThread = store.createThread({
+      turnId: seedTurn.id,
+      surfacePiSessionId: created.session.id,
+      title: "Delegate the parser fix",
+      objective: "Open a handler thread for the parser fix.",
+    });
+    const handlerThread = await (
+      catalog as unknown as {
+        createHandlerThread(input: {
+          sessionId: string;
+          turnId: string;
+          parentThreadId: string;
+          parentSurfacePiSessionId: string;
+          title: string;
+          objective: string;
+        }): Promise<{ id: string; surfacePiSessionId: string }>;
+      }
+    ).createHandlerThread({
+      sessionId: created.session.id,
+      turnId: seedTurn.id,
+      parentThreadId: orchestratorThread.id,
+      parentSurfacePiSessionId: created.session.id,
+      title: "Parser fix thread",
+      objective: "Patch the parser bug and add regression coverage.",
+    });
+
+    const promptTexts: string[] = [];
+    const closeThreadText = "Close this thread with a short summary";
+    const closeThread = userMessage(closeThreadText);
+    const sessionPrototype = Object.getPrototypeOf(getManagedSessionHandle(catalog).session) as {
+      prompt: (promptText: string) => Promise<void>;
+    };
+    const promptSpy = spyOn(sessionPrototype, "prompt").mockImplementation(async function (
+      this: PromptableSession,
+      promptText: string,
+    ) {
+      promptTexts.push(promptText);
+
+      if (promptTexts.length === 1) {
+        const runtime = (
+          catalog as unknown as {
+            activeSession: { promptExecutionRuntime: { current: { rootThreadId: string; turnId: string } | null } };
+          }
+        ).activeSession.promptExecutionRuntime.current;
+        if (!runtime) {
+          throw new Error("Expected an active handler runtime before handoff.");
+        }
+
+        store.updateThread({
+          threadId: runtime.rootThreadId,
+          status: "completed",
+          wait: null,
+        });
+        store.createEpisode({
+          threadId: runtime.rootThreadId,
+          kind: "change",
+          title: "Parser fix handoff",
+          summary: "Patched the parser bug and handed the objective back.",
+          body: "Patched the parser bug, added regression coverage, and handed the objective back.",
+        });
+        store.setTurnDecision({
+          turnId: runtime.turnId,
+          decision: "handoff",
+        });
+
+        appendMessagesToSession(this, [
+          closeThread,
+          assistantMessage("I handed the parser fix back to the orchestrator."),
+        ]);
+        return;
+      }
+
+      if (promptTexts.length === 2) {
+        appendMessagesToSession(this, [
+          userMessage("System event: A handler thread emitted a durable handoff."),
+          assistantMessage("I reviewed the handoff and will validate the parser fix before landing it."),
+        ]);
+        return;
+      }
+
+      throw new Error("Unexpected prompt invocation.");
+    });
+
+    try {
+      await catalog.sendPrompt({
+        ...DEFAULTS,
+        sessionId: handlerThread.surfacePiSessionId,
+        target: {
+          surface: "thread",
+          surfaceSessionId: handlerThread.surfacePiSessionId,
+          threadId: handlerThread.id,
+        },
+        messages: [closeThread],
+        onEvent: () => {},
+      });
+
+      await waitFor(() => promptTexts.length === 2);
+
+      expect(promptTexts[0]).toContain("Current interactive surface: handler thread.");
+      expect(promptTexts[1]).toContain("System event: A handler thread emitted a durable handoff.");
+      expect(promptTexts[1]).not.toContain("System:\nYou are svvy.");
+      expect(promptTexts[1]).toContain("Latest handler-thread handoffs from durable state:");
+      expect(promptTexts[1]).toContain("Parser fix handoff");
+      expect(promptTexts[1]).toContain("Patched the parser bug and handed the objective back.");
+
+      const activeSummary = await catalog.getActiveSessionSummary();
+      expect(activeSummary?.session.id).toBe(created.session.id);
+
+      const snapshot = getStructuredSessionState(catalog, created.session.id);
+      const orchestratorTurn = snapshot.turns.find(
+        (turn) =>
+          turn.surfacePiSessionId === created.session.id &&
+          turn.requestSummary.includes("handler thread emitted a durable handoff"),
+      );
+      expect(orchestratorTurn).toMatchObject({
+        status: "completed",
+        turnDecision: "reply",
+      });
+    } finally {
+      promptSpy.mockRestore();
+      await catalog.dispose();
+    }
+  });
+
   it("keeps a handed-back handler thread directly interactive for follow-up chat without opening a new thread", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
@@ -1043,6 +1265,104 @@ describe("WorkspaceSessionCatalog", () => {
       expect(persistedThread).toMatchObject({
         id: handlerThread.id,
         status: "completed",
+      });
+    } finally {
+      promptSpy.mockRestore();
+      await catalog.dispose();
+    }
+  });
+
+  it("clears handler-thread user wait when the user answers in that same thread surface", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Resume Waiting Thread" }, DEFAULTS);
+    const store = getStructuredSessionStore(catalog);
+
+    const seedTurn = store.startTurn({
+      sessionId: created.session.id,
+      requestSummary: "Delegate the parser fix",
+    });
+    const orchestratorThread = store.createThread({
+      turnId: seedTurn.id,
+      surfacePiSessionId: created.session.id,
+      title: "Delegate the parser fix",
+      objective: "Open a handler thread for the parser fix.",
+    });
+    const handlerThread = await (
+      catalog as unknown as {
+        createHandlerThread(input: {
+          sessionId: string;
+          turnId: string;
+          parentThreadId: string;
+          parentSurfacePiSessionId: string;
+          title: string;
+          objective: string;
+        }): Promise<{ id: string; surfacePiSessionId: string }>;
+      }
+    ).createHandlerThread({
+      sessionId: created.session.id,
+      turnId: seedTurn.id,
+      parentThreadId: orchestratorThread.id,
+      parentSurfacePiSessionId: created.session.id,
+      title: "Parser fix thread",
+      objective: "Patch the parser bug and add regression coverage.",
+    });
+
+    const wait = {
+      kind: "user" as const,
+      reason: "Need the expected parser output before continuing.",
+      resumeWhen: "Resume when the user shares the expected parser output.",
+      since: new Date().toISOString(),
+    };
+    store.updateThread({
+      threadId: orchestratorThread.id,
+      status: "completed",
+    });
+    store.updateThread({
+      threadId: handlerThread.id,
+      status: "waiting",
+      wait,
+    });
+    store.setSessionWait({
+      sessionId: created.session.id,
+      owner: { kind: "thread", threadId: handlerThread.id },
+      kind: wait.kind,
+      reason: wait.reason,
+      resumeWhen: wait.resumeWhen,
+    });
+
+    const replyText = "The expected parser output is AST-v2";
+    const reply = userMessage(replyText);
+    const { promptTexts, promptSpy } = installPromptSpy(catalog, [
+      {
+        user: reply,
+        assistant: assistantMessage("That resolves the blocker. I can continue."),
+      },
+    ]);
+
+    try {
+      await catalog.sendPrompt({
+        ...DEFAULTS,
+        sessionId: handlerThread.surfacePiSessionId,
+        target: {
+          surface: "thread",
+          surfaceSessionId: handlerThread.surfacePiSessionId,
+          threadId: handlerThread.id,
+        },
+        messages: [reply],
+        onEvent: () => {},
+      });
+
+      await waitFor(() => promptTexts.length === 1);
+      const snapshot = getStructuredSessionState(catalog, created.session.id);
+      const persistedThread = snapshot.threads.find((thread) => thread.id === handlerThread.id);
+
+      expect(promptTexts[0]).toContain(`User:\n${replyText}`);
+      expect(snapshot.session.wait).toBeNull();
+      expect(persistedThread).toMatchObject({
+        id: handlerThread.id,
+        status: "running",
+        wait: null,
       });
     } finally {
       promptSpy.mockRestore();

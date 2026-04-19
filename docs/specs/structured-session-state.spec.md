@@ -50,11 +50,11 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Treat every tool call as a `CommandRecord`.
 - Make `execute_typescript` the default generic work surface.
 - Treat every top-level `execute_typescript` invocation as one parent command record and every nested `api.*` call as a child command record.
-- Keep only a very small set of native control tools for thread spawning, workflow control, and wait.
+- Keep only a very small set of native control tools for thread spawning, explicit thread handoff, workflow control, and wait.
 - Drive durable facts from real runtime handlers and bridge events, not transcript heuristics.
 - Keep workflow-run state separate from handler-thread state.
 - Treat a handler thread as one delegated objective that may supervise many workflow runs over its lifetime.
-- Treat handler-thread episodes as durable handoff summaries that are emitted whenever a thread gives control back to the orchestrator.
+- Treat handler-thread episodes as durable handoff summaries that are emitted explicitly through `thread.handoff` whenever a thread gives control back to the orchestrator.
 - Do not model internal workflow pauses as separate episodes.
 - Use selectors and metadata-first read models instead of making the UI reconstruct state from storage details or transcripts.
 
@@ -333,7 +333,7 @@ In the delegated model, the most important invariant is:
 
 Waiting inside a handler thread does not create a wait episode.
 
-A handoff episode is created only when that delegated objective reaches a terminal state for the current active work span.
+A handoff episode is created only when that delegated objective reaches a terminal state for the current active work span and the handler thread explicitly calls `thread.handoff`.
 
 The terminal handoff back to the orchestrator is:
 
@@ -435,8 +435,8 @@ Use thread status this way:
 
 - `running` while the handler thread is actively supervising the delegated objective, including while a Smithers workflow run is executing
 - `waiting` when the delegated objective is blocked on user or external input
-- `completed` when the delegated objective reached a successful terminal result and emitted a handoff episode
-- `failed` when the delegated objective terminated unsuccessfully and emitted a failure handoff episode
+- `completed` when the delegated objective reached a successful terminal result and `thread.handoff` emitted a handoff episode
+- `failed` when the delegated objective terminated unsuccessfully and `thread.handoff` emitted a failure handoff episode
 - `cancelled` when the delegated objective was intentionally cancelled
 
 These statuses describe the objective state, not whether the thread surface can still receive direct messages.
@@ -516,7 +516,7 @@ Use them this way:
 
 - low-level repo or web reads inside `execute_typescript` are usually `trace`
 - material writes, artifact creation, and failed execs usually roll up as `summary`
-- `thread.start`, `workflow.start`, `workflow.resume`, and `wait` are normally `surface`
+- `thread.start`, `thread.handoff`, `workflow.start`, `workflow.resume`, and `wait` are normally `surface`
 - child `api.*` commands remain nested detail by default
 
 ### CommandRecord Executor
@@ -584,7 +584,7 @@ For handler threads, an episode is the semantic half of a handoff back to the or
 
 The control-plane half is the thread's current terminal durable state plus its durable links to workflow runs, commands, artifacts, and waits.
 
-Handler-thread episodes are ordered durable handoff points, not a promise that the thread surface becomes unreadable or unaddressable afterward.
+Handler-thread episodes are ordered durable handoff points produced by explicit `thread.handoff` calls, not a promise that the thread surface becomes unreadable or unaddressable afterward.
 
 Commands, including `execute_typescript`, may produce their own summaries and artifacts.
 
@@ -783,7 +783,7 @@ The implementation must enforce these invariants:
 - a handler thread may wait and resume many times
 - a handler thread remains message-addressable after handing control back
 - a completed, failed, or cancelled thread may later return to `running`
-- a new handoff episode may be created only when a thread reaches another terminal objective state
+- a new handoff episode may be created only when a thread reaches another terminal objective state and explicitly calls `thread.handoff`
 - a thread may be waiting only on user or external input, not on a fake wait episode
 - `session.wait` must be cleared when runnable work exists again
 - a turn must end in exactly one of: `completed`, `failed`, or `waiting`

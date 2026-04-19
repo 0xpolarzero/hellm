@@ -177,6 +177,7 @@ Some actions are not ordinary generic work because they change product-level con
 Those actions stay as native control tools:
 
 - `thread.start`
+- `thread.handoff`
 - `workflow.start`
 - `workflow.resume`
 - `wait`
@@ -186,6 +187,8 @@ These are still tool calls.
 Their intended use is:
 
 - the orchestrator normally uses `thread.start` to open a delegated handler thread
+- a handler thread uses `thread.handoff` to emit a durable handoff episode and mark the current objective span complete without losing direct interactivity in that thread surface
+- a successful `thread.handoff` immediately opens a fresh orchestrator reconciliation turn so the orchestrator can act on the latest durable handoff without waiting for another user-authored orchestrator message
 - a handler thread normally uses `workflow.start` and `workflow.resume` to supervise Smithers execution
 - any interactive surface may use `wait` when it needs user or external input
 
@@ -227,7 +230,8 @@ In the adopted delegated model:
 
 - a handler thread may run through many internal workflow runs
 - a handler thread may wait, resume, rerun, and repair internally
-- a handler thread returns control to the orchestrator by reaching a terminal objective state and emitting a handoff episode
+- ordinary handler-thread replies stay inside the thread and do not emit handoff episodes
+- a handler thread returns control to the orchestrator by explicitly calling `thread.handoff`, which marks the current objective span terminal and emits a handoff episode
 - the thread surface remains open for later inspection, direct follow-up chat, and resumed work on that same objective
 
 That handoff is the thread's terminal durable state plus the latest handoff episode it emits.
@@ -446,6 +450,8 @@ For delegated handler threads, a handoff episode should capture:
 - what mattered semantically
 - enough detail for the orchestrator to continue without reopening full logs by default
 
+It is created when the handler thread explicitly calls `thread.handoff`.
+
 Artifacts and detailed traces do not need to be flattened into the episode body.
 
 They remain inspectable through durable links and thread history.
@@ -517,7 +523,7 @@ When the target surface is the main orchestrator:
 4. if delegated:
    - call `thread.start`
    - hand off the delegated objective to a handler thread
-5. later reconcile the handler thread's latest handoff: thread durable state plus the latest handoff episode
+5. when a handler thread explicitly hands control back, open an orchestrator turn that reconciles the latest handoff from durable state: thread durable state plus the latest handoff episode
 
 ### Handler Thread Loop
 
@@ -532,11 +538,14 @@ When the target surface is a handler thread:
    - author a custom workflow
    - resume an existing paused workflow run
    - ask the user for clarification
-   - hand control back with a handoff episode
+   - enter wait
+   - hand control back with `thread.handoff`
 3. run or resume workflow execution as needed
 4. regain control when the workflow run completes, fails, or pauses
 5. continue supervising until the objective is truly finished
-6. when appropriate, return control to the orchestrator by reaching a terminal objective state and emitting a handoff episode
+6. when appropriate, return control to the orchestrator by explicitly calling `thread.handoff`
+
+When `thread.handoff` succeeds, the owning orchestrator surface should regain control through a fresh orchestrator turn rather than waiting for the user to manually poke the orchestrator again.
 
 If a thread already handed control back earlier:
 

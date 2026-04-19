@@ -693,6 +693,174 @@ function createFakeRpcWithToolUse(
   return { client, requestCounts };
 }
 
+function createFakeRpcWithThreadSidebarRefresh(): {
+  client: ChatRuntimeRpcClient;
+  requestCounts: {
+    listSessions: number;
+    getActiveSession: number;
+    getActiveSessionSummary: number;
+    getCommandInspector: number;
+    listHandlerThreads: number;
+    getHandlerThreadInspector: number;
+  };
+} {
+  const listeners = new Set<
+    (payload: { streamId: string; event: AssistantMessageEvent }) => void
+  >();
+  const orchestrator = createActiveSession(
+    "session-1",
+    "Orchestrator",
+    [userMessage("delegate"), assistantMessage("Opened a handler thread.")],
+    "medium",
+  );
+  orchestrator.session.status = "running";
+  orchestrator.session.preview = "Opened a handler thread.";
+  orchestrator.session.threadIdsByStatus = {
+    running: ["thread-123"],
+    waiting: [],
+    failed: [],
+  };
+  const thread = createActiveSession(
+    "thread-session-1",
+    "Handler Thread",
+    [userMessage("status"), assistantMessage("Working on it.")],
+    "medium",
+  );
+  thread.session.parentSessionId = "session-1";
+
+  let activeSessionId = orchestrator.session.id;
+  const requestCounts = {
+    listSessions: 0,
+    getActiveSession: 0,
+    getActiveSessionSummary: 0,
+    getCommandInspector: 0,
+    listHandlerThreads: 0,
+    getHandlerThreadInspector: 0,
+  };
+
+  const getSession = (sessionId: string): ActiveSessionState => {
+    if (sessionId === thread.session.id) {
+      return thread;
+    }
+    return orchestrator;
+  };
+
+  const client: ChatRuntimeRpcClient = {
+    request: {
+      getDefaults: async () => ({ provider: "openai", model: "gpt-4o", reasoningEffort: "medium" }),
+      getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
+      getWorkspaceInfo: async () => ({
+        workspaceId: "/tmp/svvy",
+        workspaceLabel: "svvy",
+        branch: "main",
+      }),
+      listSessions: async () => {
+        requestCounts.listSessions += 1;
+        return {
+          activeSessionId: orchestrator.session.id,
+          sessions: [structuredClone(orchestrator.session)],
+        };
+      },
+      getActiveSession: async () => {
+        requestCounts.getActiveSession += 1;
+        return cloneActiveSession(getSession(activeSessionId));
+      },
+      getActiveSessionSummary: async () => {
+        requestCounts.getActiveSessionSummary += 1;
+        return cloneActiveSessionSummary(getSession(activeSessionId));
+      },
+      getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
+        requestCounts.getCommandInspector += 1;
+        return createCommandInspector(commandId);
+      },
+      listHandlerThreads: async () => {
+        requestCounts.listHandlerThreads += 1;
+        return [createHandlerThreadSummary("thread-123")];
+      },
+      getHandlerThreadInspector: async ({ threadId }: { sessionId: string; threadId: string }) => {
+        requestCounts.getHandlerThreadInspector += 1;
+        return createHandlerThreadInspector(threadId);
+      },
+      createSession: async () => cloneActiveSession(orchestrator),
+      openSession: async ({ sessionId }: { sessionId: string }) => {
+        activeSessionId = sessionId;
+        return cloneActiveSession(getSession(sessionId));
+      },
+      renameSession: async () => ({
+        ok: true,
+        activeSessionId: orchestrator.session.id,
+      }),
+      forkSession: async () => cloneActiveSession(orchestrator),
+      deleteSession: async () => ({
+        ok: true,
+        activeSessionId: orchestrator.session.id,
+      }),
+      sendPrompt: async (request: {
+        sessionId?: string;
+        streamId: string;
+        messages: AgentMessage[];
+        target?: PromptTarget;
+      }) => {
+        const finalAssistant = assistantMessage("Thread handed off.");
+        thread.messages = [...request.messages, finalAssistant];
+        thread.session.preview = "Thread handed off.";
+        thread.session.messageCount = thread.messages.length;
+
+        orchestrator.session.status = "idle";
+        orchestrator.session.preview = "Thread handoff received.";
+        orchestrator.session.threadIdsByStatus = {
+          running: [],
+          waiting: [],
+          failed: [],
+        };
+
+        queueMicrotask(() => {
+          const partial = assistantMessage("");
+          for (const listener of listeners) {
+            listener({ streamId: request.streamId, event: { type: "start", partial } });
+            listener({
+              streamId: request.streamId,
+              event: { type: "done", reason: "stop", message: finalAssistant },
+            });
+          }
+        });
+
+        return {
+          sessionId: request.sessionId ?? thread.session.id,
+          target: request.target,
+        };
+      },
+      setSessionModel: async ({ sessionId }: { sessionId: string; model: string }) => ({
+        ok: true,
+        sessionId,
+      }),
+      setSessionThoughtLevel: async ({ sessionId }: { sessionId: string; level: string }) => ({
+        ok: true,
+        sessionId,
+      }),
+      cancelPrompt: async () => ({ ok: true }),
+      listProviderAuths: async () => [
+        { provider: "openai", hasKey: true, keyType: "oauth", supportsOAuth: true },
+      ],
+      setProviderApiKey: async () => ({ ok: true }),
+      startOAuth: async () => ({ ok: true }),
+      removeProviderAuth: async () => ({ ok: true }),
+    },
+    addMessageListener: (_messageName: string, listener: unknown) => {
+      listeners.add(
+        listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+      );
+    },
+    removeMessageListener: (_messageName: string, listener: unknown) => {
+      listeners.delete(
+        listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+      );
+    },
+  };
+
+  return { client, requestCounts };
+}
+
 function createMemoryStorage(): ChatStorage {
   const providerKeys = new Map<string, string>();
   const customProviders = new Map<string, CustomProvider>();
@@ -921,6 +1089,37 @@ describe("createChatRuntime", () => {
       surface: "orchestrator",
       surfaceSessionId: "session-1",
     });
+
+    runtime.dispose();
+  });
+
+  it("re-lists sidebar sessions after a thread-surface prompt settles so parent session status refreshes immediately", async () => {
+    const { createChatRuntime } = await import("./chat-runtime");
+    const { client, requestCounts } = createFakeRpcWithThreadSidebarRefresh();
+
+    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
+    await runtime.openSurface({
+      surface: "thread",
+      surfaceSessionId: "thread-session-1",
+      threadId: "thread-123",
+    });
+
+    expect(requestCounts.listSessions).toBe(1);
+    await runtime.agent.prompt("finish the objective");
+    await runtime.agent.waitForIdle();
+
+    expect(requestCounts.getActiveSessionSummary).toBe(1);
+    expect(requestCounts.listSessions).toBe(2);
+    expect(runtime.sessions.find((session) => session.id === "session-1")).toMatchObject({
+      status: "idle",
+      preview: "Thread handoff received.",
+      threadIdsByStatus: {
+        running: [],
+        waiting: [],
+        failed: [],
+      },
+    });
+    expect(runtime.sessions.some((session) => session.id === "thread-session-1")).toBe(false);
 
     runtime.dispose();
   });
