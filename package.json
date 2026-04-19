@@ -7,6 +7,7 @@
     "generate:execute-typescript-api": "bun scripts/generate-execute-typescript-api.ts",
     "start": "bun run generate:execute-typescript-api && vite build && electrobun dev",
     "dev": "bun run generate:execute-typescript-api && bun scripts/dev.ts",
+    "dev:clean": "bun run clean:session-state && bun run dev",
     "clean:session-state": "bun scripts/clean-session-state.ts",
     "build": "bun run generate:execute-typescript-api && vite build && electrobun build",
     "run": "electrobun run",
