@@ -454,24 +454,24 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
               const message =
                 event.error.content.find((block) => block.type === "text")?.text ||
                 "Prompt failed.";
-                recordBridgeEvent("prompt.failed", {
-                  model: model.id,
-                  provider: resolved.provider,
-                  reason: event.reason,
-                  surfacePiSessionId,
-                  workspaceSessionId: payload.target.workspaceSessionId,
-                  threadId: payload.target.threadId ?? null,
-                });
-                recordBridgeError("app", message, "bun.sendPrompt", {
-                  model: model.id,
-                  provider: resolved.provider,
-                  reason: event.reason,
-                  surfacePiSessionId,
-                  workspaceSessionId: payload.target.workspaceSessionId,
-                  threadId: payload.target.threadId ?? null,
-                });
-              }
-              rpc.send.sendStreamEvent({ streamId: payload.streamId, event });
+              recordBridgeEvent("prompt.failed", {
+                model: model.id,
+                provider: resolved.provider,
+                reason: event.reason,
+                surfacePiSessionId,
+                workspaceSessionId: payload.target.workspaceSessionId,
+                threadId: payload.target.threadId ?? null,
+              });
+              recordBridgeError("app", message, "bun.sendPrompt", {
+                model: model.id,
+                provider: resolved.provider,
+                reason: event.reason,
+                surfacePiSessionId,
+                workspaceSessionId: payload.target.workspaceSessionId,
+                threadId: payload.target.threadId ?? null,
+              });
+            }
+            rpc.send.sendStreamEvent({ streamId: payload.streamId, event });
           },
         });
 

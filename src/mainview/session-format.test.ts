@@ -47,10 +47,14 @@ describe("formatSessionStatusLabel", () => {
 
   it("keeps ordinary running, waiting, error, and idle labels stable", () => {
     expect(
-      formatSessionStatusLabel(session({ id: "session-running", title: "Running", status: "running" })),
+      formatSessionStatusLabel(
+        session({ id: "session-running", title: "Running", status: "running" }),
+      ),
     ).toBe("Running");
     expect(
-      formatSessionStatusLabel(session({ id: "session-waiting", title: "Waiting", status: "waiting" })),
+      formatSessionStatusLabel(
+        session({ id: "session-waiting", title: "Waiting", status: "waiting" }),
+      ),
     ).toBe("Waiting");
     expect(
       formatSessionStatusLabel(session({ id: "session-error", title: "Error", status: "error" })),

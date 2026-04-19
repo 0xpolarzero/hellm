@@ -146,11 +146,12 @@ describe("thread handoff tool", () => {
         summary: "Patched the parser bug and added coverage.",
       }),
     ]);
-    expect(snapshot.threads.find((thread) => thread.surfacePiSessionId === "pi-thread-handoff-001"))
-      .toMatchObject({
-        status: "completed",
-        wait: null,
-      });
+    expect(
+      snapshot.threads.find((thread) => thread.surfacePiSessionId === "pi-thread-handoff-001"),
+    ).toMatchObject({
+      status: "completed",
+      wait: null,
+    });
     expect(snapshot.session.wait).toBeNull();
     expect(snapshot.episodes).toEqual([
       expect.objectContaining({

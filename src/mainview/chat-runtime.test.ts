@@ -336,8 +336,7 @@ function createActiveSession(
     model: "gpt-4o",
     reasoningEffort: reasoning,
     systemPrompt: options.systemPrompt ?? "You are svvy.",
-    resolvedSystemPrompt:
-      options.resolvedSystemPrompt ?? options.systemPrompt ?? "You are svvy.",
+    resolvedSystemPrompt: options.resolvedSystemPrompt ?? options.systemPrompt ?? "You are svvy.",
   };
 }
 
@@ -393,9 +392,14 @@ function createFakeRpc(
   >();
   const sessionSyncListeners = new Set<(payload: SessionSyncMessage) => void>();
   const surfacesByPiSessionId = new Map(
-    initialSessions.map((session) => [session.target.surfacePiSessionId, cloneActiveSession(session)]),
+    initialSessions.map((session) => [
+      session.target.surfacePiSessionId,
+      cloneActiveSession(session),
+    ]),
   );
-  let activeTarget = initialSessions[0]?.target ? structuredClone(initialSessions[0].target) : undefined;
+  let activeTarget = initialSessions[0]?.target
+    ? structuredClone(initialSessions[0].target)
+    : undefined;
   const openedSessions: string[] = [];
   const sentPromptRequests: Array<{ target: PromptTarget }> = [];
   const sentPromptSessions: string[] = [];
@@ -587,12 +591,7 @@ function createFakeRpc(
           }
 
           for (const listener of sessionSyncListeners) {
-            listener(
-              createSessionSyncMessage(
-                session,
-                listSessions().sessions,
-              ),
-            );
+            listener(createSessionSyncMessage(session, listSessions().sessions));
           }
         });
         return {
@@ -757,12 +756,7 @@ function createFakeRpcWithToolUse(
             });
           }
           for (const listener of sessionSyncListeners) {
-            listener(
-              createSessionSyncMessage(
-                session,
-                [session.session],
-              ),
-            );
+            listener(createSessionSyncMessage(session, [session.session]));
           }
         });
 
@@ -868,7 +862,9 @@ function createFakeRpcWithThreadSidebarRefresh(): {
   };
 
   const getActiveSurface = () =>
-    activeTarget.surface === "thread" ? cloneActiveSession(thread) : cloneActiveSession(orchestrator);
+    activeTarget.surface === "thread"
+      ? cloneActiveSession(thread)
+      : cloneActiveSession(orchestrator);
 
   const client: ChatRuntimeRpcClient = {
     request: {
@@ -950,12 +946,7 @@ function createFakeRpcWithThreadSidebarRefresh(): {
           queueMicrotask(() => {
             activeTarget = createOrchestratorTarget(orchestrator.session.id);
             for (const listener of sessionSyncListeners) {
-              listener(
-                createSessionSyncMessage(
-                  orchestrator,
-                  [orchestrator.session],
-                ),
-              );
+              listener(createSessionSyncMessage(orchestrator, [orchestrator.session]));
             }
           });
         });
@@ -1064,7 +1055,9 @@ function createFakeRpcWithBackgroundOrchestratorResume(): {
   };
 
   const getActiveSurface = () =>
-    activeTarget.surface === "thread" ? cloneActiveSession(thread) : cloneActiveSession(orchestrator);
+    activeTarget.surface === "thread"
+      ? cloneActiveSession(thread)
+      : cloneActiveSession(orchestrator);
 
   const client: ChatRuntimeRpcClient = {
     request: {
@@ -1169,12 +1162,7 @@ function createFakeRpcWithBackgroundOrchestratorResume(): {
             orchestrator.session.preview = "I reviewed the handoff and resumed orchestration.";
             orchestrator.session.status = "idle";
             for (const listener of sessionSyncListeners) {
-              listener(
-                createSessionSyncMessage(
-                  orchestrator,
-                  [orchestrator.session],
-                ),
-              );
+              listener(createSessionSyncMessage(orchestrator, [orchestrator.session]));
             }
           });
         });

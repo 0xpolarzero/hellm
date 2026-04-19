@@ -1143,7 +1143,9 @@ describe("WorkspaceSessionCatalog", () => {
         "You are currently inside the delegated handler-thread surface, not the orchestrator surface.",
       );
       expect(promptTexts[0]).toContain("Title: Parser fix thread");
-      expect(promptTexts[0]).toContain("Objective: Patch the parser bug and add regression coverage.");
+      expect(promptTexts[0]).toContain(
+        "Objective: Patch the parser bug and add regression coverage.",
+      );
       expect(promptTexts[0]).toContain(`User:\n${followUpText}`);
       expect(snapshot.episodes).toEqual([]);
       expect(followUpTurn).toMatchObject({
@@ -1213,7 +1215,9 @@ describe("WorkspaceSessionCatalog", () => {
       if (promptTexts.length === 1) {
         const runtime = (
           catalog as unknown as {
-            activeSession: { promptExecutionRuntime: { current: { rootThreadId: string; turnId: string } | null } };
+            activeSession: {
+              promptExecutionRuntime: { current: { rootThreadId: string; turnId: string } | null };
+            };
           }
         ).activeSession.promptExecutionRuntime.current;
         if (!runtime) {
@@ -1247,7 +1251,9 @@ describe("WorkspaceSessionCatalog", () => {
       if (promptTexts.length === 2) {
         appendMessagesToSession(this, [
           userMessage("System event: A handler thread emitted a durable handoff."),
-          assistantMessage("I reviewed the handoff and will validate the parser fix before landing it."),
+          assistantMessage(
+            "I reviewed the handoff and will validate the parser fix before landing it.",
+          ),
         ]);
         return;
       }
@@ -1282,7 +1288,9 @@ describe("WorkspaceSessionCatalog", () => {
       expect(activeSession?.target).toEqual(createOrchestratorTarget(created.session.id));
 
       const listed = await catalog.listSessions();
-      const orchestratorSummary = listed.sessions.find((session) => session.id === created.session.id);
+      const orchestratorSummary = listed.sessions.find(
+        (session) => session.id === created.session.id,
+      );
       expect(orchestratorSummary).toMatchObject({
         status: "running",
         threadIdsByStatus: {
@@ -1363,7 +1371,9 @@ describe("WorkspaceSessionCatalog", () => {
       if (promptTexts.length === 1) {
         const runtime = (
           catalog as unknown as {
-            activeSession: { promptExecutionRuntime: { current: { rootThreadId: string; turnId: string } | null } };
+            activeSession: {
+              promptExecutionRuntime: { current: { rootThreadId: string; turnId: string } | null };
+            };
           }
         ).activeSession.promptExecutionRuntime.current;
         if (!runtime) {
@@ -1397,7 +1407,9 @@ describe("WorkspaceSessionCatalog", () => {
       if (promptTexts.length === 2) {
         appendMessagesToSession(this, [
           userMessage("System event: A handler thread emitted a durable handoff."),
-          assistantMessage("I reviewed the handoff and will validate the parser fix before landing it."),
+          assistantMessage(
+            "I reviewed the handoff and will validate the parser fix before landing it.",
+          ),
         ]);
         return;
       }

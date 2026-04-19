@@ -673,9 +673,7 @@ export class WorkspaceSessionCatalog {
     });
   }
 
-  private buildSummaryFromManagedSession(
-    session: ManagedSession,
-  ): WorkspaceSessionSummary {
+  private buildSummaryFromManagedSession(session: ManagedSession): WorkspaceSessionSummary {
     return this.decorateSummaryWithStructuredProjection(
       this.buildLiveSummaryFromManagedSession(session),
     );
@@ -828,7 +826,9 @@ export class WorkspaceSessionCatalog {
         throw new Error("Orchestrator targets cannot include a handler thread id.");
       }
       if (target.surfacePiSessionId !== target.workspaceSessionId) {
-        throw new Error("Orchestrator target must use the workspace session id as its pi surface id.");
+        throw new Error(
+          "Orchestrator target must use the workspace session id as its pi surface id.",
+        );
       }
       return;
     }
@@ -1245,9 +1245,7 @@ export class WorkspaceSessionCatalog {
     }
 
     const thread = snapshot.threads.find((entry) => entry.id === promptContext.rootThreadId);
-    const latestEpisode = thread
-      ? getLatestThreadEpisode(snapshot, thread.id)
-      : null;
+    const latestEpisode = thread ? getLatestThreadEpisode(snapshot, thread.id) : null;
     if (!thread || !latestEpisode) {
       return;
     }
@@ -1280,7 +1278,10 @@ export class WorkspaceSessionCatalog {
       model: orchestratorSession.model,
       thinkingLevel: orchestratorSession.thinkingLevel,
       systemPrompt: orchestratorSession.systemPrompt,
-      messages: [...convertToLlmMessages(orchestratorSession.session.agent.state.messages), resumeMessage],
+      messages: [
+        ...convertToLlmMessages(orchestratorSession.session.agent.state.messages),
+        resumeMessage,
+      ],
       onEvent: () => {},
     };
     const orchestratorPromptContext = this.createPromptExecutionContext(
@@ -1848,11 +1849,15 @@ function buildHandlerDurablePromptContext(
   ];
 
   if (thread.wait) {
-    parts.push(`Current wait: ${thread.wait.kind} - ${collapsePromptContextValue(thread.wait.reason, 220)}`);
+    parts.push(
+      `Current wait: ${thread.wait.kind} - ${collapsePromptContextValue(thread.wait.reason, 220)}`,
+    );
   }
 
   if (latestWorkflow) {
-    parts.push(`Latest workflow summary: ${collapsePromptContextValue(latestWorkflow.summary, 220)}`);
+    parts.push(
+      `Latest workflow summary: ${collapsePromptContextValue(latestWorkflow.summary, 220)}`,
+    );
   }
 
   if (latestEpisode) {
