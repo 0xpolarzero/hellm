@@ -54,3 +54,6 @@
 - workflow-template-specific UI:
   - some workflow templates may justify specialized UI treatment instead of a generic workflow card
   - verification is the obvious first example because build/test/lint state often wants purpose-built display and progress semantics
+
+- cron job on a repo that pools for updates on selected dependencies with a short summary so we can update adap
+  - especially docs/references/ so we can notice if they changed something we borrowed to something better or added a useful feature
