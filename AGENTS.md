@@ -8,9 +8,9 @@
 - Treat any proposed demo renderer, stdout snapshot, or non-pi terminal loop as a regression unless the PRD explicitly labels it as a test helper.
 - If a change implies that svvy owns the interactive terminal instead of pi, stop and rewrite the design around pi's runtime and extension APIs.
 - Use `docs/references/pi-mono` as the default local reference when reasoning about pi code, APIs, architecture, or behavior.
-- Use `docs/references/smithers` as the default local reference when reasoning about Smithers code, APIs, architecture, or behavior.
-- Run Smithers workflows from the local workflow package binary at `workflows/node_modules/.bin/smithers`; do not use `bunx smithers-orchestrator` for this repo.
-- Prefer these local references over memory or vague external summaries when questions involve these tools or libraries.
+- When working on Smithers code, APIs, architecture, or behavior, read the entire full documentation at `https://smithers.sh/llms-full.txt`.
+- If anything about Smithers is still ambiguous after that, refer to `docs/references/smithers`.
+- Prefer these references over memory or vague external summaries when questions involve these tools or libraries.
 - To inspect a running `svvy` app, use the published `electrobun-browser-tools` CLI (`--app <appId>` or `--url <bridgeUrl>`); the bridge is mounted in `src/bun/tool-bridge.ts`, and `src/bun/index.ts` logs the resolved `appId` and `bridgeUrl` when it starts.
 - Keep one main orchestrator responsible for strategy, integration, and final decisions.
 - Prefer inline code over thin pass-through helpers; if a wrapper only forwards one call without adding policy, reuse, or a meaningful seam, inline it instead of abstracting it.
