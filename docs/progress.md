@@ -48,7 +48,8 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Run a simple ordinary scripted task through `execute_typescript`. Commit(s): `76cc8f3`
 - [x] Build a POC artifact and tracing pipeline for code-mode execution. Commit(s): `76cc8f3`
 - [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
-- [x] Keep `thread.start`, `thread.handoff`, `workflow.start`, `workflow.resume`, and `wait` as separate native control tools. Commit(s): `fdaf460`
+- [ ] Keep only `thread.start`, `thread.handoff`, and `wait` as `svvy`-native control tools while exposing Smithers workflow operations through Smithers-native bridge tools.
+- [ ] Register the Smithers-native agent tool surface with official semantic names such as `smithers.list_workflows`, `smithers.run_workflow`, `smithers.list_runs`, `smithers.get_run`, `smithers.explain_run`, `smithers.list_pending_approvals`, `smithers.resolve_approval`, `smithers.get_node_detail`, `smithers.list_artifacts`, and `smithers.get_run_events`, plus Smithers-aligned bridge calls for cancellation, signals, frames, and devtools when needed.
 - [x] Limit day-one capabilities to the curated `api.*` surface defined by the spec, including explicit `api.exec.run`. Commit(s): `76cc8f3`, `29d8452`
 - [x] Expand the repo namespace to workspace-fs and search utilities with plural reads and structured listings. Commit(s): `76cc8f3`, `29d8452`
 - [x] Expand the git namespace to the settled command-shaped surface, including `status`, `diff`, `log`, `show`, `branch`, `mergeBase`, `fetch`, `pull`, `push`, `add`, `commit`, `switch`, `checkout`, `restore`, `rebase`, `cherryPick`, `stash`, and `tag`. Commit(s): `76cc8f3`, `29d8452`
@@ -67,30 +68,38 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 ## 4. Handler Threads
 
 - [x] Build a POC handler-thread spawn flow with objective handoff and a dedicated backing pi session. Commit(s): `f53c9b8`
-- [x] Persist handler-thread lifecycle transitions for running, waiting, completed, failed, and cancelled states. Commit(s): `fff54d7`, `f53c9b8`
+- [ ] Persist handler-thread lifecycle transitions for handler-active, workflow-active, waiting, troubleshooting, and completed states without flattening workflow failure or cancellation into thread terminal state.
 - [x] Let handler threads receive direct user messages through the same surface model as the orchestrator. Commit(s): `f53c9b8`
 - [x] Make handler-thread wait and resume happen inside the thread itself instead of bouncing through the orchestrator by default. Commit(s): `f53c9b8`
 - [x] Keep handed-back handler threads directly interactive for follow-up chat without forcing a new thread. Commit(s): `ba5c3f0`
-- [x] Let a handed-back thread move from completed or failed back to running when objective work resumes. Commit(s): `d323012`
+- [ ] Let a handed-back thread move from completed back to the correct active state when objective work resumes, distinguishing handler-active from workflow-active supervision.
 - [x] Preserve earlier handoff points in thread history when the same thread later returns control again. Commit(s): `d323012`
 - [x] Allow the orchestrator to inspect a handler thread on demand without making that the default reconciliation path. Commit(s): `ba5c3f0`
 - [x] Make `thread.handoff` the explicit handler-thread handoff path so ordinary handler replies stay interactive and multi-turn. Commit(s): `fdaf460`
 - [x] Load the orchestrator and handler-thread instructions through pi's true `systemPrompt` channel before any reconstructed prompt body is composed. Commit(s): `8a41d08`
 - [x] Keep handoff, resume, and transcript-rebuild prompt bodies free of duplicated system prompt text while surfacing the active system prompt as a collapsible transcript item. Commit(s): `8a41d08`
+- [ ] Slice generated capability declarations by actor so the orchestrator prompt receives only orchestrator-callable tools while handler-thread prompts receive only handler-callable tools.
+- [ ] Teach the orchestrator prompt that workflow actions require delegation into a handler thread instead of exposing `smithers.*` directly in the orchestrator API block.
+- [ ] Teach handler-thread prompts that the orchestrator owns delegation and reconciliation while omitting orchestrator-only tool declarations such as `thread.start` unless nested delegation is explicitly adopted.
 
 ## 5. Workflow Supervision Foundations
 
-- [ ] Build a POC handler thread that starts a concrete workflow, supervises it through completion, and regains control in the same thread.
+- [ ] Define the packaged-app Smithers runtime boundary so shipped product workflows are bundled app assets under `src/bun/smithers-runtime/` rather than repo-root `workflows/` authoring assets.
+- [ ] Build a POC handler thread that starts one bundled product-runtime hello-world workflow from `src/bun/smithers-runtime/`, supervises it through completion, and regains control in the same thread without relying on repo-root `workflows/`.
 - [x] Define the workflow-run request envelope from a handler thread to Smithers. Commit(s): `f53c9b8`
-- [ ] Persist workflow-run supervision metadata, including reconnect cursor and handler-attention delivery state, as soon as the supervising handler thread has a concrete Smithers run id.
+- [ ] Persist workflow-run supervision metadata, including raw Smithers status, wait kind, reconnect cursor, handler-attention delivery state, heartbeat freshness, and lineage, as soon as the supervising handler thread has a concrete Smithers run id.
 - [ ] Build a POC one-task workflow under a handler thread that returns to the thread and then emits a handoff episode.
-- [x] Allow handler threads to call `workflow.start`. Commit(s): `f53c9b8`
-- [x] Allow handler threads to call `workflow.resume`. Commit(s): `f53c9b8`
-- [ ] Wake the supervising handler thread in a background turn when a workflow run completes, fails, pauses, or loses supervision transport.
+- [ ] Let handler threads call the Smithers-native run-launch surface through the Bun bridge for both new and resumed runs.
+- [ ] Add the Smithers-native supervision surface for inspect, blocker diagnosis, approvals, signals, cancellation, node detail, artifacts, transcripts, event history, frames, and later troubleshooting controls.
+- [ ] Define workflow task agents as a lower-level Smithers actor class distinct from orchestrator and handler-thread surfaces.
+- [ ] Adopt a PI-backed svvy workflow-task agent profile with a dedicated task prompt and `execute_typescript` as the default task-local tool surface.
+- [ ] Keep approval gates and hijack as Smithers runtime or operator controls around workflow task agents rather than exposing them as ordinary task-agent tools.
+- [ ] Build a POC bundled workflow task that runs the svvy workflow-task PI profile with `execute_typescript` only.
+- [ ] Wake the supervising handler thread in a background turn only when a workflow run reaches a terminal outcome, an actionable wait, a continuation boundary, or a supervision fault that requires handler judgment.
 - [x] Support multiple workflow runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
 - [ ] Derive active and latest workflow summaries from workflow-run state without a persisted thread-level latest pointer.
-- [ ] Emit explicit Smithers bridge lifecycle events that update workflow-run and handler-thread state without read-side refresh or polling.
-- [ ] Guarantee that a workflow-run failure still returns durable failure state to the supervising handler thread even when the planned workflow finalization path does not run.
+- [ ] Emit explicit Smithers bridge lifecycle events and control-plane reconnect writes that update workflow-run and handler-thread state without read-side repair loops.
+- [ ] Guarantee that a workflow-run failure or cancellation moves the handler thread into troubleshooting before any later user-directed closure or handoff.
 
 ## 6. Workflow Templates And Presets
 
@@ -178,20 +187,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Let handler threads declare or acquire an isolated worktree when needed.
 - [ ] Show which thread or workflow run owns each worktree-backed execution.
 
-## 14. Repo-Local Workflow Hooks
-
-- [ ] Discover `.svvy/` config for the current workspace.
-- [ ] Build a POC preflight hook flow for one consequential workflow run.
-- [ ] Define a first preflight hook declaration format.
-- [ ] Run preflight hooks before consequential workflow runs.
-- [ ] Make preflight outputs available to downstream workflow steps.
-- [ ] Build a POC validation hook flow that can fail a candidate workflow result.
-- [ ] Define a first validation hook declaration format.
-- [ ] Run validation hooks after candidate workflow completion.
-- [ ] Convert validation failure into structured workflow-run outcome and handler-thread state.
-- [ ] Persist hook artifacts and outputs for later inspection.
-
-## 15. Headless Surface
+## 14. Headless Surface
 
 - [ ] Build a POC one-shot headless entrypoint that reuses desktop orchestration code.
 - [ ] Define the headless one-shot input contract.
@@ -200,7 +196,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Emit thread, workflow-run, episode, and artifact references in headless results.
 - [ ] Reuse the same orchestrator and state model as desktop execution.
 
-## 16. Pane Layout And Expanded Surfaces
+## 15. Pane Layout And Expanded Surfaces
 
 - [ ] Define the stored shape for a fixed pane layout up to `3x3`, including multi-cell spans.
 - [ ] Build a POC exact slot-position icon system for pane occupancy, including spanned surfaces.
@@ -217,7 +213,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Open a selected handler-thread surface in a pane slot as a fully interactive surface.
 - [ ] Keep duplicated views of the same surface synchronized while allowing independent scroll position.
 
-## 17. Dedicated Workflow Inspector
+## 16. Dedicated Workflow Inspector
 
 - [ ] Define the projected graph shape for a workflow inspector surface.
 - [ ] Build a POC static graph view for one completed workflow run.
@@ -231,7 +227,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Open a selected child workflow node or related thread surface from the workflow inspector into another pane slot.
 - [ ] Keep completed workflow inspectors available as durable historical surfaces after completion.
 
-## 18. Recovery And Test Coverage
+## 17. Recovery And Test Coverage
 
 - [ ] Build a POC restart or resume flow that restores one active handler thread from durable state.
 - [ ] Restore pending clarification and waiting state after app restart.
@@ -240,7 +236,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Add integration tests that exercise handler-thread delegation and workflow-run supervision through Smithers.
 - [ ] Add integration tests that exercise restart and resume behavior across the product model.
 
-## 19. Context Budget Observability
+## 18. Context Budget Observability
 
 - [ ] Define the context-budget metric as an explicit percentage of the active model's max context.
 - [ ] Define neutral, orange, and red thresholds for that metric.

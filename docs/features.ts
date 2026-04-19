@@ -28,7 +28,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "True System Prompt Channel",
     status: "in-progress",
     summary:
-      "Loads svvy's orchestrator and handler-thread instructions through pi's real `systemPrompt` channel, keeps reconstructed prompt bodies limited to durable surface context plus transcript material, and renders the active system prompt as expandable session metadata instead of inline transcript text.",
+      "Loads svvy's orchestrator and handler-thread instructions through pi's real `systemPrompt` channel, keeps reconstructed prompt bodies limited to durable surface context plus transcript material, slices generated capability declarations by actor so each surface sees only its own callable API, and renders the active system prompt as expandable session metadata instead of inline transcript text.",
     sourceSpecs: ["docs/prd.md"],
   },
   {
@@ -59,24 +59,36 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Handler Thread Surfaces",
     status: "in-progress",
     summary:
-      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, stay multi-turn and directly messageable before and after handoff, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread.handoff` calls that append ordered handoff episodes over the thread's lifetime and immediately trigger a fresh orchestrator reconciliation turn.",
+      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, stay multi-turn and directly messageable before and after handoff, distinguish handler-active, workflow-active, waiting, troubleshooting, and completed thread states, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread.handoff` calls that append ordered handoff episodes over the thread's lifetime and immediately trigger a fresh orchestrator reconciliation turn.",
     sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
+  },
+  {
+    id: "smithers-tool-surface",
+    name: "Smithers-Native Tool Surface",
+    status: "in-progress",
+    summary:
+      "Exposes Smithers-native semantic workflow control and inspection tools through the Bun bridge for handler-thread surfaces, mirroring official Smithers names such as `list_workflows`, `run_workflow`, `list_runs`, `get_run`, `explain_run`, `list_pending_approvals`, `resolve_approval`, `get_node_detail`, `list_artifacts`, and `get_run_events` instead of inventing a parallel svvy `workflow.*` abstraction, while preserving underlying transport and invocation metadata in command facts and avoiding any dependency on the repo authoring workspace under `workflows/`.",
+    sourceSpecs: ["docs/prd.md", "docs/specs/workflow-supervision.spec.md"],
+  },
+  {
+    id: "workflow-task-agent-profile",
+    name: "Workflow Task Agent Profile",
+    status: "in-progress",
+    summary:
+      "Defines lower-level Smithers workflow task agents as a separate actor class beneath handler threads, using a PI-backed svvy task profile by default with task-local instructions and `execute_typescript` as the default adopted task tool surface, while keeping approval and hijack as Smithers runtime controls rather than ordinary task-agent tools.",
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/workflow-supervision.spec.md",
+      "docs/specs/execute-typescript.spec.md",
+    ],
   },
   {
     id: "workflow-library",
     name: "Workflow Templates And Presets",
     status: "in-progress",
     summary:
-      "Defines structural Smithers workflow templates such as `single_task`, `sequential_pipeline`, `fanout_join`, and `verification_run`, plus reusable presets and one-off authored workflows supervised by handler threads.",
+      "Defines bundled product-runtime Smithers workflow templates under `src/bun/smithers-runtime/` such as `single_task`, `sequential_pipeline`, `fanout_join`, and `verification_run`, plus reusable presets and one-off authored workflows supervised by handler threads, explicitly separate from the repo-root `workflows/` authoring package used to build svvy itself.",
     sourceSpecs: ["docs/prd.md"],
-  },
-  {
-    id: "workflow-hooks",
-    name: "Repo-Local Workflow Hooks",
-    status: "in-progress",
-    summary:
-      "Wraps consequential workflow runs with repo-local preflight and validation hooks that can use execute_typescript without flattening workflow control into api.* helpers or bypassing handler-thread supervision.",
-    sourceSpecs: ["docs/prd.md", "docs/specs/workflow-hooks.spec.md"],
   },
   {
     id: "prompt-history",
@@ -115,7 +127,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Handler Threads",
     status: "in-progress",
     summary:
-      "Tracks delegated handler threads as durable interactive surfaces keyed separately from workspace session containers and pi surface ids, with objective, current objective status, wait state, worktree context, and linkage to multiple workflow runs and multiple handoff episodes over the thread's lifetime.",
+      "Tracks delegated handler threads as durable interactive surfaces keyed separately from workspace session containers and pi surface ids, with objective, handler-attention status, wait state, worktree context, and linkage to multiple workflow runs and multiple handoff episodes over the thread's lifetime without flattening workflow outcome into thread terminal state.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -139,7 +151,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Workflow Run Records",
     status: "in-progress",
     summary:
-      "Stores one svvy-side record for each Smithers workflow run under a handler thread, including run identity, template or preset metadata, status, summary, timestamps, and related artifacts and command history, with lifecycle projection owned by explicit bridge or tool writes rather than read-side refresh.",
+      "Stores one svvy-side record for each Smithers workflow run under a handler thread, including run identity, template or preset metadata, normalized status, raw Smithers status, wait kind, reconnect cursor, heartbeat freshness, lineage, summary, timestamps, and related artifacts and command history, with lifecycle projection owned by explicit bridge or tool writes rather than read-side refresh.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -147,7 +159,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Session And Thread Wait State",
     status: "in-progress",
     summary:
-      "Represents user and external blocking conditions explicitly through surface-local wait state and whole-session frontier wait state without inventing wait episodes or relying on transcript inference.",
+      "Represents handler-owned and workflow-owned blocking conditions explicitly through surface-local wait state and whole-session frontier wait state, preserving whether a wait came from user input, approval, signal, timer, or other external dependency without inventing wait episodes or relying on transcript inference.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -155,7 +167,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Metadata-First Session Read Models",
     status: "in-progress",
     summary:
-      "Derives idle, running, waiting, and error session status, counts, ordered thread ids, and compact summary data from structured wait and thread state plus artifact metadata for sidebar, navigation, and restart recovery without transcript replay, transcript-file heuristics, or live prompt overlays.",
+      "Derives idle, running, waiting, and error session status, counts, ordered thread ids, and compact summary data from structured wait, handler-attention state, workflow-run state, and artifact metadata for sidebar, navigation, and restart recovery without transcript replay, transcript-file heuristics, or live prompt overlays.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -163,7 +175,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workflow Inspector Surface",
     status: "in-progress",
     summary:
-      "Provides a read-only live graph inspector for workflow runs, with node drill-down, template-aware presentation, and pane-based inspection.",
-    sourceSpecs: ["docs/prd.md"],
+      "Provides a read-only live graph inspector for workflow runs, with snapshot-plus-delta graph streaming, blocker diagnosis, node drill-down, transcript and artifact inspection, and pane-based inspection without forcing the orchestrator to absorb raw workflow history.",
+    sourceSpecs: ["docs/prd.md", "docs/specs/workflow-supervision.spec.md"],
   },
 ];

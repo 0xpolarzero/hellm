@@ -421,15 +421,15 @@ Preferred direction:
 - aggregate status per thread, session, and workflow run
 - incremental rollups for "latest verification" and "blocking failures"
 
-### 9. Repo-local workflow hooks
+### 9. Workflow setup and validation
 
 PRD pressure:
 
-- preflight and validation hooks run around consequential workflows
+- consequential workflows may still need setup and validation behavior, but that behavior should be modeled as explicit workflow steps rather than as a separate hook layer
 
 Optimization requirement:
 
-- hook execution must be bounded, cached where safe, and projected as structured outputs
+- those explicit workflow steps must be bounded, cached where safe, and projected as structured outputs
 
 Do not:
 
@@ -437,7 +437,7 @@ Do not:
 
 Preferred direction:
 
-- hook result caching keyed by repo state where valid
+- step result caching keyed by repo state where valid
 - structured hook artifacts
 - explicit hook timing and failure attribution
 

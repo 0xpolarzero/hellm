@@ -57,6 +57,8 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Keep status derivation and workflow lifecycle projection write-driven; do not overlay `activePrompt`, parse transcript files, or perform read-side Smithers repair writes.
 - Future Smithers lifecycle projection beyond explicit tool-boundary snapshots should arrive through bridge events rather than speculative read-side reconciliation.
 - Keep workflow-run state separate from handler-thread state.
+- Keep thread state about handler ownership and attention, not as a lossy proxy for raw workflow outcome.
+- Preserve raw Smithers workflow status, wait kind, heartbeat freshness, cursor metadata, and lineage instead of flattening them into generic thread status.
 - Derive active and latest workflow selectors from workflow-run state and recency rules rather than persisting a thread-level latest-workflow pointer.
 - Treat a handler thread as one delegated objective that may supervise many workflow runs over its lifetime.
 - Treat handler-thread episodes as durable handoff summaries that are emitted explicitly through `thread.handoff` whenever a thread gives control back to the orchestrator.
@@ -145,9 +147,9 @@ type StructuredSessionState = {
       | "execute_typescript"
       | "clarify"
       | "thread.start"
-      | "workflow.start"
-      | "workflow.resume"
-      | "handoff";
+      | "thread.handoff"
+      | "wait"
+      | `smithers.${string}`;
     status: "running" | "waiting" | "completed" | "failed";
     startedAt: string;
     updatedAt: string;
@@ -160,9 +162,15 @@ type StructuredSessionState = {
     surfacePiSessionId: string;
     title: string;
     objective: string;
-    status: "running" | "waiting" | "completed" | "failed" | "cancelled";
+    status:
+      | "running-handler"
+      | "running-workflow"
+      | "waiting"
+      | "troubleshooting"
+      | "completed";
     wait: null | {
-      kind: "user" | "external";
+      owner: "handler" | "workflow";
+      kind: "user" | "external" | "approval" | "signal" | "timer";
       reason: string;
       resumeWhen: string;
       since: string;
@@ -180,7 +188,28 @@ type StructuredSessionState = {
     workflowName: string;
     templateId: string | null;
     presetId: string | null;
-    status: "running" | "waiting" | "completed" | "failed" | "cancelled";
+    status:
+      | "running"
+      | "waiting"
+      | "continued"
+      | "completed"
+      | "failed"
+      | "cancelled";
+    smithersStatus:
+      | "running"
+      | "waiting-approval"
+      | "waiting-event"
+      | "waiting-timer"
+      | "finished"
+      | "continued"
+      | "failed"
+      | "cancelled";
+    waitKind: null | "approval" | "event" | "timer";
+    continuedFromRunIds: string[];
+    activeDescendantRunId: string | null;
+    lastEventSeq: number | null;
+    lastAttentionSeq: number | null;
+    heartbeatAt: string | null;
     summary: string;
     startedAt: string;
     updatedAt: string;
@@ -315,8 +344,8 @@ They exist because the product needs a durable answer to:
 
 - which delegated objectives exist
 - which pi-backed interactive surface owns each objective
-- whether that delegated objective is active, waiting, complete, or failed
-- which workflow run was most recent under that thread
+- whether the handler is actively working, a workflow is actively running, the objective is waiting, the thread is troubleshooting, or the current span is completed
+- which workflow run is currently active or most recent under that thread
 
 A thread is not itself a workflow run.
 
@@ -331,7 +360,9 @@ They answer:
 - how many workflow runs happened under a thread
 - which template or preset was used
 - which Smithers run id corresponds to each execution
-- whether the latest execution completed, failed, or paused
+- the normalized run status plus raw Smithers status and wait kind
+- whether the run continued into another lineage
+- whether supervision is current enough to reconnect without replaying from scratch
 
 ### CommandRecord
 
@@ -430,7 +461,7 @@ Use `turnDecision` this way:
 
 - `pending` is allowed only between turn creation and the moment the surface chooses how to proceed
 - orchestrator turns persist session-level routing decisions such as `reply`, `execute_typescript`, `clarify`, or `thread.start`
-- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `workflow.start`, `workflow.resume`, or `handoff`
+- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `smithers.run_workflow`, `smithers.get_run`, `smithers.resolve_approval`, `thread.handoff`, or `wait`
 - this symmetry is intentional even though only orchestrator turns own session-level routing
 - the turn decision is the top-level classification of the turn, not a replacement for command records
 - linkage to spawned threads, workflow runs, artifacts, and episodes still belongs in their own records plus linked commands
@@ -446,32 +477,32 @@ Use `turnDecision` this way:
 | `surfacePiSessionId` | Links the thread to the backing pi conversation surface. |
 | `title` | Compact human-readable label. |
 | `objective` | Durable statement of what this thread owns. |
-| `status` | Captures lifecycle state for the delegated objective. |
-| `wait` | Captures user or external wait details for the thread itself. |
+| `status` | Captures handler-attention state for the delegated objective. |
+| `wait` | Captures blocked-state details for the thread itself, including whether the wait is handler-owned or workflow-owned. |
 | `worktree` | Records the bound worktree when relevant. |
 | `startedAt` | Orders thread creation. |
 | `updatedAt` | Enables recency-based selectors. |
-| `finishedAt` | Marks when the current active work span most recently became completed, failed, or cancelled. Clear it if later work resumes in the same thread. |
+| `finishedAt` | Marks when the current active work span most recently became completed. Clear it if later work resumes in the same thread. |
 
 ### Thread Status Semantics
 
 Use thread status this way:
 
-- `running` while the handler thread is actively supervising the delegated objective, including while a Smithers workflow run is executing
-- `waiting` when the delegated objective is blocked on user or external input
-- `completed` when the delegated objective reached a successful terminal result and `thread.handoff` emitted a handoff episode
-- `failed` when the delegated objective terminated unsuccessfully and `thread.handoff` emitted a failure handoff episode
-- `cancelled` when the delegated objective was intentionally cancelled
+- `running-handler` while the handler is actively reasoning or issuing tools and no live workflow run currently owns forward progress
+- `running-workflow` while a Smithers workflow run is actively executing and the handler is idle but still owns the delegated objective
+- `waiting` when the delegated objective is durably blocked on user, approval, signal, timer, or other external input and no troubleshooting is required yet
+- `troubleshooting` when a workflow failed, was cancelled, continued into new lineage, or lost reliable supervision and the handler must inspect or repair before deciding what to do next
+- `completed` when the delegated objective reached an explicit terminal handoff point and `thread.handoff` emitted a handoff episode
 
 These statuses describe the objective state, not whether the thread surface can still receive direct messages.
 
 Waiting is not terminal for the objective state.
 
-A completed, failed, or cancelled thread surface remains directly interactive after handoff.
+A completed thread surface remains directly interactive after handoff.
 
 A follow-up chat turn may leave thread status unchanged.
 
-A follow-up work turn may move a completed, failed, or cancelled thread back to `running`, preserving earlier handoff episodes as durable history.
+A follow-up work turn may move a completed thread back to `running-handler` or `running-workflow`, preserving earlier handoff episodes as durable history.
 
 ## Workflow Run Model
 
@@ -485,7 +516,14 @@ A follow-up work turn may move a completed, failed, or cancelled thread back to 
 | `workflowName` | Product-visible workflow identifier. |
 | `templateId` | Records which structural template was used when relevant. |
 | `presetId` | Records which preset was used when relevant. |
-| `status` | Captures current top-level run status. |
+| `status` | Captures the normalized top-level run status used by `svvy`. |
+| `smithersStatus` | Preserves the raw Smithers run status for faithful inspection and reconnect behavior. |
+| `waitKind` | Preserves whether a waiting run is blocked on approval, event, or timer. |
+| `continuedFromRunIds` | Preserves run lineage when Smithers continues the workflow as a new run. |
+| `activeDescendantRunId` | Points at the active descendant run when Smithers continued this run as new. |
+| `lastEventSeq` | Stores the most recent applied Smithers event sequence for reconnect. |
+| `lastAttentionSeq` | Stores the most recent event sequence already delivered to the handler as attention work. |
+| `heartbeatAt` | Preserves the most recent Smithers heartbeat seen for this run. |
 | `summary` | Short top-level summary of the run state. |
 | `startedAt` | Start time of the run. |
 | `updatedAt` | Most recent state transition time. |
@@ -493,15 +531,20 @@ A follow-up work turn may move a completed, failed, or cancelled thread back to 
 
 ### Workflow Run Status Semantics
 
-Use workflow-run status this way:
+Map Smithers run status into `svvy` this way:
 
-- `running` while the Smithers run is alive and making progress
-- `waiting` when the Smithers run itself reaches a durable pause condition
-- `completed`, `failed`, or `cancelled` when the Smithers run reaches a terminal outcome
+- raw `running` -> normalized `running`
+- raw `waiting-approval`, `waiting-event`, or `waiting-timer` -> normalized `waiting` with `waitKind` set accordingly
+- raw `finished` -> normalized `completed`
+- raw `continued` -> normalized `continued`
+- raw `failed` -> normalized `failed`
+- raw `cancelled` -> normalized `cancelled`
 
 Do not confuse workflow-run termination with thread termination.
 
 A thread may survive several workflow runs before it emits a handoff episode, and it may later supervise more runs after a follow-up turn reactivates work on the same objective.
+
+When a workflow run is `continued`, selector logic should follow `activeDescendantRunId` to find the currently active execution.
 
 ## Command Model
 
@@ -528,6 +571,19 @@ A thread may survive several workflow runs before it emits a handoff episode, an
 | `updatedAt` | Enables recency-based selectors. |
 | `finishedAt` | Marks terminal completion, failure, or cancellation. Waiting commands keep `finishedAt = null`. |
 
+### Workflow Command Facts
+
+For `smithers.*` commands, `facts` should preserve both the adopted agent-visible Smithers tool name and the underlying Smithers invocation metadata.
+
+At minimum that should include:
+
+- transport or bridge surface used
+- raw Smithers operation name or endpoint
+- forwarded arguments
+- affected run id, node id, and iteration when relevant
+- pre-status and post-status
+- observed event-sequence range when a command is tied to workflow events
+
 ### CommandRecord Visibility
 
 The adopted visibility levels are:
@@ -540,7 +596,8 @@ Use them this way:
 
 - low-level repo or web reads inside `execute_typescript` are usually `trace`
 - material writes, artifact creation, and failed execs usually roll up as `summary`
-- `thread.start`, `thread.handoff`, `workflow.start`, `workflow.resume`, and `wait` are normally `surface`
+- `thread.start`, `thread.handoff`, `wait`, and Smithers-mutating commands such as `smithers.run_workflow`, `smithers.resolve_approval`, `smithers.runs.cancel`, and `smithers.signals.send` are normally `surface`
+- read-only Smithers inspection commands are usually `summary` unless the UI chooses to surface a specific one directly
 - child `api.*` commands remain nested detail by default
 
 ### CommandRecord Executor
@@ -698,10 +755,15 @@ Waiting is a shared lifecycle concept, not a separate execution subsystem.
 
 ### Thread Wait
 
-Use `thread.wait` when a handler thread needs:
+Use `thread.wait` when the delegated objective is durably blocked and the thread needs to record why.
 
-- user clarification
-- external input
+Common cases are:
+
+- handler-owned user clarification
+- workflow-owned approval waits
+- workflow-owned signal waits
+- workflow-owned timer waits
+- other external dependencies
 
 Rules:
 
@@ -716,7 +778,7 @@ Rules:
 
 Use it when:
 
-- some interactive surface is waiting on user or external input
+- some interactive surface is waiting on user, approval, signal, timer, or other external input
 - there are no runnable surfaces left in the session
 
 `session.wait` must point back to the owner:
@@ -747,8 +809,8 @@ The adopted session summary selector should return:
 The summary selector should derive session status in this order:
 
 1. if `session.wait` exists, the session status is `waiting`
-2. else if any thread is `running`, the session status is `running`
-3. else if the latest updated thread is `failed`, the session status is `error`
+2. else if any thread is `troubleshooting`, the session status is `error`
+3. else if any thread is `running-handler` or `running-workflow`, the session status is `running`
 4. else the session status is `idle`
 
 No other input participates in session status:
@@ -822,9 +884,9 @@ The implementation must enforce these invariants:
 - a thread may have many workflow runs over time
 - a handler thread may wait and resume many times
 - a handler thread remains message-addressable after handing control back
-- a completed, failed, or cancelled thread may later return to `running`
+- a completed thread may later return to `running-handler` or `running-workflow`
 - a new handoff episode may be created only when a thread reaches another terminal objective state and explicitly calls `thread.handoff`
-- a thread may be waiting only on user or external input, not on a fake wait episode
+- a thread may be waiting only on real blocked conditions such as user input, approval, signal, timer, or external dependency, not on a fake wait episode
 - `session.wait` must be cleared when runnable work exists again
 - a turn must end in exactly one of: `completed`, `failed`, or `waiting`
 

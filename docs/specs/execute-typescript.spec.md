@@ -29,7 +29,8 @@ tool call -> command -> handler -> events -> structured state -> UI
 Inside that model:
 
 - `execute_typescript` is the default generic work surface
-- `thread.start`, `workflow.start`, `workflow.resume`, and `wait` remain native top-level control tools
+- `thread.start`, `thread.handoff`, and `wait` remain `svvy`-native top-level control tools
+- workflow supervision stays on Smithers-native bridge tools rather than `api.exec.run` or a svvy-defined `workflow.*` wrapper
 
 `execute_typescript` is therefore:
 
@@ -95,7 +96,14 @@ Adopted rules:
 - build and dev flows generate an ambient `.d.ts` artifact from that source-of-truth module
 - the generated declaration keeps relevant JSDoc so usage rules survive into the emitted artifact
 - the runtime uses that generated declaration for `execute_typescript` static checking
-- the default system prompt embeds that same generated declaration verbatim so the orchestrator sees the exact callable surface
+- the active surface system prompt embeds only the generated declaration blocks relevant to that surface's callable tools
+- orchestrator and handler-thread prompts may share the `execute_typescript` declaration when both surfaces can call it, but other tool declarations must still be sliced by actor
+
+Actor-specific capability slicing still applies:
+
+- the orchestrator prompt should not receive handler-only Smithers declarations just because both actors may use `execute_typescript`
+- a handler-thread prompt should not receive orchestrator-only declarations such as `thread.start` just because both actors are backed by pi sessions
+- a workflow-task-agent prompt may receive the `execute_typescript` declaration as its primary task-local tool schema without receiving any handler-thread or orchestrator control declarations
 
 This is required because short prose summaries are not sufficient for a typed host SDK with namespace methods, subtle argument shapes, and important constraints such as:
 
@@ -119,11 +127,11 @@ Use `execute_typescript` for bounded generic work such as:
 Do not use `execute_typescript` to replace top-level control-flow tools:
 
 - `thread.start`
-- `workflow.start`
-- `workflow.resume`
+- `thread.handoff`
 - `wait`
+- Smithers-native workflow tools such as `smithers.run_workflow`, `smithers.resolve_approval`, or `smithers.runs.cancel`
 
-Those actions change product-owned execution state and remain native tools.
+Those actions change product-owned execution state and stay outside the generic TypeScript runner.
 
 ## Observable Capability Boundary
 
@@ -207,6 +215,7 @@ Rules:
 - camelCase is used when JavaScript identifiers cannot match the underlying command spelling exactly
 - the runtime injects one object named `api`
 - the runtime exposes the same surface to the orchestrator, handler threads, and workflow tasks that are allowed to use `execute_typescript`
+- that shared `execute_typescript` surface does not imply that every actor receives every non-`execute_typescript` tool declaration in the same prompt block
 
 ### Representative Usage
 
@@ -606,10 +615,11 @@ The same `execute_typescript` primitive should be available inside delegated Smi
 That means:
 
 - workflow steps may call `execute_typescript`
-- hooks may call `execute_typescript`
 - the `api.*` surface stays the same
 - the parent and child command model stays the same
 - snippet artifacts, child command facts, and parent rollups stay the same
+
+The default adopted workflow-task-agent profile should expose `execute_typescript` as its task-local tool surface and should not expose `thread.start`, `thread.handoff`, `wait`, or `smithers.*`.
 
 ## First Implementation Focus
 

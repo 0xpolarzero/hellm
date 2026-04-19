@@ -48,8 +48,7 @@ flowchart TD
         Generic["execute_typescript"]
         ThreadStart["thread.start"]
         ThreadHandoff["thread.handoff"]
-        WorkflowStart["workflow.start"]
-        WorkflowResume["workflow.resume"]
+        SmithersTools["Smithers-native workflow tools (`smithers.*`)"]
         Wait["wait"]
         DirectReply["Direct reply"]
     end
@@ -67,7 +66,7 @@ flowchart TD
 
     subgraph Runtime["Runtime Handlers"]
         RuntimeHandler["svvy runtime handles execute_typescript, thread.start, thread.handoff, and wait"]
-        SmithersBridge["Smithers bridge handles workflow.start and workflow.resume"]
+        SmithersBridge["Bun-owned Smithers bridge handles Smithers-native workflow tools"]
         ResumeHandler["Runtime resumes the supervising handler thread when a workflow run changes state"]
     end
 
@@ -93,8 +92,7 @@ flowchart TD
     Decide --> Generic
     Decide --> ThreadStart
     Decide --> ThreadHandoff
-    Decide --> WorkflowStart
-    Decide --> WorkflowResume
+    Decide --> SmithersTools
     Decide --> Wait
     Decide --> DirectReply
 
@@ -110,8 +108,7 @@ flowchart TD
 
     ThreadStart --> RuntimeHandler
     ThreadHandoff --> RuntimeHandler
-    WorkflowStart --> SmithersBridge
-    WorkflowResume --> SmithersBridge
+    SmithersTools --> SmithersBridge
     Wait --> RuntimeHandler
     DirectReply --> State
 
@@ -152,6 +149,8 @@ The orchestrator typically chooses among:
 
 It normally does **not** supervise every workflow pause, rerun, and repair step itself.
 
+The orchestrator prompt should know that handler threads can use Smithers workflow tools, but it should not receive the `smithers.*` callable schema in its own generated prompt block.
+
 Instead, it opens a handler thread for that delegated objective.
 
 ### 3. A Handler Thread Supervises Workflow Execution
@@ -161,9 +160,14 @@ Inside a handler thread, the normal choices are:
 - direct reply
 - `execute_typescript`
 - `thread.handoff`
-- `workflow.start`
-- `workflow.resume`
+- Smithers-native workflow tools such as `smithers.run_workflow`, `smithers.get_run`, `smithers.explain_run`, and `smithers.resolve_approval`
 - `wait`
+
+The workflow tool surface should mirror Smithers semantics rather than a svvy-defined `workflow.*` alias layer. Those Smithers-native commands are supervision helpers inside the handler-thread lifecycle, not evidence that the repo-root `workflows/` authoring package is the shipped product runtime.
+
+The agent does not get raw Smithers internals or direct CLI access. It gets `svvy`-registered `smithers.*` tools that call the Bun-owned Smithers bridge.
+
+The handler-thread prompt may know that the orchestrator can delegate and reconcile work, but it should not receive orchestrator-only tool declarations such as `thread.start` unless nested delegation is explicitly adopted later.
 
 The handler thread may:
 
@@ -175,17 +179,39 @@ The handler thread may:
 - stay in normal multi-turn chat for ordinary replies
 - call `thread.handoff` when it wants to return control to the orchestrator with a durable episode
 
-### 4. Workflow State Returns To The Handler Thread, Not The Orchestrator
+### 4. Workflow Task Agents Are Lower-Level Workers
+
+Inside a Smithers workflow, a task may itself run a lower-level workflow task agent.
+
+That actor is:
+
+- hosted by Smithers inside a task attempt, not by `svvy` as an interactive surface
+- configured with the same broad ingredients as the orchestrator and handler thread: model, reasoning, system prompt, and tools
+- a different contract because Smithers owns the task lifecycle, output validation, retries, approvals, and hijack behavior
+
+The adopted direction is:
+
+- use a PI-backed task-agent profile by default when a workflow task needs an adaptive agent
+- give that profile a `svvy` workflow-task prompt rather than the orchestrator or handler-thread prompt
+- expose only task-local tools; the default adopted task-agent surface is `execute_typescript`
+- do not expose `thread.start`, `thread.handoff`, `wait`, or `smithers.*` to workflow task agents
+
+Approvals and hijack are not ordinary task-agent tools:
+
+- approval belongs to Smithers workflow controls such as approval nodes or task approval gates
+- hijack belongs to Smithers runtime or operator controls around the underlying task agent session
+
+### 5. Workflow State Returns To The Handler Thread, Not The Orchestrator
 
 When a Smithers run:
 
 - completes
 - fails
-- pauses
+- pauses in an actionable way
 
 the runtime resumes the supervising handler thread with the structured run result.
 
-After `workflow.start` or `workflow.resume`, the runtime parks that handler thread while Smithers executes.
+After a handler thread launches or resumes a Smithers run through the Bun bridge, the runtime parks that handler thread while Smithers executes.
 
 The handler thread then decides what to do next.
 
@@ -193,7 +219,7 @@ The orchestrator only receives delegated handoff results when the handler thread
 
 When that happens, the runtime should open an orchestrator turn to reconcile the latest durable handoff instead of waiting for another user-authored orchestrator message.
 
-### 5. Explicit Handoff Episodes
+### 6. Explicit Handoff Episodes
 
 The supervising handler thread may manage:
 
@@ -210,7 +236,7 @@ Each `thread.handoff` emits one ordered handoff episode and marks the current ob
 
 That explicit handoff is the default reconciliation unit.
 
-### 6. Waiting Is A Lifecycle Status
+### 7. Waiting Is A Lifecycle Status
 
 `wait` is still a native control tool because wait changes product-level state.
 
@@ -226,7 +252,7 @@ The difference is where the wait lives:
 - orchestrator wait lives in the main orchestrator surface
 - delegated clarification usually lives in the handler thread surface
 
-### 7. Verification Is Workflow-Shaped Execution
+### 8. Verification Is Workflow-Shaped Execution
 
 Verification remains first-class in product behavior and UI, but it is modeled through workflow templates and presets rather than a separate native execution engine.
 
@@ -236,8 +262,11 @@ That means build, test, lint, and related checks can still have structured verif
 
 - `execute_typescript` remains the default generic work surface.
 - `api.exec.run` remains the explicit bounded process execution capability inside `execute_typescript`.
-- `thread.start`, `thread.handoff`, `workflow.start`, `workflow.resume`, and `wait` remain native control tools.
-- `workflow.start` and `workflow.resume` are primarily used inside handler threads.
+- `thread.start`, `thread.handoff`, and `wait` remain `svvy`-native control tools.
+- workflow supervision should use Smithers-native bridge tools such as `smithers.run_workflow`, `smithers.get_run`, and `smithers.resolve_approval`.
+- the Smithers-native tool surface targets bundled product-runtime workflows rather than the repo authoring workspace under `workflows/`.
+- capability declarations are actor-specific: the orchestrator gets only orchestrator-callable tools, and handler threads get only handler-callable tools.
+- workflow task agents are another actor class below handler threads and should receive only task-local tool declarations, with `execute_typescript` as the default adopted task tool.
 - runtime handlers and bridges write durable facts from real execution; agents do not mutate product state through arbitrary write tools.
 - child `api.*` calls remain nested command facts under a parent `execute_typescript` command.
 - tool-run summaries stay on command records and artifacts; ordinary handler replies do not emit episodes.

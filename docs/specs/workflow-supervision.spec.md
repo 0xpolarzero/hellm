@@ -6,7 +6,7 @@
 - Status: adopted direction for event-driven workflow supervision
 - Scope of this document:
   - define how `svvy` supervises Smithers runs under handler threads
-  - define the required runtime flow after `workflow.start` and `workflow.resume`
+  - define the required runtime flow after Smithers-native run-launch and supervision commands
   - define recovery, reconnect, wake-up, and cleanup behavior
   - separate the borrowed Smithers transport shape from `svvy`-owned product behavior
 
@@ -44,6 +44,35 @@ This means workflow supervision is:
 
 This spec refines section 5 of [progress.md](../progress.md) and the workflow-run parts of the [Structured Session State Spec](./structured-session-state.spec.md).
 
+## Two Smithers Contexts
+
+This repo contains two different Smithers contexts and they must not be conflated.
+
+### 1. Repo Authoring Workflows
+
+The repo-root [`workflows/`](../../workflows/README.md) workspace exists so engineers and agents can use Smithers to build and maintain `svvy` itself.
+
+Those workflows:
+
+- are source-checkout authoring assets
+- may rely on repo-local `node_modules`, `smithers.db`, prompts, and scripts
+- are not the shipped product runtime
+- are not the workflow registry that `svvy` should supervise inside the desktop app
+
+### 2. Product Runtime Workflows
+
+The shipped app also needs Smithers workflows, but those are a different thing.
+
+Product runtime workflows:
+
+- are the workflows supervised by `svvy` handler threads inside the desktop app
+- must be bundled with the app as product-owned runtime assets
+- must work in a packaged build without a source checkout
+- must not depend on repo-root `workflows/`, `workflows/node_modules/.bin/smithers`, or `workflows/smithers.db`
+- should live under an app-owned Smithers runtime area rooted at `src/bun/smithers-runtime/`
+
+When this spec says "workflow" without qualification, it means product runtime workflows, not the repo authoring workspace.
+
 ## Out Of Scope
 
 This spec does not define:
@@ -51,25 +80,27 @@ This spec does not define:
 - workflow template or preset selection
 - workflow authoring UX
 - the exact workflow library shape
-- repo-local preflight or validation hooks
 - renderer visuals beyond the state and sync requirements needed to support them
 
 Those remain separate steps and specs.
 
 ## Borrowed Boundary
 
-`svvy` should borrow the Smithers run-event transport and reconnect shape rather than inventing a separate workflow polling model.
+`svvy` should borrow Smithers control-plane transport and inspection surfaces rather than inventing a separate workflow polling model or workflow debugger.
 
-The local references show the relevant transport shape:
+The relevant Smithers surfaces are:
 
-- the Smithers GUI uses live run-event streaming in [SmithersClient.swift](../references/smithers-gui/SmithersClient.swift)
-- Smithers serve mode exposes workflow lifecycle events over SSE in [serve.mdx](../references/smithers/docs/integrations/serve.mdx)
+- per-run progress events emitted by `runWorkflow`
+- HTTP run-event streaming with reconnect by `afterSeq`
+- Gateway snapshot and streaming surfaces for long-lived clients and live graph inspection
+- official read models such as run summary, blocker diagnosis, node detail, transcript, artifacts, and raw event history
 
 The borrowed part is:
 
-- attaching to a Smithers run event stream
-- filtering by run id
-- reconnecting from a known event sequence
+- attaching to a Smithers run control-plane stream or read surface
+- filtering by run id and node id where needed
+- reconnecting from a known event sequence or re-baselining from an official snapshot
+- preserving raw Smithers run status and lineage instead of flattening it into thread state
 
 The `svvy`-owned part is:
 
@@ -86,8 +117,13 @@ The `svvy`-owned part is:
 - Recovery may use one-shot state reads to bootstrap or repair the stream attachment after restart, but steady-state supervision must remain event-driven.
 - One handler thread may supervise many workflow runs over its lifetime.
 - For this supervision slice, one handler thread should own at most one active Smithers run at a time.
+- Workflow task agents are a lower-level actor class inside Smithers tasks, not another `svvy` interactive surface.
 - `svvy` should derive active and latest workflow summaries from workflow-run records and recency rules rather than persisting a thread-level latest-workflow pointer.
-- `workflow.start` and `workflow.resume` remain native control tools, but they are only the entry points into supervision, not the whole feature.
+- `thread.start`, `thread.handoff`, and `wait` remain the only `svvy`-native control tools in this area.
+- Agent-facing workflow supervision should use Smithers-native semantic tools exposed through the Bun bridge rather than a svvy-defined `workflow.*` abstraction.
+- Shipped product runtime must not depend on repo-root `workflows/`, repo-relative Smithers binaries, or nearest-db path walking.
+- Product runtime workflows should live in the bundled app-owned Smithers runtime area rooted at `src/bun/smithers-runtime/`, not in the repo authoring workspace.
+- The first shipped supervision POC should use one bundled product-owned hello-world workflow, not a repo authoring workflow and not `.smithers/workflows` name discovery.
 - A workflow run never returns control directly to the orchestrator.
 - Only `thread.handoff` returns control to the orchestrator.
 
@@ -125,16 +161,37 @@ A workflow monitor is the Bun-side runtime object that:
 
 The monitor is runtime state, not transcript state.
 
+### Workflow Task Agent
+
+A workflow task agent is the lower-level worker attached to one Smithers task.
+
+It is:
+
+- hosted by Smithers inside a task attempt
+- configured with model, reasoning, system prompt, and task-local tools
+- not a `svvy` session surface, handler thread, or workflow supervisor
+
+Smithers owns the task agent's:
+
+- prompt execution
+- output validation
+- retries and fallback chains
+- approval gates
+- hijack behavior
+
+`svvy` owns only the higher-level product projection and the surrounding handler-thread supervision.
+
 ### Handler Attention
 
 Handler attention means a workflow state transition now requires another handler-thread decision.
 
 The important cases are:
 
-- workflow entered a durable wait
+- workflow entered an actionable durable wait
 - workflow completed
 - workflow failed
 - workflow was cancelled
+- workflow continued as new and lineage now needs relinking
 - supervision transport became irrecoverably degraded
 
 ## End-To-End Flow
@@ -143,7 +200,7 @@ The adopted flow is:
 
 1. The orchestrator delegates an objective into a handler thread.
 2. The handler thread selects, writes, or receives a concrete workflow to run.
-3. The handler thread calls `workflow.start` or `workflow.resume`.
+3. The handler thread calls `smithers.run_workflow` or another Smithers-native supervision tool through the Bun bridge.
 4. `svvy` launches or resumes the Smithers run and obtains the concrete Smithers run id.
 5. `svvy` persists or updates the workflow-run record immediately.
 6. `svvy` registers a workflow monitor for that workflow run.
@@ -151,6 +208,131 @@ The adopted flow is:
 8. The Bun side emits explicit session-sync events whenever those durable projections change visible session or thread state.
 9. If the workflow reaches a state that needs another handler decision, `svvy` opens a synthetic background turn on that same handler thread.
 10. The handler thread decides whether to inspect, repair, resume, ask the user, or hand control back with `thread.handoff`.
+
+## Shipped App Integration
+
+The shipped desktop app should run Smithers as an embedded product runtime, not by shelling out to the repo's authoring workspace.
+
+The packaged-app contract is:
+
+- bundle product-owned workflow definitions, prompts, and supporting runtime assets with the app under `src/bun/smithers-runtime/`
+- let the Bun side own the Smithers bridge, DB location, run lifecycle, and event projection for product workflows
+- use embedded `smithers-orchestrator` APIs for lifecycle control rather than source-checkout-relative CLI paths
+- let pi-facing tools talk to the Bun-owned bridge; they must not spawn `smithers` directly
+- use official Smithers control-plane surfaces for monitoring and reconnect semantics:
+  - `runWorkflow(...)` for direct start and resume behavior
+  - multi-workflow server semantics such as `POST /v1/runs`, `POST /v1/runs/:runId/resume`, `POST /v1/runs/:runId/cancel`, and `GET /v1/runs/:runId/events?afterSeq=N` for lifecycle parity
+  - Gateway-style devtools snapshots and streams when the product needs live graph inspection
+
+The current source-tree bootstrap that points at repo-root `workflows/` may remain a development aid, but it is not the shipped design and must not be cited as the product runtime architecture.
+
+## Initial Product Runtime Workflow
+
+The first shipped supervision slice should not depend on workflow authoring UX or seeded `.smithers/workflows` discovery.
+
+It should use:
+
+- one bundled product-owned TSX workflow file in `src/bun/smithers-runtime/workflows/`
+- one static task with validated structured output and no provider-backed agent requirement
+- launch through embedded `runWorkflow(...)` with the workflow module already bundled into the app
+
+Do not model the first product-runtime POC around repo-root `workflows/`, `.smithers/workflows`, `workflow run <name>`, or `workflows/node_modules/.bin/smithers up <file>`.
+
+## Workflow Task Agents
+
+Product-runtime workflows may contain lower-level workflow task agents inside their task nodes.
+
+The adopted direction is:
+
+- when a product workflow needs an adaptive coding agent, use a PI-backed task-agent profile by default
+- configure that task agent with a `svvy` workflow-task system prompt rather than the orchestrator or handler-thread prompt
+- expose only task-local tool declarations to that actor
+- the default adopted task-agent tool surface is `execute_typescript`
+- do not expose `thread.start`, `thread.handoff`, `wait`, or `smithers.*` to workflow task agents
+
+This is intentionally the same broad recipe family as the orchestrator and handler thread:
+
+- model
+- reasoning effort
+- system prompt
+- tools
+
+But it is a different actor contract because the host and lifecycle are different:
+
+- orchestrator and handler threads are pi sessions hosted by `svvy`
+- workflow task agents are task-scoped agents hosted by Smithers
+
+Smithers runtime controls around task agents stay outside the task-agent tool surface:
+
+- approval belongs to Smithers approval nodes or task approval gates such as `<Approval>` or `needsApproval`
+- hijack belongs to Smithers runtime or operator controls that reopen the underlying task-agent session
+
+`svvy` should treat approvals and hijack as workflow-supervision state and operator surfaces around a run, not as ordinary callable tools for the task agent itself.
+
+## Smithers Tool Surface
+
+`svvy` should not define a parallel `workflow.*` API.
+
+The shipped app should register Smithers-native workflow tools through the Bun-owned bridge.
+
+The adopted naming rule is:
+
+- when Smithers already publishes an agent-facing semantic tool name, use that name verbatim after the `smithers.` namespace prefix
+- when Smithers exposes only a server route or Gateway method, keep the Smithers noun and verb shape instead of inventing a svvy alias
+- the Bun bridge may adapt transport, auth, and packaging details, but it must not rename Smithers concepts into a competing product vocabulary
+
+The exact contract is:
+
+- the agent does not receive the raw embedded Smithers runtime object, a generic HTTP client for Smithers, direct MCP transport, or direct CLI execution rights
+- `svvy` owns the actual tool registration and exposes first-party `smithers.*` tools to the model
+- each exposed `smithers.*` tool is a narrow adapter around one Smithers semantic tool, server route, or Gateway method
+- those adapters may add only product-runtime concerns that Smithers itself does not know about:
+  - bind the call to the current handler thread or session
+  - resolve bundled product workflow identifiers
+  - normalize transport and packaging details for the desktop app
+  - record durable `svvy` command facts, linkage, and lifecycle metadata
+- those adapters must not create a second abstract API that renames Smithers concepts into `workflow.*` or other `svvy`-specific verbs when Smithers already provides the right vocabulary
+- `svvy` does not need to expose every Smithers capability in v1, but whatever it does expose should preserve Smithers semantics rather than re-design them
+
+Actor-specific exposure is part of that contract:
+
+- the orchestrator prompt should know that handler threads can supervise workflows through `smithers.*`, but it should not receive the `smithers.*` generated tool schema in its own prompt
+- handler-thread prompts should receive the `smithers.*` schema because they are the delegated surfaces that actually supervise workflow execution
+- handler-thread prompts should not receive orchestrator-only tools such as `thread.start` in the default adopted model
+- workflow task agents should receive only their task-local tool schema, which in the default adopted profile is `execute_typescript`
+- awareness of another actor's capabilities belongs in compact instructional prose, not in leaked callable declarations for tools that actor cannot invoke
+
+The first adopted Smithers-native surface is:
+
+| Agent-visible tool | Product class | Purpose | Primary adopted Smithers contract |
+| --- | --- | --- | --- |
+| `smithers.list_workflows` | required | List product-owned bundled workflows that the app can launch. | Smithers semantic tool `list_workflows`, backed by the app-owned workflow registry in the Bun bridge. |
+| `smithers.run_workflow` | required | Launch a new workflow run or resume the same run when Smithers still considers that run resumable. | Smithers semantic tool `run_workflow`, backed by embedded `runWorkflow(...)`, `POST /v1/runs`, and `POST /v1/runs/:runId/resume` semantics. |
+| `smithers.list_runs` | required | List recent runs and their compact summary state. | Smithers semantic tool `list_runs`, aligned with `GET /v1/runs` and Gateway `runs.list`. |
+| `smithers.get_run` | required | Return the main run summary the handler needs to reason. | Smithers semantic tool `get_run`, aligned with `GET /v1/runs/:runId` and Gateway `runs.get`. |
+| `smithers.watch_run` | bridge or UI | Watch a run until terminal or timeout. | Smithers semantic tool `watch_run`, backed by `onProgress` plus bridge-owned watch behavior. |
+| `smithers.explain_run` | required | Explain why the run is blocked, waiting, stale, or otherwise attention-worthy. | Smithers semantic tool `explain_run`, aligned with Smithers `why` diagnostics. |
+| `smithers.list_pending_approvals` | required | List pending approvals relevant to the current run or node. | Smithers semantic tool `list_pending_approvals`, aligned with approval queries over pending gates. |
+| `smithers.resolve_approval` | required | Approve or deny a pending approval. | Smithers semantic tool `resolve_approval`, aligned with `/approve|deny` server semantics and Gateway approval decisions. |
+| `smithers.get_node_detail` | required | Inspect attempts, tool calls, token usage, and validated output for one node. | Smithers semantic tool `get_node_detail`. |
+| `smithers.list_artifacts` | required | Inspect structured workflow artifacts and node outputs. | Smithers semantic tool `list_artifacts`. |
+| `smithers.get_chat_transcript` | required | Read workflow-related agent transcript grouped by attempts. | Smithers semantic tool `get_chat_transcript`. |
+| `smithers.get_run_events` | required | Read raw lifecycle events and paginate by sequence. | Smithers semantic tool `get_run_events`, aligned with `GET /v1/runs/:runId/events?afterSeq=N`. |
+| `smithers.runs.cancel` | required | Cancel an active run. | `POST /v1/runs/:runId/cancel` and Gateway `runs.cancel`. |
+| `smithers.signals.send` | required when workflows use signals | Deliver a durable signal to a waiting run. | `POST /v1/runs/:runId/signals/:signalName` and Gateway `signals.send`. |
+| `smithers.frames.list` | bridge or UI | Inspect rendered frames for timeline or inspector UIs. | `GET /v1/runs/:runId/frames` and Gateway `frames.list|get`. |
+| `smithers.getDevToolsSnapshot` | bridge or UI | Read a graph snapshot for the workflow inspector. | Gateway `getDevToolsSnapshot`. |
+| `smithers.streamDevTools` | bridge or UI | Stream graph deltas for a live inspector. | Gateway `streamDevTools`. |
+
+The first shipped bridge does not need to expose every Smithers operator surface to the agent.
+
+These Smithers capabilities should be documented as existing but treated as non-v1 or operator-only unless the product explicitly adopts them later:
+
+- CLI and operator flows such as `retry-task`, `replay`, `fork`, `timeline`, `diff`, `graph`, and `hijack`
+- troubleshooting helpers such as `workflow path`, `workflow doctor`, and `agents doctor`
+- human-loop operator commands such as `human answer` and `human cancel`
+
+Every `smithers.*` command record should preserve both the adopted agent-visible tool name and the underlying Smithers invocation metadata, including transport, raw operation name, arguments, affected run or node, pre-status, post-status, and observed event-sequence range.
 
 ## Transport Rules
 
@@ -168,14 +350,14 @@ That means:
 
 ### Reconnect
 
-The supervision transport must support reconnect from the last applied event sequence.
+The supervision transport must support reconnect from the last applied event sequence or a fresh snapshot baseline.
 
-The serve-mode event stream already defines the right reconnect shape with `afterSeq` in [serve.mdx](../references/smithers/docs/integrations/serve.mdx).
+Smithers HTTP run-event streaming already exposes reconnect by `afterSeq`, and Gateway-style live graph streams may require a fresh snapshot plus later deltas.
 
 The adopted `svvy` rule is:
 
 - persist enough durable cursor metadata per workflow run to reconnect after restart or stream interruption
-- reconnect from the last applied sequence instead of replaying the full run every time
+- reconnect from the last applied sequence when the transport supports it, otherwise re-baseline from an official Smithers snapshot
 - treat reconnect as part of normal supervision, not as a special operator action
 
 ### Bootstrap And Recovery Reads
@@ -231,11 +413,15 @@ The bridge must not rely on transcript parsing or read-side repair loops to keep
 
 Use thread status this way:
 
-- `running` while the delegated objective is still owned by the handler thread, including while a workflow is actively executing or after a workflow terminal event that still needs handler judgment
-- `waiting` when the delegated objective is blocked on user or external input and the current thread should surface that wait
-- `completed`, `failed`, or `cancelled` only when the handler thread itself has reached a terminal objective span and `thread.handoff` has closed that span
+- `running-handler` while the handler is actively reasoning, issuing tools, or otherwise working and no live workflow run currently owns forward progress
+- `running-workflow` while a Smithers run is actively executing and the handler is idle but still owns the objective
+- `waiting` when the delegated objective is durably blocked on user, approval, signal, timer, or other external input and no troubleshooting is required yet
+- `troubleshooting` when a workflow failed, was cancelled, continued into a new run lineage, or lost reliable supervision and the handler must inspect or repair before deciding what to do next
+- `completed` only when the handler thread itself has reached a terminal objective span and `thread.handoff` has closed that span
 
 A workflow run becoming terminal does not by itself make the thread terminal.
+
+A workflow failure or cancellation must move the thread into `troubleshooting` before any later user-directed closure or handoff.
 
 ## Handler Wake-Up Rules
 
@@ -243,13 +429,16 @@ A workflow run becoming terminal does not by itself make the thread terminal.
 
 The supervision bridge should request handler attention when:
 
-- a workflow enters a durable wait
+- a workflow enters an actionable `waiting-approval` or `waiting-event` state
 - a workflow reaches `completed`
 - a workflow reaches `failed`
 - a workflow reaches `cancelled`
+- a workflow reaches `continued`
 - supervision cannot continue safely because transport or projection became irrecoverably degraded
 
 Ordinary non-terminal progress events should update state and UI but should not wake the handler thread.
+
+`waiting-timer` is normally monitor-owned and should not wake the handler on its own.
 
 ### How To Wake The Handler
 
@@ -269,9 +458,9 @@ The synthetic handler-resume prompt should include:
 - thread id and objective
 - workflow-run id and Smithers run id
 - workflow name
-- normalized workflow status
+- normalized workflow status plus raw Smithers status
 - current workflow summary
-- relevant wait reason or failure detail
+- relevant wait kind, blocker diagnosis, lineage detail, or failure detail
 - any important artifact or lifecycle references needed to act confidently
 - an explicit instruction that the handler must now decide what to do next
 
@@ -279,7 +468,7 @@ The expected next actions are:
 
 - inspect
 - repair
-- `workflow.resume`
+- `smithers.run_workflow` when Smithers still considers the same run resumable
 - ask the user
 - `thread.handoff`
 
@@ -292,6 +481,12 @@ The adopted rule is:
 - supervision must track what transition has already been delivered to the handler
 - repeated notifications for the same effective state should collapse into one pending handler-attention unit
 - if the handler thread already has an active prompt, new workflow attention should be queued or coalesced rather than interrupting that active turn
+
+### Resume Versus Replacement Run
+
+`smithers.run_workflow` may resume an existing run only when Smithers still considers that same run resumable under the same workflow source and input lineage.
+
+If the handler edits workflow source, changes workflow input, or hits a Smithers non-resumable condition, it must start a replacement run instead of trying to resume the same run.
 
 ## Recovery And Restart
 
@@ -343,6 +538,7 @@ The adopted cleanup rules are:
 In practice that means:
 
 - no active supervised run should remain attached to the thread when a terminal handoff episode is emitted
+- a failed or cancelled workflow run is not by itself a valid handoff condition; it must first be repaired, turned into an explicit wait, or closed by an explicit user-directed decision
 - historical workflow runs remain inspectable after handoff
 - a later follow-up turn on the same thread may start another workflow run for a new active span under that thread
 
@@ -366,7 +562,7 @@ That means the bridge must be able to produce:
 
 - durable failed workflow-run state
 - failure lifecycle facts and artifacts
-- handler attention for the supervising thread
+- handler attention for the supervising thread and a `troubleshooting` thread state
 
 This guarantee belongs to `svvy` supervision, not to ad hoc user refresh.
 
@@ -391,7 +587,10 @@ The correct fallback for `svvy` is reconnect and recovery, not silent polling.
 - [Execution Model](../execution-model.md)
 - [Progress](../progress.md)
 - [Structured Session State Spec](./structured-session-state.spec.md)
-- [Workflow Hooks Spec](./workflow-hooks.spec.md)
 - [Smithers GUI Client](../references/smithers-gui/SmithersClient.swift)
 - [Smithers GUI Runs View](../references/smithers-gui/RunsView.swift)
 - [Smithers Serve Docs](../references/smithers/docs/integrations/serve.mdx)
+
+### External Sources
+
+- [Smithers Full Documentation](https://smithers.sh/llms-full.txt)
