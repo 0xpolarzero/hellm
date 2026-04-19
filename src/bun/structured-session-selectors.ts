@@ -564,7 +564,10 @@ export function deriveStructuredSessionStatus(input: {
 export function buildStructuredSessionView(
   session: StructuredSessionSnapshot,
 ): StructuredSessionView {
-  const grouped = groupThreadIdsByStatus(session.threads);
+  const delegatedThreads = session.threads.filter((thread) =>
+    isDelegatedHandlerThread(session, thread),
+  );
+  const grouped = groupThreadIdsByStatus(delegatedThreads);
   const commandRollups = buildCommandRollups(session);
   const latestEpisodePreview = deriveLatestEpisodePreview(session);
   const latestWorkflowRunSummary = deriveLatestWorkflowRunSummary(session);
@@ -577,7 +580,7 @@ export function buildStructuredSessionView(
         status: turn.status,
         updatedAt: turn.updatedAt,
       })),
-      threads: session.threads.map((thread) => ({
+      threads: delegatedThreads.map((thread) => ({
         status: thread.status,
         updatedAt: thread.updatedAt,
       })),
@@ -585,7 +588,7 @@ export function buildStructuredSessionView(
     wait: structuredClone(session.session.wait),
     counts: {
       turns: session.turns.length,
-      threads: session.threads.length,
+      threads: delegatedThreads.length,
       commands: session.commands.length,
       episodes: session.episodes.length,
       verifications: session.verifications.length,
@@ -594,7 +597,7 @@ export function buildStructuredSessionView(
       events: session.events.length,
     },
     threadIdsByStatus: grouped,
-    threadIds: deriveThreadIds(session.threads),
+    threadIds: deriveThreadIds(delegatedThreads),
     latestEpisodePreview,
     latestWorkflowRunSummary,
     commandRollups,

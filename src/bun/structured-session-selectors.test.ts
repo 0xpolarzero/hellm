@@ -893,6 +893,56 @@ describe("structured session selectors", () => {
     expect(buildStructuredHandlerThreadInspector(snapshot, "thread-local")).toBeNull();
   });
 
+  it("derives session sidebar status and thread counts from delegated handler threads only", () => {
+    const snapshot = createSessionSnapshot({
+      session: {
+        id: "session-sidebar",
+        orchestratorPiSessionId: "session-sidebar",
+        wait: null,
+      },
+      threads: [
+        {
+          id: "thread-local-running",
+          surfacePiSessionId: "session-sidebar",
+          title: "Orchestrator reconciliation turn",
+          objective: "Review the latest handoff.",
+          status: "running",
+          updatedAt: "2026-04-18T10:05:00.000Z",
+        },
+        {
+          id: "thread-handler-complete",
+          surfacePiSessionId: "pi-thread-handler-1",
+          title: "Parser fix thread",
+          objective: "Patch the parser bug.",
+          status: "completed",
+          updatedAt: "2026-04-18T10:04:30.000Z",
+          finishedAt: "2026-04-18T10:04:30.000Z",
+        },
+      ],
+    });
+
+    expect(buildStructuredSessionView(snapshot)).toMatchObject({
+      sessionStatus: "idle",
+      counts: {
+        threads: 1,
+      },
+      threadIdsByStatus: {
+        running: [],
+        waiting: [],
+        failed: [],
+      },
+      threadIds: ["thread-handler-complete"],
+    });
+
+    expect(buildStructuredSessionSummaryProjection(snapshot)).toMatchObject({
+      status: "idle",
+      counts: {
+        threads: 1,
+      },
+      threadIds: ["thread-handler-complete"],
+    });
+  });
+
   it("prefers active workflow runs, then terminal episodes, then verification summaries in preview", () => {
     const workflowSnapshot = createSessionSnapshot({
       session: {

@@ -1189,6 +1189,17 @@ describe("WorkspaceSessionCatalog", () => {
       const activeSummary = await catalog.getActiveSessionSummary();
       expect(activeSummary?.session.id).toBe(created.session.id);
 
+      const listed = await catalog.listSessions();
+      const orchestratorSummary = listed.sessions.find((session) => session.id === created.session.id);
+      expect(orchestratorSummary).toMatchObject({
+        status: "idle",
+        threadIdsByStatus: {
+          running: [],
+          waiting: [],
+          failed: [],
+        },
+      });
+
       const snapshot = getStructuredSessionState(catalog, created.session.id);
       const orchestratorTurn = snapshot.turns.find(
         (turn) =>
