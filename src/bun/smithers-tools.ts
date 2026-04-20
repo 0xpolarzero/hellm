@@ -444,7 +444,7 @@ function createSmithersTool<TSchema extends TypeBoxSchema>(input: {
         smithersToolName: input.name,
         transport: "bundled-runtime",
         args: params,
-        ...(input.afterExecute?.({ params, before, result }) ?? {}),
+        ...input.afterExecute?.({ params, before, result }),
       };
       input.store.finishCommand({
         commandId: command.id,

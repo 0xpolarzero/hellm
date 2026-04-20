@@ -182,7 +182,7 @@ function stableJsonStringify(value: unknown): string {
     return `[${value.map((entry) => stableJsonStringify(entry)).join(",")}]`;
   }
   if (value && typeof value === "object") {
-    const entries = Object.entries(value as JsonObject).sort(([left], [right]) =>
+    const entries = Object.entries(value as JsonObject).toSorted(([left], [right]) =>
       left.localeCompare(right),
     );
     return `{${entries

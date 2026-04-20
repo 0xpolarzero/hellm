@@ -944,7 +944,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         throw new Error("Cannot set session wait while other runnable thread work remains.");
       }
     } else if (
-      this.queryThreadRows(session.session_id).some((thread) => isRunnableThreadStatus(thread.status))
+      this.queryThreadRows(session.session_id).some((thread) =>
+        isRunnableThreadStatus(thread.status),
+      )
     ) {
       throw new Error("Cannot set orchestrator session wait while runnable thread work remains.");
     }
@@ -1495,9 +1497,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           ? existing.active_descendant_run_id
           : (input.activeDescendantRunId ?? null),
         input.lastEventSeq ?? existing.last_event_seq,
-        input.lastAttentionSeq === undefined
-          ? existing.last_attention_seq
-          : input.lastAttentionSeq,
+        input.lastAttentionSeq === undefined ? existing.last_attention_seq : input.lastAttentionSeq,
         input.heartbeatAt === undefined ? existing.heartbeat_at : (input.heartbeatAt ?? null),
         input.summary,
         timestamp,
@@ -1865,9 +1865,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     }
 
     if (
-      threads.some(
-        (thread) => thread.id !== ownerThreadId && isRunnableThreadStatus(thread.status),
-      )
+      threads.some((thread) => thread.id !== ownerThreadId && isRunnableThreadStatus(thread.status))
     ) {
       this.clearSessionWait({ sessionId });
     }
@@ -2284,9 +2282,7 @@ function isTerminalThreadStatus(status: StructuredThreadStatus): boolean {
 
 function isRunnableThreadStatus(status: StructuredThreadStatus): boolean {
   return (
-    status === "running-handler" ||
-    status === "running-workflow" ||
-    status === "troubleshooting"
+    status === "running-handler" || status === "running-workflow" || status === "troubleshooting"
   );
 }
 

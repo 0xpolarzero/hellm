@@ -575,8 +575,7 @@ export function deriveStructuredSessionStatus(input: {
 
   if (
     input.threads.some(
-      (thread) =>
-        thread.status === "running-handler" || thread.status === "running-workflow",
+      (thread) => thread.status === "running-handler" || thread.status === "running-workflow",
     )
   ) {
     return "running";
