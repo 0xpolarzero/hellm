@@ -16,10 +16,6 @@ The top-level orchestrator stays narrow: it owns product intent, routing, and fi
 
 That keeps product-level reasoning in one place and implementation detail in the delegated surface that owns it.
 
-## Where Smithers Fits
-
-Smithers is not the top-level agent. It is the workflow engine that handler threads use for real bounded execution through structural templates, reusable presets, and one-off authored workflows when needed.
-
 ## Docs
 
 Product intent lives in [docs/prd.md](./docs/prd.md). The current feature inventory lives in [docs/features.ts](./docs/features.ts). The execution model is described in [docs/execution-model.md](./docs/execution-model.md). Progress is tracked in [docs/progress.md](./docs/progress.md).
