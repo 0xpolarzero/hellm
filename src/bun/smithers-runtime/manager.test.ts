@@ -11,7 +11,7 @@ import {
   bundledWorkflowRuntimeStoredInputSchema,
   readBundledWorkflowLaunchInput,
 } from "./runtime-input";
-import { createSmithers } from "smithers-orchestrator";
+import { WaitForEvent, createSmithers } from "smithers-orchestrator";
 import { z } from "zod";
 
 const tempDirs: string[] = [];
@@ -328,6 +328,163 @@ function getSmithersContinuation(value: unknown): { payload?: { cursor?: string 
   return value as { payload?: { cursor?: string } };
 }
 
+function createSignalWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {
+  const launchSchema = z.object({
+    signalName: z.string().min(1).default("deploy.completed"),
+  });
+  const signalPayloadSchema = z.object({
+    environment: z.string(),
+    sha: z.string(),
+    status: z.enum(["success", "failure"]),
+  });
+  const resultSchema = z.object({
+    summary: z.string(),
+    environment: z.string(),
+    status: z.enum(["success", "failure"]),
+  });
+  const smithersApi = createSmithers(
+    {
+      input: bundledWorkflowRuntimeStoredInputSchema,
+      signalPayload: signalPayloadSchema,
+      signalResult: resultSchema,
+    },
+    { dbPath },
+  );
+
+  return {
+    id: "wait_for_signal",
+    label: "Wait For Signal",
+    description: "Waits on a durable Smithers signal and records the delivered payload.",
+    workflowName: "svvy-wait-for-signal",
+    launchSchema,
+    workflow: smithersApi.smithers((ctx) => {
+      const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);
+      const payload = latestEntry<z.infer<typeof signalPayloadSchema>>(ctx.outputs.signalPayload);
+      return React.createElement(
+        smithersApi.Workflow,
+        { name: "svvy-wait-for-signal" },
+        React.createElement(
+          smithersApi.Sequence,
+          null,
+          React.createElement(WaitForEvent, {
+            id: "wait-signal",
+            event: workflowInput.signalName,
+            output: smithersApi.outputs.signalPayload,
+            outputSchema: signalPayloadSchema,
+            label: `wait:${workflowInput.signalName}`,
+          }),
+          payload
+            ? React.createElement(smithersApi.Task, {
+                id: "result",
+                output: smithersApi.outputs.signalResult,
+                children: {
+                  summary: `Received ${workflowInput.signalName} for ${payload.environment}.`,
+                  environment: payload.environment,
+                  status: payload.status,
+                },
+              })
+            : null,
+        ),
+      );
+    }),
+  };
+}
+
+function createTranscriptWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {
+  const launchSchema = z.object({
+    prompt: z.string().min(1).default("Summarize the latest transcript probe."),
+  });
+  const transcriptReplySchema = z.object({
+    reply: z.string(),
+    promptEcho: z.string(),
+  });
+  const resultSchema = z.object({
+    summary: z.string(),
+    reply: z.string(),
+  });
+  const smithersApi = createSmithers(
+    {
+      input: bundledWorkflowRuntimeStoredInputSchema,
+      transcriptReply: transcriptReplySchema,
+      transcriptResult: resultSchema,
+    },
+    { dbPath },
+  );
+  const transcriptAgent = {
+    id: "svvy-deterministic-transcript-agent",
+    async generate(rawArgs: unknown) {
+      const args = rawArgs as {
+        prompt?: string;
+        onStdout?: (chunk: string) => void;
+        onStepFinish?: (step: {
+          response: { messages: Array<{ role: string; content: string }> };
+        }) => void;
+      };
+      const promptText =
+        typeof args.prompt === "string" && args.prompt.trim().length > 0
+          ? args.prompt.trim()
+          : "No prompt provided.";
+      const response = {
+        reply: `Handled: ${promptText}`,
+        promptEcho: promptText,
+      };
+      const responseText = JSON.stringify(response);
+      args.onStdout?.(responseText);
+      args.onStepFinish?.({
+        response: {
+          messages: [{ role: "assistant", content: responseText }],
+        },
+      });
+      return {
+        text: responseText,
+        output: response,
+        response: {
+          messages: [{ role: "assistant", content: responseText }],
+        },
+      };
+    },
+  };
+
+  return {
+    id: "chat_transcript_probe",
+    label: "Chat Transcript Probe",
+    description: "Runs a deterministic agent task so transcript inspection can read real attempt history.",
+    workflowName: "svvy-chat-transcript-probe",
+    launchSchema,
+    workflow: smithersApi.smithers((ctx) => {
+      const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);
+      const reply = latestEntry<z.infer<typeof transcriptReplySchema>>(ctx.outputs.transcriptReply);
+      return React.createElement(
+        smithersApi.Workflow,
+        { name: "svvy-chat-transcript-probe" },
+        React.createElement(
+          smithersApi.Sequence,
+          null,
+          React.createElement(
+            smithersApi.Task,
+            {
+              id: "assistant",
+              output: smithersApi.outputs.transcriptReply,
+              agent: transcriptAgent as any,
+            },
+            workflowInput.prompt,
+          ),
+          reply
+            ? React.createElement(smithersApi.Task, {
+                id: "result",
+                output: smithersApi.outputs.transcriptResult,
+                children: {
+                  summary: `Captured transcript reply for prompt "${reply.promptEcho}".`,
+                  reply: reply.reply,
+                },
+              })
+            : null,
+        ),
+      );
+    }),
+  };
+}
+
 describe("SmithersRuntimeManager", () => {
   it("publishes compiled launch contracts with input-side defaults and updates the tool-surface version when workflows change", () => {
     const { cwd, manager } = createWorkspaceFixture();
@@ -470,6 +627,8 @@ describe("SmithersRuntimeManager", () => {
       runId: launched.runId,
       workflowName: "svvy-hello-world",
       status: "finished",
+      sessionId,
+      threadId,
     });
 
     const run = await manager.getRun(launched.runId);
@@ -483,7 +642,11 @@ describe("SmithersRuntimeManager", () => {
     });
 
     const explanation = await manager.explainRun(launched.runId);
-    expect(explanation.explanation).toBe("The workflow finished successfully.");
+    expect(explanation.summary).toContain("finished");
+    expect(explanation.diagnosis).toMatchObject({
+      runId: launched.runId,
+      status: "finished",
+    });
 
     const events = await manager.getRunEvents({ runId: launched.runId });
     expect(events.map((event: { type: string }) => event.type)).toEqual(
@@ -507,6 +670,113 @@ describe("SmithersRuntimeManager", () => {
     const artifacts = await manager.listArtifacts({ runId: launched.runId, limit: 10 });
     expect(artifacts.outputs.map((entry: { nodeId: string }) => entry.nodeId)).toEqual(
       expect.arrayContaining(["greeting", "result"]),
+    );
+  });
+
+  it("lists workspace-global runs with svvy session and thread ownership metadata", async () => {
+    const {
+      manager,
+      store,
+      sessionId,
+      threadId,
+      surfacePiSessionId,
+    } = createWorkspaceFixture();
+
+    const secondarySessionId = "session-smithers-runtime-secondary";
+    store.upsertPiSession({
+      sessionId: secondarySessionId,
+      title: "Secondary Smithers Runtime Session",
+      provider: "openai",
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      messageCount: 1,
+      status: "running",
+      createdAt: "2026-04-20T08:05:00.000Z",
+      updatedAt: "2026-04-20T08:05:00.000Z",
+    });
+    const secondarySeedTurn = store.startTurn({
+      sessionId: secondarySessionId,
+      surfacePiSessionId: secondarySessionId,
+      requestSummary: "Open a second handler thread for workflow supervision",
+    });
+    const secondaryHandlerThread = store.createThread({
+      turnId: secondarySeedTurn.id,
+      surfacePiSessionId: "pi-thread-smithers-runtime-secondary",
+      title: "Secondary workflow supervisor",
+      objective: "Supervise additional bundled Smithers workflows.",
+    });
+    store.finishTurn({
+      turnId: secondarySeedTurn.id,
+      status: "completed",
+    });
+
+    const firstLaunchCommand = createWorkflowCommand({
+      store,
+      sessionId,
+      threadId,
+      surfacePiSessionId,
+      requestSummary: "Launch primary hello world",
+      title: "Run primary hello_world",
+      summary: "Launch the primary hello_world workflow.",
+      toolName: "smithers.run_workflow.hello_world",
+    });
+    const secondLaunchCommand = createWorkflowCommand({
+      store,
+      sessionId: secondarySessionId,
+      threadId: secondaryHandlerThread.id,
+      surfacePiSessionId: secondaryHandlerThread.surfacePiSessionId,
+      requestSummary: "Launch secondary hello world",
+      title: "Run secondary hello_world",
+      summary: "Launch the secondary hello_world workflow.",
+      toolName: "smithers.run_workflow.hello_world",
+    });
+
+    const primaryLaunch = await manager.launchWorkflow({
+      sessionId,
+      threadId,
+      workflowId: "hello_world",
+      launchInput: { message: "primary ownership" },
+      commandId: firstLaunchCommand.commandId,
+    });
+    const secondaryLaunch = await manager.launchWorkflow({
+      sessionId: secondarySessionId,
+      threadId: secondaryHandlerThread.id,
+      workflowId: "hello_world",
+      launchInput: { message: "secondary ownership" },
+      commandId: secondLaunchCommand.commandId,
+    });
+
+    await waitFor("workspace-global hello_world completion", async () => {
+      try {
+        const [primaryRun, secondaryRun] = await Promise.all([
+          manager.getRun(primaryLaunch.runId),
+          manager.getRun(secondaryLaunch.runId),
+        ]);
+        return primaryRun.status === "finished" && secondaryRun.status === "finished";
+      } catch {
+        return false;
+      }
+    });
+
+    const runs = await manager.listRuns({ workflowId: "hello_world" });
+    expect(runs).toHaveLength(2);
+    expect(runs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: primaryLaunch.runId,
+          workflowName: "svvy-hello-world",
+          status: "finished",
+          sessionId,
+          threadId,
+        }),
+        expect.objectContaining({
+          runId: secondaryLaunch.runId,
+          workflowName: "svvy-hello-world",
+          status: "finished",
+          sessionId: secondarySessionId,
+          threadId: secondaryHandlerThread.id,
+        }),
+      ]),
     );
   });
 
@@ -625,7 +895,8 @@ describe("SmithersRuntimeManager", () => {
     });
 
     const explanation = await manager.explainRun(launched.runId);
-    expect(explanation.explanation).toContain("Waiting for 1 approval request");
+    expect(explanation.summary).toContain("waiting-approval");
+    expect(explanation.diagnosis.blockers.length).toBeGreaterThan(0);
 
     await manager.resolveApproval({
       runId: launched.runId,
@@ -812,6 +1083,239 @@ describe("SmithersRuntimeManager", () => {
     const parentSmithersRunId = parent?.smithersRunId;
     expect(parentSmithersRunId).toBeTruthy();
     expect(launched.runId).toBe(parentSmithersRunId!);
+  });
+
+  it("diagnoses signal waits and exposes real frame plus DevTools inspection for bundled runs", async () => {
+    const { cwd, store, manager, sessionId, threadId, surfacePiSessionId } =
+      createWorkspaceFixture();
+    registerWorkflow(manager, createSignalWorkflowDefinition(smithersDbPath(cwd)));
+
+    const launchCommand = createWorkflowCommand({
+      store,
+      sessionId,
+      threadId,
+      surfacePiSessionId,
+      requestSummary: "Launch signal workflow",
+      title: "Run wait_for_signal",
+      summary: "Launch the wait_for_signal workflow.",
+      toolName: "smithers.run_workflow.wait_for_signal",
+    });
+    const launched = await manager.launchWorkflow({
+      sessionId,
+      threadId,
+      workflowId: "wait_for_signal",
+      launchInput: { signalName: "deploy.completed" },
+      commandId: launchCommand.commandId,
+    });
+
+    await waitFor("signal wait state", async () => {
+      try {
+        const run = await manager.getRun(launched.runId);
+        return run.status === "waiting-event" && run.waitKind === "signal";
+      } catch {
+        return false;
+      }
+    });
+
+    let snapshot = store.getSessionState(sessionId);
+    expect(snapshot.workflowRuns.find((entry) => entry.smithersRunId === launched.runId)).toMatchObject({
+      status: "waiting",
+      smithersStatus: "waiting-event",
+      waitKind: "signal",
+    });
+    expect(snapshot.threads.find((thread) => thread.id === threadId)).toMatchObject({
+      id: threadId,
+      status: "waiting",
+      wait: expect.objectContaining({
+        owner: "workflow",
+        kind: "signal",
+      }),
+    });
+    expect(snapshot.session.wait).toMatchObject({
+      owner: { kind: "thread", threadId },
+      kind: "signal",
+    });
+
+    const watch = await manager.watchRun({
+      runId: launched.runId,
+      timeoutMs: 0,
+    });
+    expect(watch).toMatchObject({
+      runId: launched.runId,
+      reachedTerminal: false,
+      timedOut: true,
+      finalRun: {
+        status: "waiting-event",
+        waitKind: "signal",
+      },
+    });
+
+    const explanation = await manager.explainRun(launched.runId);
+    expect(explanation.summary).toContain("waiting-event");
+    expect(explanation.diagnosis).toMatchObject({
+      runId: launched.runId,
+      status: "waiting-event",
+    });
+    expect(
+      explanation.diagnosis.blockers.some(
+        (blocker: { signalName?: string | null }) => blocker.signalName === "deploy.completed",
+      ),
+    ).toBe(true);
+
+    const delivered = await manager.sendSignal({
+      runId: launched.runId,
+      signalName: "deploy.completed",
+      data: {
+        environment: "production",
+        sha: "abc123",
+        status: "success",
+      },
+    });
+    expect(delivered).toMatchObject({
+      ok: true,
+      runId: launched.runId,
+      signalName: "deploy.completed",
+    });
+
+    const resumeCommand = createWorkflowCommand({
+      store,
+      sessionId,
+      threadId,
+      surfacePiSessionId,
+      requestSummary: "Resume signal workflow",
+      title: "Resume wait_for_signal",
+      summary: "Resume the wait_for_signal workflow.",
+      toolName: "smithers.run_workflow.wait_for_signal",
+    });
+    await manager.launchWorkflow({
+      sessionId,
+      threadId,
+      workflowId: "wait_for_signal",
+      launchInput: { signalName: "deploy.completed" },
+      commandId: resumeCommand.commandId,
+      runId: launched.runId,
+    });
+
+    await waitFor("signal workflow completion", async () => {
+      try {
+        const run = await manager.getRun(launched.runId);
+        return run.status === "finished";
+      } catch {
+        return false;
+      }
+    });
+
+    const filteredEvents = await manager.getRunEvents({
+      runId: launched.runId,
+      types: ["RunFinished"],
+    });
+    expect(filteredEvents).toHaveLength(1);
+    expect(filteredEvents[0]).toMatchObject({
+      type: "RunFinished",
+    });
+
+    const frames = await manager.listFrames({
+      runId: launched.runId,
+      limit: 20,
+    });
+    expect(frames.length).toBeGreaterThan(0);
+    expect(frames[0]).toMatchObject({
+      runId: launched.runId,
+      frameNo: expect.any(Number),
+      xml: expect.anything(),
+    });
+
+    const devToolsSnapshot = await manager.getDevToolsSnapshot({
+      runId: launched.runId,
+    });
+    expect(devToolsSnapshot).toMatchObject({
+      version: 1,
+      runId: launched.runId,
+      frameNo: expect.any(Number),
+      root: expect.any(Object),
+    });
+
+    const devToolsStream = await manager.streamDevTools({
+      runId: launched.runId,
+      fromSeq: 0,
+      timeoutMs: 150,
+      maxEvents: 10,
+    });
+    expect(devToolsStream.events.length).toBeGreaterThan(0);
+    expect(devToolsStream.events[0]).toMatchObject({
+      kind: "snapshot",
+    });
+
+    const signalLogPath = smithersLogPath(cwd, launched.runId);
+    await waitFor("signal workflow execution log", () =>
+      fileContains(signalLogPath, '"type":"RunFinished"'),
+    );
+    expect(readFileSync(signalLogPath, "utf8")).toContain('"type":"RunFinished"');
+
+    snapshot = store.getSessionState(sessionId);
+    expect(snapshot.threads.find((thread) => thread.id === threadId)).toMatchObject({
+      id: threadId,
+      status: "running-handler",
+      wait: null,
+    });
+    expect(snapshot.session.wait).toBeNull();
+  });
+
+  it("returns grouped transcript messages for a deterministic real Smithers agent task", async () => {
+    const { cwd, store, manager, sessionId, threadId, surfacePiSessionId } =
+      createWorkspaceFixture();
+    registerWorkflow(manager, createTranscriptWorkflowDefinition(smithersDbPath(cwd)));
+
+    const launchCommand = createWorkflowCommand({
+      store,
+      sessionId,
+      threadId,
+      surfacePiSessionId,
+      requestSummary: "Launch transcript workflow",
+      title: "Run chat_transcript_probe",
+      summary: "Launch the chat_transcript_probe workflow.",
+      toolName: "smithers.run_workflow.chat_transcript_probe",
+    });
+    const launched = await manager.launchWorkflow({
+      sessionId,
+      threadId,
+      workflowId: "chat_transcript_probe",
+      launchInput: { prompt: "Summarize the transcript probe." },
+      commandId: launchCommand.commandId,
+    });
+
+    await waitFor("transcript workflow completion", async () => {
+      try {
+        const run = await manager.getRun(launched.runId);
+        return run.status === "finished";
+      } catch {
+        return false;
+      }
+    });
+
+    const transcript = await manager.getChatTranscript({
+      runId: launched.runId,
+      all: true,
+    });
+    expect(transcript.attempts).toHaveLength(1);
+    expect(transcript.messages.map((message) => message.role)).toEqual(
+      expect.arrayContaining(["user", "assistant"]),
+    );
+    expect(
+      transcript.messages.some((message) =>
+        String(message.text).includes("Summarize the transcript probe."),
+      ),
+    ).toBe(true);
+    expect(
+      transcript.messages.some((message) => String(message.text).includes("Handled:")),
+    ).toBe(true);
+
+    const assistantDetail = await manager.getNodeDetail({
+      runId: launched.runId,
+      nodeId: "assistant",
+    });
+    expect(assistantDetail.attempts.length).toBeGreaterThan(0);
+    expect(assistantDetail.node.outputTable).toBeTruthy();
   });
 
   it("runs the execute_typescript_task workflow through the real task-agent path with execute_typescript as the only product tool", async () => {

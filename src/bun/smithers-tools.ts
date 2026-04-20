@@ -29,9 +29,20 @@ const getRunParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const watchRunParamsSchema = Type.Object(
+  {
+    runId: runIdSchema,
+    intervalMs: Type.Optional(Type.Integer({ minimum: 1 })),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+
 const listPendingApprovalsParamsSchema = Type.Object(
   {
     runId: Type.Optional(runIdSchema),
+    workflowName: Type.Optional(Type.String({ minLength: 1 })),
+    nodeId: Type.Optional(Type.String({ minLength: 1 })),
   },
   { additionalProperties: false },
 );
@@ -68,7 +79,58 @@ const getRunEventsParamsSchema = Type.Object(
   {
     runId: runIdSchema,
     afterSeq: Type.Optional(Type.Integer({ minimum: -1 })),
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
+    nodeId: Type.Optional(Type.String({ minLength: 1 })),
+    types: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    sinceTimestampMs: Type.Optional(Type.Integer({ minimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+
+const getChatTranscriptParamsSchema = Type.Object(
+  {
+    runId: runIdSchema,
+    all: Type.Optional(Type.Boolean()),
+    includeStderr: Type.Optional(Type.Boolean()),
+    tail: Type.Optional(Type.Integer({ minimum: 1 })),
+  },
+  { additionalProperties: false },
+);
+
+const sendSignalParamsSchema = Type.Object(
+  {
+    runId: runIdSchema,
+    signalName: Type.String({ minLength: 1 }),
+    data: Type.Optional(Type.Object({}, { additionalProperties: true })),
+    correlationId: Type.Optional(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+
+const listFramesParamsSchema = Type.Object(
+  {
+    runId: runIdSchema,
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
+    afterFrameNo: Type.Optional(Type.Integer({ minimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+
+const getDevToolsSnapshotParamsSchema = Type.Object(
+  {
+    runId: runIdSchema,
+    frameNo: Type.Optional(Type.Integer({ minimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+
+const streamDevToolsParamsSchema = Type.Object(
+  {
+    runId: runIdSchema,
+    fromSeq: Type.Optional(Type.Integer({ minimum: 0 })),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
+    maxEvents: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+    pollIntervalMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 1_000 })),
   },
   { additionalProperties: false },
 );
@@ -150,6 +212,28 @@ export function createSmithersTools(options: CreateSmithersToolsOptions): AgentT
       },
     }),
     createSmithersTool({
+      name: "smithers.watch_run",
+      label: "Watch Run",
+      description: "Watch a Smithers run until it reaches a terminal state or a timeout expires.",
+      parameters: watchRunParamsSchema,
+      visibility: "summary",
+      runtime: options.runtime,
+      store: options.store,
+      execute: async (params) => {
+        const result = await options.manager.watchRun({
+          runId: params.runId,
+          intervalMs: params.intervalMs,
+          timeoutMs: params.timeoutMs,
+        });
+        return {
+          summary: result.reachedTerminal
+            ? `Run ${params.runId} reached terminal status ${result.finalRun.status}.`
+            : `Watched run ${params.runId} until timeout without reaching a terminal state.`,
+          details: result,
+        };
+      },
+    }),
+    createSmithersTool({
       name: "smithers.explain_run",
       label: "Explain Run",
       description:
@@ -161,7 +245,7 @@ export function createSmithersTools(options: CreateSmithersToolsOptions): AgentT
       execute: async (params) => {
         const explanation = await options.manager.explainRun(params.runId);
         return {
-          summary: explanation.explanation,
+          summary: explanation.summary,
           details: explanation,
         };
       },
@@ -177,6 +261,8 @@ export function createSmithersTools(options: CreateSmithersToolsOptions): AgentT
       execute: async (params) => {
         const approvals = await options.manager.listPendingApprovals({
           runId: params.runId?.trim() || undefined,
+          workflowName: params.workflowName?.trim() || undefined,
+          nodeId: params.nodeId?.trim() || undefined,
         });
         return {
           summary:
@@ -259,6 +345,27 @@ export function createSmithersTools(options: CreateSmithersToolsOptions): AgentT
       },
     }),
     createSmithersTool({
+      name: "smithers.get_chat_transcript",
+      label: "Chat Transcript",
+      description: "Read the structured workflow chat transcript grouped by attempts.",
+      parameters: getChatTranscriptParamsSchema,
+      visibility: "summary",
+      runtime: options.runtime,
+      store: options.store,
+      execute: async (params) => {
+        const transcript = await options.manager.getChatTranscript({
+          runId: params.runId,
+          all: params.all,
+          includeStderr: params.includeStderr,
+          tail: params.tail,
+        });
+        return {
+          summary: `Loaded ${transcript.messages.length} transcript message(s) across ${transcript.attempts.length} attempt(s).`,
+          details: transcript,
+        };
+      },
+    }),
+    createSmithersTool({
       name: "smithers.get_run_events",
       label: "Run Events",
       description: "Read raw Smithers lifecycle events with sequence pagination.",
@@ -271,12 +378,116 @@ export function createSmithersTools(options: CreateSmithersToolsOptions): AgentT
           runId: params.runId,
           afterSeq: params.afterSeq,
           limit: params.limit,
+          nodeId: params.nodeId?.trim() || undefined,
+          types: params.types,
+          sinceTimestampMs: params.sinceTimestampMs,
         });
         return {
           summary: `Loaded ${events.length} Smithers event(s).`,
           details: {
+            runId: params.runId,
             events,
           },
+        };
+      },
+    }),
+    createSmithersTool({
+      name: "smithers.signals.send",
+      label: "Send Signal",
+      description: "Deliver a durable signal to a waiting Smithers run.",
+      parameters: sendSignalParamsSchema,
+      visibility: "surface",
+      runtime: options.runtime,
+      store: options.store,
+      execute: async (params) => {
+        const result = await options.manager.sendSignal({
+          runId: params.runId,
+          signalName: params.signalName,
+          data: params.data,
+          correlationId: params.correlationId?.trim() || undefined,
+        });
+        return {
+          summary: `Delivered signal ${params.signalName} to run ${params.runId}.`,
+          details: result,
+        };
+      },
+      beforeExecute(input) {
+        return options.manager.getRun(input.params.runId);
+      },
+      afterExecute(input) {
+        return {
+          runId: input.params.runId,
+          signalName: input.params.signalName,
+          preStatus: readRunStatus(input.before),
+          postStatus:
+            typeof input.result.details.run === "object" && input.result.details.run
+              ? readRunStatus(input.result.details.run as Record<string, unknown>)
+              : null,
+        };
+      },
+    }),
+    createSmithersTool({
+      name: "smithers.frames.list",
+      label: "List Frames",
+      description: "Inspect rendered Smithers workflow frames for one run.",
+      parameters: listFramesParamsSchema,
+      visibility: "summary",
+      runtime: options.runtime,
+      store: options.store,
+      execute: async (params) => {
+        const frames = await options.manager.listFrames({
+          runId: params.runId,
+          limit: params.limit,
+          afterFrameNo: params.afterFrameNo,
+        });
+        return {
+          summary: `Loaded ${frames.length} Smithers frame(s).`,
+          details: {
+            runId: params.runId,
+            frames,
+          },
+        };
+      },
+    }),
+    createSmithersTool({
+      name: "smithers.getDevToolsSnapshot",
+      label: "DevTools Snapshot",
+      description: "Read a Smithers DevTools graph snapshot for a workflow run.",
+      parameters: getDevToolsSnapshotParamsSchema,
+      visibility: "summary",
+      runtime: options.runtime,
+      store: options.store,
+      execute: async (params) => {
+        const snapshot = await options.manager.getDevToolsSnapshot({
+          runId: params.runId,
+          frameNo: params.frameNo,
+        });
+        return {
+          summary: `Loaded DevTools snapshot for run ${params.runId} at frame ${snapshot.frameNo}.`,
+          details: snapshot as Record<string, unknown>,
+        };
+      },
+    }),
+    createSmithersTool({
+      name: "smithers.streamDevTools",
+      label: "Stream DevTools",
+      description:
+        "Collect a bounded Smithers DevTools snapshot-plus-delta stream for workflow inspection.",
+      parameters: streamDevToolsParamsSchema,
+      visibility: "summary",
+      runtime: options.runtime,
+      store: options.store,
+      execute: async (params) => {
+        const stream = await options.manager.streamDevTools({
+          runId: params.runId,
+          fromSeq: params.fromSeq,
+          timeoutMs: params.timeoutMs,
+          maxEvents: params.maxEvents,
+          pollIntervalMs: params.pollIntervalMs,
+        });
+        return {
+          summary: `Loaded ${stream.events.length} DevTools event(s) for run ${params.runId}.`,
+          details: stream,
         };
       },
     }),

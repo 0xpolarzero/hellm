@@ -1,7 +1,16 @@
 import { SmithersDb } from "@smithers-orchestrator/db";
 import {
+  chatAttemptKey,
+  parseChatAttemptMeta,
+  parseNodeOutputEvent,
+  selectChatAttempts,
+} from "@smithers-orchestrator/cli/chat";
+import { diagnoseRunEffect } from "@smithers-orchestrator/cli/why-diagnosis";
+import { getDevToolsSnapshotRoute, streamDevToolsRoute } from "@smithers-orchestrator/server";
+import {
   ensureSmithersTables,
   runWorkflow,
+  signalRun,
   type RunStatus,
   type SmithersEvent,
 } from "smithers-orchestrator";
@@ -305,18 +314,24 @@ export class SmithersRuntimeManager {
     const workflowName = input?.workflowId
       ? this.workflowsById.get(input.workflowId)?.workflowName
       : null;
+    const ownershipByRunId = this.listStructuredRunOwnershipBySmithersRunId();
     return runs
       .filter((run: any) => (!workflowName ? true : run.workflowName === workflowName))
-      .map((run: any) => ({
-        runId: run.runId,
-        workflowName: run.workflowName,
-        status: run.status,
-        createdAt: toIso(run.createdAtMs),
-        startedAt: toIso(run.startedAtMs),
-        finishedAt: toIso(run.finishedAtMs),
-        heartbeatAt: toIso(run.heartbeatAtMs),
-        summary: this.buildRunSummary(run),
-      }));
+      .map((run: any) => {
+        const ownership = ownershipByRunId.get(run.runId);
+        return {
+          runId: run.runId,
+          workflowName: run.workflowName,
+          status: run.status,
+          sessionId: ownership?.sessionId ?? null,
+          threadId: ownership?.threadId ?? null,
+          createdAt: toIso(run.createdAtMs),
+          startedAt: toIso(run.startedAtMs),
+          finishedAt: toIso(run.finishedAtMs),
+          heartbeatAt: toIso(run.heartbeatAtMs),
+          summary: this.buildRunSummary(run),
+        };
+      });
   }
 
   async getRun(runId: string) {
@@ -345,28 +360,79 @@ export class SmithersRuntimeManager {
   }
 
   async explainRun(runId: string) {
-    const run = await this.db.getRun(runId);
-    if (!run) {
-      throw new Error(`Smithers run not found: ${runId}`);
-    }
-
-    const approvals = await this.db.listPendingApprovals(runId);
-    const nodesByState = await this.db.countNodesByState(runId);
-    const explanation = describeRunAttention(run, {
-      pendingApprovals: approvals.length,
-      nodesByState,
-    });
+    const diagnosis = await this.getRunDiagnosis(runId);
     return {
       runId,
-      status: run.status,
-      explanation,
+      status: diagnosis.status,
+      summary: diagnosis.summary,
+      explanation: diagnosis.summary,
+      diagnosis,
     };
   }
 
-  async listPendingApprovals(input?: { runId?: string }) {
-    const approvals = input?.runId
+  async watchRun(input: { runId: string; intervalMs?: number; timeoutMs?: number }) {
+    const intervalMs = Math.max(500, input.intervalMs ?? 1_000);
+    const timeoutMs = Math.max(0, input.timeoutMs ?? 30_000);
+    const deadline = Date.now() + timeoutMs;
+    const snapshots: Array<{
+      observedAtMs: number;
+      run: Awaited<ReturnType<SmithersRuntimeManager["getRun"]>>;
+    }> = [];
+    let pollCount = 0;
+
+    while (true) {
+      const run = await this.getRun(input.runId);
+      snapshots.push({
+        observedAtMs: Date.now(),
+        run,
+      });
+
+      if (isTerminalRunStatus(run.status)) {
+        return {
+          runId: input.runId,
+          intervalMs,
+          pollCount,
+          reachedTerminal: true,
+          timedOut: false,
+          finalRun: run,
+          snapshots,
+        };
+      }
+
+      if (Date.now() >= deadline) {
+        return {
+          runId: input.runId,
+          intervalMs,
+          pollCount,
+          reachedTerminal: false,
+          timedOut: true,
+          finalRun: run,
+          snapshots,
+        };
+      }
+
+      pollCount += 1;
+      await sleep(intervalMs);
+    }
+  }
+
+  async listPendingApprovals(input?: {
+    runId?: string;
+    workflowName?: string;
+    nodeId?: string;
+  }) {
+    const allApprovals = input?.runId
       ? await this.db.listPendingApprovals(input.runId)
       : await this.db.listAllPendingApprovals();
+    const approvals = allApprovals.filter((approval: any) => {
+      if (input?.workflowName?.trim() && approval.workflowName !== input.workflowName.trim()) {
+        return false;
+      }
+      if (input?.nodeId?.trim() && approval.nodeId !== input.nodeId.trim()) {
+        return false;
+      }
+      return true;
+    });
     return approvals.map((approval: any) => ({
       runId: approval.runId,
       nodeId: approval.nodeId,
@@ -508,14 +574,258 @@ export class SmithersRuntimeManager {
     };
   }
 
-  async getRunEvents(input: { runId: string; afterSeq?: number; limit?: number }) {
-    const events = await this.db.listEvents(input.runId, input.afterSeq ?? -1, input.limit ?? 200);
+  async getChatTranscript(input: {
+    runId: string;
+    all?: boolean;
+    includeStderr?: boolean;
+    tail?: number;
+  }) {
+    const run = await this.db.getRun(input.runId);
+    if (!run) {
+      throw new Error(`Smithers run not found: ${input.runId}`);
+    }
+
+    const attempts = await this.db.listAttemptsForRun(input.runId);
+    const events = await listAllRunEvents(this.db, input.runId);
+    const knownOutputAttemptKeys = new Set<string>();
+    const parsedOutputs = events
+      .map((event) => parseNodeOutputEvent(event as any))
+      .filter(Boolean);
+
+    for (const event of parsedOutputs) {
+      knownOutputAttemptKeys.add(chatAttemptKey(event as any));
+    }
+
+    const selectedAttempts = selectChatAttempts(
+      attempts as any,
+      knownOutputAttemptKeys,
+      Boolean(input.all),
+    );
+    const selectedAttemptKeys = new Set(
+      selectedAttempts.map((attempt: any) => chatAttemptKey(attempt)),
+    );
+    const stdoutSeenAttempts = new Set<string>();
+    const messages: Array<Record<string, unknown>> = [];
+
+    for (const attempt of selectedAttempts) {
+      const attemptKey = chatAttemptKey(attempt as any);
+      const meta = parseChatAttemptMeta(attempt.metaJson);
+      const prompt = typeof meta.prompt === "string" ? meta.prompt.trim() : "";
+      if (!prompt) {
+        continue;
+      }
+      messages.push({
+        id: `prompt:${attemptKey}`,
+        attemptKey,
+        nodeId: attempt.nodeId,
+        iteration: attempt.iteration ?? 0,
+        attempt: attempt.attempt,
+        role: "user",
+        stream: null,
+        timestampMs: attempt.startedAtMs,
+        text: prompt,
+        source: "prompt",
+      });
+    }
+
+    for (const parsedEvent of parsedOutputs) {
+      const attemptKey = chatAttemptKey(parsedEvent as any);
+      if (!selectedAttemptKeys.has(attemptKey)) {
+        continue;
+      }
+      const stream = parsedEvent?.stream === "stderr" ? "stderr" : "stdout";
+      if (stream === "stderr" && input.includeStderr === false) {
+        continue;
+      }
+      if (stream === "stdout") {
+        stdoutSeenAttempts.add(attemptKey);
+      }
+      messages.push({
+        id: `event:${parsedEvent?.seq ?? "unknown"}`,
+        attemptKey,
+        nodeId: parsedEvent?.nodeId ?? "",
+        iteration: parsedEvent?.iteration ?? 0,
+        attempt: parsedEvent?.attempt ?? 1,
+        role: stream === "stderr" ? "stderr" : "assistant",
+        stream,
+        timestampMs: parsedEvent?.timestampMs ?? Date.now(),
+        text: parsedEvent?.text ?? "",
+        source: "event",
+      });
+    }
+
+    for (const attempt of selectedAttempts) {
+      const attemptKey = chatAttemptKey(attempt as any);
+      const responseText =
+        typeof attempt.responseText === "string" ? attempt.responseText.trim() : "";
+      if (!responseText || stdoutSeenAttempts.has(attemptKey)) {
+        continue;
+      }
+      messages.push({
+        id: `response:${attemptKey}`,
+        attemptKey,
+        nodeId: attempt.nodeId,
+        iteration: attempt.iteration ?? 0,
+        attempt: attempt.attempt,
+        role: "assistant",
+        stream: null,
+        timestampMs: attempt.finishedAtMs ?? attempt.startedAtMs ?? Date.now(),
+        text: responseText,
+        source: "responseText",
+      });
+    }
+
+    messages.sort((left, right) => {
+      const leftTimestamp = Number(left.timestampMs ?? 0);
+      const rightTimestamp = Number(right.timestampMs ?? 0);
+      if (leftTimestamp !== rightTimestamp) {
+        return leftTimestamp - rightTimestamp;
+      }
+      return String(left.id ?? "").localeCompare(String(right.id ?? ""));
+    });
+
+    return {
+      runId: input.runId,
+      attempts: selectedAttempts.map((attempt: any) => ({
+        attemptKey: chatAttemptKey(attempt),
+        nodeId: attempt.nodeId,
+        iteration: attempt.iteration ?? 0,
+        attempt: attempt.attempt,
+        state: attempt.state,
+        startedAtMs: attempt.startedAtMs,
+        finishedAtMs: attempt.finishedAtMs ?? null,
+        cached: Boolean(attempt.cached),
+        meta: parseJson(attempt.metaJson),
+      })),
+      messages:
+        typeof input.tail === "number" ? messages.slice(-Math.max(1, input.tail)) : messages,
+    };
+  }
+
+  async getRunEvents(input: {
+    runId: string;
+    afterSeq?: number;
+    limit?: number;
+    nodeId?: string;
+    types?: string[];
+    sinceTimestampMs?: number;
+  }) {
+    const events = await this.db.listEventHistory(input.runId, {
+      afterSeq: input.afterSeq,
+      limit: input.limit ?? 200,
+      nodeId: input.nodeId,
+      types: input.types,
+      sinceTimestampMs: input.sinceTimestampMs,
+    });
     return events.map((event: any) => ({
       seq: event.seq,
       timestampMs: event.timestampMs,
       type: event.type,
       payload: parseJson(event.payloadJson),
     }));
+  }
+
+  async sendSignal(input: {
+    runId: string;
+    signalName: string;
+    data?: unknown;
+    correlationId?: string;
+  }) {
+    const delivered = await Effect.runPromise(
+      signalRun(this.db, input.runId, input.signalName, input.data ?? {}, {
+        correlationId: input.correlationId ?? null,
+        receivedBy: "svvy-handler",
+      }),
+    );
+    await this.flushRunEvents(input.runId);
+    const run = await this.getRun(input.runId).catch(() => null);
+    return {
+      ok: true,
+      runId: input.runId,
+      signalName: delivered.signalName,
+      seq: delivered.seq,
+      correlationId: delivered.correlationId,
+      receivedAtMs: delivered.receivedAtMs,
+      receivedAt: toIso(delivered.receivedAtMs),
+      run,
+    };
+  }
+
+  async listFrames(input: { runId: string; limit?: number; afterFrameNo?: number }) {
+    const run = await this.db.getRun(input.runId);
+    if (!run) {
+      throw new Error(`Smithers run not found: ${input.runId}`);
+    }
+
+    const frames = await this.db.listFrames(input.runId, input.limit ?? 50, input.afterFrameNo);
+    return frames.map((frame: any) => mapFrameRow(frame));
+  }
+
+  async getDevToolsSnapshot(input: { runId: string; frameNo?: number }) {
+    return await getDevToolsSnapshotRoute({
+      adapter: this.db as any,
+      runId: input.runId,
+      frameNo: input.frameNo,
+    });
+  }
+
+  async streamDevTools(input: {
+    runId: string;
+    fromSeq?: number;
+    timeoutMs?: number;
+    maxEvents?: number;
+    pollIntervalMs?: number;
+  }) {
+    const timeoutMs = Math.max(1, input.timeoutMs ?? 500);
+    const maxEvents = Math.max(1, input.maxEvents ?? 25);
+    const abortController = new AbortController();
+    let endReason: "timeout" | "max-events" | "stream-closed" = "stream-closed";
+    const timeoutId = setTimeout(() => {
+      endReason = "timeout";
+      abortController.abort();
+    }, timeoutMs);
+    const events: Array<Record<string, unknown>> = [];
+
+    try {
+      for await (const event of streamDevToolsRoute({
+        adapter: this.db as any,
+        runId: input.runId,
+        fromSeq: input.fromSeq,
+        pollIntervalMs: input.pollIntervalMs,
+        signal: abortController.signal,
+      })) {
+        events.push(event as Record<string, unknown>);
+        if (events.length >= maxEvents) {
+          endReason = "max-events";
+          break;
+        }
+      }
+    } finally {
+      clearTimeout(timeoutId);
+      abortController.abort();
+    }
+
+    const lastEvent = events[events.length - 1] as
+      | {
+          kind?: string;
+          delta?: { seq?: number };
+          snapshot?: { seq?: number };
+        }
+      | undefined;
+    const lastSeq =
+      lastEvent?.kind === "delta"
+        ? Number(lastEvent.delta?.seq ?? 0)
+        : Number(lastEvent?.snapshot?.seq ?? 0);
+
+    return {
+      runId: input.runId,
+      fromSeq: input.fromSeq ?? null,
+      timeoutMs,
+      maxEvents,
+      endReason,
+      lastSeq: Number.isFinite(lastSeq) ? lastSeq : null,
+      events,
+    };
   }
 
   async cancelRun(runId: string) {
@@ -770,8 +1080,12 @@ export class SmithersRuntimeManager {
       ownership.structuredWorkflowId,
     );
     const status = mapRunStatusToWorkflowStatus(run.status);
-    const waitKind = mapRunStatusToWaitKind(run.status);
-    const summary = await this.buildRunSummary(run);
+    const diagnosis = run.status === "waiting-event" ? await this.getRunDiagnosis(runId) : null;
+    const waitKind =
+      diagnosis && containsSignalBlocker(diagnosis)
+        ? "signal"
+        : mapRunStatusToWaitKind(run.status);
+    const summary = diagnosis?.summary ?? (await this.buildRunSummary(run));
     const heartbeatAt = toIso(run.heartbeatAtMs);
     const nextWorkflowRun = this.options.store.updateWorkflow({
       workflowId: ownership.structuredWorkflowId,
@@ -972,6 +1286,10 @@ export class SmithersRuntimeManager {
     await this.options.onStructuredStateChanged?.(sessionId);
   }
 
+  private async getRunDiagnosis(runId: string): Promise<any> {
+    return await Effect.runPromise(diagnoseRunEffect(this.db as any, runId));
+  }
+
   private requireWorkflow(workflowId: string): BundledWorkflowDefinition {
     const workflow = this.workflowsById.get(workflowId);
     if (!workflow) {
@@ -1022,6 +1340,28 @@ export class SmithersRuntimeManager {
         .getSessionState(sessionId)
         .workflowRuns.find((workflowRun) => workflowRun.id === workflowRunId) ?? null
     );
+  }
+
+  private listStructuredRunOwnershipBySmithersRunId(): Map<
+    string,
+    Pick<StructuredWorkflowRunRecord, "sessionId" | "threadId">
+  > {
+    const ownershipByRunId = new Map<
+      string,
+      Pick<StructuredWorkflowRunRecord, "sessionId" | "threadId">
+    >();
+    for (const session of this.options.store.listSessionStates()) {
+      for (const workflowRun of session.workflowRuns) {
+        if (ownershipByRunId.has(workflowRun.smithersRunId)) {
+          continue;
+        }
+        ownershipByRunId.set(workflowRun.smithersRunId, {
+          sessionId: workflowRun.sessionId,
+          threadId: workflowRun.threadId,
+        });
+      }
+    }
+    return ownershipByRunId;
   }
 
   private async buildRunSummary(run: any): Promise<string> {
@@ -1097,43 +1437,19 @@ function describeAttentionEvent(event: SmithersEvent): string {
     case "RunStatusChanged":
       return event.status === "waiting-approval"
         ? "The supervised workflow is waiting on approval."
-        : "The supervised workflow is waiting on an external event.";
+        : "The supervised workflow is waiting on an external event or signal.";
     default:
       return "The supervised workflow needs handler attention.";
   }
 }
 
-function describeRunAttention(
-  run: any,
-  input: {
-    pendingApprovals: number;
-    nodesByState: Array<{ state: string; count: number }>;
-  },
-): string {
-  switch (run.status as RunStatus) {
-    case "waiting-approval":
-      return input.pendingApprovals > 0
-        ? `Waiting for ${input.pendingApprovals} approval request(s).`
-        : "Waiting for approval.";
-    case "waiting-event":
-      return "Waiting for an external event or signal before the workflow can continue.";
-    case "waiting-timer":
-      return "Waiting for a timer before the workflow can continue.";
-    case "continued":
-      return "Smithers continued this run as a descendant run.";
-    case "failed":
-      return "The workflow failed and needs troubleshooting.";
-    case "cancelled":
-      return "The workflow was cancelled.";
-    case "finished":
-      return "The workflow finished successfully.";
-    default:
-      return input.nodesByState.length > 0
-        ? `The workflow is running with ${input.nodesByState
-            .map((entry) => `${entry.count} ${entry.state}`)
-            .join(", ")}.`
-        : "The workflow is running.";
-  }
+function containsSignalBlocker(diagnosis: any): boolean {
+  return Array.isArray(diagnosis?.blockers)
+    ? diagnosis.blockers.some(
+        (blocker: any) =>
+          typeof blocker?.signalName === "string" && blocker.signalName.trim().length > 0,
+      )
+    : false;
 }
 
 function describeRunStatus(status: RunStatus): string {
@@ -1168,6 +1484,10 @@ function isTerminalWorkflowStatus(status: StructuredWorkflowStatus): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
+function isTerminalRunStatus(status: string): boolean {
+  return status === "finished" || status === "failed" || status === "cancelled";
+}
+
 function isTerminalWorkflowReplayAfterThreadCompletion(
   threadStatus: string | null,
   workflowStatus: StructuredWorkflowStatus,
@@ -1188,4 +1508,56 @@ function parseJson(value: string | null | undefined): any {
 
 function toIso(timestampMs: number | null | undefined): string | null {
   return typeof timestampMs === "number" ? new Date(timestampMs).toISOString() : null;
+}
+
+function mapFrameRow(frame: {
+  runId: string;
+  frameNo: number;
+  createdAtMs: number;
+  xmlJson: string;
+  xmlHash: string;
+  encoding: string;
+  mountedTaskIdsJson: string | null;
+  taskIndexJson: string | null;
+  note: string | null;
+}) {
+  return {
+    runId: frame.runId,
+    frameNo: frame.frameNo,
+    createdAtMs: frame.createdAtMs,
+    createdAt: toIso(frame.createdAtMs),
+    xml: parseJson(frame.xmlJson),
+    xmlHash: frame.xmlHash,
+    encoding: frame.encoding,
+    mountedTaskIds: parseJson(frame.mountedTaskIdsJson),
+    taskIndex: parseJson(frame.taskIndexJson),
+    note: frame.note ?? null,
+  };
+}
+
+async function listAllRunEvents(
+  db: SmithersDb,
+  runId: string,
+): Promise<Array<Record<string, unknown>>> {
+  const events: Array<Record<string, unknown>> = [];
+  let afterSeq = -1;
+
+  while (true) {
+    const batch = await db.listEvents(runId, afterSeq, 1_000);
+    if (batch.length === 0) {
+      break;
+    }
+    events.push(...(batch as Array<Record<string, unknown>>));
+    const lastEvent = batch[batch.length - 1];
+    afterSeq = Number(lastEvent?.seq ?? afterSeq);
+    if (batch.length < 1_000) {
+      break;
+    }
+  }
+
+  return events;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
