@@ -59,7 +59,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Handler Thread Surfaces",
     status: "in-progress",
     summary:
-      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, stay multi-turn and directly messageable before and after handoff, distinguish handler-active, workflow-active, waiting, troubleshooting, and completed thread states, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread.handoff` calls that append ordered handoff episodes over the thread's lifetime and immediately trigger a fresh orchestrator reconciliation turn.",
+      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, stay multi-turn and directly messageable before and after handoff, distinguish handler-active, workflow-active, waiting, troubleshooting, and completed thread states, reject `thread.handoff` while the thread still owns a running or waiting workflow run for the current span, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread.handoff` calls that append ordered handoff episodes over the thread's lifetime and immediately trigger a fresh orchestrator reconciliation turn.",
     sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -151,7 +151,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Workflow Run Records",
     status: "in-progress",
     summary:
-      "Stores one svvy-side record for each Smithers workflow run under a handler thread, including run identity, template or preset metadata, normalized status, raw Smithers status, wait kind, reconnect cursor, heartbeat freshness, lineage, summary, timestamps, and related artifacts and command history, with lifecycle projection owned by explicit bridge or tool writes rather than read-side refresh.",
+      "Stores one svvy-side record for each Smithers workflow run under a handler thread, including run identity, template or preset metadata, normalized status, raw Smithers status, wait kind, reconnect cursor, heartbeat freshness, lineage, summary, timestamps, and related artifacts and command history, with lifecycle projection owned by explicit bridge or tool writes, pre-handoff reconciliation against durable Smithers state, and idempotent terminal replay handling so duplicate terminal snapshots do not reopen a completed thread or redeliver handler attention.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {

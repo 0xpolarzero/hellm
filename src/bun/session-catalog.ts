@@ -58,15 +58,16 @@ import {
   type StructuredWaitState,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
-import { createStartWorkflowTool } from "./smithers-workflow-tool";
 import { createExecuteTypescriptTool } from "./execute-typescript-tool";
-import { createResumeWorkflowTool } from "./smithers-workflow-tool";
 import { createWaitTool } from "./wait-tool";
 import { resolveApiKey } from "./auth-store";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
 import { resolveWorkspaceCwd } from "./workspace-context";
 import { createStartThreadTool } from "./thread-start-tool";
 import { createThreadHandoffTool } from "./thread-handoff-tool";
+import { buildSystemPrompt, type SvvyActorProfile } from "./default-system-prompt";
+import { createSmithersTools } from "./smithers-tools";
+import { SmithersRuntimeManager } from "./smithers-runtime/manager";
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
   input: 0,
@@ -83,10 +84,11 @@ const ZERO_USAGE: AssistantMessage["usage"] = {
   },
 };
 
-const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state.sqlite";
+const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v2.sqlite";
 
 interface ManagedSession {
   sessionId: string;
+  actorProfile: SvvyActorProfile;
   provider: string;
   model: string;
   thinkingLevel: ThinkingLevel;
@@ -116,6 +118,7 @@ export interface SendAgentPromptOptions extends SessionDefaults {
 
 interface CreateManagedSessionOptions {
   sessionManager: SessionManager;
+  actorProfile: SvvyActorProfile;
   provider?: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;
@@ -139,6 +142,7 @@ export class WorkspaceSessionCatalog {
   private activeSession: ManagedSession | null = null;
   private activeTarget: PromptTarget | null = null;
   private readonly structuredSessionStore: StructuredSessionStateStore;
+  private readonly smithersRuntimeManager: SmithersRuntimeManager;
   private sessionSyncListener: ((payload: SessionSyncMessage) => void) | null = null;
 
   constructor(
@@ -158,6 +162,22 @@ export class WorkspaceSessionCatalog {
       },
       databasePath: join(this.sessionDir, STRUCTURED_SESSION_DB_FILENAME),
     });
+    this.smithersRuntimeManager = new SmithersRuntimeManager({
+      cwd: this.cwd,
+      agentDir: this.agentDir,
+      store: this.structuredSessionStore,
+      getTaskAgentDefaults: () => ({
+        provider: DEFAULT_CHAT_SETTINGS.provider,
+        model: DEFAULT_CHAT_SETTINGS.model,
+        thinkingLevel: DEFAULT_CHAT_SETTINGS.reasoningEffort,
+      }),
+      onStructuredStateChanged: async (sessionId) => {
+        await this.emitStructuredStateSync(sessionId);
+      },
+      onHandlerAttention: async (event) => {
+        await this.resumeHandlerAfterWorkflowAttention(event, buildSystemPrompt("handler"));
+      },
+    });
   }
 
   private get threadSurfaceDir(): string {
@@ -167,6 +187,7 @@ export class WorkspaceSessionCatalog {
   async dispose(): Promise<void> {
     this.activeSession?.session.dispose();
     this.activeSession = null;
+    await this.smithersRuntimeManager.close();
     this.structuredSessionStore.close();
   }
 
@@ -280,10 +301,11 @@ export class WorkspaceSessionCatalog {
 
     const session = await this.activateManagedSession({
       sessionManager,
+      actorProfile: "orchestrator",
       provider: defaults.provider,
       model: defaults.model,
       thinkingLevel: defaults.thinkingLevel,
-      systemPrompt: defaults.systemPrompt,
+      systemPrompt: buildSystemPrompt("orchestrator"),
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
     this.activeTarget = target;
@@ -296,15 +318,17 @@ export class WorkspaceSessionCatalog {
   async openSession(sessionId: string, systemPrompt?: string): Promise<ActiveSessionState> {
     return this.openSurface(
       this.buildOrchestratorPromptTarget(sessionId),
-      systemPrompt ?? this.activeSession?.systemPrompt,
+      systemPrompt ?? buildSystemPrompt("orchestrator"),
     );
   }
 
   async openSurface(target: PromptTarget, systemPrompt?: string): Promise<ActiveSessionState> {
     this.assertValidPromptTarget(target);
+    const actorProfile = getActorProfileForTarget(target);
     const session = await this.openSurfaceSessionInternal(
       target.surfacePiSessionId,
-      systemPrompt ?? this.activeSession?.systemPrompt,
+      actorProfile,
+      systemPrompt ?? buildSystemPrompt(actorProfile),
     );
     this.activeTarget = structuredClone(target);
     return this.buildActiveSessionState(session, target);
@@ -369,7 +393,8 @@ export class WorkspaceSessionCatalog {
 
     const session = await this.activateManagedSession({
       sessionManager: forkedSessionManager,
-      systemPrompt: defaults.systemPrompt,
+      actorProfile: "orchestrator",
+      systemPrompt: buildSystemPrompt("orchestrator"),
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
     this.activeTarget = target;
@@ -424,7 +449,8 @@ export class WorkspaceSessionCatalog {
     const nextTarget = this.buildOrchestratorPromptTarget(nextSessionInfo.id);
     const nextActiveSession = await this.openSurfaceSessionInternal(
       nextTarget.surfacePiSessionId,
-      defaults.systemPrompt,
+      "orchestrator",
+      buildSystemPrompt("orchestrator"),
     );
     this.activeTarget = nextTarget;
     return {
@@ -489,7 +515,11 @@ export class WorkspaceSessionCatalog {
 
     try {
       syncAuthStorage(this.activeSession.authStorage);
-      const resolvedModel = getResolvedModel(this.activeSession.provider, model);
+      const resolvedModel = resolveRegisteredModel(
+        this.activeSession.modelRegistry,
+        this.activeSession.provider,
+        model,
+      );
       if (resolvedModel) {
         await this.activeSession.session.setModel(resolvedModel);
         this.activeSession.recreateOnNextPrompt = false;
@@ -536,18 +566,22 @@ export class WorkspaceSessionCatalog {
 
   private async ensureSessionForPrompt(options: SendAgentPromptOptions): Promise<ManagedSession> {
     if (!this.activeSession) {
+      const actorProfile = getActorProfileForTarget(options.target);
       const session = await this.openSurfaceSessionInternal(
         options.target.surfacePiSessionId,
-        options.systemPrompt,
+        actorProfile,
+        buildSystemPrompt(actorProfile),
       );
       this.activeTarget = structuredClone(options.target);
       return this.prepareManagedSession(session, options);
     }
 
     if (this.activeSession.sessionId !== options.target.surfacePiSessionId) {
+      const actorProfile = getActorProfileForTarget(options.target);
       const session = await this.openSurfaceSessionInternal(
         options.target.surfacePiSessionId,
-        options.systemPrompt,
+        actorProfile,
+        buildSystemPrompt(actorProfile),
       );
       this.activeTarget = structuredClone(options.target);
       return this.prepareManagedSession(session, options);
@@ -559,11 +593,20 @@ export class WorkspaceSessionCatalog {
 
   private async openSurfaceSessionInternal(
     surfacePiSessionId: string,
-    systemPrompt = this.activeSession?.systemPrompt ?? "",
+    actorProfile: SvvyActorProfile,
+    systemPrompt = buildSystemPrompt(actorProfile),
   ): Promise<ManagedSession> {
     if (this.activeSession?.sessionId === surfacePiSessionId) {
-      this.activeSession.systemPrompt = systemPrompt || this.activeSession.systemPrompt;
-      return this.activeSession;
+      if (
+        this.activeSession.actorProfile === actorProfile &&
+        this.activeSession.systemPrompt === systemPrompt
+      ) {
+        return this.activeSession;
+      }
+      return this.recreateActiveSession(this.activeSession, {
+        actorProfile,
+        systemPrompt,
+      });
     }
 
     this.assertCanSwitchSessions();
@@ -571,7 +614,8 @@ export class WorkspaceSessionCatalog {
     const sessionFile = await this.getSessionFileForId(surfacePiSessionId);
     return this.activateManagedSession({
       sessionManager: SessionManager.open(sessionFile!, dirname(sessionFile!)),
-      systemPrompt: systemPrompt || this.activeSession?.systemPrompt || "",
+      actorProfile,
+      systemPrompt,
     });
   }
 
@@ -579,19 +623,24 @@ export class WorkspaceSessionCatalog {
     session: ManagedSession,
     options: Pick<
       SendAgentPromptOptions,
-      "provider" | "model" | "thinkingLevel" | "systemPrompt" | "messages"
+      "provider" | "model" | "thinkingLevel" | "systemPrompt" | "messages" | "target"
     >,
   ): Promise<ManagedSession> {
+    const actorProfile = getActorProfileForTarget(options.target);
+    const resolvedSystemPrompt = buildSystemPrompt(actorProfile);
+
     if (
+      session.actorProfile !== actorProfile ||
       session.provider !== options.provider ||
       session.model !== options.model ||
       session.recreateOnNextPrompt
     ) {
       return this.recreateActiveSession(session, {
+        actorProfile,
         provider: options.provider,
         model: options.model,
         thinkingLevel: options.thinkingLevel,
-        systemPrompt: options.systemPrompt,
+        systemPrompt: resolvedSystemPrompt,
       });
     }
 
@@ -600,15 +649,21 @@ export class WorkspaceSessionCatalog {
       session.session.setThinkingLevel(options.thinkingLevel);
     }
 
-    if (session.systemPrompt !== options.systemPrompt) {
-      return this.recreateActiveSession(session, { systemPrompt: options.systemPrompt });
+    if (session.systemPrompt !== resolvedSystemPrompt) {
+      return this.recreateActiveSession(session, {
+        actorProfile,
+        systemPrompt: resolvedSystemPrompt,
+      });
     }
 
     if (
       session.promptSyncCursor.messageCount > 0 &&
       !canAppendLatestUserTurn(session.promptSyncCursor, options.messages)
     ) {
-      return this.recreateActiveSession(session, { systemPrompt: options.systemPrompt });
+      return this.recreateActiveSession(session, {
+        actorProfile,
+        systemPrompt: resolvedSystemPrompt,
+      });
     }
 
     return session;
@@ -617,10 +672,11 @@ export class WorkspaceSessionCatalog {
   private async recreateActiveSession(
     session: ManagedSession,
     overrides: Partial<
-      Pick<ManagedSession, "provider" | "model" | "thinkingLevel" | "systemPrompt">
+      Pick<ManagedSession, "actorProfile" | "provider" | "model" | "thinkingLevel" | "systemPrompt">
     >,
   ): Promise<ManagedSession> {
     const sessionManager = session.session.sessionManager;
+    const actorProfile = overrides.actorProfile ?? session.actorProfile;
     const provider = overrides.provider ?? session.provider;
     const model = overrides.model ?? session.model;
     const thinkingLevel = overrides.thinkingLevel ?? session.thinkingLevel;
@@ -629,6 +685,7 @@ export class WorkspaceSessionCatalog {
     session.session.dispose();
     const nextSession = await createManagedSession({
       sessionManager,
+      actorProfile,
       provider,
       model,
       thinkingLevel,
@@ -636,6 +693,7 @@ export class WorkspaceSessionCatalog {
       agentDir: this.agentDir,
       structuredSessionStore: this.structuredSessionStore,
       createHandlerThread: this.createHandlerThread.bind(this),
+      smithersRuntimeManager: this.smithersRuntimeManager,
     });
     this.activeSession = nextSession;
     return nextSession;
@@ -650,6 +708,7 @@ export class WorkspaceSessionCatalog {
       agentDir: this.agentDir,
       structuredSessionStore: this.structuredSessionStore,
       createHandlerThread: this.createHandlerThread.bind(this),
+      smithersRuntimeManager: this.smithersRuntimeManager,
     });
     this.activeSession = session;
     return session;
@@ -773,6 +832,31 @@ export class WorkspaceSessionCatalog {
       });
     } catch (error) {
       console.error("Failed to emit session sync payload:", error);
+    }
+  }
+
+  private async emitStructuredStateSync(sessionId: string): Promise<void> {
+    if (!this.sessionSyncListener || !this.activeSession) {
+      return;
+    }
+
+    const activeTarget = this.getActivePromptTarget();
+    if (!activeTarget) {
+      return;
+    }
+
+    try {
+      const [activeSession, listed] = await Promise.all([
+        this.buildActiveSessionState(this.activeSession, activeTarget),
+        this.listSessions(),
+      ]);
+      this.sessionSyncListener({
+        reason: "structured.updated",
+        activeSession,
+        sessions: listed.sessions,
+      });
+    } catch (error) {
+      console.error(`Failed to emit structured session sync for ${sessionId}:`, error);
     }
   }
 
@@ -986,7 +1070,7 @@ export class WorkspaceSessionCatalog {
         const resumedThreadId = targetThread.id;
         this.structuredSessionStore.updateThread({
           threadId: resumedThreadId,
-          status: "running",
+          status: "running-handler",
           wait: null,
         });
         preTurnSnapshot = this.getStructuredSnapshot(structuredSessionId);
@@ -1240,7 +1324,7 @@ export class WorkspaceSessionCatalog {
     }
 
     const turn = snapshot.turns.find((entry) => entry.id === promptContext.turnId);
-    if (!turn || turn.turnDecision !== "handoff" || turn.status !== "completed") {
+    if (!turn || turn.turnDecision !== "thread.handoff" || turn.status !== "completed") {
       return;
     }
 
@@ -1254,6 +1338,7 @@ export class WorkspaceSessionCatalog {
     const target = this.buildOrchestratorPromptTarget(orchestratorSessionId);
     const orchestratorSession = await this.openSurfaceSessionInternal(
       target.surfacePiSessionId,
+      "orchestrator",
       systemPrompt,
     );
     this.activeTarget = target;
@@ -1289,6 +1374,76 @@ export class WorkspaceSessionCatalog {
       options,
     );
     await this.runAgentPrompt(orchestratorSession, options, orchestratorPromptContext);
+  }
+
+  private async resumeHandlerAfterWorkflowAttention(
+    input: {
+      sessionId: string;
+      threadId: string;
+      workflowRunId: string;
+      smithersRunId: string;
+      workflowId: string;
+      summary: string;
+      reason: string;
+    },
+    systemPrompt: string,
+  ): Promise<void> {
+    const snapshot = this.getStructuredSnapshot(input.sessionId);
+    const thread = snapshot?.threads.find((entry) => entry.id === input.threadId) ?? null;
+    if (!snapshot || !thread) {
+      return;
+    }
+
+    const target: PromptTarget = {
+      workspaceSessionId: input.sessionId,
+      surface: "thread",
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.id,
+    };
+    const handlerSession = await this.openSurfaceSessionInternal(
+      target.surfacePiSessionId,
+      "handler",
+      systemPrompt,
+    );
+    this.activeTarget = target;
+    if (handlerSession.activePrompt) {
+      return;
+    }
+
+    handlerSession.abortRequested = false;
+    handlerSession.activePrompt = true;
+    await this.emitSessionSync({
+      session: handlerSession,
+      reason: "background.started",
+      target,
+    });
+
+    const resumeMessage = createSyntheticUserMessage(
+      buildHandlerWorkflowAttentionPrompt({
+        thread,
+        workflowRun:
+          snapshot.workflowRuns.find((workflowRun) => workflowRun.id === input.workflowRunId) ??
+          null,
+        reason: input.reason,
+        summary: input.summary,
+        workflowId: input.workflowId,
+        smithersRunId: input.smithersRunId,
+      }),
+    );
+    const options: SendAgentPromptOptions = {
+      target,
+      provider: handlerSession.provider,
+      model: handlerSession.model,
+      thinkingLevel: handlerSession.thinkingLevel,
+      systemPrompt: handlerSession.systemPrompt,
+      messages: [
+        ...convertToLlmMessages(handlerSession.session.agent.state.messages),
+        resumeMessage,
+      ],
+      onEvent: () => {},
+    };
+    const handlerPromptContext = this.createPromptExecutionContext(handlerSession, options);
+    await this.runAgentPrompt(handlerSession, options, handlerPromptContext);
   }
 
   private completePromptExecution(
@@ -1328,7 +1483,7 @@ export class WorkspaceSessionCatalog {
       if (
         promptContext.surfaceKind !== "handler" &&
         assistantText &&
-        rootThread?.status === "running"
+        rootThread?.status === "running-handler"
       ) {
         this.structuredSessionStore.updateThread({
           threadId: rootThread.id,
@@ -1377,10 +1532,13 @@ export class WorkspaceSessionCatalog {
       const rootThread = snapshot.threads.find(
         (thread) => thread.id === promptContext.rootThreadId,
       );
-      if (rootThread && rootThread.status === "running") {
+      if (
+        rootThread &&
+        (rootThread.status === "running-handler" || rootThread.status === "running-workflow")
+      ) {
         this.structuredSessionStore.updateThread({
           threadId: rootThread.id,
-          status: "failed",
+          status: "troubleshooting",
         });
       }
       const turn = snapshot.turns.find((entry) => entry.id === promptContext.turnId);
@@ -1425,7 +1583,11 @@ export class WorkspaceSessionCatalog {
     });
     const activeModel =
       session.session.agent.state.model ??
-      getResolvedModel(restoredDefaults.provider, restoredDefaults.model);
+      resolveRegisteredModel(
+        session.modelRegistry,
+        restoredDefaults.provider,
+        restoredDefaults.model,
+      );
 
     session.provider = activeModel?.provider ?? restoredDefaults.provider;
     session.model = activeModel?.id ?? restoredDefaults.model;
@@ -1443,6 +1605,7 @@ async function createManagedSession(
     agentDir: string;
     structuredSessionStore: StructuredSessionStateStore;
     createHandlerThread: WorkspaceSessionCatalog["createHandlerThread"];
+    smithersRuntimeManager: SmithersRuntimeManager;
   },
 ): Promise<ManagedSession> {
   mkdirSync(options.agentDir, { recursive: true });
@@ -1452,36 +1615,42 @@ async function createManagedSession(
   const promptExecutionRuntime: PromptExecutionRuntimeHandle = {
     current: null,
   };
-  const tools = [
-    createExecuteTypescriptTool({
-      cwd: options.sessionManager.getCwd(),
-      runtime: promptExecutionRuntime,
-      store: options.structuredSessionStore,
-    }),
-    createStartThreadTool({
-      runtime: promptExecutionRuntime,
-      store: options.structuredSessionStore,
-      bridge: {
-        createHandlerThread: options.createHandlerThread,
-      },
-    }),
-    createThreadHandoffTool({
-      runtime: promptExecutionRuntime,
-      store: options.structuredSessionStore,
-    }),
-    createStartWorkflowTool({
-      runtime: promptExecutionRuntime,
-      store: options.structuredSessionStore,
-    }),
-    createResumeWorkflowTool({
-      runtime: promptExecutionRuntime,
-      store: options.structuredSessionStore,
-    }),
-    createWaitTool({
-      runtime: promptExecutionRuntime,
-      store: options.structuredSessionStore,
-    }),
-  ] as const;
+  const executeTypescriptTool = createExecuteTypescriptTool({
+    cwd: options.sessionManager.getCwd(),
+    runtime: promptExecutionRuntime,
+    store: options.structuredSessionStore,
+  });
+  const waitTool = createWaitTool({
+    runtime: promptExecutionRuntime,
+    store: options.structuredSessionStore,
+  });
+  const tools =
+    options.actorProfile === "orchestrator"
+      ? ([
+          executeTypescriptTool,
+          createStartThreadTool({
+            runtime: promptExecutionRuntime,
+            store: options.structuredSessionStore,
+            bridge: {
+              createHandlerThread: options.createHandlerThread,
+            },
+          }),
+          waitTool,
+        ] as const)
+      : ([
+          executeTypescriptTool,
+          createThreadHandoffTool({
+            runtime: promptExecutionRuntime,
+            store: options.structuredSessionStore,
+            manager: options.smithersRuntimeManager,
+          }),
+          ...createSmithersTools({
+            runtime: promptExecutionRuntime,
+            store: options.structuredSessionStore,
+            manager: options.smithersRuntimeManager,
+          }),
+          waitTool,
+        ] as const);
   const customTools = createCustomToolDefinitions(tools);
   const modelRegistryFactory = ModelRegistry as unknown as {
     create?: (authStorage: AuthStorage, modelPath: string) => ModelRegistry;
@@ -1505,7 +1674,11 @@ async function createManagedSession(
     model: options.model,
     thinkingLevel: options.thinkingLevel,
   });
-  const resolvedModel = getResolvedModel(restoredDefaults.provider, restoredDefaults.model);
+  const resolvedModel = resolveRegisteredModel(
+    modelRegistry,
+    restoredDefaults.provider,
+    restoredDefaults.model,
+  );
   if (!resolvedModel) {
     throw new Error(`Model not found: ${restoredDefaults.provider}/${restoredDefaults.model}`);
   }
@@ -1527,6 +1700,7 @@ async function createManagedSession(
 
   return {
     sessionId: session.sessionManager.getSessionId(),
+    actorProfile: options.actorProfile,
     provider: activeModel.provider,
     model: activeModel.id,
     thinkingLevel: restoredDefaults.thinkingLevel,
@@ -1618,7 +1792,7 @@ function getLatestUserPromptText(messages: readonly Message[]): string | null {
 function isTerminalThreadStatus(
   status: StructuredSessionSnapshot["threads"][number]["status"],
 ): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
+  return status === "completed";
 }
 
 function summarizePromptForTurn(text: string, limit = 96): string {
@@ -1666,6 +1840,27 @@ function buildOrchestratorHandoffResumePrompt(
   ].join("\n");
 }
 
+function buildHandlerWorkflowAttentionPrompt(input: {
+  thread: StructuredSessionSnapshot["threads"][number];
+  workflowRun: StructuredSessionSnapshot["workflowRuns"][number] | null;
+  reason: string;
+  summary: string;
+  workflowId: string;
+  smithersRunId: string;
+}): string {
+  return [
+    "System event: A supervised Smithers workflow now requires handler attention.",
+    `Thread id: ${input.thread.id}`,
+    `Thread title: ${input.thread.title}`,
+    `Objective: ${input.thread.objective}`,
+    `Bundled workflow id: ${input.workflowId}`,
+    `Smithers run id: ${input.smithersRunId}`,
+    `Attention reason: ${input.reason}`,
+    `Current workflow summary: ${input.summary}`,
+    "Inspect durable workflow state with smithers.* tools and decide the next handler action.",
+  ].join("\n");
+}
+
 function getThreadOwnedWaitId(wait: StructuredSessionSnapshot["session"]["wait"]): string | null {
   if (!wait || wait.owner.kind !== "thread") {
     return null;
@@ -1702,6 +1897,7 @@ function getEffectiveTurnWait(
   if (getThreadOwnedWaitId(snapshot.session.wait) === threadId) {
     return (
       thread.wait ?? {
+        owner: "handler",
         kind: snapshot.session.wait!.kind,
         reason: snapshot.session.wait!.reason,
         resumeWhen: snapshot.session.wait!.resumeWhen,
@@ -1717,8 +1913,8 @@ function inferPendingTurnDecision(input: {
   assistantText: string;
   wait?: StructuredWaitState | null;
 }): Exclude<StructuredSessionSnapshot["turns"][number]["turnDecision"], "pending"> {
-  if (input.wait?.kind === "user") {
-    return "clarify";
+  if (input.wait) {
+    return "wait";
   }
 
   if (looksLikeClarificationReply(input.assistantText)) {
@@ -1771,10 +1967,7 @@ function buildOrchestratorDurablePromptContext(
         return null;
       }
 
-      const latestWorkflow =
-        snapshot.workflowRuns.find(
-          (workflowRun) => workflowRun.id === thread.latestWorkflowRunId,
-        ) ?? null;
+      const latestWorkflow = resolveLatestWorkflowRunForThread(snapshot, thread.id);
 
       return {
         thread,
@@ -1829,9 +2022,7 @@ function buildHandlerDurablePromptContext(
     return undefined;
   }
 
-  const latestWorkflow =
-    snapshot.workflowRuns.find((workflowRun) => workflowRun.id === thread.latestWorkflowRunId) ??
-    null;
+  const latestWorkflow = resolveLatestWorkflowRunForThread(snapshot, thread.id);
   const latestEpisode =
     snapshot.episodes
       .filter((episode) => episode.threadId === thread.id)
@@ -1845,6 +2036,7 @@ function buildHandlerDurablePromptContext(
     `Objective: ${collapsePromptContextValue(thread.objective, 280)}`,
     `Current objective status: ${thread.status}`,
     "Use thread.handoff only when you want to return control to the orchestrator with a durable episode.",
+    "Workflow waits, approvals, and resumes stay inside this thread. Do not call thread.handoff while this thread still owns a running or waiting workflow run.",
     "Ordinary replies, clarification, and follow-up chat should stay inside this thread.",
   ];
 
@@ -1865,6 +2057,38 @@ function buildHandlerDurablePromptContext(
   }
 
   return parts.join("\n");
+}
+
+function resolveLatestWorkflowRunForThread(
+  snapshot: StructuredSessionSnapshot,
+  threadId: string,
+): StructuredSessionSnapshot["workflowRuns"][number] | null {
+  const workflowRuns = snapshot.workflowRuns.filter(
+    (workflowRun) => workflowRun.threadId === threadId,
+  );
+  if (workflowRuns.length === 0) {
+    return null;
+  }
+
+  const workflowRunsById = new Map(
+    workflowRuns.map((workflowRun) => [workflowRun.id, workflowRun]),
+  );
+  let current =
+    workflowRuns.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ??
+    null;
+  while (current?.status === "continued" && current.activeDescendantRunId) {
+    const descendant = workflowRunsById.get(current.activeDescendantRunId);
+    if (!descendant) {
+      break;
+    }
+    current = descendant;
+  }
+
+  return current;
+}
+
+function getActorProfileForTarget(target: PromptTarget): SvvyActorProfile {
+  return target.surface === "thread" ? "handler" : "orchestrator";
 }
 
 function collapsePromptContextValue(value: string, limit: number): string {
@@ -1939,10 +2163,10 @@ function readRestoredSessionMetadata(sessionManager: SessionManager): {
   return { provider, model, thinkingLevel };
 }
 
-function getResolvedModel(provider: string, model: string) {
-  return getModel(
-    provider as Parameters<typeof getModel>[0],
-    model as Parameters<typeof getModel>[1],
+function resolveRegisteredModel(modelRegistry: ModelRegistry, provider: string, model: string) {
+  return (
+    modelRegistry.find(provider, model) ??
+    getModel(provider as Parameters<typeof getModel>[0], model as Parameters<typeof getModel>[1])
   );
 }
 

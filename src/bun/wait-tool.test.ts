@@ -105,7 +105,7 @@ describe("wait tool", () => {
     expect(runtime.current?.sessionWaitApplied).toBe(true);
 
     const snapshot = store.getSessionState("session-wait-tool");
-    expect(snapshot.turns[0]?.turnDecision).toBe("clarify");
+    expect(snapshot.turns[0]?.turnDecision).toBe("wait");
     expect(snapshot.commands).toEqual([
       expect.objectContaining({
         toolName: "wait",
@@ -116,15 +116,11 @@ describe("wait tool", () => {
     ]);
     expect(snapshot.threads).toHaveLength(1);
     expect(snapshot.threads[0]).toMatchObject({
-      status: "waiting",
-      wait: {
-        kind: "user",
-        reason: "Need clarification about rollout.",
-        resumeWhen: "Resume when the user answers the rollout question.",
-      },
+      status: "completed",
+      wait: null,
     });
     expect(snapshot.session.wait).toMatchObject({
-      owner: { kind: "thread", threadId: snapshot.threads[0]!.id },
+      owner: { kind: "orchestrator" },
       kind: "user",
       reason: "Need clarification about rollout.",
       resumeWhen: "Resume when the user answers the rollout question.",

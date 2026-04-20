@@ -10,8 +10,6 @@ const SPECIALIZED_TOOL_NAMES = new Set([
   "execute_typescript",
   "thread.start",
   "thread.handoff",
-  "workflow.start",
-  "workflow.resume",
   "wait",
 ]);
 
@@ -39,6 +37,7 @@ export function createToolExecutionCommandTracker(options: {
     handleToolExecutionStart(input) {
       if (
         SPECIALIZED_TOOL_NAMES.has(input.toolName) ||
+        input.toolName.startsWith("smithers.") ||
         commandIdByToolCallId.has(input.toolCallId)
       ) {
         return;
@@ -48,7 +47,7 @@ export function createToolExecutionCommandTracker(options: {
         turnId: options.promptContext.turnId,
         threadId: options.promptContext.surfaceThreadId ?? options.promptContext.rootThreadId,
         toolName: input.toolName,
-        executor: inferExecutor(input.toolName),
+        executor: inferExecutor(input.toolName, options.promptContext),
         visibility: inferVisibility(input.toolName),
         title: inferTitle(input.toolName),
         summary: summarizeToolArguments(input.toolName, input.args),
@@ -91,12 +90,15 @@ export function createToolExecutionCommandTracker(options: {
   };
 }
 
-function inferExecutor(toolName: string): StructuredCommandExecutor {
+function inferExecutor(
+  toolName: string,
+  promptContext: Pick<PromptExecutionContext, "surfaceKind">,
+): StructuredCommandExecutor {
   if (toolName.startsWith("api.")) {
     return "execute_typescript";
   }
 
-  return "orchestrator";
+  return promptContext.surfaceKind === "handler" ? "handler" : "orchestrator";
 }
 
 function inferVisibility(toolName: string): StructuredCommandVisibility {

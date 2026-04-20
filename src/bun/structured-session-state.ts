@@ -10,11 +10,17 @@ export type StructuredTurnDecision =
   | "execute_typescript"
   | "clarify"
   | "thread.start"
-  | "workflow.start"
-  | "workflow.resume"
-  | "handoff";
-export type StructuredThreadStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
-export type StructuredWaitKind = "user" | "external";
+  | "thread.handoff"
+  | "wait"
+  | `smithers.${string}`;
+export type StructuredThreadStatus =
+  | "running-handler"
+  | "running-workflow"
+  | "waiting"
+  | "troubleshooting"
+  | "completed";
+export type StructuredWaitKind = "user" | "external" | "approval" | "signal" | "timer";
+export type StructuredThreadWaitOwner = "handler" | "workflow";
 export type StructuredCommandExecutor =
   | "orchestrator"
   | "handler"
@@ -38,7 +44,13 @@ export type StructuredEpisodeKind =
   | "clarification";
 export type StructuredArtifactKind = "text" | "log" | "json" | "file";
 export type StructuredVerificationStatus = "passed" | "failed" | "cancelled";
-export type StructuredWorkflowStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
+export type StructuredWorkflowStatus =
+  | "running"
+  | "waiting"
+  | "continued"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface StructuredWorkspaceRecord {
   id: string;
@@ -67,6 +79,7 @@ export interface StructuredPiSessionRecord {
 }
 
 export interface StructuredWaitState {
+  owner: StructuredThreadWaitOwner;
   kind: StructuredWaitKind;
   reason: string;
   resumeWhen: string;
@@ -77,8 +90,12 @@ export type StructuredSessionWaitOwner =
   | { kind: "orchestrator" }
   | { kind: "thread"; threadId: string };
 
-export interface StructuredSessionWaitState extends StructuredWaitState {
+export interface StructuredSessionWaitState {
   owner: StructuredSessionWaitOwner;
+  kind: StructuredWaitKind;
+  reason: string;
+  resumeWhen: string;
+  since: string;
 }
 
 export interface StructuredTurnRecord {
@@ -105,7 +122,6 @@ export interface StructuredThreadRecord {
   status: StructuredThreadStatus;
   wait: StructuredWaitState | null;
   worktree?: string;
-  latestWorkflowRunId: string | null;
   startedAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -169,6 +185,13 @@ export interface StructuredWorkflowRunRecord {
   templateId: string | null;
   presetId: string | null;
   status: StructuredWorkflowStatus;
+  smithersStatus: string;
+  waitKind: StructuredWaitKind | null;
+  continuedFromRunIds: string[];
+  activeDescendantRunId: string | null;
+  lastEventSeq: number;
+  lastAttentionSeq: number | null;
+  heartbeatAt: string | null;
   summary: string;
   startedAt: string;
   updatedAt: string;
@@ -343,12 +366,26 @@ export interface StructuredSessionStateStore {
     templateId?: string | null;
     presetId?: string | null;
     status: StructuredWorkflowStatus;
+    smithersStatus?: string;
+    waitKind?: StructuredWaitKind | null;
+    continuedFromRunIds?: string[];
+    activeDescendantRunId?: string | null;
+    lastEventSeq?: number;
+    lastAttentionSeq?: number | null;
+    heartbeatAt?: string | null;
     summary: string;
   }): StructuredWorkflowRunRecord;
   updateWorkflow(input: {
     workflowId: string;
     commandId?: string;
     status: StructuredWorkflowStatus;
+    smithersStatus?: string;
+    waitKind?: StructuredWaitKind | null;
+    continuedFromRunIds?: string[];
+    activeDescendantRunId?: string | null;
+    lastEventSeq?: number;
+    lastAttentionSeq?: number | null;
+    heartbeatAt?: string | null;
     summary: string;
   }): StructuredWorkflowRunRecord;
   getSessionState(sessionId: string): StructuredSessionSnapshot;
@@ -398,12 +435,12 @@ type ThreadRow = {
   title: string;
   objective: string;
   status: StructuredThreadStatus;
+  wait_owner: StructuredThreadWaitOwner | null;
   wait_kind: StructuredWaitKind | null;
   wait_reason: string | null;
   wait_resume_when: string | null;
   wait_since: string | null;
   worktree: string | null;
-  latest_workflow_run_id: string | null;
   started_at: string;
   updated_at: string;
   finished_at: string | null;
@@ -467,6 +504,13 @@ type WorkflowRunRow = {
   template_id: string | null;
   preset_id: string | null;
   status: StructuredWorkflowStatus;
+  smithers_status: string;
+  wait_kind: StructuredWaitKind | null;
+  continued_from_run_ids_json: string | null;
+  active_descendant_run_id: string | null;
+  last_event_seq: number;
+  last_attention_seq: number | null;
+  heartbeat_at: string | null;
   summary: string;
   started_at: string;
   updated_at: string;
@@ -617,14 +661,14 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const threadId = input.threadId ?? null;
     const thread = threadId ? this.mustFindThreadRow(threadId) : null;
     if (threadId && thread) {
-      if (thread.status === "waiting" || thread.wait_kind) {
+      if (thread.status !== "running-handler" || thread.wait_kind || thread.wait_owner) {
         this.db
           .query(
             `UPDATE thread
-             SET status = ?, wait_kind = NULL, wait_reason = NULL, wait_resume_when = NULL, wait_since = NULL, updated_at = ?, finished_at = NULL
+             SET status = ?, wait_owner = NULL, wait_kind = NULL, wait_reason = NULL, wait_resume_when = NULL, wait_since = NULL, updated_at = ?, finished_at = NULL
              WHERE id = ?`,
           )
-          .run("running", timestamp, threadId);
+          .run("running-handler", timestamp, threadId);
         this.recordEvent({
           sessionId: thread.session_id,
           kind: "thread.updated",
@@ -779,16 +823,16 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            title,
            objective,
            status,
+           wait_owner,
            wait_kind,
            wait_reason,
            wait_resume_when,
            wait_since,
            worktree,
-           latest_workflow_run_id,
            started_at,
            updated_at,
            finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, NULL, ?, ?, NULL)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, NULL)`,
       )
       .run(
         threadId,
@@ -798,7 +842,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         surfacePiSessionId,
         input.title,
         input.objective,
-        "running",
+        "running-handler",
         input.worktree ?? null,
         timestamp,
         timestamp,
@@ -845,6 +889,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
          SET title = ?,
              objective = ?,
              status = ?,
+             wait_owner = ?,
              wait_kind = ?,
              wait_reason = ?,
              wait_resume_when = ?,
@@ -858,6 +903,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         nextTitle,
         nextObjective,
         nextStatus,
+        nextWait?.owner ?? null,
         nextWait?.kind ?? null,
         nextWait?.reason ?? null,
         nextWait?.resumeWhen ?? null,
@@ -892,13 +938,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     if (owner.kind === "thread") {
       this.mustFindThreadRow(owner.threadId);
       const hasOtherRunningThread = this.queryThreadRows(session.session_id).some(
-        (thread) => thread.id !== owner.threadId && thread.status === "running",
+        (thread) => thread.id !== owner.threadId && isRunnableThreadStatus(thread.status),
       );
       if (hasOtherRunningThread) {
         throw new Error("Cannot set session wait while other runnable thread work remains.");
       }
     } else if (
-      this.queryThreadRows(session.session_id).some((thread) => thread.status === "running")
+      this.queryThreadRows(session.session_id).some((thread) => isRunnableThreadStatus(thread.status))
     ) {
       throw new Error("Cannot set orchestrator session wait while runnable thread work remains.");
     }
@@ -1330,6 +1376,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     templateId?: string | null;
     presetId?: string | null;
     status: StructuredWorkflowStatus;
+    smithersStatus?: string;
+    waitKind?: StructuredWaitKind | null;
+    continuedFromRunIds?: string[];
+    activeDescendantRunId?: string | null;
+    lastEventSeq?: number;
+    lastAttentionSeq?: number | null;
+    heartbeatAt?: string | null;
     summary: string;
   }): StructuredWorkflowRunRecord {
     const thread = this.mustFindThreadRow(input.threadId);
@@ -1348,11 +1401,18 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            template_id,
            preset_id,
            status,
+           smithers_status,
+           wait_kind,
+           continued_from_run_ids_json,
+           active_descendant_run_id,
+           last_event_seq,
+           last_attention_seq,
+           heartbeat_at,
            summary,
            started_at,
            updated_at,
            finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         workflowId,
@@ -1364,19 +1424,22 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         input.templateId ?? null,
         input.presetId ?? null,
         input.status,
+        input.smithersStatus ?? defaultSmithersStatusForWorkflowStatus(input.status),
+        input.waitKind ?? defaultWaitKindForWorkflowStatus(input.status),
+        toJson(input.continuedFromRunIds ?? []),
+        input.activeDescendantRunId ?? null,
+        input.lastEventSeq ?? -1,
+        input.lastAttentionSeq ?? null,
+        input.heartbeatAt ?? null,
         input.summary,
         timestamp,
         timestamp,
         isTerminalWorkflowStatus(input.status) ? timestamp : null,
       );
 
-    this.db
-      .query(`UPDATE thread SET latest_workflow_run_id = ?, updated_at = ? WHERE id = ?`)
-      .run(workflowId, timestamp, input.threadId);
-
     this.recordEvent({
       sessionId: thread.session_id,
-      kind: "workflowRun.recorded",
+      kind: "workflowRun.created",
       subjectKind: "workflowRun",
       subjectId: workflowId,
       at: timestamp,
@@ -1389,6 +1452,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     workflowId: string;
     commandId?: string;
     status: StructuredWorkflowStatus;
+    smithersStatus?: string;
+    waitKind?: StructuredWaitKind | null;
+    continuedFromRunIds?: string[];
+    activeDescendantRunId?: string | null;
+    lastEventSeq?: number;
+    lastAttentionSeq?: number | null;
+    heartbeatAt?: string | null;
     summary: string;
   }): StructuredWorkflowRunRecord {
     const existing = this.mustFindWorkflowRunRow(input.workflowId);
@@ -1401,6 +1471,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         `UPDATE workflow_run
          SET command_id = ?,
              status = ?,
+             smithers_status = ?,
+             wait_kind = ?,
+             continued_from_run_ids_json = ?,
+             active_descendant_run_id = ?,
+             last_event_seq = ?,
+             last_attention_seq = ?,
+             heartbeat_at = ?,
              summary = ?,
              updated_at = ?,
              finished_at = ?
@@ -1409,14 +1486,24 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .run(
         input.commandId ?? existing.command_id,
         input.status,
+        input.smithersStatus ?? existing.smithers_status,
+        input.waitKind === undefined ? existing.wait_kind : input.waitKind,
+        input.continuedFromRunIds === undefined
+          ? existing.continued_from_run_ids_json
+          : toJson(input.continuedFromRunIds),
+        input.activeDescendantRunId === undefined
+          ? existing.active_descendant_run_id
+          : (input.activeDescendantRunId ?? null),
+        input.lastEventSeq ?? existing.last_event_seq,
+        input.lastAttentionSeq === undefined
+          ? existing.last_attention_seq
+          : input.lastAttentionSeq,
+        input.heartbeatAt === undefined ? existing.heartbeat_at : (input.heartbeatAt ?? null),
         input.summary,
         timestamp,
         isTerminalWorkflowStatus(input.status) ? timestamp : null,
         input.workflowId,
       );
-    this.db
-      .query(`UPDATE thread SET latest_workflow_run_id = ?, updated_at = ? WHERE id = ?`)
-      .run(input.workflowId, timestamp, existing.thread_id);
 
     this.recordEvent({
       sessionId: existing.session_id,
@@ -1462,8 +1549,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const thread = this.mustFindThreadRecord(threadId);
     const workflowRuns = this.queryWorkflowRunRecordsForThread(threadId);
     const latestWorkflowRun =
-      workflowRuns.find((entry) => entry.id === thread.latestWorkflowRunId) ??
-      workflowRuns[workflowRuns.length - 1] ??
+      workflowRuns.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ??
       null;
 
     return {
@@ -1765,7 +1851,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
     const threads = this.queryThreadRows(sessionId);
     if (wait.owner.kind === "orchestrator") {
-      if (threads.some((thread) => thread.status === "running")) {
+      if (threads.some((thread) => isRunnableThreadStatus(thread.status))) {
         this.clearSessionWait({ sessionId });
       }
       return;
@@ -1778,7 +1864,11 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       return;
     }
 
-    if (threads.some((thread) => thread.id !== ownerThreadId && thread.status === "running")) {
+    if (
+      threads.some(
+        (thread) => thread.id !== ownerThreadId && isRunnableThreadStatus(thread.status),
+      )
+    ) {
       this.clearSessionWait({ sessionId });
     }
   }
@@ -1864,10 +1954,17 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   private mapThreadWait(row: ThreadRow): StructuredWaitState | null {
-    if (!row.wait_kind || !row.wait_reason || !row.wait_resume_when || !row.wait_since) {
+    if (
+      !row.wait_owner ||
+      !row.wait_kind ||
+      !row.wait_reason ||
+      !row.wait_resume_when ||
+      !row.wait_since
+    ) {
       return null;
     }
     return {
+      owner: row.wait_owner,
       kind: row.wait_kind,
       reason: row.wait_reason,
       resumeWhen: row.wait_resume_when,
@@ -1887,7 +1984,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       status: row.status,
       wait: this.mapThreadWait(row),
       worktree: row.worktree ?? undefined,
-      latestWorkflowRunId: row.latest_workflow_run_id,
       startedAt: row.started_at,
       updatedAt: row.updated_at,
       finishedAt: row.finished_at,
@@ -1963,6 +2059,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       templateId: row.template_id,
       presetId: row.preset_id,
       status: row.status,
+      smithersStatus: row.smithers_status,
+      waitKind: row.wait_kind,
+      continuedFromRunIds: fromJson<string[]>(row.continued_from_run_ids_json) ?? [],
+      activeDescendantRunId: row.active_descendant_run_id,
+      lastEventSeq: row.last_event_seq,
+      lastAttentionSeq: row.last_attention_seq,
+      heartbeatAt: row.heartbeat_at,
       summary: row.summary,
       startedAt: row.started_at,
       updatedAt: row.updated_at,
@@ -2050,12 +2153,12 @@ function initializeSchema(db: Database): void {
       title TEXT NOT NULL,
       objective TEXT NOT NULL,
       status TEXT NOT NULL,
+      wait_owner TEXT,
       wait_kind TEXT,
       wait_reason TEXT,
       wait_resume_when TEXT,
       wait_since TEXT,
       worktree TEXT,
-      latest_workflow_run_id TEXT,
       started_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       finished_at TEXT
@@ -2119,6 +2222,13 @@ function initializeSchema(db: Database): void {
       template_id TEXT,
       preset_id TEXT,
       status TEXT NOT NULL,
+      smithers_status TEXT NOT NULL,
+      wait_kind TEXT,
+      continued_from_run_ids_json TEXT,
+      active_descendant_run_id TEXT,
+      last_event_seq INTEGER NOT NULL,
+      last_attention_seq INTEGER,
+      heartbeat_at TEXT,
       summary TEXT NOT NULL,
       started_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -2154,7 +2264,7 @@ function createId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-function toJson(value: Record<string, unknown> | null | undefined): string | null {
+function toJson(value: unknown): string | null {
   if (!value) {
     return null;
   }
@@ -2169,11 +2279,47 @@ function fromJson<T>(value: string | null | undefined): T | null {
 }
 
 function isTerminalThreadStatus(status: StructuredThreadStatus): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
+  return status === "completed";
+}
+
+function isRunnableThreadStatus(status: StructuredThreadStatus): boolean {
+  return (
+    status === "running-handler" ||
+    status === "running-workflow" ||
+    status === "troubleshooting"
+  );
 }
 
 function isTerminalWorkflowStatus(status: StructuredWorkflowStatus): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
+  return (
+    status === "continued" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled"
+  );
+}
+
+function defaultSmithersStatusForWorkflowStatus(status: StructuredWorkflowStatus): string {
+  switch (status) {
+    case "running":
+      return "running";
+    case "waiting":
+      return "waiting-event";
+    case "continued":
+      return "continued";
+    case "completed":
+      return "finished";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+  }
+}
+
+function defaultWaitKindForWorkflowStatus(
+  status: StructuredWorkflowStatus,
+): StructuredWaitKind | null {
+  return status === "waiting" ? "external" : null;
 }
 
 function resolveArtifactPath(input: {

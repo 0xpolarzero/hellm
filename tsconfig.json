@@ -18,7 +18,7 @@
     "scripts/**/*.ts",
     "src/**/*.d.ts",
     "src/**/*.ts",
-    "vite.config.ts",
+    "vite.config.ts"
   ],
-  "exclude": ["node_modules", "dist", "build", ".electrobun"],
+  "exclude": ["node_modules", "dist", "build", ".electrobun"]
 }

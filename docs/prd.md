@@ -155,8 +155,10 @@ That means:
 
 - the handler thread decides whether to reuse a template, use a preset, or author a custom workflow
 - the handler thread starts and resumes workflow runs
+- workflow waits, approvals, retries, repairs, and resumptions stay inside that same handler thread instead of escaping back to the orchestrator
 - the handler thread receives control back when a workflow run reaches a terminal outcome or another actionable attention state
 - the handler thread may repair inputs, inspect workflow state, edit the workflow, start a replacement run, resume when the same run is still resumable, or ask the user for clarification
+- the handler thread may call `thread.handoff` only after its current supervised workflow state is terminal or explicitly cancelled; a running or waiting workflow run may not be orphaned under a completed thread
 - the orchestrator does not sit in the middle of every workflow pause, retry, or repair step
 
 A handler thread may launch more than one workflow run over its lifetime.
@@ -250,7 +252,7 @@ More precisely, this means:
 The intended use of the native control subset is:
 
 - the orchestrator normally uses `thread.start` to open a delegated handler thread
-- a handler thread uses `thread.handoff` to emit a durable handoff episode and mark the current objective span complete without losing direct interactivity in that thread surface
+- a handler thread uses `thread.handoff` to emit a durable handoff episode and mark the current objective span complete without losing direct interactivity in that thread surface, but only after no running or waiting workflow run still belongs to that span
 - a successful `thread.handoff` immediately opens a fresh orchestrator reconciliation turn so the orchestrator can act on the latest durable handoff without waiting for another user-authored orchestrator message
 - a handler thread normally uses Smithers-native bridge tools such as `smithers.list_workflows`, `smithers.run_workflow`, `smithers.get_run`, `smithers.explain_run`, `smithers.list_pending_approvals`, `smithers.resolve_approval`, `smithers.get_node_detail`, `smithers.list_artifacts`, and `smithers.get_run_events` to supervise Smithers execution
 - any interactive surface may use `wait` when it needs user or external input
@@ -294,7 +296,7 @@ In the adopted delegated model:
 - a handler thread may run through many internal workflow runs
 - a handler thread may wait, resume, rerun, and repair internally
 - ordinary handler-thread replies stay inside the thread and do not emit handoff episodes
-- a handler thread returns control to the orchestrator by explicitly calling `thread.handoff`, which marks the current objective span terminal and emits a handoff episode
+- a handler thread returns control to the orchestrator by explicitly calling `thread.handoff`, which marks the current objective span terminal and emits a handoff episode only after the thread no longer owns a running or waiting workflow run for that span
 - the thread surface remains open for later inspection, direct follow-up chat, and resumed work on that same objective
 
 That handoff is the thread's terminal durable state plus the latest handoff episode it emits.
@@ -671,6 +673,10 @@ The intended behavior is:
 - the handler thread enters troubleshooting
 - the handler thread may inspect artifacts, inspect workflow state through Smithers-native bridge tools, edit the workflow, repair inputs, start a replacement run, resume only when Smithers resume preconditions still hold, ask the user, or explicitly close the objective
 - only the handler thread's handoff is returned to the orchestrator: terminal thread state plus the latest handoff episode
+
+Duplicate observation of the same terminal workflow state is legitimate during final stream flushes or later reconciliation reads.
+
+That duplication must be handled as idempotent projection, not as a reason to reopen a thread the handler already handed back.
 
 If a workflow run dies before its own planned finalization path, the bridge must still surface durable failure state back to the supervising handler thread.
 

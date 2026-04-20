@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -54,6 +55,76 @@ export interface SeededSession {
 
 export function getTestAgentDir(homeDir: string): string {
   return join(homeDir, ".config", "svvy", "pi-agent");
+}
+
+export async function writeAgentModelsConfig(
+  homeDir: string,
+  config: Record<string, unknown>,
+): Promise<void> {
+  const agentDir = getTestAgentDir(homeDir);
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(join(agentDir, "models.json"), `${JSON.stringify(config, null, 2)}\n`);
+}
+
+export function resolveProjectEnvValue(key: string, rootDir = process.cwd()): string | null {
+  const envFiles = [".env.local", ".env"];
+  for (const fileName of envFiles) {
+    const filePath = join(rootDir, fileName);
+    if (!existsSync(filePath)) {
+      continue;
+    }
+
+    const value = readEnvFileValue(filePath, key);
+    if (value) {
+      return value;
+    }
+  }
+
+  const processValue = process.env[key]?.trim();
+  return processValue ? processValue : null;
+}
+
+export async function writeWorkspaceEnvFile(
+  workspaceDir: string,
+  values: Record<string, string>,
+): Promise<void> {
+  const filePath = join(workspaceDir, ".env");
+  const contents = Object.entries(values)
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  await writeFile(filePath, `${contents}\n`);
+}
+
+function readEnvFileValue(filePath: string, key: string): string | null {
+  const content = readFileSync(filePath, "utf8");
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+
+    const equalsIndex = line.indexOf("=");
+    if (equalsIndex < 0) {
+      continue;
+    }
+
+    const candidateKey = line.slice(0, equalsIndex).trim();
+    if (candidateKey !== key) {
+      continue;
+    }
+
+    let value = line.slice(equalsIndex + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    return value || null;
+  }
+
+  return null;
 }
 
 export function getTestSessionDir(homeDir: string, workspaceDir = ROOT_WORKSPACE_DIR): string {

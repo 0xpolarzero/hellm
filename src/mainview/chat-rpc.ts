@@ -42,7 +42,7 @@ export interface StreamEventMessage {
 }
 
 export interface SessionSyncMessage {
-  reason: "prompt.settled" | "background.started";
+  reason: "prompt.settled" | "background.started" | "structured.updated";
   activeSession: ActiveSessionState;
   sessions: WorkspaceSessionSummary[];
 }
@@ -143,7 +143,7 @@ export interface WorkspaceCommandInspector {
 export interface WorkspaceHandlerThreadWorkflowSummary {
   workflowRunId: string;
   workflowName: string;
-  status: "running" | "waiting" | "completed" | "failed" | "cancelled";
+  status: "running" | "waiting" | "continued" | "completed" | "failed" | "cancelled";
   summary: string;
   updatedAt: string;
 }
@@ -161,9 +161,10 @@ export interface WorkspaceHandlerThreadSummary {
   surfacePiSessionId: string;
   title: string;
   objective: string;
-  status: "running" | "waiting" | "completed" | "failed" | "cancelled";
+  status: "running-handler" | "running-workflow" | "waiting" | "troubleshooting" | "completed";
   wait: {
-    kind: "user" | "external";
+    owner: "handler" | "workflow";
+    kind: "user" | "external" | "approval" | "signal" | "timer";
     reason: string;
     resumeWhen: string;
     since: string;
@@ -203,7 +204,7 @@ export interface WorkspaceSessionSummary {
   thinkingLevel?: string;
   wait?: {
     threadId?: string;
-    kind: "user" | "external";
+    kind: "user" | "external" | "approval" | "signal" | "timer";
     reason: string;
     resumeWhen: string;
     since: string;
@@ -219,9 +220,10 @@ export interface WorkspaceSessionSummary {
     events: number;
   };
   threadIdsByStatus?: {
-    running: string[];
+    runningHandler: string[];
+    runningWorkflow: string[];
     waiting: string[];
-    failed: string[];
+    troubleshooting: string[];
   };
   threadIds?: string[];
   commandRollups?: WorkspaceCommandRollup[];

@@ -5,7 +5,6 @@ import type {
   StructuredSessionSnapshot,
   StructuredSessionStatus,
   StructuredThreadRecord,
-  StructuredThreadStatus,
   StructuredTurnRecord,
   StructuredWorkflowRunRecord,
 } from "./structured-session-state";
@@ -131,9 +130,10 @@ export interface StructuredSessionView {
     events: number;
   };
   threadIdsByStatus: {
-    running: string[];
+    runningHandler: string[];
+    runningWorkflow: string[];
     waiting: string[];
-    failed: string[];
+    troubleshooting: string[];
   };
   threadIds: string[];
   latestEpisodePreview?: string | null;
@@ -369,11 +369,26 @@ function getThreadLatestWorkflowRun(
     return null;
   }
 
-  return (
-    workflowRuns.find((workflowRun) => workflowRun.id === thread.latestWorkflowRunId) ??
-    workflowRuns.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ??
-    null
+  const workflowRunsById = new Map(
+    workflowRuns.map((workflowRun) => [workflowRun.id, workflowRun]),
   );
+  const mostRecent =
+    workflowRuns.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ??
+    null;
+  if (!mostRecent) {
+    return null;
+  }
+
+  let current = mostRecent;
+  while (current.status === "continued" && current.activeDescendantRunId) {
+    const descendant = workflowRunsById.get(current.activeDescendantRunId);
+    if (!descendant) {
+      break;
+    }
+    current = descendant;
+  }
+
+  return current;
 }
 
 function getThreadLatestEpisode(
@@ -445,6 +460,14 @@ function describeWaitingThread(thread: StructuredThreadRecord): string {
   return `Waiting: ${thread.title}`;
 }
 
+function describeTroubleshootingThread(thread: StructuredThreadRecord): string {
+  if (thread.wait) {
+    return `Troubleshooting: ${thread.wait.reason}`;
+  }
+
+  return `Troubleshooting: ${thread.title || thread.objective}`;
+}
+
 function formatEpisodePreview(episode: StructuredEpisodeRecord): string {
   switch (episode.kind) {
     case "workflow":
@@ -502,6 +525,10 @@ function derivePreview(session: StructuredSessionSnapshot): string {
     return describeWaitingThread(latestThread);
   }
 
+  if (latestThread?.status === "troubleshooting") {
+    return describeTroubleshootingThread(latestThread);
+  }
+
   if (latestThread) {
     return latestThread.title || latestThread.objective;
   }
@@ -531,7 +558,7 @@ function getLatestFailureTimestamp(session: StructuredSessionSnapshot): number |
   const failures = [
     ...session.turns.filter((turn) => turn.status === "failed").map((turn) => getUpdatedAt(turn)),
     ...session.threads
-      .filter((thread) => thread.status === "failed")
+      .filter((thread) => thread.status === "troubleshooting")
       .map((thread) => getUpdatedAt(thread)),
   ].filter((value) => Number.isFinite(value));
 
@@ -546,14 +573,16 @@ export function deriveStructuredSessionStatus(input: {
     return "waiting";
   }
 
-  if (input.threads.some((thread) => thread.status === "running")) {
+  if (
+    input.threads.some(
+      (thread) =>
+        thread.status === "running-handler" || thread.status === "running-workflow",
+    )
+  ) {
     return "running";
   }
 
-  const latestThread = input.threads.toSorted((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt),
-  )[0];
-  if (latestThread?.status === "failed") {
+  if (input.threads.some((thread) => thread.status === "troubleshooting")) {
     return "error";
   }
 
@@ -621,16 +650,28 @@ export function buildStructuredSessionSummaryProjection(
 
 export function groupThreadIdsByStatus(
   threads: Pick<StructuredThreadRecord, "id" | "status">[],
-): Record<Extract<StructuredThreadStatus, "running" | "waiting" | "failed">, string[]> {
-  const grouped = {
-    running: [] as string[],
+): StructuredSessionView["threadIdsByStatus"] {
+  const grouped: StructuredSessionView["threadIdsByStatus"] = {
+    runningHandler: [] as string[],
+    runningWorkflow: [] as string[],
     waiting: [] as string[],
-    failed: [] as string[],
+    troubleshooting: [] as string[],
   };
 
   for (const thread of threads) {
-    if (thread.status === "running" || thread.status === "waiting" || thread.status === "failed") {
-      grouped[thread.status].push(thread.id);
+    switch (thread.status) {
+      case "running-handler":
+        grouped.runningHandler.push(thread.id);
+        break;
+      case "running-workflow":
+        grouped.runningWorkflow.push(thread.id);
+        break;
+      case "waiting":
+        grouped.waiting.push(thread.id);
+        break;
+      case "troubleshooting":
+        grouped.troubleshooting.push(thread.id);
+        break;
     }
   }
 
@@ -739,7 +780,7 @@ export function getLatestFailureContext(session: StructuredSessionSnapshot): str
   }
 
   const failingThread = session.threads
-    .filter((thread) => thread.status === "failed")
+    .filter((thread) => thread.status === "troubleshooting")
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
   if (failingThread) {
     return failingThread.title || failingThread.objective;

@@ -299,6 +299,7 @@ describe("structured session state SQLite persistence", () => {
       objective: "Persist session wait details.",
     });
     const wait = {
+      owner: "workflow" as const,
       kind: "external" as const,
       reason: "Waiting on a Smithers milestone completion.",
       resumeWhen: "Resume when the milestone gate passes.",
@@ -312,7 +313,9 @@ describe("structured session state SQLite persistence", () => {
     const waitingOn = first.store.setSessionWait({
       sessionId: "session-waiting-persist",
       owner: { kind: "thread", threadId: thread.id },
-      ...wait,
+      kind: wait.kind,
+      reason: wait.reason,
+      resumeWhen: wait.resumeWhen,
     });
 
     const beforeReload = first.store.getSessionState("session-waiting-persist");
@@ -329,7 +332,7 @@ describe("structured session state SQLite persistence", () => {
 
     second.store.updateThread({
       threadId: thread.id,
-      status: "running",
+      status: "running-handler",
     });
 
     const resumed = second.store.getSessionState("session-waiting-persist");
@@ -428,6 +431,6 @@ describe("structured session state SQLite persistence", () => {
     expect(alpha.workflowRuns).toHaveLength(0);
     expect(alpha.episodes).toHaveLength(1);
     expect(beta.workflowRuns).toHaveLength(1);
-    expect(beta.threads[0]?.latestWorkflowRunId).toBe(beta.workflowRuns[0]?.id);
+    expect(beta.threads[0]?.status).toBe("running-handler");
   });
 });

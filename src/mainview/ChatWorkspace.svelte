@@ -490,32 +490,50 @@
   }
 
   function getThreadStatusLabel(
-    status: WorkspaceHandlerThreadSummary["status"] | WorkspaceHandlerThreadInspector["status"],
+    status:
+      | WorkspaceHandlerThreadSummary["status"]
+      | WorkspaceHandlerThreadInspector["status"]
+      | WorkspaceHandlerThreadWorkflowSummary["status"],
   ): string {
     switch (status) {
-      case "running":
-        return "Running";
+      case "running-handler":
+        return "Handler Running";
+      case "running-workflow":
+        return "Workflow Running";
       case "waiting":
         return "Waiting";
+      case "troubleshooting":
+        return "Troubleshooting";
       case "completed":
         return "Completed";
+      case "continued":
+        return "Continued";
       case "failed":
         return "Failed";
-      default:
+      case "cancelled":
         return "Cancelled";
+      default:
+        return status;
     }
   }
 
   function getThreadStatusTone(
-    status: WorkspaceHandlerThreadSummary["status"] | WorkspaceHandlerThreadInspector["status"],
+    status:
+      | WorkspaceHandlerThreadSummary["status"]
+      | WorkspaceHandlerThreadInspector["status"]
+      | WorkspaceHandlerThreadWorkflowSummary["status"],
   ): "neutral" | "info" | "success" | "warning" | "danger" {
     switch (status) {
-      case "running":
+      case "running-handler":
+      case "running-workflow":
         return "info";
       case "waiting":
         return "warning";
       case "completed":
         return "success";
+      case "continued":
+        return "neutral";
+      case "troubleshooting":
       case "failed":
         return "danger";
       default:
@@ -1200,7 +1218,7 @@
 
           {#if threadInspector.wait}
             <p class="thread-inspector-wait">
-              Waiting on {threadInspector.wait.kind}: {threadInspector.wait.reason}
+              Waiting on {threadInspector.wait.owner} {threadInspector.wait.kind}: {threadInspector.wait.reason}
             </p>
           {/if}
 

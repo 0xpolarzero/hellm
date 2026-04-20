@@ -5,7 +5,9 @@ import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import type {
   StructuredEpisodeKind,
   StructuredSessionStateStore,
+  StructuredWorkflowRunRecord,
 } from "./structured-session-state";
+import type { SmithersRuntimeManager } from "./smithers-runtime/manager";
 
 export const THREAD_HANDOFF_TOOL_NAME = "thread.handoff";
 
@@ -31,12 +33,14 @@ export type ThreadHandoffParams = Static<typeof threadHandoffParamsSchema>;
 
 const THREAD_HANDOFF_DESCRIPTION = [
   "Emit a durable handoff episode for the current handler-thread objective and mark that objective completed.",
+  "Do not use this while the thread still owns a running or waiting workflow run; workflow waits stay inside the handler thread until they are resolved or cancelled.",
   "The thread surface stays interactive after handoff and may receive later follow-up turns.",
 ].join(" ");
 
 export function createThreadHandoffTool(options: {
   runtime: PromptExecutionRuntimeHandle;
   store: StructuredSessionStateStore;
+  manager?: SmithersRuntimeManager;
 }): AgentTool<typeof threadHandoffParamsSchema, Record<string, unknown>> {
   return {
     label: "Thread Handoff",
@@ -66,6 +70,12 @@ export function createThreadHandoffTool(options: {
       options.store.startCommand(command.id);
 
       try {
+        await options.manager?.reconcileThreadOwnedWorkflowsBeforeHandoff(
+          runtime.sessionId,
+          threadId,
+        );
+        assertNoActiveWorkflowRuns(options.store, runtime.sessionId, threadId);
+
         options.store.updateThread({
           threadId,
           status: "completed",
@@ -83,7 +93,7 @@ export function createThreadHandoffTool(options: {
 
         options.store.setTurnDecision({
           turnId: runtime.turnId,
-          decision: "handoff",
+          decision: "thread.handoff",
         });
 
         options.store.finishCommand({
@@ -173,4 +183,33 @@ function normalizeEpisodeKind(
   fallback: StructuredEpisodeKind,
 ): StructuredEpisodeKind {
   return kind ?? fallback;
+}
+
+function assertNoActiveWorkflowRuns(
+  store: StructuredSessionStateStore,
+  sessionId: string,
+  threadId: string,
+): void {
+  const activeWorkflowRuns = store
+    .getSessionState(sessionId)
+    .workflowRuns.filter(
+      (workflowRun) =>
+        workflowRun.threadId === threadId &&
+        (workflowRun.status === "running" || workflowRun.status === "waiting"),
+    );
+  if (activeWorkflowRuns.length === 0) {
+    return;
+  }
+
+  throw new Error(buildActiveWorkflowHandoffError(activeWorkflowRuns));
+}
+
+function buildActiveWorkflowHandoffError(workflowRuns: StructuredWorkflowRunRecord[]): string {
+  const details = workflowRuns
+    .map(
+      (workflowRun) =>
+        `${workflowRun.templateId ?? workflowRun.workflowName} (${workflowRun.smithersRunId}, ${workflowRun.status})`,
+    )
+    .join(", ");
+  return `thread.handoff cannot complete the current objective span while active workflow runs still exist: ${details}. The handler keeps ownership until those runs are terminal or cancelled. Resolve the wait inside the thread, resume the workflow, or cancel it before handing control back.`;
 }

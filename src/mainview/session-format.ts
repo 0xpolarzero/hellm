@@ -37,7 +37,10 @@ export function sessionStatusTone(status: SessionStatus): "neutral" | "warning" 
 export function formatSessionStatusLabel(summary: WorkspaceSessionSummary): string {
   switch (summary.status) {
     case "running":
-      return summary.threadIdsByStatus?.running.length ? "Threading" : "Running";
+      return summary.threadIdsByStatus?.runningWorkflow.length ||
+        summary.threadIdsByStatus?.runningHandler.length
+        ? "Threading"
+        : "Running";
     case "waiting":
       return "Waiting";
     case "error":

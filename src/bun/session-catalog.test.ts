@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import * as PiCodingAgent from "@mariozechner/pi-coding-agent";
@@ -7,6 +7,7 @@ import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Message, StopReason, ToolCall } from "@mariozechner/pi-ai";
 import type { PromptTarget, SessionSyncMessage } from "../mainview/chat-rpc";
+import { buildSystemPrompt } from "./default-system-prompt";
 import {
   getSvvySessionDir,
   WorkspaceSessionCatalog,
@@ -103,6 +104,8 @@ type PromptableSession = {
 };
 
 type ManagedSessionHandle = {
+  sessionId: string;
+  actorProfile: "orchestrator" | "handler" | "workflow-task";
   session: PromptableSession;
   promptSyncCursor: {
     messageCount: number;
@@ -318,15 +321,51 @@ describe("WorkspaceSessionCatalog", () => {
       const [options] = createAgentSessionSpy.mock.calls[0] ?? [];
       expect(options?.tools).toEqual([]);
       expect(options?.customTools?.map((tool) => tool.name).toSorted()).toEqual(
-        [
-          "execute_typescript",
-          "thread.handoff",
-          "thread.start",
-          "workflow.start",
-          "workflow.resume",
-          "wait",
-        ].toSorted(),
+        ["execute_typescript", "thread.start", "wait"].toSorted(),
       );
+    } finally {
+      createAgentSessionSpy.mockRestore();
+      await catalog?.dispose();
+    }
+  });
+
+  it("resolves built-in provider overrides through the model registry before creating the pi session", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const createAgentSessionSpy = spyOn(PiCodingAgent, "createAgentSession");
+    let catalog: WorkspaceSessionCatalog | null = null;
+
+    writeFileSync(
+      join(agentDir, "models.json"),
+      `${JSON.stringify(
+        {
+          providers: {
+            zai: {
+              baseUrl: "http://127.0.0.1:43111/api/coding/paas/v4",
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    try {
+      catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+      await catalog.createSession(
+        { title: "Registry Override" },
+        {
+          ...DEFAULTS,
+          provider: "zai",
+          model: "glm-5-turbo",
+        },
+      );
+
+      const [options] = createAgentSessionSpy.mock.calls[0] ?? [];
+      expect(options?.model).toMatchObject({
+        provider: "zai",
+        id: "glm-5-turbo",
+        baseUrl: "http://127.0.0.1:43111/api/coding/paas/v4",
+      });
     } finally {
       createAgentSessionSpy.mockRestore();
       await catalog?.dispose();
@@ -342,8 +381,8 @@ describe("WorkspaceSessionCatalog", () => {
       const resolvedSystemPrompt = created.resolvedSystemPrompt;
       const managedSession = getManagedSessionHandle(catalog);
 
-      expect(created.systemPrompt).toBe(DEFAULTS.systemPrompt);
-      expect(resolvedSystemPrompt).toContain(DEFAULTS.systemPrompt);
+      expect(created.systemPrompt).toBe(buildSystemPrompt("orchestrator"));
+      expect(resolvedSystemPrompt).toContain(buildSystemPrompt("orchestrator"));
       expect(resolvedSystemPrompt).toContain("Current date:");
       expect(resolvedSystemPrompt).toContain(`Current working directory: ${cwd}`);
       expect(resolvedSystemPrompt).not.toContain(
@@ -748,7 +787,10 @@ describe("WorkspaceSessionCatalog", () => {
       );
       expect(promptTexts[0]).not.toContain(DEFAULTS.systemPrompt);
       expect(promptTexts[0]).toContain("User:\nExplain the parser");
-      expect(getManagedSessionHandle(catalog)).toBe(activeSession);
+      expect(getManagedSessionHandle(catalog)).toMatchObject({
+        sessionId: activeSession.sessionId,
+        actorProfile: "orchestrator",
+      });
 
       await catalog.sendPrompt({
         ...DEFAULTS,
@@ -763,7 +805,10 @@ describe("WorkspaceSessionCatalog", () => {
           getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 4,
       );
       expect(promptTexts[1]).toBe("What changed?");
-      expect(getManagedSessionHandle(catalog)).toBe(activeSession);
+      expect(getManagedSessionHandle(catalog)).toMatchObject({
+        sessionId: activeSession.sessionId,
+        actorProfile: "orchestrator",
+      });
     } finally {
       promptSpy.mockRestore();
     }
@@ -860,7 +905,10 @@ describe("WorkspaceSessionCatalog", () => {
       );
       expect(promptTexts[0]).not.toContain(DEFAULTS.systemPrompt);
       expect(promptTexts[0]).toContain("User:\nExplain the parser");
-      expect(getManagedSessionHandle(catalog)).toBe(activeSession);
+      expect(getManagedSessionHandle(catalog)).toMatchObject({
+        sessionId: activeSession.sessionId,
+        actorProfile: "orchestrator",
+      });
 
       await catalog.sendPrompt({
         ...DEFAULTS,
@@ -877,7 +925,10 @@ describe("WorkspaceSessionCatalog", () => {
       expect(promptTexts[1]).not.toContain(DEFAULTS.systemPrompt);
       expect(promptTexts[1]).toContain("User:\nExplain the parser, but differently");
       expect(promptTexts[1]).toContain("User:\nWhat changed?");
-      expect(getManagedSessionHandle(catalog)).not.toBe(activeSession);
+      expect(getManagedSessionHandle(catalog)).toMatchObject({
+        sessionId: activeSession.sessionId,
+        actorProfile: "orchestrator",
+      });
     } finally {
       promptSpy.mockRestore();
     }
@@ -918,7 +969,10 @@ describe("WorkspaceSessionCatalog", () => {
       );
       expect(promptTexts[0]).not.toContain(DEFAULTS.systemPrompt);
       expect(promptTexts[0]).toContain("User:\nExplain the parser");
-      expect(getManagedSessionHandle(catalog)).toBe(activeSession);
+      expect(getManagedSessionHandle(catalog)).toMatchObject({
+        sessionId: activeSession.sessionId,
+        actorProfile: "orchestrator",
+      });
 
       await catalog.sendPrompt({
         ...DEFAULTS,
@@ -933,7 +987,10 @@ describe("WorkspaceSessionCatalog", () => {
           getManagedSessionHandle(catalog).promptSyncCursor.messageCount === 4,
       );
       expect(promptTexts[1]).toBe("What changed?");
-      expect(getManagedSessionHandle(catalog)).toBe(activeSession);
+      expect(getManagedSessionHandle(catalog)).toMatchObject({
+        sessionId: activeSession.sessionId,
+        actorProfile: "orchestrator",
+      });
     } finally {
       promptSpy.mockRestore();
     }
@@ -1155,7 +1212,7 @@ describe("WorkspaceSessionCatalog", () => {
       });
       expect(persistedThread).toMatchObject({
         id: handlerThread.id,
-        status: "running",
+        status: "running-handler",
       });
     } finally {
       promptSpy.mockRestore();
@@ -1238,7 +1295,7 @@ describe("WorkspaceSessionCatalog", () => {
         });
         store.setTurnDecision({
           turnId: runtime.turnId,
-          decision: "handoff",
+          decision: "thread.handoff",
         });
 
         appendMessagesToSession(this, [
@@ -1294,9 +1351,10 @@ describe("WorkspaceSessionCatalog", () => {
       expect(orchestratorSummary).toMatchObject({
         status: "running",
         threadIdsByStatus: {
-          running: [],
+          runningHandler: [],
+          runningWorkflow: [],
           waiting: [],
-          failed: [],
+          troubleshooting: [],
         },
       });
 
@@ -1394,7 +1452,7 @@ describe("WorkspaceSessionCatalog", () => {
         });
         store.setTurnDecision({
           turnId: runtime.turnId,
-          decision: "handoff",
+          decision: "thread.handoff",
         });
 
         appendMessagesToSession(this, [
@@ -1552,7 +1610,7 @@ describe("WorkspaceSessionCatalog", () => {
       });
       expect(persistedThread).toMatchObject({
         id: handlerThread.id,
-        status: "completed",
+        status: "running-handler",
       });
     } finally {
       promptSpy.mockRestore();
@@ -1598,6 +1656,7 @@ describe("WorkspaceSessionCatalog", () => {
     });
 
     const wait = {
+      owner: "handler" as const,
       kind: "user" as const,
       reason: "Need the expected parser output before continuing.",
       resumeWhen: "Resume when the user shares the expected parser output.",
@@ -1650,7 +1709,7 @@ describe("WorkspaceSessionCatalog", () => {
       expect(snapshot.session.wait).toBeNull();
       expect(persistedThread).toMatchObject({
         id: handlerThread.id,
-        status: "running",
+        status: "running-handler",
         wait: null,
       });
     } finally {
@@ -1708,8 +1767,8 @@ describe("WorkspaceSessionCatalog", () => {
       );
       expect(threadSurface.messages).toEqual([]);
       expect(threadSurface.session.messageCount).toBe(0);
-      expect(threadSurface.systemPrompt).toBe(DEFAULTS.systemPrompt);
-      expect(threadSurface.resolvedSystemPrompt).toContain(DEFAULTS.systemPrompt);
+      expect(threadSurface.systemPrompt).toBe(buildSystemPrompt("handler"));
+      expect(threadSurface.resolvedSystemPrompt).toContain(buildSystemPrompt("handler"));
     } finally {
       await catalog.dispose();
     }
@@ -1846,6 +1905,7 @@ describe("WorkspaceSessionCatalog", () => {
       });
 
       const wait = {
+        owner: "handler" as const,
         kind: "user" as const,
         reason: "Need clarification before continuing.",
         resumeWhen: "Resume when the user answers the rollout question.",
@@ -1859,7 +1919,9 @@ describe("WorkspaceSessionCatalog", () => {
       const waitingOn = store.setSessionWait({
         sessionId: created.session.id,
         owner: { kind: "thread", threadId: waitingThread.id },
-        ...wait,
+        kind: wait.kind,
+        reason: wait.reason,
+        resumeWhen: wait.resumeWhen,
       });
 
       const sessions = await catalog.listSessions();
@@ -1923,7 +1985,7 @@ describe("WorkspaceSessionCatalog", () => {
       const command = store.createCommand({
         turnId: turn.id,
         threadId: handlerThread.id,
-        toolName: "workflow.start",
+        toolName: "smithers.run_workflow",
         executor: "smithers",
         visibility: "surface",
         title: "Start workflow",
@@ -1948,6 +2010,7 @@ describe("WorkspaceSessionCatalog", () => {
         threadId: handlerThread.id,
         status: "waiting",
         wait: {
+          owner: "workflow",
           kind: "external",
           reason: "Waiting for an external Smithers event before the workflow can continue.",
           resumeWhen: "Resume when the required external Smithers event arrives.",

@@ -93,9 +93,9 @@ The model must see the real `execute_typescript` SDK contract before it writes a
 Adopted rules:
 
 - the source of truth for the SDK shape is one documented TypeScript contract module in the repo
-- build and dev flows generate an ambient `.d.ts` artifact from that source-of-truth module
-- the generated declaration keeps relevant JSDoc so usage rules survive into the emitted artifact
-- the runtime uses that generated declaration for `execute_typescript` static checking
+- build and dev flows generate one declaration-text module from that source-of-truth contract so prompt injection and static checking use the same shape
+- the generated declaration text keeps relevant JSDoc so usage rules survive into the embedded contract
+- the runtime uses that generated declaration text for `execute_typescript` static checking
 - the active surface system prompt embeds only the generated declaration blocks relevant to that surface's callable tools
 - orchestrator and handler-thread prompts may share the `execute_typescript` declaration when both surfaces can call it, but other tool declarations must still be sliced by actor
 

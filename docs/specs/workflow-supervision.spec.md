@@ -126,6 +126,7 @@ The `svvy`-owned part is:
 - The first shipped supervision POC should use one bundled product-owned hello-world workflow, not a repo authoring workflow and not `.smithers/workflows` name discovery.
 - A workflow run never returns control directly to the orchestrator.
 - Only `thread.handoff` returns control to the orchestrator.
+- If a handler thread opens a workflow run for its current objective span, that thread stays responsible until the span ends in `thread.handoff`; waits, approvals, resumes, and repairs stay inside the handler lifecycle.
 
 ## Core Concepts
 
@@ -537,10 +538,33 @@ The adopted cleanup rules are:
 
 In practice that means:
 
+- `thread.handoff` should first reconcile the thread-owned workflow state against Smithers' durable run state so a just-finished run is not mistaken for a still-active one
 - no active supervised run should remain attached to the thread when a terminal handoff episode is emitted
 - a failed or cancelled workflow run is not by itself a valid handoff condition; it must first be repaired, turned into an explicit wait, or closed by an explicit user-directed decision
+- if the handler truly needs to end supervision before the workflow succeeds, it must explicitly cancel or otherwise terminalize that workflow run first; `svvy` must not silently leave a live workflow running behind a completed thread
 - historical workflow runs remain inspectable after handoff
 - a later follow-up turn on the same thread may start another workflow run for a new active span under that thread
+
+### Terminal Reconciliation Idempotence
+
+The same terminal Smithers run state may be observed more than once through legitimate supervision paths.
+
+Examples include:
+
+- the live progress callback
+- the monitor's final flush after the run exits
+- restart or reconnect bootstrap reads
+- the pre-handoff reconciliation read used to validate `thread.handoff`
+
+That duplication does not change ownership semantics.
+
+It means the supervision bridge must treat replayed terminal state as idempotent after the handler has already reconciled it and closed the current span.
+
+In practice:
+
+- replaying the same terminal workflow snapshot after a valid handoff must not reopen the thread
+- replaying the same terminal workflow snapshot after a valid handoff must not queue another handler-attention wake-up
+- replayed terminal state may refresh run metadata, but it must not imply that a completed thread still has active workflow ownership
 
 ## Renderer And Sync Rules
 

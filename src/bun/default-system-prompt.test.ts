@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt";
-import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "./generated/execute-typescript-api.generated";
+import {
+  buildSystemPrompt,
+  DEFAULT_SYSTEM_PROMPT,
+  HANDLER_SYSTEM_PROMPT,
+  WORKFLOW_TASK_SYSTEM_PROMPT,
+} from "./default-system-prompt";
+import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
 
 describe("default system prompt", () => {
   it("embeds the generated execute_typescript API contract", () => {
@@ -16,21 +21,37 @@ describe("default system prompt", () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain("api.exec.run({ command, args, cwd, timeoutMs, env })");
   });
 
-  it("describes the orchestrator and handler-thread tool split", () => {
-    expect(DEFAULT_SYSTEM_PROMPT).toContain("thread.start");
-    expect(DEFAULT_SYSTEM_PROMPT).toContain("thread.handoff");
-    expect(DEFAULT_SYSTEM_PROMPT).toContain("workflow.start and workflow.resume");
-    expect(DEFAULT_SYSTEM_PROMPT).toContain("Inside handler threads");
+  it("describes the adopted orchestrator and handler-thread tool split", () => {
+    expect(DEFAULT_SYSTEM_PROMPT).toBe(buildSystemPrompt("orchestrator"));
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("delegate with thread.start");
     expect(DEFAULT_SYSTEM_PROMPT).toContain(
+      "Handler threads can supervise workflows through smithers.* tools",
+    );
+    expect(DEFAULT_SYSTEM_PROMPT).not.toContain("return control with thread.handoff");
+
+    expect(HANDLER_SYSTEM_PROMPT).toBe(buildSystemPrompt("handler"));
+    expect(HANDLER_SYSTEM_PROMPT).toContain("return control with thread.handoff");
+    expect(HANDLER_SYSTEM_PROMPT).toContain(
       "Ordinary replies inside a handler thread do not close it",
     );
-    expect(DEFAULT_SYSTEM_PROMPT).toContain(
-      "immediately opens an orchestrator reconciliation turn",
+    expect(HANDLER_SYSTEM_PROMPT).toContain(
+      "Workflow waits, approvals, and resumes stay inside this handler thread.",
+    );
+    expect(HANDLER_SYSTEM_PROMPT).toContain(
+      "Do not call thread.start from this surface in the adopted supervision model.",
     );
   });
 
-  it("steers verification toward workflow templates", () => {
-    expect(DEFAULT_SYSTEM_PROMPT).toContain("Verification is workflow-shaped execution");
-    expect(DEFAULT_SYSTEM_PROMPT).toContain("workflow templates or presets");
+  it("gives workflow task agents an execute_typescript-only product surface", () => {
+    expect(WORKFLOW_TASK_SYSTEM_PROMPT).toBe(buildSystemPrompt("workflow-task"));
+    expect(WORKFLOW_TASK_SYSTEM_PROMPT).toContain(
+      "This surface is a Smithers workflow task agent.",
+    );
+    expect(WORKFLOW_TASK_SYSTEM_PROMPT).toContain(
+      "Your only callable product tool is execute_typescript.",
+    );
+    expect(WORKFLOW_TASK_SYSTEM_PROMPT).toContain(
+      "Do not attempt handler-thread or orchestrator control actions such as thread.start, thread.handoff, wait, or smithers.*.",
+    );
   });
 });

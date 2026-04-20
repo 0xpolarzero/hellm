@@ -36,9 +36,10 @@ describe("formatSessionStatusLabel", () => {
           title: "Threading",
           status: "running",
           threadIdsByStatus: {
-            running: ["thread-1"],
+            runningHandler: ["thread-1"],
+            runningWorkflow: [],
             waiting: [],
-            failed: [],
+            troubleshooting: [],
           },
         }),
       ),

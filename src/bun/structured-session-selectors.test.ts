@@ -89,7 +89,6 @@ function createSessionSnapshot(
         objective: "Selector objective",
         status: "completed" as StructuredThreadStatus,
         wait: null,
-        latestWorkflowRunId: null,
         startedAt: "2026-04-18T07:00:00.000Z",
         updatedAt: "2026-04-18T07:01:00.000Z",
         finishedAt: "2026-04-18T07:01:00.000Z",
@@ -169,6 +168,13 @@ function createSessionSnapshot(
         templateId: "single_task",
         presetId: null,
         status: "running",
+        smithersStatus: "running",
+        waitKind: null,
+        continuedFromRunIds: [],
+        activeDescendantRunId: null,
+        lastEventSeq: -1,
+        lastAttentionSeq: null,
+        heartbeatAt: null,
         summary: "Workflow summary",
         startedAt: "2026-04-18T07:02:30.000Z",
         updatedAt: "2026-04-18T07:03:00.000Z",
@@ -261,7 +267,7 @@ describe("structured session selectors", () => {
         wait: null,
         threads: [
           {
-            status: "running",
+            status: "running-handler",
             updatedAt: "2026-04-18T10:05:00.000Z",
           },
         ],
@@ -277,7 +283,7 @@ describe("structured session selectors", () => {
             updatedAt: "2026-04-18T10:01:00.000Z",
           },
           {
-            status: "failed",
+            status: "troubleshooting",
             updatedAt: "2026-04-18T10:02:00.000Z",
           },
         ],
@@ -324,12 +330,12 @@ describe("structured session selectors", () => {
           objective: "Workflow body",
           status: "waiting",
           wait: {
+            owner: "handler",
             kind: "external",
             reason: "Need clarification",
             resumeWhen: "Resume when the user decides ownership.",
             since: "2026-04-18T10:03:00.000Z",
           },
-          latestWorkflowRunId: "workflow-001",
           startedAt: "2026-04-18T10:02:30.000Z",
           updatedAt: "2026-04-18T10:03:00.000Z",
           finishedAt: null,
@@ -347,7 +353,7 @@ describe("structured session selectors", () => {
           id: "thread-002",
           title: "Verification objective",
           objective: "Verification body",
-          status: "failed",
+          status: "troubleshooting",
           startedAt: "2026-04-18T10:00:30.000Z",
           updatedAt: "2026-04-18T10:02:00.000Z",
           finishedAt: "2026-04-18T10:02:00.000Z",
@@ -447,9 +453,10 @@ describe("structured session selectors", () => {
         events: 1,
       },
       threadIdsByStatus: {
-        running: [],
+        runningHandler: [],
+        runningWorkflow: [],
         waiting: ["thread-003"],
-        failed: ["thread-002"],
+        troubleshooting: ["thread-002"],
       },
       threadIds: ["thread-001", "thread-002", "thread-003"],
       latestEpisodePreview: "Workflow episode summary",
@@ -663,7 +670,6 @@ describe("structured session selectors", () => {
           title: "Parser fix thread",
           objective: "Patch the parser bug and add regression coverage.",
           status: "completed",
-          latestWorkflowRunId: "workflow-handler-2",
           updatedAt: "2026-04-18T10:04:30.000Z",
           finishedAt: "2026-04-18T10:04:30.000Z",
         },
@@ -897,7 +903,7 @@ describe("structured session selectors", () => {
           surfacePiSessionId: "session-sidebar",
           title: "Orchestrator reconciliation turn",
           objective: "Review the latest handoff.",
-          status: "running",
+          status: "running-handler",
           updatedAt: "2026-04-18T10:05:00.000Z",
         },
         {
@@ -918,9 +924,10 @@ describe("structured session selectors", () => {
         threads: 1,
       },
       threadIdsByStatus: {
-        running: [],
+        runningHandler: [],
+        runningWorkflow: [],
         waiting: [],
-        failed: [],
+        troubleshooting: [],
       },
       threadIds: ["thread-handler-complete"],
     });
@@ -1023,16 +1030,18 @@ describe("structured session selectors", () => {
 
   it("groups thread ids by status and ignores completed threads", () => {
     const grouped = groupThreadIdsByStatus([
-      { id: "thread-001", status: "running" },
+      { id: "thread-001", status: "running-handler" },
+      { id: "thread-001a", status: "running-workflow" },
       { id: "thread-002", status: "waiting" },
-      { id: "thread-003", status: "failed" },
+      { id: "thread-003", status: "troubleshooting" },
       { id: "thread-004", status: "completed" },
     ]);
 
     expect(grouped).toEqual({
-      running: ["thread-001"],
+      runningHandler: ["thread-001"],
+      runningWorkflow: ["thread-001a"],
       waiting: ["thread-002"],
-      failed: ["thread-003"],
+      troubleshooting: ["thread-003"],
     });
   });
 
@@ -1071,7 +1080,7 @@ describe("structured session selectors", () => {
       threads: [
         {
           id: "thread-failed",
-          status: "failed",
+          status: "troubleshooting",
           title: "Thread failure context",
           objective: "Thread objective",
           updatedAt: "2026-04-18T10:07:00.000Z",

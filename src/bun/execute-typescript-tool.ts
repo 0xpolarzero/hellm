@@ -13,7 +13,7 @@ import {
 import { basename, dirname, relative, resolve } from "node:path";
 import { inspect } from "node:util";
 import * as ts from "typescript";
-import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "./generated/execute-typescript-api.generated";
+import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
 import type {
   GitCommitSummary,
   GitFileChange,
@@ -26,7 +26,9 @@ import type {
 } from "./execute-typescript-api-contract";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import type {
+  StructuredArtifactKind,
   StructuredCommandExecutor,
+  StructuredCommandStatus,
   StructuredCommandVisibility,
   StructuredSessionStateStore,
 } from "./structured-session-state";
@@ -107,6 +109,45 @@ type ExecuteTypescriptContext = {
   executor?: StructuredCommandExecutor;
   visibility?: StructuredCommandVisibility;
 };
+
+export interface ExecuteTypescriptCommandStore {
+  createCommand(input: {
+    turnId: string;
+    threadId?: string | null;
+    workflowRunId?: string | null;
+    parentCommandId?: string | null;
+    toolName: string;
+    executor: StructuredCommandExecutor;
+    visibility: StructuredCommandVisibility;
+    title: string;
+    summary: string;
+    facts?: Record<string, unknown> | null;
+    attempts?: number;
+  }): {
+    id: string;
+  };
+  startCommand(commandId: string): unknown;
+  finishCommand(input: {
+    commandId: string;
+    status: Extract<StructuredCommandStatus, "waiting" | "succeeded" | "failed" | "cancelled">;
+    visibility?: StructuredCommandVisibility;
+    summary?: string;
+    facts?: Record<string, unknown> | null;
+    error?: string | null;
+  }): unknown;
+  createArtifact(input: {
+    threadId?: string | null;
+    workflowRunId?: string | null;
+    sourceCommandId?: string | null;
+    kind: StructuredArtifactKind;
+    name?: string;
+    path?: string;
+    content?: string;
+  }): {
+    id: string;
+    path?: string;
+  };
+}
 
 type ExecuteTypescriptToolOptions = {
   cwd: string;
@@ -209,20 +250,20 @@ function ensureRunnableSurfaceThread(
     return;
   }
 
-  if (thread.status === "running" && thread.wait === null) {
+  if (thread.status === "running-handler" && thread.wait === null) {
     return;
   }
 
   store.updateThread({
     threadId,
-    status: "running",
+    status: "running-handler",
     wait: null,
   });
 }
 
-async function runExecuteTypescript(input: {
+export async function runExecuteTypescript(input: {
   cwd: string;
-  store: StructuredSessionStateStore;
+  store: ExecuteTypescriptCommandStore;
   signal?: AbortSignal;
   typescriptCode: string;
   context: ExecuteTypescriptContext;
@@ -512,7 +553,7 @@ function formatConsoleValue(value: unknown): string {
 
 function createExecuteTypescriptApi(input: {
   cwd: string;
-  store: StructuredSessionStateStore;
+  store: ExecuteTypescriptCommandStore;
   turnId: string;
   threadId: string;
   parentCommandId: string;

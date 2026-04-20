@@ -492,7 +492,7 @@ Use thread status this way:
 - `running-workflow` while a Smithers workflow run is actively executing and the handler is idle but still owns the delegated objective
 - `waiting` when the delegated objective is durably blocked on user, approval, signal, timer, or other external input and no troubleshooting is required yet
 - `troubleshooting` when a workflow failed, was cancelled, continued into new lineage, or lost reliable supervision and the handler must inspect or repair before deciding what to do next
-- `completed` when the delegated objective reached an explicit terminal handoff point and `thread.handoff` emitted a handoff episode
+- `completed` when the delegated objective reached an explicit terminal handoff point, `thread.handoff` emitted a handoff episode, and no running or waiting workflow run still belongs to that active span
 
 These statuses describe the objective state, not whether the thread surface can still receive direct messages.
 
@@ -503,6 +503,8 @@ A completed thread surface remains directly interactive after handoff.
 A follow-up chat turn may leave thread status unchanged.
 
 A follow-up work turn may move a completed thread back to `running-handler` or `running-workflow`, preserving earlier handoff episodes as durable history.
+
+If the same terminal workflow snapshot is replayed after handoff during final reconciliation or recovery, the thread remains `completed` because that replay does not start a new active span.
 
 ## Workflow Run Model
 

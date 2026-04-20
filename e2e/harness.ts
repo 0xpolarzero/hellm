@@ -134,6 +134,10 @@ async function restorePreparedHomeDir(homeDir: string): Promise<void> {
 function createLaunchOptions(options: SvvyAppLaunchOptions) {
   const workspaceDir = options.workspaceDir ?? APP_WORKSPACE_DIR;
   const preparedHomeDirs = new Set<string>();
+  const env = {
+    ...options.env,
+    SVVY_WORKSPACE_CWD: workspaceDir,
+  };
 
   return {
     beforeLaunch: async (context: {
@@ -151,7 +155,7 @@ function createLaunchOptions(options: SvvyAppLaunchOptions) {
       preparedHomeDirs.add(context.homeDir);
     },
     bridgeMetadata: BRIDGE_METADATA,
-    env: options.env,
+    env,
     homeDir: options.homeDir,
     projectRoot: PROJECT_DIR,
     ready: async ({ page }: { page: Page }) => {

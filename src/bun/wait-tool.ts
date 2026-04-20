@@ -42,7 +42,7 @@ export function createWaitTool(options: {
       const kind = normalizeWaitKind(params.kind);
       options.store.setTurnDecision({
         turnId: runtime.turnId,
-        decision: kind === "user" ? "clarify" : "reply",
+        decision: "wait",
         onlyIfPending: true,
       });
       ensureRunnableSurfaceThread(options.store, runtime.sessionId, runtime.rootThreadId);
@@ -58,27 +58,39 @@ export function createWaitTool(options: {
         summary: reason,
       });
       options.store.startCommand(command.id);
-      const wait = {
-        kind,
-        reason,
-        resumeWhen,
-        since: new Date().toISOString(),
-      } as const;
-
-      options.store.updateThread({
-        threadId: runtime.rootThreadId,
-        status: "waiting",
-        wait,
-      });
+      const isHandlerSurface = runtime.surfaceKind === "handler";
+      if (isHandlerSurface) {
+        options.store.updateThread({
+          threadId: runtime.rootThreadId,
+          status: "waiting",
+          wait: {
+            owner: "handler",
+            kind,
+            reason,
+            resumeWhen,
+            since: new Date().toISOString(),
+          },
+        });
+      } else {
+        options.store.updateThread({
+          threadId: runtime.rootThreadId,
+          status: "completed",
+          wait: null,
+        });
+      }
 
       let sessionWaitApplied = false;
       try {
         options.store.setSessionWait({
           sessionId: runtime.sessionId,
-          owner: {
-            kind: "thread",
-            threadId: runtime.rootThreadId,
-          },
+          owner: isHandlerSurface
+            ? {
+                kind: "thread",
+                threadId: runtime.rootThreadId,
+              }
+            : {
+                kind: "orchestrator",
+              },
           kind,
           reason,
           resumeWhen,
@@ -87,10 +99,14 @@ export function createWaitTool(options: {
         runtime.sessionWaitApplied = true;
       } catch (error) {
         const snapshot = options.store.getSessionState(runtime.sessionId);
-        const hasOtherRunningWork = snapshot.threads.some(
-          (thread) => thread.id !== runtime.rootThreadId && thread.status === "running",
+        const hasOtherRunnableWork = snapshot.threads.some(
+          (thread) =>
+            thread.id !== runtime.rootThreadId &&
+            (thread.status === "running-handler" ||
+              thread.status === "running-workflow" ||
+              thread.status === "troubleshooting"),
         );
-        if (!hasOtherRunningWork) {
+        if (!hasOtherRunnableWork) {
           throw error;
         }
       }
@@ -142,13 +158,13 @@ function ensureRunnableSurfaceThread(
     return;
   }
 
-  if (thread.status === "running" && thread.wait === null) {
+  if (thread.status === "running-handler" && thread.wait === null) {
     return;
   }
 
   store.updateThread({
     threadId,
-    status: "running",
+    status: "running-handler",
     wait: null,
   });
 }

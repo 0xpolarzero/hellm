@@ -163,7 +163,7 @@ describe("structured session state write API", () => {
 
     store.updateThread({
       threadId: handlerThread.id,
-      status: "running",
+      status: "running-handler",
     });
 
     const resumeWorkflow = store.createCommand({
@@ -249,7 +249,6 @@ describe("structured session state write API", () => {
         id: handlerThread.id,
         surfacePiSessionId: "pi-thread-001",
         status: "completed",
-        latestWorkflowRunId: runTwo.id,
       }),
     ]);
     expect("kind" in snapshot.threads[0]!).toBe(false);
@@ -315,12 +314,12 @@ describe("structured session state write API", () => {
       "command.requested",
       "command.started",
       "command.finished",
-      "workflowRun.recorded",
+      "workflowRun.created",
       "verification.recorded",
       "artifact.created",
       "thread.updated",
       "command.requested",
-      "workflowRun.recorded",
+      "workflowRun.created",
       "command.requested",
       "command.finished",
       "thread.finished",
@@ -410,6 +409,7 @@ describe("structured session state write API", () => {
       objective: "Pause until the user answers.",
     });
     const wait = {
+      owner: "handler" as const,
       kind: "user" as const,
       reason: "Need clarification on rollout scope",
       resumeWhen: "Resume when the user confirms the rollout scope.",
@@ -423,12 +423,16 @@ describe("structured session state write API", () => {
     const sessionWait = store.setSessionWait({
       sessionId: "session-thread-wait",
       owner: { kind: "thread", threadId: waitingThread.id },
-      ...wait,
+      kind: wait.kind,
+      reason: wait.reason,
+      resumeWhen: wait.resumeWhen,
     });
 
     expect(sessionWait).toEqual({
       owner: { kind: "thread", threadId: waitingThread.id },
-      ...wait,
+      kind: wait.kind,
+      reason: wait.reason,
+      resumeWhen: wait.resumeWhen,
       since: expect.any(String),
     });
 
@@ -440,7 +444,7 @@ describe("structured session state write API", () => {
     });
     const snapshot = store.getSessionState("session-thread-wait");
 
-    expect(runnableThread.status).toBe("running");
+    expect(runnableThread.status).toBe("running-handler");
     expect(snapshot.session.wait).toBeNull();
     expect(snapshot.threads.find((thread) => thread.id === waitingThread.id)?.wait).toEqual(wait);
   });

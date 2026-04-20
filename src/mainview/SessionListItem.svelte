@@ -69,8 +69,12 @@
       }
     }
 
-    if (threadIdsByStatus?.running.length) {
-      labels.push(`Running ${threadIdsByStatus.running.length}`);
+    if (threadIdsByStatus?.runningHandler.length) {
+      labels.push(`Handlers ${threadIdsByStatus.runningHandler.length}`);
+    }
+
+    if (threadIdsByStatus?.runningWorkflow.length) {
+      labels.push(`Workflows ${threadIdsByStatus.runningWorkflow.length}`);
     }
 
     if (threadIdsByStatus?.waiting.length) {
@@ -81,8 +85,8 @@
       );
     }
 
-    if (threadIdsByStatus?.failed.length) {
-      labels.push(`Failed ${threadIdsByStatus.failed.length}`);
+    if (threadIdsByStatus?.troubleshooting.length) {
+      labels.push(`Troubleshooting ${threadIdsByStatus.troubleshooting.length}`);
     }
 
     return labels;

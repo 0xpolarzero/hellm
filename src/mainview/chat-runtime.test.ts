@@ -151,9 +151,10 @@ function createSummary(
       events: 0,
     },
     threadIdsByStatus: {
-      running: [],
+      runningHandler: [],
+      runningWorkflow: [],
       waiting: [],
-      failed: [],
+      troubleshooting: [],
     },
     ...(includeModelMetadata
       ? {
@@ -840,9 +841,10 @@ function createFakeRpcWithThreadSidebarRefresh(): {
   orchestrator.session.status = "running";
   orchestrator.session.preview = "Opened a handler thread.";
   orchestrator.session.threadIdsByStatus = {
-    running: ["thread-123"],
+    runningHandler: ["thread-123"],
+    runningWorkflow: [],
     waiting: [],
-    failed: [],
+    troubleshooting: [],
   };
   const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
   const thread = createActiveSession(
@@ -928,9 +930,10 @@ function createFakeRpcWithThreadSidebarRefresh(): {
         orchestrator.session.status = "idle";
         orchestrator.session.preview = "Thread handoff received.";
         orchestrator.session.threadIdsByStatus = {
-          running: [],
+          runningHandler: [],
+          runningWorkflow: [],
           waiting: [],
-          failed: [],
+          troubleshooting: [],
         };
 
         queueMicrotask(() => {
@@ -1031,9 +1034,10 @@ function createFakeRpcWithBackgroundOrchestratorResume(): {
   orchestrator.session.status = "running";
   orchestrator.session.preview = "Opened a handler thread.";
   orchestrator.session.threadIdsByStatus = {
-    running: ["thread-123"],
+    runningHandler: ["thread-123"],
+    runningWorkflow: [],
     waiting: [],
-    failed: [],
+    troubleshooting: [],
   };
   const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
   const thread = createActiveSession(
@@ -1134,9 +1138,10 @@ function createFakeRpcWithBackgroundOrchestratorResume(): {
             orchestrator.session.status = "running";
             orchestrator.session.preview = "Reviewing thread handoff.";
             orchestrator.session.threadIdsByStatus = {
-              running: [],
+              runningHandler: [],
+              runningWorkflow: [],
               waiting: [],
-              failed: [],
+              troubleshooting: [],
             };
             for (const listener of sessionSyncListeners) {
               listener(
@@ -1505,9 +1510,10 @@ describe("createChatRuntime", () => {
       status: "idle",
       preview: "Thread handoff received.",
       threadIdsByStatus: {
-        running: [],
+        runningHandler: [],
+        runningWorkflow: [],
         waiting: [],
-        failed: [],
+        troubleshooting: [],
       },
     });
     expect(runtime.sessions.some((session) => session.id === "thread-session-1")).toBe(false);
@@ -1650,6 +1656,7 @@ describe("createChatRuntime", () => {
         ...createHandlerThreadSummary("thread-456"),
         status: "waiting",
         wait: {
+          owner: "handler",
           kind: "user",
           reason: "Need clarification before continuing.",
           resumeWhen: "Resume when the user answers.",
