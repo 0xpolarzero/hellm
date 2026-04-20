@@ -68,38 +68,38 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 ## 4. Handler Threads
 
 - [x] Build a POC handler-thread spawn flow with objective handoff and a dedicated backing pi session. Commit(s): `f53c9b8`
-- [ ] Persist handler-thread lifecycle transitions for handler-active, workflow-active, waiting, troubleshooting, and completed states without flattening workflow failure or cancellation into thread terminal state, with `completed` reserved for explicit handoff after active workflow supervision has been resolved.
+- [x] Persist handler-thread lifecycle transitions for handler-active, workflow-active, waiting, troubleshooting, and completed states without flattening workflow failure or cancellation into thread terminal state, with `completed` reserved for explicit handoff after active workflow supervision has been resolved. Commit(s): `f53c9b8`, `fdaf460`, `a02bd48`
 - [x] Let handler threads receive direct user messages through the same surface model as the orchestrator. Commit(s): `f53c9b8`
 - [x] Make handler-thread wait and resume happen inside the thread itself instead of bouncing through the orchestrator by default. Commit(s): `f53c9b8`
 - [x] Keep handed-back handler threads directly interactive for follow-up chat without forcing a new thread. Commit(s): `ba5c3f0`
-- [ ] Let a handed-back thread move from completed back to the correct active state when objective work resumes, distinguishing handler-active from workflow-active supervision.
+- [x] Let a handed-back thread move from completed back to the correct active state when objective work resumes, distinguishing handler-active from workflow-active supervision. Commit(s): `f53c9b8`, `a02bd48`
 - [x] Preserve earlier handoff points in thread history when the same thread later returns control again. Commit(s): `d323012`
 - [x] Allow the orchestrator to inspect a handler thread on demand without making that the default reconciliation path. Commit(s): `ba5c3f0`
 - [x] Make `thread.handoff` the explicit handler-thread handoff path so ordinary handler replies stay interactive and multi-turn. Commit(s): `fdaf460`
 - [x] Load the orchestrator and handler-thread instructions through pi's true `systemPrompt` channel before any reconstructed prompt body is composed. Commit(s): `8a41d08`
 - [x] Keep handoff, resume, and transcript-rebuild prompt bodies free of duplicated system prompt text while surfacing the active system prompt as a collapsible transcript item. Commit(s): `8a41d08`
-- [ ] Slice generated capability declarations by actor so the orchestrator prompt receives only orchestrator-callable tools while handler-thread prompts receive only handler-callable tools.
-- [ ] Teach the orchestrator prompt that workflow actions require delegation into a handler thread instead of exposing `smithers.*` directly in the orchestrator API block.
-- [ ] Teach handler-thread prompts that the orchestrator owns delegation and reconciliation while omitting orchestrator-only tool declarations such as `thread.start` unless nested delegation is explicitly adopted.
+- [x] Slice generated capability declarations by actor so the orchestrator prompt receives only orchestrator-callable tools while handler-thread prompts receive only handler-callable tools. Commit(s): `a02bd48`
+- [x] Teach the orchestrator prompt that workflow actions require delegation into a handler thread instead of exposing `smithers.*` directly in the orchestrator API block. Commit(s): `a02bd48`
+- [x] Teach handler-thread prompts that the orchestrator owns delegation and reconciliation while omitting orchestrator-only tool declarations such as `thread.start` unless nested delegation is explicitly adopted. Commit(s): `a02bd48`
 
 ## 5. Workflow Supervision Foundations
 
-- [ ] Define the packaged-app Smithers runtime boundary so shipped product workflows are bundled app assets under `src/bun/smithers-runtime/` rather than repo-root `workflows/` authoring assets.
-- [ ] Build a POC handler thread that starts one bundled product-runtime hello-world workflow from `src/bun/smithers-runtime/`, supervises it through completion, and regains control in the same thread without relying on repo-root `workflows/`.
+- [x] Define the packaged-app Smithers runtime boundary so shipped product workflows are bundled app assets under `src/bun/smithers-runtime/` rather than repo-root `workflows/` authoring assets. Commit(s): `a02bd48`
+- [x] Build a POC handler thread that starts one bundled product-runtime hello-world workflow from `src/bun/smithers-runtime/`, supervises it through completion, and regains control in the same thread without relying on repo-root `workflows/`. Commit(s): `a02bd48`
 - [x] Define the workflow-run request envelope from a handler thread to Smithers. Commit(s): `f53c9b8`
-- [ ] Persist workflow-run supervision metadata, including raw Smithers status, wait kind, reconnect cursor, handler-attention delivery state, heartbeat freshness, and lineage, as soon as the supervising handler thread has a concrete Smithers run id.
+- [x] Persist workflow-run supervision metadata, including raw Smithers status, wait kind, reconnect cursor, handler-attention delivery state, heartbeat freshness, and lineage, as soon as the supervising handler thread has a concrete Smithers run id. Commit(s): `a02bd48`
 - [ ] Build a POC one-task workflow under a handler thread that returns to the thread and then emits a handoff episode.
-- [ ] Let handler threads call the generated per-workflow Smithers run-launch surface through the Bun bridge for both new and resumed runs.
+- [x] Let handler threads call the generated per-workflow Smithers run-launch surface through the Bun bridge for both new and resumed runs. Commit(s): `4674e67`
 - [ ] Add the Smithers-native supervision surface for inspect, blocker diagnosis, approvals, signals, cancellation, node detail, artifacts, transcripts, event history, frames, and later troubleshooting controls.
-- [ ] Define workflow task agents as a lower-level Smithers actor class distinct from orchestrator and handler-thread surfaces.
-- [ ] Adopt a PI-backed svvy workflow-task agent profile with a dedicated task prompt and `execute_typescript` as the default task-local tool surface.
-- [ ] Keep approval gates and hijack as Smithers runtime or operator controls around workflow task agents rather than exposing them as ordinary task-agent tools.
-- [ ] Build a POC bundled workflow task that runs the svvy workflow-task PI profile with `execute_typescript` only.
-- [ ] Wake the supervising handler thread in a background turn only when a workflow run reaches a terminal outcome, an actionable wait, a continuation boundary, or a supervision fault that requires handler judgment, while keeping duplicate terminal reconciliation idempotent after a valid handoff.
+- [x] Define workflow task agents as a lower-level Smithers actor class distinct from orchestrator and handler-thread surfaces. Commit(s): `a02bd48`
+- [x] Adopt a PI-backed svvy workflow-task agent profile with a dedicated task prompt and `execute_typescript` as the default task-local tool surface. Commit(s): `a02bd48`
+- [x] Keep approval gates and hijack as Smithers runtime or operator controls around workflow task agents rather than exposing them as ordinary task-agent tools. Commit(s): `a02bd48`
+- [x] Build a POC bundled workflow task that runs the svvy workflow-task PI profile with `execute_typescript` only. Commit(s): `a02bd48`
+- [x] Wake the supervising handler thread in a background turn only when a workflow run reaches a terminal outcome, an actionable wait, a continuation boundary, or a supervision fault that requires handler judgment, while keeping duplicate terminal reconciliation idempotent after a valid handoff. Commit(s): `a02bd48`
 - [x] Support multiple workflow runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
-- [ ] Derive active and latest workflow summaries from workflow-run state without a persisted thread-level latest pointer.
+- [x] Derive active and latest workflow summaries from workflow-run state without a persisted thread-level latest pointer. Commit(s): `a02bd48`
 - [ ] Emit explicit Smithers bridge lifecycle events and control-plane reconnect writes that update workflow-run and handler-thread state without read-side repair loops.
-- [ ] Guarantee that a workflow-run failure or cancellation moves the handler thread into troubleshooting before any later user-directed closure or handoff.
+- [x] Guarantee that a workflow-run failure or cancellation moves the handler thread into troubleshooting before any later user-directed closure or handoff. Commit(s): `a02bd48`
 
 ## 6. Workflow Templates And Presets
 
