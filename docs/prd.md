@@ -254,7 +254,7 @@ The intended use of the native control subset is:
 - the orchestrator normally uses `thread.start` to open a delegated handler thread
 - a handler thread uses `thread.handoff` to emit a durable handoff episode and mark the current objective span complete without losing direct interactivity in that thread surface, but only after no running or waiting workflow run still belongs to that span
 - a successful `thread.handoff` immediately opens a fresh orchestrator reconciliation turn so the orchestrator can act on the latest durable handoff without waiting for another user-authored orchestrator message
-- a handler thread normally uses Smithers-native bridge tools such as `smithers.list_workflows`, `smithers.run_workflow`, `smithers.get_run`, `smithers.explain_run`, `smithers.list_pending_approvals`, `smithers.resolve_approval`, `smithers.get_node_detail`, `smithers.list_artifacts`, and `smithers.get_run_events` to supervise Smithers execution
+- a handler thread normally uses Smithers-native bridge tools such as `smithers.list_workflows`, generated workflow launch tools such as `smithers.run_workflow.hello_world`, `smithers.get_run`, `smithers.explain_run`, `smithers.list_pending_approvals`, `smithers.resolve_approval`, `smithers.get_node_detail`, `smithers.list_artifacts`, and `smithers.get_run_events` to supervise Smithers execution
 - any interactive surface may use `wait` when it needs user or external input
 
 Verification is not a separate native control tool in the adopted model.

@@ -93,6 +93,7 @@ interface ManagedSession {
   model: string;
   thinkingLevel: ThinkingLevel;
   systemPrompt: string;
+  smithersToolSurfaceVersion: string | null;
   promptSyncCursor: PromptSyncCursor;
   session: AgentSession;
   authStorage: AuthStorage;
@@ -628,12 +629,17 @@ export class WorkspaceSessionCatalog {
   ): Promise<ManagedSession> {
     const actorProfile = getActorProfileForTarget(options.target);
     const resolvedSystemPrompt = buildSystemPrompt(actorProfile);
+    const currentSmithersToolSurfaceVersion =
+      actorProfile === "handler"
+        ? this.smithersRuntimeManager.getWorkflowToolSurfaceVersion()
+        : null;
 
     if (
       session.actorProfile !== actorProfile ||
       session.provider !== options.provider ||
       session.model !== options.model ||
-      session.recreateOnNextPrompt
+      session.recreateOnNextPrompt ||
+      session.smithersToolSurfaceVersion !== currentSmithersToolSurfaceVersion
     ) {
       return this.recreateActiveSession(session, {
         actorProfile,
@@ -1697,6 +1703,10 @@ async function createManagedSession(
     resourceLoader,
   });
   const activeModel = session.agent.state.model ?? resolvedModel;
+  const smithersToolSurfaceVersion =
+    options.actorProfile === "handler"
+      ? options.smithersRuntimeManager.getWorkflowToolSurfaceVersion()
+      : null;
 
   return {
     sessionId: session.sessionManager.getSessionId(),
@@ -1705,6 +1715,7 @@ async function createManagedSession(
     model: activeModel.id,
     thinkingLevel: restoredDefaults.thinkingLevel,
     systemPrompt: options.systemPrompt,
+    smithersToolSurfaceVersion,
     promptSyncCursor: createPromptSyncCursor(convertToLlmMessages(session.agent.state.messages)),
     session,
     authStorage,

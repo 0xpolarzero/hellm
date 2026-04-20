@@ -7,7 +7,10 @@ import * as PiCodingAgent from "@mariozechner/pi-coding-agent";
 import { createStructuredSessionStateStore } from "../structured-session-state";
 import { SmithersRuntimeManager } from "./manager";
 import type { BundledWorkflowDefinition } from "./registry";
-import { readSmithersWorkflowInput, smithersRuntimeInputSchema } from "./runtime-input";
+import {
+  bundledWorkflowRuntimeStoredInputSchema,
+  readBundledWorkflowLaunchInput,
+} from "./runtime-input";
 import { createSmithers } from "smithers-orchestrator";
 import { z } from "zod";
 
@@ -161,12 +164,7 @@ function registerWorkflow(
   manager: SmithersRuntimeManager,
   definition: BundledWorkflowDefinition,
 ): void {
-  const registry = (manager as unknown as { registry: BundledWorkflowDefinition[] }).registry;
-  const workflowsById = (
-    manager as unknown as { workflowsById: Map<string, BundledWorkflowDefinition> }
-  ).workflowsById;
-  registry.push(definition);
-  workflowsById.set(definition.id, definition);
+  manager.upsertBundledWorkflow(definition);
 }
 
 function latestEntry<T>(entries: T[] | undefined): T | null {
@@ -186,6 +184,7 @@ function createWorkflowCommand(input: {
   threadId: string;
   surfacePiSessionId: string;
   requestSummary: string;
+  toolName?: `smithers.run_workflow.${string}`;
   title: string;
   summary: string;
 }): { turnId: string; commandId: string } {
@@ -199,7 +198,7 @@ function createWorkflowCommand(input: {
     turnId: turn.id,
     surfacePiSessionId: input.surfacePiSessionId,
     threadId: input.threadId,
-    toolName: "smithers.run_workflow",
+    toolName: input.toolName ?? "smithers.run_workflow.hello_world",
     executor: "smithers",
     visibility: "surface",
     title: input.title,
@@ -213,12 +212,12 @@ function createWorkflowCommand(input: {
 }
 
 function createApprovalWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {
-  const inputSchema = z.object({
+  const launchSchema = z.object({
     title: z.string().min(1).default("Approve release?"),
   });
   const smithersApi = createSmithers(
     {
-      input: smithersRuntimeInputSchema,
+      input: bundledWorkflowRuntimeStoredInputSchema,
       approval: z.object({
         approved: z.boolean(),
         note: z.string().nullable(),
@@ -238,9 +237,9 @@ function createApprovalWorkflowDefinition(dbPath: string): BundledWorkflowDefini
     label: "Approval Gate",
     description: "Waits for an approval decision and finishes after the run is resumed.",
     workflowName: "svvy-approval-gate",
-    inputSchema,
+    launchSchema,
     workflow: smithersApi.smithers((ctx) => {
-      const workflowInput = readSmithersWorkflowInput(inputSchema, ctx.input);
+      const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);
       const decision = latestEntry<ApprovalDecision>(ctx.outputs.approval);
       return React.createElement(
         smithersApi.Workflow,
@@ -274,10 +273,10 @@ function createApprovalWorkflowDefinition(dbPath: string): BundledWorkflowDefini
 }
 
 function createContinueAsNewWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {
-  const inputSchema = z.object({}).passthrough();
+  const launchSchema = z.object({}).passthrough();
   const smithersApi = createSmithers(
     {
-      input: smithersRuntimeInputSchema,
+      input: bundledWorkflowRuntimeStoredInputSchema,
       continueResult: z.object({
         cursor: z.string().nullable(),
         seenPayload: z.boolean(),
@@ -291,9 +290,9 @@ function createContinueAsNewWorkflowDefinition(dbPath: string): BundledWorkflowD
     label: "Continue Once",
     description: "Continues as new exactly once and then produces a result.",
     workflowName: "svvy-continue-once",
-    inputSchema,
+    launchSchema,
     workflow: smithersApi.smithers((ctx) => {
-      const workflowInput = readSmithersWorkflowInput(inputSchema, ctx.input);
+      const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);
       const continuation = getSmithersContinuation(workflowInput.__smithersContinuation);
       const shouldContinue = !continuation?.payload;
 
@@ -330,6 +329,56 @@ function getSmithersContinuation(value: unknown): { payload?: { cursor?: string 
 }
 
 describe("SmithersRuntimeManager", () => {
+  it("publishes compiled launch contracts with input-side defaults and updates the tool-surface version when workflows change", () => {
+    const { cwd, manager } = createWorkspaceFixture();
+
+    const initialVersion = manager.getWorkflowToolSurfaceVersion();
+    const helloWorldWorkflow = manager
+      .listWorkflows()
+      .find((workflow) => workflow.id === "hello_world");
+
+    expect(helloWorldWorkflow).toMatchObject({
+      id: "hello_world",
+      workflowName: "svvy-hello-world",
+      launchToolName: "smithers.run_workflow.hello_world",
+      semanticToolName: "smithers.run_workflow",
+      resumeRunIdField: "resumeRunId",
+      contractHash: expect.any(String),
+      launchInputSchema: {
+        type: "object",
+        properties: {
+          message: {
+            default: "hello world",
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+      launchToolSchema: {
+        type: "object",
+        properties: {
+          message: {
+            default: "hello world",
+            type: "string",
+            minLength: 1,
+          },
+          resumeRunId: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    });
+
+    registerWorkflow(manager, createApprovalWorkflowDefinition(smithersDbPath(cwd)));
+    const nextVersion = manager.getWorkflowToolSurfaceVersion();
+
+    expect(nextVersion).not.toBe(initialVersion);
+    expect(manager.listWorkflows().map((workflow) => workflow.id)).toEqual(
+      expect.arrayContaining(["approval_gate"]),
+    );
+  });
+
   it("runs the bundled hello_world workflow through the real Smithers runtime and projects completion back to the handler thread", async () => {
     const {
       cwd,
@@ -354,12 +403,13 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch hello world",
       title: "Run hello_world",
       summary: "Launch the hello_world workflow.",
+      toolName: "smithers.run_workflow.hello_world",
     });
     const launched = await manager.launchWorkflow({
       sessionId,
       threadId,
       workflowId: "hello_world",
-      input: { message: "bonjour smithers" },
+      launchInput: { message: "bonjour smithers" },
       commandId: launchCommand.commandId,
     });
 
@@ -472,12 +522,13 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch hello world",
       title: "Run hello_world",
       summary: "Launch the hello_world workflow.",
+      toolName: "smithers.run_workflow.hello_world",
     });
     const launched = await manager.launchWorkflow({
       sessionId,
       threadId,
       workflowId: "hello_world",
-      input: { message: "bonjour smithers" },
+      launchInput: { message: "bonjour smithers" },
       commandId: launchCommand.commandId,
     });
 
@@ -526,12 +577,13 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch approval workflow",
       title: "Run approval_gate",
       summary: "Launch the approval_gate workflow.",
+      toolName: "smithers.run_workflow.approval_gate",
     });
     const launched = await manager.launchWorkflow({
       sessionId,
       threadId,
       workflowId: "approval_gate",
-      input: { title: "Approve the release?" },
+      launchInput: { title: "Approve the release?" },
       commandId: launchCommand.commandId,
     });
 
@@ -599,12 +651,13 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Resume approval workflow",
       title: "Resume approval_gate",
       summary: "Resume the approval_gate workflow.",
+      toolName: "smithers.run_workflow.approval_gate",
     });
     const resumed = await manager.launchWorkflow({
       sessionId,
       threadId,
       workflowId: "approval_gate",
-      input: { title: "Approve the release?" },
+      launchInput: { title: "Approve the release?" },
       commandId: resumeCommand.commandId,
       runId: launched.runId,
     });
@@ -684,12 +737,13 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch continue-as-new workflow",
       title: "Run continue_once",
       summary: "Launch the continue_once workflow.",
+      toolName: "smithers.run_workflow.continue_once",
     });
     const launched = await manager.launchWorkflow({
       sessionId,
       threadId,
       workflowId: "continue_once",
-      input: {},
+      launchInput: {},
       commandId: launchCommand.commandId,
     });
 
@@ -933,13 +987,14 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch execute_typescript_task",
       title: "Run execute_typescript_task",
       summary: "Launch the execute_typescript_task workflow.",
+      toolName: "smithers.run_workflow.execute_typescript_task",
     });
     try {
       const launched = await manager.launchWorkflow({
         sessionId,
         threadId: handlerThread.id,
         workflowId: "execute_typescript_task",
-        input: {
+        launchInput: {
           objective: "Write a file through execute_typescript and report the result.",
           successCriteria: ["Create workflow-task-output.txt with the validation output."],
           validationCommands: ["echo workflow-validated"],

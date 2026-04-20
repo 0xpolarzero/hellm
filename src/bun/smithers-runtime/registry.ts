@@ -1,14 +1,17 @@
 import React from "react";
 import { createSmithers, type AgentLike, type SmithersWorkflow } from "smithers-orchestrator";
 import { z } from "zod";
-import { readSmithersWorkflowInput, smithersRuntimeInputSchema } from "./runtime-input";
+import {
+  bundledWorkflowRuntimeStoredInputSchema,
+  readBundledWorkflowLaunchInput,
+} from "./runtime-input";
 
 export type BundledWorkflowDefinition = {
   id: string;
   label: string;
   description: string;
   workflowName: string;
-  inputSchema: z.ZodTypeAny;
+  launchSchema: z.ZodTypeAny;
   workflow: SmithersWorkflow<any>;
 };
 
@@ -27,7 +30,7 @@ export function createBundledWorkflowRegistry(
 }
 
 function createHelloWorldWorkflow(dbPath: string): BundledWorkflowDefinition {
-  const inputSchema = z.object({
+  const launchSchema = z.object({
     message: z.string().min(1).default("hello world"),
   });
   const greetingSchema = z.object({
@@ -40,7 +43,7 @@ function createHelloWorldWorkflow(dbPath: string): BundledWorkflowDefinition {
 
   const smithersApi = createSmithers(
     {
-      input: smithersRuntimeInputSchema,
+      input: bundledWorkflowRuntimeStoredInputSchema,
       greeting: greetingSchema,
       helloWorldResult: resultSchema,
     },
@@ -52,9 +55,9 @@ function createHelloWorldWorkflow(dbPath: string): BundledWorkflowDefinition {
     label: "Hello World",
     description: "Smoke-test bundled runtime wiring with a minimal static Smithers workflow.",
     workflowName: "svvy-hello-world",
-    inputSchema,
+    launchSchema,
     workflow: smithersApi.smithers((ctx) => {
-      const workflowInput = readSmithersWorkflowInput(inputSchema, ctx.input);
+      const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);
       const greeting = getLatestOutput<z.infer<typeof greetingSchema>>(ctx.outputs.greeting);
       return React.createElement(
         smithersApi.Workflow,
@@ -87,7 +90,7 @@ function createTaskAgentWorkflow(
   dbPath: string,
   createWorkflowTaskAgent: () => AgentLike,
 ): BundledWorkflowDefinition {
-  const inputSchema = z.object({
+  const launchSchema = z.object({
     objective: z.string().min(1),
     successCriteria: z.array(z.string().min(1)).default([]),
     validationCommands: z.array(z.string().min(1)).default([]),
@@ -109,7 +112,7 @@ function createTaskAgentWorkflow(
 
   const smithersApi = createSmithers(
     {
-      input: smithersRuntimeInputSchema,
+      input: bundledWorkflowRuntimeStoredInputSchema,
       taskResult: taskResultSchema,
       workflowResult: resultSchema,
     },
@@ -123,9 +126,9 @@ function createTaskAgentWorkflow(
     description:
       "Run one PI-backed Smithers task agent with execute_typescript as its only callable product tool.",
     workflowName: "svvy-execute-typescript-task",
-    inputSchema,
+    launchSchema,
     workflow: smithersApi.smithers((ctx) => {
-      const workflowInput = readSmithersWorkflowInput(inputSchema, ctx.input);
+      const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);
       const latestResult = getLatestOutput<z.infer<typeof taskResultSchema>>(
         ctx.outputs.taskResult,
       );

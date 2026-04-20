@@ -13,8 +13,8 @@ import { createStructuredSessionStateStore } from "./structured-session-state";
 import { SmithersRuntimeManager } from "./smithers-runtime/manager";
 import type { BundledWorkflowDefinition } from "./smithers-runtime/registry";
 import {
-  readSmithersWorkflowInput,
-  smithersRuntimeInputSchema,
+  bundledWorkflowRuntimeStoredInputSchema,
+  readBundledWorkflowLaunchInput,
 } from "./smithers-runtime/runtime-input";
 import { createSmithers } from "smithers-orchestrator";
 
@@ -164,12 +164,7 @@ function registerWorkflow(
   manager: SmithersRuntimeManager,
   definition: BundledWorkflowDefinition,
 ): void {
-  const registry = (manager as unknown as { registry: BundledWorkflowDefinition[] }).registry;
-  const workflowsById = (
-    manager as unknown as { workflowsById: Map<string, BundledWorkflowDefinition> }
-  ).workflowsById;
-  registry.push(definition);
-  workflowsById.set(definition.id, definition);
+  manager.upsertBundledWorkflow(definition);
 }
 
 function latestEntry<T>(entries: T[] | undefined): T | null {
@@ -184,12 +179,12 @@ type ApprovalDecision = {
 };
 
 function createApprovalWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {
-  const inputSchema = z.object({
+  const launchSchema = z.object({
     title: z.string().min(1).default("Approve release?"),
   });
   const smithersApi = createSmithers(
     {
-      input: smithersRuntimeInputSchema,
+      input: bundledWorkflowRuntimeStoredInputSchema,
       approval: z.object({
         approved: z.boolean(),
         note: z.string().nullable(),
@@ -209,9 +204,9 @@ function createApprovalWorkflowDefinition(dbPath: string): BundledWorkflowDefini
     label: "Approval Gate",
     description: "Waits for approval and then records the result.",
     workflowName: "svvy-approval-gate",
-    inputSchema,
+    launchSchema,
     workflow: smithersApi.smithers((ctx) => {
-      const workflowInput = readSmithersWorkflowInput(inputSchema, ctx.input);
+      const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);
       const decision = latestEntry<ApprovalDecision>(ctx.outputs.approval);
       return React.createElement(
         smithersApi.Workflow,
@@ -264,7 +259,7 @@ describe("smithers.* tools", () => {
     });
 
     const listWorkflows = getTool(tools, "smithers.list_workflows");
-    const runWorkflow = getTool(tools, "smithers.run_workflow");
+    const runApprovalWorkflow = getTool(tools, "smithers.run_workflow.approval_gate");
     const listRuns = getTool(tools, "smithers.list_runs");
     const getRun = getTool(tools, "smithers.get_run");
     const listPendingApprovals = getTool(tools, "smithers.list_pending_approvals");
@@ -277,16 +272,41 @@ describe("smithers.* tools", () => {
     expect(workflows.details.workflows.map((entry: { id: string }) => entry.id)).toEqual(
       expect.arrayContaining(["hello_world", "execute_typescript_task", "approval_gate"]),
     );
+    expect(workflows.details.workflowToolSurfaceVersion).toBe(
+      manager.getWorkflowToolSurfaceVersion(),
+    );
+    expect(
+      workflows.details.workflows.find((entry: { id: string }) => entry.id === "approval_gate"),
+    ).toMatchObject({
+      launchToolName: "smithers.run_workflow.approval_gate",
+      semanticToolName: "smithers.run_workflow",
+      resumeRunIdField: "resumeRunId",
+      contractHash: expect.any(String),
+      launchInputSchema: {
+        type: "object",
+        properties: {
+          title: {
+            default: "Approve release?",
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    });
 
-    const launched = await runWorkflow.execute("tool-run-workflow", {
-      workflowId: "approval_gate",
-      input: { title: "Approve the release?" },
+    const launched = await runApprovalWorkflow.execute("tool-run-workflow", {
+      title: "Approve the release?",
     });
 
     expect(launched.details).toMatchObject({
       workflowId: "approval_gate",
+      launchToolName: "smithers.run_workflow.approval_gate",
+      semanticToolName: "smithers.run_workflow",
       status: "running",
       smithersStatus: "running",
+      launchInput: {
+        title: "Approve the release?",
+      },
     });
     const runId = launched.details.runId as string;
 
@@ -354,10 +374,9 @@ describe("smithers.* tools", () => {
       }
     });
 
-    const resumed = await runWorkflow.execute("tool-resume-workflow", {
-      workflowId: "approval_gate",
-      input: { title: "Approve the release?" },
-      runId,
+    const resumed = await runApprovalWorkflow.execute("tool-resume-workflow", {
+      title: "Approve the release?",
+      resumeRunId: runId,
     });
     expect(resumed.details).toMatchObject({
       workflowId: "approval_gate",
@@ -433,7 +452,7 @@ describe("smithers.* tools", () => {
     expect(commandToolNames).toEqual(
       expect.arrayContaining([
         "smithers.list_workflows",
-        "smithers.run_workflow",
+        "smithers.run_workflow.approval_gate",
         "smithers.list_pending_approvals",
         "smithers.get_run",
         "smithers.resolve_approval",
@@ -445,17 +464,29 @@ describe("smithers.* tools", () => {
     );
 
     const runWorkflowCommands = snapshot.commands.filter(
-      (command) => command.toolName === "smithers.run_workflow",
+      (command) => command.toolName === "smithers.run_workflow.approval_gate",
     );
     expect(runWorkflowCommands).toHaveLength(2);
     expect(runWorkflowCommands[0]?.facts).toMatchObject({
-      smithersToolName: "smithers.run_workflow",
+      smithersToolName: "smithers.run_workflow.approval_gate",
+      semanticSmithersToolName: "smithers.run_workflow",
+      launchToolName: "smithers.run_workflow.approval_gate",
+      workflowId: "approval_gate",
+      launchInput: {
+        title: "Approve the release?",
+      },
       transport: "bundled-runtime",
       runId,
       postStatus: "running",
     });
     expect(runWorkflowCommands[1]?.facts).toMatchObject({
-      smithersToolName: "smithers.run_workflow",
+      smithersToolName: "smithers.run_workflow.approval_gate",
+      semanticSmithersToolName: "smithers.run_workflow",
+      launchToolName: "smithers.run_workflow.approval_gate",
+      workflowId: "approval_gate",
+      launchInput: {
+        title: "Approve the release?",
+      },
       transport: "bundled-runtime",
       runId,
       preStatus: "waiting-event",
@@ -472,6 +503,61 @@ describe("smithers.* tools", () => {
       nodeId: "publish-gate",
       decision: "approve",
       postStatus: "approval-updated",
+    });
+  });
+
+  it("generates per-workflow launch tools from the compiled launch contracts and removes the generic launcher", () => {
+    const { manager, runtime, store } = createHarness();
+
+    const tools = createSmithersTools({
+      runtime,
+      store,
+      manager,
+    });
+
+    expect(tools.find((tool) => tool.name === "smithers.run_workflow")).toBeUndefined();
+
+    const helloWorldTool = getTool(tools, "smithers.run_workflow.hello_world");
+    expect(helloWorldTool.parameters).toMatchObject({
+      type: "object",
+      properties: {
+        message: {
+          default: "hello world",
+          type: "string",
+          minLength: 1,
+        },
+        resumeRunId: {
+          type: "string",
+          minLength: 1,
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    });
+
+    const executeTaskTool = getTool(tools, "smithers.run_workflow.execute_typescript_task");
+    expect(executeTaskTool.parameters).toMatchObject({
+      type: "object",
+      properties: {
+        objective: {
+          type: "string",
+          minLength: 1,
+        },
+        successCriteria: {
+          default: [],
+          type: "array",
+        },
+        validationCommands: {
+          default: [],
+          type: "array",
+        },
+        resumeRunId: {
+          type: "string",
+          minLength: 1,
+        },
+      },
+      required: ["objective"],
+      additionalProperties: false,
     });
   });
 });

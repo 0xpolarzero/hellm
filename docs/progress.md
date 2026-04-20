@@ -49,7 +49,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Build a POC artifact and tracing pipeline for code-mode execution. Commit(s): `76cc8f3`
 - [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [ ] Keep only `thread.start`, `thread.handoff`, and `wait` as `svvy`-native control tools while exposing Smithers workflow operations through Smithers-native bridge tools.
-- [ ] Register the Smithers-native agent tool surface with official semantic names such as `smithers.list_workflows`, `smithers.run_workflow`, `smithers.list_runs`, `smithers.get_run`, `smithers.explain_run`, `smithers.list_pending_approvals`, `smithers.resolve_approval`, `smithers.get_node_detail`, `smithers.list_artifacts`, and `smithers.get_run_events`, plus Smithers-aligned bridge calls for cancellation, signals, frames, and devtools when needed.
+- [ ] Register the Smithers-native agent tool surface with `smithers.list_workflows`, one generated launch tool per bundled workflow under `smithers.run_workflow.<workflow_id>`, and official semantic names such as `smithers.list_runs`, `smithers.get_run`, `smithers.explain_run`, `smithers.list_pending_approvals`, `smithers.resolve_approval`, `smithers.get_node_detail`, `smithers.list_artifacts`, and `smithers.get_run_events`, plus Smithers-aligned bridge calls for cancellation, signals, frames, and devtools when needed.
 - [x] Limit day-one capabilities to the curated `api.*` surface defined by the spec, including explicit `api.exec.run`. Commit(s): `76cc8f3`, `29d8452`
 - [x] Expand the repo namespace to workspace-fs and search utilities with plural reads and structured listings. Commit(s): `76cc8f3`, `29d8452`
 - [x] Expand the git namespace to the settled command-shaped surface, including `status`, `diff`, `log`, `show`, `branch`, `mergeBase`, `fetch`, `pull`, `push`, `add`, `commit`, `switch`, `checkout`, `restore`, `rebase`, `cherryPick`, `stash`, and `tag`. Commit(s): `76cc8f3`, `29d8452`
@@ -89,7 +89,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Define the workflow-run request envelope from a handler thread to Smithers. Commit(s): `f53c9b8`
 - [ ] Persist workflow-run supervision metadata, including raw Smithers status, wait kind, reconnect cursor, handler-attention delivery state, heartbeat freshness, and lineage, as soon as the supervising handler thread has a concrete Smithers run id.
 - [ ] Build a POC one-task workflow under a handler thread that returns to the thread and then emits a handoff episode.
-- [ ] Let handler threads call the Smithers-native run-launch surface through the Bun bridge for both new and resumed runs.
+- [ ] Let handler threads call the generated per-workflow Smithers run-launch surface through the Bun bridge for both new and resumed runs.
 - [ ] Add the Smithers-native supervision surface for inspect, blocker diagnosis, approvals, signals, cancellation, node detail, artifacts, transcripts, event history, frames, and later troubleshooting controls.
 - [ ] Define workflow task agents as a lower-level Smithers actor class distinct from orchestrator and handler-thread surfaces.
 - [ ] Adopt a PI-backed svvy workflow-task agent profile with a dedicated task prompt and `execute_typescript` as the default task-local tool surface.

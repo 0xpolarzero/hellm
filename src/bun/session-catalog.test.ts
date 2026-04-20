@@ -6,6 +6,7 @@ import * as PiCodingAgent from "@mariozechner/pi-coding-agent";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Message, StopReason, ToolCall } from "@mariozechner/pi-ai";
+import { z } from "zod";
 import type { PromptTarget, SessionSyncMessage } from "../mainview/chat-rpc";
 import { buildSystemPrompt } from "./default-system-prompt";
 import {
@@ -14,6 +15,7 @@ import {
   resolveRestoredSessionDefaults,
   type SessionDefaults,
 } from "./session-catalog";
+import type { BundledWorkflowDefinition } from "./smithers-runtime/registry";
 import type {
   StructuredSessionSnapshot,
   StructuredSessionStateStore,
@@ -106,6 +108,7 @@ type PromptableSession = {
 type ManagedSessionHandle = {
   sessionId: string;
   actorProfile: "orchestrator" | "handler" | "workflow-task";
+  smithersToolSurfaceVersion?: string | null;
   session: PromptableSession;
   promptSyncCursor: {
     messageCount: number;
@@ -114,6 +117,20 @@ type ManagedSessionHandle = {
 
 function getManagedSessionHandle(catalog: WorkspaceSessionCatalog): ManagedSessionHandle {
   return (catalog as unknown as { activeSession: ManagedSessionHandle }).activeSession;
+}
+
+function createWorkflowSurfaceOnlyDefinition(id: string): BundledWorkflowDefinition {
+  return {
+    id,
+    label: "Surface Refresh Workflow",
+    description: "Used to verify handler-session tool-surface refresh behavior.",
+    workflowName: `svvy-${id}`,
+    launchSchema: z.object({
+      ticketId: z.string().min(1),
+      note: z.string().default("triage"),
+    }),
+    workflow: {} as any,
+  };
 }
 
 function appendMessagesToSession(session: PromptableSession, messages: readonly Message[]): void {
@@ -1774,6 +1791,141 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("recreates the handler session when the Smithers workflow tool surface version changes", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Handler Surface Refresh" }, DEFAULTS);
+    const store = getStructuredSessionStore(catalog);
+
+    const seedTurn = store.startTurn({
+      sessionId: created.session.id,
+      surfacePiSessionId: created.session.id,
+      requestSummary: "Delegate workflow supervision",
+    });
+    const orchestratorThread = store.createThread({
+      turnId: seedTurn.id,
+      surfacePiSessionId: created.session.id,
+      title: "Delegate workflow supervision",
+      objective: "Open a handler thread for workflow supervision.",
+    });
+
+    try {
+      const handlerThread = await (
+        catalog as unknown as {
+          createHandlerThread(input: {
+            sessionId: string;
+            turnId: string;
+            parentThreadId: string;
+            parentSurfacePiSessionId: string;
+            title: string;
+            objective: string;
+          }): Promise<{ id: string; surfacePiSessionId: string }>;
+          openSurfaceSessionInternal(
+            surfacePiSessionId: string,
+            actorProfile: "orchestrator" | "handler",
+            systemPrompt: string,
+          ): Promise<ManagedSessionHandle>;
+          prepareManagedSession(
+            session: ManagedSessionHandle,
+            options: {
+              provider: string;
+              model: string;
+              thinkingLevel: ThinkingLevel;
+              systemPrompt: string;
+              target: PromptTarget;
+              messages: Message[];
+              onEvent: () => void;
+            },
+          ): Promise<ManagedSessionHandle>;
+          smithersRuntimeManager: {
+            getWorkflowToolSurfaceVersion(): string;
+            upsertBundledWorkflow(definition: BundledWorkflowDefinition): void;
+          };
+        }
+      ).createHandlerThread({
+        sessionId: created.session.id,
+        turnId: seedTurn.id,
+        parentThreadId: orchestratorThread.id,
+        parentSurfacePiSessionId: created.session.id,
+        title: "Workflow supervisor",
+        objective: "Keep supervising bundled workflows.",
+      });
+
+      const handlerTarget = createThreadTarget(
+        created.session.id,
+        handlerThread.surfacePiSessionId,
+        handlerThread.id,
+      );
+      const handlerSession = await (
+        catalog as unknown as {
+          openSurfaceSessionInternal(
+            surfacePiSessionId: string,
+            actorProfile: "orchestrator" | "handler",
+            systemPrompt: string,
+          ): Promise<ManagedSessionHandle>;
+        }
+      ).openSurfaceSessionInternal(
+        handlerThread.surfacePiSessionId,
+        "handler",
+        buildSystemPrompt("handler"),
+      );
+      const manager = (
+        catalog as unknown as {
+          smithersRuntimeManager: {
+            getWorkflowToolSurfaceVersion(): string;
+            upsertBundledWorkflow(definition: BundledWorkflowDefinition): void;
+          };
+        }
+      ).smithersRuntimeManager;
+      type PrepareManagedSessionOptions = {
+        provider: string;
+        model: string;
+        thinkingLevel: ThinkingLevel;
+        systemPrompt: string;
+        target: PromptTarget;
+        messages: Message[];
+        onEvent: () => void;
+      };
+      const options = {
+        ...DEFAULTS,
+        target: handlerTarget,
+        messages: [userMessage("Inspect the current workflow launch tools.")],
+        onEvent: () => {},
+      } satisfies PrepareManagedSessionOptions;
+
+      const preparedBefore = await (
+        catalog as unknown as {
+          prepareManagedSession(
+            session: ManagedSessionHandle,
+            options: PrepareManagedSessionOptions,
+          ): Promise<ManagedSessionHandle>;
+        }
+      ).prepareManagedSession(handlerSession, options);
+      const originalSessionRef = preparedBefore.session;
+      const originalToolSurfaceVersion = preparedBefore.smithersToolSurfaceVersion;
+
+      manager.upsertBundledWorkflow(createWorkflowSurfaceOnlyDefinition("surface_refresh"));
+
+      const preparedAfter = await (
+        catalog as unknown as {
+          prepareManagedSession(
+            session: ManagedSessionHandle,
+            options: PrepareManagedSessionOptions,
+          ): Promise<ManagedSessionHandle>;
+        }
+      ).prepareManagedSession(preparedBefore, options);
+
+      expect(preparedAfter).not.toBe(preparedBefore);
+      expect(preparedAfter.session).not.toBe(originalSessionRef);
+      expect(preparedAfter.smithersToolSurfaceVersion).toBe(
+        manager.getWorkflowToolSurfaceVersion(),
+      );
+      expect(preparedAfter.smithersToolSurfaceVersion).not.toBe(originalToolSurfaceVersion);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
   it("lists and inspects delegated handler threads on demand without changing orchestrator reconciliation", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
@@ -1985,7 +2137,7 @@ describe("WorkspaceSessionCatalog", () => {
       const command = store.createCommand({
         turnId: turn.id,
         threadId: handlerThread.id,
-        toolName: "smithers.run_workflow",
+        toolName: "smithers.run_workflow.single_task",
         executor: "smithers",
         visibility: "surface",
         title: "Start workflow",

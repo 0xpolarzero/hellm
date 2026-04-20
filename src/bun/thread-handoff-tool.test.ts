@@ -197,7 +197,7 @@ describe("thread handoff tool", () => {
       turnId: runtime.current!.turnId,
       surfacePiSessionId: runtime.current!.surfacePiSessionId,
       threadId: handlerThreadId,
-      toolName: "smithers.run_workflow",
+      toolName: "smithers.run_workflow.hello_world",
       executor: "smithers",
       visibility: "surface",
       title: "Run hello_world",
@@ -259,7 +259,7 @@ describe("thread handoff tool", () => {
       turnId: runtime.current!.turnId,
       surfacePiSessionId: runtime.current!.surfacePiSessionId,
       threadId: handlerThreadId,
-      toolName: "smithers.run_workflow",
+      toolName: "smithers.run_workflow.hello_world",
       executor: "smithers",
       visibility: "surface",
       title: "Run hello_world",
@@ -331,10 +331,11 @@ describe("thread handoff tool", () => {
       status: "completed",
       wait: null,
     });
-    expect(snapshot.workflowRuns.find((workflowRun) => workflowRun.threadId === handlerThreadId))
-      .toMatchObject({
-        status: "completed",
-        smithersStatus: "finished",
-      });
+    expect(
+      snapshot.workflowRuns.find((workflowRun) => workflowRun.threadId === handlerThreadId),
+    ).toMatchObject({
+      status: "completed",
+      smithersStatus: "finished",
+    });
   });
 });

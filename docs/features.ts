@@ -67,7 +67,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Smithers-Native Tool Surface",
     status: "in-progress",
     summary:
-      "Exposes Smithers-native semantic workflow control and inspection tools through the Bun bridge for handler-thread surfaces, mirroring official Smithers names such as `list_workflows`, `run_workflow`, `list_runs`, `get_run`, `explain_run`, `list_pending_approvals`, `resolve_approval`, `get_node_detail`, `list_artifacts`, and `get_run_events` instead of inventing a parallel svvy `workflow.*` abstraction, while preserving underlying transport and invocation metadata in command facts and avoiding any dependency on the repo authoring workspace under `workflows/`.",
+      "Exposes Smithers-native semantic workflow control and inspection tools through the Bun bridge for handler-thread surfaces, with one generated launch tool per bundled workflow under `smithers.run_workflow.<workflow_id>` derived from the workflow's real TypeScript or Zod launch schema, `smithers.list_workflows` returning the compiled contract metadata, and the rest of the Smithers surface preserving official names such as `list_runs`, `get_run`, `explain_run`, `list_pending_approvals`, `resolve_approval`, `get_node_detail`, `list_artifacts`, and `get_run_events` instead of inventing a parallel svvy `workflow.*` abstraction, while preserving underlying transport and invocation metadata in command facts and avoiding any dependency on the repo authoring workspace under `workflows/`.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-supervision.spec.md"],
   },
   {

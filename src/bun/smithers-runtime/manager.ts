@@ -24,6 +24,11 @@ import type {
   StructuredWorkflowRunRecord,
   StructuredWorkflowStatus,
 } from "../structured-session-state";
+import {
+  compileBundledWorkflowLaunchContract,
+  createWorkflowToolSurfaceVersion,
+  type BundledWorkflowLaunchContract,
+} from "./workflow-launch-contract";
 
 type WorkflowTaskAgentDefaults = {
   provider: string;
@@ -81,13 +86,17 @@ type LaunchWorkflowInput = {
   sessionId: string;
   threadId: string;
   workflowId: string;
-  input: unknown;
+  launchInput: unknown;
   commandId: string;
   runId?: string;
 };
 
 type LaunchWorkflowResult = {
   workflowId: string;
+  launchToolName: `smithers.run_workflow.${string}`;
+  semanticToolName: "smithers.run_workflow";
+  contractHash: string;
+  launchInput: Record<string, unknown>;
   runId: string;
   structuredWorkflowRunId: string;
   status: StructuredWorkflowStatus;
@@ -100,6 +109,9 @@ export class SmithersRuntimeManager {
   private readonly runtimeArtifactDir: string;
   private readonly registry: BundledWorkflowDefinition[];
   private readonly workflowsById: Map<string, BundledWorkflowDefinition>;
+  private readonly launchContractsByWorkflowId = new Map<string, BundledWorkflowLaunchContract>();
+  private workflowLaunchContracts: BundledWorkflowLaunchContract[] = [];
+  private workflowToolSurfaceVersion = "";
   private readonly db: SmithersDb;
   private readonly ownershipByRunId = new Map<string, WorkflowOwnership>();
   private readonly monitorByRunId = new Map<string, WorkflowMonitor>();
@@ -111,7 +123,10 @@ export class SmithersRuntimeManager {
     this.runtimeArtifactDir = join(this.runtimeRoot, "artifacts");
     mkdirSync(this.runtimeArtifactDir, { recursive: true });
 
-    this.registry = createBundledWorkflowRegistry({
+    this.registry = [];
+    this.workflowsById = new Map();
+
+    const bundledDefinitions = createBundledWorkflowRegistry({
       dbPath: join(this.runtimeRoot, "smithers.db"),
       createWorkflowTaskAgent: () =>
         createWorkflowTaskAgent({
@@ -124,27 +139,74 @@ export class SmithersRuntimeManager {
           fetchText: options.fetchText,
         }),
     });
-    this.workflowsById = new Map(this.registry.map((workflow) => [workflow.id, workflow]));
 
-    const primaryWorkflow = this.registry[0];
+    const primaryWorkflow = bundledDefinitions[0];
     if (!primaryWorkflow) {
       throw new Error("Expected at least one bundled Smithers workflow.");
     }
     ensureSmithersTables(primaryWorkflow.workflow.db as any);
     this.db = new SmithersDb(primaryWorkflow.workflow.db as any);
+
+    for (const definition of bundledDefinitions) {
+      this.upsertBundledWorkflow(definition);
+    }
   }
 
   listWorkflows() {
-    return this.registry.map((workflow) => ({
-      id: workflow.id,
-      label: workflow.label,
-      description: workflow.description,
+    return this.workflowLaunchContracts.map((contract) => ({
+      id: contract.workflowId,
+      workflowName: contract.workflowName,
+      label: contract.label,
+      description: contract.description,
+      launchToolName: contract.launchToolName,
+      launchInputSchema: structuredClone(contract.launchInputJsonSchema),
+      launchToolSchema: structuredClone(contract.launchToolJsonSchema),
+      semanticToolName: contract.semanticToolName,
+      resumeRunIdField: "resumeRunId",
+      contractHash: contract.contractHash,
     }));
+  }
+
+  listWorkflowLaunchContracts(): BundledWorkflowLaunchContract[] {
+    return this.workflowLaunchContracts.map((contract) => ({
+      ...contract,
+      launchInputJsonSchema: structuredClone(contract.launchInputJsonSchema),
+      launchToolJsonSchema: structuredClone(contract.launchToolJsonSchema),
+    }));
+  }
+
+  getWorkflowToolSurfaceVersion(): string {
+    return this.workflowToolSurfaceVersion;
+  }
+
+  upsertBundledWorkflow(definition: BundledWorkflowDefinition): void {
+    const existingIndex = this.registry.findIndex((workflow) => workflow.id === definition.id);
+    if (existingIndex >= 0) {
+      this.registry.splice(existingIndex, 1, definition);
+    } else {
+      this.registry.push(definition);
+    }
+    this.workflowsById.set(definition.id, definition);
+    this.launchContractsByWorkflowId.set(
+      definition.id,
+      compileBundledWorkflowLaunchContract(definition),
+    );
+    this.workflowLaunchContracts = this.registry.map((workflow) => {
+      const contract = this.launchContractsByWorkflowId.get(workflow.id);
+      if (!contract) {
+        throw new Error(`Bundled Smithers workflow contract not found: ${workflow.id}`);
+      }
+      return contract;
+    });
+    this.workflowToolSurfaceVersion = createWorkflowToolSurfaceVersion(
+      this.workflowLaunchContracts,
+    );
   }
 
   async launchWorkflow(input: LaunchWorkflowInput): Promise<LaunchWorkflowResult> {
     const definition = this.requireWorkflow(input.workflowId);
-    const parsedInput = definition.inputSchema.safeParse(input.input);
+    const launchContract = this.requireWorkflowLaunchContract(input.workflowId);
+    const parsedInput = definition.launchSchema.safeParse(input.launchInput);
     if (!parsedInput.success) {
       throw new Error(parsedInput.error.issues.map((issue) => issue.message).join("; "));
     }
@@ -226,6 +288,10 @@ export class SmithersRuntimeManager {
 
     return {
       workflowId: definition.id,
+      launchToolName: launchContract.launchToolName,
+      semanticToolName: launchContract.semanticToolName,
+      contractHash: launchContract.contractHash,
+      launchInput: parsedInput.data as Record<string, unknown>,
       runId,
       structuredWorkflowRunId: structuredWorkflowRun.id,
       status: structuredWorkflowRun.status,
@@ -912,6 +978,14 @@ export class SmithersRuntimeManager {
       throw new Error(`Bundled Smithers workflow not found: ${workflowId}`);
     }
     return workflow;
+  }
+
+  private requireWorkflowLaunchContract(workflowId: string): BundledWorkflowLaunchContract {
+    const contract = this.launchContractsByWorkflowId.get(workflowId);
+    if (!contract) {
+      throw new Error(`Bundled Smithers workflow contract not found: ${workflowId}`);
+    }
+    return contract;
   }
 
   private findStructuredWorkflowRun(input: {

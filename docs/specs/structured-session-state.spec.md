@@ -162,12 +162,7 @@ type StructuredSessionState = {
     surfacePiSessionId: string;
     title: string;
     objective: string;
-    status:
-      | "running-handler"
-      | "running-workflow"
-      | "waiting"
-      | "troubleshooting"
-      | "completed";
+    status: "running-handler" | "running-workflow" | "waiting" | "troubleshooting" | "completed";
     wait: null | {
       owner: "handler" | "workflow";
       kind: "user" | "external" | "approval" | "signal" | "timer";
@@ -188,13 +183,7 @@ type StructuredSessionState = {
     workflowName: string;
     templateId: string | null;
     presetId: string | null;
-    status:
-      | "running"
-      | "waiting"
-      | "continued"
-      | "completed"
-      | "failed"
-      | "cancelled";
+    status: "running" | "waiting" | "continued" | "completed" | "failed" | "cancelled";
     smithersStatus:
       | "running"
       | "waiting-approval"
@@ -224,20 +213,9 @@ type StructuredSessionState = {
     workflowRunId: string | null;
     parentCommandId: string | null;
     toolName: string;
-    executor:
-      | "orchestrator"
-      | "handler"
-      | "execute_typescript"
-      | "runtime"
-      | "smithers";
+    executor: "orchestrator" | "handler" | "execute_typescript" | "runtime" | "smithers";
     visibility: "trace" | "summary" | "surface";
-    status:
-      | "requested"
-      | "running"
-      | "waiting"
-      | "succeeded"
-      | "failed"
-      | "cancelled";
+    status: "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
     attempts: number;
     title: string;
     summary: string;
@@ -286,7 +264,15 @@ type StructuredSessionState = {
     at: string;
     kind: string;
     subject: {
-      kind: "session" | "turn" | "thread" | "workflowRun" | "command" | "episode" | "verification" | "artifact";
+      kind:
+        | "session"
+        | "turn"
+        | "thread"
+        | "workflowRun"
+        | "command"
+        | "episode"
+        | "verification"
+        | "artifact";
       id: string;
     };
     data?: Record<string, unknown>;
@@ -441,17 +427,17 @@ These rules are adopted:
 
 ### Turn Fields
 
-| Field | Why it exists |
-| --- | --- |
-| `id` | Stable handle for correlation and resume. |
-| `surfacePiSessionId` | Identifies which interactive surface received the message. |
-| `threadId` | Links the turn to a handler thread when the target surface is delegated work. `null` means the main orchestrator surface. |
-| `requestSummary` | Compact durable description of what the request was. |
-| `turnDecision` | Captures the top-level action this surface chose for the turn without forcing later reconstruction from commands or transcript text. |
-| `status` | Whether the request is still running, waiting, completed, or failed. |
-| `startedAt` | Enables ordering and duration reasoning. |
-| `updatedAt` | Enables recency-based selectors. |
-| `finishedAt` | Marks terminal completion or failure. |
+| Field                | Why it exists                                                                                                                        |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                 | Stable handle for correlation and resume.                                                                                            |
+| `surfacePiSessionId` | Identifies which interactive surface received the message.                                                                           |
+| `threadId`           | Links the turn to a handler thread when the target surface is delegated work. `null` means the main orchestrator surface.            |
+| `requestSummary`     | Compact durable description of what the request was.                                                                                 |
+| `turnDecision`       | Captures the top-level action this surface chose for the turn without forcing later reconstruction from commands or transcript text. |
+| `status`             | Whether the request is still running, waiting, completed, or failed.                                                                 |
+| `startedAt`          | Enables ordering and duration reasoning.                                                                                             |
+| `updatedAt`          | Enables recency-based selectors.                                                                                                     |
+| `finishedAt`         | Marks terminal completion or failure.                                                                                                |
 
 ### Turn Decision
 
@@ -461,7 +447,7 @@ Use `turnDecision` this way:
 
 - `pending` is allowed only between turn creation and the moment the surface chooses how to proceed
 - orchestrator turns persist session-level routing decisions such as `reply`, `execute_typescript`, `clarify`, or `thread.start`
-- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `smithers.run_workflow`, `smithers.get_run`, `smithers.resolve_approval`, `thread.handoff`, or `wait`
+- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `smithers.run_workflow.hello_world`, `smithers.get_run`, `smithers.resolve_approval`, `thread.handoff`, or `wait`
 - this symmetry is intentional even though only orchestrator turns own session-level routing
 - the turn decision is the top-level classification of the turn, not a replacement for command records
 - linkage to spawned threads, workflow runs, artifacts, and episodes still belongs in their own records plus linked commands
@@ -470,19 +456,19 @@ Use `turnDecision` this way:
 
 ### Thread Fields
 
-| Field | Why it exists |
-| --- | --- |
-| `id` | Stable delegated-objective handle. |
-| `parentThreadId` | Allows future thread-to-thread delegation or grouping without forcing it into v1. |
-| `surfacePiSessionId` | Links the thread to the backing pi conversation surface. |
-| `title` | Compact human-readable label. |
-| `objective` | Durable statement of what this thread owns. |
-| `status` | Captures handler-attention state for the delegated objective. |
-| `wait` | Captures blocked-state details for the thread itself, including whether the wait is handler-owned or workflow-owned. |
-| `worktree` | Records the bound worktree when relevant. |
-| `startedAt` | Orders thread creation. |
-| `updatedAt` | Enables recency-based selectors. |
-| `finishedAt` | Marks when the current active work span most recently became completed. Clear it if later work resumes in the same thread. |
+| Field                | Why it exists                                                                                                              |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `id`                 | Stable delegated-objective handle.                                                                                         |
+| `parentThreadId`     | Allows future thread-to-thread delegation or grouping without forcing it into v1.                                          |
+| `surfacePiSessionId` | Links the thread to the backing pi conversation surface.                                                                   |
+| `title`              | Compact human-readable label.                                                                                              |
+| `objective`          | Durable statement of what this thread owns.                                                                                |
+| `status`             | Captures handler-attention state for the delegated objective.                                                              |
+| `wait`               | Captures blocked-state details for the thread itself, including whether the wait is handler-owned or workflow-owned.       |
+| `worktree`           | Records the bound worktree when relevant.                                                                                  |
+| `startedAt`          | Orders thread creation.                                                                                                    |
+| `updatedAt`          | Enables recency-based selectors.                                                                                           |
+| `finishedAt`         | Marks when the current active work span most recently became completed. Clear it if later work resumes in the same thread. |
 
 ### Thread Status Semantics
 
@@ -510,26 +496,26 @@ If the same terminal workflow snapshot is replayed after handoff during final re
 
 ### Workflow Run Fields
 
-| Field | Why it exists |
-| --- | --- |
-| `id` | Stable local workflow-run handle. |
-| `threadId` | Links the run to the handler thread that owns it. |
-| `smithersRunId` | Canonical link back to Smithers. |
-| `workflowName` | Product-visible workflow identifier. |
-| `templateId` | Records which structural template was used when relevant. |
-| `presetId` | Records which preset was used when relevant. |
-| `status` | Captures the normalized top-level run status used by `svvy`. |
-| `smithersStatus` | Preserves the raw Smithers run status for faithful inspection and reconnect behavior. |
-| `waitKind` | Preserves whether a waiting run is blocked on approval, event, or timer. |
-| `continuedFromRunIds` | Preserves run lineage when Smithers continues the workflow as a new run. |
-| `activeDescendantRunId` | Points at the active descendant run when Smithers continued this run as new. |
-| `lastEventSeq` | Stores the most recent applied Smithers event sequence for reconnect. |
-| `lastAttentionSeq` | Stores the most recent event sequence already delivered to the handler as attention work. |
-| `heartbeatAt` | Preserves the most recent Smithers heartbeat seen for this run. |
-| `summary` | Short top-level summary of the run state. |
-| `startedAt` | Start time of the run. |
-| `updatedAt` | Most recent state transition time. |
-| `finishedAt` | Terminal completion, failure, or cancellation time. |
+| Field                   | Why it exists                                                                             |
+| ----------------------- | ----------------------------------------------------------------------------------------- |
+| `id`                    | Stable local workflow-run handle.                                                         |
+| `threadId`              | Links the run to the handler thread that owns it.                                         |
+| `smithersRunId`         | Canonical link back to Smithers.                                                          |
+| `workflowName`          | Product-visible workflow identifier.                                                      |
+| `templateId`            | Records which structural template was used when relevant.                                 |
+| `presetId`              | Records which preset was used when relevant.                                              |
+| `status`                | Captures the normalized top-level run status used by `svvy`.                              |
+| `smithersStatus`        | Preserves the raw Smithers run status for faithful inspection and reconnect behavior.     |
+| `waitKind`              | Preserves whether a waiting run is blocked on approval, event, or timer.                  |
+| `continuedFromRunIds`   | Preserves run lineage when Smithers continues the workflow as a new run.                  |
+| `activeDescendantRunId` | Points at the active descendant run when Smithers continued this run as new.              |
+| `lastEventSeq`          | Stores the most recent applied Smithers event sequence for reconnect.                     |
+| `lastAttentionSeq`      | Stores the most recent event sequence already delivered to the handler as attention work. |
+| `heartbeatAt`           | Preserves the most recent Smithers heartbeat seen for this run.                           |
+| `summary`               | Short top-level summary of the run state.                                                 |
+| `startedAt`             | Start time of the run.                                                                    |
+| `updatedAt`             | Most recent state transition time.                                                        |
+| `finishedAt`            | Terminal completion, failure, or cancellation time.                                       |
 
 ### Workflow Run Status Semantics
 
@@ -552,26 +538,26 @@ When a workflow run is `continued`, selector logic should follow `activeDescenda
 
 ### CommandRecord Fields
 
-| Field | Why it exists |
-| --- | --- |
-| `id` | Stable command handle. |
-| `turnId` | Links the command to the triggering request. |
-| `surfacePiSessionId` | Identifies which interactive surface executed the command. |
-| `threadId` | Links the command to the delegated thread when relevant. |
-| `workflowRunId` | Links the command to the owning workflow run when relevant. |
-| `parentCommandId` | Represents nested command structure. |
-| `toolName` | Names the tool that was called. |
-| `executor` | Identifies which runtime component executed the command. |
-| `visibility` | Distinguishes trace work from surfaced work. |
-| `status` | Captures lifecycle state. |
-| `attempts` | Records retry count without requiring a separate attempt table in the first slice. |
-| `title` | Compact human-readable label. |
-| `summary` | Compact durable explanation of the command's purpose or outcome. |
-| `facts` | Stores normalized tool-specific facts used for rollups and drill-down. |
-| `error` | Stores terminal failure text when needed. |
-| `startedAt` | Enables ordering and duration reasoning. |
-| `updatedAt` | Enables recency-based selectors. |
-| `finishedAt` | Marks terminal completion, failure, or cancellation. Waiting commands keep `finishedAt = null`. |
+| Field                | Why it exists                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
+| `id`                 | Stable command handle.                                                                          |
+| `turnId`             | Links the command to the triggering request.                                                    |
+| `surfacePiSessionId` | Identifies which interactive surface executed the command.                                      |
+| `threadId`           | Links the command to the delegated thread when relevant.                                        |
+| `workflowRunId`      | Links the command to the owning workflow run when relevant.                                     |
+| `parentCommandId`    | Represents nested command structure.                                                            |
+| `toolName`           | Names the tool that was called.                                                                 |
+| `executor`           | Identifies which runtime component executed the command.                                        |
+| `visibility`         | Distinguishes trace work from surfaced work.                                                    |
+| `status`             | Captures lifecycle state.                                                                       |
+| `attempts`           | Records retry count without requiring a separate attempt table in the first slice.              |
+| `title`              | Compact human-readable label.                                                                   |
+| `summary`            | Compact durable explanation of the command's purpose or outcome.                                |
+| `facts`              | Stores normalized tool-specific facts used for rollups and drill-down.                          |
+| `error`              | Stores terminal failure text when needed.                                                       |
+| `startedAt`          | Enables ordering and duration reasoning.                                                        |
+| `updatedAt`          | Enables recency-based selectors.                                                                |
+| `finishedAt`         | Marks terminal completion, failure, or cancellation. Waiting commands keep `finishedAt = null`. |
 
 ### Workflow Command Facts
 
@@ -579,6 +565,8 @@ For `smithers.*` commands, `facts` should preserve both the adopted agent-visibl
 
 At minimum that should include:
 
+- concrete generated tool name when the command came from a workflow-specific launch tool
+- semantic Smithers operation name such as `smithers.run_workflow`
 - transport or bridge surface used
 - raw Smithers operation name or endpoint
 - forwarded arguments
@@ -598,7 +586,7 @@ Use them this way:
 
 - low-level repo or web reads inside `execute_typescript` are usually `trace`
 - material writes, artifact creation, and failed execs usually roll up as `summary`
-- `thread.start`, `thread.handoff`, `wait`, and Smithers-mutating commands such as `smithers.run_workflow`, `smithers.resolve_approval`, `smithers.runs.cancel`, and `smithers.signals.send` are normally `surface`
+- `thread.start`, `thread.handoff`, `wait`, and Smithers-mutating commands such as generated `smithers.run_workflow.<workflow_id>` launch tools, `smithers.resolve_approval`, `smithers.runs.cancel`, and `smithers.signals.send` are normally `surface`
 - read-only Smithers inspection commands are usually `summary` unless the UI chooses to surface a specific one directly
 - child `api.*` commands remain nested detail by default
 
@@ -639,15 +627,15 @@ Instead:
 
 ### Episode Fields
 
-| Field | Why it exists |
-| --- | --- |
-| `id` | Stable episode handle. |
-| `threadId` | Links the episode to the thread that authored that handoff point. |
+| Field             | Why it exists                                                                                                                      |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `id`              | Stable episode handle.                                                                                                             |
+| `threadId`        | Links the episode to the thread that authored that handoff point.                                                                  |
 | `sourceCommandId` | Optional provenance link to the most relevant command when that linkage matters. It does not mean the command emitted the episode. |
-| `title` | Compact label for lists and cards. |
-| `summary` | Short durable digest. |
-| `body` | The reusable semantic content. |
-| `createdAt` | Orders the episode in the session lifecycle. |
+| `title`           | Compact label for lists and cards.                                                                                                 |
+| `summary`         | Short durable digest.                                                                                                              |
+| `body`            | The reusable semantic content.                                                                                                     |
+| `createdAt`       | Orders the episode in the session lifecycle.                                                                                       |
 
 ### Episode Meaning
 
@@ -677,16 +665,16 @@ Those command-level summaries are not episodes.
 
 ### Verification Fields
 
-| Field | Why it exists |
-| --- | --- |
-| `id` | Stable verification handle. |
-| `threadId` | Links the verification to the handler thread that owns it. |
+| Field           | Why it exists                                                |
+| --------------- | ------------------------------------------------------------ |
+| `id`            | Stable verification handle.                                  |
+| `threadId`      | Links the verification to the handler thread that owns it.   |
 | `workflowRunId` | Links the verification to the workflow run that produced it. |
-| `kind` | Identifies the verification type. |
-| `status` | Captures pass, fail, or cancelled outcome. |
-| `summary` | Gives the orchestrator and UI a concise outcome summary. |
-| `startedAt` | Records start time. |
-| `finishedAt` | Records finish time. |
+| `kind`          | Identifies the verification type.                            |
+| `status`        | Captures pass, fail, or cancelled outcome.                   |
+| `summary`       | Gives the orchestrator and UI a concise outcome summary.     |
+| `startedAt`     | Records start time.                                          |
+| `finishedAt`    | Records finish time.                                         |
 
 Verification kind is intentionally open-ended.
 
@@ -702,17 +690,17 @@ Built-in defaults may include:
 
 ### Artifact Fields
 
-| Field | Why it exists |
-| --- | --- |
-| `id` | Stable artifact handle. |
-| `threadId` | Links the artifact to the owning thread when relevant. |
-| `workflowRunId` | Links the artifact to the workflow run that produced it when relevant. |
-| `sourceCommandId` | Links the artifact back to the command attempt that produced it. |
-| `kind` | Distinguishes text, log, json, and file outputs. |
-| `name` | Human-readable artifact label. |
-| `path` | Workspace artifact path inside the dedicated artifact directory. |
-| `content` | Optional inline preview content for small artifacts and the POC. |
-| `createdAt` | Orders artifact creation. |
+| Field             | Why it exists                                                          |
+| ----------------- | ---------------------------------------------------------------------- |
+| `id`              | Stable artifact handle.                                                |
+| `threadId`        | Links the artifact to the owning thread when relevant.                 |
+| `workflowRunId`   | Links the artifact to the workflow run that produced it when relevant. |
+| `sourceCommandId` | Links the artifact back to the command attempt that produced it.       |
+| `kind`            | Distinguishes text, log, json, and file outputs.                       |
+| `name`            | Human-readable artifact label.                                         |
+| `path`            | Workspace artifact path inside the dedicated artifact directory.       |
+| `content`         | Optional inline preview content for small artifacts and the POC.       |
+| `createdAt`       | Orders artifact creation.                                              |
 
 Every submitted `execute_typescript` snippet must land in this table as a file-backed artifact before execution begins.
 
@@ -720,13 +708,13 @@ Every submitted `execute_typescript` snippet must land in this table as a file-b
 
 ### Event Fields
 
-| Field | Why it exists |
-| --- | --- |
-| `id` | Stable event handle. |
-| `at` | Event timestamp. |
-| `kind` | Exact lifecycle transition type. |
-| `subject` | Typed pointer to the subject record. |
-| `data` | Small optional payload for debugging or selectors. |
+| Field     | Why it exists                                      |
+| --------- | -------------------------------------------------- |
+| `id`      | Stable event handle.                               |
+| `at`      | Event timestamp.                                   |
+| `kind`    | Exact lifecycle transition type.                   |
+| `subject` | Typed pointer to the subject record.               |
+| `data`    | Small optional payload for debugging or selectors. |
 
 ### Adopted Event Kinds
 

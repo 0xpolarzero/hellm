@@ -151,7 +151,9 @@ test("drives a real delegated workflow run through the app and renders the super
           expect((await inspector.textContent()) ?? "").toContain("Workflow Runs");
           expect((await inspector.textContent()) ?? "").toContain("svvy-hello-world");
           expect((await inspector.textContent()) ?? "").toContain("svvy-hello-world is completed");
-          expect((await inspector.textContent()) ?? "").toContain("smithers.run_workflow");
+          expect((await inspector.textContent()) ?? "").toContain(
+            "smithers.run_workflow.hello_world",
+          );
           expect((await inspector.textContent()) ?? "").toContain("hello_world completed");
 
           await page.locator(".ui-dialog-close").click({ force: true });
@@ -180,14 +182,14 @@ test("drives a real delegated workflow run through the app and renders the super
     ),
   );
   expect(toolNames(orchestratorRequest)).toContain("thread.start");
-  expect(toolNames(orchestratorRequest)).not.toContain("smithers.run_workflow");
+  expect(toolNames(orchestratorRequest)).not.toContain("smithers.run_workflow.hello_world");
 
   const handlerRequest = stub.requests.find((request) =>
     latestUserText(request).includes(
       "Run the bundled hello_world workflow, wait for it to finish, and hand the result back.",
     ),
   );
-  expect(toolNames(handlerRequest)).toContain("smithers.run_workflow");
+  expect(toolNames(handlerRequest)).toContain("smithers.run_workflow.hello_world");
   expect(toolNames(handlerRequest)).toContain("thread.handoff");
   expect(toolNames(handlerRequest)).not.toContain("thread.start");
 });
@@ -262,7 +264,9 @@ realProviderTest(
           await waitForVisible(inspector, 60_000);
           expect((await inspector.textContent()) ?? "").toContain("Workflow Runs");
           expect((await inspector.textContent()) ?? "").toContain("svvy-hello-world");
-          expect((await inspector.textContent()) ?? "").toContain("smithers.run_workflow");
+          expect((await inspector.textContent()) ?? "").toContain(
+            "smithers.run_workflow.hello_world",
+          );
 
           await page.locator(".ui-dialog-close").click({ force: true });
           await inspector.waitFor({ state: "hidden" });

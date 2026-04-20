@@ -160,10 +160,10 @@ Inside a handler thread, the normal choices are:
 - direct reply
 - `execute_typescript`
 - `thread.handoff`
-- Smithers-native workflow tools such as `smithers.run_workflow`, `smithers.get_run`, `smithers.explain_run`, and `smithers.resolve_approval`
+- Smithers-native workflow tools such as `smithers.list_workflows`, generated launch tools such as `smithers.run_workflow.hello_world`, `smithers.get_run`, `smithers.explain_run`, and `smithers.resolve_approval`
 - `wait`
 
-The workflow tool surface should mirror Smithers semantics rather than a svvy-defined `workflow.*` alias layer. Those Smithers-native commands are supervision helpers inside the handler-thread lifecycle, not evidence that the repo-root `workflows/` authoring package is the shipped product runtime.
+The workflow tool surface should mirror Smithers semantics rather than a svvy-defined `workflow.*` alias layer. The launch surface is one generated tool per bundled workflow under the `smithers.run_workflow.<workflow_id>` namespace, derived from the workflow's real TypeScript or Zod launch schema rather than from handwritten prompt prose or repo inspection. Those Smithers-native commands are supervision helpers inside the handler-thread lifecycle, not evidence that the repo-root `workflows/` authoring package is the shipped product runtime.
 
 The agent does not get raw Smithers internals or direct CLI access. It gets `svvy`-registered `smithers.*` tools that call the Bun-owned Smithers bridge.
 
@@ -263,7 +263,7 @@ That means build, test, lint, and related checks can still have structured verif
 - `execute_typescript` remains the default generic work surface.
 - `api.exec.run` remains the explicit bounded process execution capability inside `execute_typescript`.
 - `thread.start`, `thread.handoff`, and `wait` remain `svvy`-native control tools.
-- workflow supervision should use Smithers-native bridge tools such as `smithers.run_workflow`, `smithers.get_run`, and `smithers.resolve_approval`.
+- workflow supervision should use Smithers-native bridge tools such as generated `smithers.run_workflow.<workflow_id>` launch tools, `smithers.get_run`, and `smithers.resolve_approval`.
 - the Smithers-native tool surface targets bundled product-runtime workflows rather than the repo authoring workspace under `workflows/`.
 - capability declarations are actor-specific: the orchestrator gets only orchestrator-callable tools, and handler threads get only handler-callable tools.
 - workflow task agents are another actor class below handler threads and should receive only task-local tool declarations, with `execute_typescript` as the default adopted task tool.

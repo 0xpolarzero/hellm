@@ -86,25 +86,27 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
             });
           }
 
-          if (!hasToolCall(toolCalls, "smithers.run_workflow")) {
+          if (!hasToolCall(toolCalls, "smithers.run_workflow.hello_world")) {
             return createToolCallResponse({
               responseId,
               model: payload.model,
               toolCallId: `call-${++toolCallCounter}`,
-              toolName: "smithers.run_workflow",
+              toolName: "smithers.run_workflow.hello_world",
               args: {
-                workflowId: "hello_world",
-                input: {
-                  message: "hello from the real app workflow supervision e2e",
-                },
+                message: "hello from the real app workflow supervision e2e",
               },
             });
           }
 
-          const launchedRun = findLatestToolResult(toolResults, "smithers.run_workflow");
+          const launchedRun = findLatestToolResult(
+            toolResults,
+            "smithers.run_workflow.hello_world",
+          );
           const runId = readStringProperty(launchedRun?.parsed, "runId");
           if (!runId) {
-            throw new Error("Expected smithers.run_workflow tool result to include runId.");
+            throw new Error(
+              "Expected smithers.run_workflow.hello_world tool result to include runId.",
+            );
           }
 
           const latestRunStatus = readStringProperty(
@@ -151,9 +153,7 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
           });
         }
 
-        if (
-          latestUserText.includes("System event: A handler thread emitted a durable handoff.")
-        ) {
+        if (latestUserText.includes("System event: A handler thread emitted a durable handoff.")) {
           return createTextResponse({
             responseId,
             model: payload.model,
@@ -227,11 +227,7 @@ function createToolCallResponse(input: {
   ]);
 }
 
-function createTextResponse(input: {
-  responseId: string;
-  model: string;
-  text: string;
-}): Response {
+function createTextResponse(input: { responseId: string; model: string; text: string }): Response {
   return createSseResponse([
     createChunk({
       responseId: input.responseId,

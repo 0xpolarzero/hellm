@@ -6,13 +6,13 @@ import { z } from "zod";
 //
 // The shared table uses a single `payload` object so Smithers can carry `__smithersContinuation`
 // across continue-as-new runs inside the normalized workflow input value.
-export const smithersRuntimeInputSchema = z.object({
+export const bundledWorkflowRuntimeStoredInputSchema = z.object({
   payload: z.record(z.string(), z.unknown()),
 });
 
-export function readSmithersWorkflowInput<Schema extends z.ZodTypeAny>(
-  schema: Schema,
+export function readBundledWorkflowLaunchInput<Schema extends z.ZodTypeAny>(
+  launchSchema: Schema,
   input: unknown,
 ): z.infer<Schema> {
-  return schema.parse(input);
+  return launchSchema.parse(input);
 }
