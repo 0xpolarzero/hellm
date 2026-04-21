@@ -585,10 +585,10 @@ test("provider auth.updated is emitted when saving an api key from settings", as
       const openaiRow = await providerRowByName(page, "openai");
       const openaiActions = openaiRow.locator(".provider-actions");
 
-      await openaiActions.getByRole("button", { name: "API Key" }).first().click();
+      await clickWhenEnabled(openaiActions.getByRole("button", { name: "API Key" }).first());
       await openaiActions.locator('input[placeholder="Paste API key..."]').fill("fresh-openai-key");
       const updatedSince = sinceNow();
-      await openaiActions.getByRole("button", { name: "Save" }).first().click();
+      await clickWhenEnabled(openaiActions.getByRole("button", { name: "Save" }).first());
       const updated = await waitForEvent(driver, "provider.auth.updated", {
         since: updatedSince,
         match: { providerId: "openai" },
@@ -621,7 +621,7 @@ test("provider auth.removed is emitted when removing an api key from settings", 
       const openaiRow = await providerRowByName(page, "openai");
 
       const removedSince = sinceNow();
-      await openaiRow.getByRole("button", { name: "Remove" }).click();
+      await clickWhenEnabled(openaiRow.getByRole("button", { name: "Remove" }));
       const removed = await waitForEvent(driver, "provider.auth.removed", {
         since: removedSince,
         match: { providerId: "openai" },

@@ -10,9 +10,13 @@ import { resolveProjectEnvValue, writeAgentModelsConfig, writeWorkspaceEnvFile }
 setDefaultTimeout(180_000);
 
 const REAL_ZAI_API_KEY = resolveProjectEnvValue("ZAI_API_KEY");
-const realProviderTest = REAL_ZAI_API_KEY ? test : test.skip;
 
 beforeAll(async () => {
+  if (!REAL_ZAI_API_KEY) {
+    throw new Error(
+      "ZAI_API_KEY is required for workflow supervision e2e coverage. Set it in .env.local, .env, or the process environment before running bun run test:e2e.",
+    );
+  }
   await ensureBuilt();
 });
 
@@ -34,18 +38,74 @@ async function waitForVisible(
   throw new Error("Timed out waiting for workflow supervision UI.");
 }
 
+async function waitForEnabled(
+  locator: {
+    isDisabled?: () => Promise<boolean>;
+    getAttribute?: (name: string) => Promise<string | null>;
+  },
+  timeoutMs = 20_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const disabled =
+      typeof locator.isDisabled === "function"
+        ? await locator.isDisabled()
+        : typeof locator.getAttribute === "function"
+          ? (await locator.getAttribute("disabled")) !== null
+          : false;
+    if (!disabled) {
+      return;
+    }
+    await Bun.sleep(100);
+  }
+
+  throw new Error("Timed out waiting for workflow supervision action to become enabled.");
+}
+
+function isDisabledClickError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Resolved element is disabled");
+}
+
+async function clickWhenEnabled(
+  locator: {
+    click: (options?: { force?: boolean }) => Promise<void>;
+    isDisabled?: () => Promise<boolean>;
+    getAttribute?: (name: string) => Promise<string | null>;
+  },
+  timeoutMs = 20_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    await waitForEnabled(locator, Math.min(1_000, timeoutMs));
+    try {
+      await locator.click({ force: true });
+      return;
+    } catch (error) {
+      if (!isDisabledClickError(error)) {
+        throw error;
+      }
+    }
+    await Bun.sleep(100);
+  }
+
+  throw new Error("Timed out clicking a workflow supervision action after it became enabled.");
+}
+
 async function sendPrompt(page: SvvyApp["page"], text: string): Promise<void> {
   const composer = page.locator(
     'textarea[placeholder="Ask svvy to inspect the repo, make a change, or run verification."]',
   );
   await composer.fill(text);
-  await page.getByRole("button", { name: "Send" }).click();
+  const sendButton = page.getByRole("button", { name: "Send" });
+  await clickWhenEnabled(sendButton);
 }
 
 async function returnToOrchestrator(page: SvvyApp["page"]): Promise<void> {
   const returnButton = page.getByRole("button", { name: "Return to orchestrator" });
   if (await returnButton.isVisible()) {
-    await returnButton.click({ force: true });
+    await clickWhenEnabled(returnButton);
   }
 }
 
@@ -119,7 +179,7 @@ test("drives a real delegated workflow run through the app and routes workflow a
             "Run the bundled hello_world workflow",
           );
 
-          await threadCard.getByRole("button", { name: "Open thread" }).click({ force: true });
+          await clickWhenEnabled(threadCard.getByRole("button", { name: "Open thread" }));
           await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
 
           await sendPrompt(
@@ -144,7 +204,7 @@ test("drives a real delegated workflow run through the app and routes workflow a
           });
           expect((await completedThreadCard.textContent()) ?? "").toContain("Completed");
 
-          await completedThreadCard.getByRole("button", { name: "Inspect" }).click({ force: true });
+          await clickWhenEnabled(completedThreadCard.getByRole("button", { name: "Inspect" }));
 
           const inspector = page.getByRole("dialog", { name: "Hello World Workflow Thread" });
           await waitForVisible(inspector);
@@ -204,12 +264,12 @@ test("drives a real delegated workflow run through the app and routes workflow a
   expect(toolNames(workflowAttentionRequest)).not.toContain("thread.start");
 });
 
-realProviderTest(
+test(
   "drives a real delegated workflow run through the app with z.ai loaded from workspace .env",
   async () => {
     await withIsolatedLaunchState(async (launchState) => {
       await writeWorkspaceEnvFile(launchState.workspaceDir, {
-        ZAI_API_KEY: REAL_ZAI_API_KEY!,
+        ZAI_API_KEY: REAL_ZAI_API_KEY,
       });
 
       await withSvvyApp(
@@ -244,7 +304,7 @@ realProviderTest(
             has: page.getByText("Hello World Workflow Thread", { exact: true }),
           });
           await waitForVisible(threadCard, 60_000);
-          await threadCard.getByRole("button", { name: "Open thread" }).click({ force: true });
+          await clickWhenEnabled(threadCard.getByRole("button", { name: "Open thread" }), 60_000);
           await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
 
           await sendPrompt(
@@ -268,7 +328,7 @@ realProviderTest(
           await waitForVisible(completedThreadCard, 90_000);
           expect((await completedThreadCard.textContent()) ?? "").toContain("Completed");
 
-          await completedThreadCard.getByRole("button", { name: "Inspect" }).click({ force: true });
+          await clickWhenEnabled(completedThreadCard.getByRole("button", { name: "Inspect" }));
 
           const inspector = page.getByRole("dialog", { name: "Hello World Workflow Thread" });
           await waitForVisible(inspector, 60_000);
