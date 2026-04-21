@@ -432,19 +432,55 @@ It contains:
 - zero or more delegated handler thread surfaces
 - durable state across those surfaces
 
+The session container is durable workspace state.
+
+It is not the live runtime slot for whichever surface happens to be open in the UI.
+
 ### Surface Identity
 
-The product carries three different identifiers and they are not interchangeable:
+The product carries four different identifiers and they are not interchangeable:
 
 - `workspaceSessionId`: the durable top-level session container id used for storage, summaries, navigation, and restart recovery
 - `surfacePiSessionId`: the pi session id for the currently addressed interactive surface
 - `threadId`: the durable handler-thread record id for the delegated objective; it exists only when the target surface is a handler thread
+- `paneId`: the UI layout identity that points at a surface without becoming that surface's runtime identity
 
 Rules:
 
-- backend RPC calls and backend-to-renderer session-sync payloads must carry an explicit surface target rather than overloading `session.id`
+- backend RPC calls and backend-to-renderer surface payloads must carry an explicit surface target rather than overloading `session.id`
 - `session.id` inside session summaries means `workspaceSessionId`
 - if the orchestrator surface currently happens to reuse the same string for `workspaceSessionId` and `surfacePiSessionId`, callers must treat that as an implementation detail rather than a shared identity contract
+- `paneId` must never be used as a session id, surface id, or thread id
+
+### Live Surface Runtime
+
+Each interactive pi surface is managed as its own live runtime object keyed by `surfacePiSessionId`.
+
+That live runtime owns:
+
+- the live transcript snapshot
+- streaming state
+- provider, model, and reasoning settings
+- the resolved system prompt
+- the current prompt execution context
+- one prompt lock for that surface
+
+Live surface runtime is separate from both durable workspace state and pane layout state.
+
+### Pane And Layout State
+
+Pane and layout state is UI state.
+
+It owns:
+
+- which pane shows which surface
+- pane geometry and spans
+- pane focus
+- pane-local scroll and inspector state
+
+Panes are not live runtimes.
+
+If two panes show the same surface, they share one underlying live surface runtime.
 
 ### Orchestrator Surface
 
@@ -594,8 +630,9 @@ Every user request goes through one orchestrator-controlled product loop:
 6. execute tools through the correct runtime handler
 7. record commands, events, workflow-run state, artifacts, and wait state
 8. update structured state
-9. emit explicit session-sync events that carry the active surface target plus rehydration data whenever prompt settlement or background lifecycle writes change what the UI should project
-10. render updated session and pane surfaces from those events plus durable state
+9. emit explicit workspace-state updates whenever durable summaries or read models change
+10. emit explicit surface-state updates whenever one live surface transcript or runtime snapshot changes
+11. render updated workspace and pane surfaces by joining those updates with pane bindings
 
 Read APIs and renderer code must not compensate for missing lifecycle writes with polling, transcript parsing, or inferred repair logic.
 
@@ -706,9 +743,19 @@ This is shared surface behavior, not a thread-specific exception.
 
 Projection ownership is equally simple:
 
-- the backend owns active surface targeting and session summary projection
-- the renderer listens for explicit session-sync payloads and rehydrates from that target plus durable state
+- the backend owns durable workspace projection and live surface runtime ownership
+- the renderer owns pane bindings, pane focus, and pane-local view state
+- the renderer listens for explicit workspace updates and surface updates, then joins them locally
 - the renderer does not poll read APIs, inspect transcript files, or infer lifecycle changes from transcript mutations
+
+Pane and surface semantics are:
+
+- opening a pane attaches that pane to a surface
+- closing a pane detaches that pane without deleting durable state
+- closing the last owner of a surface releases that live surface runtime cleanly
+- more than one pane may attach to the same surface
+- duplicated panes share one underlying live surface state but may keep independent scroll position
+- background workflow attention always targets the owning handler surface, not the currently focused pane
 
 ## Workflow Inspection
 

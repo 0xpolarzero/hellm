@@ -28,7 +28,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "True System Prompt Channel",
     status: "in-progress",
     summary:
-      "Loads svvy's orchestrator and handler-thread instructions through pi's real `systemPrompt` channel, keeps reconstructed prompt bodies limited to durable surface context plus transcript material, slices generated capability declarations by actor so each surface sees only its own callable API, and renders the active system prompt as expandable session metadata instead of inline transcript text.",
+      "Loads svvy's orchestrator and handler-thread instructions through pi's real `systemPrompt` channel, keeps reconstructed prompt bodies limited to durable surface context plus transcript material, slices generated capability declarations by actor so each surface sees only its own callable API, and renders the active system prompt as expandable surface metadata instead of inline transcript text.",
     sourceSpecs: ["docs/prd.md"],
   },
   {
@@ -59,7 +59,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Handler Thread Surfaces",
     status: "in-progress",
     summary:
-      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, stay multi-turn and directly messageable before and after handoff, distinguish handler-active, workflow-active, waiting, troubleshooting, and completed thread states, reject `thread.handoff` while the thread still owns a running or waiting workflow run for the current span, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread.handoff` calls that append ordered handoff episodes over the thread's lifetime and immediately trigger a fresh orchestrator reconciliation turn.",
+      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, stay multi-turn and directly messageable before and after handoff, distinguish handler-active, workflow-active, waiting, troubleshooting, and completed thread states, reject `thread.handoff` while the thread still owns a running or waiting workflow run for the current span, route workflow attention back to the owning handler surface rather than the focused pane, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread.handoff` calls that append ordered handoff episodes over the thread's lifetime and immediately trigger a fresh orchestrator reconciliation turn.",
     sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -103,15 +103,27 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Multi-Session Workspace Navigation",
     status: "shipped",
     summary:
-      "Supports creating, listing, switching, renaming, forking, and deleting multiple pi-backed sessions from one workspace window.",
+      "Supports creating, listing, switching, renaming, forking, and deleting multiple pi-backed session containers from one workspace window.",
     sourceSpecs: ["docs/specs/multi-session-support.spec.md"],
+  },
+  {
+    id: "multi-surface-runtime",
+    name: "Multi-Surface Live Runtime",
+    status: "in-progress",
+    summary:
+      "Separates durable workspace state from live surface runtimes and pane layout state, manages live pi surfaces in a shared registry keyed by `surfacePiSessionId`, gives each surface its own prompt lock and model or reasoning lifecycle, supports explicit open and close semantics, and lets multiple panes attach to the same surface without duplicating the underlying runtime.",
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/multi-session-support.spec.md",
+      "docs/specs/structured-session-state.spec.md",
+    ],
   },
   {
     id: "structured-session-state",
     name: "Structured Session State Overlay",
     status: "in-progress",
     summary:
-      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, workflow-run, command, episode, artifact, verification, wait, and lifecycle event records, explicit surface-target identity (`workspaceSessionId`, `surfacePiSessionId`, `threadId`), and backend-driven session-sync rehydration that survives reload.",
+      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, workflow-run, command, episode, artifact, verification, wait, and lifecycle event records, explicit surface-target identity (`workspaceSessionId`, `surfacePiSessionId`, `threadId`), workspace-level metadata projection that survives reload, and live-surface transcript updates kept separate from durable workspace read models.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -167,7 +179,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Metadata-First Session Read Models",
     status: "in-progress",
     summary:
-      "Derives idle, running, waiting, and error session status, counts, ordered thread ids, and compact summary data from structured wait, handler-attention state, workflow-run state, and artifact metadata for sidebar, navigation, and restart recovery without transcript replay, transcript-file heuristics, or live prompt overlays.",
+      "Derives idle, running, waiting, and error session status, counts, ordered thread ids, pending attention, and compact summary data from structured wait, handler-attention state, workflow-run state, and artifact metadata for workspace navigation and restart recovery without transcript replay, transcript-file heuristics, or any global active-surface overlay.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {

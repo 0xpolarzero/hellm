@@ -53,7 +53,7 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Keep only a very small set of native control tools for thread spawning, explicit thread handoff, and wait; workflow control belongs on Smithers-native `smithers.*` bridge tools.
 - Drive durable facts from real runtime handlers and bridge events, not transcript heuristics.
 - Use one explicit surface-target identity model with `workspaceSessionId`, `surfacePiSessionId`, and `threadId` instead of overloading `session.id`.
-- Use explicit backend-to-renderer session-sync events that carry the active surface target when prompt settlement or surface ownership changes; the renderer should not poll read APIs to guess when state caught up.
+- Emit workspace-level read-model updates independently from live surface transcript updates; the renderer should join durable workspace facts, live surface facts, and pane bindings locally instead of depending on one active-session payload.
 - Keep status derivation and workflow lifecycle projection write-driven; do not overlay `activePrompt`, parse transcript files, or perform read-side Smithers repair writes.
 - Future Smithers lifecycle projection beyond explicit tool-boundary snapshots should arrive through bridge events rather than speculative read-side reconciliation.
 - Keep workflow-run state separate from handler-thread state.
@@ -64,6 +64,7 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Treat handler-thread episodes as durable handoff summaries that are emitted explicitly through `thread.handoff` whenever a thread gives control back to the orchestrator.
 - Do not model internal workflow pauses as separate episodes.
 - Use selectors and metadata-first read models instead of making the UI reconstruct state from storage details or transcripts.
+- Keep pane geometry, pane focus, and pane-to-surface bindings out of structured session state; those are UI layout concerns layered on top of durable workspace state and live surface state.
 
 ## Core Modeling Rule
 
@@ -283,7 +284,7 @@ type StructuredSessionState = {
 
 ## Surface Target Identity
 
-All bun-to-renderer runtime traffic should carry an explicit surface target:
+All surface-scoped runtime traffic should carry an explicit surface target:
 
 ```ts
 type SurfaceTarget = {
@@ -301,6 +302,24 @@ Use it this way:
 - `threadId` identifies the delegated handler-thread record when `surface === "thread"`
 - session summaries expose `session.id === workspaceSessionId`
 - no component may overload `session.id` to mean `surfacePiSessionId`, even if the orchestrator currently reuses the same string for both values
+
+## Workspace Updates Versus Surface Updates
+
+Structured session state is durable workspace state.
+
+It is not the live transcript cache for every open surface and it is not pane layout state.
+
+The adopted runtime split is:
+
+- workspace updates carry structured session summaries, thread summaries, workflow summaries, command rollups, wait state, and other metadata-first read models keyed by `workspaceSessionId`
+- surface updates carry one live surface snapshot keyed by `surfacePiSessionId`
+- pane state binds a UI pane to a surface locally and is free to change without mutating structured session state
+
+This means:
+
+- workspace summaries must keep updating even when no pane is focused on the affected surface
+- surface transcript updates must not require the backend to nominate one global active surface
+- renderer code must not poll read APIs or infer lifecycle repair from transcript mutations
 
 ## Why These Records Exist
 
@@ -782,7 +801,7 @@ Use it when:
 
 The stored facts remain canonical.
 
-Selectors should derive the main session view and sidebar data from those facts.
+Selectors should derive workspace-shell and sidebar data from those facts.
 
 ### Session Summary
 

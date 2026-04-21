@@ -1,760 +1,323 @@
-# Multi-Session Support Spec
+# Multi-Session And Multi-Surface Workspace Spec
 
 ## Status
 
-- Date: 2026-04-10
-- Status: proposed implementation plan for multi-session desktop support
+- Date: 2026-04-21
+- Status: adopted direction for workspace navigation, live surface ownership, and pane indirection
 - Scope of this document:
-  - define the intended `svvy` product behavior for multiple sessions in one workspace window
-  - specify the backend and frontend architecture needed to support session creation, listing, switching, and branching
-  - recommend a phased implementation plan that stays aligned with the current pi-backed runtime seam
-  - identify what is in scope for v1 versus what should be deferred
+  - define how one workspace hosts many durable sessions and many live surfaces at once
+  - define the separation between workspace state, live surface state, and pane layout state
+  - define the runtime contracts needed for multi-surface open, close, targeting, and rehydration
+  - define the pane-to-surface model that later split-pane UI builds on
 
 ## Purpose
 
-`svvy` currently behaves like a single open chat surface with one active runtime and a static left sidebar.
+`svvy` needs real multi-surface workspace behavior, not a singleton runtime that happens to switch targets.
 
-That is below the product bar set by the PRD.
+The product must support:
 
-The product needs a real session model where:
+- many durable workspace sessions
+- many live pi-backed interactive surfaces open at the same time
+- pane layout state that points at surfaces without becoming surface identity
+- shared live state when more than one pane shows the same surface
+- explicit open and close semantics for each live surface
 
-- a workspace can contain many durable sessions
-- the left side of the app is true session navigation rather than a decorative shell
-- users can create, switch, resume, fork, and inspect sessions without losing their place
-- session persistence continues to flow through pi's session substrate instead of a second `svvy`-owned transcript system
-
-This document defines the recommended implementation direction.
-
-## Product Fit
-
-The PRD already establishes the core product shape:
-
-- sessions are durable user-facing containers, not just transcripts
-- the desktop shell includes a left navigation rail for workspace and session navigation
-- the app must support session creation, switching, resume, and branch or fork navigation
-- visible state matters as much as raw conversation history
-
-Sources:
-
-- `docs/prd.md`
-- `docs/execution-model.md`
-- `docs/specs/prompt-history.spec.md`
-
-The current implementation only partially satisfies that model:
-
-- `src/mainview/ChatWorkspace.svelte` renders a single-session workspace shell
-- `src/mainview/chat-runtime.ts` exposes one active `Agent`
-- `src/bun/pi-host.ts` persists through pi's session substrate, but only exposes prompt-oriented RPC operations
-
-The gap is not that pi lacks sessions.
-
-The gap is that `svvy` does not yet project those sessions into desktop product behavior.
-
-## Problem Statement
-
-The current product has four related limitations:
-
-1. there is no session index visible in the desktop UI
-2. there is no user-facing session switching or resume flow
-3. the frontend does not distinguish durable session metadata from the currently hydrated runtime
-4. the backend RPC surface is built around "send a prompt to the current session" rather than "manage many sessions in one workspace"
-
-The result is a mismatch between:
-
-- the PRD's session-centric product model
-- pi's actual session capabilities
-- the desktop app's current behavior
+This spec defines the adopted steady-state architecture for that behavior.
 
 ## Adopted Direction
 
-The adopted direction for multi-session support is:
+- Keep pi session files as the durable source of transcript history for orchestrator and handler-thread surfaces.
+- Keep `svvy` structured state as the durable source of workspace, thread, workflow, command, episode, artifact, verification, and wait facts.
+- Manage live interactive surfaces separately from durable workspace state.
+- Key each live surface runtime by `surfacePiSessionId`.
+- Give each live surface its own prompt lock, model state, reasoning state, cancellation state, and transcript snapshot.
+- Treat pane layout as UI state that binds panes to surfaces; panes are not runtime identity.
+- Allow more than one pane to bind to the same surface at once.
+- Close a pane by detaching that pane from its surface.
+- Close a surface by releasing its final owner and disposing its live runtime cleanly.
+- Route workflow attention to the owning handler surface, never to whichever pane is focused.
+- Emit workspace-level updates independently from surface-level transcript and runtime updates.
 
-- keep pi session files as the durable source of truth for session history
-- support a persisted fixed pane layout that can host multiple interactive session surfaces in one workspace window
-- add a session catalog layer that projects lightweight metadata for all sessions in the current workspace
-- turn the left sidebar into a real session navigator
-- support session creation, switching, resume, rename, fork, and delete before adding more advanced library features
-- keep workspace-scoped prompt history exactly as already defined in `docs/specs/prompt-history.spec.md`
-- avoid storing full conversation copies in frontend IndexedDB
-- keep `svvy` above the pi seam rather than replacing pi's runtime or session model
+## State Layers
 
-Nothing below should be read as recommending a second transcript engine or a custom shell outside pi.
+The product has three different state layers and they must stay separate.
 
-## Reading Rules
+### 1. Workspace State
 
-This document uses three labels:
+Workspace state is durable structured state plus workspace-scoped read models.
 
-- `Fact`: directly supported by local source references in this repo
-- `Decision`: adopted implementation direction for `svvy`
-- `Deferred`: intentionally not in the first implementation slice
+It owns:
 
-## Ground Truth and Ownership
+- workspace metadata
+- session summaries
+- thread summaries and inspectors
+- workflow-run summaries and inspectors
+- command summaries and inspectors
+- artifact metadata
+- verification metadata
+- wait and status read models
 
-## pi Session Substrate
+Workspace state is keyed by `workspaceSessionId` where needed and survives app reload or runtime disposal.
 
-### Fact
+Workspace state must not depend on which pane is focused or which surface is currently open.
 
-pi already provides durable session primitives that `svvy` should build on:
+### 2. Live Surface State
 
-- `SessionManager` persists append-only session trees as JSONL files
-- `SessionManager.list()` returns workspace-scoped session metadata
-- `SessionManager` supports persisted session IDs, parent sessions, and branching
-- `AgentSessionRuntime` supports switching, new session creation, and forking
+Live surface state is the currently hydrated pi runtime for one interactive surface.
 
-Sources:
+It owns:
 
-- `docs/references/pi-mono/packages/coding-agent/src/core/session-manager.ts`
-- `docs/references/pi-mono/packages/coding-agent/src/core/agent-session-runtime.ts`
+- `surfacePiSessionId`
+- actor profile
+- current transcript messages
+- streaming state
+- prompt lock
+- provider, model, and reasoning settings
+- resolved system prompt
+- live prompt execution context
 
-### Decision
+Live surface state is keyed only by `surfacePiSessionId`.
 
-`svvy` should treat pi session files and pi session runtime APIs as the source of truth for:
+If two panes show the same surface, they share this one live surface state.
 
-- conversation persistence
-- session identity
-- session branching lineage
-- restored model and thinking state
+### 3. Pane And Layout State
 
-`svvy` should add product projection and navigation around those primitives, not replace them.
+Pane state is UI-local layout and focus state.
 
-## Current `svvy` Storage Split
+It owns:
 
-### Fact
+- pane ids
+- which surface each pane is showing
+- focused pane
+- geometry, spans, and slot occupancy
+- pane-local view state such as scroll position or inspector selection
 
-The current frontend storage in `src/mainview/chat-storage.ts` stores:
+Pane state must not own transcript state, prompt locks, or model settings.
 
-- provider keys
-- custom providers
-- workspace-scoped prompt history
+## Identity Model
 
-It does not currently store durable session data.
+The workspace uses four non-interchangeable identifiers.
 
-### Decision
+### `workspaceSessionId`
 
-That remains the right boundary.
+The durable top-level session container id.
 
-Frontend storage may hold cached session metadata or UI-local preferences later, but it should not become the primary store of full session transcripts.
+Use it for:
 
-## UX Model
+- session summaries
+- session navigation
+- structured session state
+- thread and workflow inspectors
+- restart recovery
 
-## Window and Workspace Assumption
+### `surfacePiSessionId`
 
-### Decision
+The pi session id for one interactive surface runtime.
 
-The first implementation should preserve the current mental model:
+Use it for:
 
-- one desktop window is attached to one workspace
-- that workspace can contain many sessions
-- one workspace window may show multiple interactive surfaces in a persisted pane layout
-- any pane may host an orchestrator session surface, a handler thread surface, or a workflow inspector surface
+- opening and closing a live surface runtime
+- sending prompts
+- cancelling prompts
+- updating model or reasoning for one surface
+- streaming transcript updates
 
-This is simpler and better aligned with the current app than copying a multi-project icon rail immediately.
+### `threadId`
 
-## Left Navigation Structure
+The durable delegated handler-thread record id.
 
-### Decision
+Use it for:
 
-The left side of the app should become a true session navigation panel with this structure:
+- structured handler-thread state
+- workflow ownership
+- thread inspectors
+- routing workflow attention
 
-- workspace header
-- primary session action
-- session list
-- compact workspace/runtime context
+### `paneId`
 
-Recommended layout:
+The UI identity for one pane slot.
 
-- workspace header:
-  - repo or workspace label
-  - current branch or worktree indicator
-  - optional workspace status
-- primary action:
-  - `New Session`
-- session list:
-  - one flat list sorted by recency
-- utility footer:
-  - settings entry
-  - optional session search trigger later
+Use it for:
 
-Branch relationships can still be indicated within the row itself, but they do not need a dedicated section in v1.
+- layout persistence
+- focus state
+- pane-local projection state
 
-## Session Row Design
+`paneId` must never be reused as a session id or surface id.
 
-### Decision
+## Surface Ownership And Lifecycle
 
-Each session row in v1 should show:
+### Opening A Surface
 
-- title
-- one-line preview
-- relative updated time
-- status badge
+Opening a surface means hydrating or reusing the live surface runtime for one `surfacePiSessionId`.
 
-Optional but recommended fields:
+Opening must be explicit.
 
-- model shorthand
-- branch marker when the session has a parent
-- waiting indicator when the session is blocked on input
+The runtime should:
 
-The row should not try to show thread and episode detail in full.
+1. validate the requested surface target
+2. create or reuse the managed live surface keyed by `surfacePiSessionId`
+3. add an owner for that surface
+4. return the current live surface snapshot
 
-That detail belongs in the active pane surface and inspector once the session is opened.
+### Surface Owners
 
-## Session Row Actions
+A live surface may have more than one owner.
 
-### Decision
+The initial adopted owners are:
 
-Each session row should support:
+- pane attachments
+- temporary runtime-owned background work such as workflow-attention turns
 
-- single click: open session
-- context menu or overflow:
-  - rename
-  - fork
-  - delete
+The live surface stays open while at least one owner exists.
 
-Keyboard support should include:
+### Closing A Pane
 
-- arrow navigation within the session list
-- `Enter` to open
-- a rename shortcut later if a dedicated list interaction layer exists
+Closing a pane means:
 
-## Main Pane Behavior
+- remove that pane's binding to the surface
+- preserve the surface if any other owner still exists
+- do not mutate workspace state just because one pane detached
 
-### Decision
+### Closing A Surface
 
-When a session is selected:
+Closing a surface means:
 
-- the main conversation timeline rehydrates from that session
-- artifacts are hydrated from that session's structured artifact metadata and file-backed paths
-- model and reasoning controls reflect that session's current state
-- the composer in that pane targets that surface
-- any currently visible session-specific badges, waiting state, thread summaries, and inspector content swap with the selection
+- no pane or runtime owner still needs it
+- any active prompt on that surface has already settled or has been cancelled intentionally
+- the live runtime is disposed
 
-The user should not need to reload the app or open a modal just to resume an existing session.
+Closing a surface must not delete durable workspace or transcript history.
 
-## Mobile and Narrow Width Behavior
+### Workflow Attention
 
-### Decision
+Workflow attention must target the owning handler surface by its `surfacePiSessionId`.
 
-At narrow widths, the left nav should collapse into a drawer or overlay panel.
+It must not:
 
-The narrow-width layout should preserve the session list as real navigation, not demote it to a static metrics panel.
+- hijack whichever pane is focused
+- retarget another open surface
+- depend on a global active surface
 
-## Session Status Model
+If no pane currently owns that handler surface, the runtime may acquire a temporary background owner, run the synthetic handler turn, then release that owner when the turn settles.
 
-### Decision
+## Runtime Contracts
 
-For v1, `svvy` should project sessions into one of these UI states:
+The adopted runtime contract is split into workspace-scoped reads and surface-scoped reads or mutations.
 
-- `idle`
-- `running`
-- `waiting`
-- `error`
+### Workspace-Scoped Operations
 
-Guidelines:
+Workspace-scoped operations read or mutate durable workspace state.
 
-- `running`: the structured session summary shows runnable work, an active turn, or active thread work
-- `waiting`: session explicitly blocked on user input, clarification, or another resumable waiting condition
-- `error`: last terminal result was an error and there is no newer successful activity
-- `idle`: default stable state
+Examples:
 
-Selected and non-selected sessions should both derive these states from structured session summaries. The selected session may update more frequently because its runtime is active, but the status model itself should stay metadata-first rather than special-casing live prompt streaming.
+- list session summaries
+- inspect a handler thread
+- inspect a command
+- inspect workflow summaries
+- update session title metadata
 
-## Architecture Direction
+These operations target `workspaceSessionId` and must work whether or not the relevant surfaces are currently open.
 
-## Core Principle
+### Surface-Scoped Operations
 
-### Decision
+Surface-scoped operations target one live surface runtime.
 
-`svvy` should split session handling into two layers:
+Examples:
 
-- durable session truth in pi-managed session files and runtime
-- lightweight desktop session projection for navigation and selection
+- open surface
+- close surface
+- send prompt
+- cancel prompt
+- update model
+- update reasoning level
 
-This yields a clean boundary:
+These operations target `surfacePiSessionId` and must not rely on a global active surface.
 
-- pi owns persisted session history and resume semantics
-- `svvy` owns desktop navigation, metadata projection, and active-session coordination
+## Renderer Sync Model
 
-## Recommended Backend Shape
+The renderer must not rely on one monolithic active-session payload.
 
-### Decision
+The adopted sync model has two lanes.
 
-Add a dedicated backend session catalog layer in the Bun process.
+### Workspace Updates
 
-Recommended responsibilities:
+Workspace updates carry durable read models such as:
 
-- enumerate sessions for the current workspace
-- derive lightweight session metadata for UI consumption
-- open or switch the active runtime to a selected session
-- create new sessions
-- rename and fork sessions
-- manage delete policy
+- session summaries
+- thread summaries
+- workflow summaries
+- command summaries
+- workspace status
 
-This should be implemented as an explicit module instead of scattering session operations across RPC handlers.
+Workspace updates must not include or imply transcript ownership for one currently active surface.
 
-Recommended module names:
+### Surface Updates
 
-- `src/bun/session-catalog.ts`
-- `src/bun/session-projection.ts`
+Surface updates carry one live surface snapshot keyed by `surfacePiSessionId`.
 
-Names can vary, but the separation should exist.
+They include:
 
-## Active Runtime Model
+- target identity
+- transcript messages
+- streaming state
+- model and reasoning state
+- system prompt state
 
-### Decision
+The renderer joins surface updates with pane bindings locally.
 
-The Bun process should own one active runtime per desktop window and expose operations to swap its underlying session.
+## Frontend Ownership Rules
 
-The current `ManagedSession` map in `src/bun/pi-host.ts` is useful for prompt streaming, but it is not yet a good product-level session controller.
+The frontend runtime should be split into:
 
-Recommended evolution:
+- a workspace store for session summaries and structured read models
+- a shared surface-controller registry keyed by `surfacePiSessionId`
+- a pane/layout store keyed by `paneId`
 
-- introduce a single active workspace runtime wrapper around pi's `AgentSessionRuntime`
-- use pi runtime methods for:
-  - `newSession`
-  - `switchSession`
-  - `fork`
-- keep existing prompt streaming behavior, but bind it to the currently selected session runtime
+Rules:
 
-This is the cleanest path to session switching without inventing manual state replay logic.
+- a pane points at a surface controller; it does not own transcript state
+- a surface controller may exist without being focused
+- more than one pane may subscribe to the same surface controller
+- pane focus chooses where commands such as "open session in focused pane" land, but focus does not redefine surface ownership
+- closing the last pane bound to a surface should release that surface cleanly unless a runtime-owned background turn still holds it
 
-## Session Catalog Metadata Shape
+## Sidebar And Pane Semantics
 
-### Decision
+The left sidebar is workspace navigation, not runtime identity.
 
-The left nav should consume a lightweight session metadata shape similar to:
+Selecting a session from the sidebar should:
 
-```ts
-type WorkspaceSessionSummary = {
-  id: string;
-  title: string;
-  preview: string;
-  createdAt: string;
-  updatedAt: string;
-  messageCount: number;
-  status: "idle" | "running" | "waiting" | "error";
-  sessionFile?: string;
-  parentSessionId?: string;
-  parentSessionFile?: string;
-  modelId?: string;
-  provider?: string;
-  thinkingLevel?: string;
-};
-```
+- choose a target pane
+- bind that pane to the session's orchestrator surface by default
+- leave other open panes and surfaces alone unless the user explicitly changes them
 
-Notes:
+Opening a handler thread from the orchestrator should:
 
-- `id` is the user-facing stable identifier
-- `sessionFile` may remain backend-only if the UI only needs `id`
+- resolve the thread's `surfacePiSessionId`
+- bind the chosen pane to that surface
+- reuse the existing live surface if already open elsewhere
 
-## Delete Policy
+## Shared-Surface Behavior
 
-### Decision
+When multiple panes show the same surface:
 
-Delete is the only destructive list-management action in v1.
+- transcript content stays shared
+- streaming state stays shared
+- prompt locks stay shared
+- model and reasoning settings stay shared
+- pane-local scroll and selection may differ
 
-- `delete`:
-  - destructive removal with confirmation
-  - only allowed when the session is not actively streaming
+The product must never duplicate the underlying live surface runtime just because two panes show it.
 
-Archive or hide semantics are deferred until pi or `svvy` has a durable product need for them.
+## Product Outcomes
 
-## RPC Plan
+The design is successful when:
 
-### Decision
-
-Extend `src/mainview/chat-rpc.ts` and `src/bun/index.ts` with a session-management RPC surface.
-
-Recommended requests:
-
-- `listSessions`
-- `getActiveSession`
-- `createSession`
-- `openSession`
-- `renameSession`
-- `forkSession`
-- `deleteSession`
-
-Recommended payload ideas:
-
-```ts
-type ListSessionsResponse = {
-  activeSessionId?: string;
-  sessions: WorkspaceSessionSummary[];
-};
-
-type CreateSessionRequest = {
-  title?: string;
-  parentSessionId?: string;
-};
-
-type OpenSessionRequest = {
-  sessionId: string;
-};
-
-type RenameSessionRequest = {
-  sessionId: string;
-  title: string;
-};
-
-type ForkSessionRequest = {
-  sessionId: string;
-  entryId?: string;
-};
-```
-
-### Decision
-
-`openSession` should return enough state for the targeted pane surface to render immediately after a switch.
-
-That response should include:
-
-- selected session metadata
-- restored model and thinking level
-- the selected session's conversation payload
-- structured session summary, threads, episodes, verification, workflow, wait, and artifact metadata needed to render the metadata-first session surface immediately
-
-This avoids forcing the frontend to immediately make a second read call after every selection.
-
-## Frontend Runtime Plan
-
-### Decision
-
-`src/mainview/chat-runtime.ts` should evolve from a single-purpose prompt wrapper into a session-aware runtime controller.
-
-Recommended responsibilities:
-
-- hold the current active session ID
-- expose `listSessions()`
-- expose `createSession()`
-- expose `openSession()`
-- expose `renameSession()`
-- expose `forkSession()`
-- expose delete operation
-- update the active `Agent` state when a session switch occurs
-
-This can still wrap a single `Agent` instance in the main view if that keeps the frontend simple.
-
-The important change is not "many agents in the frontend".
-
-The important change is "one frontend controller that understands many durable sessions and one selected session".
-
-## Message Hydration Strategy
-
-### Decision
-
-When the user opens a session:
-
-- the backend should load that session through pi
-- the frontend should replace its active message set with the selected session's messages
-- the artifacts controller should hydrate from the selected session's structured artifact metadata and file-backed paths
-
-The frontend should not attempt to merge message arrays from two sessions.
-
-Session switching is a full selection change, not an append operation.
-
-## UI Component Plan
-
-### Decision
-
-Refactor `src/mainview/ChatWorkspace.svelte` so the left sidebar is no longer hardcoded session shell copy.
-
-Recommended component split:
-
-- `SessionSidebar.svelte`
-- `SessionList.svelte`
-- `SessionListItem.svelte`
-- existing `ChatTranscript.svelte`
-- existing `ChatComposer.svelte`
-- existing `ArtifactsPanel.svelte`
-
-Potential supporting state modules:
-
-- `src/mainview/session-state.ts`
-- `src/mainview/session-format.ts`
-
-The exact file names are flexible, but the left nav should become a first-class UI module instead of being embedded as static copy in `ChatWorkspace.svelte`.
-
-## Session Title Strategy
-
-### Decision
-
-The first implementation should support both:
-
-- explicit rename by the user
-- a default generated title when no explicit title exists
-
-Recommended default title priority:
-
-1. stored session name from pi session info
-2. first user message truncated
-3. fallback `"New Session"`
-
-Rename should update durable session info through pi-compatible session metadata rather than frontend-only state.
-
-## Branch and Fork Behavior
-
-### Decision
-
-Forking should be supported in the multi-session design, but its first implementation can be simple:
-
-- fork from the current session root or current leaf if that is what pi runtime already exposes cheaply
-- show forked sessions in the nav as branched children or with a branch badge
-
-`Deferred`:
-
-- arbitrary entry-point fork selection from the full conversation-history UI
-
-That richer fork UI can come later once transcript-to-entry mapping is surfaced cleanly in the desktop app.
-
-## Implementation Phases
-
-## Phase 0: Prerequisites and Documentation
-
-Goal:
-
-- make the repo ready for a multi-session implementation series
-
-Tasks:
-
-- add or restore `docs/features.ts`
-- add a multi-session feature inventory entry
-- land this spec
-- confirm desired naming for session states and left-nav sections
-
-Exit criteria:
-
-- docs are internally consistent
-- implementation work has an agreed vocabulary
-
-## Phase 1: Backend Session Catalog
-
-Goal:
-
-- expose durable session listing and selection through Bun RPC
-
-Tasks:
-
-- add session summary projection from pi session files
-- add RPC handlers for `listSessions`, `createSession`, and `openSession`
-- return selected session messages and settings on open
-- keep current prompt send path working against the selected session
-
-Files likely touched:
-
-- `src/mainview/chat-rpc.ts`
-- `src/bun/index.ts`
-- `src/bun/pi-host.ts`
-- new backend session catalog module(s)
-
-Exit criteria:
-
-- the app can enumerate many sessions for the workspace
-- the app can create a new session
-- the app can open an older session and continue from it
-
-## Phase 2: Left Navigation UI
-
-Goal:
-
-- replace the current static sidebar with true session navigation
-
-Tasks:
-
-- build session list components
-- show session summaries and active state
-- wire `New Session`
-- wire row selection to `openSession`
-- preserve artifacts and composer behavior when switching
-
-Files likely touched:
-
-- `src/mainview/ChatWorkspace.svelte`
-- `src/mainview/chat-runtime.ts`
-- new session sidebar components
-
-Exit criteria:
-
-- the left nav is session-centric
-- switching sessions updates the targeted pane correctly
-- no full-page reset is needed
-
-## Phase 3: Session Mutation Operations
-
-Goal:
-
-- support session rename, fork, and delete
-
-Tasks:
-
-- add rename flow
-- add fork flow
-- add delete flow with confirmation
-
-Exit criteria:
-
-- users can maintain a clean session list
-- branch relationships are preserved
-
-## Phase 4: Polishing and Product Projection
-
-Goal:
-
-- make the session navigator feel like a product surface rather than a file picker
-
-Tasks:
-
-- improve status badges
-- add search or filter
-- add empty states
-- add better narrow-screen behavior
-- optionally add alternate views beyond the default flat recency sort
-
-`Deferred`:
-
-- background concurrent active streams in multiple sessions
-- multi-workspace rail
-- session pinning
-- unread counters beyond basic selected-state behavior
-
-## Testing Plan
-
-## Unit Coverage
-
-### Decision
-
-Add unit coverage for:
-
-- session summary projection from pi session files
-- recency sorting logic
-- session title fallback rules
-- RPC request and response validation
-- frontend session selection state updates
-
-## Integration Coverage
-
-### Decision
-
-Add integration tests for the full happy path:
-
-1. create session
-2. send prompt
-3. create second session
-4. switch back to first session
-5. confirm messages, model, and thinking level restore correctly
-
-Also cover:
-
-- rename
-- fork
-- delete blocked while streaming
-- persistence across app restart
-
-## Regression Coverage
-
-### Decision
-
-Specifically protect these regressions:
-
-- switching sessions drops or duplicates messages
-- the composer sends a prompt to the wrong session
-- artifacts panel continues showing artifacts from the previously selected session
-- prompt history loses its workspace-scoped behavior
-- model or thinking controls drift out of sync with the selected session
-
-## UX Checks
-
-### Decision
-
-Manual QA should include:
-
-- narrow width drawer behavior
-- empty workspace with no sessions
-- many sessions with long titles
-- sessions with no assistant reply yet
-- session switch during artifact overlay open
-- error recovery when opening a corrupted or missing session file
-
-## Risks and Mitigations
-
-## Risk: Two Session Systems
-
-If `svvy` stores full transcripts separately from pi-backed session history, the product will drift into double persistence and unreliable resume behavior.
-
-### Mitigation
-
-Use pi session files as the canonical session history and limit `svvy` overlays to metadata-first projections and UI-only state.
-
-## Risk: Manual Runtime Replay Logic
-
-If session switching is implemented by manually replaying frontend messages into a fresh runtime, restored behavior may diverge from pi's actual session semantics.
-
-### Mitigation
-
-Prefer pi runtime session switching or direct session-manager-backed runtime creation over ad hoc message replay.
-
-## Risk: Nav Becomes a Chat List and Nothing More
-
-If the left nav is designed as a plain recent-chat list, it will not scale to waiting states, branching, verification, and later thread-aware projection.
-
-### Mitigation
-
-Adopt a session summary shape that is intentionally extensible for:
-
-- waiting state
-- verification state
-- branch lineage
-- unresolved work indicators
-
-## Risk: Overbuilding v1
-
-Trying to ship search, pins, background concurrency, and branch trees in one pass will slow delivery and increase regression risk.
-
-### Mitigation
-
-Ship in phases and keep v1 focused on:
-
-- list
-- create
-- open
-- resume
-- rename
-- fork
-
-## Deferred Work
-
-The following should not block the first multi-session release:
-
-- multiple simultaneously streaming sessions in one window
-- cross-workspace navigation in one shell
-- session pinning
-- session search with full-text indexing
-- arbitrary transcript-entry fork UI
-- unread counts and notification badges
-- deep branch-tree visualization beyond a simple parent or badge model
-
-## Recommended First PR Breakdown
-
-### Decision
-
-The implementation should be split into small reviewable pull requests:
-
-1. session RPC and backend catalog
-2. frontend session runtime controller
-3. left-nav UI replacement
-4. rename and fork flows
-5. delete flow
-6. polish and responsive cleanup
-
-This sequencing keeps the system debuggable while the product surface changes.
-
-## Summary
-
-The recommended plan is straightforward:
-
-- keep pi in charge of durable sessions
-- give `svvy` a real session catalog and session-aware RPC surface
-- replace the static left sidebar with workspace-scoped session navigation
-- let the workspace shell grow into a persisted multi-pane layout with exact pane occupancy indicators
-- add mutation operations in phases instead of shipping an overbuilt chat library all at once
-
-That gets `svvy` to the PRD's session-centric product model without violating the pi runtime boundary.
+- many surfaces can stay open at once without a global active-surface singleton
+- each surface streams, cancels, and updates settings independently
+- workspace summaries keep updating even when another surface is focused
+- workflow attention always resumes the owning handler surface
+- duplicated panes share one underlying live surface state
+- closing a pane detaches UI state only
+- closing the last owner of a surface disposes the live runtime cleanly without deleting durable state

@@ -31,7 +31,7 @@ The PRD and current specs define:
 - one orchestrator that owns strategy
 - handler threads that own delegated objectives
 - Smithers as the workflow execution engine
-- explicit backend-to-renderer session-sync events
+- explicit backend-to-renderer workspace updates and surface updates
 - structured session state as the product read model
 
 This means workflow supervision is:
@@ -107,7 +107,7 @@ The `svvy`-owned part is:
 - workflow-run records
 - handler-thread state projection
 - synthetic handler wake-ups
-- session-sync emission
+- workspace and surface update emission
 - cleanup and isolation rules
 - restart recovery and supervision durability
 
@@ -119,6 +119,7 @@ The `svvy`-owned part is:
 - For this supervision slice, one handler thread should own at most one active Smithers run at a time.
 - Workflow task agents are a lower-level actor class inside Smithers tasks, not another `svvy` interactive surface.
 - `svvy` should derive active and latest workflow summaries from workflow-run records and recency rules rather than persisting a thread-level latest-workflow pointer.
+- Workflow attention must reacquire and target the owning handler surface by `surfacePiSessionId`, never a globally active surface or the currently focused pane.
 - `thread.start`, `thread.handoff`, and `wait` remain the only `svvy`-native control tools in this area.
 - Agent-facing workflow supervision should use Smithers-native semantic tools exposed through the Bun bridge rather than a svvy-defined `workflow.*` abstraction.
 - Shipped product runtime must not depend on repo-root `workflows/`, repo-relative Smithers binaries, or nearest-db path walking.
@@ -206,7 +207,7 @@ The adopted flow is:
 5. `svvy` persists or updates the workflow-run record immediately.
 6. `svvy` records the workflow-run state needed for later reconnect and wake-up dedupe.
 7. `svvy` attaches or restores the runtime helper for that workflow run and uses it to emit write-driven lifecycle projection into durable `svvy` state.
-8. The Bun side emits explicit session-sync events whenever those durable projections change visible session or thread state.
+8. The Bun side emits explicit workspace updates and surface updates whenever those durable projections change visible workspace state or the live handler surface state.
 9. If the workflow reaches a state that needs another handler decision, `svvy` opens a synthetic background turn on that same handler thread.
 10. The handler thread decides whether to inspect, repair, resume, ask the user, or hand control back with `thread.handoff`.
 
@@ -469,10 +470,10 @@ Ordinary non-terminal progress events should update state and UI but should not 
 
 When handler attention is needed, `svvy` should:
 
-- open the backing pi session for that handler thread
+- acquire the backing pi session for that handler thread by `surfacePiSessionId`
 - start a synthetic background turn on that same thread surface
 - inject a synthetic user message that summarizes the workflow transition and the allowed next actions
-- emit explicit session-sync events so the renderer can follow the background work without polling
+- emit explicit workspace and surface updates so the renderer can follow the background work without polling
 
 This is analogous to orchestrator resume after `thread.handoff`, but it targets the handler thread instead of the orchestrator.
 
@@ -506,6 +507,7 @@ The adopted rule is:
 - supervision must track what transition has already been delivered to the handler
 - repeated notifications for the same effective state should collapse into one pending handler-attention unit
 - if the handler thread already has an active prompt, new workflow attention should be queued or coalesced rather than interrupting that active turn
+- if no pane currently shows that thread, the runtime may keep the wake-up background-only and should release any temporary surface ownership after the turn settles
 
 ### Resume Versus Replacement Run
 
@@ -623,7 +625,7 @@ The GUI fallback exists because its transport is optional and compatibility-driv
 - workflow supervision is product-internal infrastructure, not a best-effort dashboard
 - silent fallback would hide transport and integration bugs
 - it would create two lifecycle models instead of one
-- it conflicts with the write-driven lifecycle and session-sync direction already adopted for the app
+- it conflicts with the write-driven lifecycle and split workspace-vs-surface sync direction already adopted for the app
 
 The correct fallback for `svvy` is reconnect and recovery, not silent polling.
 
