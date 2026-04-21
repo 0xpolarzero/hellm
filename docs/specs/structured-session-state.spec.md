@@ -50,7 +50,7 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Treat every tool call as a `CommandRecord`.
 - Make `execute_typescript` the default generic work surface.
 - Treat every top-level `execute_typescript` invocation as one parent command record and every nested `api.*` call as a child command record.
-- Keep only a very small set of native control tools for thread spawning, explicit thread handoff, workflow control, and wait.
+- Keep only a very small set of native control tools for thread spawning, explicit thread handoff, and wait; workflow control belongs on Smithers-native `smithers.*` bridge tools.
 - Drive durable facts from real runtime handlers and bridge events, not transcript heuristics.
 - Use one explicit surface-target identity model with `workspaceSessionId`, `surfacePiSessionId`, and `threadId` instead of overloading `session.id`.
 - Use explicit backend-to-renderer session-sync events that carry the active surface target when prompt settlement or surface ownership changes; the renderer should not poll read APIs to guess when state caught up.
@@ -197,6 +197,7 @@ type StructuredSessionState = {
     continuedFromRunIds: string[];
     activeDescendantRunId: string | null;
     lastEventSeq: number | null;
+    pendingAttentionSeq: number | null;
     lastAttentionSeq: number | null;
     heartbeatAt: string | null;
     summary: string;
@@ -510,6 +511,7 @@ If the same terminal workflow snapshot is replayed after handoff during final re
 | `continuedFromRunIds`   | Preserves run lineage when Smithers continues the workflow as a new run.                  |
 | `activeDescendantRunId` | Points at the active descendant run when Smithers continued this run as new.              |
 | `lastEventSeq`          | Stores the most recent applied Smithers event sequence for reconnect.                     |
+| `pendingAttentionSeq`   | Stores the most recent attention-worthy Smithers event sequence not yet delivered to the handler. |
 | `lastAttentionSeq`      | Stores the most recent event sequence already delivered to the handler as attention work. |
 | `heartbeatAt`           | Preserves the most recent Smithers heartbeat seen for this run.                           |
 | `summary`               | Short top-level summary of the run state.                                                 |

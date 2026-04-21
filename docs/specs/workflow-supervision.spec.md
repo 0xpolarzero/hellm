@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-04-19
-- Status: adopted direction for event-driven workflow supervision
+- Status: adopted direction for write-driven workflow supervision
 - Scope of this document:
   - define how `svvy` supervises Smithers runs under handler threads
   - define the required runtime flow after Smithers-native run-launch and supervision commands
@@ -37,7 +37,7 @@ The PRD and current specs define:
 This means workflow supervision is:
 
 - a handler-thread responsibility
-- event-driven product behavior above Smithers
+- write-driven product behavior above Smithers
 - not transcript inference
 - not orchestrator polling
 - not a separate execution engine
@@ -113,8 +113,8 @@ The `svvy`-owned part is:
 
 ## Adopted Direction
 
-- Supervised workflow runs require a live Smithers event source. There is no silent polling fallback for `svvy`-owned workflow supervision.
-- Recovery may use one-shot state reads to bootstrap or repair the stream attachment after restart, but steady-state supervision must remain event-driven.
+- Workflow lifecycle state is write-driven. Live Smithers event attachment is one sanctioned lifecycle producer, and reconnect or bootstrap control-plane reads are another sanctioned lifecycle producer when they immediately project durable state.
+- There is no silent polling fallback for `svvy`-owned workflow supervision. Reconnect or bootstrap reads are explicit lifecycle writes, not background read-side repair.
 - One handler thread may supervise many workflow runs over its lifetime.
 - For this supervision slice, one handler thread should own at most one active Smithers run at a time.
 - Workflow task agents are a lower-level actor class inside Smithers tasks, not another `svvy` interactive surface.
@@ -154,13 +154,13 @@ It exists so `svvy` can reason about:
 
 ### Workflow Monitor
 
-A workflow monitor is the Bun-side runtime object that:
+A workflow monitor is the Bun-side runtime helper that:
 
 - attaches to the Smithers event stream for one workflow run
-- projects normalized workflow state into `svvy`
-- handles reconnect and teardown
+- contributes normalized workflow lifecycle writes into the durable `workflow-run` record
+- handles live attachment, reconnect, and teardown around that durable state
 
-The monitor is runtime state, not transcript state.
+The monitor is runtime state, not transcript state and not the durable lifecycle source of truth.
 
 ### Workflow Task Agent
 
@@ -204,8 +204,8 @@ The adopted flow is:
 3. The handler thread calls a generated launch tool such as `smithers.run_workflow.hello_world` or another Smithers-native supervision tool through the Bun bridge.
 4. `svvy` launches or resumes the Smithers run and obtains the concrete Smithers run id.
 5. `svvy` persists or updates the workflow-run record immediately.
-6. `svvy` registers a workflow monitor for that workflow run.
-7. The monitor attaches to the Smithers event stream and begins projecting workflow state into durable `svvy` state.
+6. `svvy` records the workflow-run state needed for later reconnect and wake-up dedupe.
+7. `svvy` attaches or restores the runtime helper for that workflow run and uses it to emit write-driven lifecycle projection into durable `svvy` state.
 8. The Bun side emits explicit session-sync events whenever those durable projections change visible session or thread state.
 9. If the workflow reaches a state that needs another handler decision, `svvy` opens a synthetic background turn on that same handler thread.
 10. The handler thread decides whether to inspect, repair, resume, ask the user, or hand control back with `thread.handoff`.
@@ -416,9 +416,10 @@ The supervision layer needs durable per-run metadata beyond the current high-lev
 At minimum, `svvy` needs durable cursor metadata equivalent to:
 
 - the last applied Smithers event sequence
+- the most recent handler-attention point still pending delivery
 - the last handler-attention delivery point for that workflow run
 
-The exact storage shape may live directly on the workflow-run record or in closely related supervision metadata, but it must be durable enough for restart-safe reconnect and wake-up dedupe.
+The exact storage shape may live directly on the workflow-run record or in closely related supervision metadata, but it must be durable enough for restart-safe reconnect and wake-up dedupe without relying on process-local memory.
 
 ### Projection Ownership
 
@@ -575,9 +576,9 @@ The same terminal Smithers run state may be observed more than once through legi
 Examples include:
 
 - the live progress callback
-- the monitor's final flush after the run exits
+- the bridge-owned final projection after the run exits
 - restart or reconnect bootstrap reads
-- the pre-handoff reconciliation read used to validate `thread.handoff`
+- explicit control-plane writes that mutate the run before the handler acts again
 
 That duplication does not change ownership semantics.
 
@@ -622,7 +623,7 @@ The GUI fallback exists because its transport is optional and compatibility-driv
 - workflow supervision is product-internal infrastructure, not a best-effort dashboard
 - silent fallback would hide transport and integration bugs
 - it would create two lifecycle models instead of one
-- it conflicts with the event-driven session-sync direction already adopted for the app
+- it conflicts with the write-driven lifecycle and session-sync direction already adopted for the app
 
 The correct fallback for `svvy` is reconnect and recovery, not silent polling.
 

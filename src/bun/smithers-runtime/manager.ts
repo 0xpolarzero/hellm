@@ -62,6 +62,8 @@ type WorkflowOwnership = {
   commandId: string;
 };
 
+type ProjectionSource = "launch" | "progress" | "control" | "bootstrap" | "failure";
+
 type SmithersRuntimeManagerOptions = {
   cwd: string;
   agentDir: string;
@@ -76,7 +78,7 @@ type SmithersRuntimeManagerOptions = {
     workflowId: string;
     summary: string;
     reason: string;
-  }) => void | Promise<void>;
+  }) => boolean | Promise<boolean>;
   runCommand?: (
     input: ExecuteTypescriptRunCommandInput,
   ) => Promise<ExecuteTypescriptRunCommandResult>;
@@ -239,6 +241,7 @@ export class SmithersRuntimeManager {
           status: "running",
           smithersStatus: "running",
           waitKind: null,
+          pendingAttentionSeq: null,
           summary: `Launching ${definition.label}.`,
           heartbeatAt: null,
         })
@@ -254,6 +257,7 @@ export class SmithersRuntimeManager {
           continuedFromRunIds: [],
           activeDescendantRunId: null,
           lastEventSeq: -1,
+          pendingAttentionSeq: null,
           lastAttentionSeq: null,
           heartbeatAt: null,
           summary: `Launching ${definition.label}.`,
@@ -265,6 +269,17 @@ export class SmithersRuntimeManager {
       wait: null,
     });
     this.clearThreadOwnedSessionWait(input.sessionId, input.threadId);
+    this.recordBridgeLifecycleEvent({
+      sessionId: input.sessionId,
+      workflowRunId: structuredWorkflowRun.id,
+      kind: "workflowRun.bridge.projected",
+      data: {
+        source: "launch",
+        smithersRunId: runId,
+        status: structuredWorkflowRun.status,
+        smithersStatus: structuredWorkflowRun.smithersStatus,
+      },
+    });
     this.ownershipByRunId.set(runId, {
       sessionId: input.sessionId,
       threadId: input.threadId,
@@ -355,6 +370,7 @@ export class SmithersRuntimeManager {
       activeDescendantRunId: workflowRun?.activeDescendantRunId ?? null,
       waitKind: workflowRun?.waitKind ?? mapRunStatusToWaitKind(run.status),
       lastEventSeq: workflowRun?.lastEventSeq ?? -1,
+      pendingAttentionSeq: workflowRun?.pendingAttentionSeq ?? null,
       lastAttentionSeq: workflowRun?.lastAttentionSeq ?? null,
     };
   }
@@ -507,7 +523,7 @@ export class SmithersRuntimeManager {
         status: pendingApprovals.length > 0 ? "waiting-approval" : "waiting-event",
       });
     }
-    await this.flushRunEvents(input.runId);
+    await this.flushRunEvents(input.runId, { source: "control" });
     return {
       ok: true,
       decision: input.decision,
@@ -737,7 +753,7 @@ export class SmithersRuntimeManager {
         receivedBy: "svvy-handler",
       }),
     );
-    await this.flushRunEvents(input.runId);
+    await this.flushRunEvents(input.runId, { source: "control" });
     const run = await this.getRun(input.runId).catch(() => null);
     return {
       ok: true,
@@ -832,32 +848,53 @@ export class SmithersRuntimeManager {
     await this.db.requestRunCancel(runId, Date.now());
     const monitor = this.monitorByRunId.get(runId);
     monitor?.abortController.abort();
-    await this.flushRunEvents(runId);
+    await this.flushRunEvents(runId, { source: "control" });
     return {
       ok: true,
       runId,
     };
   }
 
-  async reconcileThreadOwnedWorkflowsBeforeHandoff(
+  async restoreSessionSupervision(
     sessionId: string,
-    threadId: string,
+    options: {
+      emitAttention?: boolean;
+    } = {},
   ): Promise<void> {
-    // thread.handoff closes the current objective span, so first pull any durable Smithers
-    // state that may already have reached a terminal outcome but has not yet been projected
-    // into svvy's structured state.
-    const candidateRuns = this.options.store
-      .getSessionState(sessionId)
-      .workflowRuns.filter(
-        (workflowRun) =>
-          workflowRun.threadId === threadId &&
-          (workflowRun.status === "running" ||
-            workflowRun.status === "waiting" ||
-            workflowRun.status === "continued"),
-      );
+    const snapshot = this.options.store.getSessionState(sessionId);
+    this.hydrateRunOwnershipForSession(sessionId);
 
+    const candidateRuns = snapshot.workflowRuns.filter(
+      (workflowRun) =>
+        !isTerminalWorkflowStatus(workflowRun.status) || workflowRun.pendingAttentionSeq !== null,
+    );
     for (const workflowRun of candidateRuns) {
-      await this.flushRunEvents(workflowRun.smithersRunId, { emitAttention: false });
+      await this.flushRunEvents(workflowRun.smithersRunId, {
+        emitAttention: false,
+        source: "bootstrap",
+      });
+    }
+
+    if (options.emitAttention ?? true) {
+      await this.deliverPendingHandlerAttention(sessionId);
+    }
+  }
+
+  async deliverPendingHandlerAttention(sessionId: string, threadId?: string): Promise<void> {
+    const snapshot = this.options.store.getSessionState(sessionId);
+    const pendingRuns = snapshot.workflowRuns
+      .filter(
+        (workflowRun) =>
+          (!threadId || workflowRun.threadId === threadId) &&
+          workflowRun.pendingAttentionSeq !== null &&
+          workflowRun.pendingAttentionSeq !== workflowRun.lastAttentionSeq,
+      )
+      .toSorted((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+
+    for (const workflowRun of pendingRuns) {
+      await this.tryDeliverPendingHandlerAttention(workflowRun.smithersRunId, {
+        source: "bootstrap",
+      });
     }
   }
 
@@ -927,7 +964,7 @@ export class SmithersRuntimeManager {
     } finally {
       await Promise.all(
         Array.from(input.monitor.trackedRunIds).map(async (runId) => {
-          await this.flushRunEvents(runId);
+          await this.flushRunEvents(runId, { source: "progress" });
         }),
       );
     }
@@ -941,7 +978,7 @@ export class SmithersRuntimeManager {
         childRunId: event.newRunId,
       });
     }
-    await this.flushRunEvents(event.runId);
+    await this.flushRunEvents(event.runId, { source: "progress" });
   }
 
   private async ensureContinuedRunOwnership(input: {
@@ -977,6 +1014,7 @@ export class SmithersRuntimeManager {
       ],
       activeDescendantRunId: null,
       lastEventSeq: -1,
+      pendingAttentionSeq: null,
       lastAttentionSeq: null,
       heartbeatAt: null,
       summary: `Continuing ${parentWorkflowRun?.workflowName ?? parentOwnership.workflowId} as a new Smithers run.`,
@@ -987,6 +1025,7 @@ export class SmithersRuntimeManager {
       status: "continued",
       smithersStatus: "continued",
       activeDescendantRunId: childStructuredRun.id,
+      pendingAttentionSeq: null,
       summary: `Smithers continued this workflow as run ${input.childRunId}.`,
     });
     this.ownershipByRunId.set(input.childRunId, {
@@ -1000,6 +1039,7 @@ export class SmithersRuntimeManager {
     runId: string,
     options: {
       emitAttention?: boolean;
+      source?: ProjectionSource;
     } = {},
   ): Promise<void> {
     const existing = this.flushPromiseByRunId.get(runId);
@@ -1009,7 +1049,7 @@ export class SmithersRuntimeManager {
     }
 
     const flushPromise = (async () => {
-      const ownership = this.ownershipByRunId.get(runId);
+      const ownership = this.ownershipByRunId.get(runId) ?? this.rehydrateRunOwnership(runId);
       if (!ownership) {
         return;
       }
@@ -1019,20 +1059,30 @@ export class SmithersRuntimeManager {
         ownership.structuredWorkflowId,
       );
       const afterSeq = structuredRun?.lastEventSeq ?? -1;
-      const events = await this.db.listEvents(runId, afterSeq, 200);
       let lastEventSeq = afterSeq;
-      let attentionSeq = structuredRun?.lastAttentionSeq ?? null;
+      let attentionSeq: number | null = null;
       let attentionReason: string | null = null;
 
-      for (const eventRow of events) {
-        lastEventSeq = Math.max(lastEventSeq, Number(eventRow.seq ?? lastEventSeq));
-        const event = parseJson(eventRow.payloadJson) as SmithersEvent | null;
-        if (!event) {
-          continue;
+      while (true) {
+        const events = await this.db.listEvents(runId, lastEventSeq, 200);
+        if (events.length === 0) {
+          break;
         }
-        if (requiresHandlerAttention(event)) {
-          attentionSeq = Number(eventRow.seq);
-          attentionReason = describeAttentionEvent(event);
+
+        for (const eventRow of events) {
+          lastEventSeq = Math.max(lastEventSeq, Number(eventRow.seq ?? lastEventSeq));
+          const event = parseJson(eventRow.payloadJson) as SmithersEvent | null;
+          if (!event) {
+            continue;
+          }
+          if (requiresHandlerAttention(event)) {
+            attentionSeq = Number(eventRow.seq);
+            attentionReason = describeAttentionEvent(event);
+          }
+        }
+
+        if (events.length < 200) {
+          break;
         }
       }
 
@@ -1040,11 +1090,12 @@ export class SmithersRuntimeManager {
         runId,
         {
           lastEventSeq,
-          lastAttentionSeq: attentionSeq,
-          attentionReason,
+          observedAttentionSeq: attentionSeq,
+          observedAttentionReason: attentionReason,
         },
         {
           emitAttention: options.emitAttention ?? true,
+          source: options.source ?? "progress",
         },
       );
     })().finally(() => {
@@ -1059,11 +1110,12 @@ export class SmithersRuntimeManager {
     runId: string,
     input: {
       lastEventSeq: number;
-      lastAttentionSeq: number | null;
-      attentionReason: string | null;
+      observedAttentionSeq: number | null;
+      observedAttentionReason: string | null;
     },
     options: {
       emitAttention: boolean;
+      source: ProjectionSource;
     },
   ) {
     const ownership = this.ownershipByRunId.get(runId);
@@ -1087,6 +1139,14 @@ export class SmithersRuntimeManager {
         : mapRunStatusToWaitKind(run.status);
     const summary = diagnosis?.summary ?? (await this.buildRunSummary(run));
     const heartbeatAt = toIso(run.heartbeatAtMs);
+    const currentPendingAttentionSeq = currentWorkflowRun?.pendingAttentionSeq ?? null;
+    const currentDeliveredAttentionSeq = currentWorkflowRun?.lastAttentionSeq ?? null;
+    const nextPendingAttentionSeq =
+      input.observedAttentionSeq !== null &&
+      input.observedAttentionSeq >
+        Math.max(currentPendingAttentionSeq ?? -1, currentDeliveredAttentionSeq ?? -1)
+        ? input.observedAttentionSeq
+        : currentPendingAttentionSeq;
     const nextWorkflowRun = this.options.store.updateWorkflow({
       workflowId: ownership.structuredWorkflowId,
       commandId: ownership.commandId,
@@ -1094,13 +1154,37 @@ export class SmithersRuntimeManager {
       smithersStatus: run.status,
       waitKind,
       lastEventSeq: input.lastEventSeq,
-      lastAttentionSeq:
-        input.lastAttentionSeq !== null && input.attentionReason
-          ? input.lastAttentionSeq
-          : (currentWorkflowRun?.lastAttentionSeq ?? null),
+      pendingAttentionSeq: nextPendingAttentionSeq,
+      lastAttentionSeq: currentDeliveredAttentionSeq,
       heartbeatAt,
       summary,
     });
+    this.recordBridgeLifecycleEvent({
+      sessionId: ownership.sessionId,
+      workflowRunId: nextWorkflowRun.id,
+      kind: "workflowRun.bridge.projected",
+      data: {
+        source: options.source,
+        smithersRunId: runId,
+        lastEventSeq: input.lastEventSeq,
+        pendingAttentionSeq: nextPendingAttentionSeq,
+        lastAttentionSeq: currentDeliveredAttentionSeq,
+        status: nextWorkflowRun.status,
+        smithersStatus: nextWorkflowRun.smithersStatus,
+      },
+    });
+    if (nextPendingAttentionSeq !== null && nextPendingAttentionSeq !== currentPendingAttentionSeq) {
+      this.recordBridgeLifecycleEvent({
+        sessionId: ownership.sessionId,
+        workflowRunId: nextWorkflowRun.id,
+        kind: "workflowRun.bridge.attention.pending",
+        data: {
+          source: options.source,
+          smithersRunId: runId,
+          attentionSeq: nextPendingAttentionSeq,
+        },
+      });
+    }
 
     this.applyThreadProjection({
       sessionId: ownership.sessionId,
@@ -1121,18 +1205,16 @@ export class SmithersRuntimeManager {
     if (
       options.emitAttention &&
       !isReplayedTerminalStateAfterHandoff &&
-      input.attentionReason &&
-      input.lastAttentionSeq !== null &&
-      input.lastAttentionSeq !== currentWorkflowRun?.lastAttentionSeq
+      nextWorkflowRun.pendingAttentionSeq !== null &&
+      nextWorkflowRun.pendingAttentionSeq !== nextWorkflowRun.lastAttentionSeq
     ) {
-      await this.options.onHandlerAttention?.({
-        sessionId: ownership.sessionId,
-        threadId: ownership.threadId,
-        workflowRunId: nextWorkflowRun.id,
-        smithersRunId: runId,
-        workflowId: ownership.workflowId,
+      await this.tryDeliverPendingHandlerAttention(runId, {
+        source: options.source,
         summary,
-        reason: input.attentionReason,
+        reason:
+          input.observedAttentionSeq === nextWorkflowRun.pendingAttentionSeq
+            ? input.observedAttentionReason
+            : null,
       });
     }
   }
@@ -1234,28 +1316,64 @@ export class SmithersRuntimeManager {
     if (!ownership) {
       return;
     }
+    const currentWorkflowRun = this.findStructuredWorkflowRunById(
+      ownership.sessionId,
+      ownership.structuredWorkflowId,
+    );
     const message =
       error instanceof Error ? error.message : "The bundled Smithers workflow failed unexpectedly.";
-    this.options.store.updateWorkflow({
+    const nextPendingAttentionSeq =
+      Math.max(
+        currentWorkflowRun?.pendingAttentionSeq ?? -1,
+        currentWorkflowRun?.lastAttentionSeq ?? -1,
+        currentWorkflowRun?.lastEventSeq ?? -1,
+      ) + 1;
+    const nextWorkflowRun = this.options.store.updateWorkflow({
       workflowId: ownership.structuredWorkflowId,
       commandId: ownership.commandId,
       status: "failed",
       smithersStatus: "failed",
+      waitKind: null,
+      continuedFromRunIds: currentWorkflowRun?.continuedFromRunIds,
+      activeDescendantRunId: currentWorkflowRun?.activeDescendantRunId ?? null,
+      lastEventSeq: currentWorkflowRun?.lastEventSeq ?? -1,
+      pendingAttentionSeq: nextPendingAttentionSeq,
+      lastAttentionSeq: currentWorkflowRun?.lastAttentionSeq ?? null,
+      heartbeatAt: currentWorkflowRun?.heartbeatAt ?? null,
       summary: message,
     });
-    this.options.store.updateThread({
-      threadId: ownership.threadId,
-      status: "troubleshooting",
-      wait: null,
+    this.recordBridgeLifecycleEvent({
+      sessionId: ownership.sessionId,
+      workflowRunId: nextWorkflowRun.id,
+      kind: "workflowRun.bridge.projected",
+      data: {
+        source: "failure",
+        smithersRunId: runId,
+        lastEventSeq: nextWorkflowRun.lastEventSeq,
+        pendingAttentionSeq: nextWorkflowRun.pendingAttentionSeq,
+        lastAttentionSeq: nextWorkflowRun.lastAttentionSeq,
+        status: nextWorkflowRun.status,
+        smithersStatus: nextWorkflowRun.smithersStatus,
+      },
     });
-    this.clearThreadOwnedSessionWait(ownership.sessionId, ownership.threadId);
-    await this.emitStructuredStateChanged(ownership.sessionId);
-    await this.options.onHandlerAttention?.({
+    this.recordBridgeLifecycleEvent({
+      sessionId: ownership.sessionId,
+      workflowRunId: nextWorkflowRun.id,
+      kind: "workflowRun.bridge.attention.pending",
+      data: {
+        source: "failure",
+        smithersRunId: runId,
+        attentionSeq: nextPendingAttentionSeq,
+      },
+    });
+    this.applyThreadProjection({
       sessionId: ownership.sessionId,
       threadId: ownership.threadId,
-      workflowRunId: ownership.structuredWorkflowId,
-      smithersRunId: runId,
-      workflowId: ownership.workflowId,
+      workflowRun: nextWorkflowRun,
+    });
+    await this.emitStructuredStateChanged(ownership.sessionId);
+    await this.tryDeliverPendingHandlerAttention(runId, {
+      source: "failure",
       summary: message,
       reason: "The supervised Smithers workflow failed unexpectedly.",
     });
@@ -1280,6 +1398,143 @@ export class SmithersRuntimeManager {
     if (wait?.owner.kind === "thread" && wait.owner.threadId === threadId) {
       this.options.store.clearSessionWait({ sessionId });
     }
+  }
+
+  private hydrateRunOwnershipForSession(sessionId: string): void {
+    const snapshot = this.options.store.getSessionState(sessionId);
+    for (const workflowRun of snapshot.workflowRuns) {
+      this.ownershipByRunId.set(workflowRun.smithersRunId, {
+        sessionId: workflowRun.sessionId,
+        threadId: workflowRun.threadId,
+        workflowId: workflowRun.templateId ?? workflowRun.workflowName,
+        structuredWorkflowId: workflowRun.id,
+        commandId: workflowRun.commandId,
+      });
+    }
+  }
+
+  private rehydrateRunOwnership(runId: string): WorkflowOwnership | null {
+    const workflowRun = this.findStructuredWorkflowRunBySmithersRunId(runId);
+    if (!workflowRun) {
+      return null;
+    }
+    const ownership = {
+      sessionId: workflowRun.sessionId,
+      threadId: workflowRun.threadId,
+      workflowId: workflowRun.templateId ?? workflowRun.workflowName,
+      structuredWorkflowId: workflowRun.id,
+      commandId: workflowRun.commandId,
+    } satisfies WorkflowOwnership;
+    this.ownershipByRunId.set(runId, ownership);
+    return ownership;
+  }
+
+  private async tryDeliverPendingHandlerAttention(
+    runId: string,
+    input: {
+      source: ProjectionSource;
+      summary?: string;
+      reason?: string | null;
+    },
+  ): Promise<boolean> {
+    const ownership = this.ownershipByRunId.get(runId) ?? this.rehydrateRunOwnership(runId);
+    if (!ownership) {
+      return false;
+    }
+
+    const workflowRun = this.findStructuredWorkflowRunById(
+      ownership.sessionId,
+      ownership.structuredWorkflowId,
+    );
+    if (
+      !workflowRun ||
+      workflowRun.pendingAttentionSeq === null ||
+      workflowRun.pendingAttentionSeq === workflowRun.lastAttentionSeq
+    ) {
+      return false;
+    }
+
+    const thread =
+      this.options.store
+        .getSessionState(ownership.sessionId)
+        .threads.find((entry) => entry.id === ownership.threadId) ?? null;
+    if (
+      isTerminalWorkflowReplayAfterThreadCompletion(thread?.status ?? null, workflowRun.status)
+    ) {
+      return false;
+    }
+
+    const delivered =
+      (await this.options.onHandlerAttention?.({
+        sessionId: ownership.sessionId,
+        threadId: ownership.threadId,
+        workflowRunId: workflowRun.id,
+        smithersRunId: runId,
+        workflowId: ownership.workflowId,
+        summary: input.summary ?? workflowRun.summary,
+        reason:
+          input.reason ??
+          (await this.readPendingAttentionReason(runId, workflowRun.pendingAttentionSeq)) ??
+          "The supervised workflow needs handler attention.",
+      })) ?? false;
+    if (!delivered) {
+      return false;
+    }
+
+    this.options.store.updateWorkflow({
+      workflowId: workflowRun.id,
+      commandId: workflowRun.commandId,
+      status: workflowRun.status,
+      smithersStatus: workflowRun.smithersStatus,
+      waitKind: workflowRun.waitKind,
+      continuedFromRunIds: workflowRun.continuedFromRunIds,
+      activeDescendantRunId: workflowRun.activeDescendantRunId,
+      lastEventSeq: workflowRun.lastEventSeq,
+      pendingAttentionSeq: null,
+      lastAttentionSeq: workflowRun.pendingAttentionSeq,
+      heartbeatAt: workflowRun.heartbeatAt,
+      summary: workflowRun.summary,
+    });
+    this.recordBridgeLifecycleEvent({
+      sessionId: ownership.sessionId,
+      workflowRunId: workflowRun.id,
+      kind: "workflowRun.bridge.attention.delivered",
+      data: {
+        source: input.source,
+        smithersRunId: runId,
+        attentionSeq: workflowRun.pendingAttentionSeq,
+      },
+    });
+    await this.emitStructuredStateChanged(ownership.sessionId);
+    return true;
+  }
+
+  private async readPendingAttentionReason(
+    runId: string,
+    attentionSeq: number,
+  ): Promise<string | null> {
+    const events = await this.db.listEvents(runId, attentionSeq - 1, 10);
+    const eventRow = events.find((entry: any) => Number(entry.seq) === attentionSeq);
+    if (!eventRow) {
+      return null;
+    }
+    const event = parseJson(eventRow.payloadJson) as SmithersEvent | null;
+    return event ? describeAttentionEvent(event) : null;
+  }
+
+  private recordBridgeLifecycleEvent(input: {
+    sessionId: string;
+    workflowRunId: string;
+    kind: string;
+    data?: Record<string, unknown>;
+  }): void {
+    this.options.store.recordLifecycleEvent({
+      sessionId: input.sessionId,
+      kind: input.kind,
+      subjectKind: "workflowRun",
+      subjectId: input.workflowRunId,
+      data: input.data,
+    });
   }
 
   private async emitStructuredStateChanged(sessionId: string) {
@@ -1324,11 +1579,22 @@ export class SmithersRuntimeManager {
   private findStructuredWorkflowRunBySmithersRunId(
     runId: string,
   ): StructuredWorkflowRunRecord | null {
-    const ownership = this.ownershipByRunId.get(runId);
-    if (!ownership) {
-      return null;
+    const inMemoryOwnership = this.ownershipByRunId.get(runId);
+    if (inMemoryOwnership) {
+      return this.findStructuredWorkflowRunById(
+        inMemoryOwnership.sessionId,
+        inMemoryOwnership.structuredWorkflowId,
+      );
     }
-    return this.findStructuredWorkflowRunById(ownership.sessionId, ownership.structuredWorkflowId);
+
+    for (const session of this.options.store.listSessionStates()) {
+      const match = session.workflowRuns.find((workflowRun) => workflowRun.smithersRunId === runId);
+      if (match) {
+        return match;
+      }
+    }
+
+    return null;
   }
 
   private findStructuredWorkflowRunById(

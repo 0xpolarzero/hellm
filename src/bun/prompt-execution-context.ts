@@ -15,6 +15,7 @@ export interface PromptExecutionContext {
   sessionWaitApplied: boolean;
   threadWasTerminalAtStart: boolean;
   durableSurfaceContext?: string;
+  suppressPendingWorkflowAttentionDelivery?: boolean;
 }
 
 export interface PromptExecutionRuntimeHandle {
@@ -33,6 +34,7 @@ export function createPromptExecutionContext(input: {
   rootEpisodeKind?: StructuredEpisodeKind;
   threadWasTerminalAtStart?: boolean;
   durableSurfaceContext?: string;
+  suppressPendingWorkflowAttentionDelivery?: boolean;
 }): PromptExecutionContext {
   const surfaceThreadId = input.surfaceThreadId ?? input.rootThreadId;
   if (!surfaceThreadId) {
@@ -54,5 +56,7 @@ export function createPromptExecutionContext(input: {
     sessionWaitApplied: false,
     threadWasTerminalAtStart: input.threadWasTerminalAtStart ?? false,
     durableSurfaceContext: input.durableSurfaceContext,
+    suppressPendingWorkflowAttentionDelivery:
+      input.suppressPendingWorkflowAttentionDelivery ?? false,
   };
 }

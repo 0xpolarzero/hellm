@@ -4,7 +4,6 @@ import {
   type StructuredSessionStateStore,
 } from "./structured-session-state";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
-import type { SmithersRuntimeManager } from "./smithers-runtime/manager";
 import { createThreadHandoffTool } from "./thread-handoff-tool";
 
 const WORKSPACE = {
@@ -225,7 +224,7 @@ describe("thread handoff tool", () => {
     expect(result.details).toMatchObject({
       ok: false,
     });
-    expect(result.details.error).toContain("active workflow runs still exist");
+    expect(result.details.error).toContain("unresolved workflow runs still exist");
     expect(result.details.error).toContain("hello_world");
     expect(result.details.error).toContain("waiting");
 
@@ -251,91 +250,71 @@ describe("thread handoff tool", () => {
     expect(snapshot.episodes).toEqual([]);
   });
 
-  it("reconciles thread-owned workflow state before validating handoff", async () => {
-    const store = createStore();
-    const runtime = createHandlerRuntime(store);
-    const handlerThreadId = runtime.current!.rootThreadId;
-    const workflowCommand = store.createCommand({
-      turnId: runtime.current!.turnId,
-      surfacePiSessionId: runtime.current!.surfacePiSessionId,
-      threadId: handlerThreadId,
-      toolName: "smithers.run_workflow.hello_world",
-      executor: "smithers",
-      visibility: "surface",
-      title: "Run hello_world",
-      summary: "Launch the hello_world workflow.",
-    });
-    store.startCommand(workflowCommand.id);
-    store.recordWorkflow({
-      threadId: handlerThreadId,
-      commandId: workflowCommand.id,
-      smithersRunId: "smithers-run-hello-world",
-      workflowName: "svvy-hello-world",
-      templateId: "hello_world",
-      status: "running",
-      waitKind: null,
-      summary: "svvy-hello-world is still marked running in structured state.",
-    });
-    store.clearSessionWait({ sessionId: "session-thread-handoff-tool" });
-    store.updateThread({
-      threadId: handlerThreadId,
-      status: "running-workflow",
-      wait: null,
-    });
+  for (const status of ["failed", "cancelled"] as const) {
+    it(`rejects handoff while the thread still owns a ${status} workflow run`, async () => {
+      const store = createStore();
+      const runtime = createHandlerRuntime(store);
+      const handlerThreadId = runtime.current!.rootThreadId;
+      const workflowCommand = store.createCommand({
+        turnId: runtime.current!.turnId,
+        surfacePiSessionId: runtime.current!.surfacePiSessionId,
+        threadId: handlerThreadId,
+        toolName: "smithers.run_workflow.hello_world",
+        executor: "smithers",
+        visibility: "surface",
+        title: "Run hello_world",
+        summary: "Launch the hello_world workflow.",
+      });
+      store.startCommand(workflowCommand.id);
+      store.recordWorkflow({
+        threadId: handlerThreadId,
+        commandId: workflowCommand.id,
+        smithersRunId: `smithers-run-${status}`,
+        workflowName: "svvy-hello-world",
+        templateId: "hello_world",
+        status,
+        waitKind: null,
+        summary: `svvy-hello-world ${status} and still requires handler resolution.`,
+      });
+      store.clearSessionWait({ sessionId: "session-thread-handoff-tool" });
+      store.updateThread({
+        threadId: handlerThreadId,
+        status: "troubleshooting",
+        wait: null,
+      });
 
-    let reconciled = false;
-    const manager = {
-      async reconcileThreadOwnedWorkflowsBeforeHandoff(sessionId: string, threadId: string) {
-        expect(sessionId).toBe("session-thread-handoff-tool");
-        expect(threadId).toBe(handlerThreadId);
-        reconciled = true;
-        const workflowRun = store
-          .getSessionState(sessionId)
-          .workflowRuns.find((entry) => entry.threadId === threadId);
-        expect(workflowRun).toBeTruthy();
-        store.updateWorkflow({
-          workflowId: workflowRun!.id,
-          commandId: workflowCommand.id,
-          status: "completed",
-          smithersStatus: "finished",
-          summary: "svvy-hello-world already finished in Smithers.",
-        });
-        store.updateThread({
-          threadId,
-          status: "running-handler",
-          wait: null,
-        });
-      },
-    } satisfies Pick<SmithersRuntimeManager, "reconcileThreadOwnedWorkflowsBeforeHandoff">;
-    const tool = createThreadHandoffTool({
-      runtime,
-      store,
-      manager: manager as SmithersRuntimeManager,
-    });
+      const tool = createThreadHandoffTool({
+        runtime,
+        store,
+      });
 
-    const result = await tool.execute("tool-call-4", {
-      title: "Completed after reconciliation",
-      summary: "The workflow had already finished.",
-      body: "Reconciled the finished workflow state before handing the objective back.",
-      kind: "workflow",
-    });
+      const result = await tool.execute(`tool-call-unresolved-${status}`, {
+        title: "Attempt unresolved handoff",
+        summary: `Tried to hand off while the workflow is ${status}.`,
+        body: "This should be rejected because the handler still owns unresolved workflow state.",
+        kind: "workflow",
+      });
 
-    expect(reconciled).toBe(true);
-    expect(result.details).toMatchObject({
-      ok: true,
-      title: "Completed after reconciliation",
-    });
+      expect(result.details).toMatchObject({
+        ok: false,
+      });
+      expect(result.details.error).toContain("unresolved workflow runs still exist");
+      expect(result.details.error).toContain("hello_world");
+      expect(result.details.error).toContain(status);
 
-    const snapshot = store.getSessionState("session-thread-handoff-tool");
-    expect(snapshot.threads.find((thread) => thread.id === handlerThreadId)).toMatchObject({
-      status: "completed",
-      wait: null,
+      const snapshot = store.getSessionState("session-thread-handoff-tool");
+      expect(snapshot.turns[0]).toMatchObject({
+        turnDecision: "pending",
+      });
+      expect(snapshot.threads.find((thread) => thread.id === handlerThreadId)).toMatchObject({
+        status: "troubleshooting",
+        wait: null,
+      });
+      expect(
+        snapshot.workflowRuns.find((workflowRun) => workflowRun.threadId === handlerThreadId),
+      ).toMatchObject({
+        status,
+      });
     });
-    expect(
-      snapshot.workflowRuns.find((workflowRun) => workflowRun.threadId === handlerThreadId),
-    ).toMatchObject({
-      status: "completed",
-      smithersStatus: "finished",
-    });
-  });
+  }
 });

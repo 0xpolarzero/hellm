@@ -176,7 +176,10 @@ export class WorkspaceSessionCatalog {
         await this.emitStructuredStateSync(sessionId);
       },
       onHandlerAttention: async (event) => {
-        await this.resumeHandlerAfterWorkflowAttention(event, buildSystemPrompt("handler"));
+        return await this.resumeHandlerAfterWorkflowAttention(
+          event,
+          buildSystemPrompt("handler"),
+        );
       },
     });
   }
@@ -332,6 +335,7 @@ export class WorkspaceSessionCatalog {
       systemPrompt ?? buildSystemPrompt(actorProfile),
     );
     this.activeTarget = structuredClone(target);
+    await this.restoreWorkflowSupervisionIfTracked(target.workspaceSessionId);
     return this.buildActiveSessionState(session, target);
   }
 
@@ -574,6 +578,7 @@ export class WorkspaceSessionCatalog {
         buildSystemPrompt(actorProfile),
       );
       this.activeTarget = structuredClone(options.target);
+      await this.restoreWorkflowSupervisionIfTracked(options.target.workspaceSessionId);
       return this.prepareManagedSession(session, options);
     }
 
@@ -585,6 +590,7 @@ export class WorkspaceSessionCatalog {
         buildSystemPrompt(actorProfile),
       );
       this.activeTarget = structuredClone(options.target);
+      await this.restoreWorkflowSupervisionIfTracked(options.target.workspaceSessionId);
       return this.prepareManagedSession(session, options);
     }
 
@@ -864,6 +870,15 @@ export class WorkspaceSessionCatalog {
     } catch (error) {
       console.error(`Failed to emit structured session sync for ${sessionId}:`, error);
     }
+  }
+
+  private async restoreWorkflowSupervisionIfTracked(sessionId: string): Promise<void> {
+    if (!this.getStructuredSnapshot(sessionId)) {
+      return;
+    }
+    await this.smithersRuntimeManager.restoreSessionSupervision(sessionId, {
+      emitAttention: false,
+    });
   }
 
   private buildOrchestratorPromptTarget(workspaceSessionId: string): PromptTarget {
@@ -1310,6 +1325,15 @@ export class WorkspaceSessionCatalog {
           reason: "prompt.settled",
           target: options.target,
         });
+        if (
+          promptContext?.surfaceKind === "handler" &&
+          !promptContext.suppressPendingWorkflowAttentionDelivery
+        ) {
+          await this.smithersRuntimeManager.deliverPendingHandlerAttention(
+            promptContext.sessionId,
+            promptContext.rootThreadId,
+          );
+        }
       }
     } finally {
       session.promptExecutionRuntime.current = null;
@@ -1393,11 +1417,11 @@ export class WorkspaceSessionCatalog {
       reason: string;
     },
     systemPrompt: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const snapshot = this.getStructuredSnapshot(input.sessionId);
     const thread = snapshot?.threads.find((entry) => entry.id === input.threadId) ?? null;
     if (!snapshot || !thread) {
-      return;
+      return false;
     }
 
     const target: PromptTarget = {
@@ -1413,7 +1437,7 @@ export class WorkspaceSessionCatalog {
     );
     this.activeTarget = target;
     if (handlerSession.activePrompt) {
-      return;
+      return false;
     }
 
     handlerSession.abortRequested = false;
@@ -1449,7 +1473,11 @@ export class WorkspaceSessionCatalog {
       onEvent: () => {},
     };
     const handlerPromptContext = this.createPromptExecutionContext(handlerSession, options);
+    if (handlerPromptContext) {
+      handlerPromptContext.suppressPendingWorkflowAttentionDelivery = true;
+    }
     await this.runAgentPrompt(handlerSession, options, handlerPromptContext);
+    return true;
   }
 
   private completePromptExecution(
@@ -1648,7 +1676,6 @@ async function createManagedSession(
           createThreadHandoffTool({
             runtime: promptExecutionRuntime,
             store: options.structuredSessionStore,
-            manager: options.smithersRuntimeManager,
           }),
           ...createSmithersTools({
             runtime: promptExecutionRuntime,

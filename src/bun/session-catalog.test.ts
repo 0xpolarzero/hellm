@@ -2194,6 +2194,259 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("restores workflow supervision only for sessions tracked in structured state", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const existing = createPersistedSession(cwd, sessionDir, {
+      title: "Existing",
+      prompt: "Inspect the queue",
+      reply: "Queue inspected",
+      thinkingLevel: "high",
+    });
+
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const manager = (
+      catalog as unknown as {
+        smithersRuntimeManager: {
+          restoreSessionSupervision(
+            sessionId: string,
+            options?: { emitAttention?: boolean },
+          ): Promise<void>;
+        };
+      }
+    ).smithersRuntimeManager;
+    const restoreSpy = spyOn(manager, "restoreSessionSupervision");
+
+    try {
+      await catalog.openSession(existing.id, DEFAULTS.systemPrompt);
+      expect(restoreSpy).not.toHaveBeenCalled();
+
+      const created = await catalog.createSession({ title: "Tracked Session" }, DEFAULTS);
+      restoreSpy.mockClear();
+
+      await catalog.openSession(created.session.id, DEFAULTS.systemPrompt);
+
+      expect(restoreSpy).toHaveBeenCalledTimes(1);
+      expect(restoreSpy).toHaveBeenLastCalledWith(created.session.id, {
+        emitAttention: false,
+      });
+    } finally {
+      restoreSpy.mockRestore();
+      await catalog.dispose();
+    }
+  });
+
+  it("delivers deferred handler workflow attention after the active prompt settles", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await catalog.createSession({ title: "Deferred Workflow Attention" }, DEFAULTS);
+    const store = getStructuredSessionStore(catalog);
+    const syncs: SessionSyncMessage[] = [];
+    catalog.setSessionSyncListener((payload) => {
+      syncs.push(payload);
+    });
+
+    const seedTurn = store.startTurn({
+      sessionId: created.session.id,
+      surfacePiSessionId: created.session.id,
+      requestSummary: "Delegate workflow supervision",
+    });
+    const orchestratorThread = store.createThread({
+      turnId: seedTurn.id,
+      surfacePiSessionId: created.session.id,
+      title: "Delegate workflow supervision",
+      objective: "Open a handler thread for workflow supervision.",
+    });
+
+    try {
+      const handlerThread = await (
+        catalog as unknown as {
+          createHandlerThread(input: {
+            sessionId: string;
+            turnId: string;
+            parentThreadId: string;
+            parentSurfacePiSessionId: string;
+            title: string;
+            objective: string;
+          }): Promise<{ id: string; surfacePiSessionId: string }>;
+          smithersRuntimeManager: {
+            deliverPendingHandlerAttention(sessionId: string, threadId?: string): Promise<void>;
+          };
+        }
+      ).createHandlerThread({
+        sessionId: created.session.id,
+        turnId: seedTurn.id,
+        parentThreadId: orchestratorThread.id,
+        parentSurfacePiSessionId: created.session.id,
+        title: "Workflow supervisor",
+        objective: "Handle workflow attention without dropping pending wake-ups.",
+      });
+
+      const workflowCommand = store.createCommand({
+        turnId: seedTurn.id,
+        surfacePiSessionId: handlerThread.surfacePiSessionId,
+        threadId: handlerThread.id,
+        toolName: "smithers.run_workflow.hello_world",
+        executor: "smithers",
+        visibility: "surface",
+        title: "Run hello_world",
+        summary: "Launch the hello_world workflow.",
+      });
+      store.startCommand(workflowCommand.id);
+      store.recordWorkflow({
+        threadId: handlerThread.id,
+        commandId: workflowCommand.id,
+        smithersRunId: "smithers-run-deferred-attention",
+        workflowName: "svvy-hello-world",
+        templateId: "hello_world",
+        status: "completed",
+        smithersStatus: "finished",
+        waitKind: null,
+        lastEventSeq: 12,
+        pendingAttentionSeq: 12,
+        lastAttentionSeq: null,
+        summary: "svvy-hello-world finished and still needs handler attention.",
+      });
+      store.updateThread({
+        threadId: handlerThread.id,
+        status: "running-handler",
+        wait: null,
+      });
+
+      type PromptablePiSession = PromptableSession & {
+        prompt(
+          promptText: string,
+          options?: {
+            expandPromptTemplates?: boolean;
+          },
+        ): Promise<void>;
+      };
+      type PrivateManagedSession = ManagedSessionHandle & {
+        activePrompt: boolean;
+        abortRequested: boolean;
+      };
+      type RunAgentPromptOptions = {
+        provider: string;
+        model: string;
+        thinkingLevel: ThinkingLevel;
+        systemPrompt: string;
+        target: PromptTarget;
+        messages: Message[];
+        onEvent: () => void;
+      };
+      const catalogInternals = catalog as unknown as {
+        openSurfaceSessionInternal(
+          surfacePiSessionId: string,
+          actorProfile: "orchestrator" | "handler",
+          systemPrompt: string,
+        ): Promise<PrivateManagedSession>;
+        createPromptExecutionContext(
+          session: PrivateManagedSession,
+          options: RunAgentPromptOptions,
+        ): object | null;
+        runAgentPrompt(
+          session: PrivateManagedSession,
+          options: RunAgentPromptOptions,
+          promptContext: object | null,
+        ): Promise<void>;
+        smithersRuntimeManager: {
+          deliverPendingHandlerAttention(sessionId: string, threadId?: string): Promise<void>;
+        };
+      };
+      const manager = catalogInternals.smithersRuntimeManager;
+      const target = createThreadTarget(
+        created.session.id,
+        handlerThread.surfacePiSessionId,
+        handlerThread.id,
+      );
+      const handlerSession = await catalogInternals.openSurfaceSessionInternal(
+        handlerThread.surfacePiSessionId,
+        "handler",
+        buildSystemPrompt("handler"),
+      );
+      const options = {
+        ...DEFAULTS,
+        systemPrompt: buildSystemPrompt("handler"),
+        target,
+        messages: [userMessage("Continue the handler thread.")],
+        onEvent: () => {},
+      } satisfies RunAgentPromptOptions;
+      const promptTexts: string[] = [];
+      const continueMessage = options.messages[0]!;
+      const promptSpy = spyOn(handlerSession.session as PromptablePiSession, "prompt").mockImplementation(async function (
+        this: PromptableSession,
+        promptText: string,
+      ) {
+        promptTexts.push(promptText);
+
+        if (promptTexts.length === 1) {
+          await manager.deliverPendingHandlerAttention(created.session.id, handlerThread.id);
+          const workflowRun = getStructuredSessionState(catalog, created.session.id).workflowRuns.find(
+            (entry) => entry.smithersRunId === "smithers-run-deferred-attention",
+          );
+          expect(workflowRun).toMatchObject({
+            pendingAttentionSeq: 12,
+            lastAttentionSeq: null,
+          });
+
+          appendMessagesToSession(this, [
+            continueMessage,
+            assistantMessage("I am still working through the handler thread."),
+          ]);
+          return;
+        }
+
+        if (promptTexts.length === 2) {
+          expect(promptText).toContain(
+            "System event: A supervised Smithers workflow now requires handler attention.",
+          );
+          expect(promptText).toContain("smithers-run-deferred-attention");
+          appendMessagesToSession(this, [
+            userMessage("System event: A supervised Smithers workflow now requires handler attention."),
+            assistantMessage("I resumed after the deferred workflow attention."),
+          ]);
+          return;
+        }
+
+        throw new Error("Unexpected prompt invocation.");
+      });
+
+      try {
+        handlerSession.abortRequested = false;
+        handlerSession.activePrompt = true;
+        const promptContext = catalogInternals.createPromptExecutionContext(handlerSession, options);
+        await catalogInternals.runAgentPrompt(handlerSession, options, promptContext);
+      } finally {
+        promptSpy.mockRestore();
+      }
+
+      expect(promptTexts).toHaveLength(2);
+      expect(
+        syncs.some(
+          (payload) =>
+            payload.reason === "prompt.settled" && payload.activeSession.target.threadId === handlerThread.id,
+        ),
+      ).toBe(true);
+      expect(
+        syncs.some(
+          (payload) =>
+            payload.reason === "background.started" &&
+            payload.activeSession.target.threadId === handlerThread.id,
+        ),
+      ).toBe(true);
+      expect(
+        getStructuredSessionState(catalog, created.session.id).workflowRuns.find(
+          (entry) => entry.smithersRunId === "smithers-run-deferred-attention",
+        ),
+      ).toMatchObject({
+        pendingAttentionSeq: null,
+        lastAttentionSeq: 12,
+      });
+    } finally {
+      catalog.setSessionSyncListener(null);
+      await catalog.dispose();
+    }
+  });
+
   it("updates session metadata on explicit actions instead of summary reads", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);

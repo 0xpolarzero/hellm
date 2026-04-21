@@ -173,6 +173,7 @@ function createSessionSnapshot(
         continuedFromRunIds: [],
         activeDescendantRunId: null,
         lastEventSeq: -1,
+        pendingAttentionSeq: null,
         lastAttentionSeq: null,
         heartbeatAt: null,
         summary: "Workflow summary",

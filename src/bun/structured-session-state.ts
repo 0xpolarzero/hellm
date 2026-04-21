@@ -190,6 +190,7 @@ export interface StructuredWorkflowRunRecord {
   continuedFromRunIds: string[];
   activeDescendantRunId: string | null;
   lastEventSeq: number;
+  pendingAttentionSeq: number | null;
   lastAttentionSeq: number | null;
   heartbeatAt: string | null;
   summary: string;
@@ -309,6 +310,14 @@ export interface StructuredSessionStateStore {
     resumeWhen: string;
   }): StructuredSessionWaitState;
   clearSessionWait(input: { sessionId: string }): void;
+  recordLifecycleEvent(input: {
+    sessionId: string;
+    kind: string;
+    subjectKind: StructuredEventSubjectKind;
+    subjectId: string;
+    at?: string;
+    data?: Record<string, unknown>;
+  }): void;
   createCommand(input: {
     turnId: string;
     surfacePiSessionId?: string;
@@ -371,6 +380,7 @@ export interface StructuredSessionStateStore {
     continuedFromRunIds?: string[];
     activeDescendantRunId?: string | null;
     lastEventSeq?: number;
+    pendingAttentionSeq?: number | null;
     lastAttentionSeq?: number | null;
     heartbeatAt?: string | null;
     summary: string;
@@ -384,6 +394,7 @@ export interface StructuredSessionStateStore {
     continuedFromRunIds?: string[];
     activeDescendantRunId?: string | null;
     lastEventSeq?: number;
+    pendingAttentionSeq?: number | null;
     lastAttentionSeq?: number | null;
     heartbeatAt?: string | null;
     summary: string;
@@ -509,6 +520,7 @@ type WorkflowRunRow = {
   continued_from_run_ids_json: string | null;
   active_descendant_run_id: string | null;
   last_event_seq: number;
+  pending_attention_seq: number | null;
   last_attention_seq: number | null;
   heartbeat_at: string | null;
   summary: string;
@@ -1018,6 +1030,17 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     });
   }
 
+  recordLifecycleEvent(input: {
+    sessionId: string;
+    kind: string;
+    subjectKind: StructuredEventSubjectKind;
+    subjectId: string;
+    at?: string;
+    data?: Record<string, unknown>;
+  }): void {
+    this.recordEvent(input);
+  }
+
   createCommand(input: {
     turnId: string;
     surfacePiSessionId?: string;
@@ -1383,6 +1406,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     continuedFromRunIds?: string[];
     activeDescendantRunId?: string | null;
     lastEventSeq?: number;
+    pendingAttentionSeq?: number | null;
     lastAttentionSeq?: number | null;
     heartbeatAt?: string | null;
     summary: string;
@@ -1408,13 +1432,14 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            continued_from_run_ids_json,
            active_descendant_run_id,
            last_event_seq,
+           pending_attention_seq,
            last_attention_seq,
            heartbeat_at,
            summary,
            started_at,
            updated_at,
            finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         workflowId,
@@ -1431,6 +1456,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         toJson(input.continuedFromRunIds ?? []),
         input.activeDescendantRunId ?? null,
         input.lastEventSeq ?? -1,
+        input.pendingAttentionSeq ?? null,
         input.lastAttentionSeq ?? null,
         input.heartbeatAt ?? null,
         input.summary,
@@ -1459,6 +1485,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     continuedFromRunIds?: string[];
     activeDescendantRunId?: string | null;
     lastEventSeq?: number;
+    pendingAttentionSeq?: number | null;
     lastAttentionSeq?: number | null;
     heartbeatAt?: string | null;
     summary: string;
@@ -1478,6 +1505,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
              continued_from_run_ids_json = ?,
              active_descendant_run_id = ?,
              last_event_seq = ?,
+             pending_attention_seq = ?,
              last_attention_seq = ?,
              heartbeat_at = ?,
              summary = ?,
@@ -1497,6 +1525,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           ? existing.active_descendant_run_id
           : (input.activeDescendantRunId ?? null),
         input.lastEventSeq ?? existing.last_event_seq,
+        input.pendingAttentionSeq === undefined
+          ? existing.pending_attention_seq
+          : input.pendingAttentionSeq,
         input.lastAttentionSeq === undefined ? existing.last_attention_seq : input.lastAttentionSeq,
         input.heartbeatAt === undefined ? existing.heartbeat_at : (input.heartbeatAt ?? null),
         input.summary,
@@ -2062,6 +2093,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       continuedFromRunIds: fromJson<string[]>(row.continued_from_run_ids_json) ?? [],
       activeDescendantRunId: row.active_descendant_run_id,
       lastEventSeq: row.last_event_seq,
+      pendingAttentionSeq: row.pending_attention_seq,
       lastAttentionSeq: row.last_attention_seq,
       heartbeatAt: row.heartbeat_at,
       summary: row.summary,
@@ -2225,6 +2257,7 @@ function initializeSchema(db: Database): void {
       continued_from_run_ids_json TEXT,
       active_descendant_run_id TEXT,
       last_event_seq INTEGER NOT NULL,
+      pending_attention_seq INTEGER,
       last_attention_seq INTEGER,
       heartbeat_at TEXT,
       summary TEXT NOT NULL,
@@ -2256,10 +2289,26 @@ function initializeSchema(db: Database): void {
       data_json TEXT
     );
   `);
+  ensureColumn(db, "workflow_run", "pending_attention_seq", "INTEGER");
 }
 
 function createId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function ensureColumn(
+  db: Database,
+  tableName: string,
+  columnName: string,
+  columnDefinition: string,
+): void {
+  const columns = db
+    .query(`PRAGMA table_info(${tableName})`)
+    .all() as Array<{ name?: string }>;
+  if (columns.some((column) => column.name === columnName)) {
+    return;
+  }
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
 }
 
 function toJson(value: unknown): string | null {

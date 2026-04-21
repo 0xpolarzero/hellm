@@ -7,7 +7,6 @@ import type {
   StructuredSessionStateStore,
   StructuredWorkflowRunRecord,
 } from "./structured-session-state";
-import type { SmithersRuntimeManager } from "./smithers-runtime/manager";
 
 export const THREAD_HANDOFF_TOOL_NAME = "thread.handoff";
 
@@ -40,7 +39,6 @@ const THREAD_HANDOFF_DESCRIPTION = [
 export function createThreadHandoffTool(options: {
   runtime: PromptExecutionRuntimeHandle;
   store: StructuredSessionStateStore;
-  manager?: SmithersRuntimeManager;
 }): AgentTool<typeof threadHandoffParamsSchema, Record<string, unknown>> {
   return {
     label: "Thread Handoff",
@@ -70,10 +68,6 @@ export function createThreadHandoffTool(options: {
       options.store.startCommand(command.id);
 
       try {
-        await options.manager?.reconcileThreadOwnedWorkflowsBeforeHandoff(
-          runtime.sessionId,
-          threadId,
-        );
         assertNoActiveWorkflowRuns(options.store, runtime.sessionId, threadId);
 
         options.store.updateThread({
@@ -193,10 +187,13 @@ function assertNoActiveWorkflowRuns(
   const activeWorkflowRuns = store
     .getSessionState(sessionId)
     .workflowRuns.filter(
-      (workflowRun) =>
-        workflowRun.threadId === threadId &&
-        (workflowRun.status === "running" || workflowRun.status === "waiting"),
-    );
+        (workflowRun) =>
+          workflowRun.threadId === threadId &&
+          (workflowRun.status === "running" ||
+            workflowRun.status === "waiting" ||
+            workflowRun.status === "failed" ||
+            workflowRun.status === "cancelled"),
+      );
   if (activeWorkflowRuns.length === 0) {
     return;
   }
@@ -211,5 +208,5 @@ function buildActiveWorkflowHandoffError(workflowRuns: StructuredWorkflowRunReco
         `${workflowRun.templateId ?? workflowRun.workflowName} (${workflowRun.smithersRunId}, ${workflowRun.status})`,
     )
     .join(", ");
-  return `thread.handoff cannot complete the current objective span while active workflow runs still exist: ${details}. The handler keeps ownership until those runs are terminal or cancelled. Resolve the wait inside the thread, resume the workflow, or cancel it before handing control back.`;
+  return `thread.handoff cannot complete the current objective span while unresolved workflow runs still exist: ${details}. The handler keeps ownership until those runs are resolved inside the thread. Resume, repair, cancel, or explicitly close the workflow state before handing control back.`;
 }

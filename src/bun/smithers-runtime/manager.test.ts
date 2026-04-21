@@ -17,6 +17,16 @@ import { z } from "zod";
 const tempDirs: string[] = [];
 const stores: Array<ReturnType<typeof createStructuredSessionStateStore>> = [];
 const managers: SmithersRuntimeManager[] = [];
+type TestStore = ReturnType<typeof createStructuredSessionStateStore>;
+type HandlerAttentionEvent = {
+  sessionId: string;
+  threadId: string;
+  workflowRunId: string;
+  smithersRunId: string;
+  workflowId: string;
+  summary: string;
+  reason: string;
+};
 
 setDefaultTimeout(30_000);
 
@@ -35,7 +45,38 @@ afterEach(async () => {
   }
 });
 
-function createWorkspaceFixture() {
+function createManagerHarness(input: {
+  cwd: string;
+  agentDir: string;
+  store: TestStore;
+  structuredStateChanges: string[];
+  handlerAttentions: HandlerAttentionEvent[];
+  onHandlerAttention?: (event: HandlerAttentionEvent) => boolean | Promise<boolean>;
+}): SmithersRuntimeManager {
+  const manager = new SmithersRuntimeManager({
+    cwd: input.cwd,
+    agentDir: input.agentDir,
+    store: input.store,
+    getTaskAgentDefaults: () => ({
+      provider: "openai",
+      model: "gpt-5.4",
+      thinkingLevel: "medium",
+    }),
+    onStructuredStateChanged: async (nextSessionId) => {
+      input.structuredStateChanges.push(nextSessionId);
+    },
+    onHandlerAttention: async (event) => {
+      input.handlerAttentions.push(event);
+      return (await input.onHandlerAttention?.(event)) ?? false;
+    },
+  });
+  managers.push(manager);
+  return manager;
+}
+
+function createWorkspaceFixture(options: {
+  onHandlerAttention?: (event: HandlerAttentionEvent) => boolean | Promise<boolean>;
+} = {}) {
   const root = mkdtempSync(join(tmpdir(), "svvy-smithers-runtime-"));
   tempDirs.push(root);
   const cwd = join(root, "workspace");
@@ -84,32 +125,15 @@ function createWorkspaceFixture() {
   });
 
   const structuredStateChanges: string[] = [];
-  const handlerAttentions: Array<{
-    sessionId: string;
-    threadId: string;
-    workflowRunId: string;
-    smithersRunId: string;
-    workflowId: string;
-    summary: string;
-    reason: string;
-  }> = [];
-  const manager = new SmithersRuntimeManager({
+  const handlerAttentions: HandlerAttentionEvent[] = [];
+  const manager = createManagerHarness({
     cwd,
     agentDir,
     store,
-    getTaskAgentDefaults: () => ({
-      provider: "openai",
-      model: "gpt-5.4",
-      thinkingLevel: "medium",
-    }),
-    onStructuredStateChanged: async (nextSessionId) => {
-      structuredStateChanges.push(nextSessionId);
-    },
-    onHandlerAttention: async (event) => {
-      handlerAttentions.push(event);
-    },
+    structuredStateChanges,
+    handlerAttentions,
+    onHandlerAttention: options.onHandlerAttention,
   });
-  managers.push(manager);
 
   return {
     cwd,
@@ -834,6 +858,157 @@ describe("SmithersRuntimeManager", () => {
     expect(handlerAttentions).toHaveLength(priorAttentionCount);
   });
 
+  it("keeps handler attention pending until an explicit delivery succeeds", async () => {
+    let shouldDeliverAttention = false;
+    const { store, manager, sessionId, threadId, surfacePiSessionId, handlerAttentions } =
+      createWorkspaceFixture({
+        onHandlerAttention: async () => shouldDeliverAttention,
+      });
+
+    const launchCommand = createWorkflowCommand({
+      store,
+      sessionId,
+      threadId,
+      surfacePiSessionId,
+      requestSummary: "Launch hello world",
+      title: "Run hello_world",
+      summary: "Launch the hello_world workflow.",
+      toolName: "smithers.run_workflow.hello_world",
+    });
+    const launched = await manager.launchWorkflow({
+      sessionId,
+      threadId,
+      workflowId: "hello_world",
+      launchInput: { message: "leave attention pending" },
+      commandId: launchCommand.commandId,
+    });
+
+    await waitFor("hello_world completion with pending attention", async () => {
+      try {
+        const run = await manager.getRun(launched.runId);
+        return run.status === "finished" && run.pendingAttentionSeq !== null;
+      } catch {
+        return false;
+      }
+    });
+    await waitFor("first undelivered attention attempt", () => handlerAttentions.length === 1);
+
+    let snapshot = store.getSessionState(sessionId);
+    let workflowRun = snapshot.workflowRuns.find((entry) => entry.smithersRunId === launched.runId);
+    expect(workflowRun).toMatchObject({
+      status: "completed",
+      pendingAttentionSeq: expect.any(Number),
+      lastAttentionSeq: null,
+    });
+
+    shouldDeliverAttention = true;
+    await manager.deliverPendingHandlerAttention(sessionId, threadId);
+
+    snapshot = store.getSessionState(sessionId);
+    workflowRun = snapshot.workflowRuns.find((entry) => entry.smithersRunId === launched.runId);
+    expect(handlerAttentions).toHaveLength(2);
+    expect(workflowRun).toMatchObject({
+      pendingAttentionSeq: null,
+      lastAttentionSeq: expect.any(Number),
+    });
+
+    const run = await manager.getRun(launched.runId);
+    expect(run).toMatchObject({
+      pendingAttentionSeq: null,
+      lastAttentionSeq: workflowRun?.lastAttentionSeq,
+      structuredWorkflowRunId: workflowRun?.id,
+    });
+  });
+
+  it("restores pending workflow supervision from durable state after recreating the manager", async () => {
+    let shouldDeliverAttention = false;
+    const {
+      cwd,
+      agentDir,
+      store,
+      manager,
+      sessionId,
+      threadId,
+      surfacePiSessionId,
+      structuredStateChanges,
+    } = createWorkspaceFixture({
+      onHandlerAttention: async () => shouldDeliverAttention,
+    });
+
+    const launchCommand = createWorkflowCommand({
+      store,
+      sessionId,
+      threadId,
+      surfacePiSessionId,
+      requestSummary: "Launch hello world",
+      title: "Run hello_world",
+      summary: "Launch the hello_world workflow.",
+      toolName: "smithers.run_workflow.hello_world",
+    });
+    const launched = await manager.launchWorkflow({
+      sessionId,
+      threadId,
+      workflowId: "hello_world",
+      launchInput: { message: "recover pending attention" },
+      commandId: launchCommand.commandId,
+    });
+
+    await waitFor("hello_world completion before manager restart", async () => {
+      try {
+        const run = await manager.getRun(launched.runId);
+        return run.status === "finished" && run.pendingAttentionSeq !== null;
+      } catch {
+        return false;
+      }
+    });
+
+    const beforeRestart = store
+      .getSessionState(sessionId)
+      .workflowRuns.find((entry) => entry.smithersRunId === launched.runId);
+    expect(beforeRestart).toMatchObject({
+      pendingAttentionSeq: expect.any(Number),
+      lastAttentionSeq: null,
+    });
+
+    await manager.close();
+    managers.splice(managers.indexOf(manager), 1);
+
+    shouldDeliverAttention = true;
+    const restoredStructuredStateChanges: string[] = [];
+    const restoredHandlerAttentions: HandlerAttentionEvent[] = [];
+    const restoredManager = createManagerHarness({
+      cwd,
+      agentDir,
+      store,
+      structuredStateChanges: restoredStructuredStateChanges,
+      handlerAttentions: restoredHandlerAttentions,
+      onHandlerAttention: async () => shouldDeliverAttention,
+    });
+
+    await restoredManager.restoreSessionSupervision(sessionId);
+
+    const afterRestore = store
+      .getSessionState(sessionId)
+      .workflowRuns.find((entry) => entry.smithersRunId === launched.runId);
+    expect(restoredHandlerAttentions).toHaveLength(1);
+    expect(afterRestore).toMatchObject({
+      id: beforeRestart?.id,
+      pendingAttentionSeq: null,
+      lastAttentionSeq: beforeRestart?.pendingAttentionSeq,
+    });
+    expect(restoredStructuredStateChanges).toContain(sessionId);
+    expect(structuredStateChanges).toContain(sessionId);
+
+    const restoredRun = await restoredManager.getRun(launched.runId);
+    expect(restoredRun).toMatchObject({
+      runId: launched.runId,
+      structuredWorkflowRunId: beforeRestart?.id,
+      threadId,
+      pendingAttentionSeq: null,
+      lastAttentionSeq: beforeRestart?.pendingAttentionSeq,
+    });
+  });
+
   it("waits on approval, resumes the same run after approval, and finishes with the real Smithers monitor path", async () => {
     const { cwd, store, manager, sessionId, threadId, surfacePiSessionId, handlerAttentions } =
       createWorkspaceFixture();
@@ -1261,6 +1436,68 @@ describe("SmithersRuntimeManager", () => {
     expect(snapshot.session.wait).toBeNull();
   });
 
+  it("replays workflow history across multiple Smithers event batches", async () => {
+    const { store, manager, sessionId, threadId, surfacePiSessionId } = createWorkspaceFixture();
+
+    const launchCommand = createWorkflowCommand({
+      store,
+      sessionId,
+      threadId,
+      surfacePiSessionId,
+      requestSummary: "Launch hello world",
+      title: "Run hello_world",
+      summary: "Launch the hello_world workflow.",
+      toolName: "smithers.run_workflow.hello_world",
+    });
+    const launched = await manager.launchWorkflow({
+      sessionId,
+      threadId,
+      workflowId: "hello_world",
+      launchInput: { message: "drain every event batch" },
+      commandId: launchCommand.commandId,
+    });
+
+    await waitFor("hello_world completion", async () => {
+      try {
+        const run = await manager.getRun(launched.runId);
+        return run.status === "finished";
+      } catch {
+        return false;
+      }
+    });
+
+    const before = await manager.getRun(launched.runId);
+    const db = (manager as any).db as {
+      insertEventWithNextSeq(input: {
+        runId: string;
+        timestampMs: number;
+        type: string;
+        payloadJson: string;
+      }): Promise<number>;
+    };
+    let lastInsertedSeq = before.lastEventSeq;
+    for (let index = 0; index < 401; index += 1) {
+      lastInsertedSeq = await db.insertEventWithNextSeq({
+        runId: launched.runId,
+        timestampMs: Date.now() + index,
+        type: "SyntheticEvent",
+        payloadJson: JSON.stringify({
+          type: "SyntheticEvent",
+          index,
+        }),
+      });
+    }
+
+    await (manager as any).flushRunEvents(launched.runId, {
+      emitAttention: false,
+      source: "bootstrap",
+    });
+
+    const after = await manager.getRun(launched.runId);
+    expect(after.lastEventSeq).toBe(lastInsertedSeq);
+    expect(after.lastEventSeq).toBeGreaterThan(before.lastEventSeq + 200);
+  });
+
   it("returns grouped transcript messages for a deterministic real Smithers agent task", async () => {
     const { cwd, store, manager, sessionId, threadId, surfacePiSessionId } =
       createWorkspaceFixture();
@@ -1384,6 +1621,7 @@ describe("SmithersRuntimeManager", () => {
       }),
       onHandlerAttention: async (event) => {
         handlerAttentions.push(event.reason);
+        return false;
       },
       runCommand,
     });

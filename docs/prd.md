@@ -403,9 +403,9 @@ Smithers is not:
 - the main conversation substrate
 - the owner of session-level routing decisions
 
-When `svvy` needs workflow lifecycle state, the intended seam is explicit Smithers bridge events plus official Smithers control-plane reads that write workflow-run and thread facts into structured state.
+When `svvy` needs workflow lifecycle state, the intended seam is write-driven projection from explicit Smithers bridge events, Smithers tool-boundary writes, and official Smithers bootstrap or reconnect control-plane reads that immediately persist workflow-run and thread facts into structured state.
 
-Until those bridge events exist for a lifecycle transition, `svvy` may rely on explicit tool-boundary projections already emitted during Smithers bridge tool calls that launch, resume, inspect, or mutate runs, plus official Smithers reads used for bootstrap, reconnect, or operator inspection.
+Those lifecycle producers are first-class product behavior, not temporary fallback. Operator inspection reads may observe workflow state, but they must not mutate durable lifecycle state as a side effect.
 
 Read paths must not repair workflow state heuristically from transcript replay, ad hoc refresh loops, or renderer polling.
 
@@ -594,7 +594,7 @@ Every user request goes through one orchestrator-controlled product loop:
 6. execute tools through the correct runtime handler
 7. record commands, events, workflow-run state, artifacts, and wait state
 8. update structured state
-9. emit explicit session-sync events that carry the active surface target plus rehydration data whenever prompt settlement or background reconciliation changes what the UI should project
+9. emit explicit session-sync events that carry the active surface target plus rehydration data whenever prompt settlement or background lifecycle writes change what the UI should project
 10. render updated session and pane surfaces from those events plus durable state
 
 Read APIs and renderer code must not compensate for missing lifecycle writes with polling, transcript parsing, or inferred repair logic.
@@ -674,7 +674,7 @@ The intended behavior is:
 - the handler thread may inspect artifacts, inspect workflow state through Smithers-native bridge tools, edit the workflow, repair inputs, start a replacement run, resume only when Smithers resume preconditions still hold, ask the user, or explicitly close the objective
 - only the handler thread's handoff is returned to the orchestrator: terminal thread state plus the latest handoff episode
 
-Duplicate observation of the same terminal workflow state is legitimate during final stream flushes or later reconciliation reads.
+Duplicate observation of the same terminal workflow state is legitimate during final stream flushes or later bootstrap or reconnect control-plane reads.
 
 That duplication must be handled as idempotent projection, not as a reason to reopen a thread the handler already handed back.
 
