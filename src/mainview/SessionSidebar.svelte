@@ -9,6 +9,7 @@
     branch?: string;
     sessions: WorkspaceSessionSummary[];
     activeSessionId?: string;
+    activeSurface?: "orchestrator" | "thread";
     busy?: boolean;
     errorMessage?: string;
     onCreateSession: () => void;
@@ -23,6 +24,7 @@
     branch,
     sessions,
     activeSessionId,
+    activeSurface,
     busy = false,
     errorMessage,
     onCreateSession,
@@ -69,6 +71,7 @@
       {#each sessions as session (session.id)}
         <SessionListItem
           active={session.id === activeSessionId}
+          activeSurface={session.id === activeSessionId ? activeSurface : undefined}
           disabled={busy && session.id !== activeSessionId}
           {session}
           onOpen={() => onOpenSession(session.id)}

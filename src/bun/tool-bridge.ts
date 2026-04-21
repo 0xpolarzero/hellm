@@ -34,17 +34,17 @@ type ToolBridgeInstance = {
   }) => void;
 };
 
-type ActiveWorkspaceSession = {
+type OpenSurfaceSnapshot = {
   messages: unknown[];
   model: string;
   provider: string;
   reasoningEffort: string;
-  session: unknown;
   systemPrompt: string;
-} | null;
+  promptStatus: string;
+  target: unknown;
+};
 
 type WorkspaceSessionsState = {
-  activeSessionId?: string | null;
   sessions: unknown[];
 };
 
@@ -52,12 +52,12 @@ type ToolBridgeState = Record<string, Record<string, unknown>>;
 
 type CreateSvvyToolBridgeOptions = {
   defaultSystemPrompt: string;
-  getActiveWorkspaceSession: () => Promise<ActiveWorkspaceSession>;
   getDefaultChatSettings: () => ChatDefaults;
   getMainWindow: () => BrowserWindow | null;
   getWorkspaceCwd: () => string;
   getWorkspaceBranch: (cwd: string) => string | undefined;
   listProviderAuthSummaries: () => ProviderAuthInfo[];
+  listOpenSurfaceSnapshots: () => Promise<OpenSurfaceSnapshot[]>;
   listWorkspaceSessions: () => Promise<WorkspaceSessionsState>;
 };
 
@@ -83,7 +83,7 @@ export function createSvvyToolBridge(options: CreateSvvyToolBridgeOptions) {
     const cwd = options.getWorkspaceCwd();
     const defaults = options.getDefaultChatSettings();
     const sessions = await options.listWorkspaceSessions();
-    const activeSession = await options.getActiveWorkspaceSession();
+    const openSurfaces = await options.listOpenSurfaceSnapshots();
     const providerAuths = options.listProviderAuthSummaries();
 
     return {
@@ -103,19 +103,20 @@ export function createSvvyToolBridge(options: CreateSvvyToolBridgeOptions) {
         total: providerAuths.length,
       },
       sessions: {
-        active: activeSession
-          ? {
-              messageCount: activeSession.messages.length,
-              model: activeSession.model,
-              provider: activeSession.provider,
-              reasoningEffort: activeSession.reasoningEffort,
-              session: activeSession.session,
-              systemPrompt: activeSession.systemPrompt,
-            }
-          : null,
-        activeSessionId: sessions.activeSessionId ?? null,
         summaries: sessions.sessions,
         total: sessions.sessions.length,
+      },
+      surfaces: {
+        items: openSurfaces.map((surface) => ({
+          messageCount: surface.messages.length,
+          model: surface.model,
+          promptStatus: surface.promptStatus,
+          provider: surface.provider,
+          reasoningEffort: surface.reasoningEffort,
+          systemPrompt: surface.systemPrompt,
+          target: surface.target,
+        })),
+        total: openSurfaces.length,
       },
     };
   }

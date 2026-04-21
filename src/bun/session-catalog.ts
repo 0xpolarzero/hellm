@@ -22,13 +22,14 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type {
-  ActiveSessionState,
+  ConversationSurfaceSnapshot,
   CreateSessionRequest,
   ForkSessionRequest,
   ListSessionsResponse,
   PromptTarget,
-  SessionSyncMessage,
-  SessionMutationResponse,
+  SurfaceSyncMessage,
+  WorkspaceMutationResponse,
+  WorkspaceSyncMessage,
   WorkspaceCommandInspector,
   WorkspaceHandlerThreadInspector,
   WorkspaceHandlerThreadSummary,
@@ -101,6 +102,7 @@ interface ManagedSession {
   activePrompt: boolean;
   recreateOnNextPrompt: boolean;
   abortRequested: boolean;
+  retainCount: number;
   promptExecutionRuntime: PromptExecutionRuntimeHandle;
 }
 
@@ -140,11 +142,11 @@ interface PromptSyncCursor {
 type WorkspaceSessionInfo = Awaited<ReturnType<typeof SessionManager.list>>[number];
 
 export class WorkspaceSessionCatalog {
-  private activeSession: ManagedSession | null = null;
-  private activeTarget: PromptTarget | null = null;
+  private readonly managedSurfaces = new Map<string, ManagedSession>();
   private readonly structuredSessionStore: StructuredSessionStateStore;
   private readonly smithersRuntimeManager: SmithersRuntimeManager;
-  private sessionSyncListener: ((payload: SessionSyncMessage) => void) | null = null;
+  private workspaceSyncListener: ((payload: WorkspaceSyncMessage) => void) | null = null;
+  private surfaceSyncListener: ((payload: SurfaceSyncMessage) => void) | null = null;
 
   constructor(
     private readonly cwd: string = resolveWorkspaceCwd(),
@@ -176,10 +178,7 @@ export class WorkspaceSessionCatalog {
         await this.emitStructuredStateSync(sessionId);
       },
       onHandlerAttention: async (event) => {
-        return await this.resumeHandlerAfterWorkflowAttention(
-          event,
-          buildSystemPrompt("handler"),
-        );
+        return await this.resumeHandlerAfterWorkflowAttention(event, buildSystemPrompt("handler"));
       },
     });
   }
@@ -189,60 +188,48 @@ export class WorkspaceSessionCatalog {
   }
 
   async dispose(): Promise<void> {
-    this.activeSession?.session.dispose();
-    this.activeSession = null;
+    for (const session of this.managedSurfaces.values()) {
+      session.session.dispose();
+    }
+    this.managedSurfaces.clear();
     await this.smithersRuntimeManager.close();
     this.structuredSessionStore.close();
   }
 
-  setSessionSyncListener(listener: ((payload: SessionSyncMessage) => void) | null): void {
-    this.sessionSyncListener = listener;
+  setWorkspaceSyncListener(listener: ((payload: WorkspaceSyncMessage) => void) | null): void {
+    this.workspaceSyncListener = listener;
+  }
+
+  setSurfaceSyncListener(listener: ((payload: SurfaceSyncMessage) => void) | null): void {
+    this.surfaceSyncListener = listener;
   }
 
   async listSessions(): Promise<ListSessionsResponse> {
     const infos = await SessionManager.list(this.cwd, this.sessionDir);
     const summaries = new Map<string, WorkspaceSessionSummary>();
-    const activeTarget = this.getActivePromptTarget();
 
     for (const info of infos) {
-      if (
-        activeTarget?.surface === "orchestrator" &&
-        this.activeSession &&
-        this.activeSession.sessionId === info.id
-      ) {
-        summaries.set(info.id, this.buildSummaryFromManagedSession(this.activeSession));
+      const orchestratorSurface = this.managedSurfaces.get(info.id);
+      if (orchestratorSurface) {
+        summaries.set(info.id, this.buildSummaryFromManagedSession(orchestratorSurface));
         continue;
       }
 
       summaries.set(info.id, this.buildSummaryFromSessionInfo(info));
     }
 
-    if (
-      activeTarget?.surface === "orchestrator" &&
-      this.activeSession &&
-      !summaries.has(activeTarget.workspaceSessionId)
-    ) {
-      summaries.set(
-        activeTarget.workspaceSessionId,
-        this.buildSummaryFromManagedSession(this.activeSession),
-      );
+    for (const surface of this.managedSurfaces.values()) {
+      if (surface.actorProfile !== "orchestrator" || summaries.has(surface.sessionId)) {
+        continue;
+      }
+      summaries.set(surface.sessionId, this.buildSummaryFromManagedSession(surface));
     }
 
     return {
-      activeSessionId: activeTarget?.workspaceSessionId,
       sessions: Array.from(summaries.values()).toSorted(
         (left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
       ),
     };
-  }
-
-  async getActiveSession(): Promise<ActiveSessionState | null> {
-    const activeTarget = this.getActivePromptTarget();
-    if (!this.activeSession || !activeTarget) {
-      return null;
-    }
-
-    return this.buildActiveSessionState(this.activeSession, activeTarget);
   }
 
   async getCommandInspector(input: {
@@ -291,9 +278,7 @@ export class WorkspaceSessionCatalog {
   async createSession(
     request: CreateSessionRequest,
     defaults: SessionDefaults,
-  ): Promise<ActiveSessionState> {
-    this.assertCanSwitchSessions();
-
+  ): Promise<ConversationSurfaceSnapshot> {
     const parentSessionFile = request.parentSessionId
       ? await this.getSessionFileForId(request.parentSessionId)
       : undefined;
@@ -303,7 +288,7 @@ export class WorkspaceSessionCatalog {
     }
     sessionManager.appendSessionInfo(request.title?.trim() || "New Session");
 
-    const session = await this.activateManagedSession({
+    const session = await this.createManagedSurfaceRecord({
       sessionManager,
       actorProfile: "orchestrator",
       provider: defaults.provider,
@@ -312,46 +297,48 @@ export class WorkspaceSessionCatalog {
       systemPrompt: buildSystemPrompt("orchestrator"),
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
-    this.activeTarget = target;
+    session.retainCount += 1;
     this.syncStructuredPiSessionFromOrchestratorSession(session);
     this.persistManagedSessionSnapshot(session);
-
-    return this.buildActiveSessionState(session, target);
+    await this.emitWorkspaceSync("workspace.updated");
+    return this.buildSurfaceSnapshot(session, target);
   }
 
-  async openSession(sessionId: string, systemPrompt?: string): Promise<ActiveSessionState> {
+  async openSession(
+    sessionId: string,
+    systemPrompt?: string,
+  ): Promise<ConversationSurfaceSnapshot> {
     return this.openSurface(
       this.buildOrchestratorPromptTarget(sessionId),
       systemPrompt ?? buildSystemPrompt("orchestrator"),
     );
   }
 
-  async openSurface(target: PromptTarget, systemPrompt?: string): Promise<ActiveSessionState> {
+  async openSurface(
+    target: PromptTarget,
+    systemPrompt?: string,
+  ): Promise<ConversationSurfaceSnapshot> {
     this.assertValidPromptTarget(target);
-    const actorProfile = getActorProfileForTarget(target);
-    const session = await this.openSurfaceSessionInternal(
-      target.surfacePiSessionId,
-      actorProfile,
-      systemPrompt ?? buildSystemPrompt(actorProfile),
+    const session = await this.retainManagedSurface(
+      target,
+      systemPrompt ?? buildSystemPrompt(getActorProfileForTarget(target)),
     );
-    this.activeTarget = structuredClone(target);
     await this.restoreWorkflowSupervisionIfTracked(target.workspaceSessionId);
-    return this.buildActiveSessionState(session, target);
+    return this.buildSurfaceSnapshot(session, target);
   }
 
-  async renameSession(sessionId: string, title: string): Promise<SessionMutationResponse> {
+  async closeSurface(target: PromptTarget): Promise<WorkspaceMutationResponse> {
+    await this.releaseManagedSurface(target.surfacePiSessionId);
+    return { ok: true };
+  }
+
+  async renameSession(sessionId: string, title: string): Promise<WorkspaceMutationResponse> {
     const trimmedTitle = title.trim();
     if (!trimmedTitle) {
       throw new Error("Session title cannot be empty.");
     }
 
-    const activeOrchestrator =
-      this.activeSession &&
-      this.activeTarget?.surface === "orchestrator" &&
-      this.activeTarget.workspaceSessionId === sessionId &&
-      this.activeSession.sessionId === this.activeTarget.surfacePiSessionId
-        ? this.activeSession
-        : null;
+    const activeOrchestrator = this.managedSurfaces.get(sessionId) ?? null;
 
     if (activeOrchestrator) {
       activeOrchestrator.session.sessionManager.appendSessionInfo(trimmedTitle);
@@ -360,30 +347,26 @@ export class WorkspaceSessionCatalog {
       SessionManager.open(sessionFile!, this.sessionDir).appendSessionInfo(trimmedTitle);
     }
     await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
+    await this.emitWorkspaceSync("workspace.updated");
 
-    return {
-      ok: true,
-      activeSessionId: this.getActiveWorkspaceSessionId(),
-    };
+    return { ok: true };
   }
 
   async forkSession(
     request: ForkSessionRequest,
     defaults: SessionDefaults,
-  ): Promise<ActiveSessionState> {
-    this.assertCanSwitchSessions();
-
+  ): Promise<ConversationSurfaceSnapshot> {
     const sourceSessionFile = await this.getSessionFileForId(request.sessionId, false);
     if (!sourceSessionFile || !existsSync(sourceSessionFile)) {
-      const fallbackDefaults =
-        this.getActiveWorkspaceSessionId() === request.sessionId && this.activeSession
-          ? {
-              provider: this.activeSession.provider,
-              model: this.activeSession.model,
-              thinkingLevel: this.activeSession.thinkingLevel,
-              systemPrompt: this.activeSession.systemPrompt,
-            }
-          : defaults;
+      const activeOrchestrator = this.managedSurfaces.get(request.sessionId) ?? null;
+      const fallbackDefaults = activeOrchestrator
+        ? {
+            provider: activeOrchestrator.provider,
+            model: activeOrchestrator.model,
+            thinkingLevel: activeOrchestrator.thinkingLevel,
+            systemPrompt: activeOrchestrator.systemPrompt,
+          }
+        : defaults;
       return this.createSession({ title: request.title }, fallbackDefaults);
     }
 
@@ -396,78 +379,56 @@ export class WorkspaceSessionCatalog {
       forkedSessionManager.appendSessionInfo(request.title);
     }
 
-    const session = await this.activateManagedSession({
+    const session = await this.createManagedSurfaceRecord({
       sessionManager: forkedSessionManager,
       actorProfile: "orchestrator",
       systemPrompt: buildSystemPrompt("orchestrator"),
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
-    this.activeTarget = target;
+    session.retainCount += 1;
     this.syncStructuredPiSessionFromOrchestratorSession(session);
-    return this.buildActiveSessionState(session, target);
+    await this.emitWorkspaceSync("workspace.updated");
+    return this.buildSurfaceSnapshot(session, target);
   }
 
-  async deleteSession(
-    sessionId: string,
-    defaults: SessionDefaults,
-  ): Promise<SessionMutationResponse> {
-    const activeWorkspaceSessionId = this.getActiveWorkspaceSessionId();
-    if (activeWorkspaceSessionId === sessionId && this.activeSession?.activePrompt) {
-      throw new Error("Cannot delete a session while it is streaming.");
+  async deleteSession(sessionId: string): Promise<WorkspaceMutationResponse> {
+    const managedSurfaces = Array.from(this.managedSurfaces.values()).filter((surface) => {
+      return (
+        this.resolvePromptTargetForSurfacePiSessionId(surface.sessionId).workspaceSessionId ===
+        sessionId
+      );
+    });
+    if (managedSurfaces.some((surface) => surface.activePrompt)) {
+      throw new Error("Cannot delete a session while one of its surfaces is streaming.");
     }
 
-    const deletingActiveSession = activeWorkspaceSessionId === sessionId;
     const sessionFile = await this.getSessionFileForId(sessionId, false);
+    const structuredSnapshot = this.getStructuredSnapshot(sessionId);
 
-    if (deletingActiveSession) {
-      this.activeSession?.session.dispose();
-      this.activeSession = null;
-      this.activeTarget = null;
+    for (const surface of managedSurfaces) {
+      surface.session.dispose();
+      this.managedSurfaces.delete(surface.sessionId);
+      await this.emitSurfaceClosed(
+        this.resolvePromptTargetForSurfacePiSessionId(surface.sessionId),
+      );
     }
 
     if (sessionFile && existsSync(sessionFile)) {
       unlinkSync(sessionFile);
     }
-
-    if (!deletingActiveSession) {
-      return {
-        ok: true,
-        activeSessionId: this.getActiveWorkspaceSessionId(),
-      };
+    for (const thread of structuredSnapshot?.threads ?? []) {
+      const threadSessionFile = await this.getSessionFileForId(thread.surfacePiSessionId, false);
+      if (threadSessionFile && existsSync(threadSessionFile)) {
+        unlinkSync(threadSessionFile);
+      }
     }
-
-    const remainingSessions = await SessionManager.list(this.cwd, this.sessionDir);
-    if (remainingSessions.length === 0) {
-      const activeSession = await this.createSession({}, defaults);
-      return {
-        ok: true,
-        activeSessionId: activeSession.session.id,
-        activeSession,
-      };
-    }
-
-    const [nextSessionInfo] = remainingSessions;
-    if (!nextSessionInfo) {
-      throw new Error("Expected a remaining session after deletion.");
-    }
-
-    const nextTarget = this.buildOrchestratorPromptTarget(nextSessionInfo.id);
-    const nextActiveSession = await this.openSurfaceSessionInternal(
-      nextTarget.surfacePiSessionId,
-      "orchestrator",
-      buildSystemPrompt("orchestrator"),
-    );
-    this.activeTarget = nextTarget;
-    return {
-      ok: true,
-      activeSessionId: nextTarget.workspaceSessionId,
-      activeSession: await this.buildActiveSessionState(nextActiveSession, nextTarget),
-    };
+    await this.emitWorkspaceSync("workspace.updated");
+    return { ok: true };
   }
 
   async sendPrompt(options: SendAgentPromptOptions): Promise<{ target: PromptTarget }> {
     this.assertValidPromptTarget(options.target);
-    const session = await this.ensureSessionForPrompt(options);
+    const session = await this.ensureManagedSurfaceForPrompt(options);
     if (session.activePrompt) {
       throw new Error(`Session ${session.sessionId} is already streaming.`);
     }
@@ -490,140 +451,144 @@ export class WorkspaceSessionCatalog {
     };
   }
 
-  async cancelPrompt(surfacePiSessionId: string): Promise<void> {
-    if (
-      !this.activeSession ||
-      this.activeSession.sessionId !== surfacePiSessionId ||
-      !this.activeSession.activePrompt
-    ) {
+  async cancelPrompt(target: PromptTarget): Promise<void> {
+    const session = this.managedSurfaces.get(target.surfacePiSessionId);
+    if (!session?.activePrompt) {
       return;
     }
 
-    this.activeSession.abortRequested = true;
-    await this.activeSession.session.abort();
+    session.abortRequested = true;
+    await session.session.abort();
   }
 
-  async setSessionModel(
-    surfacePiSessionId: string,
+  async setSurfaceModel(
+    target: PromptTarget,
     model: string,
-  ): Promise<{ ok: boolean; sessionId: string }> {
-    if (!this.activeSession || this.activeSession.sessionId !== surfacePiSessionId) {
-      return { ok: false, sessionId: surfacePiSessionId };
+  ): Promise<{ ok: boolean; target: PromptTarget }> {
+    const session = this.managedSurfaces.get(target.surfacePiSessionId);
+    if (!session) {
+      return { ok: false, target: structuredClone(target) };
     }
 
-    this.activeSession.model = model;
-    this.activeSession.recreateOnNextPrompt = true;
+    session.model = model;
+    session.recreateOnNextPrompt = true;
 
-    if (this.activeSession.activePrompt) {
-      return { ok: true, sessionId: surfacePiSessionId };
+    if (session.activePrompt) {
+      return { ok: true, target: structuredClone(target) };
     }
 
     try {
-      syncAuthStorage(this.activeSession.authStorage);
-      const resolvedModel = resolveRegisteredModel(
-        this.activeSession.modelRegistry,
-        this.activeSession.provider,
-        model,
-      );
+      syncAuthStorage(session.authStorage);
+      const resolvedModel = resolveRegisteredModel(session.modelRegistry, session.provider, model);
       if (resolvedModel) {
-        await this.activeSession.session.setModel(resolvedModel);
-        this.activeSession.recreateOnNextPrompt = false;
-        this.syncManagedState(this.activeSession);
-        if (this.activeTarget?.surface === "orchestrator") {
-          this.syncStructuredPiSessionFromOrchestratorSession(this.activeSession);
+        await session.session.setModel(resolvedModel);
+        session.recreateOnNextPrompt = false;
+        this.syncManagedState(session);
+        if (target.surface === "orchestrator") {
+          this.syncStructuredPiSessionFromOrchestratorSession(session);
         }
       }
     } catch {
       // Fall back to recreating on the next prompt.
     }
 
-    return { ok: true, sessionId: surfacePiSessionId };
+    await this.emitSurfaceSync({
+      reason: "surface.updated",
+      session,
+      target,
+    });
+    await this.emitWorkspaceSync("workspace.updated");
+    return { ok: true, target: structuredClone(target) };
   }
 
-  async setSessionThoughtLevel(
-    surfacePiSessionId: string,
+  async setSurfaceThoughtLevel(
+    target: PromptTarget,
     level: ThinkingLevel,
-  ): Promise<{ ok: boolean; sessionId: string }> {
-    if (!this.activeSession || this.activeSession.sessionId !== surfacePiSessionId) {
-      return { ok: false, sessionId: surfacePiSessionId };
+  ): Promise<{ ok: boolean; target: PromptTarget }> {
+    const session = this.managedSurfaces.get(target.surfacePiSessionId);
+    if (!session) {
+      return { ok: false, target: structuredClone(target) };
     }
 
-    this.activeSession.thinkingLevel = level;
+    session.thinkingLevel = level;
 
-    if (this.activeSession.activePrompt) {
-      this.activeSession.recreateOnNextPrompt = true;
-      return { ok: true, sessionId: surfacePiSessionId };
+    if (session.activePrompt) {
+      session.recreateOnNextPrompt = true;
+      return { ok: true, target: structuredClone(target) };
     }
 
-    this.activeSession.session.setThinkingLevel(level);
-    this.syncManagedState(this.activeSession);
-    if (this.activeTarget?.surface === "orchestrator") {
-      this.syncStructuredPiSessionFromOrchestratorSession(this.activeSession);
+    session.session.setThinkingLevel(level);
+    this.syncManagedState(session);
+    if (target.surface === "orchestrator") {
+      this.syncStructuredPiSessionFromOrchestratorSession(session);
     }
-    return { ok: true, sessionId: surfacePiSessionId };
+    await this.emitSurfaceSync({
+      reason: "surface.updated",
+      session,
+      target,
+    });
+    await this.emitWorkspaceSync("workspace.updated");
+    return { ok: true, target: structuredClone(target) };
   }
 
-  private assertCanSwitchSessions(): void {
-    if (this.activeSession?.activePrompt) {
-      throw new Error("Cannot switch sessions while a prompt is streaming.");
-    }
+  private async ensureManagedSurfaceForPrompt(
+    options: SendAgentPromptOptions,
+  ): Promise<ManagedSession> {
+    const actorProfile = getActorProfileForTarget(options.target);
+    const session = await this.loadManagedSurface(
+      options.target.surfacePiSessionId,
+      actorProfile,
+      buildSystemPrompt(actorProfile),
+    );
+    await this.restoreWorkflowSupervisionIfTracked(options.target.workspaceSessionId);
+    return this.prepareManagedSession(session, options);
   }
 
-  private async ensureSessionForPrompt(options: SendAgentPromptOptions): Promise<ManagedSession> {
-    if (!this.activeSession) {
-      const actorProfile = getActorProfileForTarget(options.target);
-      const session = await this.openSurfaceSessionInternal(
-        options.target.surfacePiSessionId,
-        actorProfile,
-        buildSystemPrompt(actorProfile),
-      );
-      this.activeTarget = structuredClone(options.target);
-      await this.restoreWorkflowSupervisionIfTracked(options.target.workspaceSessionId);
-      return this.prepareManagedSession(session, options);
-    }
-
-    if (this.activeSession.sessionId !== options.target.surfacePiSessionId) {
-      const actorProfile = getActorProfileForTarget(options.target);
-      const session = await this.openSurfaceSessionInternal(
-        options.target.surfacePiSessionId,
-        actorProfile,
-        buildSystemPrompt(actorProfile),
-      );
-      this.activeTarget = structuredClone(options.target);
-      await this.restoreWorkflowSupervisionIfTracked(options.target.workspaceSessionId);
-      return this.prepareManagedSession(session, options);
-    }
-
-    this.activeTarget = structuredClone(options.target);
-    return this.prepareManagedSession(this.activeSession, options);
+  private async retainManagedSurface(
+    target: PromptTarget,
+    systemPrompt: string,
+  ): Promise<ManagedSession> {
+    const session = await this.loadManagedSurface(
+      target.surfacePiSessionId,
+      getActorProfileForTarget(target),
+      systemPrompt,
+    );
+    session.retainCount += 1;
+    return session;
   }
 
-  private async openSurfaceSessionInternal(
+  private async loadManagedSurface(
     surfacePiSessionId: string,
     actorProfile: SvvyActorProfile,
     systemPrompt = buildSystemPrompt(actorProfile),
   ): Promise<ManagedSession> {
-    if (this.activeSession?.sessionId === surfacePiSessionId) {
-      if (
-        this.activeSession.actorProfile === actorProfile &&
-        this.activeSession.systemPrompt === systemPrompt
-      ) {
-        return this.activeSession;
+    const existing = this.managedSurfaces.get(surfacePiSessionId);
+    if (existing) {
+      if (existing.actorProfile === actorProfile && existing.systemPrompt === systemPrompt) {
+        return existing;
       }
-      return this.recreateActiveSession(this.activeSession, {
+      return this.recreateManagedSurface(existing, {
         actorProfile,
         systemPrompt,
       });
     }
 
-    this.assertCanSwitchSessions();
-
     const sessionFile = await this.getSessionFileForId(surfacePiSessionId);
-    return this.activateManagedSession({
+    return this.createManagedSurfaceRecord({
       sessionManager: SessionManager.open(sessionFile!, dirname(sessionFile!)),
       actorProfile,
       systemPrompt,
     });
+  }
+
+  private async releaseManagedSurface(surfacePiSessionId: string): Promise<void> {
+    const session = this.managedSurfaces.get(surfacePiSessionId);
+    if (!session) {
+      return;
+    }
+
+    session.retainCount = Math.max(0, session.retainCount - 1);
+    await this.disposeManagedSurfaceIfUnused(session);
   }
 
   private async prepareManagedSession(
@@ -647,7 +612,7 @@ export class WorkspaceSessionCatalog {
       session.recreateOnNextPrompt ||
       session.smithersToolSurfaceVersion !== currentSmithersToolSurfaceVersion
     ) {
-      return this.recreateActiveSession(session, {
+      return this.recreateManagedSurface(session, {
         actorProfile,
         provider: options.provider,
         model: options.model,
@@ -662,7 +627,7 @@ export class WorkspaceSessionCatalog {
     }
 
     if (session.systemPrompt !== resolvedSystemPrompt) {
-      return this.recreateActiveSession(session, {
+      return this.recreateManagedSurface(session, {
         actorProfile,
         systemPrompt: resolvedSystemPrompt,
       });
@@ -672,7 +637,7 @@ export class WorkspaceSessionCatalog {
       session.promptSyncCursor.messageCount > 0 &&
       !canAppendLatestUserTurn(session.promptSyncCursor, options.messages)
     ) {
-      return this.recreateActiveSession(session, {
+      return this.recreateManagedSurface(session, {
         actorProfile,
         systemPrompt: resolvedSystemPrompt,
       });
@@ -681,7 +646,7 @@ export class WorkspaceSessionCatalog {
     return session;
   }
 
-  private async recreateActiveSession(
+  private async recreateManagedSurface(
     session: ManagedSession,
     overrides: Partial<
       Pick<ManagedSession, "actorProfile" | "provider" | "model" | "thinkingLevel" | "systemPrompt">
@@ -707,14 +672,14 @@ export class WorkspaceSessionCatalog {
       createHandlerThread: this.createHandlerThread.bind(this),
       smithersRuntimeManager: this.smithersRuntimeManager,
     });
-    this.activeSession = nextSession;
+    nextSession.retainCount = session.retainCount;
+    this.managedSurfaces.set(nextSession.sessionId, nextSession);
     return nextSession;
   }
 
-  private async activateManagedSession(
+  private async createManagedSurfaceRecord(
     options: CreateManagedSessionOptions,
   ): Promise<ManagedSession> {
-    this.activeSession?.session.dispose();
     const session = await createManagedSession({
       ...options,
       agentDir: this.agentDir,
@@ -722,8 +687,17 @@ export class WorkspaceSessionCatalog {
       createHandlerThread: this.createHandlerThread.bind(this),
       smithersRuntimeManager: this.smithersRuntimeManager,
     });
-    this.activeSession = session;
+    this.managedSurfaces.set(session.sessionId, session);
     return session;
+  }
+
+  private async disposeManagedSurfaceIfUnused(session: ManagedSession): Promise<void> {
+    if (session.retainCount > 0 || session.activePrompt) {
+      return;
+    }
+    session.session.dispose();
+    this.managedSurfaces.delete(session.sessionId);
+    await this.emitSurfaceClosed(this.resolvePromptTargetForSurfacePiSessionId(session.sessionId));
   }
 
   private buildLiveSummaryFromManagedSession(session: ManagedSession): WorkspaceSessionSummary {
@@ -750,14 +724,6 @@ export class WorkspaceSessionCatalog {
     );
   }
 
-  private buildSummaryFromStructuredSnapshot(
-    snapshot: StructuredSessionSnapshot,
-  ): WorkspaceSessionSummary {
-    return this.decorateSummaryWithStructuredProjection(
-      this.projectSummaryFromStructuredSnapshot(snapshot),
-    );
-  }
-
   private projectSummaryFromStructuredSnapshot(
     snapshot: StructuredSessionSnapshot,
   ): WorkspaceSessionSummary {
@@ -780,39 +746,24 @@ export class WorkspaceSessionCatalog {
     };
   }
 
-  private async buildWorkspaceSessionSummary(
-    workspaceSessionId: string,
-  ): Promise<WorkspaceSessionSummary> {
-    const activeTarget = this.getActivePromptTarget();
-    if (
-      activeTarget?.surface === "orchestrator" &&
-      activeTarget.workspaceSessionId === workspaceSessionId &&
-      this.activeSession &&
-      this.activeSession.sessionId === workspaceSessionId
-    ) {
-      return this.buildSummaryFromManagedSession(this.activeSession);
+  async listOpenSurfaceSnapshots(): Promise<ConversationSurfaceSnapshot[]> {
+    const snapshots: ConversationSurfaceSnapshot[] = [];
+    for (const session of this.managedSurfaces.values()) {
+      snapshots.push(
+        await this.buildSurfaceSnapshot(
+          session,
+          this.resolvePromptTargetForSurfacePiSessionId(session.sessionId),
+        ),
+      );
     }
-
-    const infos = await SessionManager.list(this.cwd, this.sessionDir);
-    const info = infos.find((candidate) => candidate.id === workspaceSessionId);
-    if (info) {
-      return this.buildSummaryFromSessionInfo(info);
-    }
-
-    const snapshot = this.getStructuredSnapshot(workspaceSessionId);
-    if (snapshot) {
-      return this.buildSummaryFromStructuredSnapshot(snapshot);
-    }
-
-    throw new Error(`Workspace session ${workspaceSessionId} not found.`);
+    return snapshots;
   }
 
-  private async buildActiveSessionState(
+  private async buildSurfaceSnapshot(
     session: ManagedSession,
     target: PromptTarget,
-  ): Promise<ActiveSessionState> {
+  ): Promise<ConversationSurfaceSnapshot> {
     return {
-      session: await this.buildWorkspaceSessionSummary(target.workspaceSessionId),
       target: structuredClone(target),
       provider: session.provider,
       model: session.model,
@@ -820,56 +771,70 @@ export class WorkspaceSessionCatalog {
       systemPrompt: session.systemPrompt,
       resolvedSystemPrompt: getResolvedSystemPrompt(session),
       messages: structuredClone(session.session.agent.state.messages),
+      promptStatus: session.activePrompt ? "streaming" : "idle",
     };
   }
 
-  private async emitSessionSync(input: {
+  private async emitSurfaceSync(input: {
     session: ManagedSession;
-    reason: SessionSyncMessage["reason"];
+    reason: SurfaceSyncMessage["reason"];
     target: PromptTarget;
   }): Promise<void> {
-    if (!this.sessionSyncListener) {
+    if (!this.surfaceSyncListener) {
       return;
     }
 
     try {
-      const [activeSession, listed] = await Promise.all([
-        this.buildActiveSessionState(input.session, input.target),
-        this.listSessions(),
-      ]);
-      this.sessionSyncListener({
+      this.surfaceSyncListener({
         reason: input.reason,
-        activeSession,
-        sessions: listed.sessions,
+        target: structuredClone(input.target),
+        snapshot: await this.buildSurfaceSnapshot(input.session, input.target),
       });
     } catch (error) {
-      console.error("Failed to emit session sync payload:", error);
+      console.error("Failed to emit surface sync payload:", error);
     }
   }
 
   private async emitStructuredStateSync(sessionId: string): Promise<void> {
-    if (!this.sessionSyncListener || !this.activeSession) {
+    await this.emitWorkspaceSync("structured.updated");
+    const orchestratorSurface = this.managedSurfaces.get(sessionId);
+    if (!orchestratorSurface) {
       return;
     }
+    try {
+      await this.emitSurfaceSync({
+        reason: "surface.updated",
+        session: orchestratorSurface,
+        target: this.buildOrchestratorPromptTarget(sessionId),
+      });
+    } catch (error) {
+      console.error(`Failed to emit structured surface sync for ${sessionId}:`, error);
+    }
+  }
 
-    const activeTarget = this.getActivePromptTarget();
-    if (!activeTarget) {
+  private async emitWorkspaceSync(reason: WorkspaceSyncMessage["reason"]): Promise<void> {
+    if (!this.workspaceSyncListener) {
       return;
     }
 
     try {
-      const [activeSession, listed] = await Promise.all([
-        this.buildActiveSessionState(this.activeSession, activeTarget),
-        this.listSessions(),
-      ]);
-      this.sessionSyncListener({
-        reason: "structured.updated",
-        activeSession,
-        sessions: listed.sessions,
+      this.workspaceSyncListener({
+        reason,
+        sessions: (await this.listSessions()).sessions,
       });
     } catch (error) {
-      console.error(`Failed to emit structured session sync for ${sessionId}:`, error);
+      console.error("Failed to emit workspace sync payload:", error);
     }
+  }
+
+  private async emitSurfaceClosed(target: PromptTarget): Promise<void> {
+    if (!this.surfaceSyncListener) {
+      return;
+    }
+    this.surfaceSyncListener({
+      reason: "surface.closed",
+      target: structuredClone(target),
+    });
   }
 
   private async restoreWorkflowSupervisionIfTracked(sessionId: string): Promise<void> {
@@ -890,10 +855,6 @@ export class WorkspaceSessionCatalog {
   }
 
   private resolvePromptTargetForSurfacePiSessionId(surfacePiSessionId: string): PromptTarget {
-    if (this.activeSession?.sessionId === surfacePiSessionId && this.activeTarget) {
-      return structuredClone(this.activeTarget);
-    }
-
     for (const session of this.structuredSessionStore.listSessionStates()) {
       const thread = session.threads.find(
         (candidate) => candidate.surfacePiSessionId === surfacePiSessionId,
@@ -909,20 +870,6 @@ export class WorkspaceSessionCatalog {
     }
 
     return this.buildOrchestratorPromptTarget(surfacePiSessionId);
-  }
-
-  private getActivePromptTarget(): PromptTarget | null {
-    if (!this.activeSession) {
-      return null;
-    }
-
-    return this.activeTarget
-      ? structuredClone(this.activeTarget)
-      : this.resolvePromptTargetForSurfacePiSessionId(this.activeSession.sessionId);
-  }
-
-  private getActiveWorkspaceSessionId(): string | undefined {
-    return this.getActivePromptTarget()?.workspaceSessionId;
   }
 
   private assertValidPromptTarget(target: PromptTarget): void {
@@ -997,14 +944,9 @@ export class WorkspaceSessionCatalog {
   private async syncStructuredPiSessionFromWorkspaceSession(
     workspaceSessionId: string,
   ): Promise<void> {
-    const activeTarget = this.getActivePromptTarget();
-    if (
-      activeTarget?.surface === "orchestrator" &&
-      activeTarget.workspaceSessionId === workspaceSessionId &&
-      this.activeSession &&
-      this.activeSession.sessionId === workspaceSessionId
-    ) {
-      this.syncStructuredPiSessionFromOrchestratorSession(this.activeSession);
+    const orchestratorSurface = this.managedSurfaces.get(workspaceSessionId);
+    if (orchestratorSurface) {
+      this.syncStructuredPiSessionFromOrchestratorSession(orchestratorSurface);
       return;
     }
 
@@ -1142,8 +1084,9 @@ export class WorkspaceSessionCatalog {
     sessionId: string,
     required = true,
   ): Promise<string | undefined> {
-    if (this.activeSession?.sessionId === sessionId) {
-      return this.activeSession.session.sessionManager.getSessionFile();
+    const managedSurface = this.managedSurfaces.get(sessionId);
+    if (managedSurface) {
+      return managedSurface.session.sessionManager.getSessionFile();
     }
 
     for (const sessionDir of [this.sessionDir, this.threadSurfaceDir]) {
@@ -1320,11 +1263,12 @@ export class WorkspaceSessionCatalog {
         if (options.target.surface === "orchestrator") {
           this.syncStructuredPiSessionFromOrchestratorSession(session);
         }
-        await this.emitSessionSync({
+        await this.emitSurfaceSync({
           session,
           reason: "prompt.settled",
           target: options.target,
         });
+        await this.emitWorkspaceSync("workspace.updated");
         if (
           promptContext?.surfaceKind === "handler" &&
           !promptContext.suppressPendingWorkflowAttentionDelivery
@@ -1334,6 +1278,7 @@ export class WorkspaceSessionCatalog {
             promptContext.rootThreadId,
           );
         }
+        await this.disposeManagedSurfaceIfUnused(session);
       }
     } finally {
       session.promptExecutionRuntime.current = null;
@@ -1366,44 +1311,44 @@ export class WorkspaceSessionCatalog {
 
     const orchestratorSessionId = snapshot.session.orchestratorPiSessionId;
     const target = this.buildOrchestratorPromptTarget(orchestratorSessionId);
-    const orchestratorSession = await this.openSurfaceSessionInternal(
-      target.surfacePiSessionId,
-      "orchestrator",
-      systemPrompt,
-    );
-    this.activeTarget = target;
+    const orchestratorSession = await this.retainManagedSurface(target, systemPrompt);
     if (orchestratorSession.activePrompt) {
+      await this.releaseManagedSurface(target.surfacePiSessionId);
       return;
     }
 
-    orchestratorSession.abortRequested = false;
-    orchestratorSession.activePrompt = true;
-    await this.emitSessionSync({
-      session: orchestratorSession,
-      reason: "background.started",
-      target,
-    });
+    try {
+      orchestratorSession.abortRequested = false;
+      orchestratorSession.activePrompt = true;
+      await this.emitSurfaceSync({
+        session: orchestratorSession,
+        reason: "background.started",
+        target,
+      });
 
-    const resumeMessage = createSyntheticUserMessage(
-      buildOrchestratorHandoffResumePrompt(thread, latestEpisode),
-    );
-    const options: SendAgentPromptOptions = {
-      target,
-      provider: orchestratorSession.provider,
-      model: orchestratorSession.model,
-      thinkingLevel: orchestratorSession.thinkingLevel,
-      systemPrompt: orchestratorSession.systemPrompt,
-      messages: [
-        ...convertToLlmMessages(orchestratorSession.session.agent.state.messages),
-        resumeMessage,
-      ],
-      onEvent: () => {},
-    };
-    const orchestratorPromptContext = this.createPromptExecutionContext(
-      orchestratorSession,
-      options,
-    );
-    await this.runAgentPrompt(orchestratorSession, options, orchestratorPromptContext);
+      const resumeMessage = createSyntheticUserMessage(
+        buildOrchestratorHandoffResumePrompt(thread, latestEpisode),
+      );
+      const options: SendAgentPromptOptions = {
+        target,
+        provider: orchestratorSession.provider,
+        model: orchestratorSession.model,
+        thinkingLevel: orchestratorSession.thinkingLevel,
+        systemPrompt: orchestratorSession.systemPrompt,
+        messages: [
+          ...convertToLlmMessages(orchestratorSession.session.agent.state.messages),
+          resumeMessage,
+        ],
+        onEvent: () => {},
+      };
+      const orchestratorPromptContext = this.createPromptExecutionContext(
+        orchestratorSession,
+        options,
+      );
+      await this.runAgentPrompt(orchestratorSession, options, orchestratorPromptContext);
+    } finally {
+      await this.releaseManagedSurface(target.surfacePiSessionId);
+    }
   }
 
   private async resumeHandlerAfterWorkflowAttention(
@@ -1430,54 +1375,54 @@ export class WorkspaceSessionCatalog {
       surfacePiSessionId: thread.surfacePiSessionId,
       threadId: thread.id,
     };
-    const handlerSession = await this.openSurfaceSessionInternal(
-      target.surfacePiSessionId,
-      "handler",
-      systemPrompt,
-    );
-    this.activeTarget = target;
+    const handlerSession = await this.retainManagedSurface(target, systemPrompt);
     if (handlerSession.activePrompt) {
+      await this.releaseManagedSurface(target.surfacePiSessionId);
       return false;
     }
 
-    handlerSession.abortRequested = false;
-    handlerSession.activePrompt = true;
-    await this.emitSessionSync({
-      session: handlerSession,
-      reason: "background.started",
-      target,
-    });
+    try {
+      handlerSession.abortRequested = false;
+      handlerSession.activePrompt = true;
+      await this.emitSurfaceSync({
+        session: handlerSession,
+        reason: "background.started",
+        target,
+      });
 
-    const resumeMessage = createSyntheticUserMessage(
-      buildHandlerWorkflowAttentionPrompt({
-        thread,
-        workflowRun:
-          snapshot.workflowRuns.find((workflowRun) => workflowRun.id === input.workflowRunId) ??
-          null,
-        reason: input.reason,
-        summary: input.summary,
-        workflowId: input.workflowId,
-        smithersRunId: input.smithersRunId,
-      }),
-    );
-    const options: SendAgentPromptOptions = {
-      target,
-      provider: handlerSession.provider,
-      model: handlerSession.model,
-      thinkingLevel: handlerSession.thinkingLevel,
-      systemPrompt: handlerSession.systemPrompt,
-      messages: [
-        ...convertToLlmMessages(handlerSession.session.agent.state.messages),
-        resumeMessage,
-      ],
-      onEvent: () => {},
-    };
-    const handlerPromptContext = this.createPromptExecutionContext(handlerSession, options);
-    if (handlerPromptContext) {
-      handlerPromptContext.suppressPendingWorkflowAttentionDelivery = true;
+      const resumeMessage = createSyntheticUserMessage(
+        buildHandlerWorkflowAttentionPrompt({
+          thread,
+          workflowRun:
+            snapshot.workflowRuns.find((workflowRun) => workflowRun.id === input.workflowRunId) ??
+            null,
+          reason: input.reason,
+          summary: input.summary,
+          workflowId: input.workflowId,
+          smithersRunId: input.smithersRunId,
+        }),
+      );
+      const options: SendAgentPromptOptions = {
+        target,
+        provider: handlerSession.provider,
+        model: handlerSession.model,
+        thinkingLevel: handlerSession.thinkingLevel,
+        systemPrompt: handlerSession.systemPrompt,
+        messages: [
+          ...convertToLlmMessages(handlerSession.session.agent.state.messages),
+          resumeMessage,
+        ],
+        onEvent: () => {},
+      };
+      const handlerPromptContext = this.createPromptExecutionContext(handlerSession, options);
+      if (handlerPromptContext) {
+        handlerPromptContext.suppressPendingWorkflowAttentionDelivery = true;
+      }
+      await this.runAgentPrompt(handlerSession, options, handlerPromptContext);
+      return true;
+    } finally {
+      await this.releaseManagedSurface(target.surfacePiSessionId);
     }
-    await this.runAgentPrompt(handlerSession, options, handlerPromptContext);
-    return true;
   }
 
   private completePromptExecution(
@@ -1750,6 +1695,7 @@ async function createManagedSession(
     activePrompt: false,
     recreateOnNextPrompt: false,
     abortRequested: false,
+    retainCount: 0,
     promptExecutionRuntime,
   };
 }

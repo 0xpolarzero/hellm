@@ -7,6 +7,7 @@
   type Props = {
     session: WorkspaceSessionSummary;
     active: boolean;
+    activeSurface?: "orchestrator" | "thread";
     disabled?: boolean;
     onOpen: () => void;
     onRename: () => void;
@@ -19,6 +20,7 @@
   let {
     session,
     active,
+    activeSurface,
     disabled = false,
     onOpen,
     onRename,
@@ -91,9 +93,13 @@
 
     return labels;
   }
+
+  const showingThreadSurface = $derived(active && activeSurface === "thread");
 </script>
 
-<article class={`session-item ${active ? "active" : ""} ${menuOpen ? "menu-open" : ""}`.trim()}>
+<article
+  class={`session-item ${active ? "active" : ""} ${showingThreadSurface ? "active-thread" : ""} ${menuOpen ? "menu-open" : ""}`.trim()}
+>
   <button
     class="session-main"
     type="button"
@@ -118,8 +124,11 @@
       {/if}
     </div>
 
-    {#if session.status !== "idle" || session.parentSessionId}
+    {#if showingThreadSurface || session.status !== "idle" || session.parentSessionId}
       <div class="session-main-meta">
+        {#if showingThreadSurface}
+          <span class="session-surface">Thread Open</span>
+        {/if}
         {#if session.status !== "idle"}
           <span class={`session-status status-${session.status}`.trim()}>
             <span class="session-status-dot"></span>
@@ -226,6 +235,10 @@
     background: color-mix(in oklab, var(--ui-accent) 84%, transparent);
   }
 
+  .active-thread .session-main {
+    border-style: dashed;
+  }
+
   .session-main-top {
     display: flex;
     align-items: baseline;
@@ -297,7 +310,8 @@
   }
 
   .session-status,
-  .session-branch {
+  .session-branch,
+  .session-surface {
     display: inline-flex;
     align-items: center;
     gap: 0.26rem;
@@ -331,6 +345,14 @@
 
   .session-branch {
     color: var(--ui-text-tertiary);
+  }
+
+  .session-surface {
+    padding-inline: 0.36rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--ui-accent-soft) 72%, transparent);
+    color: color-mix(in oklab, var(--ui-accent) 80%, var(--ui-text-primary));
+    text-transform: uppercase;
   }
 
   .session-menu-wrap {

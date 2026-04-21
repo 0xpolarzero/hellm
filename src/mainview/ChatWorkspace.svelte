@@ -25,6 +25,8 @@
     WorkspaceCommandRollup,
     WorkspaceHandlerThreadInspector,
     WorkspaceHandlerThreadSummary,
+    WorkspaceHandlerThreadWorkflowSummary,
+    PromptTarget,
     WorkspaceSessionSummary,
   } from "./chat-rpc";
   import type { PromptHistoryEntry } from "./prompt-history";
@@ -37,7 +39,13 @@
   import { sortVisibleSessionsByRecency } from "./session-state";
   import SessionSidebar from "./SessionSidebar.svelte";
   import ChatTranscript from "./ChatTranscript.svelte";
-  import type { ChatRuntime } from "./chat-runtime";
+  import {
+    PRIMARY_CHAT_PANE_ID,
+    type ChatRuntime,
+    type ChatPaneLayoutState,
+    type ChatPaneState,
+    type ChatSurfaceController,
+  } from "./chat-runtime";
   import ModelPickerDialog from "./ModelPickerDialog.svelte";
   import Dialog from "./ui/Dialog.svelte";
   import Badge from "./ui/Badge.svelte";
@@ -55,7 +63,7 @@
   let { runtime, onOpenSettings }: Props = $props();
 
   let controller = $state<ArtifactsController | null>(null);
-  let messages = $state<ChatRuntime["agent"]["state"]["messages"]>([]);
+  let messages = $state<ChatSurfaceController["agent"]["state"]["messages"]>([]);
   let streamMessage = $state<AssistantMessage | null>(null);
   let pendingToolCalls = $state(new Set<string>());
   let isStreaming = $state(false);
@@ -74,7 +82,14 @@
   let windowWidth = $state(0);
   let sessions = $state<WorkspaceSessionSummary[]>([]);
   let activeSessionId = $state<string | undefined>(undefined);
-  let activeSurface = $state<ChatRuntime["activeSurface"] | null>(null);
+  let paneLayout = $state<ChatPaneLayoutState>({
+    panes: [{ id: PRIMARY_CHAT_PANE_ID, target: null }],
+    focusedPaneId: PRIMARY_CHAT_PANE_ID,
+  });
+  let currentPane = $state<ChatPaneState | null>(null);
+  let focusedPaneId = $state(PRIMARY_CHAT_PANE_ID);
+  let focusedSurfaceTarget = $state<PromptTarget | null>(null);
+  let currentSurfaceController = $state<ChatSurfaceController | null>(null);
   let sidebarError = $state<string | undefined>(undefined);
   let sidebarHidden = $state(false);
   let sidebarWidth = $state(DEFAULT_SIDEBAR_WIDTH);
@@ -109,18 +124,23 @@
   let commandInspectorSessionId: string | null = null;
   let handlerThreadLoadToken = 0;
   let threadInspectorSessionId: string | null = null;
+  let unsubscribeSurfaceController: (() => void) | null = null;
 
   const conversation = $derived(projectConversation(messages));
   const conversationSummary = $derived(projectConversationSummary(conversation, streamMessage));
   const artifactCount = $derived(artifactsSnapshot.artifacts.length);
   const hasArtifacts = $derived(artifactCount > 0);
-  const showDesktopSplit = $derived(windowWidth >= DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts);
-  const showOverlayArtifacts = $derived(windowWidth < DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts);
+  const showDesktopSplit = $derived(
+    windowWidth >= DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts,
+  );
+  const showOverlayArtifacts = $derived(
+    windowWidth < DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts,
+  );
   const effectiveSidebarWidth = $derived(clampSidebarWidth(sidebarWidth, windowWidth));
   const visibleSessions = $derived(sortVisibleSessionsByRecency(sessions));
   const currentSession = $derived(sessions.find((session) => session.id === activeSessionId) ?? null);
   const currentCommandRollups = $derived(getVisibleCommandRollups(currentSession));
-  const currentSurface = $derived(activeSurface ?? runtime.activeSurface);
+  const currentSurface = $derived(focusedSurfaceTarget);
   const currentSurfaceLabel = $derived.by(() => {
     if (currentSurface?.surface === "thread") {
       return `Messaging handler thread ${currentSurface.threadId ?? currentSurface.surfacePiSessionId}`;
@@ -220,7 +240,9 @@
     }
   }
 
-  function getLatestAssistantFailureMessage(messagesSnapshot: ChatRuntime["agent"]["state"]["messages"]): string | undefined {
+  function getLatestAssistantFailureMessage(
+    messagesSnapshot: ChatSurfaceController["agent"]["state"]["messages"],
+  ): string | undefined {
     const lastMessage = messagesSnapshot[messagesSnapshot.length - 1];
     if (!lastMessage || lastMessage.role !== "assistant") return undefined;
     if (lastMessage.stopReason !== "error" && lastMessage.stopReason !== "aborted") return undefined;
@@ -236,23 +258,6 @@
     return message || undefined;
   }
 
-  function syncAgentState() {
-    const nextMessages = [...runtime.agent.state.messages];
-    messages = nextMessages;
-    streamMessage = runtime.agent.state.streamMessage?.role === "assistant" ? runtime.agent.state.streamMessage : null;
-    pendingToolCalls = new Set(runtime.agent.state.pendingToolCalls);
-    isStreaming = runtime.agent.state.isStreaming;
-    errorMessage = runtime.agent.state.error ?? getLatestAssistantFailureMessage(nextMessages);
-    currentModel = runtime.agent.state.model;
-    currentThinkingLevel = runtime.agent.state.thinkingLevel as ThinkingLevel;
-  }
-
-  function syncRuntimeState() {
-    sessions = [...runtime.sessions];
-    activeSessionId = runtime.activeSessionId;
-    activeSurface = runtime.activeSurface;
-  }
-
   function syncArtifacts(snapshot: ArtifactsSnapshot) {
     const createdNewArtifact = snapshot.artifacts.length > artifactsSnapshot.artifacts.length;
     artifactsSnapshot = snapshot;
@@ -266,21 +271,21 @@
   }
 
   async function syncArtifactsFromRuntime(force = false) {
-    if (!controller) return;
+    if (!controller || !currentSurfaceController) return;
 
-    const sessionId = runtime.agent.sessionId;
-    const nextMessageCount = runtime.agent.state.messages.length;
+    const sessionId = currentSurfaceController.agent.sessionId;
+    const nextMessageCount = currentSurfaceController.agent.state.messages.length;
     const sessionChanged = artifactSyncSessionId !== sessionId;
     const cursorWentBackwards = nextMessageCount < artifactSyncMessageCount;
 
     if (force || sessionChanged || cursorWentBackwards) {
-      await controller.syncFromMessages(runtime.agent.state.messages, { replace: true });
+      await controller.syncFromMessages(currentSurfaceController.agent.state.messages, { replace: true });
       artifactSyncSessionId = sessionId;
       artifactSyncMessageCount = nextMessageCount;
       return;
     }
 
-    await controller.syncFromMessages(runtime.agent.state.messages);
+    await controller.syncFromMessages(currentSurfaceController.agent.state.messages);
     artifactSyncMessageCount = nextMessageCount;
   }
 
@@ -329,7 +334,8 @@
     try {
       await action();
       syncRuntimeState();
-      syncAgentState();
+      resubscribeSurfaceController();
+      syncSurfaceState();
       await syncArtifactsFromRuntime();
     } catch (error) {
       sidebarError = error instanceof Error ? error.message : "Session update failed.";
@@ -339,12 +345,18 @@
   }
 
   async function handleCreateSession() {
-    await runSessionMutation(() => runtime.createSession());
+    await runSessionMutation(() => runtime.createSession({}, runtime.primaryPaneId));
   }
 
   async function handleOpenSession(sessionId: string) {
-    if (sessionId === activeSessionId) return;
-    await runSessionMutation(() => runtime.openSession(sessionId));
+    if (
+      sessionId === activeSessionId &&
+      currentSurface?.surface === "orchestrator" &&
+      currentSurface.workspaceSessionId === sessionId
+    ) {
+      return;
+    }
+    await runSessionMutation(() => runtime.openSession(sessionId, runtime.primaryPaneId));
   }
 
   function handleRenameSession(session: WorkspaceSessionSummary) {
@@ -369,11 +381,15 @@
   }
 
   async function handleForkSession(session: WorkspaceSessionSummary) {
-    await runSessionMutation(() => runtime.forkSession(session.id));
+    await runSessionMutation(() => runtime.forkSession(session.id, undefined, runtime.primaryPaneId));
   }
 
   async function handleResetSurfaceTarget() {
-    await runSessionMutation(() => runtime.resetSurfaceTarget());
+    const session = currentSession;
+    if (!session) {
+      return;
+    }
+    await runSessionMutation(() => runtime.openSession(session.id, runtime.primaryPaneId));
   }
 
   function handleDeleteSession(session: WorkspaceSessionSummary) {
@@ -384,7 +400,7 @@
     if (!deleteTarget) return;
     const target = deleteTarget;
     await runSessionMutation(async () => {
-      await runtime.deleteSession(target.id);
+      await runtime.deleteSession(target.id, runtime.primaryPaneId);
       deleteTarget = null;
     });
   }
@@ -395,7 +411,7 @@
         text: input,
         sentAt: Date.now(),
         workspaceId: runtime.workspaceId,
-        sessionId: runtime.activeSurface.workspaceSessionId,
+        sessionId: currentSurface?.workspaceSessionId ?? currentSession?.id ?? "unknown-session",
       });
       promptHistory = [...promptHistory, entry];
     } catch (error) {
@@ -404,16 +420,17 @@
   }
 
   async function handleSend(input: string): Promise<boolean> {
-    if (!input.trim() || runtime.agent.state.isStreaming || sendingPrompt) return false;
+    const surface = currentSurfaceController;
+    if (!input.trim() || !surface || surface.agent.state.isStreaming || sendingPrompt) return false;
 
     sendingPrompt = true;
     try {
       await persistPromptHistoryEntry(input);
 
-      const hasProviderAccess = await runtime.requireProviderAccess(runtime.agent.state.model.provider);
+      const hasProviderAccess = await runtime.requireProviderAccess(surface.agent.state.model.provider);
       if (!hasProviderAccess) return false;
 
-      await runtime.agent.prompt(input);
+      await surface.agent.prompt(input);
       return true;
     } finally {
       sendingPrompt = false;
@@ -429,19 +446,29 @@
     if (copyTranscriptState === "copying") return;
 
     const session = currentSession;
-    const activeModel = currentModel ?? runtime.agent.state.model;
+    const agent = currentSurfaceController?.agent;
+    if (!agent) {
+      return;
+    }
+    const activeModel = currentModel ?? agent.state.model;
     const exportText = buildSessionTranscriptExport({
       session: {
-        id: session?.id ?? runtime.agent.sessionId ?? "unknown-session",
+        id: session?.id ?? agent.sessionId ?? "unknown-session",
         title: session?.title ?? "New Session",
         status: session?.status ?? "idle",
         createdAt: session?.createdAt ?? new Date(0).toISOString(),
         updatedAt: session?.updatedAt ?? new Date().toISOString(),
       },
+      target:
+        currentSurfaceController?.target ?? {
+          workspaceSessionId: session?.id ?? "unknown-session",
+          surface: "orchestrator",
+          surfacePiSessionId: agent.sessionId ?? "unknown-surface",
+        },
       provider: activeModel.provider,
       model: activeModel.id,
       reasoningEffort: currentThinkingLevel,
-      systemPrompt: runtime.resolvedSystemPrompt,
+      systemPrompt: currentSurfaceController.resolvedSystemPrompt,
       messages,
       streamMessage,
     });
@@ -615,12 +642,15 @@
 
     closeThreadInspector();
     await runSessionMutation(() =>
-      runtime.openSurface({
-        workspaceSessionId: session.id,
-        surface: "thread",
-        surfacePiSessionId: thread.surfacePiSessionId,
-        threadId: thread.threadId,
-      }),
+      runtime.openSurface(
+        {
+          workspaceSessionId: session.id,
+          surface: "thread",
+          surfacePiSessionId: thread.surfacePiSessionId,
+          threadId: thread.threadId,
+        },
+        runtime.primaryPaneId,
+      ),
     );
   }
 
@@ -719,8 +749,70 @@
       });
   });
 
+  function syncSurfaceTools() {
+    if (!controller || !currentSurfaceController) {
+      return;
+    }
+
+    currentSurfaceController.agent.state.tools = [controller.tool];
+  }
+
+  function syncSurfaceState() {
+    const surface = currentSurfaceController;
+    if (!surface) {
+      messages = [];
+      streamMessage = null;
+      pendingToolCalls = new Set();
+      isStreaming = false;
+      errorMessage = undefined;
+      currentModel = null;
+      currentThinkingLevel = "off";
+      return;
+    }
+
+    const nextMessages = [...surface.agent.state.messages];
+    messages = nextMessages;
+    streamMessage =
+      surface.agent.state.streamMessage?.role === "assistant"
+        ? surface.agent.state.streamMessage
+        : null;
+    pendingToolCalls = new Set(surface.agent.state.pendingToolCalls);
+    isStreaming = surface.agent.state.isStreaming || surface.promptStatus === "streaming";
+    errorMessage = surface.agent.state.error ?? getLatestAssistantFailureMessage(nextMessages);
+    currentModel = surface.agent.state.model;
+    currentThinkingLevel = surface.agent.state.thinkingLevel as ThinkingLevel;
+  }
+
+  function syncRuntimeState() {
+    sessions = [...runtime.sessions];
+    paneLayout = runtime.paneLayout;
+    focusedPaneId = paneLayout.focusedPaneId;
+    currentPane = runtime.getPane(runtime.primaryPaneId) ?? null;
+    focusedSurfaceTarget = currentPane?.target ?? null;
+    activeSessionId = currentPane?.target?.workspaceSessionId;
+    currentSurfaceController = runtime.getPaneController(runtime.primaryPaneId);
+  }
+
+  function resubscribeSurfaceController() {
+    unsubscribeSurfaceController?.();
+    unsubscribeSurfaceController = null;
+    if (!currentSurfaceController) {
+      syncSurfaceState();
+      return;
+    }
+
+    syncSurfaceTools();
+    unsubscribeSurfaceController = currentSurfaceController.subscribe(() => {
+      focusedSurfaceTarget = currentSurfaceController?.target ?? null;
+      activeSessionId = currentSurfaceController?.target.workspaceSessionId;
+      syncSurfaceTools();
+      syncSurfaceState();
+      void syncArtifactsFromRuntime();
+    });
+  }
+
   syncRuntimeState();
-  syncAgentState();
+  syncSurfaceState();
 
   onMount(() => {
     windowWidth = window.innerWidth;
@@ -738,8 +830,7 @@
     window.addEventListener("resize", handleResize);
     window.addEventListener("keydown", handleWindowKeydown);
 
-    runtime.agent.state.tools = [nextController.tool];
-    syncAgentState();
+    syncSurfaceTools();
     void runtime.storage.promptHistory
       .list(runtime.workspaceId)
       .then((entries) => {
@@ -749,23 +840,22 @@
         console.error("Failed to load prompt history:", error);
       });
 
-    const unsubscribeAgent = runtime.agent.subscribe(() => {
-      syncAgentState();
-    });
     const unsubscribeRuntime = runtime.subscribe(() => {
       syncRuntimeState();
-      syncAgentState();
+      resubscribeSurfaceController();
+      syncSurfaceState();
       void syncArtifactsFromRuntime();
     });
     const unsubscribeArtifacts = nextController.subscribe((snapshot) => {
       syncArtifacts(snapshot);
     });
+    resubscribeSurfaceController();
     void syncArtifactsFromRuntime(true);
 
     return () => {
-      unsubscribeAgent();
       unsubscribeRuntime();
       unsubscribeArtifacts();
+      unsubscribeSurfaceController?.();
       nextController.dispose();
       setSidebarResizing(false);
       clearCopyTranscriptResetTimer();
@@ -809,7 +899,8 @@
             branch={runtime.branch}
             sessions={visibleSessions}
             {activeSessionId}
-            busy={mutatingSession || isStreaming}
+            activeSurface={currentSurface?.surface}
+            busy={mutatingSession}
             errorMessage={sidebarError}
             onCreateSession={handleCreateSession}
             onOpenSession={handleOpenSession}
@@ -1032,26 +1123,26 @@
 
           <ChatTranscript
             {conversation}
-            sessionId={runtime.agent.sessionId}
-            systemPrompt={runtime.resolvedSystemPrompt}
+            sessionId={currentSurfaceController?.agent.sessionId ?? "no-surface"}
+            systemPrompt={currentSurfaceController?.resolvedSystemPrompt ?? ""}
             streamMessage={streamMessage ?? undefined}
             {pendingToolCalls}
             {isStreaming}
             onOpenArtifact={handleOpenArtifact}
           />
           <ChatComposer
-            currentModel={currentModel ?? runtime.agent.state.model}
+            currentModel={currentModel}
             thinkingLevel={currentThinkingLevel}
             isStreaming={promptBusy}
             errorMessage={composerErrorMessage}
             {promptHistory}
             usageText={usageText || undefined}
-            onAbort={() => runtime.agent.abort()}
+            onAbort={() => void currentSurfaceController?.abort()}
             onOpenModelPicker={() => void openModelSelector()}
             onSend={handleSend}
             onThinkingChange={(level) => {
               currentThinkingLevel = level;
-              runtime.agent.setThinkingLevel(level);
+              currentSurfaceController?.agent.setThinkingLevel(level);
             }}
           />
         </div>
@@ -1104,13 +1195,13 @@
 
 {#if showModelPicker}
   <ModelPickerDialog
-    currentModel={currentModel ?? runtime.agent.state.model}
+    currentModel={currentModel}
     allowedProviders={allowedProviders}
     storage={runtime.storage}
     onClose={() => (showModelPicker = false)}
     onSelect={(model) => {
       currentModel = model;
-      runtime.agent.setModel(model);
+      currentSurfaceController?.agent.setModel(model);
       showModelPicker = false;
     }}
   />

@@ -26,13 +26,17 @@ export interface SendPromptResponse {
   target: PromptTarget;
 }
 
-export interface SetSessionModelRequest {
-  surfacePiSessionId: string;
+export interface CloseSurfaceRequest {
+  target: PromptTarget;
+}
+
+export interface SetSurfaceModelRequest {
+  target: PromptTarget;
   model: string;
 }
 
-export interface SetSessionThoughtLevelRequest {
-  surfacePiSessionId: string;
+export interface SetSurfaceThoughtLevelRequest {
+  target: PromptTarget;
   level: ReasoningEffort;
 }
 
@@ -41,14 +45,13 @@ export interface StreamEventMessage {
   event: AssistantMessageEvent;
 }
 
-export interface SessionSyncMessage {
-  reason: "prompt.settled" | "background.started" | "structured.updated";
-  activeSession: ActiveSessionState;
+export interface WorkspaceSyncMessage {
+  reason: "workspace.updated" | "structured.updated";
   sessions: WorkspaceSessionSummary[];
 }
 
 export interface CancelPromptRequest {
-  surfacePiSessionId: string;
+  target: PromptTarget;
 }
 
 export interface ProviderAuthStateRequest {
@@ -229,8 +232,7 @@ export interface WorkspaceSessionSummary {
   commandRollups?: WorkspaceCommandRollup[];
 }
 
-export interface ActiveSessionState {
-  session: WorkspaceSessionSummary;
+export interface ConversationSurfaceSnapshot {
   target: PromptTarget;
   messages: AgentMessage[];
   provider: string;
@@ -238,10 +240,16 @@ export interface ActiveSessionState {
   reasoningEffort: ReasoningEffort;
   systemPrompt: string;
   resolvedSystemPrompt: string;
+  promptStatus: "idle" | "streaming";
+}
+
+export interface SurfaceSyncMessage {
+  reason: "surface.updated" | "prompt.settled" | "background.started" | "surface.closed";
+  target: PromptTarget;
+  snapshot?: ConversationSurfaceSnapshot;
 }
 
 export interface ListSessionsResponse {
-  activeSessionId?: string;
   sessions: WorkspaceSessionSummary[];
 }
 
@@ -268,10 +276,13 @@ export interface ForkSessionRequest {
   title?: string;
 }
 
-export interface SessionMutationResponse {
+export interface WorkspaceMutationResponse {
   ok: boolean;
-  activeSessionId?: string;
-  activeSession?: ActiveSessionState | null;
+}
+
+export interface SurfaceMutationResponse {
+  ok: boolean;
+  target: PromptTarget;
 }
 
 export interface ChatRPCSchema {
@@ -293,10 +304,6 @@ export interface ChatRPCSchema {
         params: undefined;
         response: ListSessionsResponse;
       };
-      getActiveSession: {
-        params: undefined;
-        response: ActiveSessionState | null;
-      };
       getCommandInspector: {
         params: { sessionId: string; commandId: string };
         response: WorkspaceCommandInspector | null;
@@ -311,43 +318,47 @@ export interface ChatRPCSchema {
       };
       createSession: {
         params: CreateSessionRequest;
-        response: ActiveSessionState;
+        response: ConversationSurfaceSnapshot;
       };
       openSession: {
         params: OpenSessionRequest;
-        response: ActiveSessionState;
+        response: ConversationSurfaceSnapshot;
       };
       openSurface: {
         params: OpenSurfaceRequest;
-        response: ActiveSessionState;
+        response: ConversationSurfaceSnapshot;
+      };
+      closeSurface: {
+        params: CloseSurfaceRequest;
+        response: WorkspaceMutationResponse;
       };
       renameSession: {
         params: RenameSessionRequest;
-        response: SessionMutationResponse;
+        response: WorkspaceMutationResponse;
       };
       forkSession: {
         params: ForkSessionRequest;
-        response: ActiveSessionState;
+        response: ConversationSurfaceSnapshot;
       };
       deleteSession: {
         params: { sessionId: string };
-        response: SessionMutationResponse;
+        response: WorkspaceMutationResponse;
       };
       sendPrompt: {
         params: SendPromptRequest;
         response: SendPromptResponse;
       };
-      setSessionModel: {
-        params: SetSessionModelRequest;
-        response: { ok: boolean; sessionId: string };
+      setSurfaceModel: {
+        params: SetSurfaceModelRequest;
+        response: SurfaceMutationResponse;
       };
-      setSessionThoughtLevel: {
-        params: SetSessionThoughtLevelRequest;
-        response: { ok: boolean; sessionId: string };
+      setSurfaceThoughtLevel: {
+        params: SetSurfaceThoughtLevelRequest;
+        response: SurfaceMutationResponse;
       };
       cancelPrompt: {
         params: CancelPromptRequest;
-        response: { ok: boolean };
+        response: WorkspaceMutationResponse;
       };
       listProviderAuths: {
         params: undefined;
@@ -372,7 +383,8 @@ export interface ChatRPCSchema {
     requests: Record<string, never>;
     messages: {
       sendStreamEvent: StreamEventMessage;
-      sendSessionSync: SessionSyncMessage;
+      sendWorkspaceSync: WorkspaceSyncMessage;
+      sendSurfaceSync: SurfaceSyncMessage;
     };
   };
 }

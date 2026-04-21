@@ -28,11 +28,6 @@ import { WorkspaceSessionCatalog, type SessionDefaults } from "./session-catalog
 import { createSvvyToolBridge } from "./tool-bridge";
 import { resolveWorkspaceCwd } from "./workspace-context";
 
-type SessionMutationResponse = {
-  ok: boolean;
-  sessionId: string;
-};
-
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
 const DEV_SERVER_WAIT_TIMEOUT_MS = 15_000;
@@ -262,12 +257,12 @@ function listProviderAuthSummaries(): ProviderAuthInfo[] {
 
 const svvyToolBridge = createSvvyToolBridge({
   defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
-  getActiveWorkspaceSession: () => workspaceSessionCatalog.getActiveSession(),
   getDefaultChatSettings,
   getMainWindow: () => mainWindow,
   getWorkspaceCwd: resolveWorkspaceCwd,
   getWorkspaceBranch,
   listProviderAuthSummaries,
+  listOpenSurfaceSnapshots: () => workspaceSessionCatalog.listOpenSurfaceSnapshots(),
   listWorkspaceSessions: () => workspaceSessionCatalog.listSessions(),
 });
 const recordBridgeEvent = svvyToolBridge.recordEvent;
@@ -299,9 +294,6 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       listSessions: async () => {
         return await workspaceSessionCatalog.listSessions();
-      },
-      getActiveSession: async () => {
-        return await workspaceSessionCatalog.getActiveSession();
       },
       getCommandInspector: async ({
         sessionId,
@@ -343,12 +335,12 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         );
         recordBridgeEvent("session.created", {
           parentSessionId: parentSessionId ?? null,
-          sessionId: session.session.id,
+          sessionId: session.target.workspaceSessionId,
           title: title?.trim() || null,
         });
         recordBridgeLog("info", "Workspace session created.", "bun.session", {
           parentSessionId: parentSessionId ?? null,
-          sessionId: session.session.id,
+          sessionId: session.target.workspaceSessionId,
         });
         return session;
       },
@@ -369,6 +361,16 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return session;
       },
+      closeSurface: async ({ target }: { target: PromptTarget }) => {
+        const result = await workspaceSessionCatalog.closeSurface(target);
+        recordBridgeEvent("surface.closed", {
+          surface: target.surface,
+          surfacePiSessionId: target.surfacePiSessionId,
+          threadId: target.threadId ?? null,
+          workspaceSessionId: target.workspaceSessionId,
+        });
+        return result;
+      },
       renameSession: async ({ sessionId, title }: { sessionId: string; title: string }) => {
         const result = await workspaceSessionCatalog.renameSession(sessionId, title);
         recordBridgeEvent("session.renamed", {
@@ -384,13 +386,13 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         );
         recordBridgeEvent("session.forked", {
           sessionId,
-          targetSessionId: session.session.id,
+          targetSessionId: session.target.workspaceSessionId,
           title: title?.trim() || null,
         });
         return session;
       },
       deleteSession: async ({ sessionId }: { sessionId: string }) => {
-        const result = await workspaceSessionCatalog.deleteSession(sessionId, getSessionDefaults());
+        const result = await workspaceSessionCatalog.deleteSession(sessionId);
         recordBridgeEvent("session.deleted", { sessionId });
         return result;
       },
@@ -485,63 +487,70 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return session;
       },
-      cancelPrompt: async ({
-        surfacePiSessionId,
-      }: {
-        surfacePiSessionId: string;
-      }): Promise<{ ok: boolean }> => {
-        await workspaceSessionCatalog.cancelPrompt(surfacePiSessionId);
-        recordBridgeEvent("prompt.cancel.requested", { surfacePiSessionId });
+      cancelPrompt: async ({ target }: { target: PromptTarget }): Promise<{ ok: boolean }> => {
+        await workspaceSessionCatalog.cancelPrompt(target);
+        recordBridgeEvent("prompt.cancel.requested", {
+          surfacePiSessionId: target.surfacePiSessionId,
+          threadId: target.threadId ?? null,
+          workspaceSessionId: target.workspaceSessionId,
+        });
         return { ok: true };
       },
-      setSessionModel: async ({
-        surfacePiSessionId,
+      setSurfaceModel: async ({
+        target,
         model,
       }: {
-        surfacePiSessionId: string;
+        target: PromptTarget;
         model: string;
-      }): Promise<SessionMutationResponse> => {
-        const result = await workspaceSessionCatalog.setSessionModel(surfacePiSessionId, model);
+      }) => {
+        const result = await workspaceSessionCatalog.setSurfaceModel(target, model);
         if (result.ok) {
-          recordBridgeEvent("session.model.changed", { model, surfacePiSessionId });
+          recordBridgeEvent("surface.model.changed", {
+            model,
+            surfacePiSessionId: target.surfacePiSessionId,
+            threadId: target.threadId ?? null,
+            workspaceSessionId: target.workspaceSessionId,
+          });
         } else {
           recordBridgeError(
             "rpc",
-            `Surface pi session ${surfacePiSessionId} was not found for model update.`,
-            "bun.session",
+            `Surface pi session ${target.surfacePiSessionId} was not found for model update.`,
+            "bun.surface",
             {
               model,
-              surfacePiSessionId,
+              surfacePiSessionId: target.surfacePiSessionId,
             },
           );
         }
-        return { ok: result.ok, sessionId: result.sessionId };
+        return result;
       },
-      setSessionThoughtLevel: async ({
-        surfacePiSessionId,
+      setSurfaceThoughtLevel: async ({
+        target,
         level,
       }: {
-        surfacePiSessionId: string;
+        target: PromptTarget;
         level: ReasoningEffort;
-      }): Promise<SessionMutationResponse> => {
-        const result = await workspaceSessionCatalog.setSessionThoughtLevel(
-          surfacePiSessionId,
-          level,
-        );
+      }) => {
+        const result = await workspaceSessionCatalog.setSurfaceThoughtLevel(target, level);
         if (result.ok) {
-          recordBridgeEvent("session.reasoning.changed", { level, surfacePiSessionId });
+          recordBridgeEvent("surface.reasoning.changed", {
+            level,
+            surfacePiSessionId: target.surfacePiSessionId,
+            threadId: target.threadId ?? null,
+            workspaceSessionId: target.workspaceSessionId,
+          });
         } else {
           recordBridgeError(
             "rpc",
-            `Surface pi session ${surfacePiSessionId} was not found for reasoning update.`,
-            "bun.session",
+            `Surface pi session ${target.surfacePiSessionId} was not found for reasoning update.`,
+            "bun.surface",
             {
               level,
-              surfacePiSessionId,
+              surfacePiSessionId: target.surfacePiSessionId,
             },
           );
         }
-        return { ok: result.ok, sessionId: result.sessionId };
+        return result;
       },
       listProviderAuths: async (): Promise<ProviderAuthInfo[]> => listProviderAuthSummaries(),
       setProviderApiKey: async ({
@@ -589,8 +598,12 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
   },
 });
 
-workspaceSessionCatalog.setSessionSyncListener((payload) => {
-  rpc.send.sendSessionSync(payload);
+workspaceSessionCatalog.setWorkspaceSyncListener((payload) => {
+  rpc.send.sendWorkspaceSync(payload);
+});
+
+workspaceSessionCatalog.setSurfaceSyncListener((payload) => {
+  rpc.send.sendSurfaceSync(payload);
 });
 
 const appMenu: Parameters<typeof ApplicationMenu.setApplicationMenu>[0] = [

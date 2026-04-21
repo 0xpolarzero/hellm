@@ -12,6 +12,12 @@ import { projectConversation, type ProjectedToolCall } from "./conversation-proj
 
 export interface SessionTranscriptExportInput {
   session: Pick<WorkspaceSessionSummary, "id" | "title" | "status" | "createdAt" | "updatedAt">;
+  target?: {
+    workspaceSessionId: string;
+    surface: "orchestrator" | "thread";
+    surfacePiSessionId: string;
+    threadId?: string;
+  };
   provider: string;
   model: string;
   reasoningEffort: string;
@@ -32,6 +38,18 @@ export function buildSessionTranscriptExport(input: SessionTranscriptExportInput
   lines.push(`status: ${input.session.status}`);
   lines.push(`createdAt: ${input.session.createdAt}`);
   lines.push(`updatedAt: ${input.session.updatedAt}`);
+  if (input.target) {
+    lines.push("");
+    lines.push("## surface");
+    lines.push(`workspaceSessionId: ${input.target.workspaceSessionId}`);
+    lines.push(`surface: ${input.target.surface}`);
+    lines.push(`surfacePiSessionId: ${input.target.surfacePiSessionId}`);
+    if (input.target.threadId) {
+      lines.push(`threadId: ${input.target.threadId}`);
+    }
+  }
+  lines.push("");
+  lines.push("## model");
   lines.push(`provider: ${input.provider}`);
   lines.push(`model: ${input.model}`);
   lines.push(`reasoningEffort: ${input.reasoningEffort}`);
