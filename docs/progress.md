@@ -98,7 +98,10 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Wake the supervising handler thread in a background turn only when a workflow run reaches a terminal outcome, an actionable wait, a continuation boundary, or a supervision fault that requires handler judgment, while keeping duplicate terminal reconciliation idempotent after a valid handoff. Commit(s): `a02bd48`
 - [x] Support multiple workflow runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
 - [x] Derive active and latest workflow summaries from workflow-run state without a persisted thread-level latest pointer. Commit(s): `a02bd48`
-- [ ] Emit explicit Smithers bridge lifecycle events and control-plane reconnect writes that update workflow-run and handler-thread state without read-side repair loops.
+- [x] Persist durable reconnect cursors plus pending-versus-delivered handler-attention state on workflow runs so restart recovery and wake-up dedupe do not depend on process memory. Commit(s): `2f874a7`
+- [x] Emit explicit Smithers bridge lifecycle events for workflow projection, reconnect bootstrap, and handler-attention delivery. Commit(s): `2f874a7`
+- [x] Bootstrap workflow supervision from durable run state on session restore, rebuilding runtime ownership from workflow-run records and replaying only undelivered handler attention. Commit(s): `2f874a7`
+- [x] Keep `thread.handoff`, Smithers read APIs, selectors, and renderer reads free of lifecycle repair writes. Commit(s): `2f874a7`
 - [x] Guarantee that a workflow-run failure or cancellation moves the handler thread into troubleshooting before any later user-directed closure or handoff. Commit(s): `a02bd48`
 
 ## 6. Workflow Templates And Presets
