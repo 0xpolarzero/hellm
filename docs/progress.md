@@ -124,19 +124,22 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Surface failed or incomplete verification as routing input for later orchestrator decisions.
 - [ ] Show latest verification outcome inline in session and inspector surfaces.
 
-## 8. Session Navigation And Core Projection
+## 8. Workspace Navigation, Live Surfaces, And Core Projection
 
-- [ ] Drive the session sidebar entirely from durable session summaries.
+- [x] Drive the session sidebar entirely from durable workspace session summaries. Commit(s): `9a21f87`, `b0ee858`
 - [ ] Define the stored shape for flat folder labels on sessions.
 - [ ] Persist session folder membership.
 - [ ] Render flat folder groupings in the session sidebar.
-- [ ] Build a POC threads-and-episodes read model from structured state in the main session view.
-- [ ] Render handler-thread lists from structured thread data.
-- [ ] Show thread objective, status, latest workflow-run summary, and blocked reason in the main session view.
-- [ ] Render the latest handoff episode for a selected thread while preserving earlier handoff points in the thread history.
+- [x] Join session summaries, focused pane, and pane-to-surface bindings in one workspace-shell read model without depending on a global active surface. Commit(s): `9a21f87`, `b0ee858`
+- [x] Split workspace-summary updates from live surface transcript updates in the renderer runtime. Commit(s): `9a21f87`, `b0ee858`
+- [x] Manage open live surfaces in a shared registry keyed by `surfacePiSessionId`. Commit(s): `9a21f87`, `b0ee858`
+- [x] Give each live surface its own prompt lock, model state, reasoning state, and cancellation lifecycle. Commit(s): `9a21f87`, `b0ee858`
+- [ ] Render handler-thread lists from structured thread data in the workspace shell and focused pane.
+- [ ] Show thread objective, status, latest workflow-run summary, and blocked reason in pane-local thread views.
+- [ ] Render the latest handoff episode for an inspected thread while preserving earlier handoff points in thread history.
 - [ ] Render thread- and workflow-run-linked artifacts before relying on transcript reconstruction.
-- [ ] Render a verification summary block for the selected thread or session.
-- [ ] Restore selected session, selected thread surface, and inspector selection after restart.
+- [ ] Render a verification summary block for the focused surface or inspected thread.
+- [ ] Restore focused pane, pane-to-surface bindings, and inspector selection after restart.
 
 ## 9. Session Modes And Runtime Profiles
 
@@ -145,11 +148,11 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Build a POC settings model for editing app-wide runtime profile defaults.
 - [ ] Persist app-wide runtime profile defaults.
 - [ ] Build a POC session creation flow with separate orchestrator-session and quick-session actions.
-- [ ] Persist session mode and the main-session prompt selection.
+- [ ] Persist session mode and the default orchestrator-surface prompt selection.
 - [ ] Persist per-session overrides for each runtime profile.
 - [ ] Apply the quick-session main profile and quick-session system prompt at session creation.
-- [ ] Show the current main runtime profile summary in the session chrome.
-- [ ] Expand the session runtime panel to inspect all agent runtime profiles for that session.
+- [ ] Show the current focused-surface runtime profile summary in pane chrome.
+- [ ] Expand the session runtime panel to inspect all agent runtime profiles for the focused surface's session.
 
 ## 10. Session Titles
 
@@ -185,7 +188,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Persist worktree binding on threads.
 - [ ] Persist worktree binding on workflow runs.
 - [ ] Show active worktree on orchestrator and thread surfaces.
-- [ ] Warn when selected session context and current filesystem context diverge.
+- [ ] Warn when the focused pane surface context and current filesystem context diverge.
 - [ ] Build a POC isolated workflow run in a separate worktree.
 - [ ] Let handler threads declare or acquire an isolated worktree when needed.
 - [ ] Show which thread or workflow run owns each worktree-backed execution.
@@ -199,20 +202,22 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Emit thread, workflow-run, episode, and artifact references in headless results.
 - [ ] Reuse the same orchestrator and state model as desktop execution.
 
-## 15. Pane Layout And Expanded Surfaces
+## 15. Pane Layout, Surface Ownership, And Expanded Surfaces
 
 - [ ] Define the stored shape for a fixed pane layout up to `3x3`, including multi-cell spans.
-- [ ] Build a POC exact slot-position icon system for pane occupancy, including spanned surfaces.
+- [ ] Persist pane-to-surface bindings separately from live surface runtime state.
 - [ ] Build a POC workspace pane grid that opens one surface in a targeted slot.
 - [ ] Support click-split or drag placement into a chosen pane slot.
-- [ ] Allow the same interactive surface to be opened in more than one pane slot at once.
+- [x] Manage explicit open and close semantics for live surfaces independently from pane focus. Commit(s): `9a21f87`, `b0ee858`
+- [x] Allow the same interactive surface to be opened in more than one pane slot at once. Commit(s): `9a21f87`, `b0ee858`
+- [x] Keep one underlying live surface controller per `surfacePiSessionId` regardless of pane count. Commit(s): `9a21f87`, `b0ee858`
 - [ ] Persist pane occupancy and pane geometry across app restart.
 - [ ] Restore the focused pane on app restart.
 - [ ] Show exact pane-position indicators in the sidebar for open surfaces.
 - [ ] Show a clear highlight for the currently focused pane surface.
-- [ ] Define the stored shape for compact thread and workflow-run surfaces inside the main session.
-- [ ] Render compact thread cards in the main session timeline.
-- [ ] Render compact workflow-run cards in the main session timeline.
+- [ ] Define the stored shape for compact thread and workflow-run surfaces inside the workspace shell.
+- [ ] Render compact thread cards in the workspace shell timeline.
+- [ ] Render compact workflow-run cards in the workspace shell timeline.
 - [ ] Open a selected handler-thread surface in a pane slot as a fully interactive surface.
 - [ ] Keep duplicated views of the same surface synchronized while allowing independent scroll position.
 
@@ -232,19 +237,20 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 
 ## 17. Recovery And Test Coverage
 
-- [ ] Build a POC restart or resume flow that restores one active handler thread from durable state.
+- [ ] Build a POC restart or resume flow that restores multiple open surfaces and pane bindings from durable state.
 - [ ] Restore pending clarification and waiting state after app restart.
 - [ ] Restore active workflow-run state after app restart.
+- [ ] Restore pending handler attention queues and per-surface prompt-lock state after app restart.
 - [ ] Add integration tests that exercise the real pi-backed runtime seam for direct work.
 - [ ] Expand from the current real bundled-runtime supervision coverage in `src/bun/smithers-runtime/manager.test.ts` and `src/bun/smithers-tools.test.ts` to full pi-backed handler-thread delegation and workflow-run supervision.
-- [ ] Add integration tests that exercise restart and resume behavior across the product model.
+- [ ] Add integration tests that exercise restart and resume behavior across workspace state, live surface state, and pane bindings.
 
 ## 18. Context Budget Observability
 
 - [ ] Define the context-budget metric as an explicit percentage of the active model's max context.
 - [ ] Define neutral, orange, and red thresholds for that metric.
-- [ ] Build a POC full-width main-session context bar below the composer.
-- [ ] Render the main-session context bar beneath the text input.
+- [ ] Build a POC full-width focused-surface context bar below the composer.
+- [ ] Render the focused-surface context bar beneath the text input.
 - [ ] Build a POC compact bottom-edge context indicator for collapsed delegated-work surfaces.
 - [ ] Render bottom-edge context indicators on collapsed handler-thread and workflow surfaces.
 - [ ] Render full-width context bars on expanded handler-thread panes.
