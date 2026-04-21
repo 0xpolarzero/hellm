@@ -1,21 +1,17 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type {
-  AssistantMessage,
-  AssistantMessageEvent,
-  ToolCall,
-  ToolResultMessage,
-} from "@mariozechner/pi-ai";
+import { getModel, type AssistantMessage, type AssistantMessageEvent } from "@mariozechner/pi-ai";
 import type { ChatStorage, CustomProvider } from "./chat-storage";
 import type {
-  ActiveSessionState,
+  ConversationSurfaceSnapshot,
   PromptTarget,
-  SessionSyncMessage,
-  SessionMutationResponse,
+  SendPromptRequest,
+  SurfaceSyncMessage,
   WorkspaceCommandInspector,
   WorkspaceHandlerThreadInspector,
   WorkspaceHandlerThreadSummary,
   WorkspaceSessionSummary,
+  WorkspaceSyncMessage,
 } from "./chat-rpc";
 import type { PromptHistoryEntry } from "./prompt-history";
 import type { ChatRuntimeRpcClient } from "./chat-runtime";
@@ -41,6 +37,46 @@ mock.module("electrobun/view", () => {
   };
 });
 
+type ReasoningEffort = ConversationSurfaceSnapshot["reasoningEffort"];
+
+type PromptHandlerResult = {
+  assistantText: string;
+  extraMessages?: AgentMessage[];
+  reason?: Extract<SurfaceSyncMessage["reason"], "prompt.settled" | "surface.updated">;
+};
+
+type PromptHandler = (
+  request: SendPromptRequest,
+  harness: FakeRpcHarness,
+) => Promise<PromptHandlerResult> | PromptHandlerResult;
+
+type SurfaceRecord = {
+  snapshot: ConversationSurfaceSnapshot;
+  retainCount: number;
+};
+
+type FakeRpcHarness = {
+  client: ChatRuntimeRpcClient;
+  openedTargets: PromptTarget[];
+  closeRequests: PromptTarget[];
+  promptRequests: SendPromptRequest[];
+  modelUpdates: Array<{ target: PromptTarget; model: string }>;
+  thoughtLevelUpdates: Array<{ target: PromptTarget; level: ReasoningEffort }>;
+  cancelRequests: PromptTarget[];
+  requestCounts: {
+    listSessions: number;
+  };
+  commandInspectorRequests: Array<{ sessionId: string; commandId: string }>;
+  handlerThreadListRequests: string[];
+  handlerThreadInspectorRequests: Array<{ sessionId: string; threadId: string }>;
+  setPromptHandler: (surfacePiSessionId: string, handler: PromptHandler) => void;
+  updateSummary: (sessionId: string, updater: (summary: WorkspaceSessionSummary) => void) => void;
+  emitWorkspaceSync: (reason?: WorkspaceSyncMessage["reason"]) => void;
+  emitSurfaceSync: (payload: SurfaceSyncMessage) => void;
+  getRetainCount: (surfacePiSessionId: string) => number;
+  getSurfaceSnapshot: (surfacePiSessionId: string) => ConversationSurfaceSnapshot;
+};
+
 function userMessage(text: string): AgentMessage {
   return {
     role: "user",
@@ -49,13 +85,19 @@ function userMessage(text: string): AgentMessage {
   };
 }
 
-function assistantMessage(text: string): AssistantMessage {
+function assistantMessage(
+  text: string,
+  options: {
+    provider?: string;
+    model?: string;
+  } = {},
+): AssistantMessage {
   return {
     role: "assistant",
     timestamp: Date.now(),
-    api: "openai-responses",
-    provider: "openai",
-    model: "gpt-4o",
+    api: `${options.provider ?? "openai"}-responses`,
+    provider: options.provider ?? "openai",
+    model: options.model ?? "gpt-4o",
     usage: {
       input: 0,
       output: 0,
@@ -69,6 +111,16 @@ function assistantMessage(text: string): AssistantMessage {
   };
 }
 
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
 async function waitFor(condition: () => boolean, timeoutMs = 2_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -79,26 +131,6 @@ async function waitFor(condition: () => boolean, timeoutMs = 2_000): Promise<voi
   }
 
   throw new Error("Timed out waiting for chat runtime state.");
-}
-
-function toolCall(name: string, argumentsValue: Record<string, unknown>): ToolCall {
-  return {
-    type: "toolCall",
-    id: "tool-call-1",
-    name,
-    arguments: argumentsValue,
-  };
-}
-
-function toolResultMessage(text: string): ToolResultMessage {
-  return {
-    role: "toolResult",
-    toolCallId: "tool-call-1",
-    toolName: "artifacts",
-    timestamp: Date.now(),
-    isError: false,
-    content: [{ type: "text", text }],
-  };
 }
 
 function createOrchestratorTarget(workspaceSessionId: string): PromptTarget {
@@ -126,10 +158,9 @@ function createSummary(
   id: string,
   title: string,
   preview: string,
-  reasoning: ActiveSessionState["reasoningEffort"] = "medium",
-  options: { includeModelMetadata?: boolean; parentSessionId?: string } = {},
+  reasoningEffort: ReasoningEffort = "medium",
+  options: { parentSessionId?: string } = {},
 ): WorkspaceSessionSummary {
-  const includeModelMetadata = options.includeModelMetadata ?? true;
   return {
     id,
     title,
@@ -138,6 +169,9 @@ function createSummary(
     updatedAt: "2026-04-10T10:05:00.000Z",
     messageCount: 2,
     status: "idle",
+    provider: "openai",
+    modelId: "gpt-4o",
+    thinkingLevel: reasoningEffort,
     ...(options.parentSessionId ? { parentSessionId: options.parentSessionId } : {}),
     wait: null,
     counts: {
@@ -156,13 +190,28 @@ function createSummary(
       waiting: [],
       troubleshooting: [],
     },
-    ...(includeModelMetadata
-      ? {
-          provider: "openai",
-          modelId: "gpt-4o",
-          thinkingLevel: reasoning,
-        }
-      : {}),
+  };
+}
+
+function createSurfaceSnapshot(input: {
+  target: PromptTarget;
+  messages: AgentMessage[];
+  provider?: string;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
+  systemPrompt?: string;
+  resolvedSystemPrompt?: string;
+}): ConversationSurfaceSnapshot {
+  const systemPrompt = input.systemPrompt ?? "You are svvy.";
+  return {
+    target: structuredClone(input.target),
+    messages: structuredClone(input.messages),
+    provider: input.provider ?? "openai",
+    model: input.model ?? "gpt-4o",
+    reasoningEffort: input.reasoningEffort ?? "medium",
+    systemPrompt,
+    resolvedSystemPrompt: input.resolvedSystemPrompt ?? systemPrompt,
+    promptStatus: "idle",
   };
 }
 
@@ -188,9 +237,9 @@ function createCommandInspector(
     updatedAt: "2026-04-10T10:05:00.000Z",
     finishedAt: "2026-04-10T10:05:00.000Z",
     artifacts: [],
-    childCount: 2,
+    childCount: 1,
     summaryChildCount: 1,
-    traceChildCount: 1,
+    traceChildCount: 0,
     summaryChildren: [
       {
         commandId: "command-summary-1",
@@ -209,24 +258,7 @@ function createCommandInspector(
         artifacts: [],
       },
     ],
-    traceChildren: [
-      {
-        commandId: "command-trace-1",
-        toolName: "repo.readFile",
-        visibility: "trace",
-        status: "succeeded",
-        title: "Read docs/prd.md",
-        summary: "Loaded docs/prd.md.",
-        error: null,
-        facts: {
-          path: "docs/prd.md",
-        },
-        startedAt: "2026-04-10T10:00:30.000Z",
-        updatedAt: "2026-04-10T10:00:40.000Z",
-        finishedAt: "2026-04-10T10:00:40.000Z",
-        artifacts: [],
-      },
-    ],
+    traceChildren: [],
   };
 }
 
@@ -258,973 +290,35 @@ function createHandlerThreadSummary(threadId = "thread-1"): WorkspaceHandlerThre
       kind: "change",
       title: "Latest handoff",
       summary: "Patched the parser transitions and added regression coverage.",
-      createdAt: "2026-04-10T10:05:00.000Z",
+      createdAt: "2026-04-10T10:04:00.000Z",
     },
   };
 }
 
 function createHandlerThreadInspector(threadId = "thread-1"): WorkspaceHandlerThreadInspector {
-  const summary = createHandlerThreadSummary(threadId);
   return {
-    ...summary,
-    commandRollups: [
+    ...createHandlerThreadSummary(threadId),
+    commandRollups: [],
+    workflowRuns: [
       {
-        commandId: "command-77",
-        threadId,
-        workflowRunId: null,
-        toolName: "execute_typescript",
-        visibility: "summary",
-        status: "succeeded",
-        title: "Patch parser transitions",
-        summary: "Updated parser transitions and added regression coverage.",
-        childCount: 1,
-        summaryChildCount: 1,
-        traceChildCount: 0,
-        summaryChildren: [
-          {
-            commandId: "command-78",
-            toolName: "artifact.writeText",
-            status: "succeeded",
-            title: "Write parser test",
-            summary: "Created parser regression test coverage.",
-            error: null,
-          },
-        ],
-        updatedAt: "2026-04-10T10:04:00.000Z",
+        workflowRunId: "workflow-1",
+        workflowName: "verification_run",
+        status: "completed",
+        summary: "Verification passed.",
+        updatedAt: "2026-04-10T10:04:30.000Z",
       },
     ],
-    workflowRuns: [summary.latestWorkflowRun!],
-    episodes: [summary.latestEpisode!],
-    artifacts: [
+    episodes: [
       {
-        artifactId: "artifact-1",
-        kind: "file",
-        name: "parser-regression.test.ts",
-        path: "/tmp/svvy/.svvy/artifacts/parser-regression.test.ts",
-        createdAt: "2026-04-10T10:03:30.000Z",
+        episodeId: "episode-1",
+        kind: "change",
+        title: "Latest handoff",
+        summary: "Patched the parser transitions and added regression coverage.",
+        createdAt: "2026-04-10T10:04:00.000Z",
       },
     ],
+    artifacts: [],
   };
-}
-
-function createActiveSession(
-  id: string,
-  title: string,
-  messages: AgentMessage[],
-  reasoning: ActiveSessionState["reasoningEffort"] = "medium",
-  options: {
-    systemPrompt?: string;
-    resolvedSystemPrompt?: string;
-    target?: PromptTarget;
-  } = {},
-): ActiveSessionState {
-  const lastMessage = messages.at(-1);
-  const preview =
-    lastMessage && lastMessage.role === "assistant"
-      ? lastMessage.content
-          .filter((block) => block.type === "text")
-          .map((block) => block.text)
-          .join(" ")
-      : "";
-
-  const target = options.target ?? createOrchestratorTarget(id);
-
-  return {
-    session: createSummary(id, title, preview, reasoning),
-    target,
-    messages,
-    provider: "openai",
-    model: "gpt-4o",
-    reasoningEffort: reasoning,
-    systemPrompt: options.systemPrompt ?? "You are svvy.",
-    resolvedSystemPrompt: options.resolvedSystemPrompt ?? options.systemPrompt ?? "You are svvy.",
-  };
-}
-
-function cloneActiveSession(session: ActiveSessionState): ActiveSessionState {
-  return structuredClone(session);
-}
-
-function createSessionSyncMessage(
-  activeSession: ActiveSessionState,
-  sessions: WorkspaceSessionSummary[],
-  reason: SessionSyncMessage["reason"] = "prompt.settled",
-): SessionSyncMessage {
-  return {
-    reason,
-    activeSession: cloneActiveSession(activeSession),
-    sessions: structuredClone(sessions),
-  };
-}
-
-function stripSummaryMetadata(summary: WorkspaceSessionSummary): WorkspaceSessionSummary {
-  const {
-    provider: _provider,
-    modelId: _modelId,
-    thinkingLevel: _thinkingLevel,
-    ...rest
-  } = summary;
-  return { ...rest };
-}
-
-function createFakeRpc(
-  initialSessions: ActiveSessionState[],
-  options: {
-    metadataOnlyListSessions?: boolean;
-    commandInspector?: WorkspaceCommandInspector;
-    handlerThreads?: WorkspaceHandlerThreadSummary[];
-    handlerThreadInspector?: WorkspaceHandlerThreadInspector;
-  } = {},
-): {
-  client: ChatRuntimeRpcClient;
-  sentPromptRequests: Array<{ target: PromptTarget }>;
-  sentPromptSessions: string[];
-  openedSessions: string[];
-  requestCounts: {
-    listSessions: number;
-    getActiveSession: number;
-    getCommandInspector: number;
-    listHandlerThreads: number;
-    getHandlerThreadInspector: number;
-  };
-} {
-  const streamListeners = new Set<
-    (payload: { streamId: string; event: AssistantMessageEvent }) => void
-  >();
-  const sessionSyncListeners = new Set<(payload: SessionSyncMessage) => void>();
-  const surfacesByPiSessionId = new Map(
-    initialSessions.map((session) => [
-      session.target.surfacePiSessionId,
-      cloneActiveSession(session),
-    ]),
-  );
-  let activeTarget = initialSessions[0]?.target
-    ? structuredClone(initialSessions[0].target)
-    : undefined;
-  const openedSessions: string[] = [];
-  const sentPromptRequests: Array<{ target: PromptTarget }> = [];
-  const sentPromptSessions: string[] = [];
-  const requestCounts = {
-    listSessions: 0,
-    getActiveSession: 0,
-    getCommandInspector: 0,
-    listHandlerThreads: 0,
-    getHandlerThreadInspector: 0,
-  };
-
-  const listWorkspaceSummaries = () => {
-    const summariesById = new Map<string, WorkspaceSessionSummary>();
-    for (const session of surfacesByPiSessionId.values()) {
-      if (!summariesById.has(session.session.id) || session.target.surface === "orchestrator") {
-        summariesById.set(
-          session.session.id,
-          options.metadataOnlyListSessions
-            ? stripSummaryMetadata(session.session)
-            : structuredClone(session.session),
-        );
-      }
-    }
-
-    return Array.from(summariesById.values());
-  };
-
-  const getSurface = (surfacePiSessionId: string) => {
-    const session = surfacesByPiSessionId.get(surfacePiSessionId);
-    if (!session) {
-      throw new Error(`Missing fake surface ${surfacePiSessionId}`);
-    }
-    return session;
-  };
-
-  const updateWorkspaceSummary = (
-    workspaceSessionId: string,
-    updater: (summary: WorkspaceSessionSummary) => void,
-  ) => {
-    for (const session of surfacesByPiSessionId.values()) {
-      if (session.session.id === workspaceSessionId) {
-        updater(session.session);
-      }
-    }
-  };
-
-  const listSessions = () => ({
-    activeSessionId: activeTarget?.workspaceSessionId,
-    sessions: listWorkspaceSummaries(),
-  });
-
-  const getActiveSession = () => {
-    requestCounts.getActiveSession += 1;
-    return activeTarget ? cloneActiveSession(getSurface(activeTarget.surfacePiSessionId)) : null;
-  };
-
-  const mutation = (activeSession?: ActiveSessionState | null): SessionMutationResponse => ({
-    ok: true,
-    activeSessionId: activeTarget?.workspaceSessionId,
-    activeSession: activeSession ? cloneActiveSession(activeSession) : (activeSession ?? undefined),
-  });
-
-  const client: ChatRuntimeRpcClient = {
-    request: {
-      getDefaults: async () => ({ provider: "openai", model: "gpt-4o", reasoningEffort: "medium" }),
-      getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
-      getWorkspaceInfo: async () => ({
-        workspaceId: "/tmp/svvy",
-        workspaceLabel: "svvy",
-        branch: "main",
-      }),
-      listSessions: async () => {
-        requestCounts.listSessions += 1;
-        return listSessions();
-      },
-      getActiveSession: async () => getActiveSession(),
-      getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
-        requestCounts.getCommandInspector += 1;
-        return structuredClone(options.commandInspector ?? createCommandInspector(commandId));
-      },
-      listHandlerThreads: async ({ sessionId }: { sessionId: string }) => {
-        requestCounts.listHandlerThreads += 1;
-        return structuredClone(
-          options.handlerThreads ?? [createHandlerThreadSummary(`thread-for-${sessionId}`)],
-        );
-      },
-      getHandlerThreadInspector: async ({ threadId }: { sessionId: string; threadId: string }) => {
-        requestCounts.getHandlerThreadInspector += 1;
-        return structuredClone(
-          options.handlerThreadInspector ?? createHandlerThreadInspector(threadId),
-        );
-      },
-      createSession: async ({ title }: { title?: string }) => {
-        const id = `session-${surfacesByPiSessionId.size + 1}`;
-        const created = createActiveSession(id, title ?? "New Session", [], "medium");
-        surfacesByPiSessionId.set(created.target.surfacePiSessionId, cloneActiveSession(created));
-        activeTarget = structuredClone(created.target);
-        return cloneActiveSession(created);
-      },
-      openSession: async ({ sessionId }: { sessionId: string }) => {
-        openedSessions.push(sessionId);
-        activeTarget = createOrchestratorTarget(sessionId);
-        return cloneActiveSession(getSurface(sessionId));
-      },
-      openSurface: async ({ target }: { target: PromptTarget }) => {
-        openedSessions.push(target.surfacePiSessionId);
-        activeTarget = structuredClone(target);
-        const session = cloneActiveSession(getSurface(target.surfacePiSessionId));
-        session.target = structuredClone(target);
-        return session;
-      },
-      renameSession: async ({ sessionId, title }: { sessionId: string; title: string }) => {
-        updateWorkspaceSummary(sessionId, (summary) => {
-          summary.title = title;
-        });
-        return mutation();
-      },
-      forkSession: async ({ sessionId, title }: { sessionId: string; title?: string }) => {
-        const source = getSurface(sessionId);
-        const id = `session-${surfacesByPiSessionId.size + 1}`;
-        const forked = cloneActiveSession(source);
-        forked.session.id = id;
-        forked.session.title = title ?? `${source.session.title} fork`;
-        forked.session.parentSessionId = sessionId;
-        forked.target = createOrchestratorTarget(id);
-        surfacesByPiSessionId.set(id, forked);
-        activeTarget = structuredClone(forked.target);
-        return cloneActiveSession(forked);
-      },
-      deleteSession: async ({ sessionId }: { sessionId: string }) => {
-        for (const [surfacePiSessionId, session] of surfacesByPiSessionId.entries()) {
-          if (session.session.id === sessionId) {
-            surfacesByPiSessionId.delete(surfacePiSessionId);
-          }
-        }
-        if (activeTarget?.workspaceSessionId === sessionId) {
-          const nextSurface = Array.from(surfacesByPiSessionId.values()).find(
-            (session) => session.target.surface === "orchestrator",
-          );
-          activeTarget = nextSurface ? structuredClone(nextSurface.target) : undefined;
-          return mutation(nextSurface ? cloneActiveSession(nextSurface) : null);
-        }
-        return mutation();
-      },
-      sendPrompt: async (request: {
-        streamId: string;
-        messages: AgentMessage[];
-        target: PromptTarget;
-      }) => {
-        sentPromptRequests.push({ target: structuredClone(request.target) });
-        sentPromptSessions.push(request.target.surfacePiSessionId);
-        const assistant = assistantMessage("Session-specific reply");
-        const session = getSurface(request.target.surfacePiSessionId);
-        session.messages = [...request.messages, assistant];
-        updateWorkspaceSummary(request.target.workspaceSessionId, (summary) => {
-          summary.preview = "Session-specific reply";
-          summary.messageCount = session.messages.length;
-        });
-        queueMicrotask(() => {
-          const partial = assistantMessage("");
-          for (const listener of streamListeners) {
-            listener({ streamId: request.streamId, event: { type: "start", partial } });
-            listener({
-              streamId: request.streamId,
-              event: { type: "text_start", contentIndex: 0, partial },
-            });
-            listener({
-              streamId: request.streamId,
-              event: {
-                type: "text_delta",
-                contentIndex: 0,
-                delta: "Session-specific reply",
-                partial,
-              },
-            });
-            listener({
-              streamId: request.streamId,
-              event: {
-                type: "text_end",
-                contentIndex: 0,
-                content: "Session-specific reply",
-                partial,
-              },
-            });
-            listener({
-              streamId: request.streamId,
-              event: { type: "done", reason: "stop", message: assistant },
-            });
-          }
-
-          for (const listener of sessionSyncListeners) {
-            listener(createSessionSyncMessage(session, listSessions().sessions));
-          }
-        });
-        return {
-          target: structuredClone(request.target),
-        };
-      },
-      setSessionModel: async ({
-        surfacePiSessionId,
-      }: {
-        surfacePiSessionId: string;
-        model: string;
-      }) => ({
-        ok: true,
-        sessionId: surfacePiSessionId,
-      }),
-      setSessionThoughtLevel: async ({
-        surfacePiSessionId,
-      }: {
-        surfacePiSessionId: string;
-        level: string;
-      }) => ({
-        ok: true,
-        sessionId: surfacePiSessionId,
-      }),
-      cancelPrompt: async () => ({ ok: true }),
-      listProviderAuths: async () => [
-        { provider: "openai", hasKey: true, keyType: "oauth", supportsOAuth: true },
-      ],
-      setProviderApiKey: async () => ({ ok: true }),
-      startOAuth: async () => ({ ok: true }),
-      removeProviderAuth: async () => ({ ok: true }),
-    },
-    addMessageListener: (messageName: string, listener: unknown) => {
-      if (messageName === "sendStreamEvent") {
-        streamListeners.add(
-          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-        );
-        return;
-      }
-      if (messageName === "sendSessionSync") {
-        sessionSyncListeners.add(listener as (payload: SessionSyncMessage) => void);
-      }
-    },
-    removeMessageListener: (messageName: string, listener: unknown) => {
-      if (messageName === "sendStreamEvent") {
-        streamListeners.delete(
-          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-        );
-        return;
-      }
-      if (messageName === "sendSessionSync") {
-        sessionSyncListeners.delete(listener as (payload: SessionSyncMessage) => void);
-      }
-    },
-  };
-
-  return { client, sentPromptRequests, sentPromptSessions, openedSessions, requestCounts };
-}
-
-function createFakeRpcWithToolUse(
-  initialSession: ActiveSessionState,
-  _options: { summaryMode?: "summary" | "null" | "mismatch" } = {},
-): {
-  client: ChatRuntimeRpcClient;
-  requestCounts: {
-    listSessions: number;
-    getActiveSession: number;
-    getCommandInspector: number;
-    listHandlerThreads: number;
-    getHandlerThreadInspector: number;
-  };
-} {
-  const streamListeners = new Set<
-    (payload: { streamId: string; event: AssistantMessageEvent }) => void
-  >();
-  const sessionSyncListeners = new Set<(payload: SessionSyncMessage) => void>();
-  const toolUse = toolCall("artifacts", {
-    command: "create",
-    filename: "tool-use.txt",
-    content: "tool use artifact",
-  });
-  const finalAssistant = assistantMessage("Tool use finished.");
-  const session = cloneActiveSession(initialSession);
-  const requestCounts = {
-    listSessions: 0,
-    getActiveSession: 0,
-    getCommandInspector: 0,
-    listHandlerThreads: 0,
-    getHandlerThreadInspector: 0,
-  };
-
-  const client: ChatRuntimeRpcClient = {
-    request: {
-      getDefaults: async () => ({ provider: "openai", model: "gpt-4o", reasoningEffort: "medium" }),
-      getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
-      getWorkspaceInfo: async () => ({
-        workspaceId: "/tmp/svvy",
-        workspaceLabel: "svvy",
-        branch: "main",
-      }),
-      listSessions: async () => {
-        requestCounts.listSessions += 1;
-        return {
-          activeSessionId: session.session.id,
-          sessions: [structuredClone(session.session)],
-        };
-      },
-      getActiveSession: async () => {
-        requestCounts.getActiveSession += 1;
-        return cloneActiveSession(session);
-      },
-      getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
-        requestCounts.getCommandInspector += 1;
-        return createCommandInspector(commandId);
-      },
-      listHandlerThreads: async () => {
-        requestCounts.listHandlerThreads += 1;
-        return [createHandlerThreadSummary()];
-      },
-      getHandlerThreadInspector: async ({ threadId }: { sessionId: string; threadId: string }) => {
-        requestCounts.getHandlerThreadInspector += 1;
-        return createHandlerThreadInspector(threadId);
-      },
-      createSession: async () => cloneActiveSession(session),
-      openSession: async () => cloneActiveSession(session),
-      openSurface: async () => cloneActiveSession(session),
-      renameSession: async () => ({
-        ok: true,
-        activeSessionId: session.session.id,
-      }),
-      forkSession: async () => cloneActiveSession(session),
-      deleteSession: async () => ({
-        ok: true,
-        activeSessionId: session.session.id,
-      }),
-      sendPrompt: async (request: {
-        streamId: string;
-        messages: AgentMessage[];
-        target: PromptTarget;
-      }) => {
-        const toolAssistant: AssistantMessage = {
-          ...assistantMessage("Using the artifacts tool."),
-          stopReason: "toolUse",
-          content: [{ type: "text", text: "Using the artifacts tool." }, toolUse],
-        };
-        session.messages = [
-          ...request.messages,
-          toolAssistant,
-          toolResultMessage("Created file tool-use.txt"),
-          finalAssistant,
-        ];
-        session.session.preview = "Tool use finished.";
-        session.session.messageCount = session.messages.length;
-
-        queueMicrotask(() => {
-          const partial = assistantMessage("");
-          for (const listener of streamListeners) {
-            listener({ streamId: request.streamId, event: { type: "start", partial } });
-            listener({
-              streamId: request.streamId,
-              event: { type: "done", reason: "stop", message: finalAssistant },
-            });
-          }
-          for (const listener of sessionSyncListeners) {
-            listener(createSessionSyncMessage(session, [session.session]));
-          }
-        });
-
-        return {
-          target: structuredClone(request.target),
-        };
-      },
-      setSessionModel: async ({
-        surfacePiSessionId,
-      }: {
-        surfacePiSessionId: string;
-        model: string;
-      }) => ({
-        ok: true,
-        sessionId: surfacePiSessionId,
-      }),
-      setSessionThoughtLevel: async ({
-        surfacePiSessionId,
-      }: {
-        surfacePiSessionId: string;
-        level: string;
-      }) => ({
-        ok: true,
-        sessionId: surfacePiSessionId,
-      }),
-      cancelPrompt: async () => ({ ok: true }),
-      listProviderAuths: async () => [
-        { provider: "openai", hasKey: true, keyType: "oauth", supportsOAuth: true },
-      ],
-      setProviderApiKey: async () => ({ ok: true }),
-      startOAuth: async () => ({ ok: true }),
-      removeProviderAuth: async () => ({ ok: true }),
-    },
-    addMessageListener: (messageName: string, listener: unknown) => {
-      if (messageName === "sendStreamEvent") {
-        streamListeners.add(
-          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-        );
-        return;
-      }
-      if (messageName === "sendSessionSync") {
-        sessionSyncListeners.add(listener as (payload: SessionSyncMessage) => void);
-      }
-    },
-    removeMessageListener: (messageName: string, listener: unknown) => {
-      if (messageName === "sendStreamEvent") {
-        streamListeners.delete(
-          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-        );
-        return;
-      }
-      if (messageName === "sendSessionSync") {
-        sessionSyncListeners.delete(listener as (payload: SessionSyncMessage) => void);
-      }
-    },
-  };
-
-  return { client, requestCounts };
-}
-
-function createFakeRpcWithThreadSidebarRefresh(): {
-  client: ChatRuntimeRpcClient;
-  requestCounts: {
-    listSessions: number;
-    getActiveSession: number;
-    getCommandInspector: number;
-    listHandlerThreads: number;
-    getHandlerThreadInspector: number;
-  };
-} {
-  const streamListeners = new Set<
-    (payload: { streamId: string; event: AssistantMessageEvent }) => void
-  >();
-  const sessionSyncListeners = new Set<(payload: SessionSyncMessage) => void>();
-  const orchestrator = createActiveSession(
-    "session-1",
-    "Orchestrator",
-    [userMessage("delegate"), assistantMessage("Opened a handler thread.")],
-    "medium",
-  );
-  orchestrator.session.status = "running";
-  orchestrator.session.preview = "Opened a handler thread.";
-  orchestrator.session.threadIdsByStatus = {
-    runningHandler: ["thread-123"],
-    runningWorkflow: [],
-    waiting: [],
-    troubleshooting: [],
-  };
-  const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
-  const thread = createActiveSession(
-    "session-1",
-    "Handler Thread",
-    [userMessage("status"), assistantMessage("Working on it.")],
-    "medium",
-    { target: threadTarget },
-  );
-  let activeTarget = createOrchestratorTarget(orchestrator.session.id);
-  const requestCounts = {
-    listSessions: 0,
-    getActiveSession: 0,
-    getCommandInspector: 0,
-    listHandlerThreads: 0,
-    getHandlerThreadInspector: 0,
-  };
-
-  const getActiveSurface = () =>
-    activeTarget.surface === "thread"
-      ? cloneActiveSession(thread)
-      : cloneActiveSession(orchestrator);
-
-  const client: ChatRuntimeRpcClient = {
-    request: {
-      getDefaults: async () => ({ provider: "openai", model: "gpt-4o", reasoningEffort: "medium" }),
-      getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
-      getWorkspaceInfo: async () => ({
-        workspaceId: "/tmp/svvy",
-        workspaceLabel: "svvy",
-        branch: "main",
-      }),
-      listSessions: async () => {
-        requestCounts.listSessions += 1;
-        return {
-          activeSessionId: orchestrator.session.id,
-          sessions: [structuredClone(orchestrator.session)],
-        };
-      },
-      getActiveSession: async () => {
-        requestCounts.getActiveSession += 1;
-        return getActiveSurface();
-      },
-      getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
-        requestCounts.getCommandInspector += 1;
-        return createCommandInspector(commandId);
-      },
-      listHandlerThreads: async () => {
-        requestCounts.listHandlerThreads += 1;
-        return [createHandlerThreadSummary("thread-123")];
-      },
-      getHandlerThreadInspector: async ({ threadId }: { sessionId: string; threadId: string }) => {
-        requestCounts.getHandlerThreadInspector += 1;
-        return createHandlerThreadInspector(threadId);
-      },
-      createSession: async () => cloneActiveSession(orchestrator),
-      openSession: async ({ sessionId }: { sessionId: string }) => {
-        activeTarget = createOrchestratorTarget(sessionId);
-        return cloneActiveSession(orchestrator);
-      },
-      openSurface: async ({ target }: { target: PromptTarget }) => {
-        activeTarget = structuredClone(target);
-        return cloneActiveSession(thread);
-      },
-      renameSession: async () => ({
-        ok: true,
-        activeSessionId: orchestrator.session.id,
-      }),
-      forkSession: async () => cloneActiveSession(orchestrator),
-      deleteSession: async () => ({
-        ok: true,
-        activeSessionId: orchestrator.session.id,
-      }),
-      sendPrompt: async (request: {
-        streamId: string;
-        messages: AgentMessage[];
-        target: PromptTarget;
-      }) => {
-        const finalAssistant = assistantMessage("Thread handed off.");
-        thread.messages = [...request.messages, finalAssistant];
-        thread.target = structuredClone(request.target);
-
-        orchestrator.session.status = "idle";
-        orchestrator.session.preview = "Thread handoff received.";
-        orchestrator.session.threadIdsByStatus = {
-          runningHandler: [],
-          runningWorkflow: [],
-          waiting: [],
-          troubleshooting: [],
-        };
-
-        queueMicrotask(() => {
-          const partial = assistantMessage("");
-          for (const listener of streamListeners) {
-            listener({ streamId: request.streamId, event: { type: "start", partial } });
-            listener({
-              streamId: request.streamId,
-              event: { type: "done", reason: "stop", message: finalAssistant },
-            });
-          }
-
-          queueMicrotask(() => {
-            activeTarget = createOrchestratorTarget(orchestrator.session.id);
-            for (const listener of sessionSyncListeners) {
-              listener(createSessionSyncMessage(orchestrator, [orchestrator.session]));
-            }
-          });
-        });
-
-        return {
-          target: structuredClone(request.target),
-        };
-      },
-      setSessionModel: async ({
-        surfacePiSessionId,
-      }: {
-        surfacePiSessionId: string;
-        model: string;
-      }) => ({
-        ok: true,
-        sessionId: surfacePiSessionId,
-      }),
-      setSessionThoughtLevel: async ({
-        surfacePiSessionId,
-      }: {
-        surfacePiSessionId: string;
-        level: string;
-      }) => ({
-        ok: true,
-        sessionId: surfacePiSessionId,
-      }),
-      cancelPrompt: async () => ({ ok: true }),
-      listProviderAuths: async () => [
-        { provider: "openai", hasKey: true, keyType: "oauth", supportsOAuth: true },
-      ],
-      setProviderApiKey: async () => ({ ok: true }),
-      startOAuth: async () => ({ ok: true }),
-      removeProviderAuth: async () => ({ ok: true }),
-    },
-    addMessageListener: (messageName: string, listener: unknown) => {
-      if (messageName === "sendStreamEvent") {
-        streamListeners.add(
-          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-        );
-        return;
-      }
-      if (messageName === "sendSessionSync") {
-        sessionSyncListeners.add(listener as (payload: SessionSyncMessage) => void);
-      }
-    },
-    removeMessageListener: (messageName: string, listener: unknown) => {
-      if (messageName === "sendStreamEvent") {
-        streamListeners.delete(
-          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-        );
-        return;
-      }
-      if (messageName === "sendSessionSync") {
-        sessionSyncListeners.delete(listener as (payload: SessionSyncMessage) => void);
-      }
-    },
-  };
-
-  return { client, requestCounts };
-}
-
-function createFakeRpcWithBackgroundOrchestratorResume(): {
-  client: ChatRuntimeRpcClient;
-  requestCounts: {
-    listSessions: number;
-    getActiveSession: number;
-    getCommandInspector: number;
-    listHandlerThreads: number;
-    getHandlerThreadInspector: number;
-  };
-} {
-  const streamListeners = new Set<
-    (payload: { streamId: string; event: AssistantMessageEvent }) => void
-  >();
-  const sessionSyncListeners = new Set<(payload: SessionSyncMessage) => void>();
-  const orchestrator = createActiveSession(
-    "session-1",
-    "Orchestrator",
-    [userMessage("delegate"), assistantMessage("Opened a handler thread.")],
-    "medium",
-  );
-  orchestrator.session.status = "running";
-  orchestrator.session.preview = "Opened a handler thread.";
-  orchestrator.session.threadIdsByStatus = {
-    runningHandler: ["thread-123"],
-    runningWorkflow: [],
-    waiting: [],
-    troubleshooting: [],
-  };
-  const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
-  const thread = createActiveSession(
-    "session-1",
-    "Handler Thread",
-    [userMessage("status"), assistantMessage("Working on it.")],
-    "medium",
-    { target: threadTarget },
-  );
-  let activeTarget = createOrchestratorTarget(orchestrator.session.id);
-  let emittedOrchestratorStart = false;
-  let emittedOrchestratorDone = false;
-  const requestCounts = {
-    listSessions: 0,
-    getActiveSession: 0,
-    getCommandInspector: 0,
-    listHandlerThreads: 0,
-    getHandlerThreadInspector: 0,
-  };
-
-  const getActiveSurface = () =>
-    activeTarget.surface === "thread"
-      ? cloneActiveSession(thread)
-      : cloneActiveSession(orchestrator);
-
-  const client: ChatRuntimeRpcClient = {
-    request: {
-      getDefaults: async () => ({ provider: "openai", model: "gpt-4o", reasoningEffort: "medium" }),
-      getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
-      getWorkspaceInfo: async () => ({
-        workspaceId: "/tmp/svvy",
-        workspaceLabel: "svvy",
-        branch: "main",
-      }),
-      listSessions: async () => {
-        requestCounts.listSessions += 1;
-        return {
-          activeSessionId: orchestrator.session.id,
-          sessions: [structuredClone(orchestrator.session)],
-        };
-      },
-      getActiveSession: async () => {
-        requestCounts.getActiveSession += 1;
-        return getActiveSurface();
-      },
-      getCommandInspector: async ({ commandId }: { sessionId: string; commandId: string }) => {
-        requestCounts.getCommandInspector += 1;
-        return createCommandInspector(commandId);
-      },
-      listHandlerThreads: async () => {
-        requestCounts.listHandlerThreads += 1;
-        return [createHandlerThreadSummary("thread-123")];
-      },
-      getHandlerThreadInspector: async ({ threadId }: { sessionId: string; threadId: string }) => {
-        requestCounts.getHandlerThreadInspector += 1;
-        return createHandlerThreadInspector(threadId);
-      },
-      createSession: async () => cloneActiveSession(orchestrator),
-      openSession: async ({ sessionId }: { sessionId: string }) => {
-        activeTarget = createOrchestratorTarget(sessionId);
-        return cloneActiveSession(orchestrator);
-      },
-      openSurface: async ({ target }: { target: PromptTarget }) => {
-        activeTarget = structuredClone(target);
-        return cloneActiveSession(thread);
-      },
-      renameSession: async () => ({
-        ok: true,
-        activeSessionId: orchestrator.session.id,
-      }),
-      forkSession: async () => cloneActiveSession(orchestrator),
-      deleteSession: async () => ({
-        ok: true,
-        activeSessionId: orchestrator.session.id,
-      }),
-      sendPrompt: async (request: {
-        streamId: string;
-        messages: AgentMessage[];
-        target: PromptTarget;
-      }) => {
-        const finalAssistant = assistantMessage("Thread handed off.");
-        thread.messages = [...request.messages, finalAssistant];
-        thread.target = structuredClone(request.target);
-
-        queueMicrotask(() => {
-          const partial = assistantMessage("");
-          for (const listener of streamListeners) {
-            listener({ streamId: request.streamId, event: { type: "start", partial } });
-            listener({
-              streamId: request.streamId,
-              event: { type: "done", reason: "stop", message: finalAssistant },
-            });
-          }
-
-          if (!emittedOrchestratorStart) {
-            emittedOrchestratorStart = true;
-            activeTarget = createOrchestratorTarget(orchestrator.session.id);
-            orchestrator.session.status = "running";
-            orchestrator.session.preview = "Reviewing thread handoff.";
-            orchestrator.session.threadIdsByStatus = {
-              runningHandler: [],
-              runningWorkflow: [],
-              waiting: [],
-              troubleshooting: [],
-            };
-            for (const listener of sessionSyncListeners) {
-              listener(
-                createSessionSyncMessage(
-                  orchestrator,
-                  [orchestrator.session],
-                  "background.started",
-                ),
-              );
-            }
-          }
-
-          queueMicrotask(() => {
-            if (emittedOrchestratorDone) {
-              return;
-            }
-            emittedOrchestratorDone = true;
-            const resumedAssistant = assistantMessage(
-              "I reviewed the handoff and resumed orchestration.",
-            );
-            orchestrator.messages = [...orchestrator.messages, resumedAssistant];
-            orchestrator.session.messageCount = orchestrator.messages.length;
-            orchestrator.session.preview = "I reviewed the handoff and resumed orchestration.";
-            orchestrator.session.status = "idle";
-            for (const listener of sessionSyncListeners) {
-              listener(createSessionSyncMessage(orchestrator, [orchestrator.session]));
-            }
-          });
-        });
-
-        return {
-          target: structuredClone(request.target),
-        };
-      },
-      setSessionModel: async ({
-        surfacePiSessionId,
-      }: {
-        surfacePiSessionId: string;
-        model: string;
-      }) => ({
-        ok: true,
-        sessionId: surfacePiSessionId,
-      }),
-      setSessionThoughtLevel: async ({
-        surfacePiSessionId,
-      }: {
-        surfacePiSessionId: string;
-        level: string;
-      }) => ({
-        ok: true,
-        sessionId: surfacePiSessionId,
-      }),
-      cancelPrompt: async () => ({ ok: true }),
-      listProviderAuths: async () => [],
-      setProviderApiKey: async () => ({ ok: true }),
-      startOAuth: async () => ({ ok: true }),
-      removeProviderAuth: async () => ({ ok: true }),
-    },
-    addMessageListener: (messageName: string, listener: unknown) => {
-      if (messageName === "sendStreamEvent") {
-        streamListeners.add(
-          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-        );
-        return;
-      }
-      if (messageName === "sendSessionSync") {
-        sessionSyncListeners.add(listener as (payload: SessionSyncMessage) => void);
-      }
-    },
-    removeMessageListener: (messageName: string, listener: unknown) => {
-      if (messageName === "sendStreamEvent") {
-        streamListeners.delete(
-          listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
-        );
-        return;
-      }
-      if (messageName === "sendSessionSync") {
-        sessionSyncListeners.delete(listener as (payload: SessionSyncMessage) => void);
-      }
-    },
-  };
-
-  return { client, requestCounts };
 }
 
 function createMemoryStorage(): ChatStorage {
@@ -1264,440 +358,781 @@ function createMemoryStorage(): ChatStorage {
         return entry;
       },
     },
-  } as unknown as ChatStorage;
+  } as ChatStorage;
+}
+
+function createFakeRpc(input: {
+  sessions: WorkspaceSessionSummary[];
+  surfaces: ConversationSurfaceSnapshot[];
+  commandInspector?: WorkspaceCommandInspector;
+  handlerThreads?: WorkspaceHandlerThreadSummary[];
+  handlerThreadInspector?: WorkspaceHandlerThreadInspector;
+}): FakeRpcHarness {
+  const streamListeners = new Set<
+    (payload: { streamId: string; event: AssistantMessageEvent }) => void
+  >();
+  const workspaceSyncListeners = new Set<(payload: WorkspaceSyncMessage) => void>();
+  const surfaceSyncListeners = new Set<(payload: SurfaceSyncMessage) => void>();
+  const summaries = new Map(
+    input.sessions.map((summary) => [summary.id, structuredClone(summary)]),
+  );
+  const surfaces = new Map<string, SurfaceRecord>(
+    input.surfaces.map((snapshot) => [
+      snapshot.target.surfacePiSessionId,
+      { snapshot: structuredClone(snapshot), retainCount: 0 },
+    ]),
+  );
+  const promptHandlers = new Map<string, PromptHandler>();
+  const pendingPromptIdsBySurface = new Map<string, string>();
+  const cancelledPromptIds = new Set<string>();
+  const openedTargets: PromptTarget[] = [];
+  const closeRequests: PromptTarget[] = [];
+  const promptRequests: SendPromptRequest[] = [];
+  const modelUpdates: Array<{ target: PromptTarget; model: string }> = [];
+  const thoughtLevelUpdates: Array<{ target: PromptTarget; level: ReasoningEffort }> = [];
+  const cancelRequests: PromptTarget[] = [];
+  const commandInspectorRequests: Array<{ sessionId: string; commandId: string }> = [];
+  const handlerThreadListRequests: string[] = [];
+  const handlerThreadInspectorRequests: Array<{ sessionId: string; threadId: string }> = [];
+  const requestCounts = {
+    listSessions: 0,
+  };
+
+  const cloneTarget = (target: PromptTarget): PromptTarget => structuredClone(target);
+
+  const listSessions = (): WorkspaceSessionSummary[] =>
+    Array.from(summaries.values()).map((summary) => structuredClone(summary));
+
+  const getSurfaceRecord = (surfacePiSessionId: string): SurfaceRecord => {
+    const record = surfaces.get(surfacePiSessionId) ?? null;
+    if (!record) {
+      throw new Error(`Missing fake surface ${surfacePiSessionId}`);
+    }
+    return record;
+  };
+
+  const updateSummary = (
+    sessionId: string,
+    updater: (summary: WorkspaceSessionSummary) => void,
+  ): void => {
+    const summary = summaries.get(sessionId) ?? null;
+    if (!summary) {
+      throw new Error(`Missing fake workspace session ${sessionId}`);
+    }
+    updater(summary);
+  };
+
+  const emitWorkspaceSync = (
+    reason: WorkspaceSyncMessage["reason"] = "workspace.updated",
+  ): void => {
+    const payload: WorkspaceSyncMessage = {
+      reason,
+      sessions: listSessions(),
+    };
+    for (const listener of workspaceSyncListeners) {
+      listener(structuredClone(payload));
+    }
+  };
+
+  const emitSurfaceSync = (payload: SurfaceSyncMessage): void => {
+    if (payload.reason === "surface.closed") {
+      surfaces.delete(payload.target.surfacePiSessionId);
+    } else if (payload.snapshot) {
+      const existing = surfaces.get(payload.target.surfacePiSessionId);
+      if (existing) {
+        existing.snapshot = structuredClone(payload.snapshot);
+      } else {
+        surfaces.set(payload.target.surfacePiSessionId, {
+          snapshot: structuredClone(payload.snapshot),
+          retainCount: 0,
+        });
+      }
+    }
+
+    for (const listener of surfaceSyncListeners) {
+      listener(structuredClone(payload));
+    }
+  };
+
+  const emitAssistantStream = (
+    streamId: string,
+    text: string,
+    provider: string,
+    model: string,
+  ): void => {
+    const partial = assistantMessage("", { provider, model });
+    const complete = assistantMessage(text, { provider, model });
+    for (const listener of streamListeners) {
+      listener({ streamId, event: { type: "start", partial } });
+      listener({
+        streamId,
+        event: { type: "text_start", contentIndex: 0, partial },
+      });
+      listener({
+        streamId,
+        event: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: text,
+          partial,
+        },
+      });
+      listener({
+        streamId,
+        event: {
+          type: "text_end",
+          contentIndex: 0,
+          content: text,
+          partial,
+        },
+      });
+      listener({
+        streamId,
+        event: { type: "done", reason: "stop", message: complete },
+      });
+    }
+  };
+
+  const defaultPromptHandler: PromptHandler = async (request) => ({
+    assistantText: `Reply for ${request.target.surfacePiSessionId}`,
+  });
+
+  const harness: FakeRpcHarness = {
+    client: {
+      request: {
+        getDefaults: async () => ({
+          provider: "openai",
+          model: "gpt-4o",
+          reasoningEffort: "medium",
+        }),
+        getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
+        getWorkspaceInfo: async () => ({
+          workspaceId: "/tmp/svvy",
+          workspaceLabel: "svvy",
+          branch: "main",
+        }),
+        listSessions: async () => {
+          requestCounts.listSessions += 1;
+          return { sessions: listSessions() };
+        },
+        getCommandInspector: async ({ sessionId, commandId }) => {
+          commandInspectorRequests.push({ sessionId, commandId });
+          return structuredClone(input.commandInspector ?? createCommandInspector(commandId));
+        },
+        listHandlerThreads: async ({ sessionId }) => {
+          handlerThreadListRequests.push(sessionId);
+          return structuredClone(
+            input.handlerThreads ?? [createHandlerThreadSummary(`thread-for-${sessionId}`)],
+          );
+        },
+        getHandlerThreadInspector: async ({ sessionId, threadId }) => {
+          handlerThreadInspectorRequests.push({ sessionId, threadId });
+          return structuredClone(
+            input.handlerThreadInspector ?? createHandlerThreadInspector(threadId),
+          );
+        },
+        createSession: async ({ title } = {}) => {
+          const sessionId = `session-${summaries.size + 1}`;
+          const summary = createSummary(sessionId, title ?? "New Session", "");
+          const snapshot = createSurfaceSnapshot({
+            target: createOrchestratorTarget(sessionId),
+            messages: [],
+          });
+          summaries.set(sessionId, summary);
+          surfaces.set(sessionId, { snapshot, retainCount: 1 });
+          return structuredClone(snapshot);
+        },
+        openSession: async ({ sessionId }) => {
+          const record = getSurfaceRecord(sessionId);
+          record.retainCount += 1;
+          openedTargets.push(cloneTarget(record.snapshot.target));
+          return structuredClone(record.snapshot);
+        },
+        openSurface: async ({ target }) => {
+          const record = getSurfaceRecord(target.surfacePiSessionId);
+          record.retainCount += 1;
+          record.snapshot = {
+            ...record.snapshot,
+            target: cloneTarget(target),
+          };
+          openedTargets.push(cloneTarget(target));
+          return structuredClone(record.snapshot);
+        },
+        closeSurface: async ({ target }) => {
+          closeRequests.push(cloneTarget(target));
+          const record = getSurfaceRecord(target.surfacePiSessionId);
+          record.retainCount = Math.max(0, record.retainCount - 1);
+          if (record.retainCount === 0) {
+            queueMicrotask(() => {
+              emitSurfaceSync({
+                reason: "surface.closed",
+                target: cloneTarget(target),
+              });
+            });
+          }
+          return { ok: true };
+        },
+        renameSession: async ({ sessionId, title }) => {
+          updateSummary(sessionId, (summary) => {
+            summary.title = title;
+          });
+          return { ok: true };
+        },
+        forkSession: async ({ sessionId, title }) => {
+          const sourceSummary = summaries.get(sessionId) ?? null;
+          const sourceSurface = getSurfaceRecord(sessionId).snapshot;
+          if (!sourceSummary) {
+            throw new Error(`Missing source session ${sessionId}`);
+          }
+          const nextSessionId = `session-${summaries.size + 1}`;
+          const summary = createSummary(
+            nextSessionId,
+            title ?? `${sourceSummary.title} fork`,
+            sourceSummary.preview,
+            sourceSurface.reasoningEffort,
+            { parentSessionId: sessionId },
+          );
+          const snapshot = createSurfaceSnapshot({
+            target: createOrchestratorTarget(nextSessionId),
+            messages: sourceSurface.messages,
+            provider: sourceSurface.provider,
+            model: sourceSurface.model,
+            reasoningEffort: sourceSurface.reasoningEffort,
+            systemPrompt: sourceSurface.systemPrompt,
+            resolvedSystemPrompt: sourceSurface.resolvedSystemPrompt,
+          });
+          summaries.set(nextSessionId, summary);
+          surfaces.set(nextSessionId, { snapshot, retainCount: 1 });
+          return structuredClone(snapshot);
+        },
+        deleteSession: async ({ sessionId }) => {
+          summaries.delete(sessionId);
+          for (const [surfacePiSessionId, record] of surfaces.entries()) {
+            if (record.snapshot.target.workspaceSessionId === sessionId) {
+              surfaces.delete(surfacePiSessionId);
+            }
+          }
+          return { ok: true };
+        },
+        sendPrompt: async (request) => {
+          promptRequests.push(structuredClone(request));
+          pendingPromptIdsBySurface.set(request.target.surfacePiSessionId, request.streamId);
+          const promptHandler =
+            promptHandlers.get(request.target.surfacePiSessionId) ?? defaultPromptHandler;
+          const result = await promptHandler(structuredClone(request), harness);
+          const cancelled = cancelledPromptIds.has(request.streamId);
+          pendingPromptIdsBySurface.delete(request.target.surfacePiSessionId);
+          if (cancelled) {
+            cancelledPromptIds.delete(request.streamId);
+            return { target: cloneTarget(request.target) };
+          }
+
+          const record = getSurfaceRecord(request.target.surfacePiSessionId);
+          const provider = request.provider ?? record.snapshot.provider;
+          const model = request.model ?? record.snapshot.model;
+          const nextMessages = [
+            ...(request.messages as AgentMessage[]),
+            ...(result.extraMessages ? structuredClone(result.extraMessages) : []),
+            assistantMessage(result.assistantText, { provider, model }),
+          ];
+
+          record.snapshot = {
+            ...record.snapshot,
+            target: cloneTarget(request.target),
+            messages: nextMessages,
+            provider,
+            model,
+            reasoningEffort: request.reasoningEffort ?? record.snapshot.reasoningEffort,
+            systemPrompt: request.systemPrompt ?? record.snapshot.systemPrompt,
+            promptStatus: "idle",
+          };
+
+          updateSummary(request.target.workspaceSessionId, (summary) => {
+            summary.preview = result.assistantText;
+            summary.messageCount = nextMessages.length;
+            summary.status = "idle";
+          });
+
+          queueMicrotask(() => {
+            emitAssistantStream(request.streamId, result.assistantText, provider, model);
+            emitSurfaceSync({
+              reason: result.reason ?? "prompt.settled",
+              target: cloneTarget(request.target),
+              snapshot: structuredClone(record.snapshot),
+            });
+            emitWorkspaceSync("workspace.updated");
+          });
+
+          return { target: cloneTarget(request.target) };
+        },
+        setSurfaceModel: async ({ target, model }) => {
+          modelUpdates.push({ target: cloneTarget(target), model });
+          const record = getSurfaceRecord(target.surfacePiSessionId);
+          record.snapshot = {
+            ...record.snapshot,
+            model,
+          };
+          if (target.surface === "orchestrator") {
+            updateSummary(target.workspaceSessionId, (summary) => {
+              summary.modelId = model;
+            });
+          }
+          queueMicrotask(() => {
+            emitSurfaceSync({
+              reason: "surface.updated",
+              target: cloneTarget(target),
+              snapshot: structuredClone(record.snapshot),
+            });
+          });
+          return { ok: true, target: cloneTarget(target) };
+        },
+        setSurfaceThoughtLevel: async ({ target, level }) => {
+          thoughtLevelUpdates.push({ target: cloneTarget(target), level });
+          const record = getSurfaceRecord(target.surfacePiSessionId);
+          record.snapshot = {
+            ...record.snapshot,
+            reasoningEffort: level,
+          };
+          if (target.surface === "orchestrator") {
+            updateSummary(target.workspaceSessionId, (summary) => {
+              summary.thinkingLevel = level;
+            });
+          }
+          queueMicrotask(() => {
+            emitSurfaceSync({
+              reason: "surface.updated",
+              target: cloneTarget(target),
+              snapshot: structuredClone(record.snapshot),
+            });
+          });
+          return { ok: true, target: cloneTarget(target) };
+        },
+        cancelPrompt: async ({ target }) => {
+          cancelRequests.push(cloneTarget(target));
+          const pendingStreamId = pendingPromptIdsBySurface.get(target.surfacePiSessionId);
+          if (pendingStreamId) {
+            cancelledPromptIds.add(pendingStreamId);
+          }
+          return { ok: true };
+        },
+        listProviderAuths: async () => [
+          { provider: "openai", hasKey: true, keyType: "oauth", supportsOAuth: true },
+        ],
+        setProviderApiKey: async () => ({ ok: true }),
+        startOAuth: async () => ({ ok: true }),
+        removeProviderAuth: async () => ({ ok: true }),
+      },
+      addMessageListener: (messageName: string, listener: unknown) => {
+        if (messageName === "sendStreamEvent") {
+          streamListeners.add(
+            listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+          );
+          return;
+        }
+        if (messageName === "sendWorkspaceSync") {
+          workspaceSyncListeners.add(listener as (payload: WorkspaceSyncMessage) => void);
+          return;
+        }
+        if (messageName === "sendSurfaceSync") {
+          surfaceSyncListeners.add(listener as (payload: SurfaceSyncMessage) => void);
+        }
+      },
+      removeMessageListener: (messageName: string, listener: unknown) => {
+        if (messageName === "sendStreamEvent") {
+          streamListeners.delete(
+            listener as (payload: { streamId: string; event: AssistantMessageEvent }) => void,
+          );
+          return;
+        }
+        if (messageName === "sendWorkspaceSync") {
+          workspaceSyncListeners.delete(listener as (payload: WorkspaceSyncMessage) => void);
+          return;
+        }
+        if (messageName === "sendSurfaceSync") {
+          surfaceSyncListeners.delete(listener as (payload: SurfaceSyncMessage) => void);
+        }
+      },
+    },
+    openedTargets,
+    closeRequests,
+    promptRequests,
+    modelUpdates,
+    thoughtLevelUpdates,
+    cancelRequests,
+    requestCounts,
+    commandInspectorRequests,
+    handlerThreadListRequests,
+    handlerThreadInspectorRequests,
+    setPromptHandler: (surfacePiSessionId, handler) => {
+      promptHandlers.set(surfacePiSessionId, handler);
+    },
+    updateSummary,
+    emitWorkspaceSync,
+    emitSurfaceSync,
+    getRetainCount: (surfacePiSessionId) => surfaces.get(surfacePiSessionId)?.retainCount ?? 0,
+    getSurfaceSnapshot: (surfacePiSessionId) =>
+      structuredClone(getSurfaceRecord(surfacePiSessionId).snapshot),
+  };
+
+  return harness;
+}
+
+async function createRuntime(harness: FakeRpcHarness) {
+  const { createChatRuntime } = await import("./chat-runtime");
+  return await createChatRuntime({}, harness.client as never, createMemoryStorage());
 }
 
 describe("createChatRuntime", () => {
-  it("keeps the raw prompt for RPC sends while exposing the resolved system prompt for UI surfaces", async () => {
-    const { createChatRuntime } = await import("./chat-runtime");
-    const { client } = createFakeRpc([
-      createActiveSession(
-        "session-1",
-        "Prompt Channel",
-        [userMessage("inspect"), assistantMessage("done")],
-        "medium",
-        {
-          systemPrompt: "You are svvy.",
-          resolvedSystemPrompt:
-            "You are svvy.\n\n# Project Context\n\nCurrent date: 2026-04-19\nCurrent working directory: /tmp/svvy",
-        },
-      ),
-    ]);
-
-    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
-
-    expect(runtime.agent.state.systemPrompt).toBe("You are svvy.");
-    expect(runtime.resolvedSystemPrompt).toContain("You are svvy.");
-    expect(runtime.resolvedSystemPrompt).toContain("# Project Context");
-    expect(runtime.resolvedSystemPrompt).toContain("Current working directory: /tmp/svvy");
-
-    runtime.dispose();
-  });
-
-  it("hydrates sessions, switches the active transcript, and keeps prompts scoped to the selected session", async () => {
-    const { createChatRuntime } = await import("./chat-runtime");
-    const { client, sentPromptRequests, sentPromptSessions, requestCounts } = createFakeRpc([
-      createActiveSession(
-        "session-1",
-        "First",
-        [userMessage("first"), assistantMessage("first reply")],
-        "medium",
-      ),
-      createActiveSession(
-        "session-2",
-        "Second",
-        [userMessage("second"), assistantMessage("second reply")],
-        "high",
-      ),
-    ]);
-
-    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
-
-    expect(runtime.activeSessionId).toBe("session-1");
-    expect(runtime.sessions).toHaveLength(2);
-    expect(requestCounts.listSessions).toBe(1);
-
-    await runtime.openSession("session-2");
-    expect(runtime.activeSessionId).toBe("session-2");
-    expect(runtime.agent.state.thinkingLevel).toBe("high");
-    expect(requestCounts.listSessions).toBe(1);
-    expect(
-      runtime.agent.state.messages.some(
-        (message) =>
-          message.role === "assistant" &&
-          message.content[0]?.type === "text" &&
-          message.content[0].text === "second reply",
-      ),
-    ).toBe(true);
-
-    await runtime.agent.prompt("continue");
-    await runtime.agent.waitForIdle();
-    expect(sentPromptSessions.at(-1)).toBe("session-2");
-    expect(sentPromptRequests.at(-1)).toEqual({
-      target: {
-        workspaceSessionId: "session-2",
-        surface: "orchestrator",
-        surfacePiSessionId: "session-2",
-      },
-    });
-    expect(requestCounts.listSessions).toBe(1);
-    expect(requestCounts.getActiveSession).toBe(1);
-    expect(runtime.sessions.find((session) => session.id === "session-2")?.preview).toBe(
-      "Session-specific reply",
-    );
-
-    await runtime.renameSession("session-2", "Renamed");
-    expect(runtime.sessions.find((session) => session.id === "session-2")?.title).toBe("Renamed");
-    expect(requestCounts.listSessions).toBe(1);
-
-    await runtime.deleteSession("session-2");
-    expect(runtime.activeSessionId).toBe("session-1");
-    expect(runtime.sessions.some((session) => session.id === "session-2")).toBe(false);
-    expect(requestCounts.listSessions).toBe(1);
-    expect(
-      runtime.agent.state.messages.some(
-        (message) =>
-          message.role === "assistant" &&
-          message.content[0]?.type === "text" &&
-          message.content[0].text === "first reply",
-      ),
-    ).toBe(true);
-
-    runtime.dispose();
-  });
-
-  it("hydrates when sidebar summaries are metadata-only", async () => {
-    const { createChatRuntime } = await import("./chat-runtime");
-    const { client, requestCounts } = createFakeRpc(
-      [
-        createActiveSession(
-          "session-1",
-          "First",
-          [userMessage("first"), assistantMessage("first reply")],
-          "medium",
-        ),
-        createActiveSession(
-          "session-2",
-          "Second",
-          [userMessage("second"), assistantMessage("second reply")],
-          "high",
-        ),
+  it("hydrates the primary pane from an orchestrator surface and keeps the resolved prompt separate", async () => {
+    const rawPrompt = "You are svvy.";
+    const resolvedPrompt =
+      "You are svvy.\n\n# Project Context\n\nCurrent date: 2026-04-21\nCurrent working directory: /tmp/svvy";
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Prompt Channel", "done")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [userMessage("inspect"), assistantMessage("done")],
+          systemPrompt: rawPrompt,
+          resolvedSystemPrompt: resolvedPrompt,
+        }),
       ],
-      { metadataOnlyListSessions: true },
+    });
+
+    const runtime = await createRuntime(harness);
+    const controller = runtime.getPaneController(runtime.primaryPaneId);
+
+    expect(runtime.sessions).toHaveLength(1);
+    expect(runtime.paneLayout.focusedPaneId).toBe(runtime.primaryPaneId);
+    expect(runtime.getPane(runtime.primaryPaneId)?.target).toEqual(
+      createOrchestratorTarget("session-1"),
     );
-
-    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
-
-    expect(requestCounts.listSessions).toBe(1);
-    expect(
-      runtime.sessions.find((session) => session.id === "session-2") &&
-        runtime.sessions.find((session) => session.id === "session-2")?.provider === undefined &&
-        runtime.sessions.find((session) => session.id === "session-2")?.modelId === undefined &&
-        runtime.sessions.find((session) => session.id === "session-2")?.thinkingLevel === undefined,
-    ).toBe(true);
-
-    await runtime.openSession("session-2");
-    expect(runtime.activeSessionId).toBe("session-2");
-    expect(runtime.agent.state.thinkingLevel).toBe("high");
-    expect(requestCounts.listSessions).toBe(1);
-    expect(
-      runtime.agent.state.messages.some(
-        (message) =>
-          message.role === "assistant" &&
-          message.content[0]?.type === "text" &&
-          message.content[0].text === "second reply",
-      ),
-    ).toBe(true);
+    expect(controller).toBeTruthy();
+    expect(controller?.agent.state.systemPrompt).toBe(rawPrompt);
+    expect(controller?.resolvedSystemPrompt).toContain("# Project Context");
+    expect(controller?.agent.state.messages.at(-1)).toMatchObject({
+      role: "assistant",
+    });
 
     runtime.dispose();
   });
 
-  it("can bind the single pane to a handler-thread surface and route prompts directly there", async () => {
-    const { createChatRuntime } = await import("./chat-runtime");
-    const threadSession = createActiveSession(
+  it("keeps workspace pane state and live surface state separate when multiple surfaces are open", async () => {
+    const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "Orchestrator", "main reply"),
+        createSummary("session-2", "Second", "second reply", "high"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [userMessage("main"), assistantMessage("main reply")],
+        }),
+        createSurfaceSnapshot({
+          target: threadTarget,
+          messages: [userMessage("worker context"), assistantMessage("worker ready")],
+        }),
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-2"),
+          messages: [userMessage("second"), assistantMessage("second reply")],
+          reasoningEffort: "high",
+        }),
+      ],
+    });
+
+    const runtime = await createRuntime(harness);
+    await runtime.openSurface(threadTarget, "secondary");
+
+    const primaryController = runtime.getPaneController(runtime.primaryPaneId);
+    const secondaryController = runtime.getPaneController("secondary");
+
+    expect(runtime.paneLayout.focusedPaneId).toBe("secondary");
+    expect(runtime.getPane(runtime.primaryPaneId)?.target).toEqual(
+      createOrchestratorTarget("session-1"),
+    );
+    expect(runtime.getPane("secondary")?.target).toEqual(threadTarget);
+    expect(primaryController?.target).toEqual(createOrchestratorTarget("session-1"));
+    expect(secondaryController?.target).toEqual(threadTarget);
+    expect(primaryController).not.toBe(secondaryController);
+    expect(harness.openedTargets.at(-1)).toEqual(threadTarget);
+
+    runtime.dispose();
+  });
+
+  it("shares one live surface controller across panes and only releases it after the last pane closes", async () => {
+    const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [userMessage("main"), assistantMessage("main reply")],
+        }),
+        createSurfaceSnapshot({
+          target: threadTarget,
+          messages: [userMessage("worker"), assistantMessage("worker ready")],
+        }),
+      ],
+    });
+
+    const runtime = await createRuntime(harness);
+    await runtime.openSurface(threadTarget, "secondary");
+    await runtime.openSurface(threadTarget, "tertiary");
+
+    const secondaryController = runtime.getPaneController("secondary");
+    const tertiaryController = runtime.getPaneController("tertiary");
+
+    expect(secondaryController).toBeTruthy();
+    expect(secondaryController).toBe(tertiaryController);
+    expect(harness.getRetainCount(threadTarget.surfacePiSessionId)).toBe(2);
+
+    await runtime.closePaneSurface("secondary");
+
+    expect(runtime.getPane("secondary")?.target).toBeNull();
+    expect(runtime.getPaneController("tertiary")).toBe(tertiaryController);
+    expect(runtime.getSurfaceController(threadTarget.surfacePiSessionId)).toBe(tertiaryController);
+    expect(harness.closeRequests).toHaveLength(1);
+    expect(harness.getRetainCount(threadTarget.surfacePiSessionId)).toBe(1);
+
+    await runtime.closePaneSurface("tertiary");
+    await waitFor(() => runtime.getSurfaceController(threadTarget.surfacePiSessionId) === null);
+
+    expect(runtime.getPane("tertiary")?.target).toBeNull();
+    expect(harness.closeRequests).toHaveLength(2);
+    expect(harness.getRetainCount(threadTarget.surfacePiSessionId)).toBe(0);
+
+    runtime.dispose();
+  });
+
+  it("keeps prompt dispatch independent across concurrent surfaces", async () => {
+    const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
+    const orchestratorGate = createDeferred<void>();
+    const handlerGate = createDeferred<void>();
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "ready")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("ready")],
+        }),
+        createSurfaceSnapshot({
+          target: threadTarget,
+          messages: [assistantMessage("worker ready")],
+        }),
+      ],
+    });
+
+    harness.setPromptHandler("session-1", async () => {
+      await orchestratorGate.promise;
+      return { assistantText: "Orchestrator settled." };
+    });
+    harness.setPromptHandler(threadTarget.surfacePiSessionId, async () => {
+      await handlerGate.promise;
+      return { assistantText: "Handler settled." };
+    });
+
+    const runtime = await createRuntime(harness);
+    await runtime.openSurface(threadTarget, "secondary");
+    const orchestratorController = runtime.getPaneController(runtime.primaryPaneId);
+    const handlerController = runtime.getPaneController("secondary");
+    if (!orchestratorController || !handlerController) {
+      throw new Error("Expected both surface controllers.");
+    }
+
+    const orchestratorPrompt = orchestratorController.agent.prompt("Continue orchestrating");
+    const handlerPrompt = handlerController.agent.prompt("Continue handling");
+
+    await waitFor(
+      () =>
+        orchestratorController.promptStatus === "streaming" &&
+        handlerController.promptStatus === "streaming",
+    );
+
+    handlerGate.resolve();
+    await handlerPrompt;
+    await handlerController.agent.waitForIdle();
+
+    expect(handlerController.promptStatus).toBe("idle");
+    expect(orchestratorController.promptStatus).toBe("streaming");
+
+    orchestratorGate.resolve();
+    await orchestratorPrompt;
+    await orchestratorController.agent.waitForIdle();
+
+    expect(harness.promptRequests.map((request) => request.target.surfacePiSessionId)).toEqual([
       "session-1",
-      "Handler Thread",
-      [userMessage("worker context"), assistantMessage("worker ready")],
-      "medium",
-      { target: createThreadTarget("session-1", "thread-session-1", "thread-123") },
-    );
-    const { client, openedSessions, sentPromptRequests } = createFakeRpc([
-      createActiveSession(
-        "session-1",
-        "Orchestrator",
-        [userMessage("main"), assistantMessage("main reply")],
-        "medium",
-      ),
-      threadSession,
+      threadTarget.surfacePiSessionId,
     ]);
-
-    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
-
-    expect(runtime.activeSurface).toEqual({
-      workspaceSessionId: "session-1",
-      surface: "orchestrator",
-      surfacePiSessionId: "session-1",
-    });
-
-    await runtime.openSurface({
-      workspaceSessionId: "session-1",
-      surface: "thread",
-      surfacePiSessionId: "thread-session-1",
-      threadId: "thread-123",
-    });
-
-    expect(openedSessions.at(-1)).toBe("thread-session-1");
-    expect(runtime.activeSessionId).toBe("session-1");
-    expect(runtime.activeSurface).toEqual({
-      workspaceSessionId: "session-1",
-      surface: "thread",
-      surfacePiSessionId: "thread-session-1",
-      threadId: "thread-123",
-    });
     expect(
-      runtime.agent.state.messages.some(
+      handlerController.agent.state.messages.some(
         (message) =>
           message.role === "assistant" &&
           message.content[0]?.type === "text" &&
-          message.content[0].text === "worker ready",
+          message.content[0].text === "Handler settled.",
       ),
     ).toBe(true);
-
-    await runtime.agent.prompt("status?");
-    await runtime.agent.waitForIdle();
-
-    expect(sentPromptRequests.at(-1)).toEqual({
-      target: {
-        workspaceSessionId: "session-1",
-        surface: "thread",
-        surfacePiSessionId: "thread-session-1",
-        threadId: "thread-123",
-      },
-    });
-
-    await runtime.resetSurfaceTarget();
-
-    expect(openedSessions.at(-1)).toBe("session-1");
-    expect(runtime.activeSessionId).toBe("session-1");
-    expect(runtime.activeSurface).toEqual({
-      workspaceSessionId: "session-1",
-      surface: "orchestrator",
-      surfacePiSessionId: "session-1",
-    });
-
-    runtime.dispose();
-  });
-
-  it("applies a thread handoff session sync without polling for the orchestrator surface", async () => {
-    const { createChatRuntime } = await import("./chat-runtime");
-    const { client, requestCounts } = createFakeRpcWithThreadSidebarRefresh();
-
-    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
-    await runtime.openSurface({
-      workspaceSessionId: "session-1",
-      surface: "thread",
-      surfacePiSessionId: "thread-session-1",
-      threadId: "thread-123",
-    });
-
-    expect(requestCounts.listSessions).toBe(1);
-    await runtime.agent.prompt("finish the objective");
-    await runtime.agent.waitForIdle();
-    await waitFor(() => runtime.activeSurface.surface === "orchestrator");
-
-    expect(requestCounts.listSessions).toBe(1);
-    expect(runtime.sessions.find((session) => session.id === "session-1")).toMatchObject({
-      status: "idle",
-      preview: "Thread handoff received.",
-      threadIdsByStatus: {
-        runningHandler: [],
-        runningWorkflow: [],
-        waiting: [],
-        troubleshooting: [],
-      },
-    });
-    expect(runtime.sessions.some((session) => session.id === "thread-session-1")).toBe(false);
-    expect(runtime.activeSessionId).toBe("session-1");
-    expect(runtime.activeSurface).toEqual({
-      workspaceSessionId: "session-1",
-      surface: "orchestrator",
-      surfacePiSessionId: "session-1",
-    });
-
-    runtime.dispose();
-  });
-
-  it("keeps the orchestrator transcript in sync while a background handoff reconciliation turn settles", async () => {
-    const { createChatRuntime } = await import("./chat-runtime");
-    const { client, requestCounts } = createFakeRpcWithBackgroundOrchestratorResume();
-
-    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
-    await runtime.openSurface({
-      workspaceSessionId: "session-1",
-      surface: "thread",
-      surfacePiSessionId: "thread-session-1",
-      threadId: "thread-123",
-    });
-
-    await runtime.agent.prompt("finish the objective");
-    await runtime.agent.waitForIdle();
-    await waitFor(() => runtime.activeSurface.surface === "orchestrator");
-    await waitFor(() =>
-      runtime.agent.state.messages.some(
+    expect(
+      orchestratorController.agent.state.messages.some(
         (message) =>
           message.role === "assistant" &&
           message.content[0]?.type === "text" &&
-          message.content[0].text === "I reviewed the handoff and resumed orchestration.",
-      ),
-    );
-
-    expect(requestCounts.getActiveSession).toBe(1);
-    expect(runtime.activeSessionId).toBe("session-1");
-    expect(runtime.sessions.find((session) => session.id === "session-1")).toMatchObject({
-      status: "idle",
-      preview: "I reviewed the handoff and resumed orchestration.",
-    });
-
-    runtime.dispose();
-  });
-
-  it("keeps the active session in sync after a prompt settles without relisting the sidebar", async () => {
-    const { createChatRuntime } = await import("./chat-runtime");
-    const { client, requestCounts } = createFakeRpcWithToolUse(
-      createActiveSession("session-1", "First", [userMessage("first")], "medium"),
-    );
-
-    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
-    expect(requestCounts.listSessions).toBe(1);
-    await runtime.agent.prompt("use a tool");
-    await runtime.agent.waitForIdle();
-    expect(requestCounts.listSessions).toBe(1);
-    expect(runtime.sessions.find((session) => session.id === "session-1")?.preview).toBe(
-      "Tool use finished.",
-    );
-    expect(requestCounts.getActiveSession).toBe(1);
-
-    expect(
-      runtime.agent.state.messages.some(
-        (message) =>
-          message.role === "user" &&
-          typeof message.content !== "string" &&
-          message.content.some((block) => block.type === "text" && block.text === "use a tool"),
-      ),
-    ).toBe(true);
-    expect(
-      runtime.agent.state.messages.some(
-        (message) =>
-          message.role === "toolResult" &&
-          message.toolName === "artifacts" &&
-          message.content[0]?.type === "text" &&
-          message.content[0].text === "Created file tool-use.txt",
-      ),
-    ).toBe(true);
-    expect(
-      runtime.agent.state.messages.some(
-        (message) =>
-          message.role === "assistant" &&
-          typeof message.content !== "string" &&
-          message.content.some(
-            (block) => block.type === "text" && block.text === "Tool use finished.",
-          ),
+          message.content[0].text === "Orchestrator settled.",
       ),
     ).toBe(true);
 
     runtime.dispose();
   });
 
-  it("does not depend on summary polling when explicit session sync is present", async () => {
-    const { createChatRuntime } = await import("./chat-runtime");
-    const { client, requestCounts } = createFakeRpcWithToolUse(
-      createActiveSession("session-1", "First", [userMessage("first")], "medium"),
-      { summaryMode: "null" },
-    );
-
-    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
-    expect(requestCounts.listSessions).toBe(1);
-    expect(requestCounts.getActiveSession).toBe(1);
-
-    await runtime.agent.prompt("use a tool");
-    await runtime.agent.waitForIdle();
-
-    expect(requestCounts.getActiveSession).toBe(1);
-    expect(requestCounts.listSessions).toBe(1);
-    expect(runtime.sessions.find((session) => session.id === "session-1")?.preview).toBe(
-      "Tool use finished.",
-    );
-
-    runtime.dispose();
-  });
-
-  it("requests structured command inspector detail for the current session", async () => {
-    const { createChatRuntime } = await import("./chat-runtime");
-    const inspector = createCommandInspector("command-77");
-    const { client, requestCounts } = createFakeRpc(
-      [createActiveSession("session-1", "Inspector", [userMessage("inspect")], "medium")],
-      { commandInspector: inspector },
-    );
-
-    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
-    const detail = await runtime.getCommandInspector("command-77");
-
-    expect(requestCounts.getCommandInspector).toBe(1);
-    expect(detail).toEqual(inspector);
-
-    runtime.dispose();
-  });
-
-  it("lists handler-thread summaries for the current session", async () => {
-    const { createChatRuntime } = await import("./chat-runtime");
-    const handlerThreads = [
-      createHandlerThreadSummary("thread-123"),
-      {
-        ...createHandlerThreadSummary("thread-456"),
-        status: "waiting",
-        wait: {
-          owner: "handler",
-          kind: "user",
-          reason: "Need clarification before continuing.",
-          resumeWhen: "Resume when the user answers.",
-          since: "2026-04-10T10:06:00.000Z",
-        },
-      },
-    ] satisfies WorkspaceHandlerThreadSummary[];
-    const { client, requestCounts } = createFakeRpc(
-      [createActiveSession("session-1", "Threads", [userMessage("inspect threads")], "medium")],
-      { handlerThreads },
-    );
-
-    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
-    const summaries = await runtime.listHandlerThreads();
-
-    expect(requestCounts.listHandlerThreads).toBe(1);
-    expect(summaries).toEqual(handlerThreads);
-
-    runtime.dispose();
-  });
-
-  it("requests handler-thread inspector detail for the current session", async () => {
-    const { createChatRuntime } = await import("./chat-runtime");
-    const inspector = createHandlerThreadInspector("thread-123");
-    const { client, requestCounts } = createFakeRpc(
-      [
-        createActiveSession(
-          "session-1",
-          "Thread Inspector",
-          [userMessage("inspect thread")],
-          "medium",
-        ),
+  it("keeps model, reasoning, and cancel mutations scoped to the targeted surface", async () => {
+    const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
+    const handlerGate = createDeferred<void>();
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "ready")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("ready")],
+        }),
+        createSurfaceSnapshot({
+          target: threadTarget,
+          messages: [assistantMessage("worker ready")],
+        }),
       ],
-      { handlerThreadInspector: inspector },
+    });
+
+    harness.setPromptHandler(threadTarget.surfacePiSessionId, async () => {
+      await handlerGate.promise;
+      return { assistantText: "This should stay cancelled." };
+    });
+
+    const runtime = await createRuntime(harness);
+    await runtime.openSurface(threadTarget, "secondary");
+
+    const orchestratorController = runtime.getPaneController(runtime.primaryPaneId);
+    const handlerController = runtime.getPaneController("secondary");
+    if (!orchestratorController || !handlerController) {
+      throw new Error("Expected both surface controllers.");
+    }
+
+    handlerController.agent.setModel(getModel("openai", "gpt-4.1"));
+    handlerController.agent.setThinkingLevel("high");
+
+    await waitFor(
+      () => harness.modelUpdates.length === 1 && harness.thoughtLevelUpdates.length === 1,
     );
 
-    const runtime = await createChatRuntime({}, client as never, createMemoryStorage());
-    const detail = await runtime.getHandlerThreadInspector("thread-123");
+    expect(harness.modelUpdates[0]).toEqual({
+      target: threadTarget,
+      model: "gpt-4.1",
+    });
+    expect(harness.thoughtLevelUpdates[0]).toEqual({
+      target: threadTarget,
+      level: "high",
+    });
+    expect(orchestratorController.agent.state.model.id).toBe("gpt-4o");
+    expect(orchestratorController.agent.state.thinkingLevel).toBe("medium");
 
-    expect(requestCounts.getHandlerThreadInspector).toBe(1);
-    expect(detail).toEqual(inspector);
+    const handlerPrompt = handlerController.agent.prompt("Continue handling");
+    await waitFor(() => handlerController.promptStatus === "streaming");
+    handlerController.agent.abort();
+    await waitFor(() => harness.cancelRequests.length === 1);
+    handlerGate.resolve();
+    await handlerPrompt;
+    await waitFor(() => handlerController.promptStatus === "idle");
+
+    expect(harness.cancelRequests[0]).toEqual(threadTarget);
+    expect(orchestratorController.promptStatus).toBe("idle");
+
+    runtime.dispose();
+  });
+
+  it("applies workspace summary updates without depending on a global active surface", async () => {
+    const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "Orchestrator", "main reply"),
+        createSummary("session-2", "Background", "stale summary"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [userMessage("main"), assistantMessage("main reply")],
+        }),
+        createSurfaceSnapshot({
+          target: threadTarget,
+          messages: [userMessage("worker"), assistantMessage("worker ready")],
+        }),
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-2"),
+          messages: [userMessage("background"), assistantMessage("done")],
+        }),
+      ],
+    });
+
+    const runtime = await createRuntime(harness);
+    await runtime.openSurface(threadTarget, "secondary");
+
+    harness.updateSummary("session-2", (summary) => {
+      summary.preview = "Background workflow updated.";
+      summary.status = "running";
+    });
+    harness.emitWorkspaceSync("workspace.updated");
+
+    await waitFor(
+      () =>
+        runtime.sessions.find((session) => session.id === "session-2")?.preview ===
+        "Background workflow updated.",
+    );
+
+    expect(runtime.getPane("secondary")?.target).toEqual(threadTarget);
+    expect(runtime.paneLayout.focusedPaneId).toBe("secondary");
+    expect(harness.requestCounts.listSessions).toBe(1);
+
+    runtime.dispose();
+  });
+
+  it("uses the focused pane session by default for inspectors", async () => {
+    const commandInspector = createCommandInspector("command-77");
+    const handlerThreads = [createHandlerThreadSummary("thread-77")];
+    const handlerThreadInspector = createHandlerThreadInspector("thread-77");
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "First", "first reply"),
+        createSummary("session-2", "Second", "second reply"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [userMessage("first"), assistantMessage("first reply")],
+        }),
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-2"),
+          messages: [userMessage("second"), assistantMessage("second reply")],
+        }),
+      ],
+      commandInspector,
+      handlerThreads,
+      handlerThreadInspector,
+    });
+
+    const runtime = await createRuntime(harness);
+    await runtime.openSession("session-2", "secondary");
+
+    const detail = await runtime.getCommandInspector("command-77");
+    const threads = await runtime.listHandlerThreads();
+    const threadDetail = await runtime.getHandlerThreadInspector("thread-77");
+
+    expect(detail).toEqual(commandInspector);
+    expect(threads).toEqual(handlerThreads);
+    expect(threadDetail).toEqual(handlerThreadInspector);
+    expect(harness.commandInspectorRequests).toEqual([
+      { sessionId: "session-2", commandId: "command-77" },
+    ]);
+    expect(harness.handlerThreadListRequests).toEqual(["session-2"]);
+    expect(harness.handlerThreadInspectorRequests).toEqual([
+      { sessionId: "session-2", threadId: "thread-77" },
+    ]);
 
     runtime.dispose();
   });

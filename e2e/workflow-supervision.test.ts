@@ -69,7 +69,7 @@ async function withIsolatedLaunchState<T>(
   }
 }
 
-test("drives a real delegated workflow run through the app and renders the supervised result", async () => {
+test("drives a real delegated workflow run through the app and routes workflow attention back to the owning handler surface", async () => {
   const stub = startWorkflowSupervisionChatStub();
 
   try {
@@ -124,7 +124,7 @@ test("drives a real delegated workflow run through the app and renders the super
 
           await sendPrompt(
             page,
-            "Run the bundled hello_world workflow, wait for it to finish, and hand the result back.",
+            "Run the bundled hello_world workflow, let workflow supervision wake this handler when it finishes, and then hand the result back.",
           );
 
           await waitForVisible(page.getByRole("button", { name: "Send" }));
@@ -186,12 +186,22 @@ test("drives a real delegated workflow run through the app and renders the super
 
   const handlerRequest = stub.requests.find((request) =>
     latestUserText(request).includes(
-      "Run the bundled hello_world workflow, wait for it to finish, and hand the result back.",
+      "Run the bundled hello_world workflow, let workflow supervision wake this handler when it finishes, and then hand the result back.",
     ),
   );
   expect(toolNames(handlerRequest)).toContain("smithers.run_workflow.hello_world");
   expect(toolNames(handlerRequest)).toContain("thread.handoff");
   expect(toolNames(handlerRequest)).not.toContain("thread.start");
+
+  const workflowAttentionRequest = stub.requests.find((request) =>
+    latestUserText(request).includes(
+      "System event: A supervised Smithers workflow now requires handler attention.",
+    ),
+  );
+  expect(workflowAttentionRequest).toBeTruthy();
+  expect(toolNames(workflowAttentionRequest)).toContain("smithers.get_run");
+  expect(toolNames(workflowAttentionRequest)).toContain("thread.handoff");
+  expect(toolNames(workflowAttentionRequest)).not.toContain("thread.start");
 });
 
 realProviderTest(

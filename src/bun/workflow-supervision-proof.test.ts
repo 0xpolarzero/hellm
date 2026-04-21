@@ -114,10 +114,11 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
 
   try {
     const created = await catalog.createSession({ title: "Workflow Supervision Proof" }, TEST_DEFAULTS);
+    const workspaceSessionId = created.target.workspaceSessionId;
 
     await catalog.sendPrompt({
       ...TEST_DEFAULTS,
-      target: createOrchestratorTarget(created.session.id),
+      target: createOrchestratorTarget(workspaceSessionId),
       messages: [
         createUserMessage(
           "Open a handler thread dedicated to proving the smithers workflow supervision surface end to end. Do not supervise workflows from the orchestrator.",
@@ -126,9 +127,9 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
       onEvent: () => {},
     });
 
-    await waitFor(() => getStructuredSessionState(catalog, created.session.id).threads.length >= 2);
+    await waitFor(() => getStructuredSessionState(catalog, workspaceSessionId).threads.length >= 2);
     const thread =
-      getStructuredSessionState(catalog, created.session.id).threads.find(
+      getStructuredSessionState(catalog, workspaceSessionId).threads.find(
         (entry) => entry.parentThreadId !== null,
       ) ?? null;
     await waitFor(() => !isPromptStreaming(catalog), 10_000);
@@ -138,7 +139,7 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
     }
 
     const handlerTarget = createThreadTarget(
-      created.session.id,
+      workspaceSessionId,
       thread.surfacePiSessionId,
       thread.id,
     );
@@ -160,13 +161,13 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
 
     await waitFor(
       () => {
-        const snapshot = getStructuredSessionState(catalog, created.session.id);
+        const snapshot = getStructuredSessionState(catalog, workspaceSessionId);
         const currentThread = snapshot.threads.find((entry) => entry.id === thread.id);
         return currentThread?.status === "completed" && snapshot.episodes.length > 0;
       },
       60_000,
       () => {
-        const snapshot = getStructuredSessionState(catalog, created.session.id);
+        const snapshot = getStructuredSessionState(catalog, workspaceSessionId);
         return JSON.stringify(
           {
             thread: snapshot.threads.find((entry) => entry.id === thread.id) ?? null,
@@ -191,7 +192,7 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
       },
     );
 
-    const snapshot = getStructuredSessionState(catalog, created.session.id);
+    const snapshot = getStructuredSessionState(catalog, workspaceSessionId);
     const handoffCommand = snapshot.commands.find((command) => command.toolName === "thread.handoff");
     if (!handoffCommand) {
       throw new Error(
@@ -240,8 +241,10 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
 
     await waitFor(() => !isPromptStreaming(catalog), 10_000);
     const handlerState = await catalog.openSurface(handlerTarget);
+    const handlerSession = await buildSurfaceTranscriptSession(catalog, handlerTarget);
     const handlerTranscript = buildSessionTranscriptExport({
-      session: handlerState.session,
+      session: handlerSession,
+      target: handlerTarget,
       provider: handlerState.provider,
       model: handlerState.model,
       reasoningEffort: handlerState.reasoningEffort,
@@ -491,13 +494,66 @@ function getSmithersRuntimeManager(catalog: WorkspaceSessionCatalog) {
 }
 
 function isPromptStreaming(catalog: WorkspaceSessionCatalog): boolean {
-  return Boolean(
-    (catalog as unknown as {
-      activeSession?: {
-        activePrompt?: boolean;
-      } | null;
-    }).activeSession?.activePrompt,
-  );
+  const managedSurfaces = (catalog as unknown as {
+    managedSurfaces: Map<string, { activePrompt: boolean }>;
+  }).managedSurfaces;
+  return Array.from(managedSurfaces.values()).some((surface) => surface.activePrompt);
+}
+
+async function buildSurfaceTranscriptSession(
+  catalog: WorkspaceSessionCatalog,
+  target: PromptTarget,
+): Promise<{
+  id: string;
+  title: string;
+  status: "idle" | "running" | "waiting" | "error";
+  createdAt: string;
+  updatedAt: string;
+}> {
+  if (target.surface === "orchestrator") {
+    const summary =
+      (await catalog.listSessions()).sessions.find(
+        (session) => session.id === target.workspaceSessionId,
+      ) ?? null;
+    if (!summary) {
+      throw new Error(`Workspace session not found for transcript export: ${target.workspaceSessionId}`);
+    }
+    return {
+      id: summary.id,
+      title: summary.title,
+      status: summary.status,
+      createdAt: summary.createdAt,
+      updatedAt: summary.updatedAt,
+    };
+  }
+
+  const inspector = await catalog.getHandlerThreadInspector({
+    sessionId: target.workspaceSessionId,
+    threadId: target.threadId!,
+  });
+
+  return {
+    id: target.surfacePiSessionId,
+    title: inspector.title,
+    status: projectHandlerThreadStatus(inspector.status),
+    createdAt: inspector.startedAt,
+    updatedAt: inspector.updatedAt,
+  };
+}
+
+function projectHandlerThreadStatus(
+  status: "running-handler" | "running-workflow" | "waiting" | "troubleshooting" | "completed",
+): "idle" | "running" | "waiting" | "error" {
+  switch (status) {
+    case "completed":
+      return "idle";
+    case "waiting":
+      return "waiting";
+    case "troubleshooting":
+      return "error";
+    default:
+      return "running";
+  }
 }
 
 function createSignalWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {

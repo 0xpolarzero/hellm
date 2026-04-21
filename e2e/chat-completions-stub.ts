@@ -73,6 +73,43 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
 
         if (
           latestUserText.includes(
+            "Run the bundled hello_world workflow, let workflow supervision wake this handler when it finishes, and then hand the result back.",
+          )
+        ) {
+          if (!hasToolCall(toolCalls, "smithers.list_workflows")) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "smithers.list_workflows",
+              args: {},
+            });
+          }
+
+          if (!hasToolCall(toolCalls, "smithers.run_workflow.hello_world")) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "smithers.run_workflow.hello_world",
+              args: {
+                message: "hello from the real app workflow supervision e2e",
+              },
+            });
+          }
+
+          return createTextResponse({
+            responseId,
+            model: payload.model,
+            text: [
+              "Launched the bundled hello_world workflow.",
+              "Workflow supervision will wake this handler surface when durable attention is needed.",
+            ].join(" "),
+          });
+        }
+
+        if (
+          latestUserText.includes(
             "Run the bundled hello_world workflow, wait for it to finish, and hand the result back.",
           )
         ) {
@@ -132,17 +169,7 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
               model: payload.model,
               toolCallId: `call-${++toolCallCounter}`,
               toolName: "thread.handoff",
-              args: {
-                kind: "workflow",
-                title: "hello_world completed",
-                summary:
-                  "Ran the bundled hello_world workflow and verified that it finished successfully.",
-                body: [
-                  "Launched the bundled hello_world workflow through smithers.run_workflow.",
-                  "Observed the Smithers run until it reported finished through smithers.get_run.",
-                  "The workflow completed successfully and is ready for orchestrator follow-up.",
-                ].join("\n\n"),
-              },
+              args: helloWorldHandoffArgs(),
             });
           }
 
@@ -166,10 +193,48 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
             "System event: A supervised Smithers workflow now requires handler attention.",
           )
         ) {
+          const launchedRun = findLatestToolResult(
+            toolResults,
+            "smithers.run_workflow.hello_world",
+          );
+          const runId = readStringProperty(launchedRun?.parsed, "runId");
+          if (!runId) {
+            throw new Error(
+              "Expected smithers.run_workflow.hello_world tool result to include runId.",
+            );
+          }
+
+          const latestRunStatus = readStringProperty(
+            findLatestToolResult(toolResults, "smithers.get_run")?.parsed,
+            "status",
+          );
+
+          if (latestRunStatus !== "finished") {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "smithers.get_run",
+              args: {
+                runId,
+              },
+            });
+          }
+
+          if (!hasToolCall(toolCalls, "thread.handoff")) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "thread.handoff",
+              args: helloWorldHandoffArgs(),
+            });
+          }
+
           return createTextResponse({
             responseId,
             model: payload.model,
-            text: "Workflow attention received; the handler thread will inspect durable state before acting.",
+            text: "Workflow attention received; the handler reconciled durable state and handed the result back.",
           });
         }
 
@@ -188,6 +253,19 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
     stop() {
       server.stop(true);
     },
+  };
+}
+
+function helloWorldHandoffArgs(): Record<string, unknown> {
+  return {
+    kind: "workflow",
+    title: "hello_world completed",
+    summary: "Ran the bundled hello_world workflow and verified that it finished successfully.",
+    body: [
+      "Launched the bundled hello_world workflow through smithers.run_workflow.",
+      "Observed the Smithers run until it reported finished through smithers.get_run.",
+      "The workflow completed successfully and is ready for orchestrator follow-up.",
+    ].join("\n\n"),
   };
 }
 

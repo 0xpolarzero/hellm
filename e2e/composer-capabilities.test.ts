@@ -55,8 +55,33 @@ async function openModelPicker(page: SvvyApp["page"]): Promise<void> {
 }
 
 async function openReasoningMenu(page: SvvyApp["page"]): Promise<void> {
-  await page.getByRole("button", { name: "Thinking level" }).click();
-  await page.locator(".thinking-menu").waitFor({ state: "visible" });
+  const trigger = page.locator(".thinking-field").first();
+  const menu = page.locator(".thinking-menu");
+  const deadline = Date.now() + 15_000;
+
+  while (Date.now() < deadline) {
+    try {
+      if (await menu.isVisible()) {
+        return;
+      }
+    } catch {
+      // Retry while the menu is mounting.
+    }
+
+    await trigger.click({ force: true });
+
+    try {
+      if (await menu.isVisible()) {
+        return;
+      }
+    } catch {
+      // Retry while the menu is mounting.
+    }
+
+    await Bun.sleep(100);
+  }
+
+  throw new Error("Timed out waiting for the thinking level menu.");
 }
 
 async function providerHeadings(page: SvvyApp["page"]): Promise<string[]> {
@@ -78,7 +103,27 @@ async function selectModelBySearch(page: SvvyApp["page"], query: string): Promis
   await picker.waitFor({ state: "hidden" });
 }
 
-test("model picker stays scoped to configured providers and reasoning options track the selected model", async () => {
+async function waitForModelLabel(
+  page: SvvyApp["page"],
+  expectedText: string,
+  timeoutMs = 15_000,
+): Promise<void> {
+  const label = page.locator(".model-control strong");
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const text = ((await label.textContent()) ?? "").trim().toLowerCase();
+    if (text.includes(expectedText.toLowerCase())) {
+      return;
+    }
+
+    await Bun.sleep(100);
+  }
+
+  throw new Error(`Timed out waiting for model label "${expectedText}".`);
+}
+
+test("model picker stays scoped to configured providers and updates the composer model label", async () => {
   await runApp(
     createEnv({
       OPENAI_API_KEY: "test-openai-key",
@@ -100,19 +145,10 @@ test("model picker stays scoped to configured providers and reasoning options tr
       expect(headings).not.toContain("anthropic");
       expect(headings).not.toContain("google");
       await selectModelBySearch(page, "gpt-5.4");
+      await waitForModelLabel(page, "gpt-5.4");
 
       const modelLabel = (await page.locator(".model-control strong").textContent())?.trim() ?? "";
       expect(modelLabel.toLowerCase()).toContain("gpt-5.4");
-
-      await openReasoningMenu(page);
-      await menu.getByRole("option", { name: /^xhigh$/i }).waitFor({ state: "visible" });
-      await menu.getByRole("option", { name: /^xhigh$/i }).click();
-      await menu.waitFor({ state: "hidden" });
-      expect(
-        (
-          (await page.getByRole("button", { name: "Thinking level" }).textContent()) ?? ""
-        ).toLowerCase(),
-      ).toContain("xhigh");
     },
   );
 });

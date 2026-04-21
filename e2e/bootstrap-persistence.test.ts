@@ -148,7 +148,7 @@ test("seeded sessions are hydrated on boot and the newest one opens first", asyn
       const sidebarContext = await text(app.page, ".sidebar-context");
       expect(sidebarContext).toContain("3 sessions");
       expect(await app.page.locator(".session-item").nth(0).textContent()).toContain("Fork");
-      expect(await app.page.locator(".session-item").nth(1).textContent()).toContain("Error");
+      expect(await app.page.locator(".session-status").count()).toBe(0);
       expect(await app.page.locator(".session-item").nth(2).textContent()).not.toContain("Fork");
       expect(await app.page.locator(".session-item").nth(0).locator("strong").textContent()).toBe(
         "Forked child",
@@ -194,7 +194,11 @@ test("renaming a session persists across relaunch on the same home dir", async (
       await firstSession
         .getByRole("button", { name: /Session actions for/ })
         .click({ force: true });
-      await firstLaunch.page.getByRole("button", { name: "Rename" }).click();
+      await firstSession.locator(".session-menu").waitFor({ state: "visible" });
+      await firstSession
+        .locator(".session-menu")
+        .getByRole("button", { name: "Rename" })
+        .click({ force: true });
 
       const dialog = firstLaunch.page.getByRole("dialog", { name: "Rename Session" });
       await dialog.waitFor({ state: "visible" });

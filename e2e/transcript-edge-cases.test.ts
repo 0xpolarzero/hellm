@@ -129,7 +129,7 @@ test("renders seeded transcript timestamps, tool error states, and reasoning fal
     expect(await toolResult.locator("summary").textContent()).toBe("Error output");
     expect(await toolResult.locator("pre").textContent()).toContain("Unable to create broken.txt");
 
-    const reasoningBlocks = page.locator(".thinking-block");
+    const reasoningBlocks = page.locator(".assistant-row .thinking-block");
     expect(await reasoningBlocks.count()).toBe(2);
     expect(await reasoningBlocks.nth(0).locator("pre").textContent()).toBe("[redacted]");
     expect(await reasoningBlocks.nth(1).locator("pre").textContent()).toBe(

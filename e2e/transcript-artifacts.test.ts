@@ -211,7 +211,7 @@ test("renders seeded transcript messages, reasoning traces, and tool cards", asy
     await page.getByText("I will create the HTML preview first.").waitFor({ state: "visible" });
     await page.getByText("The HTML artifact is ready.").waitFor({ state: "visible" });
 
-    const thinkingBlocks = page.locator(".thinking-block");
+    const thinkingBlocks = page.locator(".assistant-row .thinking-block");
     expect(await thinkingBlocks.count()).toBe(4);
     const firstThinking = thinkingBlocks.first();
     await firstThinking.locator("summary").click({ force: true });

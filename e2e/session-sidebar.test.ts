@@ -150,7 +150,7 @@ async function waitForText(
   throw new Error(`Timed out waiting for text "${expected}". Last text was "${lastText}".`);
 }
 
-test("renders seeded sessions in recency order, projects badges, and switches the active session", async () => {
+test("renders seeded sessions in recency order, projects the fork badge, and switches the active session", async () => {
   await launchWithSessions(
     [
       {
@@ -191,7 +191,7 @@ test("renders seeded sessions in recency order, projects badges, and switches th
       ]);
       await expectMainTitle(page, "Track beta branch");
       await expectActiveSessionTitle(page, "Track beta branch");
-      await page.locator(".session-status.status-error").waitFor({ state: "visible" });
+      expect(await page.locator(".session-status").count()).toBe(0);
       await page.locator(".session-branch").waitFor({ state: "visible" });
 
       await clickSessionByTitle(page, "Alpha Review");

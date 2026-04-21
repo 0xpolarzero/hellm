@@ -91,6 +91,83 @@ async function waitForEvent(
   throw new Error(`Timed out waiting for bridge event "${eventName}".`);
 }
 
+async function waitForEnabled(
+  locator: {
+    isDisabled?: () => Promise<boolean>;
+    getAttribute?: (name: string) => Promise<string | null>;
+  },
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const disabled =
+      typeof locator.isDisabled === "function"
+        ? await locator.isDisabled()
+        : typeof locator.getAttribute === "function"
+          ? (await locator.getAttribute("disabled")) !== null
+          : false;
+    if (!disabled) {
+      return;
+    }
+    await Bun.sleep(100);
+  }
+
+  throw new Error("Timed out waiting for a control to become enabled.");
+}
+
+function isDisabledClickError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Resolved element is disabled");
+}
+
+async function clickWhenEnabled(
+  locator: {
+    click: (options?: { force?: boolean }) => Promise<void>;
+    isDisabled?: () => Promise<boolean>;
+    getAttribute?: (name: string) => Promise<string | null>;
+  },
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    await waitForEnabled(locator, Math.min(500, timeoutMs));
+    try {
+      await locator.click({ force: true });
+      return;
+    } catch (error) {
+      if (!isDisabledClickError(error)) {
+        throw error;
+      }
+    }
+    await Bun.sleep(100);
+  }
+
+  throw new Error("Timed out clicking an enabled control.");
+}
+
+async function waitForSessionSummary(
+  driver: SvvyApp["driver"],
+  sessionId: string,
+  match: (summary: { id: string; title?: string }) => boolean,
+  timeout = 5_000,
+) {
+  const deadline = Date.now() + timeout;
+  let lastSummary: { id: string; title?: string } | null = null;
+
+  while (Date.now() < deadline) {
+    const sessions = stateValue(await driver.stateGet("sessions"));
+    lastSummary =
+      sessions.summaries.find((summary: { id: string }) => summary.id === sessionId) ?? null;
+    if (lastSummary && match(lastSummary)) {
+      return lastSummary;
+    }
+    await Bun.sleep(100);
+  }
+
+  throw new Error(`Timed out waiting for session summary "${sessionId}" to match.`);
+}
+
 function sinceNow(): string {
   return new Date(Date.now() - 1_000).toISOString();
 }
@@ -118,7 +195,13 @@ async function openSettings(page: SvvyApp["page"]): Promise<void> {
 }
 
 async function openActiveSessionMenu(page: SvvyApp["page"]): Promise<void> {
-  const trigger = sessionMenuTrigger(page);
+  const trigger = page
+    .locator(".session-item")
+    .filter({
+      has: page.locator('.session-main[aria-current="true"]'),
+    })
+    .locator(".session-menu-trigger")
+    .first();
   await trigger.click({ force: true });
   await page.locator(".session-menu").waitFor({ state: "visible" });
 }
@@ -154,7 +237,23 @@ async function stateSnapshot(driver: SvvyApp["driver"]) {
     defaults: stateValue(await driver.stateGet("defaults")),
     providers: stateValue(await driver.stateGet("providers")),
     sessions: stateValue(await driver.stateGet("sessions")),
+    surfaces: stateValue(await driver.stateGet("surfaces")),
   };
+}
+
+function currentOrchestratorSurface(snapshot: Awaited<ReturnType<typeof stateSnapshot>>) {
+  const surface =
+    snapshot.surfaces.items.find(
+      (entry: {
+        target: {
+          surface: string;
+        };
+      }) => entry.target.surface === "orchestrator",
+    ) ?? null;
+  if (!surface) {
+    throw new Error("Expected an open orchestrator surface in the bridge snapshot.");
+  }
+  return surface;
 }
 
 async function providerRowByName(
@@ -175,12 +274,14 @@ async function providerRowByName(
   throw new Error(`Could not find provider row for "${providerName}".`);
 }
 
-test("bridge state snapshot and app.ready expose the workspace/default/provider/session metadata", async () => {
+test("bridge state snapshot and app.ready expose workspace, session metadata, and open surfaces", async () => {
   await withSvvyApp({ env: noAuthEnv({ ZAI_API_KEY: "stub-key" }) }, async ({ driver }) => {
     const ready = await waitForEvent(driver, "app.ready");
     const snapshot = await stateSnapshot(driver);
     const namespaces = await driver.stateList();
     const eventSummary = await driver.eventsSummary({ groupBy: "event" });
+    const initialSession = snapshot.sessions.summaries[0];
+    const initialSurface = currentOrchestratorSurface(snapshot);
 
     expect(ready.payload?.workspaceId).toBe(snapshot.workspace.cwd);
     expect(typeof ready.payload?.url).toBe("string");
@@ -193,8 +294,9 @@ test("bridge state snapshot and app.ready expose the workspace/default/provider/
       "defaults",
       "providers",
       "sessions",
+      "surfaces",
     ]);
-    expect(namespaces.map((entry) => entry.keyCount)).toEqual([4, 4, 3, 4]);
+    expect(namespaces.map((entry) => entry.keyCount)).toEqual([4, 4, 3, 2, 2]);
 
     expect(snapshot.workspace).toEqual({
       workspaceId: snapshot.workspace.cwd,
@@ -217,22 +319,30 @@ test("bridge state snapshot and app.ready expose the workspace/default/provider/
       supportsOAuth: false,
     });
     expect(snapshot.sessions.total).toBe(1);
-    expect(snapshot.sessions.activeSessionId).toBe(snapshot.sessions.active?.session.id);
-    expect(snapshot.sessions.active).toMatchObject({
-      messageCount: 0,
-      model: PROMPT_MODEL,
-      provider: PROMPT_PROVIDER,
-      reasoningEffort: "medium",
-      systemPrompt: snapshot.defaults.systemPrompt,
-    });
+    expect("active" in snapshot.sessions).toBe(false);
+    expect("activeSessionId" in snapshot.sessions).toBe(false);
     expect(snapshot.sessions.summaries).toHaveLength(1);
-    expect(snapshot.sessions.summaries[0]).toMatchObject({
-      id: snapshot.sessions.activeSessionId,
+    expect(initialSession).toMatchObject({
       title: "New Session",
       status: "idle",
       provider: PROMPT_PROVIDER,
       modelId: PROMPT_MODEL,
       thinkingLevel: "medium",
+    });
+    expect(snapshot.surfaces.total).toBe(1);
+    expect(snapshot.surfaces.items).toHaveLength(1);
+    expect(initialSurface).toMatchObject({
+      messageCount: 0,
+      model: PROMPT_MODEL,
+      provider: PROMPT_PROVIDER,
+      reasoningEffort: "medium",
+      systemPrompt: snapshot.defaults.systemPrompt,
+      promptStatus: "idle",
+      target: {
+        workspaceSessionId: initialSession.id,
+        surface: "orchestrator",
+        surfacePiSessionId: initialSession.id,
+      },
     });
 
     expect(eventSummary.totals["app.ready"]).toBe(1);
@@ -264,10 +374,8 @@ test("session lifecycle bridge events are emitted for create, open, rename, fork
     },
     async ({ driver, page }) => {
       const baseSession = await stateSnapshot(driver);
-      const baseSessionId = baseSession.sessions.activeSessionId;
-      if (!baseSessionId) {
-        throw new Error("Expected an initial active session id.");
-      }
+      const baseSurface = currentOrchestratorSurface(baseSession);
+      const baseSessionId = baseSurface.target.workspaceSessionId;
 
       const createSince = sinceNow();
       await page.getByRole("button", { name: "Create a new session" }).click();
@@ -281,7 +389,19 @@ test("session lifecycle bridge events are emitted for create, open, rename, fork
 
       const afterCreate = await stateSnapshot(driver);
       expect(afterCreate.sessions.total).toBe(2);
-      expect(afterCreate.sessions.activeSessionId).not.toBe(baseSessionId);
+      expect("activeSessionId" in afterCreate.sessions).toBe(false);
+      expect(
+        afterCreate.surfaces.items.some(
+          (surface: {
+            target: {
+              surface: string;
+              workspaceSessionId: string;
+            };
+          }) =>
+            surface.target.surface === "orchestrator" &&
+            surface.target.workspaceSessionId === created.payload?.sessionId,
+        ),
+      ).toBe(true);
 
       const openSince = sinceNow();
       await sessionMenuTrigger(page, "Seeded base session").waitFor({ state: "visible" });
@@ -289,6 +409,19 @@ test("session lifecycle bridge events are emitted for create, open, rename, fork
       await Bun.sleep(250);
       const opened = await waitForEvent(driver, "session.opened", { since: openSince });
       expect(opened.payload).toMatchObject({ sessionId: baseSessionId });
+      const afterOpen = await stateSnapshot(driver);
+      expect(
+        afterOpen.surfaces.items.some(
+          (surface: {
+            target: {
+              surface: string;
+              workspaceSessionId: string;
+            };
+          }) =>
+            surface.target.surface === "orchestrator" &&
+            surface.target.workspaceSessionId === baseSessionId,
+        ),
+      ).toBe(true);
 
       const renamedTitle = `Bridge Contract Renamed ${Date.now()}`;
       const renameSince = sinceNow();
@@ -302,41 +435,56 @@ test("session lifecycle bridge events are emitted for create, open, rename, fork
         .getByRole("dialog", { name: "Rename Session" })
         .locator('input[placeholder="Session title"]')
         .fill(renamedTitle);
-      await page
+      const renameSaveButton = page
         .getByRole("dialog", { name: "Rename Session" })
-        .getByRole("button", { name: "Save" })
-        .click();
+        .getByRole("button", { name: "Save" });
+      await clickWhenEnabled(renameSaveButton);
       await Bun.sleep(250);
       const renamed = await waitForEvent(driver, "session.renamed", { since: renameSince });
       expect(renamed.payload).toMatchObject({
         sessionId: expect.any(String),
         title: renamedTitle,
       });
+      const renamedSummary = await waitForSessionSummary(
+        driver,
+        baseSessionId,
+        (session) => session.title === renamedTitle,
+      );
+      expect(renamedSummary.title).toBe(renamedTitle);
 
       const forkSince = sinceNow();
       await openActiveSessionMenu(page);
-      await page
-        .locator(".session-menu")
-        .getByRole("button", { name: "Fork" })
-        .click({ force: true });
+      const forkButton = page.locator(".session-menu").getByRole("button", { name: "Fork" });
+      await clickWhenEnabled(forkButton);
       await Bun.sleep(250);
       const forked = await waitForEvent(driver, "session.forked", { since: forkSince });
       expect(typeof forked.payload?.sessionId).toBe("string");
       expect(forked.payload?.title).toBeNull();
       expect(typeof forked.payload?.targetSessionId).toBe("string");
       expect(forked.payload?.targetSessionId).not.toBe(forked.payload?.sessionId);
+      const afterFork = await stateSnapshot(driver);
+      expect(
+        afterFork.surfaces.items.some(
+          (surface: {
+            target: {
+              surface: string;
+              workspaceSessionId: string;
+            };
+          }) =>
+            surface.target.surface === "orchestrator" &&
+            surface.target.workspaceSessionId === forked.payload?.targetSessionId,
+        ),
+      ).toBe(true);
 
       const deleteSince = sinceNow();
       await openActiveSessionMenu(page);
-      await page
-        .locator(".session-menu")
-        .getByRole("button", { name: "Delete" })
-        .click({ force: true });
+      const deleteButton = page.locator(".session-menu").getByRole("button", { name: "Delete" });
+      await clickWhenEnabled(deleteButton);
       await page.getByRole("dialog", { name: "Delete Session" }).waitFor({ state: "visible" });
-      await page
+      const confirmDeleteButton = page
         .getByRole("dialog", { name: "Delete Session" })
-        .getByRole("button", { name: "Delete" })
-        .click({ force: true });
+        .getByRole("button", { name: "Delete" });
+      await clickWhenEnabled(confirmDeleteButton);
       await Bun.sleep(250);
       const deleted = await waitForEvent(driver, "session.deleted", { since: deleteSince });
       expect(deleted.payload).toMatchObject({
@@ -344,46 +492,81 @@ test("session lifecycle bridge events are emitted for create, open, rename, fork
       });
 
       const sessionsState = stateValue(await driver.stateGet("sessions"));
-      expect(typeof sessionsState.activeSessionId).toBe("string");
+      const surfacesState = stateValue(await driver.stateGet("surfaces"));
+      expect("activeSessionId" in sessionsState).toBe(false);
+      expect(
+        sessionsState.summaries.some(
+          (session: { id: string }) => session.id === forked.payload?.targetSessionId,
+        ),
+      ).toBe(false);
+      expect(
+        surfacesState.items.some(
+          (surface: {
+            target: {
+              workspaceSessionId: string;
+            };
+          }) => surface.target.workspaceSessionId === forked.payload?.targetSessionId,
+        ),
+      ).toBe(false);
     },
   );
 });
 
-test("composer controls emit session.model.changed and session.reasoning.changed with the active session id", async () => {
+test("composer controls emit surface.model.changed and surface.reasoning.changed for the current surface", async () => {
   await withSvvyApp({ env: noAuthEnv({ ZAI_API_KEY: "stub-key" }) }, async ({ driver, page }) => {
     const initial = await stateSnapshot(driver);
-    const activeSessionId = initial.sessions.activeSessionId;
-    if (!activeSessionId) {
-      throw new Error("Expected an active session id before changing composer controls.");
-    }
+    const initialSurface = currentOrchestratorSurface(initial);
 
     await openModelPicker(page);
     const modelSince = sinceNow();
     await selectModel(page, "glm-4.7-flashx");
-    const modelChanged = await waitForEvent(driver, "session.model.changed", {
+    const modelChanged = await waitForEvent(driver, "surface.model.changed", {
       match: { model: "glm-4.7-flashx" },
       since: modelSince,
     });
     expect(modelChanged.payload).toMatchObject({
-      sessionId: activeSessionId,
+      surfacePiSessionId: initialSurface.target.surfacePiSessionId,
+      threadId: null,
+      workspaceSessionId: initialSurface.target.workspaceSessionId,
       model: "glm-4.7-flashx",
     });
 
     await openReasoningMenu(page);
     const reasoningSince = sinceNow();
     await selectReasoningLevel(page, "high");
-    const reasoningChanged = await waitForEvent(driver, "session.reasoning.changed", {
+    const reasoningChanged = await waitForEvent(driver, "surface.reasoning.changed", {
       match: { level: "high" },
       since: reasoningSince,
     });
     expect(reasoningChanged.payload).toMatchObject({
-      sessionId: activeSessionId,
+      surfacePiSessionId: initialSurface.target.surfacePiSessionId,
+      threadId: null,
+      workspaceSessionId: initialSurface.target.workspaceSessionId,
       level: "high",
     });
 
     const sessionsState = stateValue(await driver.stateGet("sessions"));
-    expect(sessionsState.active?.model).toBe("glm-4.7-flashx");
-    expect(sessionsState.active?.reasoningEffort).toBe("high");
+    const surfacesState = stateValue(await driver.stateGet("surfaces"));
+    const updatedSurface =
+      surfacesState.items.find(
+        (surface: {
+          target: {
+            surfacePiSessionId: string;
+          };
+        }) => surface.target.surfacePiSessionId === initialSurface.target.surfacePiSessionId,
+      ) ?? null;
+    expect(updatedSurface).toMatchObject({
+      model: "glm-4.7-flashx",
+      reasoningEffort: "high",
+    });
+    expect(
+      sessionsState.summaries.find(
+        (session: { id: string }) => session.id === initialSurface.target.workspaceSessionId,
+      ),
+    ).toMatchObject({
+      modelId: "glm-4.7-flashx",
+      thinkingLevel: "high",
+    });
   });
 });
 
