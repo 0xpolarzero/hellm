@@ -195,6 +195,9 @@ The adopted direction is:
 - give that profile a `svvy` workflow-task prompt rather than the orchestrator or handler-thread prompt
 - expose only task-local tools; the default adopted task-agent surface is `execute_typescript`
 - do not expose `thread.start`, `thread.handoff`, `wait`, or `smithers.*` to workflow task agents
+- do not load ambient pi built-in tools or workspace-discovered extension tools into workflow task agents
+- execute workflow task agents from Smithers' current task root or worktree rather than from the workspace runtime DB root
+- preserve structured message history, step boundaries, and usage across retries and hijack handoff instead of flattening task-agent continuation into plain text
 
 Approvals and hijack are not ordinary task-agent tools:
 
@@ -266,7 +269,7 @@ That means build, test, lint, and related checks can still have structured verif
 - workflow supervision should use Smithers-native bridge tools such as generated `smithers.run_workflow.<workflow_id>` launch tools, `smithers.get_run`, and `smithers.resolve_approval`.
 - the Smithers-native tool surface targets product-runtime runnable workflows rather than the repo authoring workspace under `workflows/`.
 - capability declarations are actor-specific: the orchestrator gets only orchestrator-callable tools, and handler threads get only handler-callable tools.
-- workflow task agents are another actor class below handler threads and should receive only task-local tool declarations, with `execute_typescript` as the default adopted task tool.
+- workflow task agents are another actor class below handler threads and should receive only task-local tool declarations, with `execute_typescript` as the default adopted task tool and no ambient pi extension-tool leakage.
 - runtime handlers and bridges write durable facts from real execution; agents do not mutate product state through arbitrary write tools.
 - child `api.*` calls remain nested command facts under a parent `execute_typescript` command.
 - tool-run summaries stay on command records and artifacts; ordinary handler replies do not emit episodes.

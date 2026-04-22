@@ -127,6 +127,7 @@ The `svvy`-owned part is:
 - A workflow run never returns control directly to the orchestrator.
 - Only `thread.handoff` returns control to the orchestrator.
 - If a handler thread opens a workflow run for its current objective span, that thread stays responsible until the span ends in `thread.handoff`; waits, approvals, resumes, and repairs stay inside the handler lifecycle.
+- Workflow-task-attempt projection is write-driven from the current Smithers attempt identity and explicit runtime handlers. When a task-local tool needs the attempt before handler-side projection has landed, the bootstrap path is an exact persisted resume-handle lookup against the Smithers attempt row, not a heuristic scan or fallback chain.
 
 ## Core Concepts
 
@@ -242,6 +243,10 @@ The adopted direction is:
 - the default adopted task-agent tool surface is `execute_typescript`
 - project each Smithers task attempt into a durable `svvy` workflow-task-attempt record and attach any task-agent `execute_typescript` commands and artifacts to that attempt instead of leaving them in a local ephemeral trace
 - do not expose `thread.start`, `thread.handoff`, `wait`, or `smithers.*` to workflow task agents
+- do not load ambient pi built-in tools or workspace-discovered extension tools into the task agent runtime
+- execute the task agent and its task-local tools from Smithers' current task root or worktree, while leaving Smithers runtime DB ownership and `svvy` workflow projection workspace-scoped
+- preserve structured message arrays, step boundaries, and usage across retries, schema repair prompts, and hijack handoff instead of flattening continuation state into plain transcript prose
+- stream live assistant deltas and tool updates so heartbeat freshness and UI activity reflect real task-agent progress rather than only terminal text
 
 This is intentionally the same broad recipe family as the orchestrator and handler thread:
 
@@ -292,7 +297,7 @@ Actor-specific exposure is part of that contract:
 - the orchestrator prompt should know that handler threads can supervise workflows through `smithers.*`, but it should not receive the `smithers.*` generated tool schema in its own prompt
 - handler-thread prompts should receive the `smithers.*` schema because they are the delegated surfaces that actually supervise workflow execution
 - handler-thread prompts should not receive orchestrator-only tools such as `thread.start` in the default adopted model
-- workflow task agents should receive only their task-local tool schema, which in the default adopted profile is `execute_typescript`
+- workflow task agents should receive only their task-local tool schema, which in the default adopted profile is `execute_typescript`, with no ambient pi built-ins or extension-provided callable tools beyond that task-local set
 - awareness of another actor's capabilities belongs in compact instructional prose, not in leaked callable declarations for tools that actor cannot invoke
 
 The first adopted Smithers-native surface is:

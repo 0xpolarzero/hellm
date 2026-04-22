@@ -92,6 +92,7 @@ The actor-specific capability split is:
 - the orchestrator prompt knows that handler threads can supervise Smithers workflows, but it does not receive the `smithers.*` tool declarations; if it wants workflow action, it must delegate by calling `thread.start`
 - a handler-thread prompt receives `smithers.*`, `thread.handoff`, `wait`, and any allowed generic work surface such as `execute_typescript`, but it does not receive `thread.start` in the default adopted model
 - a workflow-task-agent prompt receives only task-local instructions and task-local callable declarations; in the default adopted model it should receive `execute_typescript` and not `thread.start`, `thread.handoff`, `wait`, or `smithers.*`
+- a workflow-task-agent runtime must not load ambient pi built-in tools or workspace-discovered extension tools that would widen that callable surface beyond the explicit task-local tool set
 - if `svvy` later adopts nested delegation or additional actor classes, those capabilities must be added explicitly rather than leaked through one shared global prompt surface
 
 ### 3. Handler Threads Are The Delegation Unit
@@ -194,6 +195,11 @@ The adopted direction for task agents is:
 - expose only a task-local tool surface; the default adopted task-agent tool surface is `execute_typescript`
 - keep `thread.start`, `thread.handoff`, `wait`, and `smithers.*` out of the task-agent prompt and tool schema
 - keep human approval and hijack as Smithers runtime or operator controls around the task, not as ordinary task-agent tools
+- execute the task agent and its task-local `execute_typescript` calls from Smithers' current task root, including the active worktree when the task is worktree-bound
+- keep the workflow runtime DB, run ownership, and structured projection workspace-scoped even when the task itself executes in a worktree
+- bind the workflow-task-attempt record before any task-local tool call runs by exact persisted resume-handle lookup against the current Smithers attempt row; do not use heuristic recency scans, transcript inference, or multi-stage fallback chains to discover ownership
+- preserve structured message history, step boundaries, and usage across retries, schema repair prompts, and hijack handoff instead of flattening continuation state into role-labelled prose
+- stream live assistant and tool updates so handler wake-ups, UI activity, and heartbeat freshness reflect real task-agent progress rather than only terminal task text
 
 This lets `svvy` reuse the same general PI-based agent recipe at three different layers without conflating their responsibilities:
 
@@ -643,6 +649,7 @@ At minimum:
 
 - a handler thread may be associated with a worktree
 - a workflow run may execute in a worktree
+- a workflow task agent executes from the current Smithers task root or worktree, while `svvy` workflow projection and Smithers runtime storage stay bound to the workspace root
 - delegated workflows should default to the current branch and current worktree rather than spawning worktrees automatically
 - the UI must make the active worktree legible
 

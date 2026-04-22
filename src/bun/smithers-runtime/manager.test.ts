@@ -1668,83 +1668,90 @@ describe("SmithersRuntimeManager", () => {
             state: {
               messages,
             },
+            async prompt(promptMessages: Array<{ role: string; content: Array<{ type: string; text: string }> }>) {
+              messages.push(...promptMessages);
+
+              const executeTypescript = options.customTools.find(
+                (tool: { name: string }) => tool.name === "execute_typescript",
+              );
+              if (!executeTypescript) {
+                throw new Error("Expected execute_typescript to be the only custom tool.");
+              }
+
+              subscribers.forEach((callback) =>
+                callback({
+                  type: "tool_execution_start",
+                  toolCallId: "tool-call-workflow-task",
+                  toolName: "execute_typescript",
+                }),
+              );
+
+              const toolResult = await executeTypescript.execute(
+                "tool-call-workflow-task",
+                {
+                  typescriptCode: [
+                    'const validation = await api.exec.run({ command: "echo", args: ["workflow-validated"] });',
+                    'await api.repo.writeFile({ path: "workflow-task-output.txt", text: validation.stdout.trim() });',
+                    "return {",
+                    '  summary: "Completed the workflow task and wrote the output file.",',
+                    '  filesChanged: ["workflow-task-output.txt"],',
+                    '  validationRan: ["echo workflow-validated"],',
+                    "  unresolvedIssues: [],",
+                    "};",
+                  ].join("\n"),
+                },
+                undefined,
+                undefined,
+              );
+
+              subscribers.forEach((callback) =>
+                callback({
+                  type: "tool_execution_end",
+                  toolCallId: "tool-call-workflow-task",
+                  toolName: "execute_typescript",
+                  isError: false,
+                  result: toolResult,
+                }),
+              );
+
+              const taskResult = (toolResult.details as any).result as {
+                summary: string;
+                filesChanged: string[];
+                validationRan: string[];
+                unresolvedIssues: string[];
+              };
+              messages.push({
+                role: "assistant",
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      status: "completed",
+                      summary: taskResult.summary,
+                      filesChanged: taskResult.filesChanged,
+                      validationRan: taskResult.validationRan,
+                      unresolvedIssues: taskResult.unresolvedIssues,
+                    }),
+                  },
+                ],
+              });
+              subscribers.forEach((callback) =>
+                callback({
+                  type: "turn_end",
+                  message: messages[messages.length - 1],
+                  toolResults: [],
+                }),
+              );
+            },
+          },
+          getActiveToolNames() {
+            return ["execute_typescript"];
           },
           subscribe(callback: (event: Record<string, unknown>) => void) {
             subscribers.add(callback);
             return () => {
               subscribers.delete(callback);
             };
-          },
-          async prompt(promptText: string) {
-            messages.push({
-              role: "user",
-              content: [{ type: "text", text: promptText }],
-            });
-
-            const executeTypescript = options.customTools.find(
-              (tool: { name: string }) => tool.name === "execute_typescript",
-            );
-            if (!executeTypescript) {
-              throw new Error("Expected execute_typescript to be the only custom tool.");
-            }
-
-            subscribers.forEach((callback) =>
-              callback({
-                type: "tool_execution_start",
-                toolCallId: "tool-call-workflow-task",
-                toolName: "execute_typescript",
-              }),
-            );
-
-            const toolResult = await executeTypescript.execute(
-              "tool-call-workflow-task",
-              {
-                typescriptCode: [
-                  'const validation = await api.exec.run({ command: "echo", args: ["workflow-validated"] });',
-                  'await api.repo.writeFile({ path: "workflow-task-output.txt", text: validation.stdout.trim() });',
-                  "return {",
-                  '  summary: "Completed the workflow task and wrote the output file.",',
-                  '  filesChanged: ["workflow-task-output.txt"],',
-                  '  validationRan: ["echo workflow-validated"],',
-                  "  unresolvedIssues: [],",
-                  "};",
-                ].join("\n"),
-              },
-              undefined,
-              undefined,
-            );
-
-            subscribers.forEach((callback) =>
-              callback({
-                type: "tool_execution_end",
-                toolCallId: "tool-call-workflow-task",
-                toolName: "execute_typescript",
-                isError: false,
-                result: toolResult,
-              }),
-            );
-
-            const taskResult = (toolResult.details as any).result as {
-              summary: string;
-              filesChanged: string[];
-              validationRan: string[];
-              unresolvedIssues: string[];
-            };
-            messages.push({
-              role: "assistant",
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({
-                    status: "completed",
-                    summary: taskResult.summary,
-                    filesChanged: taskResult.filesChanged,
-                    validationRan: taskResult.validationRan,
-                    unresolvedIssues: taskResult.unresolvedIssues,
-                  }),
-                },
-              ],
-            });
           },
           async abort() {},
           dispose() {},

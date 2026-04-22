@@ -75,7 +75,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workflow Task Agent Profile",
     status: "in-progress",
     summary:
-      "Defines lower-level Smithers workflow task agents as a separate actor class beneath handler threads, using a PI-backed svvy task profile by default with task-local instructions and `execute_typescript` as the default adopted task tool surface, while projecting first-class durable workflow-task-attempt records keyed by Smithers attempt identity plus inspectable nested transcript, command, and artifact traces, and keeping approval and hijack as Smithers runtime controls rather than ordinary task-agent tools.",
+      "Defines lower-level Smithers workflow task agents as a separate actor class beneath handler threads, using a PI-backed svvy task profile with a strict `execute_typescript`-only callable surface, no ambient pi built-ins or extension-tool leakage, task-root or worktree execution aligned to the active Smithers attempt, first-class durable workflow-task-attempt records keyed by Smithers attempt identity before task-local tool calls run, message-native retry and hijack continuation, live task-agent activity streaming, and projected nested transcript, command, artifact, and usage traces, while keeping approval and hijack as Smithers runtime controls rather than ordinary task-agent tools.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/workflow-supervision.spec.md",
@@ -131,7 +131,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Session State Overlay",
     status: "in-progress",
     summary:
-      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, workflow-run, workflow-task-attempt, command, episode, artifact, verification, wait, and lifecycle event records, explicit surface-target identity (`workspaceSessionId`, `surfacePiSessionId`, `threadId`), workspace-level metadata projection that survives reload, and live-surface transcript updates kept separate from durable workspace read models.",
+      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, workflow-run, workflow-task-attempt, command, episode, artifact, verification, wait, and lifecycle event records, explicit surface-target identity (`workspaceSessionId`, `surfacePiSessionId`, `threadId`), workflow-task-attempt binding bootstrapped by exact persisted Smithers resume-handle lookup instead of heuristic attempt-table scans or transcript-derived repair, workspace-level metadata projection that survives reload, and live-surface transcript updates kept separate from durable workspace read models.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {

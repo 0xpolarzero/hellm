@@ -103,7 +103,7 @@ Actor-specific capability slicing still applies:
 
 - the orchestrator prompt should not receive handler-only Smithers declarations just because both actors may use `execute_typescript`
 - a handler-thread prompt should not receive orchestrator-only declarations such as `thread.start` just because both actors are backed by pi sessions
-- a workflow-task-agent prompt may receive the `execute_typescript` declaration as its primary task-local tool schema without receiving any handler-thread or orchestrator control declarations
+- a workflow-task-agent prompt may receive the `execute_typescript` declaration as its primary task-local tool schema without receiving any handler-thread or orchestrator control declarations or ambient pi extension tools that widen the callable surface
 
 This is required because short prose summaries are not sufficient for a typed host SDK with namespace methods, subtle argument shapes, and important constraints such as:
 
@@ -618,6 +618,7 @@ That means:
 - the `api.*` surface stays the same
 - the parent and child command model stays the same
 - snippet artifacts, child command facts, and parent rollups stay the same
+- when a workflow task agent calls `execute_typescript`, the execution root is the current Smithers task root or worktree, not the workspace runtime DB root
 
 The default adopted workflow-task-agent profile should expose `execute_typescript` as its task-local tool surface and should not expose `thread.start`, `thread.handoff`, `wait`, or `smithers.*`.
 
