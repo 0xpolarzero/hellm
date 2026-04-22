@@ -67,7 +67,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Smithers-Native Tool Surface",
     status: "in-progress",
     summary:
-      "Exposes Smithers-native semantic workflow control and inspection tools through the Bun bridge for handler-thread surfaces, with one generated launch tool per bundled workflow under `smithers.run_workflow.<workflow_id>` derived from the workflow's real TypeScript or Zod launch schema, `smithers.list_workflows` returning the compiled contract metadata, `smithers.list_runs` returning workspace-global compact run summaries enriched with svvy `sessionId` and `threadId` ownership when known, and the rest of the handler-thread surface preserving official Smithers names such as `get_run`, `watch_run`, `explain_run`, `list_pending_approvals`, `resolve_approval`, `get_node_detail`, `list_artifacts`, `get_chat_transcript`, `get_run_events`, `runs.cancel`, `signals.send`, `frames.list`, `getDevToolsSnapshot`, and `streamDevTools` instead of inventing a parallel svvy `workflow.*` abstraction, while preserving transport and invocation metadata in command facts and avoiding any dependency on the repo authoring workspace under `workflows/`.",
+      "Exposes Smithers-native semantic workflow control and inspection tools through the Bun bridge for handler-thread surfaces, with one generated launch tool per discoverable workflow under `smithers.run_workflow.<workflow_id>` derived from the workflow's real TypeScript or Zod launch schema, `smithers.list_workflows` returning the compiled contract metadata, `smithers.list_runs` returning workspace-global compact run summaries enriched with svvy `sessionId` and `threadId` ownership when known, and the rest of the handler-thread surface preserving official Smithers names such as `get_run`, `watch_run`, `explain_run`, `list_pending_approvals`, `resolve_approval`, `get_node_detail`, `list_artifacts`, `get_chat_transcript`, `get_run_events`, `runs.cancel`, `signals.send`, `frames.list`, `getDevToolsSnapshot`, and `streamDevTools` instead of inventing a parallel svvy `workflow.*` abstraction, while preserving transport and invocation metadata in command facts and avoiding any dependency on the repo authoring workspace under `workflows/`.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-supervision.spec.md"],
   },
   {
@@ -84,11 +84,19 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
   },
   {
     id: "workflow-library",
-    name: "Workflow Templates And Presets",
+    name: "Workflow Templates And Custom Authoring",
     status: "in-progress",
     summary:
-      "Defines bundled product-runtime Smithers workflow templates under `src/bun/smithers-runtime/` such as `single_task`, `sequential_pipeline`, `fanout_join`, and `verification_run`, plus reusable presets and one-off authored workflows supervised by handler threads, explicitly separate from the repo-root `workflows/` authoring package used to build svvy itself.",
-    sourceSpecs: ["docs/prd.md"],
+      "Defines bundled product-runtime Smithers structural workflow templates under `src/bun/smithers-runtime/` such as `single_task`, `ordered_steps`, and `parallel_branches`, plus one-off authored workflows supervised by handler threads, explicitly separate from the repo-root `workflows/` authoring package used to build svvy itself.",
+    sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
+  },
+  {
+    id: "saved-workflow-library",
+    name: "Workspace Saved Workflows",
+    status: "in-progress",
+    summary:
+      "Lets users save a reusable authored workflow into `.svvy/workflows`, discover saved workflows alongside bundled templates in later handler-thread workflow selection, and manage saved workflows from a dedicated workspace library tab with delete support, while handler instructions may save on request or propose saving when a workflow looks reusable.",
+    sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
   },
   {
     id: "prompt-history",
@@ -163,7 +171,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Workflow Run Records",
     status: "in-progress",
     summary:
-      "Stores one svvy-side record for each Smithers workflow run under a handler thread, including run identity, template or preset metadata, normalized status, raw Smithers status, wait kind, reconnect cursor, pending-versus-delivered handler-attention cursors, heartbeat freshness, lineage, summary, timestamps, and related artifacts and command history, with lifecycle projection owned by explicit bridge-event writes, Smithers tool-boundary writes, and reconnect or bootstrap control-plane writes, plus idempotent terminal replay handling so duplicate terminal snapshots do not reopen a completed thread or redeliver handler attention.",
+      "Stores one svvy-side record for each Smithers workflow run under a handler thread, including run identity, workflow source, template metadata, saved-workflow linkage when relevant, normalized status, raw Smithers status, wait kind, reconnect cursor, pending-versus-delivered handler-attention cursors, heartbeat freshness, lineage, summary, timestamps, and related artifacts and command history, with lifecycle projection owned by explicit bridge-event writes, Smithers tool-boundary writes, and reconnect or bootstrap control-plane writes, plus idempotent terminal replay handling so duplicate terminal snapshots do not reopen a completed thread or redeliver handler attention.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {

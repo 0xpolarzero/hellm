@@ -2,7 +2,7 @@
 
 ## Status
 
-- Date: 2026-04-19
+- Date: 2026-04-21
 - Status: adopted direction for the structured session state model
 - Reference implementation: [POC](../pocs/structured-session-state.poc.ts)
 
@@ -182,8 +182,9 @@ type StructuredSessionState = {
     threadId: string;
     smithersRunId: string;
     workflowName: string;
+    workflowSource: "bundled-template" | "saved-workflow" | "authored-custom";
     templateId: string | null;
-    presetId: string | null;
+    savedWorkflowId: string | null;
     status: "running" | "waiting" | "continued" | "completed" | "failed" | "cancelled";
     smithersStatus:
       | "running"
@@ -364,7 +365,7 @@ Workflow-run records exist because the product needs a top-level durable summary
 They answer:
 
 - how many workflow runs happened under a thread
-- which template or preset was used
+- which bundled template, saved workflow, or authored custom workflow shape was used
 - which Smithers run id corresponds to each execution
 - the normalized run status plus raw Smithers status and wait kind
 - whether the run continued into another lineage
@@ -522,8 +523,9 @@ If the same terminal workflow snapshot is replayed after handoff during final re
 | `threadId`              | Links the run to the handler thread that owns it.                                         |
 | `smithersRunId`         | Canonical link back to Smithers.                                                          |
 | `workflowName`          | Product-visible workflow identifier.                                                      |
+| `workflowSource`        | Distinguishes bundled-template, saved-workflow, and authored-custom execution.            |
 | `templateId`            | Records which structural template was used when relevant.                                 |
-| `presetId`              | Records which preset was used when relevant.                                              |
+| `savedWorkflowId`       | Records which saved workflow entry was launched when relevant.                            |
 | `status`                | Captures the normalized top-level run status used by `svvy`.                              |
 | `smithersStatus`        | Preserves the raw Smithers run status for faithful inspection and reconnect behavior.     |
 | `waitKind`              | Preserves whether a waiting run is blocked on approval, event, or timer.                  |

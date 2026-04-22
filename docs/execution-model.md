@@ -163,7 +163,7 @@ Inside a handler thread, the normal choices are:
 - Smithers-native workflow tools such as `smithers.list_workflows`, generated launch tools such as `smithers.run_workflow.hello_world`, `smithers.get_run`, `smithers.explain_run`, and `smithers.resolve_approval`
 - `wait`
 
-The workflow tool surface should mirror Smithers semantics rather than a svvy-defined `workflow.*` alias layer. The launch surface is one generated tool per bundled workflow under the `smithers.run_workflow.<workflow_id>` namespace, derived from the workflow's real TypeScript or Zod launch schema rather than from handwritten prompt prose or repo inspection. Those Smithers-native commands are supervision helpers inside the handler-thread lifecycle, not evidence that the repo-root `workflows/` authoring package is the shipped product runtime.
+The workflow tool surface should mirror Smithers semantics rather than a svvy-defined `workflow.*` alias layer. The launch surface is one generated tool per discoverable workflow under the `smithers.run_workflow.<workflow_id>` namespace, derived from the workflow's real TypeScript or Zod launch schema rather than from handwritten prompt prose or repo inspection. Those Smithers-native commands are supervision helpers inside the handler-thread lifecycle, not evidence that the repo-root `workflows/` authoring package is the shipped product runtime.
 
 The agent does not get raw Smithers internals or direct CLI access. It gets `svvy`-registered `smithers.*` tools that call the Bun-owned Smithers bridge.
 
@@ -171,8 +171,8 @@ The handler-thread prompt may know that the orchestrator can delegate and reconc
 
 The handler thread may:
 
-- reuse a workflow template
-- fill a preset
+- reuse a saved workflow
+- use a bundled workflow template
 - author a custom workflow
 - rerun after repair
 - resume after clarification
@@ -254,7 +254,7 @@ The difference is where the wait lives:
 
 ### 8. Verification Is Workflow-Shaped Execution
 
-Verification remains first-class in product behavior and UI, but it is modeled through workflow templates and presets rather than a separate native execution engine.
+Verification remains first-class in product behavior and UI, but it is modeled through workflow templates and saved or custom workflows rather than a separate native execution engine.
 
 That means build, test, lint, and related checks can still have structured verification records and specialized UI, while execution stays consistent with the workflow model.
 

@@ -364,7 +364,7 @@ PRD pressure:
 
 - app-wide runtime profiles exist for orchestrator, quick, explorer, implementer, reviewer, workflow-writer, and namer
 - sessions can override those profiles
-- handler threads and workflow tasks inherit bounded task presets
+- handler threads and workflow tasks inherit bounded task defaults
 
 Optimization requirement:
 

@@ -6,7 +6,7 @@ Ship `svvy` as an Electrobun desktop coding app with a pi-backed runtime, a visi
 
 ## Status
 
-- Date: 2026-04-19
+- Date: 2026-04-22
 - Status: target product PRD
 - Scope: this document defines the intended shipped product, not just the current bootstrap implementation
 
@@ -21,6 +21,7 @@ The product combines:
 - a `svvy` orchestrator that owns strategy, routing, and final decisions
 - pi-backed delegated handler threads for bounded delegated objectives
 - Smithers-backed workflow runs executed under those handler threads
+- bundled structural workflow templates plus workspace-saved reusable workflows
 - first-class threads, workflow runs, commands, episodes, artifacts, verification, and worktree awareness
 
 The intended feel is closer to Slate than to stock pi:
@@ -41,6 +42,7 @@ The shipped product must let a user:
 - delegate bounded work while keeping top-level strategy and state visible
 - talk directly inside delegated thread surfaces when that work needs clarification or follow-up
 - run and interpret verification as first-class product behavior
+- save a reusable authored workflow into the workspace workflow library and discover it later
 - pause and resume safely when user input or an external prerequisite is required
 - keep session context and worktree context aligned
 - use the same execution model from both the desktop app and headless automation surfaces
@@ -122,13 +124,20 @@ The repo-root `workflows/` package is not the shipped product workflow runtime.
 
 It is an authoring workspace used to build and maintain `svvy` itself.
 
-The shipped app must supervise product-owned Smithers workflows that are bundled with the app under an app-owned runtime area such as `src/bun/smithers-runtime/` and work without a source checkout, not repo-local authoring workflows that depend on `workflows/node_modules/.bin/smithers`, `workflows/smithers.db`, or source-relative paths.
+The shipped app must supervise product-runtime Smithers workflows that work without a source checkout.
+
+That includes:
+
+- bundled structural templates under an app-owned runtime area such as `src/bun/smithers-runtime/`
+- workspace-saved workflows under `.svvy/workflows/`
+
+It must not depend on repo-local authoring workflows that rely on `workflows/node_modules/.bin/smithers`, `workflows/smithers.db`, or source-relative paths.
 
 That means:
 
 - a short-lived worker is a one-task workflow
 - parallel delegated work is a workflow template
-- verification is a workflow template or preset
+- verification uses the same workflow runtime and structured output model rather than a separate engine
 - a custom delegated plan is authored as a workflow and then executed
 
 The handler thread is not the heavy execution engine.
@@ -153,7 +162,7 @@ The orchestrator gives control of the delegated objective to the handler thread 
 
 That means:
 
-- the handler thread decides whether to reuse a template, use a preset, or author a custom workflow
+- the handler thread decides whether to reuse a saved workflow, use a bundled structural template, or author a custom workflow
 - the handler thread starts and resumes workflow runs
 - workflow waits, approvals, retries, repairs, and resumptions stay inside that same handler thread instead of escaping back to the orchestrator
 - the handler thread receives control back when a workflow run reaches a terminal outcome or another actionable attention state
@@ -243,7 +252,7 @@ More precisely, this means:
 - each `smithers.*` tool is a thin Bun-side adapter around one Smithers operation or one Smithers-aligned control-plane surface
 - when Smithers already publishes a semantic tool name, `svvy` should keep that name and expose it as `smithers.<same_name>`
 - when Smithers exposes only a server route or Gateway method, `svvy` may wrap it, but it should preserve Smithers' nouns and verbs instead of inventing a competing `workflow.*` vocabulary
-- product-specific additions are limited to app-runtime concerns such as implicit current-thread binding, bundled workflow registry lookup, normalized error envelopes, and durable command-fact recording
+- product-specific additions are limited to app-runtime concerns such as implicit current-thread binding, workflow registry lookup, normalized error envelopes, and durable command-fact recording
 - `svvy` should expose only the subset of Smithers capabilities it actually wants the agent to use; unexposed Smithers surfaces remain operator-only or future work rather than getting renamed into parallel `svvy` APIs
 - the orchestrator should know that `smithers.*` exists as a handler-thread capability, but it should not receive the `smithers.*` generated API block in its own prompt
 - a handler thread should know that the orchestrator can delegate and reconcile handoffs, but it should not receive the orchestrator-only `thread.start` generated API block unless nested delegation is explicitly adopted
@@ -259,7 +268,7 @@ The intended use of the native control subset is:
 
 Verification is not a separate native control tool in the adopted model.
 
-Verification is delegated work expressed through workflow templates and presets.
+Verification is delegated work expressed through workflow templates, saved workflows, and custom workflows that still run on the same Smithers runtime.
 
 ### 8. Sessions Contain Many Interactive Surfaces
 
@@ -335,7 +344,7 @@ In practice that means:
 
 - useful results are compressed into final thread episodes and artifacts instead of dragging full transcripts forward
 - workflow runs can pause and resume inside a handler thread without forcing the orchestrator to absorb every internal event
-- repeatable structure is pushed into workflow templates, presets, and `execute_typescript` instead of repeatedly re-derived in prose
+- repeatable structure is pushed into bundled templates, saved workflows, and `execute_typescript` instead of repeatedly re-derived in prose
 - raw model reasoning is reserved for ambiguity, synthesis, prioritization, and recovery
 
 ### 12. Full Approvals By Default
@@ -528,24 +537,49 @@ It has:
 
 One handler thread may own many workflow runs over time.
 
-### Workflow Templates, Presets, And Custom Workflows
+### Workflow Templates, Saved Workflows, And Custom Workflows
 
 The delegated workflow library has three layers:
 
 1. structural templates:
    - `single_task`
-   - `sequential_pipeline`
-   - `fanout_join`
-   - `verification_run`
-2. presets that fill or partially fill one of those templates for a recurring pattern
-3. one-off custom workflows authored on demand when no existing template or preset is a good fit
+   - `ordered_steps`
+   - `parallel_branches`
+2. workspace-saved workflows captured from reusable authored workflows when a user wants them available later
+3. one-off custom workflows authored on demand when no saved workflow or bundled template is a good fit
 
 The intended decision order inside a handler thread is:
 
-1. can an existing structural template handle this objective?
-2. if yes, is there a reusable preset that already fits or mostly fits?
+1. does a saved workflow clearly fit this objective and its expected inputs or outputs?
+2. if not, can a bundled structural template handle it clearly?
 3. if not, author a custom workflow
 4. execute the chosen workflow
+
+Newly authored custom workflows are ephemeral by default.
+
+They become reusable only after an explicit save action.
+
+### Saved Workflows
+
+Saved workflows are workspace-owned runtime assets stored under `.svvy/workflows/`.
+
+They are:
+
+- authored from successful or promising custom workflows
+- available to later handler threads through the same workflow discovery surface as bundled templates
+- user-manageable through a dedicated saved-workflows library view
+- distinct from repo-root `workflows/`, which remains a source-checkout authoring workspace for building `svvy` itself
+
+The UI should expose:
+
+- a `Save workflow` action on saveable authored workflows
+- a saved-workflows tab where the user can inspect and delete saved workflows
+
+Handler-thread instructions should treat saving as explicit reuse curation:
+
+- save a workflow when the user asks for it
+- otherwise propose saving when a newly authored workflow looks broadly reusable
+- do not silently save every custom workflow
 
 ### Turn
 
@@ -601,7 +635,7 @@ Verification is a first-class feature area, but it is represented as delegated w
 
 In practice that means:
 
-- build, test, lint, integration, and manual verification may be expressed as workflow presets
+- build, test, lint, integration, and manual verification may be expressed as workflows built on the structural templates, saved workflows, or authored custom workflows
 - verification outcomes still need structured records for summary, routing, and UI
 - verification-specific UI is allowed where it improves clarity
 
@@ -659,8 +693,8 @@ When the target surface is a handler thread:
 2. decide and persist whether to:
    - reply directly inside the thread
    - use `execute_typescript`
-   - reuse a workflow template
-   - reuse or complete a preset
+   - reuse a saved workflow
+   - use a bundled workflow template
    - author a custom workflow
    - inspect workflow state through Smithers-native bridge tools such as `smithers.get_run`, `smithers.explain_run`, `smithers.get_node_detail`, and `smithers.get_run_events`
    - resume an existing paused workflow run through the Smithers bridge when Smithers still considers that run resumable

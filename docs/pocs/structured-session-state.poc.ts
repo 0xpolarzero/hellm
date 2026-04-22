@@ -53,7 +53,7 @@ type WorkflowRunRecord = {
   smithersRunId: string;
   workflowName: string;
   templateId: string | null;
-  presetId: string | null;
+  savedWorkflowId: string | null;
   status: "running" | "waiting" | "completed" | "failed" | "cancelled";
   summary: string;
   startedAt: string;
@@ -235,7 +235,7 @@ const state: StructuredSessionState = {
       smithersRunId: "smithers-run-101",
       workflowName: "authored-design-workflow",
       templateId: "single_task",
-      presetId: null,
+      savedWorkflowId: null,
       status: "waiting",
       summary:
         "Paused for clarification about whether the handler thread or orchestrator owns Smithers resume decisions.",
@@ -249,7 +249,7 @@ const state: StructuredSessionState = {
       smithersRunId: "smithers-run-102",
       workflowName: "authored-design-workflow-v2",
       templateId: "single_task",
-      presetId: null,
+      savedWorkflowId: null,
       status: "completed",
       summary: "Completed after clarification and produced the final design synthesis.",
       startedAt: now("09:14"),
@@ -328,7 +328,7 @@ const state: StructuredSessionState = {
       title: "Workflow Execution Design Finalized",
       summary:
         "Settled that the orchestrator delegates to handler threads, handler threads supervise Smithers workflow runs, and each handler thread explicitly hands control back through ordered handoff episodes.",
-      body: "The delegated objective should live inside a handler thread backed by pi. That handler thread may reuse a template, use a preset, author a custom workflow, rerun after repair, and resume after clarification. Smithers owns workflow execution, while the handler thread owns the delegated objective lifecycle until it explicitly hands control back to the orchestrator with a handoff episode.",
+      body: "The delegated objective should live inside a handler thread backed by pi. That handler thread may reuse a saved workflow, use a bundled template, author a custom workflow, rerun after repair, and resume after clarification. Smithers owns workflow execution, while the handler thread owns the delegated objective lifecycle until it explicitly hands control back to the orchestrator with a handoff episode.",
       createdAt: now("09:20"),
     },
   ],

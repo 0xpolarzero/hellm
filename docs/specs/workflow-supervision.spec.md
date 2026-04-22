@@ -2,7 +2,7 @@
 
 ## Status
 
-- Date: 2026-04-19
+- Date: 2026-04-21
 - Status: adopted direction for write-driven workflow supervision
 - Scope of this document:
   - define how `svvy` supervises Smithers runs under handler threads
@@ -66,10 +66,10 @@ The shipped app also needs Smithers workflows, but those are a different thing.
 Product runtime workflows:
 
 - are the workflows supervised by `svvy` handler threads inside the desktop app
-- must be bundled with the app as product-owned runtime assets
 - must work in a packaged build without a source checkout
 - must not depend on repo-root `workflows/`, `workflows/node_modules/.bin/smithers`, or `workflows/smithers.db`
-- should live under an app-owned Smithers runtime area rooted at `src/bun/smithers-runtime/`
+- may come from bundled structural templates under `src/bun/smithers-runtime/`
+- may also come from workspace-saved workflows under `.svvy/workflows/`
 
 When this spec says "workflow" without qualification, it means product runtime workflows, not the repo authoring workspace.
 
@@ -77,12 +77,12 @@ When this spec says "workflow" without qualification, it means product runtime w
 
 This spec does not define:
 
-- workflow template or preset selection
+- workflow selection policy beyond the Smithers supervision surface itself
 - workflow authoring UX
 - the exact workflow library shape
 - renderer visuals beyond the state and sync requirements needed to support them
 
-Those remain separate steps and specs.
+Those remain separate steps and specs such as `docs/specs/workflow-library.spec.md`.
 
 ## Borrowed Boundary
 
@@ -123,7 +123,7 @@ The `svvy`-owned part is:
 - `thread.start`, `thread.handoff`, and `wait` remain the only `svvy`-native control tools in this area.
 - Agent-facing workflow supervision should use Smithers-native semantic tools exposed through the Bun bridge rather than a svvy-defined `workflow.*` abstraction.
 - Shipped product runtime must not depend on repo-root `workflows/`, repo-relative Smithers binaries, or nearest-db path walking.
-- Product runtime workflows should live in the bundled app-owned Smithers runtime area rooted at `src/bun/smithers-runtime/`, not in the repo authoring workspace.
+- Bundled structural templates should live in the app-owned Smithers runtime area rooted at `src/bun/smithers-runtime/`, while workspace-saved workflows should live under `.svvy/workflows/`, and neither should depend on the repo authoring workspace.
 - The first shipped supervision POC should use one bundled product-owned hello-world workflow, not a repo authoring workflow and not `.smithers/workflows` name discovery.
 - A workflow run never returns control directly to the orchestrator.
 - Only `thread.handoff` returns control to the orchestrator.
@@ -308,8 +308,8 @@ The first adopted Smithers-native surface is:
 
 | Agent-visible tool                    | Product class                       | Purpose                                                                                                                                                             | Primary adopted Smithers contract                                                                                                           |
 | ------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `smithers.list_workflows`             | required                            | List product-owned bundled workflows and return each workflow's compiled launch contract, generated launch tool name, and input-side default or optional semantics. | Smithers semantic tool `list_workflows`, backed by the app-owned workflow registry plus Bun-side contract compilation.                      |
-| `smithers.run_workflow.<workflow_id>` | required                            | Launch one specific bundled workflow run or resume the same run when Smithers still considers that run resumable.                                                   | Smithers semantic tool `run_workflow`, backed by embedded `runWorkflow(...)`, `POST /v1/runs`, and `POST /v1/runs/:runId/resume` semantics. |
+| `smithers.list_workflows`             | required                            | List bundled structural templates plus saved workspace workflows and return each workflow's compiled launch contract, generated launch tool name, workflow-source metadata, and input-side default or optional semantics. | Smithers semantic tool `list_workflows`, backed by the app-owned workflow registry plus Bun-side contract compilation.                      |
+| `smithers.run_workflow.<workflow_id>` | required                            | Launch one specific discoverable workflow run or resume the same run when Smithers still considers that run resumable.                                              | Smithers semantic tool `run_workflow`, backed by embedded `runWorkflow(...)`, `POST /v1/runs`, and `POST /v1/runs/:runId/resume` semantics. |
 | `smithers.list_runs`                  | required                            | List recent runs and their compact summary state, while enriching each summary with svvy `sessionId` and `threadId` ownership when the run belongs to a recorded handler thread. | Smithers semantic tool `list_runs`, aligned with `GET /v1/runs` and Gateway `runs.list`, with svvy-side ownership projection layered on top. |
 | `smithers.get_run`                    | required                            | Return the main run summary the handler needs to reason.                                                                                                            | Smithers semantic tool `get_run`, aligned with `GET /v1/runs/:runId` and Gateway `runs.get`.                                                |
 | `smithers.watch_run`                  | bridge or UI                        | Watch a run until terminal or timeout.                                                                                                                              | Smithers semantic tool `watch_run`, backed by `onProgress` plus bridge-owned watch behavior.                                                |
@@ -328,12 +328,12 @@ The first adopted Smithers-native surface is:
 
 ### Workflow Launch Contracts
 
-Handler-visible workflow launch contracts must come from the actual bundled workflow definition, not from prompt prose, repo inspection, or a second handwritten manifest.
+Handler-visible workflow launch contracts must come from the actual workflow definition, not from prompt prose, repo inspection, or a second handwritten manifest.
 
 The adopted contract pipeline is:
 
-- each bundled workflow definition publishes one launch Zod schema
-- `svvy` compiles that launch schema into the handler-visible launch contract when the bundled workflow registry is loaded or refreshed
+- each discoverable workflow definition publishes one launch Zod schema
+- `svvy` compiles that launch schema into the handler-visible launch contract when the workflow registry is loaded or refreshed
 - the Bun bridge generates one launch tool per workflow under `smithers.run_workflow.<workflow_id>`
 - the same launch Zod schema remains the runtime validation source when the tool is executed
 - `smithers.list_workflows` returns the compiled contract metadata so a handler can inspect available workflows without opening workflow source files

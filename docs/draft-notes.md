@@ -16,8 +16,12 @@
 - nice moat but need to nail it:
   - CI as a verification check on every session
   - basically same as github workflows on push except it's smithers workflows
-  - need to figure out when it's sensible to run so it doesn't bloat the machine; in a vm it would solve it but the (remote) vm is something we need to figure out separately; or manual runs? kinda defeats the purpose
-  - do we onboard? like special session to figure out CI where AI guides you through?
+  - likely needs a CI onboarding flow for a new workspace where the AI guides the user through setting up the workspace's CI workflow
+  - that onboarding should end with a reusable workflow configuration for that workspace rather than a one-off conversation artifact
+  - the execution model should stay the same as everything else: it runs on a thread through a workflow, not through a separate CI engine
+  - the difference should mostly be UI and automation: easier setup, better default triggers, and more purpose-built verification displays
+  - need to figure out when it's sensible to run so it doesn't bloat the machine; in a vm it would solve it but the (remote) vm is something we need to figure out separately
+  - should support both automatic post-work runs and manual runs from a clearer UX surface
 
 - use sandboxing separate from environment 
   - https://x.com/nicoalbanese10/status/2043745569278251112
@@ -45,11 +49,6 @@
   - if the orchestrator judges an episode as suspicious, low-confidence, inconsistent, or otherwise weird, it could proactively spawn a reviewer workflow
   - that reviewer would inspect the prior worker's transcript/artifacts/outputs, explain what likely went wrong, and suggest escalation to the user if it judges it is/might be an upstream issue
   - this could become a useful recovery pattern instead of treating every bad worker result as a dead end; basically agents handle suspected bugs -> suggesting an issue to open on github
-
-- workflow reuse capture:
-  - one-off authored workflows might later prove valuable enough to keep
-  - a useful product path could be a "save as template" action from a workflow surface
-  - that flow could clean up the workflow for reuse, decide whether a preset also makes sense, and save the result as a reusable template or preset
 
 - workflow-template-specific UI:
   - some workflow templates may justify specialized UI treatment instead of a generic workflow card
