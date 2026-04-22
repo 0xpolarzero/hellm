@@ -17,7 +17,7 @@
     "setup:e2e": "electrobun-e2e setup --config ./electrobun-e2e.config.ts",
     "test:e2e": "ELECTROBUN_E2E_SHARDS=1 electrobun-e2e run --config ./electrobun-e2e.config.ts",
     "typecheck": "bun run generate:api && bun run typecheck:root && bun run typecheck:workflows",
-    "typecheck:root": "tsc -p tsconfig.json --noEmit",
+    "typecheck:root": "tsgo -p tsconfig.json --noEmit",
     "typecheck:workflows": "bun run --cwd workflows typecheck",
     "lint": "oxlint . --import-plugin --node-plugin --deny-warnings --fix --fix-suggestions",
     "lint:check": "oxlint . --import-plugin --node-plugin --deny-warnings",
@@ -42,6 +42,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@typescript/native-preview": "beta",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@types/bun": "^1.3.11",
     "@types/three": "^0.184.0",
