@@ -161,6 +161,53 @@ export interface WorkspaceHandlerThreadEpisodeSummary {
   createdAt: string;
 }
 
+export interface WorkspaceWorkflowTaskAttemptTranscriptMessage {
+  messageId: string;
+  role: "user" | "assistant" | "stderr";
+  source: "prompt" | "event" | "responseText";
+  text: string;
+  createdAt: string;
+}
+
+export interface WorkspaceWorkflowTaskAttemptSummary {
+  workflowTaskAttemptId: string;
+  workflowRunId: string;
+  smithersRunId: string;
+  nodeId: string;
+  iteration: number;
+  attempt: number;
+  title: string;
+  kind: "agent" | "compute" | "static" | "unknown";
+  status: "running" | "waiting" | "completed" | "failed" | "cancelled";
+  summary: string;
+  updatedAt: string;
+  commandCount: number;
+  artifactCount: number;
+  transcriptMessageCount: number;
+}
+
+export interface WorkspaceWorkflowTaskAttemptInspector extends WorkspaceWorkflowTaskAttemptSummary {
+  surfacePiSessionId: string | null;
+  smithersState: string;
+  prompt: string | null;
+  responseText: string | null;
+  error: string | null;
+  cached: boolean;
+  jjPointer: string | null;
+  jjCwd: string | null;
+  heartbeatAt: string | null;
+  agentId: string | null;
+  agentModel: string | null;
+  agentEngine: string | null;
+  agentResume: string | null;
+  meta: Record<string, unknown> | null;
+  startedAt: string;
+  finishedAt: string | null;
+  transcript: WorkspaceWorkflowTaskAttemptTranscriptMessage[];
+  commandRollups: WorkspaceCommandRollup[];
+  artifacts: WorkspaceCommandArtifactLink[];
+}
+
 export interface WorkspaceHandlerThreadSummary {
   threadId: string;
   surfacePiSessionId: string;
@@ -190,22 +237,7 @@ export interface WorkspaceHandlerThreadSummary {
 export interface WorkspaceHandlerThreadInspector extends WorkspaceHandlerThreadSummary {
   commandRollups: WorkspaceCommandRollup[];
   workflowRuns: WorkspaceHandlerThreadWorkflowSummary[];
-  workflowTaskAttempts?: Array<{
-    workflowTaskAttemptId: string;
-    workflowRunId: string;
-    smithersRunId: string;
-    nodeId: string;
-    iteration: number;
-    attempt: number;
-    title: string;
-    kind: "agent" | "compute" | "static" | "unknown";
-    status: "running" | "waiting" | "completed" | "failed" | "cancelled";
-    summary: string;
-    updatedAt: string;
-    commandCount: number;
-    artifactCount: number;
-    transcriptMessageCount: number;
-  }>;
+  workflowTaskAttempts?: WorkspaceWorkflowTaskAttemptSummary[];
   episodes: WorkspaceHandlerThreadEpisodeSummary[];
   artifacts: WorkspaceCommandArtifactLink[];
 }
@@ -334,6 +366,10 @@ export interface ChatRPCSchema {
       getHandlerThreadInspector: {
         params: { sessionId: string; threadId: string };
         response: WorkspaceHandlerThreadInspector | null;
+      };
+      getWorkflowTaskAttemptInspector: {
+        params: { sessionId: string; workflowTaskAttemptId: string };
+        response: WorkspaceWorkflowTaskAttemptInspector | null;
       };
       createSession: {
         params: CreateSessionRequest;

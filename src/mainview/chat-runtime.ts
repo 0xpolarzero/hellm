@@ -17,6 +17,7 @@ import type {
   WorkspaceHandlerThreadSummary,
   WorkspaceSessionSummary,
   WorkspaceSyncMessage,
+  WorkspaceWorkflowTaskAttemptInspector,
 } from "./chat-rpc";
 import { createChatStorage, type ChatStorage } from "./chat-storage";
 import { DEFAULT_CHAT_SETTINGS, type ReasoningEffort } from "./chat-settings";
@@ -93,6 +94,7 @@ export interface ChatRuntimeRpcClient {
     getCommandInspector: typeof rpc.request.getCommandInspector;
     listHandlerThreads: typeof rpc.request.listHandlerThreads;
     getHandlerThreadInspector: typeof rpc.request.getHandlerThreadInspector;
+    getWorkflowTaskAttemptInspector: typeof rpc.request.getWorkflowTaskAttemptInspector;
     createSession: typeof rpc.request.createSession;
     openSession: typeof rpc.request.openSession;
     openSurface: typeof rpc.request.openSurface;
@@ -142,6 +144,10 @@ export interface ChatRuntime {
     threadId: string,
     sessionId?: string,
   ) => Promise<WorkspaceHandlerThreadInspector>;
+  getWorkflowTaskAttemptInspector: (
+    workflowTaskAttemptId: string,
+    sessionId?: string,
+  ) => Promise<WorkspaceWorkflowTaskAttemptInspector>;
   createSession: (request?: CreateSessionRequest, paneId?: string) => Promise<void>;
   openSession: (sessionId: string, paneId?: string) => Promise<void>;
   openSurface: (target: PromptTarget, paneId?: string) => Promise<void>;
@@ -721,6 +727,25 @@ export async function createChatRuntime(
     return inspector;
   };
 
+  const getWorkflowTaskAttemptInspector = async (
+    workflowTaskAttemptId: string,
+    sessionId = getSelectedSessionId(),
+  ): Promise<WorkspaceWorkflowTaskAttemptInspector> => {
+    if (!sessionId) {
+      throw new Error("Expected a workspace session before inspecting a workflow task attempt.");
+    }
+
+    const inspector = await rpcClient.request.getWorkflowTaskAttemptInspector({
+      sessionId,
+      workflowTaskAttemptId,
+    });
+    if (!inspector) {
+      throw new Error(`Workflow task attempt not found: ${workflowTaskAttemptId}`);
+    }
+
+    return inspector;
+  };
+
   const resolvePaneId = (paneId?: string): string => {
     const nextPaneId = paneId ?? focusedPaneId ?? PRIMARY_CHAT_PANE_ID;
     ensurePane(nextPaneId);
@@ -842,6 +867,7 @@ export async function createChatRuntime(
     getCommandInspector,
     listHandlerThreads,
     getHandlerThreadInspector,
+    getWorkflowTaskAttemptInspector,
     createSession: async (request = {}, paneId) => {
       const nextPaneId = resolvePaneId(paneId);
       const snapshot = await rpcClient.request.createSession(request);

@@ -322,6 +322,18 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           threadId,
         });
       },
+      getWorkflowTaskAttemptInspector: async ({
+        sessionId,
+        workflowTaskAttemptId,
+      }: {
+        sessionId: string;
+        workflowTaskAttemptId: string;
+      }) => {
+        return await workspaceSessionCatalog.getWorkflowTaskAttemptInspector({
+          sessionId,
+          workflowTaskAttemptId,
+        });
+      },
       createSession: async ({
         title,
         parentSessionId,

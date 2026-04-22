@@ -34,6 +34,7 @@ import type {
   WorkspaceHandlerThreadInspector,
   WorkspaceHandlerThreadSummary,
   WorkspaceSessionSummary,
+  WorkspaceWorkflowTaskAttemptInspector,
 } from "../mainview/chat-rpc";
 import { DEFAULT_CHAT_SETTINGS } from "../mainview/chat-settings";
 import {
@@ -46,6 +47,7 @@ import {
   buildStructuredHandlerThreadSummaries,
   buildStructuredSessionSummaryProjection,
   buildStructuredSessionView,
+  buildStructuredWorkflowTaskAttemptInspector,
   hasStructuredSessionFacts,
 } from "./structured-session-selectors";
 import {
@@ -270,6 +272,26 @@ export class WorkspaceSessionCatalog {
     const inspector = buildStructuredHandlerThreadInspector(snapshot, input.threadId);
     if (!inspector) {
       throw new Error(`Delegated handler thread not found: ${input.threadId}`);
+    }
+
+    return inspector;
+  }
+
+  async getWorkflowTaskAttemptInspector(input: {
+    sessionId: string;
+    workflowTaskAttemptId: string;
+  }): Promise<WorkspaceWorkflowTaskAttemptInspector> {
+    const snapshot = this.getStructuredSnapshot(input.sessionId);
+    if (!snapshot) {
+      throw new Error(`Structured session not found: ${input.sessionId}`);
+    }
+
+    const inspector = buildStructuredWorkflowTaskAttemptInspector(
+      snapshot,
+      input.workflowTaskAttemptId,
+    );
+    if (!inspector) {
+      throw new Error(`Workflow task attempt not found: ${input.workflowTaskAttemptId}`);
     }
 
     return inspector;

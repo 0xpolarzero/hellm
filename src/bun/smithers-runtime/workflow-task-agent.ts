@@ -134,7 +134,6 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         store: options.store,
         getSurfacePiSessionId: () => sessionIdentity.surfacePiSessionId,
         getResumeHandle: () => resumeHandleRef.current,
-        promptText,
         runCommand: options.runCommand,
         webSearch: options.webSearch,
         fetchText: options.fetchText,
@@ -255,7 +254,6 @@ function createWorkflowTaskExecuteTypescriptTool(input: {
   store: StructuredSessionStateStore;
   getSurfacePiSessionId: () => string;
   getResumeHandle: () => string | null;
-  promptText: string;
   runCommand?: (
     args: ExecuteTypescriptRunCommandInput,
   ) => Promise<ExecuteTypescriptRunCommandResult>;
@@ -281,7 +279,6 @@ function createWorkflowTaskExecuteTypescriptTool(input: {
         cwd: input.cwd,
         surfacePiSessionId: input.getSurfacePiSessionId(),
         agentResume: input.getResumeHandle(),
-        promptText: input.promptText,
       });
       const result = await runExecuteTypescript({
         cwd: input.cwd,
@@ -369,22 +366,16 @@ async function waitForWorkflowTaskAttemptProjection(input: {
   cwd: string;
   surfacePiSessionId: string;
   agentResume: string | null;
-  promptText: string;
   timeoutMs?: number;
 }): Promise<WorkflowTaskAttemptProjectionContext> {
-  const agentResume = input.agentResume?.trim() || null;
-  const promptText = input.promptText.trim();
+  const agentResume = input.agentResume?.trim();
+  if (!agentResume) {
+    throw new Error("Workflow task agent projection requires an explicit agent resume handle.");
+  }
 
   const deadline = Date.now() + (input.timeoutMs ?? 5_000);
   while (Date.now() <= deadline) {
-    const attempt =
-      (agentResume ? input.store.findWorkflowTaskAttemptByAgentResume(agentResume) : null) ??
-      findSmithersAttemptProjectionByPrompt({
-        store: input.store,
-        cwd: input.cwd,
-        surfacePiSessionId: input.surfacePiSessionId,
-        promptText,
-      });
+    const attempt = input.store.findWorkflowTaskAttemptByAgentResume(agentResume);
     if (attempt) {
       return {
         threadId: attempt.threadId,
@@ -396,7 +387,6 @@ async function waitForWorkflowTaskAttemptProjection(input: {
     const smithersAttempt = findSmithersAttemptForProjection({
       cwd: input.cwd,
       agentResume,
-      promptText,
     });
     const workflowRun = smithersAttempt
       ? input.store.findWorkflowRunBySmithersRunId(smithersAttempt.runId)
@@ -471,8 +461,7 @@ type SmithersAttemptProjectionRow = {
 
 function findSmithersAttemptForProjection(input: {
   cwd: string;
-  agentResume: string | null;
-  promptText: string;
+  agentResume: string;
 }): SmithersAttemptProjectionRow | null {
   const dbPath = join(input.cwd, ".svvy", "smithers-runtime", "smithers.db");
   if (!existsSync(dbPath)) {
@@ -506,80 +495,14 @@ function findSmithersAttemptForProjection(input: {
       .all() as SmithersAttemptProjectionRow[];
     return (
       rows.find((row) =>
-        (input.agentResume &&
-          (readTaskAttemptMetaString(row.metaJson, "agentResume") === input.agentResume ||
-            readTaskAttemptMetaString(row.heartbeatDataJson, "agentResume") === input.agentResume)) ||
-        readTaskAttemptMetaString(row.metaJson, "prompt") === input.promptText,
-      ) ??
-      rows.find(
-        (row) =>
-          readTaskAttemptMetaString(row.metaJson, "kind") === "agent" &&
-          row.state === "in-progress",
+        readTaskAttemptMetaString(row.metaJson, "agentResume") === input.agentResume ||
+        readTaskAttemptMetaString(row.heartbeatDataJson, "agentResume") === input.agentResume,
       ) ??
       null
     );
   } finally {
     db.close();
   }
-}
-
-function findSmithersAttemptProjectionByPrompt(input: {
-  store: StructuredSessionStateStore;
-  cwd: string;
-  surfacePiSessionId: string;
-  promptText: string;
-}): StructuredWorkflowTaskAttemptRecord | null {
-  const smithersAttempt = findSmithersAttemptForProjection({
-    cwd: input.cwd,
-    agentResume: null,
-    promptText: input.promptText,
-  });
-  const workflowRun = smithersAttempt
-    ? input.store.findWorkflowRunBySmithersRunId(smithersAttempt.runId)
-    : null;
-  if (!smithersAttempt || !workflowRun) {
-    return null;
-  }
-
-  return input.store.upsertWorkflowTaskAttempt({
-    workflowRunId: workflowRun.id,
-    smithersRunId: smithersAttempt.runId,
-    nodeId: smithersAttempt.nodeId,
-    iteration: smithersAttempt.iteration,
-    attempt: smithersAttempt.attempt,
-    surfacePiSessionId: input.surfacePiSessionId,
-    title: readTaskAttemptMetaString(smithersAttempt.metaJson, "label") ?? smithersAttempt.nodeId,
-    summary: `Workflow task attempt ${smithersAttempt.nodeId} is running execute_typescript.`,
-    kind: "agent",
-    status: mapSmithersAttemptStateToStructuredStatus(smithersAttempt.state),
-    smithersState: smithersAttempt.state,
-    prompt: readTaskAttemptMetaString(smithersAttempt.metaJson, "prompt"),
-    responseText: smithersAttempt.responseText ?? null,
-    error: readTaskAttemptErrorMessage(smithersAttempt.errorJson),
-    cached: Boolean(smithersAttempt.cached),
-    jjPointer: smithersAttempt.jjPointer ?? null,
-    jjCwd: smithersAttempt.jjCwd ?? null,
-    heartbeatAt:
-      typeof smithersAttempt.heartbeatAtMs === "number"
-        ? new Date(smithersAttempt.heartbeatAtMs).toISOString()
-        : null,
-    agentId: readTaskAttemptMetaString(smithersAttempt.metaJson, "agentId"),
-    agentModel: readTaskAttemptMetaString(smithersAttempt.metaJson, "agentModel"),
-    agentEngine:
-      readTaskAttemptMetaString(smithersAttempt.metaJson, "agentEngine") ??
-      readTaskAttemptMetaString(smithersAttempt.heartbeatDataJson, "agentEngine"),
-    agentResume:
-      readTaskAttemptMetaString(smithersAttempt.metaJson, "agentResume") ??
-      readTaskAttemptMetaString(smithersAttempt.heartbeatDataJson, "agentResume"),
-    meta:
-      parseTaskAttemptMeta(smithersAttempt.metaJson) ??
-      parseTaskAttemptMeta(smithersAttempt.heartbeatDataJson),
-    startedAt: new Date(smithersAttempt.startedAtMs).toISOString(),
-    finishedAt:
-      typeof smithersAttempt.finishedAtMs === "number"
-        ? new Date(smithersAttempt.finishedAtMs).toISOString()
-        : null,
-  });
 }
 
 function parseTaskAttemptMeta(metaJson: string | null | undefined): Record<string, unknown> | null {

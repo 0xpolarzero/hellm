@@ -16,8 +16,8 @@ import {
 } from "./session-catalog";
 import type { TestWorkflowDefinition } from "./smithers-runtime/manager";
 import {
-  createExecuteTypescriptTaskTestWorkflow,
   createHelloWorldTestWorkflow,
+  createTranscriptProbeTestWorkflow,
 } from "./smithers-runtime/test-workflows";
 import {
   bundledWorkflowRuntimeStoredInputSchema,
@@ -116,21 +116,11 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
   );
 
   const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-  const store = getStructuredSessionStore(catalog);
   getSmithersRuntimeManager(catalog).registerTestWorkflow(
     createHelloWorldTestWorkflow(join(cwd, ".svvy", "smithers-runtime", "smithers.db")),
   );
   getSmithersRuntimeManager(catalog).registerTestWorkflow(
-    createExecuteTypescriptTaskTestWorkflow({
-      dbPath: join(cwd, ".svvy", "smithers-runtime", "smithers.db"),
-      cwd,
-      agentDir,
-      artifactDir: join(cwd, ".svvy", "smithers-runtime", "artifacts", "task-agent"),
-      store,
-      provider: "zai",
-      model: "glm-5-turbo",
-      thinkingLevel: "medium",
-    }),
+    createTranscriptProbeTestWorkflow(join(cwd, ".svvy", "smithers-runtime", "smithers.db")),
   );
   getSmithersRuntimeManager(catalog).registerTestWorkflow(
     createSignalWorkflowDefinition(join(cwd, ".svvy", "smithers-runtime", "smithers.db")),
@@ -258,18 +248,8 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
     }
     expect(handoff.summary).toContain("Diagnosed the signal wait");
     expect(handoff.body).toContain("deploy.completed");
-    expect(handoff.body).toContain("workflow-proof.txt");
+    expect(handoff.body).toContain("transcript");
     expect(handoff.body).toContain("DevTools");
-
-    const workflowTaskAttempt = snapshot.workflowTaskAttempts.find(
-      (attempt) => attempt.nodeId === "task" && attempt.kind === "agent",
-    );
-    expect(workflowTaskAttempt).toBeTruthy();
-    expect(
-      snapshot.workflowTaskMessages.filter(
-        (message) => message.workflowTaskAttemptId === workflowTaskAttempt?.id,
-      ).length,
-    ).toBeGreaterThan(0);
 
     await waitFor(() => !isPromptStreaming(catalog), 10_000);
     const handlerState = await catalog.openSurface(handlerTarget);
@@ -289,7 +269,7 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
     expect(handlerTranscript).toContain("smithers.explain_run");
     expect(handlerTranscript).toContain("smithers.watch_run");
     expect(handlerTranscript).toContain("smithers.signals.send");
-    expect(handlerTranscript).toContain("smithers.run_workflow.execute_typescript_task");
+    expect(handlerTranscript).toContain("smithers.run_workflow.chat_transcript_probe");
     expect(handlerTranscript).toContain("smithers.get_chat_transcript");
     expect(handlerTranscript).toContain("smithers.get_node_detail");
     expect(handlerTranscript).toContain("smithers.list_artifacts");
@@ -298,7 +278,7 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
     expect(handlerTranscript).toContain("smithers.streamDevTools");
     expect(handlerTranscript).toContain("thread.handoff");
     expect(handlerTranscript).toContain("deploy.completed");
-    expect(handlerTranscript).toContain("workflow-proof.txt");
+    expect(handlerTranscript).toContain("Summarize the transcript probe");
 
     const handlerToolCalls = collectAssistantToolCallNames(handlerState.messages);
     expect(handlerToolCalls).toEqual(
@@ -308,7 +288,7 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
         "smithers.explain_run",
         "smithers.watch_run",
         "smithers.signals.send",
-        "smithers.run_workflow.execute_typescript_task",
+        "smithers.run_workflow.chat_transcript_probe",
         "smithers.get_chat_transcript",
         "smithers.get_node_detail",
         "smithers.list_artifacts",
@@ -337,7 +317,7 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
       | undefined;
     expect(chatTranscriptDetails?.attempts?.length ?? 0).toBe(1);
     expect(chatTranscriptDetails?.messages?.length ?? 0).toBeGreaterThanOrEqual(2);
-    expect(handlerTranscript).toContain("Complete the following repository task inside svvy.");
+    expect(handlerTranscript).toContain("Summarize the transcript probe");
 
     const nodeDetailResult = findToolResultMessage(
       handlerState.messages,
@@ -347,7 +327,7 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
     const nodeDetail = nodeDetailResult?.details as
       | { node?: { nodeId?: string }; attempts?: unknown[] }
       | undefined;
-    expect(nodeDetail?.node?.nodeId).toBe("task");
+    expect(nodeDetail?.node?.nodeId).toBe("assistant");
     expect(nodeDetail?.attempts?.length ?? 0).toBeGreaterThan(0);
 
     const artifactResult = findToolResultMessage(handlerState.messages, "smithers.list_artifacts");
@@ -373,7 +353,7 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
         }
       | undefined;
     expect(devToolsSnapshot?.frameNo ?? 0).toBeGreaterThan(0);
-    expect(devToolsSnapshot?.root?.name).toBe("svvy-execute-typescript-task");
+    expect(devToolsSnapshot?.root?.name).toBe("svvy-chat-transcript-probe");
     expect(devToolsSnapshot?.runState?.state).toBe("succeeded");
 
     const devToolsStreamResult = findToolResultMessage(
@@ -398,7 +378,7 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
         "smithers.explain_run",
         "smithers.watch_run",
         "smithers.signals.send",
-        "smithers.run_workflow.execute_typescript_task",
+        "smithers.run_workflow.chat_transcript_probe",
         "smithers.get_chat_transcript",
         "smithers.get_node_detail",
         "smithers.list_artifacts",
@@ -776,16 +756,6 @@ function startAutonomousWorkflowSupervisionProofStub(): AutonomousProofStub {
           });
         }
 
-        if (toolNames.includes("execute_typescript")) {
-          return respondAsAutonomousWorkflowTask({
-            payload,
-            responseId,
-            toolCalls,
-            toolResults,
-            toolCallCounter: () => `call-${++toolCallCounter}`,
-          });
-        }
-
         throw new Error(`Unhandled supervision proof request: ${latestUserText}`);
       } catch (error) {
         return new Response(String(error instanceof Error ? error.message : error), {
@@ -816,10 +786,10 @@ function respondAsAutonomousHandler(input: {
     (name) => name === "smithers.run_workflow.wait_for_signal",
   );
   const runTaskToolName = toolNames.find(
-    (name) => name === "smithers.run_workflow.execute_typescript_task",
+    (name) => name === "smithers.run_workflow.chat_transcript_probe",
   );
   if (!runSignalToolName || !runTaskToolName) {
-    throw new Error("Expected wait_for_signal and execute_typescript_task launch tools.");
+    throw new Error("Expected wait_for_signal and chat_transcript_probe launch tools.");
   }
 
   if (!hasToolCall(input.toolCalls, "smithers.list_workflows")) {
@@ -959,19 +929,14 @@ function respondAsAutonomousHandler(input: {
       toolCallId: input.toolCallCounter(),
       toolName: runTaskToolName,
       args: {
-        objective:
-          "Read investigation-brief.md, write workflow-proof.txt with the extracted facts, and report the result as structured JSON.",
-        successCriteria: [
-          "Create workflow-proof.txt in the workspace.",
-          "Include the investigation brief facts in the generated file.",
-        ],
-        validationCommands: ["cat workflow-proof.txt"],
+        prompt:
+          "Summarize the transcript probe for workflow supervision evidence and mention investigation-brief.md context.",
       },
     });
   }
 
   if (!taskRunId) {
-    throw new Error("Expected execute_typescript_task launch result to include runId.");
+    throw new Error("Expected chat_transcript_probe launch result to include runId.");
   }
 
   const taskWatchResults = watchRunResultsFor(input.toolCalls, input.toolResults, taskRunId);
@@ -1005,7 +970,7 @@ function respondAsAutonomousHandler(input: {
     });
   }
 
-  if (!hasNodeDetailFor(input.toolCalls, taskRunId, "task")) {
+  if (!hasNodeDetailFor(input.toolCalls, taskRunId, "assistant")) {
     return createToolCallResponse({
       responseId: input.responseId,
       model: input.payload.model,
@@ -1013,7 +978,7 @@ function respondAsAutonomousHandler(input: {
       toolName: "smithers.get_node_detail",
       args: {
         runId: taskRunId,
-        nodeId: "task",
+        nodeId: "assistant",
       },
     });
   }
@@ -1121,9 +1086,9 @@ function respondAsAutonomousHandler(input: {
           `smithers.explain_run diagnosed a waiting-event blocker on signal \`${blockerSignalName ?? "unknown"}\`.`,
           "smithers.signals.send delivered the signal and the resumed wait_for_signal run finished.",
           `smithers.get_chat_transcript captured the task agent reply: ${latestAssistantTranscript?.text ?? "missing transcript reply"}`,
-          `smithers.get_node_detail reported ${taskToolCallCount} workflow-task tool call(s), including execute_typescript.`,
+          `smithers.get_node_detail reported ${taskToolCallCount} workflow-task tool call(s) for the transcript probe node.`,
           `smithers.frames.list returned ${frameCount} frame(s) and smithers.getDevToolsSnapshot returned frame ${devToolsFrameNo}.`,
-          "The task workflow wrote workflow-proof.txt with evidence copied from investigation-brief.md.",
+          "The transcript workflow produced a durable task transcript the handler could inspect directly.",
         ].join("\n\n"),
       },
     });
@@ -1133,50 +1098,6 @@ function respondAsAutonomousHandler(input: {
     responseId: input.responseId,
     model: input.payload.model,
     text: "Finished the workflow supervision proof and handed the evidence back to the orchestrator.",
-  });
-}
-
-function respondAsAutonomousWorkflowTask(input: {
-  payload: ChatCompletionRequest;
-  responseId: string;
-  toolCalls: ToolCallRecord[];
-  toolResults: ToolResultRecord[];
-  toolCallCounter: () => string;
-}): Response {
-  if (!hasToolCall(input.toolCalls, "execute_typescript")) {
-    return createToolCallResponse({
-      responseId: input.responseId,
-      model: input.payload.model,
-      toolCallId: input.toolCallCounter(),
-      toolName: "execute_typescript",
-      args: {
-        typescriptCode: [
-          'const brief = await api.repo.readFile({ path: "investigation-brief.md" });',
-          "const facts = brief.text.trim().split(/\\r?\\n/).filter(Boolean).slice(0, 3);",
-          'const report = ["Workflow proof generated from investigation brief.", ...facts].join("\\n");',
-          'await api.repo.writeFile({ path: "workflow-proof.txt", text: report });',
-          'await api.exec.run({ command: "cat", args: ["workflow-proof.txt"] });',
-          "return {",
-          '  summary: "Generated workflow-proof.txt from investigation-brief.md.",',
-          '  filesChanged: ["workflow-proof.txt"],',
-          '  validationRan: ["cat workflow-proof.txt"],',
-          "  unresolvedIssues: [],",
-          "};",
-        ].join("\n"),
-      },
-    });
-  }
-
-  return createTextResponse({
-    responseId: input.responseId,
-    model: input.payload.model,
-    text: JSON.stringify({
-      status: "completed",
-      summary: "Generated workflow-proof.txt from investigation-brief.md.",
-      filesChanged: ["workflow-proof.txt"],
-      validationRan: ["cat workflow-proof.txt"],
-      unresolvedIssues: [],
-    }),
   });
 }
 

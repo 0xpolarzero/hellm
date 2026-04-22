@@ -26,6 +26,8 @@
     WorkspaceHandlerThreadInspector,
     WorkspaceHandlerThreadSummary,
     WorkspaceHandlerThreadWorkflowSummary,
+    WorkspaceWorkflowTaskAttemptInspector,
+    WorkspaceWorkflowTaskAttemptSummary,
     PromptTarget,
     WorkspaceSessionSummary,
   } from "./chat-rpc";
@@ -116,6 +118,11 @@
   let threadInspectorError = $state<string | undefined>(undefined);
   let threadInspectorLoading = $state(false);
   let threadInspectorThreadId = $state<string | null>(null);
+  let showWorkflowTaskAttemptInspector = $state(false);
+  let workflowTaskAttemptInspector = $state<WorkspaceWorkflowTaskAttemptInspector | null>(null);
+  let workflowTaskAttemptInspectorError = $state<string | undefined>(undefined);
+  let workflowTaskAttemptInspectorLoading = $state(false);
+  let workflowTaskAttemptInspectorId = $state<string | null>(null);
 
   let sidebarResizePointerId: number | null = null;
   let sidebarResizeOriginX = 0;
@@ -124,6 +131,7 @@
   let commandInspectorSessionId: string | null = null;
   let handlerThreadLoadToken = 0;
   let threadInspectorSessionId: string | null = null;
+  let workflowTaskAttemptInspectorSessionId: string | null = null;
   let unsubscribeSurfaceController: (() => void) | null = null;
 
   const conversation = $derived(projectConversation(messages));
@@ -504,6 +512,15 @@
     threadInspectorSessionId = null;
   }
 
+  function closeWorkflowTaskAttemptInspector() {
+    showWorkflowTaskAttemptInspector = false;
+    workflowTaskAttemptInspector = null;
+    workflowTaskAttemptInspectorError = undefined;
+    workflowTaskAttemptInspectorLoading = false;
+    workflowTaskAttemptInspectorId = null;
+    workflowTaskAttemptInspectorSessionId = null;
+  }
+
   function getCommandStatusLabel(
     status: WorkspaceCommandRollup["status"] | WorkspaceCommandInspector["status"],
   ): string {
@@ -563,6 +580,44 @@
       case "troubleshooting":
       case "failed":
         return "danger";
+      default:
+        return "neutral";
+    }
+  }
+
+  function getWorkflowTaskAttemptStatusLabel(
+    status: WorkspaceWorkflowTaskAttemptSummary["status"] | WorkspaceWorkflowTaskAttemptInspector["status"],
+  ): string {
+    switch (status) {
+      case "running":
+        return "Running";
+      case "waiting":
+        return "Waiting";
+      case "completed":
+        return "Completed";
+      case "failed":
+        return "Failed";
+      case "cancelled":
+        return "Cancelled";
+      default:
+        return status;
+    }
+  }
+
+  function getWorkflowTaskAttemptStatusTone(
+    status: WorkspaceWorkflowTaskAttemptSummary["status"] | WorkspaceWorkflowTaskAttemptInspector["status"],
+  ): "neutral" | "info" | "success" | "warning" | "danger" {
+    switch (status) {
+      case "running":
+        return "info";
+      case "waiting":
+        return "warning";
+      case "completed":
+        return "success";
+      case "failed":
+        return "danger";
+      case "cancelled":
+        return "neutral";
       default:
         return "neutral";
     }
@@ -690,7 +745,69 @@
 
   async function handleInspectThreadCommand(commandId: string) {
     closeThreadInspector();
+    closeWorkflowTaskAttemptInspector();
     await handleInspectCommand(commandId);
+  }
+
+  async function handleInspectWorkflowTaskAttempt(
+    workflowTaskAttempt: Pick<WorkspaceWorkflowTaskAttemptSummary, "workflowTaskAttemptId">,
+  ) {
+    const session = currentSession;
+    if (!session) {
+      return;
+    }
+
+    showWorkflowTaskAttemptInspector = true;
+    workflowTaskAttemptInspector = null;
+    workflowTaskAttemptInspectorError = undefined;
+    workflowTaskAttemptInspectorLoading = true;
+    workflowTaskAttemptInspectorId = workflowTaskAttempt.workflowTaskAttemptId;
+    workflowTaskAttemptInspectorSessionId = session.id;
+
+    try {
+      const inspector = await runtime.getWorkflowTaskAttemptInspector(
+        workflowTaskAttempt.workflowTaskAttemptId,
+        session.id,
+      );
+      if (
+        workflowTaskAttemptInspectorId !== workflowTaskAttempt.workflowTaskAttemptId ||
+        workflowTaskAttemptInspectorSessionId !== session.id
+      ) {
+        return;
+      }
+
+      workflowTaskAttemptInspector = inspector;
+    } catch (error) {
+      if (
+        workflowTaskAttemptInspectorId !== workflowTaskAttempt.workflowTaskAttemptId ||
+        workflowTaskAttemptInspectorSessionId !== session.id
+      ) {
+        return;
+      }
+
+      workflowTaskAttemptInspectorError =
+        error instanceof Error ? error.message : "Unable to inspect this workflow task attempt.";
+    } finally {
+      if (
+        workflowTaskAttemptInspectorId === workflowTaskAttempt.workflowTaskAttemptId &&
+        workflowTaskAttemptInspectorSessionId === session.id
+      ) {
+        workflowTaskAttemptInspectorLoading = false;
+      }
+    }
+  }
+
+  async function handleInspectThreadWorkflowTaskAttempt(
+    workflowTaskAttempt: WorkspaceWorkflowTaskAttemptSummary,
+  ) {
+    closeThreadInspector();
+    await handleInspectWorkflowTaskAttempt(workflowTaskAttempt);
+  }
+
+  async function handleInspectCommandWorkflowTaskAttempt(workflowTaskAttemptId: string) {
+    closeCommandInspector();
+    closeThreadInspector();
+    await handleInspectWorkflowTaskAttempt({ workflowTaskAttemptId });
   }
 
   $effect(() => {
@@ -709,6 +826,19 @@
     }
 
     closeThreadInspector();
+  });
+
+  $effect(() => {
+    const sessionId = currentSession?.id ?? null;
+    if (
+      !workflowTaskAttemptInspectorSessionId ||
+      !sessionId ||
+      sessionId === workflowTaskAttemptInspectorSessionId
+    ) {
+      return;
+    }
+
+    closeWorkflowTaskAttemptInspector();
   });
 
   $effect(() => {
@@ -1298,6 +1428,12 @@
               {threadInspector.commandCount}
               {threadInspector.commandCount === 1 ? " command" : " commands"}
             </span>
+            {#if (threadInspector.workflowTaskAttemptCount ?? 0) > 0}
+              <span>
+                {threadInspector.workflowTaskAttemptCount}
+                {threadInspector.workflowTaskAttemptCount === 1 ? " task attempt" : " task attempts"}
+              </span>
+            {/if}
             {#if threadInspector.verificationCount > 0}
               <span>
                 {threadInspector.verificationCount}
@@ -1415,6 +1551,67 @@
           </section>
         {/if}
 
+        {#if (threadInspector.workflowTaskAttempts?.length ?? 0) > 0}
+          <section class="thread-inspector-section">
+            <header class="thread-inspector-section-header">
+              <div>
+                <h3>Task Attempts</h3>
+                <p>Inspect the Smithers task-agent attempts under this thread without promoting them into a top-level surface.</p>
+              </div>
+              <span>{threadInspector.workflowTaskAttempts?.length ?? 0}</span>
+            </header>
+
+            <div class="thread-inspector-command-list">
+              {#each threadInspector.workflowTaskAttempts ?? [] as workflowTaskAttempt (workflowTaskAttempt.workflowTaskAttemptId)}
+                <article class="thread-inspector-command">
+                  <div class="thread-inspector-command-top">
+                    <div class="thread-inspector-command-copy">
+                      <strong>{workflowTaskAttempt.title}</strong>
+                      <span>
+                        {workflowTaskAttempt.nodeId}
+                        · attempt {workflowTaskAttempt.attempt}
+                        {#if workflowTaskAttempt.iteration > 0}
+                          · iteration {workflowTaskAttempt.iteration}
+                        {/if}
+                      </span>
+                    </div>
+                    <div class="thread-inspector-command-meta">
+                      <Badge tone={getWorkflowTaskAttemptStatusTone(workflowTaskAttempt.status)}>
+                        {getWorkflowTaskAttemptStatusLabel(workflowTaskAttempt.status)}
+                      </Badge>
+                      <span>{formatTimestamp(workflowTaskAttempt.updatedAt)}</span>
+                    </div>
+                  </div>
+                  <p>{workflowTaskAttempt.summary}</p>
+                  <div class="thread-inspector-command-footer">
+                    <span>
+                      {workflowTaskAttempt.transcriptMessageCount}
+                      {workflowTaskAttempt.transcriptMessageCount === 1 ? " transcript message" : " transcript messages"}
+                    </span>
+                    <span>
+                      {workflowTaskAttempt.commandCount}
+                      {workflowTaskAttempt.commandCount === 1 ? " command" : " commands"}
+                    </span>
+                    {#if workflowTaskAttempt.artifactCount > 0}
+                      <span>
+                        {workflowTaskAttempt.artifactCount}
+                        {workflowTaskAttempt.artifactCount === 1 ? " artifact" : " artifacts"}
+                      </span>
+                    {/if}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onclick={() => void handleInspectThreadWorkflowTaskAttempt(workflowTaskAttempt)}
+                    >
+                      Inspect attempt
+                    </Button>
+                  </div>
+                </article>
+              {/each}
+            </div>
+          </section>
+        {/if}
+
         {#if threadInspector.episodes.length > 0}
           <section class="thread-inspector-section">
             <header class="thread-inspector-section-header">
@@ -1521,6 +1718,15 @@
             </span>
             {#if commandInspector.threadId}
               <span>{commandInspector.threadId}</span>
+            {/if}
+            {#if commandInspector.workflowTaskAttemptId}
+              <Button
+                variant="ghost"
+                size="sm"
+                onclick={() => void handleInspectCommandWorkflowTaskAttempt(commandInspector.workflowTaskAttemptId!)}
+              >
+                Inspect task attempt
+              </Button>
             {/if}
           </div>
 
@@ -1644,6 +1850,174 @@
           </div>
         {:else}
           <p class="command-inspector-empty">No child command detail was recorded for this command.</p>
+        {/if}
+      {/if}
+    </div>
+  </Dialog>
+{/if}
+
+{#if showWorkflowTaskAttemptInspector}
+  <Dialog
+    eyebrow="Task Attempt"
+    title={workflowTaskAttemptInspector?.title ?? "Inspect Task Attempt"}
+    description="Inspect the durable workflow task attempt transcript, nested command rollups, and artifacts without opening a separate interactive surface."
+    width="lg"
+    onClose={closeWorkflowTaskAttemptInspector}
+  >
+    <div class="command-inspector">
+      {#if workflowTaskAttemptInspectorLoading}
+        <p class="command-inspector-empty">Loading workflow task attempt detail…</p>
+      {:else if workflowTaskAttemptInspectorError}
+        <p class="command-inspector-empty error">{workflowTaskAttemptInspectorError}</p>
+      {:else if workflowTaskAttemptInspector}
+        <section class="command-inspector-summary">
+          <div class="command-inspector-summary-top">
+            <div class="command-inspector-summary-copy">
+              <strong>{workflowTaskAttemptInspector.title}</strong>
+              <p>{workflowTaskAttemptInspector.summary}</p>
+            </div>
+            <div class="command-inspector-summary-meta">
+              <Badge tone={getWorkflowTaskAttemptStatusTone(workflowTaskAttemptInspector.status)}>
+                {getWorkflowTaskAttemptStatusLabel(workflowTaskAttemptInspector.status)}
+              </Badge>
+              <span>{formatTimestamp(workflowTaskAttemptInspector.updatedAt)}</span>
+            </div>
+          </div>
+
+          <div class="command-inspector-pills">
+            <span>{workflowTaskAttemptInspector.nodeId}</span>
+            <span>attempt {workflowTaskAttemptInspector.attempt}</span>
+            {#if workflowTaskAttemptInspector.iteration > 0}
+              <span>iteration {workflowTaskAttemptInspector.iteration}</span>
+            {/if}
+            <span>{workflowTaskAttemptInspector.smithersRunId}</span>
+            <span>{workflowTaskAttemptInspector.smithersState}</span>
+          </div>
+
+          {#if workflowTaskAttemptInspector.error}
+            <p class="command-inspector-error">{workflowTaskAttemptInspector.error}</p>
+          {/if}
+
+          {#if formatCommandFacts(workflowTaskAttemptInspector.meta)}
+            <div class="command-inspector-facts">
+              <span>Meta</span>
+              <pre>{formatCommandFacts(workflowTaskAttemptInspector.meta)}</pre>
+            </div>
+          {/if}
+        </section>
+
+        {#if workflowTaskAttemptInspector.transcript.length > 0}
+          <section class="command-inspector-section">
+            <header class="command-inspector-section-header">
+              <div>
+                <h3>Transcript</h3>
+                <p>Durable prompt and reply messages for this task attempt.</p>
+              </div>
+              <span>{workflowTaskAttemptInspector.transcript.length}</span>
+            </header>
+
+            <div class="command-inspector-child-list">
+              {#each workflowTaskAttemptInspector.transcript as message (message.messageId)}
+                <article class="command-inspector-child">
+                  <div class="command-inspector-child-top">
+                    <div class="command-inspector-child-copy">
+                      <strong>{message.role}</strong>
+                      <span>{message.source}</span>
+                    </div>
+                    <div class="command-inspector-child-meta">
+                      <span>{formatTimestamp(message.createdAt)}</span>
+                    </div>
+                  </div>
+
+                  <p class="command-inspector-child-summary transcript-body">{message.text}</p>
+                </article>
+              {/each}
+            </div>
+          </section>
+        {/if}
+
+        {#if workflowTaskAttemptInspector.commandRollups.length > 0}
+          <section class="command-inspector-section">
+            <header class="command-inspector-section-header">
+              <div>
+                <h3>Commands</h3>
+                <p>Nested durable command rollups attached to this task attempt.</p>
+              </div>
+              <span>{workflowTaskAttemptInspector.commandRollups.length}</span>
+            </header>
+
+            <div class="thread-inspector-command-list">
+              {#each workflowTaskAttemptInspector.commandRollups as rollup (rollup.commandId)}
+                <article class="thread-inspector-command">
+                  <div class="thread-inspector-command-top">
+                    <div class="thread-inspector-command-copy">
+                      <strong>{rollup.title}</strong>
+                      <span>{rollup.toolName}</span>
+                    </div>
+                    <div class="thread-inspector-command-meta">
+                      <span class={`structured-command-status tone-${getCommandStatusTone(rollup.status)}`.trim()}>
+                        {getCommandStatusLabel(rollup.status)}
+                      </span>
+                      <span>{formatTimestamp(rollup.updatedAt)}</span>
+                    </div>
+                  </div>
+                  <p>{rollup.summary}</p>
+                  <div class="thread-inspector-command-footer">
+                    <span>
+                      {rollup.summaryChildCount}
+                      {rollup.summaryChildCount === 1 ? " rollup detail" : " rollup details"}
+                    </span>
+                    <span>
+                      {rollup.traceChildCount}
+                      {rollup.traceChildCount === 1 ? " trace step" : " trace steps"}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onclick={() => void handleInspectThreadCommand(rollup.commandId)}
+                    >
+                      Inspect command
+                    </Button>
+                  </div>
+                </article>
+              {/each}
+            </div>
+          </section>
+        {/if}
+
+        {#if workflowTaskAttemptInspector.artifacts.length > 0}
+          <section class="command-inspector-section">
+            <header class="command-inspector-section-header">
+              <div>
+                <h3>Artifacts</h3>
+                <p>Artifacts created directly by this workflow task attempt.</p>
+              </div>
+              <span>{workflowTaskAttemptInspector.artifacts.length}</span>
+            </header>
+
+            <div class="command-inspector-artifact-list">
+              {#each workflowTaskAttemptInspector.artifacts as artifact (artifact.artifactId)}
+                <div class="command-inspector-artifact">
+                  <div class="command-inspector-artifact-copy">
+                    <strong>{artifact.name}</strong>
+                    <span>{artifact.kind}</span>
+                    {#if artifact.path}
+                      <code>{artifact.path}</code>
+                    {/if}
+                  </div>
+                  {#if canOpenArtifactLink(artifact)}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onclick={() => handleOpenArtifact(artifact.name)}
+                    >
+                      Open
+                    </Button>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          </section>
         {/if}
       {/if}
     </div>

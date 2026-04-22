@@ -195,6 +195,105 @@ export function createExecuteTypescriptTaskTestWorkflow(input: {
   };
 }
 
+export function createTranscriptProbeTestWorkflow(dbPath: string): TestWorkflowDefinition {
+  const launchSchema = z.object({
+    prompt: z.string().min(1).default("Summarize the latest transcript probe."),
+  });
+  const transcriptReplySchema = z.object({
+    reply: z.string(),
+    promptEcho: z.string(),
+  });
+  const resultSchema = z.object({
+    summary: z.string(),
+    reply: z.string(),
+  });
+
+  const smithersApi = createSmithers(
+    {
+      input: bundledWorkflowRuntimeStoredInputSchema,
+      transcriptReply: transcriptReplySchema,
+      transcriptResult: resultSchema,
+    },
+    { dbPath },
+  );
+  const transcriptAgent: AgentLike = {
+    id: "svvy-deterministic-transcript-agent",
+    async generate(rawArgs: unknown) {
+      const args = rawArgs as {
+        prompt?: string;
+        onStdout?: (chunk: string) => void;
+        onStepFinish?: (step: {
+          response: { messages: Array<{ role: string; content: string }> };
+        }) => void;
+      };
+      const promptText =
+        typeof args.prompt === "string" && args.prompt.trim().length > 0
+          ? args.prompt.trim()
+          : "No prompt provided.";
+      const response = {
+        reply: `Handled: ${promptText}`,
+        promptEcho: promptText,
+      };
+      const responseText = JSON.stringify(response);
+      args.onStdout?.(responseText);
+      args.onStepFinish?.({
+        response: {
+          messages: [{ role: "assistant", content: responseText }],
+        },
+      });
+      return {
+        text: responseText,
+        output: response,
+        response: {
+          messages: [{ role: "assistant", content: responseText }],
+        },
+      };
+    },
+  };
+
+  return {
+    id: "chat_transcript_probe",
+    label: "Chat Transcript Probe",
+    summary:
+      "Runs a deterministic agent task so transcript inspection can read real attempt history.",
+    workflowName: "svvy-chat-transcript-probe",
+    launchSchema,
+    workflow: smithersApi.smithers((ctx) => {
+      const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);
+      const reply = getLatestOutput<z.infer<typeof transcriptReplySchema>>(ctx.outputs.transcriptReply);
+      return React.createElement(
+        smithersApi.Workflow,
+        { name: "svvy-chat-transcript-probe" },
+        React.createElement(
+          smithersApi.Sequence,
+          null,
+          React.createElement(
+            smithersApi.Task,
+            {
+              id: "assistant",
+              output: smithersApi.outputs.transcriptReply,
+              agent: transcriptAgent,
+            },
+            workflowInput.prompt,
+          ),
+          reply
+            ? React.createElement(smithersApi.Task, {
+                id: "result",
+                output: smithersApi.outputs.transcriptResult,
+                children: {
+                  summary: `Captured transcript reply for prompt "${reply.promptEcho}".`,
+                  reply: reply.reply,
+                },
+              })
+            : null,
+        ),
+      );
+    }),
+    sourceScope: "saved",
+    entryPath: ".svvy/workflows/entries/chat-transcript-probe.tsx",
+  };
+}
+
 function buildTaskPrompt(input: {
   objective: string;
   successCriteria: string[];

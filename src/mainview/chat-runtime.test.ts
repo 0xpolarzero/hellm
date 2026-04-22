@@ -12,6 +12,7 @@ import type {
   WorkspaceHandlerThreadSummary,
   WorkspaceSessionSummary,
   WorkspaceSyncMessage,
+  WorkspaceWorkflowTaskAttemptInspector,
 } from "./chat-rpc";
 import type { PromptHistoryEntry } from "./prompt-history";
 import type { ChatRuntimeRpcClient } from "./chat-runtime";
@@ -69,6 +70,10 @@ type FakeRpcHarness = {
   commandInspectorRequests: Array<{ sessionId: string; commandId: string }>;
   handlerThreadListRequests: string[];
   handlerThreadInspectorRequests: Array<{ sessionId: string; threadId: string }>;
+  workflowTaskAttemptInspectorRequests: Array<{
+    sessionId: string;
+    workflowTaskAttemptId: string;
+  }>;
   setPromptHandler: (surfacePiSessionId: string, handler: PromptHandler) => void;
   updateSummary: (sessionId: string, updater: (summary: WorkspaceSessionSummary) => void) => void;
   emitWorkspaceSync: (reason?: WorkspaceSyncMessage["reason"]) => void;
@@ -308,6 +313,24 @@ function createHandlerThreadInspector(threadId = "thread-1"): WorkspaceHandlerTh
         updatedAt: "2026-04-10T10:04:30.000Z",
       },
     ],
+    workflowTaskAttempts: [
+      {
+        workflowTaskAttemptId: "workflow-task-attempt-1",
+        workflowRunId: "workflow-1",
+        smithersRunId: "smithers-run-1",
+        nodeId: "assistant",
+        iteration: 0,
+        attempt: 1,
+        title: "assistant",
+        kind: "agent",
+        status: "completed",
+        summary: "Transcript probe completed.",
+        updatedAt: "2026-04-10T10:03:30.000Z",
+        commandCount: 1,
+        artifactCount: 0,
+        transcriptMessageCount: 2,
+      },
+    ],
     episodes: [
       {
         episodeId: "episode-1",
@@ -317,6 +340,61 @@ function createHandlerThreadInspector(threadId = "thread-1"): WorkspaceHandlerTh
         createdAt: "2026-04-10T10:04:00.000Z",
       },
     ],
+    artifacts: [],
+  };
+}
+
+function createWorkflowTaskAttemptInspector(
+  workflowTaskAttemptId = "workflow-task-attempt-1",
+): WorkspaceWorkflowTaskAttemptInspector {
+  return {
+    workflowTaskAttemptId,
+    workflowRunId: "workflow-1",
+    smithersRunId: "smithers-run-1",
+    nodeId: "assistant",
+    iteration: 0,
+    attempt: 1,
+    title: "assistant",
+    kind: "agent",
+    status: "completed",
+    summary: "Transcript probe completed.",
+    updatedAt: "2026-04-10T10:03:30.000Z",
+    commandCount: 1,
+    artifactCount: 0,
+    transcriptMessageCount: 2,
+    surfacePiSessionId: "pi-task-agent-1",
+    smithersState: "finished",
+    prompt: "Summarize the transcript probe.",
+    responseText: "{\"reply\":\"Handled: Summarize the transcript probe.\"}",
+    error: null,
+    cached: false,
+    jjPointer: null,
+    jjCwd: null,
+    heartbeatAt: null,
+    agentId: "svvy-deterministic-transcript-agent",
+    agentModel: "gpt-4o",
+    agentEngine: "pi",
+    agentResume: "/tmp/task-agent-session.json",
+    meta: null,
+    startedAt: "2026-04-10T10:03:00.000Z",
+    finishedAt: "2026-04-10T10:03:30.000Z",
+    transcript: [
+      {
+        messageId: "workflow-task-message-1",
+        role: "user",
+        source: "prompt",
+        text: "Summarize the transcript probe.",
+        createdAt: "2026-04-10T10:03:00.000Z",
+      },
+      {
+        messageId: "workflow-task-message-2",
+        role: "assistant",
+        source: "responseText",
+        text: "{\"reply\":\"Handled: Summarize the transcript probe.\"}",
+        createdAt: "2026-04-10T10:03:30.000Z",
+      },
+    ],
+    commandRollups: [],
     artifacts: [],
   };
 }
@@ -367,6 +445,7 @@ function createFakeRpc(input: {
   commandInspector?: WorkspaceCommandInspector;
   handlerThreads?: WorkspaceHandlerThreadSummary[];
   handlerThreadInspector?: WorkspaceHandlerThreadInspector;
+  workflowTaskAttemptInspector?: WorkspaceWorkflowTaskAttemptInspector;
 }): FakeRpcHarness {
   const streamListeners = new Set<
     (payload: { streamId: string; event: AssistantMessageEvent }) => void
@@ -394,6 +473,10 @@ function createFakeRpc(input: {
   const commandInspectorRequests: Array<{ sessionId: string; commandId: string }> = [];
   const handlerThreadListRequests: string[] = [];
   const handlerThreadInspectorRequests: Array<{ sessionId: string; threadId: string }> = [];
+  const workflowTaskAttemptInspectorRequests: Array<{
+    sessionId: string;
+    workflowTaskAttemptId: string;
+  }> = [];
   const requestCounts = {
     listSessions: 0,
   };
@@ -529,6 +612,16 @@ function createFakeRpc(input: {
           handlerThreadInspectorRequests.push({ sessionId, threadId });
           return structuredClone(
             input.handlerThreadInspector ?? createHandlerThreadInspector(threadId),
+          );
+        },
+        getWorkflowTaskAttemptInspector: async ({ sessionId, workflowTaskAttemptId }) => {
+          workflowTaskAttemptInspectorRequests.push({
+            sessionId,
+            workflowTaskAttemptId,
+          });
+          return structuredClone(
+            input.workflowTaskAttemptInspector ??
+              createWorkflowTaskAttemptInspector(workflowTaskAttemptId),
           );
         },
         createSession: async ({ title } = {}) => {
@@ -763,6 +856,7 @@ function createFakeRpc(input: {
     commandInspectorRequests,
     handlerThreadListRequests,
     handlerThreadInspectorRequests,
+    workflowTaskAttemptInspectorRequests,
     setPromptHandler: (surfacePiSessionId, handler) => {
       promptHandlers.set(surfacePiSessionId, handler);
     },
@@ -1096,6 +1190,9 @@ describe("createChatRuntime", () => {
     const commandInspector = createCommandInspector("command-77");
     const handlerThreads = [createHandlerThreadSummary("thread-77")];
     const handlerThreadInspector = createHandlerThreadInspector("thread-77");
+    const workflowTaskAttemptInspector = createWorkflowTaskAttemptInspector(
+      "workflow-task-attempt-77",
+    );
     const harness = createFakeRpc({
       sessions: [
         createSummary("session-1", "First", "first reply"),
@@ -1114,6 +1211,7 @@ describe("createChatRuntime", () => {
       commandInspector,
       handlerThreads,
       handlerThreadInspector,
+      workflowTaskAttemptInspector,
     });
 
     const runtime = await createRuntime(harness);
@@ -1122,16 +1220,23 @@ describe("createChatRuntime", () => {
     const detail = await runtime.getCommandInspector("command-77");
     const threads = await runtime.listHandlerThreads();
     const threadDetail = await runtime.getHandlerThreadInspector("thread-77");
+    const workflowTaskAttemptDetail = await runtime.getWorkflowTaskAttemptInspector(
+      "workflow-task-attempt-77",
+    );
 
     expect(detail).toEqual(commandInspector);
     expect(threads).toEqual(handlerThreads);
     expect(threadDetail).toEqual(handlerThreadInspector);
+    expect(workflowTaskAttemptDetail).toEqual(workflowTaskAttemptInspector);
     expect(harness.commandInspectorRequests).toEqual([
       { sessionId: "session-2", commandId: "command-77" },
     ]);
     expect(harness.handlerThreadListRequests).toEqual(["session-2"]);
     expect(harness.handlerThreadInspectorRequests).toEqual([
       { sessionId: "session-2", threadId: "thread-77" },
+    ]);
+    expect(harness.workflowTaskAttemptInspectorRequests).toEqual([
+      { sessionId: "session-2", workflowTaskAttemptId: "workflow-task-attempt-77" },
     ]);
 
     runtime.dispose();
