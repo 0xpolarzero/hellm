@@ -32,7 +32,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Add `surfacePiSessionId` linkage on turns so orchestrator-surface and handler-thread turns use one model. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Persist handler-thread records with title, objective, status, wait state, backing pi session id, and latest workflow-run linkage. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Support workflow-run records that allow many runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
-- [ ] Persist workflow-run records with run id, workflow name, workflow source, template metadata, saved-workflow linkage when relevant, status, summary, and timestamps.
+- [ ] Persist workflow-run records with run id, workflow name, workflow source, runnable entry path plus saved-entry linkage when relevant, status, summary, and timestamps.
 - [x] Persist artifact references independently from transcript parsing at thread, workflow-run, and command scope. Commit(s): `fff54d7`
 - [x] Persist ordered handoff episode records each time a handler thread returns control to the orchestrator, while preserving earlier handoff points for later follow-up turns. Commit(s): `d323012`
 - [x] Persist session wait state as a frontier-level summary derived from surface and thread wait state. Commit(s): `fff54d7`, `f53c9b8`, `43a26cb`
@@ -103,22 +103,24 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Keep `thread.handoff`, Smithers read APIs, selectors, and renderer reads free of lifecycle repair writes. Commit(s): `2f874a7`
 - [x] Guarantee that a workflow-run failure or cancellation moves the handler thread into troubleshooting before any later user-directed closure or handoff. Commit(s): `a02bd48`
 
-## 6. Workflow Templates, Saved Workflows, And Custom Authoring
+## 6. Workflow Authoring, Saved Assets, And Artifact Promotion
 
-- [ ] Define the first structural workflow templates: `single_task`, `ordered_steps`, and `parallel_branches`.
-- [ ] Define the workflow-library discovery contract for bundled templates and saved workflows so handler-thread selection is explicit and low-ambiguity.
-- [ ] Build a POC handler thread that chooses between a saved workflow, a bundled template, and an authored custom workflow.
-- [ ] Build a POC one-task workflow that authors a custom workflow and explains it back to the handler thread.
-- [ ] Let a handler thread run an authored custom workflow after the authoring step completes.
-- [ ] Keep authored workflows ephemeral by default until an explicit save action is taken.
-- [ ] Define the stored shape and workspace file layout for saved workflows under `.svvy/workflows/`.
-- [ ] Persist saved workflow definitions and metadata under the workspace-owned workflow library.
-- [ ] Surface saved workflows through `smithers.list_workflows` with the same contract clarity as bundled templates and explicit workflow-source metadata.
-- [ ] Add an explicit save path so a handler can save a reusable authored workflow on request while ordinary replies can still just propose saving it.
+- [ ] Define the bundled workflow authoring guide and curated best-practice example bundle injected into workflow-writing context.
+- [ ] Build a POC handler-thread flow that authors a short-lived workflow artifact for one delegated objective instead of selecting from a tiny structural template menu.
+- [ ] Persist every authored short-lived workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/` with `definitions/`, `prompts/`, `components/`, `entries/`, and provenance metadata.
+- [ ] Define the saved workflow library layout under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and `.svvy/workflows/entries/`.
+- [ ] Define the discovery metadata contract compiled from JSDoc headers in `ts` or `tsx` files and frontmatter in `mdx` prompt files.
+- [ ] Expose `api.workflow.listAssets(...)` inside `execute_typescript` so workflow-writing actors can discover saved definitions, prompts, components, and agent profiles before reading files directly.
+- [ ] Expose `api.workflow.listModels()` inside `execute_typescript` for the escape hatch where no saved agent profile fits.
+- [ ] Build a POC saved definition plus saved entry that are reused by a new short-lived artifact entry with different prompts, profiles, or config bound at authoring time.
+- [ ] Keep authored workflows artifact-only by default until an explicit save action is taken.
+- [ ] Add an explicit save or promotion path that copies selected reusable definitions, prompts, components, or entries out of an artifact workflow into `.svvy/workflows/` while preserving the original artifact for provenance.
+- [ ] Surface all runnable saved and artifact entries through `smithers.list_workflows` and `smithers.run_workflow.<workflow_id>`, with each entry publishing an explicit launch contract and grouped asset refs rather than relying on inferred import graphs.
+- [ ] Persist agent profile components as discoverable saved workflow components with explicit profile-oriented metadata.
 
 ## 7. Verification As First-Class State
 
-- [ ] Build a POC verification workflow built on the structural template set that captures build, test, lint, or manual check outcomes.
+- [ ] Build a POC verification workflow as a saved definition or short-lived artifact workflow that captures build, test, lint, or manual check outcomes.
 - [ ] Persist verification records produced by verification-shaped workflow runs.
 - [ ] Capture build verification results with status, summary, and artifacts.
 - [ ] Capture test verification results with status, summary, and artifacts.
@@ -133,11 +135,11 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Define the stored shape for flat folder labels on sessions.
 - [ ] Persist session folder membership.
 - [ ] Render flat folder groupings in the session sidebar.
-- [ ] Define the workspace read model for saved workflows.
-- [ ] Render a `Save workflow` action for saveable authored workflows in the relevant thread or workflow surfaces.
-- [ ] Render a saved-workflows tab in the workspace shell.
-- [ ] Show saved workflow title, description, base template, and recency metadata in the saved-workflows tab.
-- [ ] Allow deleting a saved workflow from the saved-workflows tab.
+- [ ] Define the workspace read model for saved workflow assets and artifact workflows.
+- [ ] Render a `Save workflow` action for saveable artifact workflows in the relevant thread or workflow surfaces.
+- [ ] Render a saved workflow library tab in the workspace shell with separate definitions, prompts, components, and entries groupings.
+- [ ] Show saved asset title, summary, kind, path, tags, and recency metadata in the saved workflow library tab, including explicit indication when a component is an agent profile and grouped asset refs for entries.
+- [ ] Allow deleting a saved workflow definition, prompt, component, or entry from the library without deleting historical artifact workflows that previously used it.
 - [x] Join session summaries, focused pane, and pane-to-surface bindings in one workspace-shell read model without depending on a global active surface. Commit(s): `9a21f87`, `b0ee858`
 - [x] Split workspace-summary updates from live surface transcript updates in the renderer runtime. Commit(s): `9a21f87`, `b0ee858`
 - [x] Manage open live surfaces in a shared registry keyed by `surfacePiSessionId`. Commit(s): `9a21f87`, `b0ee858`

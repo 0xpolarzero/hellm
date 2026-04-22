@@ -50,9 +50,16 @@
   - that reviewer would inspect the prior worker's transcript/artifacts/outputs, explain what likely went wrong, and suggest escalation to the user if it judges it is/might be an upstream issue
   - this could become a useful recovery pattern instead of treating every bad worker result as a dead end; basically agents handle suspected bugs -> suggesting an issue to open on github
 
-- workflow-template-specific UI:
-  - some workflow templates may justify specialized UI treatment instead of a generic workflow card
+- workflow-category-specific UI:
+  - some workflow categories may justify specialized UI treatment instead of a generic workflow card
   - verification is the obvious first example because build/test/lint state often wants purpose-built display and progress semantics
+
+- smithers workflow authoring:
+  - consider automatic typecheck for workflow definitions and components so the agent gets diagnostics while writing them
 
 - cron job on a repo that pools for updates on selected dependencies with a short summary so we can update adap
   - especially docs/references/ so we can notice if they changed something we borrowed to something better or added a useful feature
+
+- context usage per turn: nice UI thing to get a rough idea of how much context was used in each turn both agent and user
+
+- /btw similar to claude code, e.g. select some agent text and quick quote and ask a question on a disposable short session (but maybe it can persist on the ui tho)

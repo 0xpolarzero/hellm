@@ -2,14 +2,14 @@
 
 `svvy` is a desktop coding harness built around a small strategic orchestrator and delegated execution.
 
-The top-level orchestrator stays narrow: it owns product intent, routing, and final decisions. When work needs bounded execution, it moves into a delegated handler thread. That thread supervises one or more short-lived Smithers workflows or reusable presets, handles verification, validation, retries, and clarification without bloating orchestrator context, and then hands a durable result back to the orchestrator. Pi provides the underlying runtime.
+The top-level orchestrator stays narrow: it owns product intent, routing, and final decisions. When work needs bounded execution, it moves into a delegated handler thread. That thread handles verification, validation, retries, clarification, and workflow supervision without bloating orchestrator context, and then hands a durable result back to the orchestrator. Pi provides the underlying runtime.
 
 ## The Flow
 
 1. You ask the main orchestrator to do something.
 2. The orchestrator keeps its context focused on strategy and product state, not the full implementation transcript.
 3. If the work is small, it answers directly. If it needs bounded execution, it opens a handler thread for that one objective.
-4. The handler thread picks the lightest Smithers path that fits: reuse a template, fill a preset, or author a one-off workflow.
+4. The handler thread picks the lightest path that fits: finish the work directly, run a reusable saved workflow entrypoint, or author a short-lived artifact workflow that may import saved definitions, prompts, components, and agent profiles.
 5. Verification and validation live in that path instead of being bolted on afterward, so build, test, lint, manual checks, and failed validations come back as structured outcomes.
 6. The thread can inspect results, repair inputs, rerun, pause, resume, or ask for clarification without bloating orchestrator context.
 7. When the work is ready, the thread hands the result back to the orchestrator explicitly as a bounded episode.

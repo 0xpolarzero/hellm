@@ -1,0 +1,1612 @@
+/**
+ * Workflow library, authoring assets, and runnable entries POC
+ *
+ * This proves the adopted model:
+ * - saved reusable assets live under `.svvy/workflows/{definitions,prompts,components}`
+ * - runnable saved entries live under `.svvy/workflows/entries`
+ * - artifact workflows live under `.svvy/artifacts/workflows/<id>/{...,entries,metadata.json}`
+ * - `api.workflow.listAssets(...)` and `api.workflow.listModels()` are authoring-time discovery APIs inside `execute_typescript`
+ * - `smithers.list_workflows` is reserved for runnable entries and lists both saved and artifact entries
+ * - launch goes through a minimal bridge-shaped `smithers.*` seam rather than a trace-local helper
+ * - runnable entries publish explicit grouped asset refs instead of relying on inferred import graphs
+ * - saving is explicit promotion of selected reusable files out of an artifact workflow into `.svvy/workflows/...`
+ *
+ * Proof boundaries:
+ * - this POC proves asset discovery, runnable-entry registry validation, bridge-shaped launch, and promotion semantics
+ * - it does not attempt to prove live supervision monitors, reconnect, synthetic wake-ups, workflow-task-agent execution, or real verification command execution
+ */
+
+import { randomUUID } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, extname, join, relative } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { Effect } from "effect";
+import { runWorkflow } from "smithers-orchestrator";
+import { z } from "zod";
+
+const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+
+type AssetKind = "definition" | "prompt" | "component";
+type AssetScope = "saved" | "artifact";
+
+type AssetMetadata = {
+  id: string;
+  kind: AssetKind;
+  title: string;
+  summary: string;
+  path: string;
+  scope: AssetScope;
+  subtype?: string;
+  tags: string[];
+  exports: string[];
+  variables: string[];
+  providerModelSummary?: string;
+  toolsetSummary?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type ModelInfo = {
+  providerId: string;
+  modelId: string;
+  authAvailable: boolean;
+  authSource: string;
+  capabilityFlags: string[];
+};
+
+type RunnableWorkflowEntry = {
+  id: string;
+  label: string;
+  summary: string;
+  sourceScope: AssetScope;
+  launchToolName: `smithers.run_workflow.${string}`;
+  launchInputSchema: Record<string, unknown>;
+  entryPath: string;
+  assetPaths: string[];
+  definitionPaths: string[];
+  promptPaths: string[];
+  componentPaths: string[];
+};
+
+type RunnableEntryFactoryOutput = {
+  workflowId: string;
+  workflowSource: AssetScope;
+  launchSchema: z.ZodTypeAny;
+  workflow: unknown;
+};
+
+type ExecutionDetails = {
+  workflowId: string;
+  workflowSource: AssetScope;
+  entryPath: string;
+  runStatus: string;
+  output: Record<string, unknown>;
+};
+
+type TraceStep = {
+  toolName: string;
+  args: unknown;
+  childCalls?: Array<{
+    toolName: string;
+    args: unknown;
+    result: unknown;
+  }>;
+  result: unknown;
+};
+
+type ScenarioResult = {
+  id: string;
+  trace: TraceStep[];
+  proof: Record<string, unknown>;
+};
+
+type SavedSeed = {
+  definitionPath: string;
+  promptPath: string;
+  componentPath: string;
+  entryPath: string;
+};
+
+type ArtifactDraft = {
+  artifactWorkflowId: string;
+  objectiveSummary: string;
+  promptPath: string;
+  componentPath: string;
+  entryPath: string;
+  metadataPath: string;
+  reviewerModel: ModelInfo;
+};
+
+type PromotionResult = {
+  promptPath: string;
+  componentPath: string;
+  entryPath: string;
+};
+
+type SmithersBridgePoc = {
+  listWorkflows: () => Promise<RunnableWorkflowEntry[]>;
+  runWorkflow: (workflowId: string, input: Record<string, unknown>) => Promise<ExecutionDetails>;
+};
+
+function ensureDir(path: string): void {
+  mkdirSync(path, { recursive: true });
+}
+
+function writeText(path: string, text: string): void {
+  ensureDir(dirname(path));
+  writeFileSync(path, text, "utf8");
+}
+
+function readText(path: string): string {
+  return readFileSync(path, "utf8");
+}
+
+function walkFiles(root: string): string[] {
+  if (!existsSync(root)) {
+    return [];
+  }
+  const pending = [root];
+  const files: string[] = [];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) {
+      continue;
+    }
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const entryPath = join(current, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(entryPath);
+      } else {
+        files.push(entryPath);
+      }
+    }
+  }
+  return files.toSorted();
+}
+
+function relativeWorkspacePath(workspaceRoot: string, path: string): string {
+  return relative(workspaceRoot, path);
+}
+
+function relativeImportPath(fromDir: string, toPath: string): string {
+  const path = relative(fromDir, toPath).replace(/\\/g, "/");
+  return path.startsWith(".") ? path : `./${path}`;
+}
+
+function splitCsv(value: string | undefined): string[] {
+  return value
+    ? value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    : [];
+}
+
+function readTsJsdocTag(header: string, tag: string): string | undefined {
+  const match = header.match(new RegExp(`@${tag}\\s+([^\\n*]+)`));
+  return match?.[1]?.trim();
+}
+
+function parseFrontmatter(text: string): Record<string, string | string[]> {
+  if (!text.startsWith("---\n")) {
+    return {};
+  }
+  const end = text.indexOf("\n---\n", 4);
+  if (end === -1) {
+    return {};
+  }
+  const result: Record<string, string | string[]> = {};
+  let currentListKey: string | null = null;
+  for (const line of text.slice(4, end).split("\n")) {
+    if (line.startsWith("  - ") && currentListKey) {
+      const current = result[currentListKey];
+      const values = Array.isArray(current) ? current : [];
+      values.push(line.slice(4).trim());
+      result[currentListKey] = values;
+      continue;
+    }
+    currentListKey = null;
+    const separator = line.indexOf(":");
+    if (separator === -1) {
+      continue;
+    }
+    const key = line.slice(0, separator).trim();
+    const rawValue = line.slice(separator + 1).trim();
+    if (!rawValue) {
+      result[key] = [];
+      currentListKey = key;
+      continue;
+    }
+    result[key] = rawValue;
+  }
+  return result;
+}
+
+function parseAssetMetadata(workspaceRoot: string, path: string, scope: AssetScope): AssetMetadata {
+  const text = readText(path);
+  const stats = statSync(path);
+  if (extname(path) === ".mdx") {
+    const frontmatter = parseFrontmatter(text);
+    return {
+      id: String(frontmatter.svvyId ?? relativeWorkspacePath(workspaceRoot, path)),
+      kind: "prompt",
+      title: String(frontmatter.title ?? relativeWorkspacePath(workspaceRoot, path)),
+      summary: String(frontmatter.summary ?? ""),
+      path: relativeWorkspacePath(workspaceRoot, path),
+      scope,
+      subtype: typeof frontmatter.svvySubtype === "string" ? frontmatter.svvySubtype : undefined,
+      tags: Array.isArray(frontmatter.tags) ? frontmatter.tags.map(String) : [],
+      exports: [],
+      variables: Array.isArray(frontmatter.variables) ? frontmatter.variables.map(String) : [],
+      createdAt: stats.birthtime.toISOString(),
+      updatedAt: stats.mtime.toISOString(),
+    };
+  }
+
+  const header = text.match(/\/\*\*[\s\S]*?\*\//)?.[0] ?? "";
+  return {
+    id: readTsJsdocTag(header, "svvyId") ?? relativeWorkspacePath(workspaceRoot, path),
+    kind: (readTsJsdocTag(header, "svvyAssetKind") as AssetKind | undefined) ?? "component",
+    title: readTsJsdocTag(header, "svvyTitle") ?? relativeWorkspacePath(workspaceRoot, path),
+    summary: readTsJsdocTag(header, "svvySummary") ?? "",
+    path: relativeWorkspacePath(workspaceRoot, path),
+    scope,
+    subtype: readTsJsdocTag(header, "svvySubtype"),
+    tags: splitCsv(readTsJsdocTag(header, "svvyTags")),
+    exports: splitCsv(readTsJsdocTag(header, "svvyExports")),
+    variables: [],
+    providerModelSummary: readTsJsdocTag(header, "svvyProviderModelSummary"),
+    toolsetSummary: readTsJsdocTag(header, "svvyToolsetSummary"),
+    createdAt: stats.birthtime.toISOString(),
+    updatedAt: stats.mtime.toISOString(),
+  };
+}
+
+function listAssetFiles(workspaceRoot: string, scope: AssetScope): string[] {
+  if (scope === "saved") {
+    return walkFiles(join(workspaceRoot, ".svvy", "workflows")).filter((path) =>
+      ["/definitions/", "/prompts/", "/components/"].some((segment) => path.includes(segment)),
+    );
+  }
+  return walkFiles(join(workspaceRoot, ".svvy", "artifacts", "workflows")).filter((path) =>
+    ["/definitions/", "/prompts/", "/components/"].some((segment) => path.includes(segment)),
+  );
+}
+
+function listAssets(
+  workspaceRoot: string,
+  input: {
+    kind?: AssetKind;
+    subtype?: string;
+    tags?: string[];
+    pathPrefix?: string;
+    exports?: string[];
+    scope?: "saved" | "artifact" | "both";
+  },
+): AssetMetadata[] {
+  const scopes =
+    input.scope === "artifact" ? ["artifact"] : input.scope === "both" ? ["saved", "artifact"] : ["saved"];
+
+  return scopes
+    .flatMap((scope) =>
+      listAssetFiles(workspaceRoot, scope as AssetScope)
+        .filter((path) => [".ts", ".tsx", ".mdx"].includes(extname(path)))
+        .map((path) => parseAssetMetadata(workspaceRoot, path, scope as AssetScope)),
+    )
+    .filter((asset) => (input.kind ? asset.kind === input.kind : true))
+    .filter((asset) => (input.subtype ? asset.subtype === input.subtype : true))
+    .filter((asset) => (input.tags && input.tags.length > 0 ? input.tags.every((tag) => asset.tags.includes(tag)) : true))
+    .filter((asset) => (input.pathPrefix ? asset.path.startsWith(input.pathPrefix) : true))
+    .filter((asset) =>
+      input.exports && input.exports.length > 0
+        ? input.exports.every((exportName) => asset.exports.includes(exportName))
+        : true,
+    )
+    .toSorted((left, right) => left.path.localeCompare(right.path));
+}
+
+function listModels(): ModelInfo[] {
+  return [
+    {
+      providerId: "openai",
+      modelId: "gpt-5.4",
+      authAvailable: true,
+      authSource: "oauth",
+      capabilityFlags: ["reasoning", "tool-calling"],
+    },
+    {
+      providerId: "openai",
+      modelId: "gpt-5.4-mini",
+      authAvailable: true,
+      authSource: "oauth",
+      capabilityFlags: ["reasoning", "tool-calling"],
+    },
+    {
+      providerId: "anthropic",
+      modelId: "claude-sonnet-4",
+      authAvailable: true,
+      authSource: "api-key",
+      capabilityFlags: ["tool-calling"],
+    },
+  ];
+}
+
+function readPromptBody(path: string): string {
+  const text = readText(path);
+  if (!text.startsWith("---\n")) {
+    return text.trim();
+  }
+  const end = text.indexOf("\n---\n", 4);
+  return (end === -1 ? text : text.slice(end + 5)).trim();
+}
+
+async function importFresh(path: string): Promise<Record<string, unknown>> {
+  return (await import(`${pathToFileURL(path).href}?cacheBust=${randomUUID()}`)) as Record<string, unknown>;
+}
+
+function deriveEntryScope(entryPath: string): AssetScope {
+  if (entryPath.startsWith(".svvy/workflows/entries/")) {
+    return "saved";
+  }
+  if (entryPath.startsWith(".svvy/artifacts/workflows/")) {
+    return "artifact";
+  }
+  throw new Error(`Unable to derive entry scope for ${entryPath}.`);
+}
+
+function readStringArrayExport(module: Record<string, unknown>, name: string): string[] {
+  const value = module[name];
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+    throw new Error(`Expected ${name} export to be a string[] on runnable entry.`);
+  }
+  return value.slice();
+}
+
+function validateEntryAssetPaths(
+  workspaceRoot: string,
+  entryPath: string,
+  kind: AssetKind,
+  paths: string[],
+): string[] {
+  const marker = `/${kind === "definition" ? "definitions" : kind === "prompt" ? "prompts" : "components"}/`;
+  for (const path of paths) {
+    if (!path.includes(marker)) {
+      throw new Error(`Entry ${entryPath} declared ${path} in ${kind}Paths, but the path does not match that asset kind.`);
+    }
+    if (!existsSync(join(workspaceRoot, path))) {
+      throw new Error(`Entry ${entryPath} declared missing asset path ${path}.`);
+    }
+  }
+  return paths.toSorted();
+}
+
+function schemaFingerprint(schema: z.ZodTypeAny): string {
+  return JSON.stringify(z.toJSONSchema(schema as any, { io: "input" }));
+}
+
+function createValidationDbPath(workspaceRoot: string, purpose: string): string {
+  const dbPath = join(workspaceRoot, ".svvy", "runtime", `${purpose}-${randomUUID()}.db`);
+  ensureDir(dirname(dbPath));
+  return dbPath;
+}
+
+async function loadRunnableEntryModule(
+  workspaceRoot: string,
+  input: {
+    entryPath: string;
+    sourceScope: AssetScope;
+  },
+): Promise<{
+  workflowId: string;
+  label: string;
+  summary: string;
+  launchSchema: z.ZodTypeAny;
+  definitionPaths: string[];
+  promptPaths: string[];
+  componentPaths: string[];
+  createRunnableEntry: (input: { dbPath: string }) => RunnableEntryFactoryOutput;
+}> {
+  const absolutePath = join(workspaceRoot, input.entryPath);
+  const module = await importFresh(absolutePath);
+  const workflowId = String(module.workflowId ?? "");
+  const label = String(module.label ?? "");
+  const summary = String(module.summary ?? "");
+  const launchSchema = module.launchSchema as z.ZodTypeAny | undefined;
+  const createRunnableEntry = module.createRunnableEntry as ((input: { dbPath: string }) => RunnableEntryFactoryOutput) | undefined;
+
+  if (!workflowId || !label || !summary || !launchSchema) {
+    throw new Error(`Runnable entry ${input.entryPath} is missing workflowId, label, summary, or launchSchema.`);
+  }
+  if (typeof createRunnableEntry !== "function") {
+    throw new Error(`Runnable entry ${input.entryPath} is missing createRunnableEntry(...).`);
+  }
+
+  const definitionPaths = validateEntryAssetPaths(
+    workspaceRoot,
+    input.entryPath,
+    "definition",
+    readStringArrayExport(module, "definitionPaths"),
+  );
+  const promptPaths = validateEntryAssetPaths(
+    workspaceRoot,
+    input.entryPath,
+    "prompt",
+    readStringArrayExport(module, "promptPaths"),
+  );
+  const componentPaths = validateEntryAssetPaths(
+    workspaceRoot,
+    input.entryPath,
+    "component",
+    readStringArrayExport(module, "componentPaths"),
+  );
+
+  const runtimeEntry = createRunnableEntry({
+    dbPath: createValidationDbPath(workspaceRoot, "validate-entry"),
+  });
+
+  if (runtimeEntry.workflowId !== workflowId) {
+    throw new Error(
+      `Runnable entry ${input.entryPath} returned workflowId ${runtimeEntry.workflowId}, which does not match exported workflowId ${workflowId}.`,
+    );
+  }
+  if (runtimeEntry.workflowSource !== input.sourceScope) {
+    throw new Error(
+      `Runnable entry ${input.entryPath} returned workflowSource ${runtimeEntry.workflowSource}, which does not match derived sourceScope ${input.sourceScope}.`,
+    );
+  }
+  if (schemaFingerprint(runtimeEntry.launchSchema) !== schemaFingerprint(launchSchema)) {
+    throw new Error(`Runnable entry ${input.entryPath} returned a launchSchema that does not match the exported launchSchema.`);
+  }
+  if (!runtimeEntry.workflow) {
+    throw new Error(`Runnable entry ${input.entryPath} returned an empty workflow graph.`);
+  }
+
+  return {
+    workflowId,
+    label,
+    summary,
+    launchSchema,
+    definitionPaths,
+    promptPaths,
+    componentPaths,
+    createRunnableEntry,
+  };
+}
+
+async function listRunnableWorkflows(workspaceRoot: string): Promise<RunnableWorkflowEntry[]> {
+  const savedEntriesRoot = join(workspaceRoot, ".svvy", "workflows", "entries");
+  const artifactWorkflowsRoot = join(workspaceRoot, ".svvy", "artifacts", "workflows");
+
+  const entryFiles = [
+    ...walkFiles(savedEntriesRoot),
+    ...walkFiles(artifactWorkflowsRoot).filter((path) => path.includes("/entries/")),
+  ].filter((path) => [".ts", ".tsx"].includes(extname(path)));
+
+  const seenIds = new Set<string>();
+  const entries: RunnableWorkflowEntry[] = [];
+
+  for (const absolutePath of entryFiles) {
+    const entryPath = relativeWorkspacePath(workspaceRoot, absolutePath);
+    const sourceScope = deriveEntryScope(entryPath);
+    const {
+      workflowId,
+      label,
+      summary,
+      launchSchema,
+      definitionPaths,
+      promptPaths,
+      componentPaths,
+    } = await loadRunnableEntryModule(workspaceRoot, {
+      entryPath,
+      sourceScope,
+    });
+    if (seenIds.has(workflowId)) {
+      throw new Error(`Duplicate runnable workflow id ${workflowId}.`);
+    }
+    seenIds.add(workflowId);
+
+    const assetPaths = Array.from(new Set([...definitionPaths, ...promptPaths, ...componentPaths])).toSorted();
+
+    entries.push({
+      id: workflowId,
+      label,
+      summary,
+      sourceScope,
+      launchToolName: `smithers.run_workflow.${workflowId}` as const,
+      launchInputSchema: z.toJSONSchema(launchSchema as any, { io: "input" }) as Record<string, unknown>,
+      entryPath,
+      assetPaths,
+      definitionPaths,
+      promptPaths,
+      componentPaths,
+    });
+  }
+
+  return entries.toSorted(
+    (left, right) => left.id.localeCompare(right.id) || left.sourceScope.localeCompare(right.sourceScope),
+  );
+}
+
+function normalizeWorkflowOutput(value: unknown): Record<string, unknown> {
+  if (Array.isArray(value)) {
+    const last = value[value.length - 1];
+    if (last && typeof last === "object" && !Array.isArray(last)) {
+      return last as Record<string, unknown>;
+    }
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  throw new Error(`Expected structured workflow output, received ${String(value)}.`);
+}
+
+function updateArtifactMetadataExecutionStatus(workspaceRoot: string, artifactWorkflowId: string, runStatus: string): void {
+  const metadataPath = join(workspaceRoot, ".svvy", "artifacts", "workflows", artifactWorkflowId, "metadata.json");
+  const current = JSON.parse(readText(metadataPath)) as Record<string, unknown>;
+  current.lastExecutionStatus = runStatus;
+  current.updatedAt = new Date().toISOString();
+  writeText(metadataPath, JSON.stringify(current, null, 2));
+}
+
+// Minimal in-process stand-in for the Bun-owned Smithers bridge.
+// It preserves the registry and launch seam without modeling monitors or reconnect.
+function createSmithersBridgePoc(workspaceRoot: string): SmithersBridgePoc {
+  return {
+    listWorkflows: async () => listRunnableWorkflows(workspaceRoot),
+    runWorkflow: async (workflowId, input) => {
+      const entries = await listRunnableWorkflows(workspaceRoot);
+      const entry = entries.find((candidate) => candidate.id === workflowId);
+      if (!entry) {
+        throw new Error(`No runnable workflow entry found for ${workflowId}.`);
+      }
+
+      const { createRunnableEntry } = await loadRunnableEntryModule(workspaceRoot, {
+        entryPath: entry.entryPath,
+        sourceScope: entry.sourceScope,
+      });
+      const runnableEntry = createRunnableEntry({
+        dbPath: createValidationDbPath(workspaceRoot, "run-entry"),
+      });
+      const parsedInput = runnableEntry.launchSchema.parse(input);
+      const result = await Effect.runPromise(
+        runWorkflow(runnableEntry.workflow as any, {
+          runId: `workflow-library-poc-${randomUUID()}`,
+          input: parsedInput,
+        }),
+      );
+
+      const runStatus = typeof (result as any).status === "string" ? (result as any).status : "unknown";
+      if (entry.sourceScope === "artifact") {
+        const parts = entry.entryPath.split("/");
+        const artifactWorkflowId = parts[3];
+        if (artifactWorkflowId) {
+          updateArtifactMetadataExecutionStatus(workspaceRoot, artifactWorkflowId, runStatus);
+        }
+      }
+
+      return {
+        workflowId: runnableEntry.workflowId,
+        workflowSource: runnableEntry.workflowSource,
+        entryPath: entry.entryPath,
+        runStatus,
+        output: normalizeWorkflowOutput((result as any).output),
+      };
+    },
+  };
+}
+
+function summarizeAssets(assets: AssetMetadata[]): Array<Record<string, unknown>> {
+  return assets.map((asset) => ({
+    id: asset.id,
+    kind: asset.kind,
+    scope: asset.scope,
+    path: asset.path,
+    subtype: asset.subtype,
+    exports: asset.exports,
+    tags: asset.tags,
+  }));
+}
+
+function writePromptAsset(
+  path: string,
+  input: {
+    id: string;
+    title: string;
+    summary: string;
+    tags: string[];
+    body: string;
+  },
+): void {
+  writeText(
+    path,
+    [
+      "---",
+      "svvyAssetKind: prompt",
+      `svvyId: ${input.id}`,
+      `title: ${input.title}`,
+      `summary: ${input.summary}`,
+      "tags:",
+      ...input.tags.map((tag) => `  - ${tag}`),
+      "---",
+      input.body,
+      "",
+    ].join("\n"),
+  );
+}
+
+function writeAgentProfileComponent(
+  path: string,
+  input: {
+    assetId: string;
+    title: string;
+    summary: string;
+    tags: string[];
+    exportName: string;
+    providerModelSummary: string;
+    profile: {
+      name: string;
+      provider: string;
+      model: string;
+      reasoning: string;
+      toolSurface: string[];
+      instructions: string;
+    };
+  },
+): void {
+  writeText(
+    path,
+    [
+      "/**",
+      " * @svvyAssetKind component",
+      " * @svvySubtype agent-profile",
+      ` * @svvyId ${input.assetId}`,
+      ` * @svvyTitle ${input.title}`,
+      ` * @svvySummary ${input.summary}`,
+      ` * @svvyTags ${input.tags.join(", ")}`,
+      ` * @svvyExports ${input.exportName}`,
+      ` * @svvyProviderModelSummary ${input.providerModelSummary}`,
+      " * @svvyToolsetSummary execute_typescript",
+      " */",
+      `export const ${input.exportName} = {`,
+      `  name: ${JSON.stringify(input.profile.name)},`,
+      `  provider: ${JSON.stringify(input.profile.provider)},`,
+      `  model: ${JSON.stringify(input.profile.model)},`,
+      `  reasoning: ${JSON.stringify(input.profile.reasoning)},`,
+      `  toolSurface: ${JSON.stringify(input.profile.toolSurface)},`,
+      `  instructions: ${JSON.stringify(input.profile.instructions)},`,
+      "};",
+      "",
+    ].join("\n"),
+  );
+}
+
+function writeSavedImplementReviewVerifyEntry(
+  workspaceRoot: string,
+  input: {
+    entryPath: string;
+    definitionPath: string;
+    promptPath: string;
+    componentPath: string;
+  },
+): void {
+  const absoluteEntryPath = join(workspaceRoot, input.entryPath);
+  const entryDir = dirname(absoluteEntryPath);
+  const definitionImportPath = relativeImportPath(entryDir, join(workspaceRoot, input.definitionPath));
+  const componentImportPath = relativeImportPath(entryDir, join(workspaceRoot, input.componentPath));
+  const reviewPromptRelativePath = relativeImportPath(entryDir, join(workspaceRoot, input.promptPath));
+
+  writeText(
+    absoluteEntryPath,
+    [
+      'import { readFileSync } from "node:fs";',
+      `import { createImplementReviewVerifyWorkflow, implementReviewVerifyLaunchSchema } from "${definitionImportPath}";`,
+      `import { cheapImplementer, carefulReviewer } from "${componentImportPath}";`,
+      "",
+      "function readPromptBody(relativePath: string): string {",
+      '  const text = readFileSync(new URL(relativePath, import.meta.url), "utf8");',
+      '  if (!text.startsWith("---\\n")) {',
+      "    return text.trim();",
+      "  }",
+      '  const end = text.indexOf("\\n---\\n", 4);',
+      "  return (end === -1 ? text : text.slice(end + 5)).trim();",
+      "}",
+      "",
+      `const reviewPromptPath = ${JSON.stringify(reviewPromptRelativePath)};`,
+      "",
+      "export const workflowId = 'implement_review_verify';",
+      "export const label = 'Implement Review Verify';",
+      "export const summary = 'Saved runnable entry fixture that proves prompt and profile binding with saved defaults.';",
+      "export const launchSchema = implementReviewVerifyLaunchSchema;",
+      `export const definitionPaths = ${JSON.stringify([input.definitionPath], null, 2)} as const;`,
+      `export const promptPaths = ${JSON.stringify([input.promptPath], null, 2)} as const;`,
+      `export const componentPaths = ${JSON.stringify([input.componentPath], null, 2)} as const;`,
+      "",
+      "export function createRunnableEntry(input: { dbPath: string }) {",
+      "  const reviewPrompt = readPromptBody(reviewPromptPath);",
+      "  return {",
+      "    workflowId,",
+      "    workflowSource: 'saved' as const,",
+      "    launchSchema,",
+      "    workflow: createImplementReviewVerifyWorkflow({",
+      "      dbPath: input.dbPath,",
+      "      workflowName: 'implement-review-verify',",
+      "      workflowId,",
+      "      workflowSource: 'saved',",
+      "      implementerProfile: cheapImplementer,",
+      "      reviewerProfile: carefulReviewer,",
+      "      implementPrompt: cheapImplementer.instructions,",
+      "      reviewPrompt,",
+      "      defaultVerificationCommands: ['bun test'],",
+      "    }),",
+      "  };",
+      "}",
+      "",
+    ].join("\n"),
+  );
+}
+
+function writeOAuthReviewEntry(
+  workspaceRoot: string,
+  input: {
+    entryPath: string;
+    workflowId: string;
+    label: string;
+    summary: string;
+    workflowSource: AssetScope;
+    definitionPath: string;
+    savedComponentPath: string;
+    reviewerComponentPath: string;
+    reviewPromptPath: string;
+    implementPromptPath: string;
+    definitionPaths: string[];
+    promptPaths: string[];
+    componentPaths: string[];
+  },
+): void {
+  const absoluteEntryPath = join(workspaceRoot, input.entryPath);
+  const entryDir = dirname(absoluteEntryPath);
+  const definitionImportPath = relativeImportPath(entryDir, join(workspaceRoot, input.definitionPath));
+  const savedComponentImportPath = relativeImportPath(entryDir, join(workspaceRoot, input.savedComponentPath));
+  const reviewerComponentImportPath = relativeImportPath(entryDir, join(workspaceRoot, input.reviewerComponentPath));
+  const reviewPromptRelativePath = relativeImportPath(entryDir, join(workspaceRoot, input.reviewPromptPath));
+  const implementPromptRelativePath = relativeImportPath(entryDir, join(workspaceRoot, input.implementPromptPath));
+
+  writeText(
+    absoluteEntryPath,
+    [
+      'import { readFileSync } from "node:fs";',
+      `import { createImplementReviewVerifyWorkflow, implementReviewVerifyLaunchSchema } from "${definitionImportPath}";`,
+      `import { cheapImplementer } from "${savedComponentImportPath}";`,
+      `import { oauthSecurityReviewer } from "${reviewerComponentImportPath}";`,
+      "",
+      "function readPromptBody(relativePath: string): string {",
+      '  const text = readFileSync(new URL(relativePath, import.meta.url), "utf8");',
+      '  if (!text.startsWith("---\\n")) {',
+      "    return text.trim();",
+      "  }",
+      '  const end = text.indexOf("\\n---\\n", 4);',
+      "  return (end === -1 ? text : text.slice(end + 5)).trim();",
+      "}",
+      "",
+      `const reviewPromptPath = ${JSON.stringify(reviewPromptRelativePath)};`,
+      `const implementPromptPath = ${JSON.stringify(implementPromptRelativePath)};`,
+      "",
+      `export const workflowId = ${JSON.stringify(input.workflowId)};`,
+      `export const label = ${JSON.stringify(input.label)};`,
+      `export const summary = ${JSON.stringify(input.summary)};`,
+      "export const launchSchema = implementReviewVerifyLaunchSchema;",
+      `export const definitionPaths = ${JSON.stringify(input.definitionPaths, null, 2)} as const;`,
+      `export const promptPaths = ${JSON.stringify(input.promptPaths, null, 2)} as const;`,
+      `export const componentPaths = ${JSON.stringify(input.componentPaths, null, 2)} as const;`,
+      "",
+      "export function createRunnableEntry(input: { dbPath: string }) {",
+      "  const reviewBase = readPromptBody(reviewPromptPath);",
+      "  const implementDetails = readPromptBody(implementPromptPath);",
+      "  return {",
+      "    workflowId,",
+      `    workflowSource: ${JSON.stringify(input.workflowSource)} as const,`,
+      "    launchSchema,",
+      "    workflow: createImplementReviewVerifyWorkflow({",
+      "      dbPath: input.dbPath,",
+      `      workflowName: ${JSON.stringify(input.workflowId.replaceAll("_", "-"))},`,
+      "      workflowId,",
+      `      workflowSource: ${JSON.stringify(input.workflowSource)},`,
+      "      implementerProfile: cheapImplementer,",
+      "      reviewerProfile: oauthSecurityReviewer,",
+      "      implementPrompt: `${cheapImplementer.instructions}\\n\\n${implementDetails}`,",
+      "      reviewPrompt: `${reviewBase}\\n\\n${oauthSecurityReviewer.instructions}`,",
+      "      defaultVerificationCommands: ['bun test src/auth'],",
+      "    }),",
+      "  };",
+      "}",
+      "",
+    ].join("\n"),
+  );
+}
+
+function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
+  const savedRoot = join(workspaceRoot, ".svvy", "workflows");
+  const definitionPath = join(savedRoot, "definitions", "create-implement-review-verify.tsx");
+  const promptPath = join(savedRoot, "prompts", "review-base.mdx");
+  const componentPath = join(savedRoot, "components", "agent-profiles.tsx");
+  const entryPath = join(savedRoot, "entries", "implement-review-verify.tsx");
+
+  writeText(
+    definitionPath,
+    [
+      "/**",
+      " * @svvyAssetKind definition",
+      " * @svvyId create_implement_review_verify",
+      " * @svvyTitle Create Implement Review Verify",
+      " * @svvySummary Reusable workflow fixture for binding prompts, profiles, and verification requests into a launchable entry contract.",
+      " * @svvyTags sequential, coding, review, verification",
+      " * @svvyExports implementReviewVerifyLaunchSchema, createImplementReviewVerifyWorkflow",
+      " */",
+      'import React from "react";',
+      'import { createSmithers } from "smithers-orchestrator";',
+      'import { z } from "zod";',
+      "",
+      "const agentProfileSchema = z.object({",
+      "  name: z.string(),",
+      "  provider: z.string(),",
+      "  model: z.string(),",
+      "  reasoning: z.string(),",
+      "  toolSurface: z.array(z.string()),",
+      "  instructions: z.string(),",
+      "});",
+      "",
+      "export const implementReviewVerifyLaunchSchema = z.object({",
+      "  objective: z.string().min(1),",
+      "  verificationCommands: z.array(z.string()).default([]),",
+      "});",
+      "",
+      "export function createImplementReviewVerifyWorkflow(config: {",
+      "  dbPath: string;",
+      "  workflowName: string;",
+      "  workflowId: string;",
+      "  workflowSource: 'saved' | 'artifact';",
+      "  implementerProfile: z.infer<typeof agentProfileSchema>;",
+      "  reviewerProfile: z.infer<typeof agentProfileSchema>;",
+      "  implementPrompt: string;",
+      "  reviewPrompt: string;",
+      "  defaultVerificationCommands: string[];",
+      "}) {",
+      "  const implementRequestSchema = z.object({ prompt: z.string() });",
+      "  const reviewRequestSchema = z.object({ prompt: z.string() });",
+      "  const verificationRequestSchema = z.object({ commands: z.array(z.string()) });",
+      "  const outputSchema = z.object({",
+      "    workflowId: z.string(),",
+      "    workflowSource: z.enum(['saved', 'artifact']),",
+      "    objective: z.string(),",
+      "    implementPrompt: z.string(),",
+      "    reviewPrompt: z.string(),",
+      "    verificationCommands: z.array(z.string()),",
+      "    implementerProfile: agentProfileSchema,",
+      "    reviewerProfile: agentProfileSchema,",
+      "  });",
+      "  const smithersApi = createSmithers(",
+      "    { implement: implementRequestSchema, review: reviewRequestSchema, verify: verificationRequestSchema, output: outputSchema },",
+      "    { dbPath: config.dbPath },",
+      "  );",
+      "  return smithersApi.smithers((ctx) => {",
+      "    const launch = implementReviewVerifyLaunchSchema.parse(ctx.input);",
+      "    const verificationCommands =",
+      "      launch.verificationCommands.length > 0 ? launch.verificationCommands : config.defaultVerificationCommands;",
+      "    return React.createElement(",
+      "      smithersApi.Workflow,",
+      "      { name: config.workflowName },",
+      "      React.createElement(",
+      "        smithersApi.Sequence,",
+      "        null,",
+      "        React.createElement(smithersApi.Task, {",
+      "          id: 'prepare_implement_request',",
+      "          output: smithersApi.outputs.implement,",
+      "          children: { prompt: `${config.implementPrompt}\\n\\nObjective: ${launch.objective}` },",
+      "        }),",
+      "        React.createElement(smithersApi.Task, {",
+      "          id: 'prepare_review_request',",
+      "          output: smithersApi.outputs.review,",
+      "          children: { prompt: `${config.reviewPrompt}\\n\\nObjective: ${launch.objective}` },",
+      "        }),",
+      "        React.createElement(smithersApi.Task, {",
+      "          id: 'prepare_verification_request',",
+      "          output: smithersApi.outputs.verify,",
+      "          children: { commands: verificationCommands },",
+      "        }),",
+      "        React.createElement(smithersApi.Task, {",
+      "          id: 'result',",
+      "          output: smithersApi.outputs.output,",
+      "          children: {",
+      "            workflowId: config.workflowId,",
+      "            workflowSource: config.workflowSource,",
+      "            objective: launch.objective,",
+      "            implementPrompt: config.implementPrompt,",
+      "            reviewPrompt: config.reviewPrompt,",
+      "            verificationCommands,",
+      "            implementerProfile: config.implementerProfile,",
+      "            reviewerProfile: config.reviewerProfile,",
+      "          },",
+      "        }),",
+      "      ),",
+      "    );",
+      "  });",
+      "}",
+      "",
+    ].join("\n"),
+  );
+
+  writeText(
+    componentPath,
+    [
+      "/**",
+      " * @svvyAssetKind component",
+      " * @svvySubtype agent-profile",
+      " * @svvyId saved_agent_profiles",
+      " * @svvyTitle Saved Agent Profiles",
+      " * @svvySummary Reusable implementation and review profiles for workflow authoring.",
+      " * @svvyTags agent-profile, implementer, reviewer",
+      " * @svvyExports cheapImplementer, carefulReviewer",
+      " * @svvyProviderModelSummary openai/gpt-5.4-mini and anthropic/claude-sonnet-4",
+      " * @svvyToolsetSummary execute_typescript",
+      " */",
+      "export const cheapImplementer = {",
+      "  name: 'cheap-implementer',",
+      "  provider: 'openai',",
+      "  model: 'gpt-5.4-mini',",
+      "  reasoning: 'low',",
+      "  toolSurface: ['execute_typescript'],",
+      "  instructions: 'Implement the requested change directly and keep the diff tight.',",
+      "};",
+      "",
+      "export const carefulReviewer = {",
+      "  name: 'careful-reviewer',",
+      "  provider: 'anthropic',",
+      "  model: 'claude-sonnet-4',",
+      "  reasoning: 'medium',",
+      "  toolSurface: ['execute_typescript'],",
+      "  instructions: 'Review for correctness, edge cases, and verification gaps before sign-off.',",
+      "};",
+      "",
+    ].join("\n"),
+  );
+
+  writeText(
+    promptPath,
+    [
+      "---",
+      "svvyAssetKind: prompt",
+      "svvyId: review_base",
+      "title: Review Base",
+      "summary: Base review instructions reusable across saved and artifact workflow entries.",
+      "tags:",
+      "  - review",
+      "  - reusable",
+      "variables:",
+      "  - objective",
+      "---",
+      "Review the implementation against the stated objective. Call out mismatches and edge cases.",
+      "",
+    ].join("\n"),
+  );
+
+  writeSavedImplementReviewVerifyEntry(workspaceRoot, {
+    entryPath: relativeWorkspacePath(workspaceRoot, entryPath),
+    definitionPath: relativeWorkspacePath(workspaceRoot, definitionPath),
+    promptPath: relativeWorkspacePath(workspaceRoot, promptPath),
+    componentPath: relativeWorkspacePath(workspaceRoot, componentPath),
+  });
+
+  return {
+    definitionPath: relativeWorkspacePath(workspaceRoot, definitionPath),
+    promptPath: relativeWorkspacePath(workspaceRoot, promptPath),
+    componentPath: relativeWorkspacePath(workspaceRoot, componentPath),
+    entryPath: relativeWorkspacePath(workspaceRoot, entryPath),
+  };
+}
+
+function writeArtifactWorkflow(
+  workspaceRoot: string,
+  input: {
+    artifactWorkflowId: string;
+    objectiveSummary: string;
+    savedDefinitionPath: string;
+    savedPromptPath: string;
+    savedComponentPath: string;
+    reviewerModel: ModelInfo;
+  },
+): ArtifactDraft {
+  const artifactRoot = join(workspaceRoot, ".svvy", "artifacts", "workflows", input.artifactWorkflowId);
+  const promptPath = join(artifactRoot, "prompts", "implement-oauth.mdx");
+  const componentPath = join(artifactRoot, "components", "oauth-security-reviewer.tsx");
+  const entryPath = join(artifactRoot, "entries", "oauth-review.tsx");
+  const metadataPath = join(artifactRoot, "metadata.json");
+  const now = new Date().toISOString();
+
+  writePromptAsset(promptPath, {
+    id: "oauth_review_draft.implement_prompt",
+    title: "OAuth Implement Prompt Draft",
+    summary: "Artifact-local implementation details for the OAuth review draft entry.",
+    tags: ["oauth", "implementation"],
+    body: "Implement the OAuth callback fix, preserve session semantics, and avoid redirect or state-handling regressions.",
+  });
+
+  writeAgentProfileComponent(componentPath, {
+    assetId: "oauth_security_reviewer_draft",
+    title: "OAuth Security Reviewer Draft",
+    summary: "Artifact-local security reviewer profile authored because the generic saved entry was not a clear fit for the OAuth task.",
+    tags: ["agent-profile", "oauth", "security", "review"],
+    exportName: "oauthSecurityReviewer",
+    providerModelSummary: `${input.reviewerModel.providerId}/${input.reviewerModel.modelId}`,
+    profile: {
+      name: "oauth-security-reviewer",
+      provider: input.reviewerModel.providerId,
+      model: input.reviewerModel.modelId,
+      reasoning: "medium",
+      toolSurface: ["execute_typescript"],
+      instructions:
+        "Focus on callback validation, redirect allowlists, CSRF/state handling, token exchange errors, and session integrity.",
+    },
+  });
+
+  writeOAuthReviewEntry(workspaceRoot, {
+    entryPath: relativeWorkspacePath(workspaceRoot, entryPath),
+    workflowId: "oauth_review_draft",
+    label: "OAuth Review Draft",
+    summary:
+      "Artifact runnable entry fixture that reuses saved structure but adds an OAuth-specific implement prompt and reviewer profile because the generic saved entry is not a clear fit.",
+    workflowSource: "artifact",
+    definitionPath: input.savedDefinitionPath,
+    savedComponentPath: input.savedComponentPath,
+    reviewerComponentPath: relativeWorkspacePath(workspaceRoot, componentPath),
+    reviewPromptPath: input.savedPromptPath,
+    implementPromptPath: relativeWorkspacePath(workspaceRoot, promptPath),
+    definitionPaths: [input.savedDefinitionPath],
+    promptPaths: [input.savedPromptPath, relativeWorkspacePath(workspaceRoot, promptPath)],
+    componentPaths: [input.savedComponentPath, relativeWorkspacePath(workspaceRoot, componentPath)],
+  });
+
+  writeText(
+    metadataPath,
+    JSON.stringify(
+      {
+        artifactWorkflowId: input.artifactWorkflowId,
+        owningThreadId: "thread-oauth-review",
+        createdAt: now,
+        updatedAt: now,
+        objectiveSummary: input.objectiveSummary,
+        authoringActor: "workflow-writer",
+        entryPath: relativeWorkspacePath(workspaceRoot, entryPath),
+        lastExecutionStatus: "not-run-yet",
+      },
+      null,
+      2,
+    ),
+  );
+
+  return {
+    artifactWorkflowId: input.artifactWorkflowId,
+    objectiveSummary: input.objectiveSummary,
+    promptPath: relativeWorkspacePath(workspaceRoot, promptPath),
+    componentPath: relativeWorkspacePath(workspaceRoot, componentPath),
+    entryPath: relativeWorkspacePath(workspaceRoot, entryPath),
+    metadataPath: relativeWorkspacePath(workspaceRoot, metadataPath),
+    reviewerModel: input.reviewerModel,
+  };
+}
+
+function promoteArtifactAssets(
+  workspaceRoot: string,
+  input: {
+    artifact: ArtifactDraft;
+    savedDefinitionPath: string;
+    savedPromptPath: string;
+    savedComponentPath: string;
+  },
+): PromotionResult {
+  const promotedPromptPath = join(workspaceRoot, ".svvy", "workflows", "prompts", "oauth", "implement-oauth.mdx");
+  const promotedComponentPath = join(workspaceRoot, ".svvy", "workflows", "components", "oauth-security-reviewer.tsx");
+  const promotedEntryPath = join(workspaceRoot, ".svvy", "workflows", "entries", "oauth-review.tsx");
+
+  writePromptAsset(promotedPromptPath, {
+    id: "oauth_review.implement_prompt",
+    title: "OAuth Implement Prompt",
+    summary: "Saved implementation prompt for the reusable OAuth review entry.",
+    tags: ["oauth", "implementation"],
+    body: readPromptBody(join(workspaceRoot, input.artifact.promptPath)),
+  });
+
+  writeAgentProfileComponent(promotedComponentPath, {
+    assetId: "oauth_security_reviewer",
+    title: "OAuth Security Reviewer",
+    summary: "Saved OAuth-focused security reviewer profile for reusable workflow entries.",
+    tags: ["agent-profile", "oauth", "security", "review"],
+    exportName: "oauthSecurityReviewer",
+    providerModelSummary: `${input.artifact.reviewerModel.providerId}/${input.artifact.reviewerModel.modelId}`,
+    profile: {
+      name: "oauth-security-reviewer",
+      provider: input.artifact.reviewerModel.providerId,
+      model: input.artifact.reviewerModel.modelId,
+      reasoning: "medium",
+      toolSurface: ["execute_typescript"],
+      instructions:
+        "Focus on callback validation, redirect allowlists, CSRF/state handling, token exchange errors, and session integrity.",
+    },
+  });
+
+  writeOAuthReviewEntry(workspaceRoot, {
+    entryPath: relativeWorkspacePath(workspaceRoot, promotedEntryPath),
+    workflowId: "oauth_review",
+    label: "OAuth Review",
+    summary: "Saved runnable entry fixture for OAuth-specific prompt and profile binding.",
+    workflowSource: "saved",
+    definitionPath: input.savedDefinitionPath,
+    savedComponentPath: input.savedComponentPath,
+    reviewerComponentPath: relativeWorkspacePath(workspaceRoot, promotedComponentPath),
+    reviewPromptPath: input.savedPromptPath,
+    implementPromptPath: relativeWorkspacePath(workspaceRoot, promotedPromptPath),
+    definitionPaths: [input.savedDefinitionPath],
+    promptPaths: [input.savedPromptPath, relativeWorkspacePath(workspaceRoot, promotedPromptPath)],
+    componentPaths: [input.savedComponentPath, relativeWorkspacePath(workspaceRoot, promotedComponentPath)],
+  });
+
+  return {
+    promptPath: relativeWorkspacePath(workspaceRoot, promotedPromptPath),
+    componentPath: relativeWorkspacePath(workspaceRoot, promotedComponentPath),
+    entryPath: relativeWorkspacePath(workspaceRoot, promotedEntryPath),
+  };
+}
+
+async function runSavedEntryScenario(workspaceRoot: string): Promise<ScenarioResult> {
+  const trace: TraceStep[] = [];
+  const bridge = createSmithersBridgePoc(workspaceRoot);
+  const workflows = await bridge.listWorkflows();
+  trace.push({
+    toolName: "smithers.list_workflows",
+    args: {},
+    result: {
+      workflowIds: workflows.map((workflow) => workflow.id),
+      workflows,
+    },
+  });
+
+  const savedEntry = workflows.find((workflow) => workflow.id === "implement_review_verify");
+  if (!savedEntry) {
+    throw new Error("Expected implement_review_verify saved entry.");
+  }
+
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "inspect the saved runnable entry and its declared assets before launch" },
+    childCalls: [
+      {
+        toolName: "api.repo.readFiles",
+        args: { paths: [savedEntry.entryPath, ...savedEntry.assetPaths] },
+        result: {
+          files: [savedEntry.entryPath, ...savedEntry.assetPaths],
+        },
+      },
+    ],
+    result: {
+      inspectedPaths: [savedEntry.entryPath, ...savedEntry.assetPaths],
+    },
+  });
+
+  const execution = await bridge.runWorkflow(savedEntry.id, {
+    objective: "Fix the OAuth callback bug",
+    verificationCommands: ["bun test src/auth"],
+  });
+  trace.push({
+    toolName: savedEntry.launchToolName,
+    args: {
+      objective: "Fix the OAuth callback bug",
+      verificationCommands: ["bun test src/auth"],
+    },
+    result: execution,
+  });
+
+  return {
+    id: "saved_entry_registry_and_bridge_launch",
+    trace,
+    proof: {
+      workflowId: execution.workflowId,
+      workflowSource: execution.workflowSource,
+      entryPath: execution.entryPath,
+      promptWasLoadedFromSavedAsset: execution.output.reviewPrompt === readPromptBody(join(workspaceRoot, ".svvy", "workflows", "prompts", "review-base.mdx")),
+      assetPaths: savedEntry.assetPaths,
+    },
+  };
+}
+
+async function runArtifactAuthoringScenario(
+  workspaceRoot: string,
+  seed: SavedSeed,
+): Promise<ScenarioResult & { artifact: ArtifactDraft }> {
+  const trace: TraceStep[] = [];
+  const bridge = createSmithersBridgePoc(workspaceRoot);
+
+  const definitionAssets = listAssets(workspaceRoot, {
+    kind: "definition",
+    scope: "saved",
+    exports: ["createImplementReviewVerifyWorkflow"],
+  });
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "discover saved definitions by export contract" },
+    childCalls: [
+      {
+        toolName: "api.workflow.listAssets",
+        args: { kind: "definition", scope: "saved", exports: ["createImplementReviewVerifyWorkflow"] },
+        result: summarizeAssets(definitionAssets),
+      },
+    ],
+    result: { discoveredDefinitionIds: definitionAssets.map((asset) => asset.id) },
+  });
+
+  const promptAssets = listAssets(workspaceRoot, {
+    kind: "prompt",
+    scope: "saved",
+    tags: ["review"],
+  });
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "discover saved prompts by tag" },
+    childCalls: [
+      {
+        toolName: "api.workflow.listAssets",
+        args: { kind: "prompt", scope: "saved", tags: ["review"] },
+        result: summarizeAssets(promptAssets),
+      },
+    ],
+    result: { discoveredPromptIds: promptAssets.map((asset) => asset.id) },
+  });
+
+  const savedProfiles = listAssets(workspaceRoot, {
+    kind: "component",
+    subtype: "agent-profile",
+    scope: "saved",
+  });
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "discover saved agent-profile components" },
+    childCalls: [
+      {
+        toolName: "api.workflow.listAssets",
+        args: { kind: "component", subtype: "agent-profile", scope: "saved" },
+        result: summarizeAssets(savedProfiles),
+      },
+    ],
+    result: { discoveredSavedProfileIds: savedProfiles.map((asset) => asset.id) },
+  });
+
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "inspect the reusable saved assets before authoring" },
+    childCalls: [
+      {
+        toolName: "api.repo.readFiles",
+        args: { paths: [seed.definitionPath, seed.promptPath, seed.componentPath, seed.entryPath] },
+        result: { files: [seed.definitionPath, seed.promptPath, seed.componentPath, seed.entryPath] },
+      },
+    ],
+    result: { inspectedPaths: [seed.definitionPath, seed.promptPath, seed.componentPath, seed.entryPath] },
+  });
+
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "decide the generic saved runnable entry is not a clear fit for the OAuth objective" },
+    result: {
+      rejectedSavedEntryPath: seed.entryPath,
+      reasons: [
+        "The saved entry binds only the generic reviewer profile and generic review prompt.",
+        "The OAuth objective needs an objective-specific implement prompt and a tighter security-focused reviewer profile.",
+      ],
+    },
+  });
+
+  const models = listModels();
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "find a configured model for a new artifact-local OAuth security reviewer profile" },
+    childCalls: [
+      {
+        toolName: "api.workflow.listModels",
+        args: {},
+        result: models,
+      },
+    ],
+    result: {
+      chosenReviewerModel: models.find((model) => model.modelId === "gpt-5.4") ?? null,
+    },
+  });
+
+  const reviewerModel = models.find((model) => model.modelId === "gpt-5.4");
+  if (!reviewerModel) {
+    throw new Error("Expected gpt-5.4 to be available for the artifact reviewer profile.");
+  }
+
+  const artifact = writeArtifactWorkflow(workspaceRoot, {
+    artifactWorkflowId: "wf-oauth-review",
+    objectiveSummary: "Fix the OAuth callback bug with a focused security review pass.",
+    savedDefinitionPath: seed.definitionPath,
+    savedPromptPath: seed.promptPath,
+    savedComponentPath: seed.componentPath,
+    reviewerModel,
+  });
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "author an artifact workflow with an artifact prompt, an artifact profile, and an artifact entry" },
+    childCalls: [
+      {
+        toolName: "api.repo.writeFile",
+        args: { path: artifact.promptPath },
+        result: { path: artifact.promptPath },
+      },
+      {
+        toolName: "api.repo.writeFile",
+        args: { path: artifact.componentPath },
+        result: { path: artifact.componentPath },
+      },
+      {
+        toolName: "api.repo.writeFile",
+        args: { path: artifact.entryPath },
+        result: { path: artifact.entryPath },
+      },
+      {
+        toolName: "api.repo.writeJson",
+        args: { path: artifact.metadataPath },
+        result: { path: artifact.metadataPath },
+      },
+    ],
+    result: artifact,
+  });
+
+  const allProfiles = listAssets(workspaceRoot, {
+    kind: "component",
+    subtype: "agent-profile",
+    scope: "both",
+    tags: ["oauth"],
+  });
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "confirm the new artifact profile is discoverable through the authoring API" },
+    childCalls: [
+      {
+        toolName: "api.workflow.listAssets",
+        args: { kind: "component", subtype: "agent-profile", scope: "both", tags: ["oauth"] },
+        result: summarizeAssets(allProfiles),
+      },
+    ],
+    result: { discoveredOAuthProfileIds: allProfiles.map((asset) => asset.id) },
+  });
+
+  const workflows = await bridge.listWorkflows();
+  trace.push({
+    toolName: "smithers.list_workflows",
+    args: {},
+    result: {
+      workflowIds: workflows.map((workflow) => workflow.id),
+      workflows,
+    },
+  });
+
+  const artifactEntry = workflows.find((workflow) => workflow.id === "oauth_review_draft");
+  if (!artifactEntry) {
+    throw new Error("Expected oauth_review_draft artifact entry after authoring.");
+  }
+
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "inspect the artifact entry and its declared assets before launch" },
+    childCalls: [
+      {
+        toolName: "api.repo.readFiles",
+        args: { paths: [artifactEntry.entryPath, ...artifactEntry.assetPaths] },
+        result: { files: [artifactEntry.entryPath, ...artifactEntry.assetPaths] },
+      },
+    ],
+    result: { inspectedPaths: [artifactEntry.entryPath, ...artifactEntry.assetPaths] },
+  });
+
+  const execution = await bridge.runWorkflow(artifactEntry.id, {
+    objective: "Fix the OAuth callback bug",
+    verificationCommands: ["bun test src/auth"],
+  });
+  trace.push({
+    toolName: artifactEntry.launchToolName,
+    args: {
+      objective: "Fix the OAuth callback bug",
+      verificationCommands: ["bun test src/auth"],
+    },
+    result: execution,
+  });
+
+  return {
+    id: "artifact_authoring_registry_and_bridge_launch",
+    trace,
+    proof: {
+      artifactWorkflowId: artifact.artifactWorkflowId,
+      workflowId: execution.workflowId,
+      workflowSource: execution.workflowSource,
+      entryPath: execution.entryPath,
+      preparedImplementRequestUsesArtifactPrompt: String(execution.output.implementPrompt).includes("preserve session semantics"),
+      preparedReviewRequestUsesSavedPromptAndArtifactProfile:
+        String(execution.output.reviewPrompt).includes("Review the implementation against the stated objective.") &&
+        String(execution.output.reviewPrompt).includes("callback validation"),
+      reviewerProfileModel: (execution.output.reviewerProfile as Record<string, unknown>).model,
+      metadataAfterRun: JSON.parse(readText(join(workspaceRoot, artifact.metadataPath))),
+    },
+    artifact,
+  };
+}
+
+async function runPromotionScenario(
+  workspaceRoot: string,
+  seed: SavedSeed,
+  artifact: ArtifactDraft,
+): Promise<ScenarioResult> {
+  const trace: TraceStep[] = [];
+  const bridge = createSmithersBridgePoc(workspaceRoot);
+
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "inspect the reusable artifact files selected for promotion" },
+    childCalls: [
+      {
+        toolName: "api.repo.readFiles",
+        args: { paths: [artifact.promptPath, artifact.componentPath, artifact.entryPath] },
+        result: { files: [artifact.promptPath, artifact.componentPath, artifact.entryPath] },
+      },
+    ],
+    result: { selectedArtifactPaths: [artifact.promptPath, artifact.componentPath, artifact.entryPath] },
+  });
+
+  const promoted = promoteArtifactAssets(workspaceRoot, {
+    artifact,
+    savedDefinitionPath: seed.definitionPath,
+    savedPromptPath: seed.promptPath,
+    savedComponentPath: seed.componentPath,
+  });
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "promote the reusable prompt, profile, and entry into the saved workflow library" },
+    childCalls: [
+      {
+        toolName: "api.repo.writeFile",
+        args: { path: promoted.promptPath },
+        result: { path: promoted.promptPath },
+      },
+      {
+        toolName: "api.repo.writeFile",
+        args: { path: promoted.componentPath },
+        result: { path: promoted.componentPath },
+      },
+      {
+        toolName: "api.repo.writeFile",
+        args: { path: promoted.entryPath },
+        result: { path: promoted.entryPath },
+      },
+    ],
+    result: promoted,
+  });
+
+  const promotedAssets = listAssets(workspaceRoot, {
+    scope: "saved",
+    pathPrefix: ".svvy/workflows/",
+    tags: ["oauth"],
+  });
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "confirm promoted saved assets are discoverable through the authoring API" },
+    childCalls: [
+      {
+        toolName: "api.workflow.listAssets",
+        args: { scope: "saved", pathPrefix: ".svvy/workflows/", tags: ["oauth"] },
+        result: summarizeAssets(promotedAssets),
+      },
+    ],
+    result: { promotedSavedAssetIds: promotedAssets.map((asset) => asset.id) },
+  });
+
+  const workflows = await bridge.listWorkflows();
+  trace.push({
+    toolName: "smithers.list_workflows",
+    args: {},
+    result: {
+      workflowIds: workflows.map((workflow) => workflow.id),
+      workflows,
+    },
+  });
+
+  const promotedEntry = workflows.find((workflow) => workflow.id === "oauth_review");
+  if (!promotedEntry) {
+    throw new Error("Expected oauth_review saved entry after promotion.");
+  }
+
+  trace.push({
+    toolName: "execute_typescript",
+    args: { purpose: "inspect the promoted saved entry and its declared assets before relaunch" },
+    childCalls: [
+      {
+        toolName: "api.repo.readFiles",
+        args: { paths: [promotedEntry.entryPath, ...promotedEntry.assetPaths] },
+        result: { files: [promotedEntry.entryPath, ...promotedEntry.assetPaths] },
+      },
+    ],
+    result: { inspectedPaths: [promotedEntry.entryPath, ...promotedEntry.assetPaths] },
+  });
+
+  const promotedExecution = await bridge.runWorkflow(promotedEntry.id, {
+    objective: "Fix the OAuth callback bug",
+    verificationCommands: ["bun test src/auth"],
+  });
+  trace.push({
+    toolName: promotedEntry.launchToolName,
+    args: {
+      objective: "Fix the OAuth callback bug",
+      verificationCommands: ["bun test src/auth"],
+    },
+    result: promotedExecution,
+  });
+
+  return {
+    id: "explicit_save_promotion_and_relaunch",
+    trace,
+    proof: {
+      promotedPaths: promoted,
+      savedEntryIds: workflows.filter((workflow) => workflow.sourceScope === "saved").map((workflow) => workflow.id),
+      artifactStillExists: existsSync(join(workspaceRoot, artifact.entryPath)),
+      promotedAssetsDroppedDraftIdentity: !promotedAssets.some((asset) => asset.id.includes("draft")),
+      promotedEntryUsesPromotedAssets: (() => {
+        return (
+          promotedEntry.promptPaths.includes(promoted.promptPath) &&
+          promotedEntry.componentPaths.includes(promoted.componentPath) &&
+          promotedEntry.definitionPaths.includes(seed.definitionPath)
+        );
+      })(),
+      promotedEntryLaunchWorks: promotedExecution.workflowId === "oauth_review",
+    },
+  };
+}
+
+async function runPoc(): Promise<Record<string, unknown>> {
+  const workspaceRoot = mkdtempSync(join(REPO_ROOT, ".tmp-workflow-library-poc-"));
+  try {
+    const seed = seedSavedWorkflowLibrary(workspaceRoot);
+    const savedEntryScenario = await runSavedEntryScenario(workspaceRoot);
+    const authoredArtifact = await runArtifactAuthoringScenario(workspaceRoot, seed);
+    const promotion = await runPromotionScenario(workspaceRoot, seed, authoredArtifact.artifact);
+
+    return {
+      workspaceRoot: relativeWorkspacePath(REPO_ROOT, workspaceRoot),
+      seededSavedAssets: seed,
+      scenarios: [
+        savedEntryScenario,
+        {
+          id: authoredArtifact.id,
+          trace: authoredArtifact.trace,
+          proof: authoredArtifact.proof,
+        },
+        promotion,
+      ],
+    };
+  } finally {
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+}
+
+if (import.meta.main) {
+  const output = await runPoc();
+  console.log(JSON.stringify(output, null, 2));
+  process.exit(0);
+}
+
+export { runPoc };

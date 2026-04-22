@@ -160,7 +160,7 @@ Inside a handler thread, the normal choices are:
 - direct reply
 - `execute_typescript`
 - `thread.handoff`
-- Smithers-native workflow tools such as `smithers.list_workflows`, generated launch tools such as `smithers.run_workflow.hello_world`, `smithers.get_run`, `smithers.explain_run`, and `smithers.resolve_approval`
+- Smithers-native workflow tools such as `smithers.list_workflows`, generated launch tools such as `smithers.run_workflow.<workflow_id>`, `smithers.get_run`, `smithers.explain_run`, and `smithers.resolve_approval`
 - `wait`
 
 The workflow tool surface should mirror Smithers semantics rather than a svvy-defined `workflow.*` alias layer. The launch surface is one generated tool per discoverable workflow under the `smithers.run_workflow.<workflow_id>` namespace, derived from the workflow's real TypeScript or Zod launch schema rather than from handwritten prompt prose or repo inspection. Those Smithers-native commands are supervision helpers inside the handler-thread lifecycle, not evidence that the repo-root `workflows/` authoring package is the shipped product runtime.
@@ -171,9 +171,9 @@ The handler-thread prompt may know that the orchestrator can delegate and reconc
 
 The handler thread may:
 
-- reuse a saved workflow
-- use a bundled workflow template
-- author a custom workflow
+- reuse a saved runnable entry
+- author a short-lived artifact workflow
+- import saved definitions, prompts, components, and agent profiles while authoring that workflow
 - rerun after repair
 - resume after clarification
 - stay in normal multi-turn chat for ordinary replies
@@ -254,7 +254,7 @@ The difference is where the wait lives:
 
 ### 8. Verification Is Workflow-Shaped Execution
 
-Verification remains first-class in product behavior and UI, but it is modeled through workflow templates and saved or custom workflows rather than a separate native execution engine.
+Verification remains first-class in product behavior and UI, but it is modeled through saved runnable entries and artifact entries rather than a separate native execution engine.
 
 That means build, test, lint, and related checks can still have structured verification records and specialized UI, while execution stays consistent with the workflow model.
 
@@ -264,7 +264,7 @@ That means build, test, lint, and related checks can still have structured verif
 - `api.exec.run` remains the explicit bounded process execution capability inside `execute_typescript`.
 - `thread.start`, `thread.handoff`, and `wait` remain `svvy`-native control tools.
 - workflow supervision should use Smithers-native bridge tools such as generated `smithers.run_workflow.<workflow_id>` launch tools, `smithers.get_run`, and `smithers.resolve_approval`.
-- the Smithers-native tool surface targets bundled product-runtime workflows rather than the repo authoring workspace under `workflows/`.
+- the Smithers-native tool surface targets product-runtime runnable workflows rather than the repo authoring workspace under `workflows/`.
 - capability declarations are actor-specific: the orchestrator gets only orchestrator-callable tools, and handler threads get only handler-callable tools.
 - workflow task agents are another actor class below handler threads and should receive only task-local tool declarations, with `execute_typescript` as the default adopted task tool.
 - runtime handlers and bridges write durable facts from real execution; agents do not mutate product state through arbitrary write tools.

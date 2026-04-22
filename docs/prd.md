@@ -21,7 +21,7 @@ The product combines:
 - a `svvy` orchestrator that owns strategy, routing, and final decisions
 - pi-backed delegated handler threads for bounded delegated objectives
 - Smithers-backed workflow runs executed under those handler threads
-- bundled structural workflow templates plus workspace-saved reusable workflows
+- authored artifact workflows plus workspace-saved reusable workflow assets and runnable workflow entries
 - first-class threads, workflow runs, commands, episodes, artifacts, verification, and worktree awareness
 
 The intended feel is closer to Slate than to stock pi:
@@ -128,15 +128,15 @@ The shipped app must supervise product-runtime Smithers workflows that work with
 
 That includes:
 
-- bundled structural templates under an app-owned runtime area such as `src/bun/smithers-runtime/`
-- workspace-saved workflows under `.svvy/workflows/`
+- runnable saved entries under `.svvy/workflows/entries/`
+- short-lived authored artifact workflows under `.svvy/artifacts/workflows/`
 
 It must not depend on repo-local authoring workflows that rely on `workflows/node_modules/.bin/smithers`, `workflows/smithers.db`, or source-relative paths.
 
 That means:
 
 - a short-lived worker is a one-task workflow
-- parallel delegated work is a workflow template
+- parallel delegated work is a workflow graph authored from saved or artifact-local assets when needed
 - verification uses the same workflow runtime and structured output model rather than a separate engine
 - a custom delegated plan is authored as a workflow and then executed
 
@@ -162,7 +162,7 @@ The orchestrator gives control of the delegated objective to the handler thread 
 
 That means:
 
-- the handler thread decides whether to reuse a saved workflow, use a bundled structural template, or author a custom workflow
+- the handler thread decides whether to reuse a saved runnable entry or author a short-lived artifact workflow
 - the handler thread starts and resumes workflow runs
 - workflow waits, approvals, retries, repairs, and resumptions stay inside that same handler thread instead of escaping back to the orchestrator
 - the handler thread receives control back when a workflow run reaches a terminal outcome or another actionable attention state
@@ -174,7 +174,7 @@ A handler thread may launch more than one workflow run over its lifetime.
 
 Examples:
 
-- one run to author a custom workflow, then another run to execute it
+- one run to author an artifact workflow, then another run to execute it
 - one run that fails, followed by a repaired rerun
 - one run that pauses for clarification, then resumes
 
@@ -263,12 +263,12 @@ The intended use of the native control subset is:
 - the orchestrator normally uses `thread.start` to open a delegated handler thread
 - a handler thread uses `thread.handoff` to emit a durable handoff episode and mark the current objective span complete without losing direct interactivity in that thread surface, but only after no running or waiting workflow run still belongs to that span
 - a successful `thread.handoff` immediately opens a fresh orchestrator reconciliation turn so the orchestrator can act on the latest durable handoff without waiting for another user-authored orchestrator message
-- a handler thread normally uses Smithers-native bridge tools such as `smithers.list_workflows`, generated workflow launch tools such as `smithers.run_workflow.hello_world`, `smithers.get_run`, `smithers.explain_run`, `smithers.list_pending_approvals`, `smithers.resolve_approval`, `smithers.get_node_detail`, `smithers.list_artifacts`, and `smithers.get_run_events` to supervise Smithers execution
+- a handler thread normally uses Smithers-native bridge tools such as `smithers.list_workflows`, generated workflow launch tools such as `smithers.run_workflow.<workflow_id>`, `smithers.get_run`, `smithers.explain_run`, `smithers.list_pending_approvals`, `smithers.resolve_approval`, `smithers.get_node_detail`, `smithers.list_artifacts`, and `smithers.get_run_events` to supervise Smithers execution
 - any interactive surface may use `wait` when it needs user or external input
 
 Verification is not a separate native control tool in the adopted model.
 
-Verification is delegated work expressed through workflow templates, saved workflows, and custom workflows that still run on the same Smithers runtime.
+Verification is delegated work expressed through saved runnable entries and artifact entries that still run on the same Smithers runtime.
 
 ### 8. Sessions Contain Many Interactive Surfaces
 
@@ -344,7 +344,7 @@ In practice that means:
 
 - useful results are compressed into final thread episodes and artifacts instead of dragging full transcripts forward
 - workflow runs can pause and resume inside a handler thread without forcing the orchestrator to absorb every internal event
-- repeatable structure is pushed into bundled templates, saved workflows, and `execute_typescript` instead of repeatedly re-derived in prose
+- repeatable structure is pushed into saved definitions, prompts, components, agent profiles, saved runnable entries, and `execute_typescript` instead of repeatedly re-derived in prose
 - raw model reasoning is reserved for ambiguity, synthesis, prioritization, and recovery
 
 ### 12. Full Approvals By Default
@@ -531,55 +531,51 @@ A workflow run is one Smithers execution launched from a handler thread.
 It has:
 
 - a Smithers run id
-- a workflow template or authored workflow shape
+- a runnable saved entry or authored artifact entry shape
 - status over time
 - artifacts, logs, and related command history
 
 One handler thread may own many workflow runs over time.
 
-### Workflow Templates, Saved Workflows, And Custom Workflows
+### Saved Workflow Assets, Runnable Entries, And Artifact Workflows
 
 The delegated workflow library has three layers:
 
-1. structural templates:
-   - `single_task`
-   - `ordered_steps`
-   - `parallel_branches`
-2. workspace-saved workflows captured from reusable authored workflows when a user wants them available later
-3. one-off custom workflows authored on demand when no saved workflow or bundled template is a good fit
+1. bundled workflow authoring guidance and examples injected into the workflow-writing actor
+2. workspace-saved reusable workflow assets under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and launchable saved entries under `.svvy/workflows/entries/`
+3. short-lived authored artifact workflows under `.svvy/artifacts/workflows/`
+
+Saved workflow assets are reusable source assets.
+
+They include:
+
+- definitions
+- prompts
+- components
+- agent profiles as a specialized component asset kind
+
+Saved entries are the launchable wrappers in the saved workflow library.
 
 The intended decision order inside a handler thread is:
 
-1. does a saved workflow clearly fit this objective and its expected inputs or outputs?
-2. if not, can a bundled structural template handle it clearly?
-3. if not, author a custom workflow
-4. execute the chosen workflow
+1. can the task be completed directly in `execute_typescript`?
+2. if not, does a saved runnable entry clearly fit?
+3. if not, author a short-lived artifact workflow, usually by mixing saved definitions, prompts, components, and agent profiles
+4. execute the selected or authored workflow
 
-Newly authored custom workflows are ephemeral by default.
+Artifact workflows are persisted by default under `.svvy/artifacts/workflows/`.
 
-They become reusable only after an explicit save action.
-
-### Saved Workflows
-
-Saved workflows are workspace-owned runtime assets stored under `.svvy/workflows/`.
-
-They are:
-
-- authored from successful or promising custom workflows
-- available to later handler threads through the same workflow discovery surface as bundled templates
-- user-manageable through a dedicated saved-workflows library view
-- distinct from repo-root `workflows/`, which remains a source-checkout authoring workspace for building `svvy` itself
+Saving is explicit promotion of reusable files out of an artifact workflow into `.svvy/workflows/`.
 
 The UI should expose:
 
-- a `Save workflow` action on saveable authored workflows
-- a saved-workflows tab where the user can inspect and delete saved workflows
+- a `Save workflow` action on saveable artifact workflows
+- a saved workflow library tab where the user can inspect and delete saved definitions, prompts, components, and entries
 
 Handler-thread instructions should treat saving as explicit reuse curation:
 
-- save a workflow when the user asks for it
+- save reusable workflow assets when the user asks for that
 - otherwise propose saving when a newly authored workflow looks broadly reusable
-- do not silently save every custom workflow
 
 ### Turn
 
@@ -635,7 +631,7 @@ Verification is a first-class feature area, but it is represented as delegated w
 
 In practice that means:
 
-- build, test, lint, integration, and manual verification may be expressed as workflows built on the structural templates, saved workflows, or authored custom workflows
+- build, test, lint, integration, and manual verification may be expressed as saved runnable entries or artifact entries
 - verification outcomes still need structured records for summary, routing, and UI
 - verification-specific UI is allowed where it improves clarity
 
@@ -693,9 +689,8 @@ When the target surface is a handler thread:
 2. decide and persist whether to:
    - reply directly inside the thread
    - use `execute_typescript`
-   - reuse a saved workflow
-   - use a bundled workflow template
-   - author a custom workflow
+   - reuse a saved runnable entry
+   - author a short-lived artifact workflow, often by importing saved definitions, prompts, components, and agent profiles
    - inspect workflow state through Smithers-native bridge tools such as `smithers.get_run`, `smithers.explain_run`, `smithers.get_node_detail`, and `smithers.get_run_events`
    - resume an existing paused workflow run through the Smithers bridge when Smithers still considers that run resumable
    - start a replacement workflow run
@@ -803,7 +798,7 @@ The workflow inspector should let the user inspect:
 - related artifacts
 - worktree and runtime profile context
 
-Some workflow templates may justify specialized UI instead of a generic workflow card.
+Some workflow categories may justify specialized UI instead of a generic workflow card.
 
 Verification is the clearest first example.
 

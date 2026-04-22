@@ -182,9 +182,9 @@ type StructuredSessionState = {
     threadId: string;
     smithersRunId: string;
     workflowName: string;
-    workflowSource: "bundled-template" | "saved-workflow" | "authored-custom";
-    templateId: string | null;
-    savedWorkflowId: string | null;
+    workflowSource: "saved" | "artifact";
+    entryPath: string | null;
+    savedEntryId: string | null;
     status: "running" | "waiting" | "continued" | "completed" | "failed" | "cancelled";
     smithersStatus:
       | "running"
@@ -365,7 +365,7 @@ Workflow-run records exist because the product needs a top-level durable summary
 They answer:
 
 - how many workflow runs happened under a thread
-- which bundled template, saved workflow, or authored custom workflow shape was used
+- which runnable entry shape was used and whether it came from the saved library or an artifact workflow
 - which Smithers run id corresponds to each execution
 - the normalized run status plus raw Smithers status and wait kind
 - whether the run continued into another lineage
@@ -468,7 +468,7 @@ Use `turnDecision` this way:
 
 - `pending` is allowed only between turn creation and the moment the surface chooses how to proceed
 - orchestrator turns persist session-level routing decisions such as `reply`, `execute_typescript`, `clarify`, or `thread.start`
-- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `smithers.run_workflow.hello_world`, `smithers.get_run`, `smithers.resolve_approval`, `thread.handoff`, or `wait`
+- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `smithers.run_workflow.<workflow_id>`, `smithers.get_run`, `smithers.resolve_approval`, `thread.handoff`, or `wait`
 - this symmetry is intentional even though only orchestrator turns own session-level routing
 - the turn decision is the top-level classification of the turn, not a replacement for command records
 - linkage to spawned threads, workflow runs, artifacts, and episodes still belongs in their own records plus linked commands
@@ -523,9 +523,9 @@ If the same terminal workflow snapshot is replayed after handoff during final re
 | `threadId`              | Links the run to the handler thread that owns it.                                         |
 | `smithersRunId`         | Canonical link back to Smithers.                                                          |
 | `workflowName`          | Product-visible workflow identifier.                                                      |
-| `workflowSource`        | Distinguishes bundled-template, saved-workflow, and authored-custom execution.            |
-| `templateId`            | Records which structural template was used when relevant.                                 |
-| `savedWorkflowId`       | Records which saved workflow entry was launched when relevant.                            |
+| `workflowSource`        | Distinguishes saved-library entry execution from artifact-entry execution.                |
+| `entryPath`             | Records the runnable entry path used for the run when relevant.                           |
+| `savedEntryId`          | Records which saved runnable entry was launched when relevant.                            |
 | `status`                | Captures the normalized top-level run status used by `svvy`.                              |
 | `smithersStatus`        | Preserves the raw Smithers run status for faithful inspection and reconnect behavior.     |
 | `waitKind`              | Preserves whether a waiting run is blocked on approval, event, or timer.                  |
