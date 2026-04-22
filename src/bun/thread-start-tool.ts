@@ -28,7 +28,7 @@ export interface ThreadStartBridge {
   createHandlerThread(input: {
     sessionId: string;
     turnId: string;
-    parentThreadId: string;
+    parentThreadId: string | null;
     parentSurfacePiSessionId: string;
     title: string;
     objective: string;
@@ -62,7 +62,7 @@ export function createStartThreadTool(options: {
       const command = options.store.createCommand({
         turnId: runtime.turnId,
         surfacePiSessionId: runtime.surfacePiSessionId,
-        threadId: runtime.rootThreadId,
+        threadId: runtime.rootThreadId ?? null,
         toolName: START_THREAD_TOOL_NAME,
         executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
         visibility: "surface",
@@ -75,7 +75,7 @@ export function createStartThreadTool(options: {
         const thread = await options.bridge.createHandlerThread({
           sessionId: runtime.sessionId,
           turnId: runtime.turnId,
-          parentThreadId: runtime.rootThreadId,
+          parentThreadId: runtime.rootThreadId ?? null,
           parentSurfacePiSessionId: runtime.surfacePiSessionId,
           title,
           objective,

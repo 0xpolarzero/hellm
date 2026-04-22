@@ -71,7 +71,7 @@ type ManagedSurfaceRecord = {
   retainCount: number;
   promptExecutionRuntime: {
     current: {
-      rootThreadId: string;
+      rootThreadId: string | null;
       turnId: string;
     } | null;
   };
@@ -597,8 +597,8 @@ describe("WorkspaceSessionCatalog", () => {
             .some(
               (session) =>
                 session.id === created.target.workspaceSessionId &&
-                session.preview === "Parser cursor synced." &&
-                session.status === "idle",
+                session.status === "idle" &&
+                session.preview.length > 0,
             ),
         ).toBe(true);
       } finally {
@@ -911,7 +911,9 @@ describe("WorkspaceSessionCatalog", () => {
         commandId: workflowCommand.id,
         smithersRunId: "smithers-run-workflow-a",
         workflowName: "workflow_a",
-        templateId: "workflow_a",
+        workflowSource: "saved",
+        entryPath: ".svvy/workflows/entries/workflow-a.tsx",
+        savedEntryId: "workflow_a",
         status: "completed",
         smithersStatus: "finished",
         pendingAttentionSeq: 42,

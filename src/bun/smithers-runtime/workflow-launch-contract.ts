@@ -2,21 +2,24 @@ import { createHash } from "node:crypto";
 import { Type } from "@mariozechner/pi-ai";
 import type { TSchema } from "@sinclair/typebox";
 import { z } from "zod";
-import type { BundledWorkflowDefinition } from "./registry";
+import type { RunnableWorkflowRegistryEntry } from "./workflow-registry";
 
 export const SMITHERS_RUN_WORKFLOW_TOOL_NAME = "smithers.run_workflow";
-export const RESUME_RUN_ID_FIELD = "resumeRunId";
 
-export type BundledWorkflowLaunchContract = {
+export type RunnableWorkflowLaunchContract = {
   workflowId: string;
-  workflowName: string;
   label: string;
-  description: string;
+  summary: string;
+  sourceScope: RunnableWorkflowRegistryEntry["sourceScope"];
+  entryPath: string;
+  definitionPaths: string[];
+  promptPaths: string[];
+  componentPaths: string[];
+  assetPaths: string[];
   semanticToolName: typeof SMITHERS_RUN_WORKFLOW_TOOL_NAME;
   launchToolName: `smithers.run_workflow.${string}`;
   launchSchema: z.ZodTypeAny;
   launchInputJsonSchema: Record<string, unknown>;
-  launchToolJsonSchema: Record<string, unknown>;
   launchToolParameters: TSchema;
   contractHash: string;
 };
@@ -25,68 +28,52 @@ type JsonObject = Record<string, unknown>;
 
 const WORKFLOW_ID_PATTERN = /^[a-z0-9_]+$/;
 
-export function compileBundledWorkflowLaunchContract(
-  definition: BundledWorkflowDefinition,
-): BundledWorkflowLaunchContract {
-  assertValidWorkflowId(definition.id);
+export function compileRunnableWorkflowLaunchContract(
+  entry: RunnableWorkflowRegistryEntry,
+): RunnableWorkflowLaunchContract {
+  assertValidWorkflowId(entry.workflowId);
   const launchInputJsonSchema = sanitizeToolJsonSchema(
-    z.toJSONSchema(definition.launchSchema as any, { io: "input" }) as JsonObject,
+    z.toJSONSchema(entry.launchSchema as any, { io: "input" }) as JsonObject,
   );
-  ensureRootObjectSchema(launchInputJsonSchema, definition.id);
+  ensureRootObjectSchema(launchInputJsonSchema, entry.workflowId);
 
-  const launchToolName = `${SMITHERS_RUN_WORKFLOW_TOOL_NAME}.${definition.id}` as const;
-  const properties = {
-    ...readObjectProperties(launchInputJsonSchema, definition.id),
-  };
-  if (RESUME_RUN_ID_FIELD in properties) {
-    throw new Error(
-      `Bundled Smithers workflow ${definition.id} uses reserved launch field ${RESUME_RUN_ID_FIELD}.`,
-    );
-  }
-
-  properties[RESUME_RUN_ID_FIELD] = {
-    type: "string",
-    minLength: 1,
-    description:
-      "Resume the same Smithers run id when Smithers still considers that run resumable.",
-  };
-
-  const launchToolJsonSchema = sanitizeToolJsonSchema({
-    type: "object",
-    description: definition.description,
-    properties,
-    required: readRequiredProperties(launchInputJsonSchema),
-    additionalProperties: launchInputJsonSchema.additionalProperties ?? false,
-  });
-
+  const launchToolName = `${SMITHERS_RUN_WORKFLOW_TOOL_NAME}.${entry.workflowId}` as const;
   const contractHash = createStableHash({
-    workflowId: definition.id,
-    workflowName: definition.workflowName,
-    label: definition.label,
-    description: definition.description,
+    workflowId: entry.workflowId,
+    label: entry.label,
+    summary: entry.summary,
+    sourceScope: entry.sourceScope,
+    entryPath: entry.entryPath,
+    definitionPaths: entry.definitionPaths,
+    promptPaths: entry.promptPaths,
+    componentPaths: entry.componentPaths,
+    assetPaths: entry.assetPaths,
     semanticToolName: SMITHERS_RUN_WORKFLOW_TOOL_NAME,
     launchToolName,
     launchInputJsonSchema,
-    launchToolJsonSchema,
   });
 
   return {
-    workflowId: definition.id,
-    workflowName: definition.workflowName,
-    label: definition.label,
-    description: definition.description,
+    workflowId: entry.workflowId,
+    label: entry.label,
+    summary: entry.summary,
+    sourceScope: entry.sourceScope,
+    entryPath: entry.entryPath,
+    definitionPaths: entry.definitionPaths.slice(),
+    promptPaths: entry.promptPaths.slice(),
+    componentPaths: entry.componentPaths.slice(),
+    assetPaths: entry.assetPaths.slice(),
     semanticToolName: SMITHERS_RUN_WORKFLOW_TOOL_NAME,
     launchToolName,
-    launchSchema: definition.launchSchema,
+    launchSchema: entry.launchSchema,
     launchInputJsonSchema,
-    launchToolJsonSchema,
-    launchToolParameters: Type.Unsafe(launchToolJsonSchema) as TSchema,
+    launchToolParameters: Type.Unsafe(launchInputJsonSchema) as TSchema,
     contractHash,
   };
 }
 
 export function createWorkflowToolSurfaceVersion(
-  contracts: readonly BundledWorkflowLaunchContract[],
+  contracts: readonly RunnableWorkflowLaunchContract[],
 ): string {
   return createStableHash(
     contracts.map((contract) => ({
@@ -99,7 +86,7 @@ export function createWorkflowToolSurfaceVersion(
 function assertValidWorkflowId(workflowId: string): void {
   if (!WORKFLOW_ID_PATTERN.test(workflowId)) {
     throw new Error(
-      `Bundled Smithers workflow id ${workflowId} must match ${WORKFLOW_ID_PATTERN.source} so svvy can generate a stable smithers.run_workflow.<workflow_id> tool name.`,
+      `Runnable Smithers workflow id ${workflowId} must match ${WORKFLOW_ID_PATTERN.source} so svvy can generate a stable smithers.run_workflow.<workflow_id> tool name.`,
     );
   }
 }
@@ -107,28 +94,9 @@ function assertValidWorkflowId(workflowId: string): void {
 function ensureRootObjectSchema(schema: JsonObject, workflowId: string): void {
   if (schema.type !== "object") {
     throw new Error(
-      `Bundled Smithers workflow ${workflowId} must expose an object launch schema so svvy can generate a workflow launch tool.`,
+      `Runnable Smithers workflow ${workflowId} must expose an object launch schema so svvy can generate a workflow launch tool.`,
     );
   }
-}
-
-function readObjectProperties(schema: JsonObject, workflowId: string): JsonObject {
-  const properties = schema.properties;
-  if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
-    if (schema.additionalProperties === true) {
-      return {};
-    }
-    throw new Error(
-      `Bundled Smithers workflow ${workflowId} must expose object launch properties or explicit additionalProperties: true.`,
-    );
-  }
-  return properties as JsonObject;
-}
-
-function readRequiredProperties(schema: JsonObject): string[] {
-  return Array.isArray(schema.required)
-    ? schema.required.filter((entry): entry is string => typeof entry === "string")
-    : [];
 }
 
 function sanitizeToolJsonSchema(input: JsonObject): JsonObject {
@@ -189,5 +157,6 @@ function stableJsonStringify(value: unknown): string {
       .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableJsonStringify(entryValue)}`)
       .join(",")}}`;
   }
+
   return JSON.stringify(value);
 }

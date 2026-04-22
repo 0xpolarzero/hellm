@@ -6,10 +6,10 @@ export interface PromptExecutionContext {
   sessionId: string;
   turnId: string;
   surfacePiSessionId: string;
-  surfaceThreadId: string;
+  surfaceThreadId: string | null;
   surfaceKind: PromptExecutionSurfaceKind;
   defaultEpisodeKind: StructuredEpisodeKind;
-  rootThreadId: string;
+  rootThreadId: string | null;
   promptText: string;
   rootEpisodeKind: StructuredEpisodeKind;
   sessionWaitApplied: boolean;
@@ -26,19 +26,20 @@ export function createPromptExecutionContext(input: {
   sessionId: string;
   turnId: string;
   surfacePiSessionId: string;
-  surfaceThreadId?: string;
+  surfaceThreadId?: string | null;
   surfaceKind?: PromptExecutionSurfaceKind;
   defaultEpisodeKind?: StructuredEpisodeKind;
-  rootThreadId?: string;
+  rootThreadId?: string | null;
   promptText: string;
   rootEpisodeKind?: StructuredEpisodeKind;
   threadWasTerminalAtStart?: boolean;
   durableSurfaceContext?: string;
   suppressPendingWorkflowAttentionDelivery?: boolean;
 }): PromptExecutionContext {
-  const surfaceThreadId = input.surfaceThreadId ?? input.rootThreadId;
-  if (!surfaceThreadId) {
-    throw new Error("Prompt execution context requires a surfaceThreadId or rootThreadId.");
+  const surfaceKind = input.surfaceKind ?? "orchestrator";
+  const surfaceThreadId = input.surfaceThreadId ?? input.rootThreadId ?? null;
+  if (surfaceKind === "handler" && !surfaceThreadId) {
+    throw new Error("Handler prompt execution context requires a thread id.");
   }
 
   const defaultEpisodeKind = input.defaultEpisodeKind ?? input.rootEpisodeKind ?? "change";
@@ -48,9 +49,9 @@ export function createPromptExecutionContext(input: {
     turnId: input.turnId,
     surfacePiSessionId: input.surfacePiSessionId,
     surfaceThreadId,
-    surfaceKind: input.surfaceKind ?? "orchestrator",
+    surfaceKind,
     defaultEpisodeKind,
-    rootThreadId: surfaceThreadId,
+    rootThreadId: input.rootThreadId ?? surfaceThreadId,
     promptText: input.promptText,
     rootEpisodeKind: defaultEpisodeKind,
     sessionWaitApplied: false,

@@ -85,7 +85,7 @@ const ZERO_USAGE: AssistantMessage["usage"] = {
   },
 };
 
-const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v2.sqlite";
+const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v3.sqlite";
 
 interface ManagedSession {
   sessionId: string;
@@ -600,6 +600,9 @@ export class WorkspaceSessionCatalog {
   ): Promise<ManagedSession> {
     const actorProfile = getActorProfileForTarget(options.target);
     const resolvedSystemPrompt = buildSystemPrompt(actorProfile);
+    if (actorProfile === "handler") {
+      await this.smithersRuntimeManager.refreshWorkflowRegistry();
+    }
     const currentSmithersToolSurfaceVersion =
       actorProfile === "handler"
         ? this.smithersRuntimeManager.getWorkflowToolSurfaceVersion()
@@ -1047,15 +1050,7 @@ export class WorkspaceSessionCatalog {
         threadId: target?.surface === "thread" ? (target.threadId ?? null) : null,
         requestSummary,
       });
-      const rootThreadId =
-        target?.surface === "thread" && target.threadId
-          ? target.threadId
-          : this.structuredSessionStore.createThread({
-              turnId: turn.id,
-              surfacePiSessionId: session.sessionId,
-              title: requestSummary,
-              objective: promptText,
-            }).id;
+      const rootThreadId = target?.surface === "thread" && target.threadId ? target.threadId : null;
 
       return createPromptExecutionContext({
         sessionId: structuredSessionId,
@@ -1107,7 +1102,7 @@ export class WorkspaceSessionCatalog {
   private async createHandlerThread(input: {
     sessionId: string;
     turnId: string;
-    parentThreadId: string;
+    parentThreadId: string | null;
     parentSurfacePiSessionId: string;
     title: string;
     objective: string;
@@ -1275,7 +1270,7 @@ export class WorkspaceSessionCatalog {
         ) {
           await this.smithersRuntimeManager.deliverPendingHandlerAttention(
             promptContext.sessionId,
-            promptContext.rootThreadId,
+            promptContext.rootThreadId ?? undefined,
           );
         }
         await this.disposeManagedSurfaceIfUnused(session);
@@ -1303,7 +1298,9 @@ export class WorkspaceSessionCatalog {
       return;
     }
 
-    const thread = snapshot.threads.find((entry) => entry.id === promptContext.rootThreadId);
+    const thread = promptContext.rootThreadId
+      ? (snapshot.threads.find((entry) => entry.id === promptContext.rootThreadId) ?? null)
+      : null;
     const latestEpisode = thread ? getLatestThreadEpisode(snapshot, thread.id) : null;
     if (!thread || !latestEpisode) {
       return;
@@ -1435,9 +1432,6 @@ export class WorkspaceSessionCatalog {
 
     try {
       const snapshot = this.structuredSessionStore.getSessionState(promptContext.sessionId);
-      const rootThread = snapshot.threads.find(
-        (thread) => thread.id === promptContext.rootThreadId,
-      );
       const assistantText = messageToPlainText(message).trim();
       const turn = snapshot.turns.find((entry) => entry.id === promptContext.turnId);
       if (!turn) {
@@ -1457,30 +1451,6 @@ export class WorkspaceSessionCatalog {
           status: "waiting",
         });
         return;
-      }
-
-      if (
-        promptContext.surfaceKind !== "handler" &&
-        assistantText &&
-        rootThread?.status === "running-handler"
-      ) {
-        this.structuredSessionStore.updateThread({
-          threadId: rootThread.id,
-          status: "completed",
-        });
-        const finalizedThread =
-          this.structuredSessionStore
-            .getSessionState(promptContext.sessionId)
-            .threads.find((thread) => thread.id === promptContext.rootThreadId) ?? null;
-        if (finalizedThread && isTerminalThreadStatus(finalizedThread.status)) {
-          this.structuredSessionStore.createEpisode({
-            threadId: promptContext.rootThreadId,
-            kind: promptContext.rootEpisodeKind,
-            title: finalizedThread.title || summarizePromptForTurn(promptContext.promptText),
-            summary: summarizePromptForTurn(assistantText),
-            body: assistantText,
-          });
-        }
       }
 
       this.persistPendingTurnDecision({
@@ -1508,9 +1478,9 @@ export class WorkspaceSessionCatalog {
 
     try {
       const snapshot = this.structuredSessionStore.getSessionState(promptContext.sessionId);
-      const rootThread = snapshot.threads.find(
-        (thread) => thread.id === promptContext.rootThreadId,
-      );
+      const rootThread = promptContext.rootThreadId
+        ? (snapshot.threads.find((thread) => thread.id === promptContext.rootThreadId) ?? null)
+        : null;
       if (
         rootThread &&
         (rootThread.status === "running-handler" || rootThread.status === "running-workflow")
@@ -1588,6 +1558,10 @@ async function createManagedSession(
   },
 ): Promise<ManagedSession> {
   mkdirSync(options.agentDir, { recursive: true });
+
+  if (options.actorProfile === "handler") {
+    await options.smithersRuntimeManager.refreshWorkflowRegistry();
+  }
 
   const authStorage = AuthStorage.inMemory();
   syncAuthStorage(authStorage);
@@ -1837,7 +1811,7 @@ function buildHandlerWorkflowAttentionPrompt(input: {
     `Thread id: ${input.thread.id}`,
     `Thread title: ${input.thread.title}`,
     `Objective: ${input.thread.objective}`,
-    `Bundled workflow id: ${input.workflowId}`,
+    `Workflow entry id: ${input.workflowId}`,
     `Smithers run id: ${input.smithersRunId}`,
     `Attention reason: ${input.reason}`,
     `Current workflow summary: ${input.summary}`,
@@ -1871,8 +1845,11 @@ function projectWorkspaceWait(
 
 function getEffectiveTurnWait(
   snapshot: StructuredSessionSnapshot,
-  threadId: string,
+  threadId: string | null,
 ): StructuredWaitState | null {
+  if (!threadId) {
+    return null;
+  }
   const thread = snapshot.threads.find((entry) => entry.id === threadId) ?? null;
   if (!thread) {
     return null;

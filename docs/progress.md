@@ -252,7 +252,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Restore active workflow-run state after app restart.
 - [ ] Restore pending handler attention queues and per-surface prompt-lock state after app restart.
 - [ ] Add integration tests that exercise the real pi-backed runtime seam for direct work.
-- [ ] Expand from the current real bundled-runtime supervision coverage in `src/bun/smithers-runtime/manager.test.ts` and `src/bun/smithers-tools.test.ts` to full pi-backed handler-thread delegation and workflow-run supervision.
+- [ ] Expand from the current real embedded-runtime supervision coverage in `src/bun/smithers-runtime/manager.test.ts` and `src/bun/smithers-tools.test.ts` to full pi-backed handler-thread delegation and workflow-run supervision.
 - [ ] Add integration tests that exercise restart and resume behavior across workspace state, live surface state, and pane bindings.
 
 ## 18. Context Budget Observability

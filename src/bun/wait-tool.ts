@@ -50,7 +50,8 @@ export function createWaitTool(options: {
       const resumeWhen = params.resumeWhen.trim();
       const command = options.store.createCommand({
         turnId: runtime.turnId,
-        threadId: runtime.rootThreadId,
+        surfacePiSessionId: runtime.surfacePiSessionId,
+        threadId: runtime.rootThreadId ?? null,
         toolName: WAIT_TOOL_NAME,
         executor: "runtime",
         visibility: "surface",
@@ -59,7 +60,7 @@ export function createWaitTool(options: {
       });
       options.store.startCommand(command.id);
       const isHandlerSurface = runtime.surfaceKind === "handler";
-      if (isHandlerSurface) {
+      if (isHandlerSurface && runtime.rootThreadId) {
         options.store.updateThread({
           threadId: runtime.rootThreadId,
           status: "waiting",
@@ -71,12 +72,6 @@ export function createWaitTool(options: {
             since: new Date().toISOString(),
           },
         });
-      } else {
-        options.store.updateThread({
-          threadId: runtime.rootThreadId,
-          status: "completed",
-          wait: null,
-        });
       }
 
       let sessionWaitApplied = false;
@@ -86,7 +81,7 @@ export function createWaitTool(options: {
           owner: isHandlerSurface
             ? {
                 kind: "thread",
-                threadId: runtime.rootThreadId,
+                threadId: runtime.rootThreadId!,
               }
             : {
                 kind: "orchestrator",
@@ -151,8 +146,11 @@ export function createWaitTool(options: {
 function ensureRunnableSurfaceThread(
   store: StructuredSessionStateStore,
   sessionId: string,
-  threadId: string,
+  threadId: string | null,
 ): void {
+  if (!threadId) {
+    return;
+  }
   const thread = store.getSessionState(sessionId).threads.find((entry) => entry.id === threadId);
   if (!thread) {
     return;

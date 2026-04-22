@@ -45,21 +45,16 @@ function createRuntime(store: StructuredSessionStateStore): PromptExecutionRunti
     surfacePiSessionId: "session-wait-tool",
     requestSummary: "Wait for user input",
   });
-  const rootThread = store.createThread({
-    turnId: turn.id,
-    title: "Clarify rollout",
-    objective: "Pause until the user clarifies the rollout strategy.",
-  });
 
   return {
     current: {
       sessionId: "session-wait-tool",
       turnId: turn.id,
       surfacePiSessionId: "session-wait-tool",
-      surfaceThreadId: rootThread.id,
+      surfaceThreadId: null,
       surfaceKind: "orchestrator",
       defaultEpisodeKind: "clarification",
-      rootThreadId: rootThread.id,
+      rootThreadId: null,
       promptText: "Wait for user input",
       rootEpisodeKind: "clarification",
       sessionWaitApplied: false,
@@ -83,7 +78,7 @@ describe("wait tool", () => {
     ).rejects.toThrow("wait can only run during an active prompt.");
   });
 
-  it("records command, thread wait, and session wait state", async () => {
+  it("records command and orchestrator-owned session wait state", async () => {
     const store = createStore();
     const runtime = createRuntime(store);
     const tool = createWaitTool({
@@ -114,11 +109,7 @@ describe("wait tool", () => {
         status: "waiting",
       }),
     ]);
-    expect(snapshot.threads).toHaveLength(1);
-    expect(snapshot.threads[0]).toMatchObject({
-      status: "completed",
-      wait: null,
-    });
+    expect(snapshot.threads).toEqual([]);
     expect(snapshot.session.wait).toMatchObject({
       owner: { kind: "orchestrator" },
       kind: "user",

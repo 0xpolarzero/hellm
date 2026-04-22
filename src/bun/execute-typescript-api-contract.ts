@@ -119,6 +119,53 @@ export interface WebFetchTextResult {
   text: string;
 }
 
+export type WorkflowAssetKind = "definition" | "prompt" | "component";
+
+export type WorkflowAssetScope = "saved" | "artifact";
+
+/**
+ * Compact discovery metadata for one reusable workflow asset.
+ */
+export interface WorkflowAssetMetadata {
+  id: string;
+  kind: WorkflowAssetKind;
+  title: string;
+  summary: string;
+  path: string;
+  scope: WorkflowAssetScope;
+  subtype?: string;
+  tags: string[];
+  exports: string[];
+  variables: string[];
+  providerModelSummary?: string;
+  toolsetSummary?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * Filters for `api.workflow.listAssets(...)`.
+ */
+export interface WorkflowListAssetsInput {
+  kind?: WorkflowAssetKind;
+  subtype?: string;
+  tags?: string[];
+  pathPrefix?: string;
+  exports?: string[];
+  scope?: WorkflowAssetScope | "both";
+}
+
+/**
+ * One provider/model option discoverable for workflow authoring.
+ */
+export interface WorkflowModelInfo {
+  providerId: string;
+  modelId: string;
+  authAvailable: boolean;
+  authSource: string;
+  capabilityFlags: string[];
+}
+
 /**
  * Host SDK injected as the `api` variable inside `execute_typescript`.
  *
@@ -380,5 +427,22 @@ export interface SvvyApi {
      * Fetch one URL as plain text.
      */
     fetchText(input: { url: string }): Promise<WebFetchTextResult>;
+  };
+
+  /**
+   * Workflow-library discovery helpers used while authoring workflows.
+   */
+  workflow: {
+    /**
+     * List reusable saved or artifact workflow assets.
+     *
+     * This does not list runnable workflow entries.
+     */
+    listAssets(input?: WorkflowListAssetsInput): Promise<WorkflowAssetMetadata[]>;
+
+    /**
+     * List provider/model options for authoring or revising agent profiles.
+     */
+    listModels(): Promise<WorkflowModelInfo[]>;
   };
 }

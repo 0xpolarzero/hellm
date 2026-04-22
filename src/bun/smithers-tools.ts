@@ -5,9 +5,8 @@ import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import type { StructuredSessionStateStore } from "./structured-session-state";
 import { SmithersRuntimeManager } from "./smithers-runtime/manager";
 import {
-  RESUME_RUN_ID_FIELD,
   SMITHERS_RUN_WORKFLOW_TOOL_NAME,
-  type BundledWorkflowLaunchContract,
+  type RunnableWorkflowLaunchContract,
 } from "./smithers-runtime/workflow-launch-contract";
 
 const emptyParamsSchema = Type.Object({}, { additionalProperties: false });
@@ -146,12 +145,14 @@ export function createSmithersTools(options: CreateSmithersToolsOptions): AgentT
     createSmithersTool({
       name: "smithers.list_workflows",
       label: "Smithers Workflows",
-      description: "List bundled product-owned Smithers workflows available to handler threads.",
+      description:
+        "List runnable saved and artifact Smithers workflow entries available to the current handler thread.",
       parameters: emptyParamsSchema,
       visibility: "summary",
       runtime: options.runtime,
       store: options.store,
       execute: async () => {
+        await options.manager.refreshWorkflowRegistry();
         const workflows = options.manager.listWorkflows();
         return {
           summary:
@@ -159,7 +160,7 @@ export function createSmithersTools(options: CreateSmithersToolsOptions): AgentT
               ? `Available workflows: ${workflows
                   .map((workflow) => `${workflow.id} via ${workflow.launchToolName}`)
                   .join(", ")}.`
-              : "No bundled workflows are available.",
+              : "No runnable workflow entries are available.",
           details: {
             workflows,
             workflowToolSurfaceVersion: options.manager.getWorkflowToolSurfaceVersion(),
@@ -173,7 +174,7 @@ export function createSmithersTools(options: CreateSmithersToolsOptions): AgentT
     createSmithersTool({
       name: "smithers.list_runs",
       label: "List Runs",
-      description: "List recent bundled Smithers workflow runs.",
+      description: "List recent Smithers workflow runs with svvy ownership metadata when known.",
       parameters: listRunsParamsSchema,
       visibility: "summary",
       runtime: options.runtime,
@@ -518,26 +519,24 @@ export function createSmithersTools(options: CreateSmithersToolsOptions): AgentT
 
 function createWorkflowLaunchTool(
   options: CreateSmithersToolsOptions,
-  contract: BundledWorkflowLaunchContract,
+  contract: RunnableWorkflowLaunchContract,
 ): AgentTool<any> {
   return createSmithersTool({
     name: contract.launchToolName,
     label: contract.label,
-    description: `Launch or resume the bundled ${contract.label} Smithers workflow under the current handler thread.`,
+    description: `Launch or resume the ${contract.label} Smithers workflow entry under the current handler thread.`,
     parameters: contract.launchToolParameters,
     visibility: "surface",
     runtime: options.runtime,
     store: options.store,
     execute: async (params) => {
       const runtime = requireActiveRuntime(options.runtime, contract.launchToolName);
-      const { launchInput, resumeRunId } = splitWorkflowLaunchToolParams(params);
       const result = await options.manager.launchWorkflow({
         sessionId: runtime.sessionId,
         threadId: runtime.surfaceThreadId,
         workflowId: contract.workflowId,
-        launchInput,
+        launchInput: params,
         commandId: "__pending__",
-        runId: resumeRunId?.trim() || undefined,
       });
       return {
         summary: result.summary,
@@ -545,20 +544,14 @@ function createWorkflowLaunchTool(
       };
     },
     customizeCommand(command, params) {
-      const { resumeRunId } = splitWorkflowLaunchToolParams(params);
-      command.title = resumeRunId?.trim()
-        ? `Resume ${contract.label} workflow`
-        : `Run ${contract.label} workflow`;
-      command.summary = resumeRunId?.trim()
-        ? `Resume bundled workflow ${contract.workflowId} in Smithers.`
-        : `Launch bundled workflow ${contract.workflowId} in Smithers.`;
-    },
-    beforeExecute(input) {
-      const { resumeRunId } = splitWorkflowLaunchToolParams(input.params);
-      if (!resumeRunId?.trim()) {
-        return null;
-      }
-      return options.manager.getRun(resumeRunId.trim());
+      const mode =
+        params &&
+        typeof params === "object" &&
+        Object.keys(params as Record<string, unknown>).length > 0
+          ? "Launch or resume"
+          : "Run";
+      command.title = `${mode} ${contract.label} workflow`;
+      command.summary = `Launch or resume runnable workflow ${contract.workflowId} in Smithers.`;
     },
     afterExecute(input) {
       return {
@@ -566,23 +559,28 @@ function createWorkflowLaunchTool(
         workflowId: contract.workflowId,
         launchToolName: contract.launchToolName,
         launchContractHash: contract.contractHash,
+        sourceScope: contract.sourceScope,
+        entryPath: contract.entryPath,
+        definitionPaths: contract.definitionPaths,
+        promptPaths: contract.promptPaths,
+        componentPaths: contract.componentPaths,
+        assetPaths: contract.assetPaths,
         launchInput: input.result.details.launchInput,
         preStatus: readRunStatus(input.before),
         postStatus: input.result.details.smithersStatus,
         runId: input.result.details.runId,
         workflowRunId: input.result.details.structuredWorkflowRunId,
+        resumedRunId: input.result.details.resumedRunId,
       };
     },
     executeWithCommandId: async (params, commandId) => {
       const runtime = requireActiveRuntime(options.runtime, contract.launchToolName);
-      const { launchInput, resumeRunId } = splitWorkflowLaunchToolParams(params);
       const result = await options.manager.launchWorkflow({
         sessionId: runtime.sessionId,
         threadId: runtime.surfaceThreadId,
         workflowId: contract.workflowId,
-        launchInput,
+        launchInput: params,
         commandId,
-        runId: resumeRunId?.trim() || undefined,
       });
       return {
         summary: result.summary,
@@ -653,7 +651,9 @@ function createSmithersTool<TSchema extends TypeBoxSchema>(input: {
         : await input.execute(params);
       const facts = {
         smithersToolName: input.name,
-        transport: "bundled-runtime",
+        semanticSmithersToolName: input.name,
+        rawSmithersOperationName: input.name.replace(/^smithers\./, ""),
+        transport: "embedded-runtime",
         args: params,
         ...input.afterExecute?.({ params, before, result }),
       };
@@ -677,12 +677,20 @@ function createSmithersTool<TSchema extends TypeBoxSchema>(input: {
   };
 }
 
-function requireActiveRuntime(runtimeHandle: PromptExecutionRuntimeHandle, toolName: string) {
+function requireActiveRuntime(
+  runtimeHandle: PromptExecutionRuntimeHandle,
+  toolName: string,
+): NonNullable<PromptExecutionRuntimeHandle["current"]> & { surfaceThreadId: string } {
   const runtime = runtimeHandle.current;
   if (!runtime) {
     throw new Error(`${toolName} can only run during an active prompt.`);
   }
-  return runtime;
+  if (runtime.surfaceKind !== "handler" || !runtime.surfaceThreadId) {
+    throw new Error(`${toolName} can only run from a handler thread surface.`);
+  }
+  return runtime as NonNullable<PromptExecutionRuntimeHandle["current"]> & {
+    surfaceThreadId: string;
+  };
 }
 
 function ensureRunnableHandlerThread(
@@ -712,23 +720,4 @@ function ensureRunnableHandlerThread(
 
 function readRunStatus(run: Record<string, unknown> | null): string | null {
   return typeof run?.status === "string" ? run.status : null;
-}
-
-function splitWorkflowLaunchToolParams(params: unknown): {
-  launchInput: Record<string, unknown>;
-  resumeRunId: string | null;
-} {
-  if (!params || typeof params !== "object" || Array.isArray(params)) {
-    throw new Error("Expected Smithers workflow launch parameters to be an object.");
-  }
-  const launchInput = { ...(params as Record<string, unknown>) };
-  const resumeRunId =
-    typeof launchInput[RESUME_RUN_ID_FIELD] === "string"
-      ? (launchInput[RESUME_RUN_ID_FIELD] as string)
-      : null;
-  delete launchInput[RESUME_RUN_ID_FIELD];
-  return {
-    launchInput,
-    resumeRunId,
-  };
 }

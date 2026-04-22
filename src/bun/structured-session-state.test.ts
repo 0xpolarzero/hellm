@@ -139,7 +139,9 @@ describe("structured session state write API", () => {
       commandId: startWorkflow.id,
       smithersRunId: "smithers-run-001",
       workflowName: "design-workflow",
-      templateId: "single_task",
+      workflowSource: "artifact",
+      entryPath: ".svvy/artifacts/workflows/design-workflow-v1/entries/workflow.tsx",
+      savedEntryId: null,
       status: "waiting",
       summary: "Paused for clarification about workflow resume ownership.",
     });
@@ -180,8 +182,9 @@ describe("structured session state write API", () => {
       commandId: resumeWorkflow.id,
       smithersRunId: "smithers-run-002",
       workflowName: "design-workflow-v2",
-      templateId: "single_task",
-      presetId: "design-review",
+      workflowSource: "artifact",
+      entryPath: ".svvy/artifacts/workflows/design-workflow-v2/entries/workflow.tsx",
+      savedEntryId: null,
       status: "completed",
       summary: "Completed after clarification and repair.",
     });
@@ -519,6 +522,9 @@ describe("structured session state write API", () => {
       commandId: workflowCommand.id,
       smithersRunId: "smithers-run-verification",
       workflowName: "verification-run",
+      workflowSource: "saved",
+      entryPath: ".svvy/workflows/entries/verification-run.tsx",
+      savedEntryId: "verification_run",
       status: "running",
       summary: "Workflow is running verification.",
     });

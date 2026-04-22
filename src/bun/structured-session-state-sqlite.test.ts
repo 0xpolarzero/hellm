@@ -119,7 +119,9 @@ describe("structured session state SQLite persistence", () => {
       commandId: firstCommand.id,
       smithersRunId: "smithers-run-alpha",
       workflowName: "persist-alpha",
-      templateId: "single_task",
+      workflowSource: "artifact",
+      entryPath: ".svvy/artifacts/workflows/persist-alpha/entries/workflow.tsx",
+      savedEntryId: null,
       status: "waiting",
       summary: "The first workflow run is waiting on clarification.",
     });
@@ -137,8 +139,9 @@ describe("structured session state SQLite persistence", () => {
       commandId: secondCommand.id,
       smithersRunId: "smithers-run-beta",
       workflowName: "persist-beta",
-      templateId: "single_task",
-      presetId: "design-review",
+      workflowSource: "saved",
+      entryPath: ".svvy/workflows/entries/persist-beta.tsx",
+      savedEntryId: "persist_beta",
       status: "completed",
       summary: "The repaired workflow run completed.",
     });
@@ -420,6 +423,9 @@ describe("structured session state SQLite persistence", () => {
       commandId: betaCommand.id,
       smithersRunId: "smithers-run-beta-list",
       workflowName: "beta-workflow",
+      workflowSource: "saved",
+      entryPath: ".svvy/workflows/entries/beta-workflow.tsx",
+      savedEntryId: "beta_workflow",
       status: "running",
       summary: "Beta workflow is running.",
     });

@@ -21,13 +21,13 @@ export type StructuredThreadStatus =
   | "completed";
 export type StructuredWaitKind = "user" | "external" | "approval" | "signal" | "timer";
 export type StructuredThreadWaitOwner = "handler" | "workflow";
+export type StructuredWorkflowWaitKind = "approval" | "event" | "timer";
 export type StructuredCommandExecutor =
   | "orchestrator"
   | "handler"
   | "execute_typescript"
   | "runtime"
-  | "smithers"
-  | "verification";
+  | "smithers";
 export type StructuredCommandVisibility = "trace" | "summary" | "surface";
 export type StructuredCommandStatus =
   | "requested"
@@ -182,14 +182,15 @@ export interface StructuredWorkflowRunRecord {
   commandId: string;
   smithersRunId: string;
   workflowName: string;
-  templateId: string | null;
-  presetId: string | null;
+  workflowSource: "saved" | "artifact";
+  entryPath: string | null;
+  savedEntryId: string | null;
   status: StructuredWorkflowStatus;
   smithersStatus: string;
-  waitKind: StructuredWaitKind | null;
+  waitKind: StructuredWorkflowWaitKind | null;
   continuedFromRunIds: string[];
   activeDescendantRunId: string | null;
-  lastEventSeq: number;
+  lastEventSeq: number | null;
   pendingAttentionSeq: number | null;
   lastAttentionSeq: number | null;
   heartbeatAt: string | null;
@@ -372,14 +373,15 @@ export interface StructuredSessionStateStore {
     commandId: string;
     smithersRunId: string;
     workflowName: string;
-    templateId?: string | null;
-    presetId?: string | null;
+    workflowSource: "saved" | "artifact";
+    entryPath?: string | null;
+    savedEntryId?: string | null;
     status: StructuredWorkflowStatus;
     smithersStatus?: string;
-    waitKind?: StructuredWaitKind | null;
+    waitKind?: StructuredWorkflowWaitKind | null;
     continuedFromRunIds?: string[];
     activeDescendantRunId?: string | null;
-    lastEventSeq?: number;
+    lastEventSeq?: number | null;
     pendingAttentionSeq?: number | null;
     lastAttentionSeq?: number | null;
     heartbeatAt?: string | null;
@@ -390,10 +392,10 @@ export interface StructuredSessionStateStore {
     commandId?: string;
     status: StructuredWorkflowStatus;
     smithersStatus?: string;
-    waitKind?: StructuredWaitKind | null;
+    waitKind?: StructuredWorkflowWaitKind | null;
     continuedFromRunIds?: string[];
     activeDescendantRunId?: string | null;
-    lastEventSeq?: number;
+    lastEventSeq?: number | null;
     pendingAttentionSeq?: number | null;
     lastAttentionSeq?: number | null;
     heartbeatAt?: string | null;
@@ -512,14 +514,15 @@ type WorkflowRunRow = {
   command_id: string;
   smithers_run_id: string;
   workflow_name: string;
-  template_id: string | null;
-  preset_id: string | null;
+  workflow_source: "saved" | "artifact";
+  entry_path: string | null;
+  saved_entry_id: string | null;
   status: StructuredWorkflowStatus;
   smithers_status: string;
-  wait_kind: StructuredWaitKind | null;
+  wait_kind: StructuredWorkflowWaitKind | null;
   continued_from_run_ids_json: string | null;
   active_descendant_run_id: string | null;
-  last_event_seq: number;
+  last_event_seq: number | null;
   pending_attention_seq: number | null;
   last_attention_seq: number | null;
   heartbeat_at: string | null;
@@ -1398,14 +1401,15 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     commandId: string;
     smithersRunId: string;
     workflowName: string;
-    templateId?: string | null;
-    presetId?: string | null;
+    workflowSource: "saved" | "artifact";
+    entryPath?: string | null;
+    savedEntryId?: string | null;
     status: StructuredWorkflowStatus;
     smithersStatus?: string;
-    waitKind?: StructuredWaitKind | null;
+    waitKind?: StructuredWorkflowWaitKind | null;
     continuedFromRunIds?: string[];
     activeDescendantRunId?: string | null;
-    lastEventSeq?: number;
+    lastEventSeq?: number | null;
     pendingAttentionSeq?: number | null;
     lastAttentionSeq?: number | null;
     heartbeatAt?: string | null;
@@ -1424,8 +1428,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            command_id,
            smithers_run_id,
            workflow_name,
-           template_id,
-           preset_id,
+           workflow_source,
+           entry_path,
+           saved_entry_id,
            status,
            smithers_status,
            wait_kind,
@@ -1439,7 +1444,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            started_at,
            updated_at,
            finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         workflowId,
@@ -1448,14 +1453,15 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         input.commandId,
         input.smithersRunId,
         input.workflowName,
-        input.templateId ?? null,
-        input.presetId ?? null,
+        input.workflowSource,
+        input.entryPath ?? null,
+        input.savedEntryId ?? null,
         input.status,
         input.smithersStatus ?? defaultSmithersStatusForWorkflowStatus(input.status),
         input.waitKind ?? defaultWaitKindForWorkflowStatus(input.status),
         toJson(input.continuedFromRunIds ?? []),
         input.activeDescendantRunId ?? null,
-        input.lastEventSeq ?? -1,
+        input.lastEventSeq ?? null,
         input.pendingAttentionSeq ?? null,
         input.lastAttentionSeq ?? null,
         input.heartbeatAt ?? null,
@@ -1481,10 +1487,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     commandId?: string;
     status: StructuredWorkflowStatus;
     smithersStatus?: string;
-    waitKind?: StructuredWaitKind | null;
+    waitKind?: StructuredWorkflowWaitKind | null;
     continuedFromRunIds?: string[];
     activeDescendantRunId?: string | null;
-    lastEventSeq?: number;
+    lastEventSeq?: number | null;
     pendingAttentionSeq?: number | null;
     lastAttentionSeq?: number | null;
     heartbeatAt?: string | null;
@@ -1524,7 +1530,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         input.activeDescendantRunId === undefined
           ? existing.active_descendant_run_id
           : (input.activeDescendantRunId ?? null),
-        input.lastEventSeq ?? existing.last_event_seq,
+        input.lastEventSeq === undefined ? existing.last_event_seq : input.lastEventSeq,
         input.pendingAttentionSeq === undefined
           ? existing.pending_attention_seq
           : input.pendingAttentionSeq,
@@ -2085,8 +2091,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       commandId: row.command_id,
       smithersRunId: row.smithers_run_id,
       workflowName: row.workflow_name,
-      templateId: row.template_id,
-      presetId: row.preset_id,
+      workflowSource: row.workflow_source,
+      entryPath: row.entry_path,
+      savedEntryId: row.saved_entry_id,
       status: row.status,
       smithersStatus: row.smithers_status,
       waitKind: row.wait_kind,
@@ -2249,14 +2256,15 @@ function initializeSchema(db: Database): void {
       command_id TEXT NOT NULL,
       smithers_run_id TEXT NOT NULL,
       workflow_name TEXT NOT NULL,
-      template_id TEXT,
-      preset_id TEXT,
+      workflow_source TEXT NOT NULL,
+      entry_path TEXT,
+      saved_entry_id TEXT,
       status TEXT NOT NULL,
       smithers_status TEXT NOT NULL,
       wait_kind TEXT,
       continued_from_run_ids_json TEXT,
       active_descendant_run_id TEXT,
-      last_event_seq INTEGER NOT NULL,
+      last_event_seq INTEGER,
       pending_attention_seq INTEGER,
       last_attention_seq INTEGER,
       heartbeat_at TEXT,
@@ -2289,26 +2297,10 @@ function initializeSchema(db: Database): void {
       data_json TEXT
     );
   `);
-  ensureColumn(db, "workflow_run", "pending_attention_seq", "INTEGER");
 }
 
 function createId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
-}
-
-function ensureColumn(
-  db: Database,
-  tableName: string,
-  columnName: string,
-  columnDefinition: string,
-): void {
-  const columns = db
-    .query(`PRAGMA table_info(${tableName})`)
-    .all() as Array<{ name?: string }>;
-  if (columns.some((column) => column.name === columnName)) {
-    return;
-  }
-  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
 }
 
 function toJson(value: unknown): string | null {
@@ -2363,8 +2355,8 @@ function defaultSmithersStatusForWorkflowStatus(status: StructuredWorkflowStatus
 
 function defaultWaitKindForWorkflowStatus(
   status: StructuredWorkflowStatus,
-): StructuredWaitKind | null {
-  return status === "waiting" ? "external" : null;
+): StructuredWorkflowWaitKind | null {
+  return status === "waiting" ? "event" : null;
 }
 
 function resolveArtifactPath(input: {

@@ -5,8 +5,11 @@ import { tmpdir } from "node:os";
 import React from "react";
 import * as PiCodingAgent from "@mariozechner/pi-coding-agent";
 import { createStructuredSessionStateStore } from "../structured-session-state";
-import { SmithersRuntimeManager } from "./manager";
-import type { BundledWorkflowDefinition } from "./registry";
+import { SmithersRuntimeManager, type TestWorkflowDefinition } from "./manager";
+import {
+  createExecuteTypescriptTaskTestWorkflow,
+  createHelloWorldTestWorkflow,
+} from "./test-workflows";
 import {
   bundledWorkflowRuntimeStoredInputSchema,
   readBundledWorkflowLaunchInput,
@@ -74,9 +77,11 @@ function createManagerHarness(input: {
   return manager;
 }
 
-function createWorkspaceFixture(options: {
-  onHandlerAttention?: (event: HandlerAttentionEvent) => boolean | Promise<boolean>;
-} = {}) {
+function createWorkspaceFixture(
+  options: {
+    onHandlerAttention?: (event: HandlerAttentionEvent) => boolean | Promise<boolean>;
+  } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "svvy-smithers-runtime-"));
   tempDirs.push(root);
   const cwd = join(root, "workspace");
@@ -117,7 +122,7 @@ function createWorkspaceFixture(options: {
     turnId: seedTurn.id,
     surfacePiSessionId: "pi-thread-smithers-runtime",
     title: "Workflow supervisor",
-    objective: "Supervise bundled Smithers workflows.",
+    objective: "Supervise saved and artifact Smithers workflow entries.",
   });
   store.finishTurn({
     turnId: seedTurn.id,
@@ -134,6 +139,19 @@ function createWorkspaceFixture(options: {
     handlerAttentions,
     onHandlerAttention: options.onHandlerAttention,
   });
+  registerWorkflow(manager, createHelloWorldTestWorkflow(smithersDbPath(cwd)));
+  registerWorkflow(
+    manager,
+    createExecuteTypescriptTaskTestWorkflow({
+      dbPath: smithersDbPath(cwd),
+      cwd,
+      agentDir,
+      artifactDir: taskAgentArtifactDir(cwd),
+      provider: "openai",
+      model: "gpt-5.4",
+      thinkingLevel: "medium",
+    }),
+  );
 
   return {
     cwd,
@@ -186,9 +204,9 @@ function fileContains(path: string, needle: string): boolean {
 
 function registerWorkflow(
   manager: SmithersRuntimeManager,
-  definition: BundledWorkflowDefinition,
+  definition: TestWorkflowDefinition,
 ): void {
-  manager.upsertBundledWorkflow(definition);
+  manager.registerTestWorkflow(definition);
 }
 
 function latestEntry<T>(entries: T[] | undefined): T | null {
@@ -235,7 +253,7 @@ function createWorkflowCommand(input: {
   };
 }
 
-function createApprovalWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {
+function createApprovalWorkflowDefinition(dbPath: string): TestWorkflowDefinition {
   const launchSchema = z.object({
     title: z.string().min(1).default("Approve release?"),
   });
@@ -259,7 +277,7 @@ function createApprovalWorkflowDefinition(dbPath: string): BundledWorkflowDefini
   return {
     id: "approval_gate",
     label: "Approval Gate",
-    description: "Waits for an approval decision and finishes after the run is resumed.",
+    summary: "Waits for an approval decision and finishes after the run is resumed.",
     workflowName: "svvy-approval-gate",
     launchSchema,
     workflow: smithersApi.smithers((ctx) => {
@@ -296,7 +314,7 @@ function createApprovalWorkflowDefinition(dbPath: string): BundledWorkflowDefini
   };
 }
 
-function createContinueAsNewWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {
+function createContinueAsNewWorkflowDefinition(dbPath: string): TestWorkflowDefinition {
   const launchSchema = z.object({}).passthrough();
   const smithersApi = createSmithers(
     {
@@ -312,7 +330,7 @@ function createContinueAsNewWorkflowDefinition(dbPath: string): BundledWorkflowD
   return {
     id: "continue_once",
     label: "Continue Once",
-    description: "Continues as new exactly once and then produces a result.",
+    summary: "Continues as new exactly once and then produces a result.",
     workflowName: "svvy-continue-once",
     launchSchema,
     workflow: smithersApi.smithers((ctx) => {
@@ -352,7 +370,7 @@ function getSmithersContinuation(value: unknown): { payload?: { cursor?: string 
   return value as { payload?: { cursor?: string } };
 }
 
-function createSignalWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {
+function createSignalWorkflowDefinition(dbPath: string): TestWorkflowDefinition {
   const launchSchema = z.object({
     signalName: z.string().min(1).default("deploy.completed"),
   });
@@ -378,7 +396,7 @@ function createSignalWorkflowDefinition(dbPath: string): BundledWorkflowDefiniti
   return {
     id: "wait_for_signal",
     label: "Wait For Signal",
-    description: "Waits on a durable Smithers signal and records the delivered payload.",
+    summary: "Waits on a durable Smithers signal and records the delivered payload.",
     workflowName: "svvy-wait-for-signal",
     launchSchema,
     workflow: smithersApi.smithers((ctx) => {
@@ -414,7 +432,7 @@ function createSignalWorkflowDefinition(dbPath: string): BundledWorkflowDefiniti
   };
 }
 
-function createTranscriptWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {
+function createTranscriptWorkflowDefinition(dbPath: string): TestWorkflowDefinition {
   const launchSchema = z.object({
     prompt: z.string().min(1).default("Summarize the latest transcript probe."),
   });
@@ -472,7 +490,8 @@ function createTranscriptWorkflowDefinition(dbPath: string): BundledWorkflowDefi
   return {
     id: "chat_transcript_probe",
     label: "Chat Transcript Probe",
-    description: "Runs a deterministic agent task so transcript inspection can read real attempt history.",
+    summary:
+      "Runs a deterministic agent task so transcript inspection can read real attempt history.",
     workflowName: "svvy-chat-transcript-probe",
     launchSchema,
     workflow: smithersApi.smithers((ctx) => {
@@ -520,30 +539,18 @@ describe("SmithersRuntimeManager", () => {
 
     expect(helloWorldWorkflow).toMatchObject({
       id: "hello_world",
-      workflowName: "svvy-hello-world",
+      label: "Hello World",
+      summary: "Smoke-test workflow used by Smithers runtime tests.",
+      sourceScope: "saved",
+      entryPath: ".svvy/workflows/entries/hello-world.tsx",
       launchToolName: "smithers.run_workflow.hello_world",
       semanticToolName: "smithers.run_workflow",
-      resumeRunIdField: "resumeRunId",
       contractHash: expect.any(String),
       launchInputSchema: {
         type: "object",
         properties: {
           message: {
             default: "hello world",
-            type: "string",
-            minLength: 1,
-          },
-        },
-      },
-      launchToolSchema: {
-        type: "object",
-        properties: {
-          message: {
-            default: "hello world",
-            type: "string",
-            minLength: 1,
-          },
-          resumeRunId: {
             type: "string",
             minLength: 1,
           },
@@ -625,8 +632,10 @@ describe("SmithersRuntimeManager", () => {
     );
     expect(workflowRun).toMatchObject({
       threadId,
-      workflowName: "svvy-hello-world",
-      templateId: "hello_world",
+      workflowName: "hello_world",
+      workflowSource: "saved",
+      entryPath: ".svvy/workflows/entries/hello-world.tsx",
+      savedEntryId: "hello_world",
       status: "completed",
       smithersStatus: "finished",
       waitKind: null,
@@ -649,7 +658,10 @@ describe("SmithersRuntimeManager", () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]).toMatchObject({
       runId: launched.runId,
-      workflowName: "svvy-hello-world",
+      workflowName: "hello_world",
+      workflowId: "hello_world",
+      workflowSource: "saved",
+      entryPath: ".svvy/workflows/entries/hello-world.tsx",
       status: "finished",
       sessionId,
       threadId,
@@ -658,7 +670,10 @@ describe("SmithersRuntimeManager", () => {
     const run = await manager.getRun(launched.runId);
     expect(run).toMatchObject({
       runId: launched.runId,
-      workflowName: "svvy-hello-world",
+      workflowName: "hello_world",
+      workflowId: "hello_world",
+      workflowSource: "saved",
+      entryPath: ".svvy/workflows/entries/hello-world.tsx",
       status: "finished",
       structuredWorkflowRunId: workflowRun?.id,
       threadId,
@@ -698,13 +713,7 @@ describe("SmithersRuntimeManager", () => {
   });
 
   it("lists workspace-global runs with svvy session and thread ownership metadata", async () => {
-    const {
-      manager,
-      store,
-      sessionId,
-      threadId,
-      surfacePiSessionId,
-    } = createWorkspaceFixture();
+    const { manager, store, sessionId, threadId, surfacePiSessionId } = createWorkspaceFixture();
 
     const secondarySessionId = "session-smithers-runtime-secondary";
     store.upsertPiSession({
@@ -727,7 +736,7 @@ describe("SmithersRuntimeManager", () => {
       turnId: secondarySeedTurn.id,
       surfacePiSessionId: "pi-thread-smithers-runtime-secondary",
       title: "Secondary workflow supervisor",
-      objective: "Supervise additional bundled Smithers workflows.",
+      objective: "Supervise additional Smithers workflow entries.",
     });
     store.finishTurn({
       turnId: secondarySeedTurn.id,
@@ -788,14 +797,18 @@ describe("SmithersRuntimeManager", () => {
       expect.arrayContaining([
         expect.objectContaining({
           runId: primaryLaunch.runId,
-          workflowName: "svvy-hello-world",
+          workflowName: "hello_world",
+          workflowId: "hello_world",
+          workflowSource: "saved",
           status: "finished",
           sessionId,
           threadId,
         }),
         expect.objectContaining({
           runId: secondaryLaunch.runId,
-          workflowName: "svvy-hello-world",
+          workflowName: "hello_world",
+          workflowId: "hello_world",
+          workflowSource: "saved",
           status: "finished",
           sessionId: secondarySessionId,
           threadId: secondaryHandlerThread.id,
@@ -1196,12 +1209,12 @@ describe("SmithersRuntimeManager", () => {
     await waitFor("continued child run and final completion", () => {
       const runs = store
         .getSessionState(sessionId)
-        .workflowRuns.filter((entry) => entry.templateId === "continue_once");
+        .workflowRuns.filter((entry) => entry.savedEntryId === "continue_once");
       return runs.length === 2 && runs.some((entry) => entry.status === "completed");
     });
 
     const snapshot = store.getSessionState(sessionId);
-    const runs = snapshot.workflowRuns.filter((entry) => entry.templateId === "continue_once");
+    const runs = snapshot.workflowRuns.filter((entry) => entry.savedEntryId === "continue_once");
     expect(runs).toHaveLength(2);
     const parent = runs.find((entry) => entry.status === "continued");
     const child = runs.find((entry) => entry.status === "completed");
@@ -1286,17 +1299,19 @@ describe("SmithersRuntimeManager", () => {
     await waitFor("signal wait state", async () => {
       try {
         const run = await manager.getRun(launched.runId);
-        return run.status === "waiting-event" && run.waitKind === "signal";
+        return run.status === "waiting-event" && run.waitKind === "event";
       } catch {
         return false;
       }
     });
 
     let snapshot = store.getSessionState(sessionId);
-    expect(snapshot.workflowRuns.find((entry) => entry.smithersRunId === launched.runId)).toMatchObject({
+    expect(
+      snapshot.workflowRuns.find((entry) => entry.smithersRunId === launched.runId),
+    ).toMatchObject({
       status: "waiting",
       smithersStatus: "waiting-event",
-      waitKind: "signal",
+      waitKind: "event",
     });
     expect(snapshot.threads.find((thread) => thread.id === threadId)).toMatchObject({
       id: threadId,
@@ -1321,7 +1336,7 @@ describe("SmithersRuntimeManager", () => {
       timedOut: true,
       finalRun: {
         status: "waiting-event",
-        waitKind: "signal",
+        waitKind: "event",
       },
     });
 
@@ -1495,7 +1510,7 @@ describe("SmithersRuntimeManager", () => {
 
     const after = await manager.getRun(launched.runId);
     expect(after.lastEventSeq).toBe(lastInsertedSeq);
-    expect(after.lastEventSeq).toBeGreaterThan(before.lastEventSeq + 200);
+    expect(after.lastEventSeq).toBeGreaterThan((before.lastEventSeq ?? -1) + 200);
   });
 
   it("returns grouped transcript messages for a deterministic real Smithers agent task", async () => {
@@ -1543,9 +1558,9 @@ describe("SmithersRuntimeManager", () => {
         String(message.text).includes("Summarize the transcript probe."),
       ),
     ).toBe(true);
-    expect(
-      transcript.messages.some((message) => String(message.text).includes("Handled:")),
-    ).toBe(true);
+    expect(transcript.messages.some((message) => String(message.text).includes("Handled:"))).toBe(
+      true,
+    );
 
     const assistantDetail = await manager.getNodeDetail({
       runId: launched.runId,
@@ -1626,6 +1641,20 @@ describe("SmithersRuntimeManager", () => {
       runCommand,
     });
     managers.push(manager);
+    registerWorkflow(manager, createHelloWorldTestWorkflow(smithersDbPath(cwd)));
+    registerWorkflow(
+      manager,
+      createExecuteTypescriptTaskTestWorkflow({
+        dbPath: smithersDbPath(cwd),
+        cwd,
+        agentDir,
+        artifactDir: taskAgentArtifactDir(cwd),
+        provider: "openai",
+        model: "gpt-5.4",
+        thinkingLevel: "medium",
+        runCommand,
+      }),
+    );
 
     createAgentSessionSpy.mockImplementation(async (options: any) => {
       const subscribers = new Set<(event: Record<string, unknown>) => void>();
@@ -1786,8 +1815,10 @@ describe("SmithersRuntimeManager", () => {
         (entry) => entry.smithersRunId === launched.runId,
       );
       expect(workflowRun).toMatchObject({
-        workflowName: "svvy-execute-typescript-task",
-        templateId: "execute_typescript_task",
+        workflowName: "execute_typescript_task",
+        workflowSource: "saved",
+        entryPath: ".svvy/workflows/entries/execute-typescript-task.tsx",
+        savedEntryId: "execute_typescript_task",
         status: "completed",
         smithersStatus: "finished",
       });
@@ -1804,6 +1835,13 @@ describe("SmithersRuntimeManager", () => {
       expect(taskNodeDetail.node.nodeId).toBe("task");
       expect(taskNodeDetail.attempts.length).toBeGreaterThan(0);
       expect(taskNodeDetail.node.outputTable).toBeTruthy();
+      const taskAttemptMeta =
+        (taskNodeDetail.attempts[0] as { metaJson?: string | null } | undefined)?.metaJson ?? null;
+      const parsedTaskAttemptMeta = taskAttemptMeta
+        ? (JSON.parse(taskAttemptMeta) as { agentResume?: string | null })
+        : null;
+      expect(parsedTaskAttemptMeta?.agentResume).toEqual(expect.any(String));
+      expect(parsedTaskAttemptMeta?.agentResume).toContain("/task-agent-sessions/");
 
       const artifactFiles = readdirSync(taskAgentArtifactDir(cwd));
       expect(artifactFiles.length).toBeGreaterThan(0);

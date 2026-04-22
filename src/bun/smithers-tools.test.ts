@@ -10,12 +10,15 @@ import {
 } from "./prompt-execution-context";
 import { createSmithersTools } from "./smithers-tools";
 import { createStructuredSessionStateStore } from "./structured-session-state";
-import { SmithersRuntimeManager } from "./smithers-runtime/manager";
-import type { BundledWorkflowDefinition } from "./smithers-runtime/registry";
+import { SmithersRuntimeManager, type TestWorkflowDefinition } from "./smithers-runtime/manager";
 import {
   bundledWorkflowRuntimeStoredInputSchema,
   readBundledWorkflowLaunchInput,
 } from "./smithers-runtime/runtime-input";
+import {
+  createExecuteTypescriptTaskTestWorkflow,
+  createHelloWorldTestWorkflow,
+} from "./smithers-runtime/test-workflows";
 import { WaitForEvent, createSmithers } from "smithers-orchestrator";
 
 const tempDirs: string[] = [];
@@ -98,6 +101,19 @@ function createHarness() {
     }),
   });
   managers.push(manager);
+  registerWorkflow(manager, createHelloWorldTestWorkflow(smithersDbPath(cwd)));
+  registerWorkflow(
+    manager,
+    createExecuteTypescriptTaskTestWorkflow({
+      dbPath: smithersDbPath(cwd),
+      cwd,
+      agentDir,
+      artifactDir: join(cwd, ".svvy", "smithers-runtime", "artifacts", "task-agent"),
+      provider: "openai",
+      model: "gpt-5.4",
+      thinkingLevel: "medium",
+    }),
+  );
 
   const handlerTurn = store.startTurn({
     sessionId,
@@ -162,9 +178,9 @@ function fileContains(path: string, needle: string): boolean {
 
 function registerWorkflow(
   manager: SmithersRuntimeManager,
-  definition: BundledWorkflowDefinition,
+  definition: TestWorkflowDefinition,
 ): void {
-  manager.upsertBundledWorkflow(definition);
+  manager.registerTestWorkflow(definition);
 }
 
 function latestEntry<T>(entries: T[] | undefined): T | null {
@@ -178,7 +194,7 @@ type ApprovalDecision = {
   decidedAt: string | null;
 };
 
-function createApprovalWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {
+function createApprovalWorkflowDefinition(dbPath: string): TestWorkflowDefinition {
   const launchSchema = z.object({
     title: z.string().min(1).default("Approve release?"),
   });
@@ -202,7 +218,7 @@ function createApprovalWorkflowDefinition(dbPath: string): BundledWorkflowDefini
   return {
     id: "approval_gate",
     label: "Approval Gate",
-    description: "Waits for approval and then records the result.",
+    summary: "Waits for approval and then records the result.",
     workflowName: "svvy-approval-gate",
     launchSchema,
     workflow: smithersApi.smithers((ctx) => {
@@ -239,7 +255,7 @@ function createApprovalWorkflowDefinition(dbPath: string): BundledWorkflowDefini
   };
 }
 
-function createSignalWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {
+function createSignalWorkflowDefinition(dbPath: string): TestWorkflowDefinition {
   const launchSchema = z.object({
     signalName: z.string().min(1).default("deploy.completed"),
   });
@@ -265,7 +281,7 @@ function createSignalWorkflowDefinition(dbPath: string): BundledWorkflowDefiniti
   return {
     id: "wait_for_signal",
     label: "Wait For Signal",
-    description: "Waits on a durable Smithers signal and records the delivered payload.",
+    summary: "Waits on a durable Smithers signal and records the delivered payload.",
     workflowName: "svvy-wait-for-signal",
     launchSchema,
     workflow: smithersApi.smithers((ctx) => {
@@ -301,7 +317,7 @@ function createSignalWorkflowDefinition(dbPath: string): BundledWorkflowDefiniti
   };
 }
 
-function createTranscriptWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {
+function createTranscriptWorkflowDefinition(dbPath: string): TestWorkflowDefinition {
   const launchSchema = z.object({
     prompt: z.string().min(1).default("Summarize the latest transcript probe."),
   });
@@ -359,7 +375,8 @@ function createTranscriptWorkflowDefinition(dbPath: string): BundledWorkflowDefi
   return {
     id: "chat_transcript_probe",
     label: "Chat Transcript Probe",
-    description: "Runs a deterministic agent task so transcript inspection can read real attempt history.",
+    summary:
+      "Runs a deterministic agent task so transcript inspection can read real attempt history.",
     workflowName: "svvy-chat-transcript-probe",
     launchSchema,
     workflow: smithersApi.smithers((ctx) => {
@@ -435,9 +452,11 @@ describe("smithers.* tools", () => {
     expect(
       workflows.details.workflows.find((entry: { id: string }) => entry.id === "approval_gate"),
     ).toMatchObject({
+      id: "approval_gate",
+      sourceScope: "saved",
+      entryPath: ".svvy/workflows/entries/approval-gate.tsx",
       launchToolName: "smithers.run_workflow.approval_gate",
       semanticToolName: "smithers.run_workflow",
-      resumeRunIdField: "resumeRunId",
       contractHash: expect.any(String),
       launchInputSchema: {
         type: "object",
@@ -504,7 +523,9 @@ describe("smithers.* tools", () => {
     const waitingRun = await getRun.execute("tool-get-run", { runId });
     expect(waitingRun.details).toMatchObject({
       runId,
-      workflowName: "svvy-approval-gate",
+      workflowName: "approval_gate",
+      workflowId: "approval_gate",
+      workflowSource: "saved",
       status: "waiting-approval",
       waitKind: "approval",
     });
@@ -533,7 +554,6 @@ describe("smithers.* tools", () => {
 
     const resumed = await runApprovalWorkflow.execute("tool-resume-workflow", {
       title: "Approve the release?",
-      resumeRunId: runId,
     });
     expect(resumed.details).toMatchObject({
       workflowId: "approval_gate",
@@ -556,7 +576,10 @@ describe("smithers.* tools", () => {
     expect(runs.details.runs).toHaveLength(1);
     expect(runs.details.runs[0]).toMatchObject({
       runId,
-      workflowName: "svvy-approval-gate",
+      workflowName: "approval_gate",
+      workflowId: "approval_gate",
+      workflowSource: "saved",
+      entryPath: ".svvy/workflows/entries/approval-gate.tsx",
       status: "finished",
       sessionId,
       threadId,
@@ -629,26 +652,34 @@ describe("smithers.* tools", () => {
     expect(runWorkflowCommands[0]?.facts).toMatchObject({
       smithersToolName: "smithers.run_workflow.approval_gate",
       semanticSmithersToolName: "smithers.run_workflow",
+      rawSmithersOperationName: "run_workflow.approval_gate",
       launchToolName: "smithers.run_workflow.approval_gate",
       workflowId: "approval_gate",
+      sourceScope: "saved",
+      entryPath: ".svvy/workflows/entries/approval-gate.tsx",
       launchInput: {
         title: "Approve the release?",
       },
-      transport: "bundled-runtime",
+      transport: "embedded-runtime",
       runId,
+      resumedRunId: null,
       postStatus: "running",
     });
     expect(runWorkflowCommands[1]?.facts).toMatchObject({
       smithersToolName: "smithers.run_workflow.approval_gate",
       semanticSmithersToolName: "smithers.run_workflow",
+      rawSmithersOperationName: "run_workflow.approval_gate",
       launchToolName: "smithers.run_workflow.approval_gate",
       workflowId: "approval_gate",
+      sourceScope: "saved",
+      entryPath: ".svvy/workflows/entries/approval-gate.tsx",
       launchInput: {
         title: "Approve the release?",
       },
-      transport: "bundled-runtime",
+      transport: "embedded-runtime",
       runId,
-      preStatus: "waiting-event",
+      resumedRunId: runId,
+      preStatus: null,
       postStatus: "running",
     });
 
@@ -657,7 +688,9 @@ describe("smithers.* tools", () => {
     );
     expect(resolveApprovalCommand?.facts).toMatchObject({
       smithersToolName: "smithers.resolve_approval",
-      transport: "bundled-runtime",
+      semanticSmithersToolName: "smithers.resolve_approval",
+      rawSmithersOperationName: "resolve_approval",
+      transport: "embedded-runtime",
       runId,
       nodeId: "publish-gate",
       decision: "approve",
@@ -755,14 +788,18 @@ describe("smithers.* tools", () => {
       expect.arrayContaining([
         expect.objectContaining({
           runId: ownLaunch.details.runId,
-          workflowName: "svvy-hello-world",
+          workflowName: "hello_world",
+          workflowId: "hello_world",
+          workflowSource: "saved",
           status: "finished",
           sessionId,
           threadId,
         }),
         expect.objectContaining({
           runId: foreignLaunch.details.runId,
-          workflowName: "svvy-hello-world",
+          workflowName: "hello_world",
+          workflowId: "hello_world",
+          workflowSource: "saved",
           status: "finished",
           sessionId: secondarySessionId,
           threadId: secondaryHandlerThread.id,
@@ -799,7 +836,7 @@ describe("smithers.* tools", () => {
     await waitFor("signal tool wait state", async () => {
       try {
         const run = await manager.getRun(runId);
-        return run.status === "waiting-event" && run.waitKind === "signal";
+        return run.status === "waiting-event" && run.waitKind === "event";
       } catch {
         return false;
       }
@@ -809,7 +846,7 @@ describe("smithers.* tools", () => {
     expect(waitingRun.details).toMatchObject({
       runId,
       status: "waiting-event",
-      waitKind: "signal",
+      waitKind: "event",
     });
 
     const watched = await watchRun.execute("tool-watch-signal-run", {
@@ -822,7 +859,7 @@ describe("smithers.* tools", () => {
       timedOut: true,
       finalRun: {
         status: "waiting-event",
-        waitKind: "signal",
+        waitKind: "event",
       },
     });
 
@@ -854,7 +891,6 @@ describe("smithers.* tools", () => {
 
     await runSignalWorkflow.execute("tool-resume-signal-workflow", {
       signalName: "deploy.completed",
-      resumeRunId: runId,
     });
 
     await waitFor("signal tool completion", async () => {
@@ -927,7 +963,9 @@ describe("smithers.* tools", () => {
     );
     expect(sendSignalCommand?.facts).toMatchObject({
       smithersToolName: "smithers.signals.send",
-      transport: "bundled-runtime",
+      semanticSmithersToolName: "smithers.signals.send",
+      rawSmithersOperationName: "signals.send",
+      transport: "embedded-runtime",
       runId,
       signalName: "deploy.completed",
       preStatus: "waiting-event",
@@ -993,46 +1031,45 @@ describe("smithers.* tools", () => {
     expect(tools.find((tool) => tool.name === "smithers.run_workflow")).toBeUndefined();
 
     const helloWorldTool = getTool(tools, "smithers.run_workflow.hello_world");
-    expect(helloWorldTool.parameters).toMatchObject({
-      type: "object",
-      properties: {
-        message: {
-          default: "hello world",
-          type: "string",
-          minLength: 1,
-        },
-        resumeRunId: {
-          type: "string",
-          minLength: 1,
-        },
-      },
-      required: [],
-      additionalProperties: false,
+    expect((helloWorldTool.parameters as Record<string, unknown>).type).toBe("object");
+    expect(
+      (helloWorldTool.parameters as { properties?: Record<string, unknown> }).properties?.message,
+    ).toMatchObject({
+      default: "hello world",
+      type: "string",
+      minLength: 1,
     });
+    expect(
+      (helloWorldTool.parameters as { properties?: Record<string, unknown> }).properties
+        ?.resumeRunId,
+    ).toBeUndefined();
 
     const executeTaskTool = getTool(tools, "smithers.run_workflow.execute_typescript_task");
-    expect(executeTaskTool.parameters).toMatchObject({
-      type: "object",
-      properties: {
-        objective: {
-          type: "string",
-          minLength: 1,
-        },
-        successCriteria: {
-          default: [],
-          type: "array",
-        },
-        validationCommands: {
-          default: [],
-          type: "array",
-        },
-        resumeRunId: {
-          type: "string",
-          minLength: 1,
-        },
-      },
-      required: ["objective"],
-      additionalProperties: false,
+    expect((executeTaskTool.parameters as Record<string, unknown>).type).toBe("object");
+    expect(
+      (executeTaskTool.parameters as { properties?: Record<string, unknown> }).properties
+        ?.objective,
+    ).toMatchObject({
+      type: "string",
+      minLength: 1,
     });
+    expect(
+      (executeTaskTool.parameters as { properties?: Record<string, unknown> }).properties
+        ?.successCriteria,
+    ).toMatchObject({
+      default: [],
+      type: "array",
+    });
+    expect(
+      (executeTaskTool.parameters as { properties?: Record<string, unknown> }).properties
+        ?.validationCommands,
+    ).toMatchObject({
+      default: [],
+      type: "array",
+    });
+    expect(
+      (executeTaskTool.parameters as { properties?: Record<string, unknown> }).properties
+        ?.resumeRunId,
+    ).toBeUndefined();
   });
 });

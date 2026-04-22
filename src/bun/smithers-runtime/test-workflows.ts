@@ -1,35 +1,25 @@
+import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import React from "react";
-import { createSmithers, type AgentLike, type SmithersWorkflow } from "smithers-orchestrator";
+import { createSmithers, type AgentLike } from "smithers-orchestrator";
 import { z } from "zod";
+import type { TestWorkflowDefinition } from "./manager";
 import {
   bundledWorkflowRuntimeStoredInputSchema,
   readBundledWorkflowLaunchInput,
 } from "./runtime-input";
+import { createWorkflowTaskAgent } from "./workflow-task-agent";
+import type {
+  ExecuteTypescriptRunCommandInput,
+  ExecuteTypescriptRunCommandResult,
+  ExecuteTypescriptWebFetchResult,
+  ExecuteTypescriptWebSearchResult,
+} from "../execute-typescript-tool";
 
-export type BundledWorkflowDefinition = {
-  id: string;
-  label: string;
-  description: string;
-  workflowName: string;
-  launchSchema: z.ZodTypeAny;
-  workflow: SmithersWorkflow<any>;
-};
-
-type CreateBundledWorkflowRegistryOptions = {
-  dbPath: string;
-  createWorkflowTaskAgent: () => AgentLike;
-};
-
-export function createBundledWorkflowRegistry(
-  options: CreateBundledWorkflowRegistryOptions,
-): BundledWorkflowDefinition[] {
-  return [
-    createHelloWorldWorkflow(options.dbPath),
-    createTaskAgentWorkflow(options.dbPath, options.createWorkflowTaskAgent),
-  ];
+function getLatestOutput<T>(entries: T[] | undefined): T | null {
+  return entries && entries.length > 0 ? (entries[entries.length - 1] ?? null) : null;
 }
 
-function createHelloWorldWorkflow(dbPath: string): BundledWorkflowDefinition {
+export function createHelloWorldTestWorkflow(dbPath: string): TestWorkflowDefinition {
   const launchSchema = z.object({
     message: z.string().min(1).default("hello world"),
   });
@@ -53,8 +43,7 @@ function createHelloWorldWorkflow(dbPath: string): BundledWorkflowDefinition {
   return {
     id: "hello_world",
     label: "Hello World",
-    description: "Smoke-test bundled runtime wiring with a minimal static Smithers workflow.",
-    workflowName: "svvy-hello-world",
+    summary: "Smoke-test workflow used by Smithers runtime tests.",
     launchSchema,
     workflow: smithersApi.smithers((ctx) => {
       const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);
@@ -83,13 +72,32 @@ function createHelloWorldWorkflow(dbPath: string): BundledWorkflowDefinition {
         ),
       );
     }),
+    sourceScope: "saved",
+    entryPath: ".svvy/workflows/entries/hello-world.tsx",
   };
 }
 
-function createTaskAgentWorkflow(
-  dbPath: string,
-  createWorkflowTaskAgent: () => AgentLike,
-): BundledWorkflowDefinition {
+export function createExecuteTypescriptTaskTestWorkflow(input: {
+  dbPath: string;
+  cwd: string;
+  agentDir: string;
+  artifactDir: string;
+  provider: string;
+  model: string;
+  thinkingLevel: ThinkingLevel;
+  runCommand?: (
+    args: ExecuteTypescriptRunCommandInput,
+  ) => Promise<ExecuteTypescriptRunCommandResult>;
+  webSearch?: (args: {
+    query: string;
+    maxResults?: number;
+    signal?: AbortSignal;
+  }) => Promise<ExecuteTypescriptWebSearchResult>;
+  fetchText?: (args: {
+    url: string;
+    signal?: AbortSignal;
+  }) => Promise<ExecuteTypescriptWebFetchResult>;
+}): TestWorkflowDefinition {
   const launchSchema = z.object({
     objective: z.string().min(1),
     successCriteria: z.array(z.string().min(1)).default([]),
@@ -116,16 +124,25 @@ function createTaskAgentWorkflow(
       taskResult: taskResultSchema,
       workflowResult: resultSchema,
     },
-    { dbPath },
+    { dbPath: input.dbPath },
   );
-  const taskAgent = createWorkflowTaskAgent();
+  const taskAgent: AgentLike = createWorkflowTaskAgent({
+    cwd: input.cwd,
+    agentDir: input.agentDir,
+    artifactDir: input.artifactDir,
+    provider: input.provider,
+    model: input.model,
+    thinkingLevel: input.thinkingLevel,
+    runCommand: input.runCommand,
+    webSearch: input.webSearch,
+    fetchText: input.fetchText,
+  });
 
   return {
     id: "execute_typescript_task",
     label: "Execute TypeScript Task",
-    description:
-      "Run one PI-backed Smithers task agent with execute_typescript as its only callable product tool.",
-    workflowName: "svvy-execute-typescript-task",
+    summary:
+      "Run one PI-backed workflow task agent with execute_typescript as its only product tool.",
     launchSchema,
     workflow: smithersApi.smithers((ctx) => {
       const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);
@@ -170,6 +187,8 @@ function createTaskAgentWorkflow(
         ),
       );
     }),
+    sourceScope: "saved",
+    entryPath: ".svvy/workflows/entries/execute-typescript-task.tsx",
   };
 }
 
@@ -178,7 +197,7 @@ function buildTaskPrompt(input: {
   successCriteria: string[];
   validationCommands: string[];
 }): string {
-  const parts = [
+  return [
     "Complete the following repository task inside svvy.",
     `Objective:\n${input.objective}`,
     input.successCriteria.length > 0
@@ -202,11 +221,7 @@ function buildTaskPrompt(input: {
       null,
       2,
     ),
-  ].filter(Boolean);
-
-  return parts.join("\n\n");
-}
-
-function getLatestOutput<T>(entries: T[] | undefined): T | null {
-  return entries && entries.length > 0 ? (entries[entries.length - 1] ?? null) : null;
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }

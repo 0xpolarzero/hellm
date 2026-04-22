@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import { createWorkflowAssetDiscovery } from "./smithers-runtime/workflow-asset-discovery";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
@@ -28,6 +29,12 @@ function createWorkspaceRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "svvy-execute-typescript-"));
   tempDirs.push(root);
   return root;
+}
+
+function writeWorkspaceFile(workspaceRoot: string, path: string, text: string): void {
+  const filePath = join(workspaceRoot, path);
+  mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(filePath, text, "utf8");
 }
 
 function createStore(sessionId: string, workspaceCwd: string): StructuredSessionStateStore {
@@ -63,21 +70,16 @@ function createRuntime(
     surfacePiSessionId: sessionId,
     requestSummary: promptText,
   });
-  const rootThread = store.createThread({
-    turnId: turn.id,
-    title: "Execute code mode task",
-    objective: promptText,
-  });
 
   return {
     current: {
       sessionId,
       turnId: turn.id,
       surfacePiSessionId: sessionId,
-      surfaceThreadId: rootThread.id,
+      surfaceThreadId: null,
       surfaceKind: "orchestrator",
       defaultEpisodeKind: "analysis",
-      rootThreadId: rootThread.id,
+      rootThreadId: null,
       promptText,
       rootEpisodeKind: "analysis",
       sessionWaitApplied: false,
@@ -881,5 +883,295 @@ describe("execute_typescript tool", () => {
         }),
       ]),
     );
+  });
+
+  it("lists workflow authoring assets with spec-aligned metadata and filters", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    writeWorkspaceFile(
+      workspaceCwd,
+      ".svvy/workflows/definitions/create-implement-review-verify.ts",
+      [
+        "/**",
+        " * @svvyAssetKind definition",
+        " * @svvyId create_implement_review_verify",
+        " * @svvyTitle Create Implement Review Verify",
+        " * @svvySummary Reusable workflow factory for implement, review, and verification stages.",
+        " * @svvyTags sequential, coding, review, verification",
+        " * @svvyExports implementReviewVerifyLaunchSchema, createImplementReviewVerifyWorkflow",
+        " */",
+        "export const implementReviewVerifyLaunchSchema = {};",
+        "export function createImplementReviewVerifyWorkflow() {}",
+      ].join("\n"),
+    );
+    writeWorkspaceFile(
+      workspaceCwd,
+      ".svvy/workflows/prompts/review-base.mdx",
+      [
+        "---",
+        "svvyAssetKind: prompt",
+        "svvyId: review_base",
+        "title: Review Base",
+        "summary: Base review instructions reusable across review-oriented workflows.",
+        "tags:",
+        "  - review",
+        "  - reusable",
+        "variables:",
+        "  - objective",
+        "---",
+        "",
+        "Review the implementation against the stated objective.",
+      ].join("\n"),
+    );
+    writeWorkspaceFile(
+      workspaceCwd,
+      ".svvy/workflows/components/reviewer-profile.ts",
+      [
+        "/**",
+        " * @svvyAssetKind component",
+        " * @svvyId saved_reviewer_profile",
+        " * @svvyTitle Saved Reviewer Profile",
+        " * @svvySummary Reusable reviewer profile for generic code review.",
+        " * @svvySubtype agent-profile",
+        " * @svvyTags review, reusable",
+        " * @svvyExports reviewerProfile",
+        " * @svvyProviderModelSummary openai/gpt-5.4-mini",
+        " * @svvyToolsetSummary execute_typescript",
+        " */",
+        "export const reviewerProfile = {};",
+      ].join("\n"),
+    );
+    writeWorkspaceFile(
+      workspaceCwd,
+      ".svvy/workflows/entries/implement-review.entry.ts",
+      [
+        "export const workflowId = 'implement_review_verify';",
+        "export const label = 'Implement Review Verify';",
+      ].join("\n"),
+    );
+    writeWorkspaceFile(
+      workspaceCwd,
+      ".svvy/artifacts/workflows/wf-oauth-review/components/oauth-security-profile.ts",
+      [
+        "/**",
+        " * @svvyAssetKind component",
+        " * @svvyId oauth_security_reviewer",
+        " * @svvyTitle OAuth Security Reviewer",
+        " * @svvySummary Focused reviewer profile for OAuth-sensitive changes.",
+        " * @svvySubtype agent-profile",
+        " * @svvyTags review, oauth",
+        " * @svvyExports oauthSecurityReviewer",
+        " * @svvyProviderModelSummary openai/gpt-5.4",
+        " * @svvyToolsetSummary execute_typescript",
+        " */",
+        "export const oauthSecurityReviewer = {};",
+      ].join("\n"),
+    );
+    writeWorkspaceFile(
+      workspaceCwd,
+      ".svvy/artifacts/workflows/wf-oauth-review/entries/oauth-review.entry.ts",
+      [
+        "export const workflowId = 'oauth_review_draft';",
+        "export const label = 'OAuth Review Draft';",
+      ].join("\n"),
+    );
+    writeWorkspaceFile(
+      workspaceCwd,
+      ".svvy/artifacts/workflows/wf-oauth-review/metadata.json",
+      JSON.stringify({ artifactWorkflowId: "wf-oauth-review" }, null, 2),
+    );
+
+    const store = createStore("session-workflow-assets", workspaceCwd);
+    const runtime = createRuntime(
+      store,
+      "session-workflow-assets",
+      "Discover reusable workflow assets before authoring",
+    );
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+    });
+
+    const result = await tool.execute("tool-call-workflow-assets", {
+      typescriptCode: [
+        "const definitions = await api.workflow.listAssets({",
+        '  kind: "definition",',
+        '  scope: "saved",',
+        '  exports: ["createImplementReviewVerifyWorkflow"],',
+        "});",
+        "const prompts = await api.workflow.listAssets({",
+        '  kind: "prompt",',
+        '  scope: "saved",',
+        '  tags: ["review"],',
+        "});",
+        "const oauthProfiles = await api.workflow.listAssets({",
+        '  kind: "component",',
+        '  subtype: "agent-profile",',
+        '  scope: "both",',
+        '  tags: ["oauth"],',
+        "});",
+        "const savedLibrary = await api.workflow.listAssets({",
+        '  scope: "saved",',
+        '  pathPrefix: ".svvy/workflows/",',
+        "});",
+        "return {",
+        "  definitionIds: definitions.map((asset) => asset.id),",
+        "  promptVariables: prompts[0]?.variables ?? [],",
+        "  oauthProfile: oauthProfiles[0] ?? null,",
+        "  savedLibraryPaths: savedLibrary.map((asset) => asset.path),",
+        "};",
+      ].join("\n"),
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      result: {
+        definitionIds: ["create_implement_review_verify"],
+        promptVariables: ["objective"],
+        oauthProfile: {
+          id: "oauth_security_reviewer",
+          scope: "artifact",
+          providerModelSummary: "openai/gpt-5.4",
+          toolsetSummary: "execute_typescript",
+        },
+        savedLibraryPaths: [
+          ".svvy/workflows/components/reviewer-profile.ts",
+          ".svvy/workflows/definitions/create-implement-review-verify.ts",
+          ".svvy/workflows/prompts/review-base.mdx",
+        ],
+      },
+    });
+
+    const snapshot = store.getSessionState("session-workflow-assets");
+    const [parentCommand, ...childCommands] = snapshot.commands;
+    expect(parentCommand?.summary).toContain("Discovered 6 workflow assets");
+    expect(childCommands.map((command) => command.toolName)).toEqual([
+      "workflow.listAssets",
+      "workflow.listAssets",
+      "workflow.listAssets",
+      "workflow.listAssets",
+    ]);
+    expect(childCommands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          toolName: "workflow.listAssets",
+          facts: {
+            kind: "definition",
+            scope: "saved",
+            exports: ["createImplementReviewVerifyWorkflow"],
+            assetCount: 1,
+          },
+        }),
+        expect.objectContaining({
+          toolName: "workflow.listAssets",
+          facts: {
+            kind: "prompt",
+            scope: "saved",
+            tags: ["review"],
+            assetCount: 1,
+          },
+        }),
+        expect.objectContaining({
+          toolName: "workflow.listAssets",
+          facts: {
+            kind: "component",
+            subtype: "agent-profile",
+            scope: "both",
+            tags: ["oauth"],
+            assetCount: 1,
+          },
+        }),
+        expect.objectContaining({
+          toolName: "workflow.listAssets",
+          facts: {
+            scope: "saved",
+            pathPrefix: ".svvy/workflows/",
+            assetCount: 3,
+          },
+        }),
+      ]),
+    );
+  });
+
+  it("lists workflow models from the shared discovery surface and records normalized facts", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-workflow-models", workspaceCwd);
+    const runtime = createRuntime(
+      store,
+      "session-workflow-models",
+      "Inspect workflow model options before creating a new agent profile",
+    );
+    const workflowDiscovery = createWorkflowAssetDiscovery(workspaceCwd, {
+      getProviders: (() => ["openai", "anthropic"]) as any,
+      getModels: ((providerId: string) =>
+        providerId === "openai"
+          ? [{ id: "gpt-5.4", api: "openai-responses", reasoning: true, input: ["text", "image"] }]
+          : [
+              {
+                id: "claude-sonnet-4",
+                api: "anthropic-messages",
+                reasoning: false,
+                input: ["text"],
+              },
+            ]) as any,
+      resolveAuthState: ((providerId: string) =>
+        providerId === "openai"
+          ? { connected: true, keyType: "oauth" }
+          : { connected: false, keyType: "none" }) as any,
+      getProviderEnvVar: ((providerId: string) =>
+        providerId === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY") as any,
+    });
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      workflowDiscovery,
+    });
+
+    const result = await tool.execute("tool-call-workflow-models", {
+      typescriptCode: [
+        "const models = await api.workflow.listModels();",
+        "return {",
+        "  count: models.length,",
+        "  providerIds: models.map((model) => model.providerId),",
+        "  first: models[0] ?? null,",
+        "  last: models[models.length - 1] ?? null,",
+        "};",
+      ].join("\n"),
+    });
+
+    expect(result.details.success).toBe(true);
+    expect(result.details.result).toEqual({
+      count: 2,
+      providerIds: ["anthropic", "openai"],
+      first: {
+        providerId: "anthropic",
+        modelId: "claude-sonnet-4",
+        authAvailable: false,
+        authSource: "missing:ANTHROPIC_API_KEY",
+        capabilityFlags: ["tool-calling"],
+      },
+      last: {
+        providerId: "openai",
+        modelId: "gpt-5.4",
+        authAvailable: true,
+        authSource: "oauth",
+        capabilityFlags: ["reasoning", "vision", "tool-calling"],
+      },
+    });
+
+    const snapshot = store.getSessionState("session-workflow-models");
+    const [parentCommand, ...childCommands] = snapshot.commands;
+    expect(parentCommand?.summary).toContain("Listed 2 workflow models");
+    expect(childCommands).toEqual([
+      expect.objectContaining({
+        toolName: "workflow.listModels",
+        facts: {
+          modelCount: 2,
+          providerCount: 2,
+          authAvailableCount: 1,
+        },
+      }),
+    ]);
   });
 });

@@ -25,6 +25,10 @@ import type {
   WebSearchResult,
 } from "./execute-typescript-api-contract";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
+import {
+  createWorkflowAssetDiscovery,
+  type WorkflowAssetDiscovery,
+} from "./smithers-runtime/workflow-asset-discovery";
 import type {
   StructuredArtifactKind,
   StructuredCommandExecutor,
@@ -105,7 +109,9 @@ const WRAPPER_LINE_OFFSET = 1;
 
 type ExecuteTypescriptContext = {
   turnId: string;
-  threadId: string;
+  surfacePiSessionId: string;
+  threadId: string | null;
+  workflowRunId?: string | null;
   executor?: StructuredCommandExecutor;
   visibility?: StructuredCommandVisibility;
 };
@@ -113,6 +119,7 @@ type ExecuteTypescriptContext = {
 export interface ExecuteTypescriptCommandStore {
   createCommand(input: {
     turnId: string;
+    surfacePiSessionId?: string;
     threadId?: string | null;
     workflowRunId?: string | null;
     parentCommandId?: string | null;
@@ -153,6 +160,7 @@ type ExecuteTypescriptToolOptions = {
   cwd: string;
   runtime: PromptExecutionRuntimeHandle;
   store: StructuredSessionStateStore;
+  workflowDiscovery?: WorkflowAssetDiscovery;
   runCommand?: (
     input: ExecuteTypescriptRunCommandInput,
   ) => Promise<ExecuteTypescriptRunCommandResult>;
@@ -220,8 +228,11 @@ export function createExecuteTypescriptTool(
         typescriptCode: params.typescriptCode,
         context: {
           turnId: runtime.turnId,
-          threadId: runtime.rootThreadId,
+          surfacePiSessionId: runtime.surfacePiSessionId,
+          threadId: runtime.surfaceKind === "handler" ? runtime.rootThreadId : null,
+          executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
         },
+        workflowDiscovery: options.workflowDiscovery,
         runCommand: options.runCommand,
         webSearch: options.webSearch,
         fetchText: options.fetchText,
@@ -243,8 +254,11 @@ export function createExecuteTypescriptTool(
 function ensureRunnableSurfaceThread(
   store: StructuredSessionStateStore,
   sessionId: string,
-  threadId: string,
+  threadId: string | null,
 ): void {
+  if (!threadId) {
+    return;
+  }
   const thread = store.getSessionState(sessionId).threads.find((entry) => entry.id === threadId);
   if (!thread) {
     return;
@@ -267,6 +281,7 @@ export async function runExecuteTypescript(input: {
   signal?: AbortSignal;
   typescriptCode: string;
   context: ExecuteTypescriptContext;
+  workflowDiscovery?: WorkflowAssetDiscovery;
   runCommand?: (
     input: ExecuteTypescriptRunCommandInput,
   ) => Promise<ExecuteTypescriptRunCommandResult>;
@@ -282,7 +297,9 @@ export async function runExecuteTypescript(input: {
 }): Promise<ExecuteTypescriptResult> {
   const parentCommand = input.store.createCommand({
     turnId: input.context.turnId,
+    surfacePiSessionId: input.context.surfacePiSessionId,
     threadId: input.context.threadId,
+    workflowRunId: input.context.workflowRunId ?? null,
     toolName: EXECUTE_TYPESCRIPT_TOOL_NAME,
     executor: input.context.executor ?? "orchestrator",
     visibility: input.context.visibility ?? "summary",
@@ -334,10 +351,13 @@ export async function runExecuteTypescript(input: {
     const api = createExecuteTypescriptApi({
       cwd: input.cwd,
       store: input.store,
+      surfacePiSessionId: input.context.surfacePiSessionId,
       turnId: input.context.turnId,
       threadId: input.context.threadId,
+      workflowRunId: input.context.workflowRunId ?? null,
       parentCommandId: parentCommand.id,
       signal: input.signal,
+      workflowDiscovery: input.workflowDiscovery ?? createWorkflowAssetDiscovery(input.cwd),
       runCommand: input.runCommand ?? defaultRunCommand,
       webSearch: input.webSearch ?? defaultWebSearch,
       fetchText: input.fetchText ?? defaultFetchText,
@@ -554,10 +574,13 @@ function formatConsoleValue(value: unknown): string {
 function createExecuteTypescriptApi(input: {
   cwd: string;
   store: ExecuteTypescriptCommandStore;
+  surfacePiSessionId: string;
   turnId: string;
-  threadId: string;
+  threadId: string | null;
+  workflowRunId?: string | null;
   parentCommandId: string;
   signal?: AbortSignal;
+  workflowDiscovery: WorkflowAssetDiscovery;
   runCommand: (
     input: ExecuteTypescriptRunCommandInput,
   ) => Promise<ExecuteTypescriptRunCommandResult>;
@@ -581,7 +604,9 @@ function createExecuteTypescriptApi(input: {
   }): Promise<T> => {
     const command = input.store.createCommand({
       turnId: input.turnId,
+      surfacePiSessionId: input.surfacePiSessionId,
       threadId: input.threadId,
+      workflowRunId: input.workflowRunId ?? null,
       parentCommandId: input.parentCommandId,
       toolName: config.toolName,
       executor: "execute_typescript",
@@ -1600,6 +1625,56 @@ function createExecuteTypescriptApi(input: {
           },
         }),
     },
+    workflow: {
+      listAssets: (params = {}) =>
+        call({
+          toolName: "workflow.listAssets",
+          title: "List workflow assets",
+          summary: "List workflow assets",
+          run: async () => {
+            const value = await Promise.resolve(input.workflowDiscovery.listAssets(params));
+            return {
+              value,
+              facts: {
+                ...(params.kind ? { kind: params.kind } : {}),
+                ...(params.subtype ? { subtype: params.subtype } : {}),
+                ...(params.tags?.length ? { tags: params.tags } : {}),
+                ...(params.pathPrefix ? { pathPrefix: params.pathPrefix } : {}),
+                ...(params.exports?.length ? { exports: params.exports } : {}),
+                ...(params.scope ? { scope: params.scope } : {}),
+                assetCount: value.length,
+              },
+              summary:
+                value.length > 0
+                  ? `Listed ${pluralize(value.length, "workflow asset")}.`
+                  : "No workflow assets matched the filters.",
+            };
+          },
+        }),
+      listModels: () =>
+        call({
+          toolName: "workflow.listModels",
+          title: "List workflow models",
+          summary: "List workflow models",
+          run: async () => {
+            const value = await Promise.resolve(input.workflowDiscovery.listModels());
+            const providerCount = new Set(value.map((model) => model.providerId)).size;
+            const authAvailableCount = value.filter((model) => model.authAvailable).length;
+            return {
+              value,
+              facts: {
+                modelCount: value.length,
+                providerCount,
+                authAvailableCount,
+              },
+              summary:
+                value.length > 0
+                  ? `Listed ${pluralize(value.length, "workflow model")} across ${pluralize(providerCount, "provider")}.`
+                  : "No workflow models were discovered.",
+            };
+          },
+        }),
+    },
   };
 }
 
@@ -1808,6 +1883,8 @@ function buildExecuteTypescriptParentRollup(input: {
   let grepPathCount = 0;
   let webSearchCount = 0;
   let webFetchCount = 0;
+  let workflowAssetCount = 0;
+  let workflowModelCount = 0;
   let gitBranch: string | undefined;
   let gitChangedFileCount: number | undefined;
   let lastCommitSha: string | undefined;
@@ -1899,6 +1976,12 @@ function buildExecuteTypescriptParentRollup(input: {
       case "web.fetchText":
         webFetchCount += 1;
         break;
+      case "workflow.listAssets":
+        workflowAssetCount += readFactNumber(activity.facts, "assetCount") ?? 0;
+        break;
+      case "workflow.listModels":
+        workflowModelCount += readFactNumber(activity.facts, "modelCount") ?? 0;
+        break;
       default:
         break;
     }
@@ -1947,6 +2030,12 @@ function buildExecuteTypescriptParentRollup(input: {
   if (webFetchCount > 0) {
     summaryParts.push(`Fetched ${pluralize(webFetchCount, "page")}`);
   }
+  if (workflowAssetCount > 0) {
+    summaryParts.push(`Discovered ${pluralize(workflowAssetCount, "workflow asset")}`);
+  }
+  if (workflowModelCount > 0) {
+    summaryParts.push(`Listed ${pluralize(workflowModelCount, "workflow model")}`);
+  }
   if (summaryParts.length === 0 && input.childActivity.length > 0) {
     summaryParts.push(`Ran ${pluralize(input.childActivity.length, "api call")}`);
   }
@@ -1969,6 +2058,8 @@ function buildExecuteTypescriptParentRollup(input: {
       grepPathCount,
       webSearchCount,
       webFetchCount,
+      workflowAssetCount,
+      workflowModelCount,
       ...(artifactIds.length > 0 ? { artifactIds } : {}),
       ...(gitBranch ? { gitBranch } : {}),
       ...(typeof gitChangedFileCount === "number" ? { gitChangedFileCount } : {}),

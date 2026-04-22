@@ -1,4 +1,5 @@
 import { SmithersDb } from "@smithers-orchestrator/db";
+import { Database } from "bun:sqlite";
 import {
   chatAttemptKey,
   parseChatAttemptMeta,
@@ -13,6 +14,7 @@ import {
   signalRun,
   type RunStatus,
   type SmithersEvent,
+  type SmithersWorkflow,
 } from "smithers-orchestrator";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import { Effect } from "effect";
@@ -25,19 +27,21 @@ import type {
   ExecuteTypescriptWebFetchResult,
   ExecuteTypescriptWebSearchResult,
 } from "../execute-typescript-tool";
-import { createBundledWorkflowRegistry, type BundledWorkflowDefinition } from "./registry";
-import { createWorkflowTaskAgent } from "./workflow-task-agent";
 import type {
   StructuredSessionStateStore,
-  StructuredWaitKind,
+  StructuredWorkflowWaitKind,
   StructuredWorkflowRunRecord,
   StructuredWorkflowStatus,
 } from "../structured-session-state";
 import {
-  compileBundledWorkflowLaunchContract,
+  compileRunnableWorkflowLaunchContract,
   createWorkflowToolSurfaceVersion,
-  type BundledWorkflowLaunchContract,
+  type RunnableWorkflowLaunchContract,
 } from "./workflow-launch-contract";
+import {
+  loadRunnableWorkflowRegistry,
+  type RunnableWorkflowRegistryEntry,
+} from "./workflow-registry";
 
 type WorkflowTaskAgentDefaults = {
   provider: string;
@@ -109,21 +113,36 @@ type LaunchWorkflowResult = {
   contractHash: string;
   launchInput: Record<string, unknown>;
   runId: string;
+  resumedRunId: string | null;
   structuredWorkflowRunId: string;
   status: StructuredWorkflowStatus;
   smithersStatus: RunStatus;
   summary: string;
 };
 
+export type TestWorkflowDefinition = {
+  id: string;
+  label: string;
+  summary: string;
+  workflowName?: string;
+  launchSchema: RunnableWorkflowRegistryEntry["launchSchema"];
+  workflow: SmithersWorkflow<any>;
+  sourceScope?: RunnableWorkflowRegistryEntry["sourceScope"];
+  entryPath?: string;
+  definitionPaths?: string[];
+  promptPaths?: string[];
+  componentPaths?: string[];
+};
+
 export class SmithersRuntimeManager {
   private readonly runtimeRoot: string;
-  private readonly runtimeArtifactDir: string;
-  private readonly registry: BundledWorkflowDefinition[];
-  private readonly workflowsById: Map<string, BundledWorkflowDefinition>;
-  private readonly launchContractsByWorkflowId = new Map<string, BundledWorkflowLaunchContract>();
-  private workflowLaunchContracts: BundledWorkflowLaunchContract[] = [];
-  private workflowToolSurfaceVersion = "";
+  private readonly runtimeDbPath: string;
   private readonly db: SmithersDb;
+  private readonly testWorkflowEntriesById = new Map<string, RunnableWorkflowRegistryEntry>();
+  private readonly workflowEntriesById = new Map<string, RunnableWorkflowRegistryEntry>();
+  private readonly launchContractsByWorkflowId = new Map<string, RunnableWorkflowLaunchContract>();
+  private workflowLaunchContracts: RunnableWorkflowLaunchContract[] = [];
+  private workflowToolSurfaceVersion = "";
   private readonly ownershipByRunId = new Map<string, WorkflowOwnership>();
   private readonly monitorByRunId = new Map<string, WorkflowMonitor>();
   private readonly flushPromiseByRunId = new Map<string, Promise<void>>();
@@ -131,58 +150,35 @@ export class SmithersRuntimeManager {
 
   constructor(private readonly options: SmithersRuntimeManagerOptions) {
     this.runtimeRoot = join(options.cwd, ".svvy", "smithers-runtime");
-    this.runtimeArtifactDir = join(this.runtimeRoot, "artifacts");
-    mkdirSync(this.runtimeArtifactDir, { recursive: true });
-
-    this.registry = [];
-    this.workflowsById = new Map();
-
-    const bundledDefinitions = createBundledWorkflowRegistry({
-      dbPath: join(this.runtimeRoot, "smithers.db"),
-      createWorkflowTaskAgent: () =>
-        createWorkflowTaskAgent({
-          cwd: options.cwd,
-          agentDir: options.agentDir,
-          artifactDir: join(this.runtimeArtifactDir, "task-agent"),
-          ...options.getTaskAgentDefaults(),
-          runCommand: options.runCommand,
-          webSearch: options.webSearch,
-          fetchText: options.fetchText,
-        }),
-    });
-
-    const primaryWorkflow = bundledDefinitions[0];
-    if (!primaryWorkflow) {
-      throw new Error("Expected at least one bundled Smithers workflow.");
-    }
-    ensureSmithersTables(primaryWorkflow.workflow.db as any);
-    this.db = new SmithersDb(primaryWorkflow.workflow.db as any);
-
-    for (const definition of bundledDefinitions) {
-      this.upsertBundledWorkflow(definition);
-    }
+    mkdirSync(this.runtimeRoot, { recursive: true });
+    this.runtimeDbPath = join(this.runtimeRoot, "smithers.db");
+    const db = new Database(this.runtimeDbPath);
+    ensureSmithersTables(db as any);
+    this.db = new SmithersDb(db as any);
   }
 
   listWorkflows() {
     return this.workflowLaunchContracts.map((contract) => ({
       id: contract.workflowId,
-      workflowName: contract.workflowName,
       label: contract.label,
-      description: contract.description,
+      summary: contract.summary,
+      sourceScope: contract.sourceScope,
       launchToolName: contract.launchToolName,
       launchInputSchema: structuredClone(contract.launchInputJsonSchema),
-      launchToolSchema: structuredClone(contract.launchToolJsonSchema),
+      entryPath: contract.entryPath,
+      definitionPaths: contract.definitionPaths.slice(),
+      promptPaths: contract.promptPaths.slice(),
+      componentPaths: contract.componentPaths.slice(),
+      assetPaths: contract.assetPaths.slice(),
       semanticToolName: contract.semanticToolName,
-      resumeRunIdField: "resumeRunId",
       contractHash: contract.contractHash,
     }));
   }
 
-  listWorkflowLaunchContracts(): BundledWorkflowLaunchContract[] {
+  listWorkflowLaunchContracts(): RunnableWorkflowLaunchContract[] {
     return this.workflowLaunchContracts.map((contract) => ({
       ...contract,
       launchInputJsonSchema: structuredClone(contract.launchInputJsonSchema),
-      launchToolJsonSchema: structuredClone(contract.launchToolJsonSchema),
     }));
   }
 
@@ -190,22 +186,63 @@ export class SmithersRuntimeManager {
     return this.workflowToolSurfaceVersion;
   }
 
-  upsertBundledWorkflow(definition: BundledWorkflowDefinition): void {
-    const existingIndex = this.registry.findIndex((workflow) => workflow.id === definition.id);
-    if (existingIndex >= 0) {
-      this.registry.splice(existingIndex, 1, definition);
-    } else {
-      this.registry.push(definition);
+  async refreshWorkflowRegistry(): Promise<void> {
+    const registry = await loadRunnableWorkflowRegistry(this.options.cwd);
+    this.rebuildWorkflowRegistry([
+      ...registry,
+      ...Array.from(this.testWorkflowEntriesById.values()),
+    ]);
+  }
+
+  registerTestWorkflow(definition: TestWorkflowDefinition): void {
+    const sourceScope = definition.sourceScope ?? "saved";
+    const entryPath =
+      definition.entryPath ?? `.svvy/workflows/entries/${definition.id.replace(/_/g, "-")}.tsx`;
+    const entry: RunnableWorkflowRegistryEntry = {
+      workflowId: definition.id,
+      label: definition.label,
+      summary: definition.summary,
+      sourceScope,
+      entryPath,
+      launchSchema: definition.launchSchema,
+      definitionPaths: definition.definitionPaths ?? [],
+      promptPaths: definition.promptPaths ?? [],
+      componentPaths: definition.componentPaths ?? [],
+      assetPaths: Array.from(
+        new Set([
+          ...(definition.definitionPaths ?? []),
+          ...(definition.promptPaths ?? []),
+          ...(definition.componentPaths ?? []),
+        ]),
+      ).toSorted(),
+      createRunnableEntry: () => ({
+        workflowId: definition.id,
+        workflowSource: sourceScope,
+        launchSchema: definition.launchSchema,
+        workflow: definition.workflow,
+      }),
+    };
+    this.testWorkflowEntriesById.set(definition.id, entry);
+    this.rebuildWorkflowRegistry([
+      ...Array.from(this.workflowEntriesById.values()),
+      ...Array.from(this.testWorkflowEntriesById.values()),
+    ]);
+  }
+
+  private rebuildWorkflowRegistry(registry: RunnableWorkflowRegistryEntry[]): void {
+    this.workflowEntriesById.clear();
+    this.launchContractsByWorkflowId.clear();
+    for (const entry of registry) {
+      this.workflowEntriesById.set(entry.workflowId, entry);
+      this.launchContractsByWorkflowId.set(
+        entry.workflowId,
+        compileRunnableWorkflowLaunchContract(entry),
+      );
     }
-    this.workflowsById.set(definition.id, definition);
-    this.launchContractsByWorkflowId.set(
-      definition.id,
-      compileBundledWorkflowLaunchContract(definition),
-    );
-    this.workflowLaunchContracts = this.registry.map((workflow) => {
-      const contract = this.launchContractsByWorkflowId.get(workflow.id);
+    this.workflowLaunchContracts = registry.map((entry) => {
+      const contract = this.launchContractsByWorkflowId.get(entry.workflowId);
       if (!contract) {
-        throw new Error(`Bundled Smithers workflow contract not found: ${workflow.id}`);
+        throw new Error(`Runnable Smithers workflow contract not found: ${entry.workflowId}`);
       }
       return contract;
     });
@@ -215,14 +252,17 @@ export class SmithersRuntimeManager {
   }
 
   async launchWorkflow(input: LaunchWorkflowInput): Promise<LaunchWorkflowResult> {
-    const definition = this.requireWorkflow(input.workflowId);
+    await this.refreshWorkflowRegistry();
+    const entry = this.requireWorkflowEntry(input.workflowId);
     const launchContract = this.requireWorkflowLaunchContract(input.workflowId);
-    const parsedInput = definition.launchSchema.safeParse(input.launchInput);
+    const parsedInput = entry.launchSchema.safeParse(input.launchInput);
     if (!parsedInput.success) {
       throw new Error(parsedInput.error.issues.map((issue) => issue.message).join("; "));
     }
 
-    const existingRunId = input.runId?.trim() || undefined;
+    const existingRunId =
+      input.runId?.trim() ||
+      this.findResumableThreadRun(input.sessionId, input.threadId, input.workflowId)?.smithersRunId;
     if (!existingRunId) {
       await this.cancelSupersededThreadRuns(input.sessionId, input.threadId);
     }
@@ -242,25 +282,27 @@ export class SmithersRuntimeManager {
           smithersStatus: "running",
           waitKind: null,
           pendingAttentionSeq: null,
-          summary: `Launching ${definition.label}.`,
+          summary: `${existingRunId ? "Resuming" : "Launching"} ${entry.label}.`,
           heartbeatAt: null,
         })
       : this.options.store.recordWorkflow({
           threadId: input.threadId,
           commandId: input.commandId,
           smithersRunId: runId,
-          workflowName: definition.workflowName,
-          templateId: definition.id,
+          workflowName: entry.workflowId,
+          workflowSource: entry.sourceScope,
+          entryPath: entry.entryPath,
+          savedEntryId: entry.sourceScope === "saved" ? entry.workflowId : null,
           status: "running",
           smithersStatus: "running",
           waitKind: null,
           continuedFromRunIds: [],
           activeDescendantRunId: null,
-          lastEventSeq: -1,
+          lastEventSeq: null,
           pendingAttentionSeq: null,
           lastAttentionSeq: null,
           heartbeatAt: null,
-          summary: `Launching ${definition.label}.`,
+          summary: `${existingRunId ? "Resuming" : "Launching"} ${entry.label}.`,
         });
 
     this.options.store.updateThread({
@@ -283,7 +325,7 @@ export class SmithersRuntimeManager {
     this.ownershipByRunId.set(runId, {
       sessionId: input.sessionId,
       threadId: input.threadId,
-      workflowId: definition.id,
+      workflowId: entry.workflowId,
       structuredWorkflowId: structuredWorkflowRun.id,
       commandId: input.commandId,
     });
@@ -291,13 +333,16 @@ export class SmithersRuntimeManager {
     const monitor = this.createMonitor({
       sessionId: input.sessionId,
       threadId: input.threadId,
-      workflowId: definition.id,
+      workflowId: entry.workflowId,
       runId,
     });
     this.trackRunIdWithMonitor(monitor, runId);
 
+    const runnableEntry = entry.createRunnableEntry({
+      dbPath: this.runtimeDbPath,
+    });
     const workflowPromise = this.runWorkflowInBackground({
-      definition,
+      runnableEntry,
       monitor,
       runId,
       input: parsedInput.data as Record<string, unknown>,
@@ -311,12 +356,13 @@ export class SmithersRuntimeManager {
     await this.emitStructuredStateChanged(input.sessionId);
 
     return {
-      workflowId: definition.id,
+      workflowId: entry.workflowId,
       launchToolName: launchContract.launchToolName,
       semanticToolName: launchContract.semanticToolName,
       contractHash: launchContract.contractHash,
       launchInput: parsedInput.data as Record<string, unknown>,
       runId,
+      resumedRunId: existingRunId ?? null,
       structuredWorkflowRunId: structuredWorkflowRun.id,
       status: structuredWorkflowRun.status,
       smithersStatus: "running",
@@ -326,27 +372,39 @@ export class SmithersRuntimeManager {
 
   async listRuns(input?: { limit?: number; status?: string; workflowId?: string }) {
     const runs = await this.db.listRuns(input?.limit ?? 25, input?.status);
-    const workflowName = input?.workflowId
-      ? this.workflowsById.get(input.workflowId)?.workflowName
-      : null;
-    const ownershipByRunId = this.listStructuredRunOwnershipBySmithersRunId();
-    return runs
-      .filter((run: any) => (!workflowName ? true : run.workflowName === workflowName))
-      .map((run: any) => {
-        const ownership = ownershipByRunId.get(run.runId);
+    const structuredRunBySmithersRunId = this.listStructuredRunBySmithersRunId();
+    const filteredRuns = runs.filter((run: any) => {
+      if (!input?.workflowId) {
+        return true;
+      }
+      const structuredRun = structuredRunBySmithersRunId.get(run.runId);
+      return (
+        structuredRun?.savedEntryId === input.workflowId ||
+        structuredRun?.workflowName === input.workflowId
+      );
+    });
+
+    return await Promise.all(
+      filteredRuns.map(async (run: any) => {
+        const structuredRun = structuredRunBySmithersRunId.get(run.runId) ?? null;
         return {
           runId: run.runId,
-          workflowName: run.workflowName,
+          workflowName: structuredRun?.workflowName ?? run.workflowName,
+          workflowId: structuredRun?.savedEntryId ?? structuredRun?.workflowName ?? null,
+          workflowSource: structuredRun?.workflowSource ?? null,
+          entryPath: structuredRun?.entryPath ?? null,
+          savedEntryId: structuredRun?.savedEntryId ?? null,
           status: run.status,
-          sessionId: ownership?.sessionId ?? null,
-          threadId: ownership?.threadId ?? null,
+          sessionId: structuredRun?.sessionId ?? null,
+          threadId: structuredRun?.threadId ?? null,
           createdAt: toIso(run.createdAtMs),
           startedAt: toIso(run.startedAtMs),
           finishedAt: toIso(run.finishedAtMs),
           heartbeatAt: toIso(run.heartbeatAtMs),
-          summary: this.buildRunSummary(run),
+          summary: await this.buildRunSummary(run),
         };
-      });
+      }),
+    );
   }
 
   async getRun(runId: string) {
@@ -357,7 +415,11 @@ export class SmithersRuntimeManager {
     const workflowRun = this.findStructuredWorkflowRunBySmithersRunId(runId);
     return {
       runId: run.runId,
-      workflowName: run.workflowName,
+      workflowName: workflowRun?.workflowName ?? run.workflowName,
+      workflowId: workflowRun?.savedEntryId ?? workflowRun?.workflowName ?? null,
+      workflowSource: workflowRun?.workflowSource ?? null,
+      entryPath: workflowRun?.entryPath ?? null,
+      savedEntryId: workflowRun?.savedEntryId ?? null,
       status: run.status,
       createdAt: toIso(run.createdAtMs),
       startedAt: toIso(run.startedAtMs),
@@ -369,7 +431,7 @@ export class SmithersRuntimeManager {
       continuedFromRunIds: workflowRun?.continuedFromRunIds ?? [],
       activeDescendantRunId: workflowRun?.activeDescendantRunId ?? null,
       waitKind: workflowRun?.waitKind ?? mapRunStatusToWaitKind(run.status),
-      lastEventSeq: workflowRun?.lastEventSeq ?? -1,
+      lastEventSeq: workflowRun?.lastEventSeq ?? null,
       pendingAttentionSeq: workflowRun?.pendingAttentionSeq ?? null,
       lastAttentionSeq: workflowRun?.lastAttentionSeq ?? null,
     };
@@ -432,11 +494,7 @@ export class SmithersRuntimeManager {
     }
   }
 
-  async listPendingApprovals(input?: {
-    runId?: string;
-    workflowName?: string;
-    nodeId?: string;
-  }) {
+  async listPendingApprovals(input?: { runId?: string; workflowName?: string; nodeId?: string }) {
     const allApprovals = input?.runId
       ? await this.db.listPendingApprovals(input.runId)
       : await this.db.listAllPendingApprovals();
@@ -604,9 +662,7 @@ export class SmithersRuntimeManager {
     const attempts = await this.db.listAttemptsForRun(input.runId);
     const events = await listAllRunEvents(this.db, input.runId);
     const knownOutputAttemptKeys = new Set<string>();
-    const parsedOutputs = events
-      .map((event) => parseNodeOutputEvent(event as any))
-      .filter(Boolean);
+    const parsedOutputs = events.map((event) => parseNodeOutputEvent(event as any)).filter(Boolean);
 
     for (const event of parsedOutputs) {
       knownOutputAttemptKeys.add(chatAttemptKey(event as any));
@@ -938,7 +994,7 @@ export class SmithersRuntimeManager {
   }
 
   private async runWorkflowInBackground(input: {
-    definition: BundledWorkflowDefinition;
+    runnableEntry: ReturnType<RunnableWorkflowRegistryEntry["createRunnableEntry"]>;
     monitor: WorkflowMonitor;
     runId: string;
     input: Record<string, unknown>;
@@ -946,7 +1002,7 @@ export class SmithersRuntimeManager {
   }) {
     try {
       await Effect.runPromise(
-        runWorkflow(input.definition.workflow, {
+        runWorkflow(input.runnableEntry.workflow, {
           runId: input.runId,
           input: input.input,
           resume: input.resume,
@@ -1003,8 +1059,9 @@ export class SmithersRuntimeManager {
       commandId: parentOwnership.commandId,
       smithersRunId: input.childRunId,
       workflowName: parentWorkflowRun?.workflowName ?? parentOwnership.workflowId,
-      templateId: parentWorkflowRun?.templateId ?? parentOwnership.workflowId,
-      presetId: parentWorkflowRun?.presetId ?? null,
+      workflowSource: parentWorkflowRun?.workflowSource ?? "artifact",
+      entryPath: parentWorkflowRun?.entryPath ?? null,
+      savedEntryId: parentWorkflowRun?.savedEntryId ?? null,
       status: "running",
       smithersStatus: "running",
       waitKind: null,
@@ -1013,7 +1070,7 @@ export class SmithersRuntimeManager {
         parentOwnership.structuredWorkflowId,
       ],
       activeDescendantRunId: null,
-      lastEventSeq: -1,
+      lastEventSeq: null,
       pendingAttentionSeq: null,
       lastAttentionSeq: null,
       heartbeatAt: null,
@@ -1058,19 +1115,19 @@ export class SmithersRuntimeManager {
         ownership.sessionId,
         ownership.structuredWorkflowId,
       );
-      const afterSeq = structuredRun?.lastEventSeq ?? -1;
-      let lastEventSeq = afterSeq;
+      let lastEventSeq = structuredRun?.lastEventSeq ?? null;
       let attentionSeq: number | null = null;
       let attentionReason: string | null = null;
 
       while (true) {
-        const events = await this.db.listEvents(runId, lastEventSeq, 200);
+        const events = await this.db.listEvents(runId, lastEventSeq ?? -1, 200);
         if (events.length === 0) {
           break;
         }
 
         for (const eventRow of events) {
-          lastEventSeq = Math.max(lastEventSeq, Number(eventRow.seq ?? lastEventSeq));
+          const nextSeq = Number(eventRow.seq ?? lastEventSeq ?? -1);
+          lastEventSeq = Math.max(lastEventSeq ?? -1, nextSeq);
           const event = parseJson(eventRow.payloadJson) as SmithersEvent | null;
           if (!event) {
             continue;
@@ -1109,7 +1166,7 @@ export class SmithersRuntimeManager {
   private async refreshStructuredProjection(
     runId: string,
     input: {
-      lastEventSeq: number;
+      lastEventSeq: number | null;
       observedAttentionSeq: number | null;
       observedAttentionReason: string | null;
     },
@@ -1133,10 +1190,7 @@ export class SmithersRuntimeManager {
     );
     const status = mapRunStatusToWorkflowStatus(run.status);
     const diagnosis = run.status === "waiting-event" ? await this.getRunDiagnosis(runId) : null;
-    const waitKind =
-      diagnosis && containsSignalBlocker(diagnosis)
-        ? "signal"
-        : mapRunStatusToWaitKind(run.status);
+    const waitKind = mapRunStatusToWaitKind(run.status);
     const summary = diagnosis?.summary ?? (await this.buildRunSummary(run));
     const heartbeatAt = toIso(run.heartbeatAtMs);
     const currentPendingAttentionSeq = currentWorkflowRun?.pendingAttentionSeq ?? null;
@@ -1173,7 +1227,10 @@ export class SmithersRuntimeManager {
         smithersStatus: nextWorkflowRun.smithersStatus,
       },
     });
-    if (nextPendingAttentionSeq !== null && nextPendingAttentionSeq !== currentPendingAttentionSeq) {
+    if (
+      nextPendingAttentionSeq !== null &&
+      nextPendingAttentionSeq !== currentPendingAttentionSeq
+    ) {
       this.recordBridgeLifecycleEvent({
         sessionId: ownership.sessionId,
         workflowRunId: nextWorkflowRun.id,
@@ -1255,7 +1312,7 @@ export class SmithersRuntimeManager {
       case "waiting": {
         const wait = {
           owner: "workflow" as const,
-          kind: workflowRun.waitKind ?? "external",
+          kind: deriveThreadWaitKind(workflowRun),
           reason: workflowRun.summary,
           resumeWhen: describeWaitResumeWhen(workflowRun.waitKind),
           since: workflowRun.updatedAt,
@@ -1321,7 +1378,9 @@ export class SmithersRuntimeManager {
       ownership.structuredWorkflowId,
     );
     const message =
-      error instanceof Error ? error.message : "The bundled Smithers workflow failed unexpectedly.";
+      error instanceof Error
+        ? error.message
+        : "The supervised Smithers workflow failed unexpectedly.";
     const nextPendingAttentionSeq =
       Math.max(
         currentWorkflowRun?.pendingAttentionSeq ?? -1,
@@ -1336,7 +1395,7 @@ export class SmithersRuntimeManager {
       waitKind: null,
       continuedFromRunIds: currentWorkflowRun?.continuedFromRunIds,
       activeDescendantRunId: currentWorkflowRun?.activeDescendantRunId ?? null,
-      lastEventSeq: currentWorkflowRun?.lastEventSeq ?? -1,
+      lastEventSeq: currentWorkflowRun?.lastEventSeq ?? null,
       pendingAttentionSeq: nextPendingAttentionSeq,
       lastAttentionSeq: currentWorkflowRun?.lastAttentionSeq ?? null,
       heartbeatAt: currentWorkflowRun?.heartbeatAt ?? null,
@@ -1406,7 +1465,7 @@ export class SmithersRuntimeManager {
       this.ownershipByRunId.set(workflowRun.smithersRunId, {
         sessionId: workflowRun.sessionId,
         threadId: workflowRun.threadId,
-        workflowId: workflowRun.templateId ?? workflowRun.workflowName,
+        workflowId: workflowRun.savedEntryId ?? workflowRun.workflowName,
         structuredWorkflowId: workflowRun.id,
         commandId: workflowRun.commandId,
       });
@@ -1421,7 +1480,7 @@ export class SmithersRuntimeManager {
     const ownership = {
       sessionId: workflowRun.sessionId,
       threadId: workflowRun.threadId,
-      workflowId: workflowRun.templateId ?? workflowRun.workflowName,
+      workflowId: workflowRun.savedEntryId ?? workflowRun.workflowName,
       structuredWorkflowId: workflowRun.id,
       commandId: workflowRun.commandId,
     } satisfies WorkflowOwnership;
@@ -1458,9 +1517,7 @@ export class SmithersRuntimeManager {
       this.options.store
         .getSessionState(ownership.sessionId)
         .threads.find((entry) => entry.id === ownership.threadId) ?? null;
-    if (
-      isTerminalWorkflowReplayAfterThreadCompletion(thread?.status ?? null, workflowRun.status)
-    ) {
+    if (isTerminalWorkflowReplayAfterThreadCompletion(thread?.status ?? null, workflowRun.status)) {
       return false;
     }
 
@@ -1545,18 +1602,18 @@ export class SmithersRuntimeManager {
     return await Effect.runPromise(diagnoseRunEffect(this.db as any, runId));
   }
 
-  private requireWorkflow(workflowId: string): BundledWorkflowDefinition {
-    const workflow = this.workflowsById.get(workflowId);
+  private requireWorkflowEntry(workflowId: string): RunnableWorkflowRegistryEntry {
+    const workflow = this.workflowEntriesById.get(workflowId);
     if (!workflow) {
-      throw new Error(`Bundled Smithers workflow not found: ${workflowId}`);
+      throw new Error(`Runnable Smithers workflow not found: ${workflowId}`);
     }
     return workflow;
   }
 
-  private requireWorkflowLaunchContract(workflowId: string): BundledWorkflowLaunchContract {
+  private requireWorkflowLaunchContract(workflowId: string): RunnableWorkflowLaunchContract {
     const contract = this.launchContractsByWorkflowId.get(workflowId);
     if (!contract) {
-      throw new Error(`Bundled Smithers workflow contract not found: ${workflowId}`);
+      throw new Error(`Runnable Smithers workflow contract not found: ${workflowId}`);
     }
     return contract;
   }
@@ -1573,6 +1630,24 @@ export class SmithersRuntimeManager {
           (workflowRun) =>
             workflowRun.threadId === input.threadId && workflowRun.smithersRunId === input.runId,
         ) ?? null
+    );
+  }
+
+  private findResumableThreadRun(
+    sessionId: string,
+    threadId: string,
+    workflowId: string,
+  ): StructuredWorkflowRunRecord | null {
+    return (
+      this.options.store
+        .getSessionState(sessionId)
+        .workflowRuns.filter(
+          (workflowRun) =>
+            workflowRun.threadId === threadId &&
+            (workflowRun.savedEntryId === workflowId || workflowRun.workflowName === workflowId) &&
+            (workflowRun.status === "waiting" || workflowRun.status === "continued"),
+        )
+        .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null
     );
   }
 
@@ -1608,26 +1683,16 @@ export class SmithersRuntimeManager {
     );
   }
 
-  private listStructuredRunOwnershipBySmithersRunId(): Map<
-    string,
-    Pick<StructuredWorkflowRunRecord, "sessionId" | "threadId">
-  > {
-    const ownershipByRunId = new Map<
-      string,
-      Pick<StructuredWorkflowRunRecord, "sessionId" | "threadId">
-    >();
+  private listStructuredRunBySmithersRunId(): Map<string, StructuredWorkflowRunRecord> {
+    const workflowRunsBySmithersRunId = new Map<string, StructuredWorkflowRunRecord>();
     for (const session of this.options.store.listSessionStates()) {
       for (const workflowRun of session.workflowRuns) {
-        if (ownershipByRunId.has(workflowRun.smithersRunId)) {
-          continue;
+        if (!workflowRunsBySmithersRunId.has(workflowRun.smithersRunId)) {
+          workflowRunsBySmithersRunId.set(workflowRun.smithersRunId, workflowRun);
         }
-        ownershipByRunId.set(workflowRun.smithersRunId, {
-          sessionId: workflowRun.sessionId,
-          threadId: workflowRun.threadId,
-        });
       }
     }
-    return ownershipByRunId;
+    return workflowRunsBySmithersRunId;
   }
 
   private async buildRunSummary(run: any): Promise<string> {
@@ -1660,12 +1725,12 @@ function mapRunStatusToWorkflowStatus(status: RunStatus): StructuredWorkflowStat
   }
 }
 
-function mapRunStatusToWaitKind(status: RunStatus): StructuredWaitKind | null {
+function mapRunStatusToWaitKind(status: RunStatus): StructuredWorkflowWaitKind | null {
   switch (status) {
     case "waiting-approval":
       return "approval";
     case "waiting-event":
-      return "external";
+      return "event";
     case "waiting-timer":
       return "timer";
     default:
@@ -1709,15 +1774,6 @@ function describeAttentionEvent(event: SmithersEvent): string {
   }
 }
 
-function containsSignalBlocker(diagnosis: any): boolean {
-  return Array.isArray(diagnosis?.blockers)
-    ? diagnosis.blockers.some(
-        (blocker: any) =>
-          typeof blocker?.signalName === "string" && blocker.signalName.trim().length > 0,
-      )
-    : false;
-}
-
 function describeRunStatus(status: RunStatus): string {
   switch (status) {
     case "waiting-approval":
@@ -1733,14 +1789,29 @@ function describeRunStatus(status: RunStatus): string {
   }
 }
 
-function describeWaitResumeWhen(waitKind: StructuredWaitKind | null): string {
+function deriveThreadWaitKind(
+  workflowRun: StructuredWorkflowRunRecord,
+): "approval" | "signal" | "timer" | "external" {
+  switch (workflowRun.waitKind) {
+    case "approval":
+      return "approval";
+    case "timer":
+      return "timer";
+    case "event":
+      return "signal";
+    default:
+      return "external";
+  }
+}
+
+function describeWaitResumeWhen(waitKind: StructuredWorkflowWaitKind | null): string {
   switch (waitKind) {
     case "approval":
       return "Resume when the approval is resolved.";
     case "timer":
       return "Resume when the timer fires.";
-    case "signal":
-      return "Resume when the signal arrives.";
+    case "event":
+      return "Resume when the required event or signal arrives.";
     default:
       return "Resume when the workflow can make forward progress again.";
   }

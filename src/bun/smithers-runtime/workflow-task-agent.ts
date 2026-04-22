@@ -10,9 +10,8 @@ import {
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
 import type { AgentLike } from "smithers-orchestrator";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { resolveApiKey } from "../auth-store";
 import { DEFAULT_CHAT_SETTINGS } from "../../mainview/chat-settings";
@@ -53,6 +52,8 @@ type WorkflowTaskAgentOptions = {
 type WorkflowTaskAgentGenerateArgs = {
   prompt?: string;
   messages?: Array<{ role?: string; content?: unknown }>;
+  resumeSession?: string;
+  lastHeartbeat?: unknown;
   abortSignal?: AbortSignal;
   onEvent?: (event: Record<string, unknown>) => void;
   onStepFinish?: (step: {
@@ -86,11 +87,14 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         throw new Error(`Workflow task agent model not found: ${provider}/${modelId}`);
       }
 
-      const sessionRoot = mkdtempSync(join(tmpdir(), "svvy-workflow-task-agent-"));
-      const sessionDir = join(sessionRoot, "sessions");
-      const agentDir = join(sessionRoot, "agent");
+      const sessionDir = resolveTaskAgentSessionDir(options.artifactDir);
+      const sessionManager = resolveTaskAgentSessionManager({
+        cwd: options.cwd,
+        sessionDir,
+        resumeSession: args.resumeSession,
+      });
+      const agentDir = options.agentDir;
       mkdirSync(sessionDir, { recursive: true });
-      mkdirSync(agentDir, { recursive: true });
 
       const authStorage = AuthStorage.inMemory();
       syncAuthStorage(authStorage);
@@ -104,8 +108,9 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
           ? modelRegistryFactory.create(authStorage, modelRegistryPath)
           : new modelRegistryFactory(authStorage, modelRegistryPath);
       const settingsManager = SettingsManager.create(options.cwd, agentDir);
-      const sessionManager = SessionManager.create(options.cwd, sessionDir);
-      sessionManager.appendSessionInfo("Workflow Task Agent");
+      if (!args.resumeSession) {
+        sessionManager.appendSessionInfo("Workflow Task Agent");
+      }
       const resourceLoader = new DefaultResourceLoader({
         cwd: options.cwd,
         agentDir,
@@ -117,9 +122,13 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
       const commandStore = createLocalExecuteTypescriptStore({
         artifactDir: options.artifactDir,
       });
+      const sessionIdentity = {
+        surfacePiSessionId: sessionManager.getSessionId(),
+      };
       const executeTypescriptTool = createWorkflowTaskExecuteTypescriptTool({
         cwd: options.cwd,
         store: commandStore,
+        getSurfacePiSessionId: () => sessionIdentity.surfacePiSessionId,
         runCommand: options.runCommand,
         webSearch: options.webSearch,
         fetchText: options.fetchText,
@@ -139,10 +148,16 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         resourceLoader,
       });
 
+      const durableSessionManager =
+        (session as { sessionManager?: SessionManager }).sessionManager ?? sessionManager;
+      sessionIdentity.surfacePiSessionId = durableSessionManager.getSessionId();
+      const resumeHandle =
+        durableSessionManager.getSessionFile() ?? sessionIdentity.surfacePiSessionId;
       args.onEvent?.({
         type: "started",
         engine: "pi",
         title: "pi workflow task agent",
+        resume: resumeHandle,
       });
 
       const unsubscribe = session.subscribe((event) => {
@@ -224,7 +239,6 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         unsubscribe();
         args.abortSignal?.removeEventListener("abort", abortPrompt);
         session.dispose();
-        rmSync(sessionRoot, { force: true, recursive: true });
       }
     },
   };
@@ -233,6 +247,7 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
 function createWorkflowTaskExecuteTypescriptTool(input: {
   cwd: string;
   store: ExecuteTypescriptCommandStore;
+  getSurfacePiSessionId: () => string;
   runCommand?: (
     args: ExecuteTypescriptRunCommandInput,
   ) => Promise<ExecuteTypescriptRunCommandResult>;
@@ -259,8 +274,10 @@ function createWorkflowTaskExecuteTypescriptTool(input: {
         signal,
         typescriptCode: params.typescriptCode,
         context: {
+          surfacePiSessionId: input.getSurfacePiSessionId(),
           turnId: `workflow-task-turn-${randomUUID()}`,
-          threadId: `workflow-task-thread-${randomUUID()}`,
+          threadId: null,
+          executor: "runtime",
         },
         runCommand: input.runCommand,
         webSearch: input.webSearch,
@@ -283,14 +300,12 @@ function createWorkflowTaskExecuteTypescriptTool(input: {
 function createLocalExecuteTypescriptStore(input: {
   artifactDir: string;
 }): ExecuteTypescriptCommandStore {
-  let commandCounter = 0;
-  let artifactCounter = 0;
   const commands = new Map<string, LocalCommandRecord>();
   mkdirSync(input.artifactDir, { recursive: true });
 
   return {
     createCommand(config) {
-      const id = `workflow-task-command-${++commandCounter}`;
+      const id = `workflow-task-command-${randomUUID()}`;
       commands.set(id, {
         id,
         toolName: config.toolName,
@@ -314,7 +329,7 @@ function createLocalExecuteTypescriptStore(input: {
       }
     },
     createArtifact(config) {
-      const id = `workflow-task-artifact-${++artifactCounter}`;
+      const id = `workflow-task-artifact-${randomUUID()}`;
       const resolvedPath =
         config.path ??
         join(input.artifactDir, `${id}-${sanitizeArtifactName(config.name ?? "artifact")}`);
@@ -325,6 +340,21 @@ function createLocalExecuteTypescriptStore(input: {
       return { id, path: resolvedPath };
     },
   };
+}
+
+function resolveTaskAgentSessionDir(artifactDir: string): string {
+  return join(resolve(artifactDir, "..", ".."), "task-agent-sessions");
+}
+
+function resolveTaskAgentSessionManager(input: {
+  cwd: string;
+  sessionDir: string;
+  resumeSession?: string;
+}): SessionManager {
+  if (input.resumeSession?.trim() && existsSync(input.resumeSession.trim())) {
+    return SessionManager.open(input.resumeSession.trim(), input.sessionDir);
+  }
+  return SessionManager.create(input.cwd, input.sessionDir);
 }
 
 function createCustomToolDefinitions(tools: readonly AgentTool<any>[]): ToolDefinition[] {
@@ -356,15 +386,22 @@ function buildWorkflowTaskPrompt(args: WorkflowTaskAgentGenerateArgs): string {
   if (prompt) {
     parts.push(prompt);
   } else if (Array.isArray(args.messages) && args.messages.length > 0) {
-    parts.push(
-      args.messages
-        .map(
-          (message) =>
-            `${String(message.role ?? "message").toUpperCase()}: ${messageToText(message)}`,
-        )
-        .filter((entry) => entry.trim().length > 0)
-        .join("\n\n"),
-    );
+    if (args.resumeSession) {
+      const latestUserMessage = findLatestUserMessageText(args.messages);
+      if (latestUserMessage) {
+        parts.push(latestUserMessage);
+      }
+    } else {
+      parts.push(
+        args.messages
+          .map(
+            (message) =>
+              `${String(message.role ?? "message").toUpperCase()}: ${messageToText(message)}`,
+          )
+          .filter((entry) => entry.trim().length > 0)
+          .join("\n\n"),
+      );
+    }
   }
 
   if (args.outputSchema) {
@@ -372,6 +409,23 @@ function buildWorkflowTaskPrompt(args: WorkflowTaskAgentGenerateArgs): string {
   }
 
   return parts.join("\n\n").trim();
+}
+
+function findLatestUserMessageText(
+  messages: Array<{ role?: string; content?: unknown }>,
+): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "user") {
+      continue;
+    }
+    const text = messageToText(message).trim();
+    if (text) {
+      return text;
+    }
+  }
+
+  return null;
 }
 
 function messageToText(message: { content?: unknown }): string {

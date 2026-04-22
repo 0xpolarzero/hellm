@@ -170,7 +170,7 @@ describe("thread handoff tool", () => {
       runtime,
       store,
     });
-    const handlerThreadId = runtime.current!.rootThreadId;
+    const handlerThreadId = runtime.current!.rootThreadId!;
 
     store.clearSessionWait({ sessionId: "session-thread-handoff-tool" });
     store.updateThread({
@@ -207,11 +207,13 @@ describe("thread handoff tool", () => {
       threadId: handlerThreadId,
       commandId: workflowCommand.id,
       smithersRunId: "smithers-run-hello-world",
-      workflowName: "svvy-hello-world",
-      templateId: "hello_world",
+      workflowName: "hello_world",
+      workflowSource: "saved",
+      entryPath: ".svvy/workflows/entries/hello-world.tsx",
+      savedEntryId: "hello_world",
       status: "waiting",
       waitKind: "approval",
-      summary: "svvy-hello-world is waiting for approval.",
+      summary: "hello_world is waiting for approval.",
     });
 
     const result = await tool.execute("tool-call-3", {
@@ -251,10 +253,10 @@ describe("thread handoff tool", () => {
   });
 
   for (const status of ["failed", "cancelled"] as const) {
-    it(`rejects handoff while the thread still owns a ${status} workflow run`, async () => {
+    it(`allows handoff after the thread resolves a ${status} workflow run`, async () => {
       const store = createStore();
       const runtime = createHandlerRuntime(store);
-      const handlerThreadId = runtime.current!.rootThreadId;
+      const handlerThreadId = runtime.current!.rootThreadId!;
       const workflowCommand = store.createCommand({
         turnId: runtime.current!.turnId,
         surfacePiSessionId: runtime.current!.surfacePiSessionId,
@@ -270,11 +272,13 @@ describe("thread handoff tool", () => {
         threadId: handlerThreadId,
         commandId: workflowCommand.id,
         smithersRunId: `smithers-run-${status}`,
-        workflowName: "svvy-hello-world",
-        templateId: "hello_world",
+        workflowName: "hello_world",
+        workflowSource: "saved",
+        entryPath: ".svvy/workflows/entries/hello-world.tsx",
+        savedEntryId: "hello_world",
         status,
         waitKind: null,
-        summary: `svvy-hello-world ${status} and still requires handler resolution.`,
+        summary: `hello_world ${status} and still requires handler resolution.`,
       });
       store.clearSessionWait({ sessionId: "session-thread-handoff-tool" });
       store.updateThread({
@@ -289,25 +293,22 @@ describe("thread handoff tool", () => {
       });
 
       const result = await tool.execute(`tool-call-unresolved-${status}`, {
-        title: "Attempt unresolved handoff",
-        summary: `Tried to hand off while the workflow is ${status}.`,
-        body: "This should be rejected because the handler still owns unresolved workflow state.",
+        title: "Resolved handoff",
+        summary: `The handler resolved the ${status} workflow and is handing control back.`,
+        body: "The handler inspected the terminal workflow result and is now handing control back.",
         kind: "workflow",
       });
 
       expect(result.details).toMatchObject({
-        ok: false,
+        ok: true,
       });
-      expect(result.details.error).toContain("unresolved workflow runs still exist");
-      expect(result.details.error).toContain("hello_world");
-      expect(result.details.error).toContain(status);
 
       const snapshot = store.getSessionState("session-thread-handoff-tool");
       expect(snapshot.turns[0]).toMatchObject({
-        turnDecision: "pending",
+        turnDecision: "thread.handoff",
       });
       expect(snapshot.threads.find((thread) => thread.id === handlerThreadId)).toMatchObject({
-        status: "troubleshooting",
+        status: "completed",
         wait: null,
       });
       expect(
@@ -315,6 +316,12 @@ describe("thread handoff tool", () => {
       ).toMatchObject({
         status,
       });
+      expect(snapshot.episodes).toEqual([
+        expect.objectContaining({
+          threadId: handlerThreadId,
+          summary: `The handler resolved the ${status} workflow and is handing control back.`,
+        }),
+      ]);
     });
   }
 });

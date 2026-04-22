@@ -9,8 +9,16 @@ import { WaitForEvent, createSmithers } from "smithers-orchestrator";
 import { z } from "zod";
 import { buildSessionTranscriptExport } from "../mainview/session-transcript";
 import type { PromptTarget } from "../mainview/chat-rpc";
-import { WorkspaceSessionCatalog, getSvvySessionDir, type SessionDefaults } from "./session-catalog";
-import type { BundledWorkflowDefinition } from "./smithers-runtime/registry";
+import {
+  WorkspaceSessionCatalog,
+  getSvvySessionDir,
+  type SessionDefaults,
+} from "./session-catalog";
+import type { TestWorkflowDefinition } from "./smithers-runtime/manager";
+import {
+  createExecuteTypescriptTaskTestWorkflow,
+  createHelloWorldTestWorkflow,
+} from "./smithers-runtime/test-workflows";
 import {
   bundledWorkflowRuntimeStoredInputSchema,
   readBundledWorkflowLaunchInput,
@@ -108,12 +116,29 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
   );
 
   const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-  getSmithersRuntimeManager(catalog).upsertBundledWorkflow(
+  getSmithersRuntimeManager(catalog).registerTestWorkflow(
+    createHelloWorldTestWorkflow(join(cwd, ".svvy", "smithers-runtime", "smithers.db")),
+  );
+  getSmithersRuntimeManager(catalog).registerTestWorkflow(
+    createExecuteTypescriptTaskTestWorkflow({
+      dbPath: join(cwd, ".svvy", "smithers-runtime", "smithers.db"),
+      cwd,
+      agentDir,
+      artifactDir: join(cwd, ".svvy", "smithers-runtime", "artifacts", "task-agent"),
+      provider: "zai",
+      model: "glm-5-turbo",
+      thinkingLevel: "medium",
+    }),
+  );
+  getSmithersRuntimeManager(catalog).registerTestWorkflow(
     createSignalWorkflowDefinition(join(cwd, ".svvy", "smithers-runtime", "smithers.db")),
   );
 
   try {
-    const created = await catalog.createSession({ title: "Workflow Supervision Proof" }, TEST_DEFAULTS);
+    const created = await catalog.createSession(
+      { title: "Workflow Supervision Proof" },
+      TEST_DEFAULTS,
+    );
     const workspaceSessionId = created.target.workspaceSessionId;
 
     await catalog.sendPrompt({
@@ -127,10 +152,10 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
       onEvent: () => {},
     });
 
-    await waitFor(() => getStructuredSessionState(catalog, workspaceSessionId).threads.length >= 2);
+    await waitFor(() => getStructuredSessionState(catalog, workspaceSessionId).threads.length >= 1);
     const thread =
       getStructuredSessionState(catalog, workspaceSessionId).threads.find(
-        (entry) => entry.parentThreadId !== null,
+        (entry) => entry.surfacePiSessionId !== workspaceSessionId,
       ) ?? null;
     await waitFor(() => !isPromptStreaming(catalog), 10_000);
     expect(thread).toBeTruthy();
@@ -193,7 +218,9 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
     );
 
     const snapshot = getStructuredSessionState(catalog, workspaceSessionId);
-    const handoffCommand = snapshot.commands.find((command) => command.toolName === "thread.handoff");
+    const handoffCommand = snapshot.commands.find(
+      (command) => command.toolName === "thread.handoff",
+    );
     if (!handoffCommand) {
       throw new Error(
         JSON.stringify(
@@ -307,7 +334,10 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
     expect(chatTranscriptDetails?.messages?.length ?? 0).toBeGreaterThanOrEqual(2);
     expect(handlerTranscript).toContain("Complete the following repository task inside svvy.");
 
-    const nodeDetailResult = findToolResultMessage(handlerState.messages, "smithers.get_node_detail");
+    const nodeDetailResult = findToolResultMessage(
+      handlerState.messages,
+      "smithers.get_node_detail",
+    );
     expect(nodeDetailResult).toBeTruthy();
     const nodeDetail = nodeDetailResult?.details as
       | { node?: { nodeId?: string }; attempts?: unknown[] }
@@ -352,7 +382,9 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
     expect(devToolsStream?.events?.length ?? 0).toBeGreaterThan(0);
     expect(devToolsStream?.lastSeq ?? 0).toBeGreaterThan(0);
 
-    const commandNames = snapshot.commands.map((command: StructuredCommandLike) => command.toolName);
+    const commandNames = snapshot.commands.map(
+      (command: StructuredCommandLike) => command.toolName,
+    );
     expect(commandNames).toEqual(
       expect.arrayContaining([
         "thread.start",
@@ -486,17 +518,21 @@ function getStructuredSessionState(
 }
 
 function getSmithersRuntimeManager(catalog: WorkspaceSessionCatalog) {
-  return (catalog as unknown as {
-    smithersRuntimeManager: {
-      upsertBundledWorkflow(definition: BundledWorkflowDefinition): void;
-    };
-  }).smithersRuntimeManager;
+  return (
+    catalog as unknown as {
+      smithersRuntimeManager: {
+        registerTestWorkflow(definition: TestWorkflowDefinition): void;
+      };
+    }
+  ).smithersRuntimeManager;
 }
 
 function isPromptStreaming(catalog: WorkspaceSessionCatalog): boolean {
-  const managedSurfaces = (catalog as unknown as {
-    managedSurfaces: Map<string, { activePrompt: boolean }>;
-  }).managedSurfaces;
+  const managedSurfaces = (
+    catalog as unknown as {
+      managedSurfaces: Map<string, { activePrompt: boolean }>;
+    }
+  ).managedSurfaces;
   return Array.from(managedSurfaces.values()).some((surface) => surface.activePrompt);
 }
 
@@ -516,7 +552,9 @@ async function buildSurfaceTranscriptSession(
         (session) => session.id === target.workspaceSessionId,
       ) ?? null;
     if (!summary) {
-      throw new Error(`Workspace session not found for transcript export: ${target.workspaceSessionId}`);
+      throw new Error(
+        `Workspace session not found for transcript export: ${target.workspaceSessionId}`,
+      );
     }
     return {
       id: summary.id,
@@ -556,7 +594,7 @@ function projectHandlerThreadStatus(
   }
 }
 
-function createSignalWorkflowDefinition(dbPath: string): BundledWorkflowDefinition {
+function createSignalWorkflowDefinition(dbPath: string): TestWorkflowDefinition {
   const launchSchema = z.object({
     signalName: z.string().min(1).default("deploy.completed"),
   });
@@ -582,7 +620,7 @@ function createSignalWorkflowDefinition(dbPath: string): BundledWorkflowDefiniti
   return {
     id: "wait_for_signal",
     label: "Wait For Signal",
-    description: "Waits on a durable Smithers signal and records the delivered payload.",
+    summary: "Waits on a durable Smithers signal and records the delivered payload.",
     workflowName: "svvy-wait-for-signal",
     launchSchema,
     workflow: smithersApi.smithers((ctx) => {
@@ -693,7 +731,10 @@ function startAutonomousWorkflowSupervisionProofStub(): AutonomousProofStub {
           });
         }
 
-        if (toolNames.includes("thread.start") && !toolNames.some((name) => name.startsWith("smithers."))) {
+        if (
+          toolNames.includes("thread.start") &&
+          !toolNames.some((name) => name.startsWith("smithers."))
+        ) {
           if (!hasToolCall(toolCalls, "thread.start")) {
             return createToolCallResponse({
               responseId,
@@ -761,7 +802,9 @@ function respondAsAutonomousHandler(input: {
   toolCallCounter: () => string;
 }): Response {
   const toolNames = availableToolNames(input.payload);
-  const runSignalToolName = toolNames.find((name) => name === "smithers.run_workflow.wait_for_signal");
+  const runSignalToolName = toolNames.find(
+    (name) => name === "smithers.run_workflow.wait_for_signal",
+  );
   const runTaskToolName = toolNames.find(
     (name) => name === "smithers.run_workflow.execute_typescript_task",
   );
@@ -803,7 +846,9 @@ function respondAsAutonomousHandler(input: {
 
   const signalWatchResults = watchRunResultsFor(input.toolCalls, input.toolResults, signalRunId);
   const waitingSignalWatch = signalWatchResults.find(
-    (result) => readStringProperty(result.parsed?.finalRun as Record<string, unknown> | null, "status") === "waiting-event",
+    (result) =>
+      readStringProperty(result.parsed?.finalRun as Record<string, unknown> | null, "status") ===
+      "waiting-event",
   );
   const terminalSignalWatch = signalWatchResults.find(
     (result) => readBooleanProperty(result.parsed, "reachedTerminal") === true,
@@ -919,7 +964,12 @@ function respondAsAutonomousHandler(input: {
     throw new Error("Expected execute_typescript_task launch result to include runId.");
   }
 
-  if (!hasWatchRunFor(input.toolCalls, taskRunId)) {
+  const taskWatchResults = watchRunResultsFor(input.toolCalls, input.toolResults, taskRunId);
+  const terminalTaskWatch = taskWatchResults.find(
+    (result) => readBooleanProperty(result.parsed, "reachedTerminal") === true,
+  );
+
+  if (!terminalTaskWatch) {
     return createToolCallResponse({
       responseId: input.responseId,
       model: input.payload.model,
@@ -1013,7 +1063,10 @@ function respondAsAutonomousHandler(input: {
 
   if (!hasToolCall(input.toolCalls, "thread.handoff")) {
     const signalDiagnosis = findLatestToolResult(input.toolResults, "smithers.explain_run")?.parsed;
-    const taskTranscript = findLatestToolResult(input.toolResults, "smithers.get_chat_transcript")?.parsed;
+    const taskTranscript = findLatestToolResult(
+      input.toolResults,
+      "smithers.get_chat_transcript",
+    )?.parsed;
     const nodeDetail = findLatestToolResult(input.toolResults, "smithers.get_node_detail")?.parsed;
     const frames = findLatestToolResult(input.toolResults, "smithers.frames.list")?.parsed;
     const devToolsSnapshot = findLatestToolResult(
@@ -1040,7 +1093,9 @@ function respondAsAutonomousHandler(input: {
     const frameCount = Array.isArray(frames?.frames) ? frames.frames.length : 0;
     const devToolsFrameNo =
       typeof devToolsSnapshot?.frameNo === "number" ? String(devToolsSnapshot.frameNo) : "unknown";
-    const taskToolCallCount = Array.isArray(nodeDetail?.toolCalls) ? nodeDetail.toolCalls.length : 0;
+    const taskToolCallCount = Array.isArray(nodeDetail?.toolCalls)
+      ? nodeDetail.toolCalls.length
+      : 0;
 
     return createToolCallResponse({
       responseId: input.responseId,
@@ -1205,7 +1260,9 @@ function createSseResponse(events: unknown[]): Response {
 
 function availableToolNames(request: ChatCompletionRequest | undefined): string[] {
   return (request?.tools ?? [])
-    .map((tool) => readStringProperty((tool as { function?: Record<string, unknown> }).function, "name"))
+    .map((tool) =>
+      readStringProperty((tool as { function?: Record<string, unknown> }).function, "name"),
+    )
     .filter((name): name is string => typeof name === "string");
 }
 
@@ -1294,7 +1351,11 @@ function flattenMessageContent(content: unknown): string {
       if (typeof block === "string") {
         return block;
       }
-      if (block && typeof block === "object" && typeof (block as { text?: unknown }).text === "string") {
+      if (
+        block &&
+        typeof block === "object" &&
+        typeof (block as { text?: unknown }).text === "string"
+      ) {
         return (block as { text: string }).text;
       }
       return "";
@@ -1358,12 +1419,6 @@ function findLatestToolResult(
     }
   }
   return undefined;
-}
-
-function hasWatchRunFor(toolCalls: ToolCallRecord[], runId: string): boolean {
-  return toolCalls.some(
-    (toolCall) => toolCall.name === "smithers.watch_run" && toolCall.args.runId === runId,
-  );
 }
 
 function watchRunResultsFor(

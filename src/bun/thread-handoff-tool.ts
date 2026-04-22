@@ -47,7 +47,7 @@ export function createThreadHandoffTool(options: {
     parameters: threadHandoffParamsSchema,
     execute: async (_toolCallId, params) => {
       const runtime = requireActiveHandlerRuntime(options.runtime);
-      const threadId = runtime.surfaceThreadId ?? runtime.rootThreadId;
+      const threadId = runtime.surfaceThreadId;
       const summary = params.summary.trim();
       const body = params.body.trim();
       const title = params.title?.trim() || summary;
@@ -159,17 +159,21 @@ export function createThreadHandoffTool(options: {
   };
 }
 
-function requireActiveHandlerRuntime(runtimeHandle: PromptExecutionRuntimeHandle) {
+function requireActiveHandlerRuntime(
+  runtimeHandle: PromptExecutionRuntimeHandle,
+): NonNullable<PromptExecutionRuntimeHandle["current"]> & { surfaceThreadId: string } {
   const runtime = runtimeHandle.current;
   if (!runtime) {
     throw new Error(`${THREAD_HANDOFF_TOOL_NAME} can only run during an active prompt.`);
   }
 
-  if (runtime.surfaceKind !== "handler") {
+  if (runtime.surfaceKind !== "handler" || !runtime.surfaceThreadId) {
     throw new Error(`${THREAD_HANDOFF_TOOL_NAME} can only run from a handler thread.`);
   }
 
-  return runtime;
+  return runtime as NonNullable<PromptExecutionRuntimeHandle["current"]> & {
+    surfaceThreadId: string;
+  };
 }
 
 function normalizeEpisodeKind(
@@ -187,13 +191,10 @@ function assertNoActiveWorkflowRuns(
   const activeWorkflowRuns = store
     .getSessionState(sessionId)
     .workflowRuns.filter(
-        (workflowRun) =>
-          workflowRun.threadId === threadId &&
-          (workflowRun.status === "running" ||
-            workflowRun.status === "waiting" ||
-            workflowRun.status === "failed" ||
-            workflowRun.status === "cancelled"),
-      );
+      (workflowRun) =>
+        workflowRun.threadId === threadId &&
+        (workflowRun.status === "running" || workflowRun.status === "waiting"),
+    );
   if (activeWorkflowRuns.length === 0) {
     return;
   }
@@ -205,7 +206,7 @@ function buildActiveWorkflowHandoffError(workflowRuns: StructuredWorkflowRunReco
   const details = workflowRuns
     .map(
       (workflowRun) =>
-        `${workflowRun.templateId ?? workflowRun.workflowName} (${workflowRun.smithersRunId}, ${workflowRun.status})`,
+        `${workflowRun.savedEntryId ?? workflowRun.workflowName} (${workflowRun.smithersRunId}, ${workflowRun.status})`,
     )
     .join(", ");
   return `thread.handoff cannot complete the current objective span while unresolved workflow runs still exist: ${details}. The handler keeps ownership until those runs are resolved inside the thread. Resume, repair, cancel, or explicitly close the workflow state before handing control back.`;
