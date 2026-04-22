@@ -1,63 +1,80 @@
 #!/usr/bin/env bun
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import * as ts from "typescript";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 
 const projectRoot = join(import.meta.dir, "..");
 const sourcePath = join(projectRoot, "src", "bun", "execute-typescript-api-contract.ts");
 const generatedDir = join(projectRoot, "generated");
 const moduleOutputPath = join(generatedDir, "execute-typescript-api.generated.ts");
 
-function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
-  return diagnostics
-    .map((diagnostic) => {
-      const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
-      if (!diagnostic.file || diagnostic.start === undefined) {
-        return message;
-      }
-      const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
-      return `${diagnostic.file.fileName}:${position.line + 1}:${position.character + 1} ${message}`;
-    })
-    .join("\n");
+function resolveTsgoPath(): string {
+  const fromPath = Bun.which("tsgo");
+  if (fromPath) {
+    return fromPath;
+  }
+
+  const bundledPath = join(projectRoot, "node_modules", ".bin", "tsgo");
+  if (existsSync(bundledPath)) {
+    return bundledPath;
+  }
+
+  throw new Error("Could not find the tsgo executable. Run `bun install` first.");
 }
 
 function emitDeclaration(sourceFilePath: string): string {
-  const compilerOptions: ts.CompilerOptions = {
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.ESNext,
-    declaration: true,
-    emitDeclarationOnly: true,
-    removeComments: false,
-    skipLibCheck: true,
-    strict: true,
-  };
+  const sourceDir = dirname(sourceFilePath);
+  const tempDir = mkdtempSync(join(tmpdir(), "svvy-execute-typescript-api-"));
+  const outDir = join(tempDir, "out");
+  const configPath = join(tempDir, "tsconfig.json");
+  const emittedPath = join(outDir, `${basename(sourceFilePath, ".ts")}.d.ts`);
 
-  let emittedDeclaration = "";
-  const host = ts.createCompilerHost(compilerOptions, true);
-  const originalWriteFile = host.writeFile.bind(host);
-  host.writeFile = (fileName, text, ...rest) => {
-    if (fileName.endsWith(".d.ts")) {
-      emittedDeclaration = text;
-      return;
+  try {
+    const tsconfig = {
+      compilerOptions: {
+        target: "ES2022",
+        module: "ESNext",
+        moduleResolution: "bundler",
+        allowImportingTsExtensions: true,
+        declaration: true,
+        emitDeclarationOnly: true,
+        removeComments: false,
+        skipLibCheck: true,
+        strict: true,
+        types: [],
+        rootDir: sourceDir,
+        outDir: "./out",
+      },
+      files: [sourceFilePath],
+    };
+    writeFileSync(configPath, `${JSON.stringify(tsconfig, null, 2)}\n`, "utf8");
+
+    const result = Bun.spawnSync({
+      cmd: [resolveTsgoPath(), "-p", configPath],
+      cwd: projectRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: process.env,
+    });
+    const stdout = Buffer.from(result.stdout).toString("utf8").trim();
+    const stderr = Buffer.from(result.stderr).toString("utf8").trim();
+    if (result.exitCode !== 0) {
+      const output = [stderr, stdout].filter(Boolean).join("\n");
+      throw new Error(
+        `Failed to generate execute_typescript API declaration with tsgo.\n${output}`,
+      );
     }
-    originalWriteFile(fileName, text, ...rest);
-  };
 
-  const program = ts.createProgram([sourceFilePath], compilerOptions, host);
-  const diagnostics = ts.getPreEmitDiagnostics(program);
-  if (diagnostics.length > 0) {
-    throw new Error(
-      `Failed to generate execute_typescript API declaration.\n${formatDiagnostics(diagnostics)}`,
-    );
+    const emittedDeclaration = readFileSync(emittedPath, "utf8");
+    if (!emittedDeclaration.trim()) {
+      throw new Error("TypeScript skipped declaration emit for execute_typescript API contract.");
+    }
+
+    return emittedDeclaration;
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
   }
-
-  const result = program.emit();
-  if (result.emitSkipped || !emittedDeclaration.trim()) {
-    throw new Error("TypeScript skipped declaration emit for execute_typescript API contract.");
-  }
-
-  return emittedDeclaration;
 }
 
 function toAmbientDeclaration(source: string): string {
