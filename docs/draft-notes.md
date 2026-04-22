@@ -63,3 +63,13 @@
 - context usage per turn: nice UI thing to get a rough idea of how much context was used in each turn both agent and user
 
 - /btw similar to claude code, e.g. select some agent text and quick quote and ask a question on a disposable short session (but maybe it can persist on the ui tho)
+
+- snitch (TBD); this is one of the best features, but it makes sense to wait for the main product to be working before getting attention
+  - small model running at all time alongisde your sessions, focused purely on productivity stuff
+  - meaning roughly what you do when you finish a session or during a session (hey write that in AGENTS.md) or more broadly any suggestions that can help
+  - this is separate but maybe not that much separate (?) from the small model running alongside a workflow to give frequent high-level summaries of progress
+  - basically it has a session alongside every session, and it is focused purely on watching you discuss with your agent, and runs after an entire turn (user + agent) to figure out if it could help with anything, notice something redundant, weird, maybe even more broadly help with phrasing or understand stuff idk
+  - it could have its own AGENTS.md, even tho it would for instance help maintain main AGENTS.md and docs/instructions, but it would also have its own AGENTS.md with instructions, maybe its memory, basically its own docs surface only reachable by itself and hidden from other agents
+  - maybe it can be the one to decide when to run CI during agent sessions, this kind of stuff
+  - this helps agents in sessions focus purely on product and not in anything-harness, so you have clear separation of concerns, and snitch suggesting stuff so you don't have to think too much about this either
+  - including maybe having it help on a specific set of surfaces, e.g. its notes, todos, this kind of more user-facing stuff?
