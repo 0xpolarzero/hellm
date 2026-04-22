@@ -1,5 +1,5 @@
 import { afterEach, expect, it, setDefaultTimeout } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import React from "react";
@@ -116,6 +116,7 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
   );
 
   const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+  const store = getStructuredSessionStore(catalog);
   getSmithersRuntimeManager(catalog).registerTestWorkflow(
     createHelloWorldTestWorkflow(join(cwd, ".svvy", "smithers-runtime", "smithers.db")),
   );
@@ -125,6 +126,7 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
       cwd,
       agentDir,
       artifactDir: join(cwd, ".svvy", "smithers-runtime", "artifacts", "task-agent"),
+      store,
       provider: "zai",
       model: "glm-5-turbo",
       thinkingLevel: "medium",
@@ -259,12 +261,15 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
     expect(handoff.body).toContain("workflow-proof.txt");
     expect(handoff.body).toContain("DevTools");
 
-    const proofFile = join(cwd, "workflow-proof.txt");
-    expect(existsSync(proofFile)).toBe(true);
-    const proofText = readFileSync(proofFile, "utf8");
-    expect(proofText).toContain("deploy.completed");
-    expect(proofText).toContain("workflow task agent");
-    expect(proofText).toContain("Frames and DevTools");
+    const workflowTaskAttempt = snapshot.workflowTaskAttempts.find(
+      (attempt) => attempt.nodeId === "task" && attempt.kind === "agent",
+    );
+    expect(workflowTaskAttempt).toBeTruthy();
+    expect(
+      snapshot.workflowTaskMessages.filter(
+        (message) => message.workflowTaskAttemptId === workflowTaskAttempt?.id,
+      ).length,
+    ).toBeGreaterThan(0);
 
     await waitFor(() => !isPromptStreaming(catalog), 10_000);
     const handlerState = await catalog.openSurface(handlerTarget);
@@ -512,9 +517,14 @@ function getStructuredSessionState(
   catalog: WorkspaceSessionCatalog,
   sessionId: string,
 ): StructuredSessionSnapshot {
-  const store = (catalog as unknown as { structuredSessionStore: StructuredSessionStateStore })
+  return getStructuredSessionStore(catalog).getSessionState(sessionId);
+}
+
+function getStructuredSessionStore(
+  catalog: WorkspaceSessionCatalog,
+): StructuredSessionStateStore {
+  return (catalog as unknown as { structuredSessionStore: StructuredSessionStateStore })
     .structuredSessionStore;
-  return store.getSessionState(sessionId);
 }
 
 function getSmithersRuntimeManager(catalog: WorkspaceSessionCatalog) {

@@ -108,7 +108,8 @@ const WRAPPER_SUFFIX = "}";
 const WRAPPER_LINE_OFFSET = 1;
 
 type ExecuteTypescriptContext = {
-  turnId: string;
+  turnId?: string | null;
+  workflowTaskAttemptId?: string | null;
   surfacePiSessionId: string;
   threadId: string | null;
   workflowRunId?: string | null;
@@ -118,7 +119,8 @@ type ExecuteTypescriptContext = {
 
 export interface ExecuteTypescriptCommandStore {
   createCommand(input: {
-    turnId: string;
+    turnId?: string | null;
+    workflowTaskAttemptId?: string | null;
     surfacePiSessionId?: string;
     threadId?: string | null;
     workflowRunId?: string | null;
@@ -145,6 +147,7 @@ export interface ExecuteTypescriptCommandStore {
   createArtifact(input: {
     threadId?: string | null;
     workflowRunId?: string | null;
+    workflowTaskAttemptId?: string | null;
     sourceCommandId?: string | null;
     kind: StructuredArtifactKind;
     name?: string;
@@ -296,7 +299,8 @@ export async function runExecuteTypescript(input: {
   }) => Promise<ExecuteTypescriptWebFetchResult>;
 }): Promise<ExecuteTypescriptResult> {
   const parentCommand = input.store.createCommand({
-    turnId: input.context.turnId,
+    turnId: input.context.turnId ?? null,
+    workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
     surfacePiSessionId: input.context.surfacePiSessionId,
     threadId: input.context.threadId,
     workflowRunId: input.context.workflowRunId ?? null,
@@ -308,6 +312,7 @@ export async function runExecuteTypescript(input: {
   });
   input.store.startCommand(parentCommand.id);
   const snippetArtifact = input.store.createArtifact({
+    workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
     sourceCommandId: parentCommand.id,
     kind: "text",
     name: "execute-typescript.ts",
@@ -317,6 +322,7 @@ export async function runExecuteTypescript(input: {
   const preflight = compileAndTypecheck(input.typescriptCode);
   if (preflight.errors.length > 0) {
     const diagnosticsArtifact = input.store.createArtifact({
+      workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
       sourceCommandId: parentCommand.id,
       kind: "json",
       name: "execute-typescript.diagnostics.json",
@@ -352,7 +358,8 @@ export async function runExecuteTypescript(input: {
       cwd: input.cwd,
       store: input.store,
       surfacePiSessionId: input.context.surfacePiSessionId,
-      turnId: input.context.turnId,
+      turnId: input.context.turnId ?? null,
+      workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
       threadId: input.context.threadId,
       workflowRunId: input.context.workflowRunId ?? null,
       parentCommandId: parentCommand.id,
@@ -369,6 +376,7 @@ export async function runExecuteTypescript(input: {
     const logsArtifact =
       logs.length > 0
         ? input.store.createArtifact({
+            workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
             sourceCommandId: parentCommand.id,
             kind: "log",
             name: "execute-typescript.logs.log",
@@ -397,6 +405,7 @@ export async function runExecuteTypescript(input: {
     const logsArtifact =
       logs.length > 0
         ? input.store.createArtifact({
+            workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
             sourceCommandId: parentCommand.id,
             kind: "log",
             name: "execute-typescript.logs.log",
@@ -575,7 +584,8 @@ function createExecuteTypescriptApi(input: {
   cwd: string;
   store: ExecuteTypescriptCommandStore;
   surfacePiSessionId: string;
-  turnId: string;
+  turnId?: string | null;
+  workflowTaskAttemptId?: string | null;
   threadId: string | null;
   workflowRunId?: string | null;
   parentCommandId: string;
@@ -603,7 +613,8 @@ function createExecuteTypescriptApi(input: {
     run: (commandId: string) => Promise<ExecuteTypescriptChildCallResult<T>>;
   }): Promise<T> => {
     const command = input.store.createCommand({
-      turnId: input.turnId,
+      turnId: input.turnId ?? null,
+      workflowTaskAttemptId: input.workflowTaskAttemptId ?? null,
       surfacePiSessionId: input.surfacePiSessionId,
       threadId: input.threadId,
       workflowRunId: input.workflowRunId ?? null,
@@ -1508,6 +1519,7 @@ function createExecuteTypescriptApi(input: {
           visibility: "summary",
           run: async (commandId) => {
             const artifact = input.store.createArtifact({
+              workflowTaskAttemptId: input.workflowTaskAttemptId ?? null,
               sourceCommandId: commandId,
               kind: "text",
               name: params.name,
@@ -1538,6 +1550,7 @@ function createExecuteTypescriptApi(input: {
               params.pretty === false ? undefined : 2,
             );
             const artifact = input.store.createArtifact({
+              workflowTaskAttemptId: input.workflowTaskAttemptId ?? null,
               sourceCommandId: commandId,
               kind: "json",
               name: params.name,
@@ -1565,6 +1578,7 @@ function createExecuteTypescriptApi(input: {
             const filePath = resolveWorkspacePath(input.cwd, params.path);
             const name = params.name?.trim() || basename(filePath);
             const artifact = input.store.createArtifact({
+              workflowTaskAttemptId: input.workflowTaskAttemptId ?? null,
               sourceCommandId: commandId,
               kind: "file",
               name,

@@ -92,6 +92,7 @@ export interface WorkspaceCommandRollup {
   commandId: string;
   threadId: string | null;
   workflowRunId?: string | null;
+  workflowTaskAttemptId?: string | null;
   toolName: string;
   visibility: "summary" | "surface";
   status: "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
@@ -125,6 +126,7 @@ export interface WorkspaceCommandInspector {
   commandId: string;
   threadId: string | null;
   workflowRunId?: string | null;
+  workflowTaskAttemptId?: string | null;
   toolName: string;
   visibility: "trace" | "summary" | "surface";
   status: "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
@@ -177,6 +179,7 @@ export interface WorkspaceHandlerThreadSummary {
   finishedAt: string | null;
   commandCount: number;
   workflowRunCount: number;
+  workflowTaskAttemptCount?: number;
   episodeCount: number;
   artifactCount: number;
   verificationCount: number;
@@ -187,6 +190,22 @@ export interface WorkspaceHandlerThreadSummary {
 export interface WorkspaceHandlerThreadInspector extends WorkspaceHandlerThreadSummary {
   commandRollups: WorkspaceCommandRollup[];
   workflowRuns: WorkspaceHandlerThreadWorkflowSummary[];
+  workflowTaskAttempts?: Array<{
+    workflowTaskAttemptId: string;
+    workflowRunId: string;
+    smithersRunId: string;
+    nodeId: string;
+    iteration: number;
+    attempt: number;
+    title: string;
+    kind: "agent" | "compute" | "static" | "unknown";
+    status: "running" | "waiting" | "completed" | "failed" | "cancelled";
+    summary: string;
+    updatedAt: string;
+    commandCount: number;
+    artifactCount: number;
+    transcriptMessageCount: number;
+  }>;
   episodes: WorkspaceHandlerThreadEpisodeSummary[];
   artifacts: WorkspaceCommandArtifactLink[];
 }

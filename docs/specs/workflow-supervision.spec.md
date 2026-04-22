@@ -182,6 +182,8 @@ Smithers owns the task agent's:
 
 `svvy` owns only the higher-level product projection and the surrounding handler-thread supervision.
 
+That projection should treat the Smithers task attempt as a real durable product record, not as transcript-only internal noise.
+
 ### Handler Attention
 
 Handler attention means a workflow state transition now requires another handler-thread decision.
@@ -206,9 +208,10 @@ The adopted flow is:
 5. `svvy` persists or updates the workflow-run record immediately.
 6. `svvy` records the workflow-run state needed for later reconnect and wake-up dedupe.
 7. `svvy` attaches or restores the runtime helper for that workflow run and uses it to emit write-driven lifecycle projection into durable `svvy` state.
-8. The Bun side emits explicit workspace updates and surface updates whenever those durable projections change visible workspace state or the live handler surface state.
-9. If the workflow reaches a state that needs another handler decision, `svvy` opens a synthetic background turn on that same handler thread.
-10. The handler thread decides whether to inspect, repair, resume, ask the user, or hand control back with `thread.handoff`.
+8. When Smithers task attempts exist under that run, `svvy` projects first-class workflow-task-attempt records keyed by `runId`, `nodeId`, `iteration`, and `attempt`, plus durable nested transcript, command, and artifact traces for task-agent work.
+9. The Bun side emits explicit workspace updates and surface updates whenever those durable projections change visible workspace state or the live handler surface state.
+10. If the workflow reaches a state that needs another handler decision, `svvy` opens a synthetic background turn on that same handler thread.
+11. The handler thread decides whether to inspect, repair, resume, ask the user, or hand control back with `thread.handoff`.
 
 ## Shipped App Integration
 
@@ -237,6 +240,7 @@ The adopted direction is:
 - configure that task agent with a `svvy` workflow-task system prompt rather than the orchestrator or handler-thread prompt
 - expose only task-local tool declarations to that actor
 - the default adopted task-agent tool surface is `execute_typescript`
+- project each Smithers task attempt into a durable `svvy` workflow-task-attempt record and attach any task-agent `execute_typescript` commands and artifacts to that attempt instead of leaving them in a local ephemeral trace
 - do not expose `thread.start`, `thread.handoff`, `wait`, or `smithers.*` to workflow task agents
 
 This is intentionally the same broad recipe family as the orchestrator and handler thread:

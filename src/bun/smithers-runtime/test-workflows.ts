@@ -14,6 +14,7 @@ import type {
   ExecuteTypescriptWebFetchResult,
   ExecuteTypescriptWebSearchResult,
 } from "../execute-typescript-tool";
+import type { StructuredSessionStateStore } from "../structured-session-state";
 
 function getLatestOutput<T>(entries: T[] | undefined): T | null {
   return entries && entries.length > 0 ? (entries[entries.length - 1] ?? null) : null;
@@ -82,6 +83,7 @@ export function createExecuteTypescriptTaskTestWorkflow(input: {
   cwd: string;
   agentDir: string;
   artifactDir: string;
+  store: StructuredSessionStateStore;
   provider: string;
   model: string;
   thinkingLevel: ThinkingLevel;
@@ -130,6 +132,7 @@ export function createExecuteTypescriptTaskTestWorkflow(input: {
     cwd: input.cwd,
     agentDir: input.agentDir,
     artifactDir: input.artifactDir,
+    store: input.store,
     provider: input.provider,
     model: input.model,
     thinkingLevel: input.thinkingLevel,

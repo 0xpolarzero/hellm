@@ -5,6 +5,7 @@ import {
   parseChatAttemptMeta,
   parseNodeOutputEvent,
   selectChatAttempts,
+  type ParsedNodeOutputEvent,
 } from "@smithers-orchestrator/cli/chat";
 import { diagnoseRunEffect } from "@smithers-orchestrator/cli/why-diagnosis";
 import { getDevToolsSnapshotRoute, streamDevToolsRoute } from "@smithers-orchestrator/server";
@@ -118,6 +119,23 @@ type LaunchWorkflowResult = {
   status: StructuredWorkflowStatus;
   smithersStatus: RunStatus;
   summary: string;
+};
+
+type SmithersAttemptRow = {
+  runId: string;
+  nodeId: string;
+  iteration: number;
+  attempt: number;
+  state: string;
+  startedAtMs: number;
+  finishedAtMs?: number | null;
+  heartbeatAtMs?: number | null;
+  errorJson?: string | null;
+  metaJson?: string | null;
+  responseText?: string | null;
+  cached?: boolean | null;
+  jjPointer?: string | null;
+  jjCwd?: string | null;
 };
 
 export type TestWorkflowDefinition = {
@@ -1243,6 +1261,7 @@ export class SmithersRuntimeManager {
       });
     }
 
+    await this.projectWorkflowTaskAttempts(runId, ownership);
     this.applyThreadProjection({
       sessionId: ownership.sessionId,
       threadId: ownership.threadId,
@@ -1272,6 +1291,82 @@ export class SmithersRuntimeManager {
           input.observedAttentionSeq === nextWorkflowRun.pendingAttentionSeq
             ? input.observedAttentionReason
             : null,
+      });
+    }
+  }
+
+  private async projectWorkflowTaskAttempts(runId: string, ownership: WorkflowOwnership) {
+    const attempts = (await this.db.listAttemptsForRun(runId)) as SmithersAttemptRow[];
+    if (attempts.length === 0) {
+      return;
+    }
+
+    const outputEvents = (await listAllRunEventsByType(this.db, runId, ["NodeOutput"]))
+      .map((event) => parseNodeOutputEvent(event as any))
+      .filter((event): event is NonNullable<typeof event> => event !== null);
+    const outputEventsByAttemptKey = new Map<string, typeof outputEvents>();
+    for (const outputEvent of outputEvents) {
+      if (!outputEvent.nodeId) {
+        continue;
+      }
+      const key = chatAttemptKey({
+        nodeId: outputEvent.nodeId,
+        iteration: outputEvent.iteration ?? 0,
+        attempt: outputEvent.attempt ?? 1,
+      });
+      const list = outputEventsByAttemptKey.get(key) ?? [];
+      list.push(outputEvent);
+      outputEventsByAttemptKey.set(key, list);
+    }
+
+    for (const attempt of attempts) {
+      const meta = parseJson(attempt.metaJson);
+      const structuredAttempt = this.options.store.upsertWorkflowTaskAttempt({
+        workflowRunId: ownership.structuredWorkflowId,
+        smithersRunId: runId,
+        nodeId: attempt.nodeId,
+        iteration: attempt.iteration ?? 0,
+        attempt: attempt.attempt,
+        surfacePiSessionId: readMetaString(meta, "agentSurfacePiSessionId"),
+        title: readMetaString(meta, "label") ?? attempt.nodeId,
+        summary: summarizeWorkflowTaskAttemptProjection(attempt, meta),
+        kind: readWorkflowTaskAttemptKind(meta),
+        status: mapAttemptStateToWorkflowTaskAttemptStatus(attempt.state),
+        smithersState: attempt.state,
+        prompt: readMetaString(meta, "prompt"),
+        responseText: attempt.responseText ?? null,
+        error: parseAttemptErrorMessage(attempt.errorJson),
+        cached: Boolean(attempt.cached),
+        jjPointer: attempt.jjPointer ?? null,
+        jjCwd: attempt.jjCwd ?? null,
+        heartbeatAt: toIso(attempt.heartbeatAtMs),
+        agentId: readMetaString(meta, "agentId"),
+        agentModel: readMetaString(meta, "agentModel"),
+        agentEngine: readMetaString(meta, "agentEngine"),
+        agentResume:
+          readMetaString(meta, "agentResume") ??
+          readNestedMetaString(meta, "hijackHandoff", "resume"),
+        meta,
+        startedAt: toIso(attempt.startedAtMs) ?? new Date(0).toISOString(),
+        finishedAt: toIso(attempt.finishedAtMs),
+      });
+
+      this.options.store.replaceWorkflowTaskMessages({
+        workflowTaskAttemptId: structuredAttempt.id,
+        messages: buildWorkflowTaskAttemptMessages({
+          runId,
+          attempt,
+          prompt: readMetaString(meta, "prompt"),
+          responseText: attempt.responseText ?? null,
+          outputEvents:
+            outputEventsByAttemptKey.get(
+              chatAttemptKey({
+                nodeId: attempt.nodeId,
+                iteration: attempt.iteration ?? 0,
+                attempt: attempt.attempt,
+              }),
+            ) ?? [],
+        }),
       });
     }
   }
@@ -1725,6 +1820,147 @@ function mapRunStatusToWorkflowStatus(status: RunStatus): StructuredWorkflowStat
   }
 }
 
+function mapAttemptStateToWorkflowTaskAttemptStatus(
+  state: string,
+): "running" | "waiting" | "completed" | "failed" | "cancelled" {
+  switch (state) {
+    case "waiting-timer":
+      return "waiting";
+    case "finished":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+    default:
+      return "running";
+  }
+}
+
+function readWorkflowTaskAttemptKind(meta: Record<string, unknown> | null): "agent" | "compute" | "static" | "unknown" {
+  const kind = readMetaString(meta, "kind");
+  return kind === "agent" || kind === "compute" || kind === "static" ? kind : "unknown";
+}
+
+function readMetaString(meta: Record<string, unknown> | null, key: string): string | null {
+  return meta && typeof meta[key] === "string" ? (meta[key] as string) : null;
+}
+
+function readNestedMetaString(
+  meta: Record<string, unknown> | null,
+  key: string,
+  nestedKey: string,
+): string | null {
+  const record = meta?.[key];
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return null;
+  }
+  return typeof (record as Record<string, unknown>)[nestedKey] === "string"
+    ? ((record as Record<string, unknown>)[nestedKey] as string)
+    : null;
+}
+
+function parseAttemptErrorMessage(errorJson: string | null | undefined): string | null {
+  const error = parseJson(errorJson);
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+  return typeof (error as Record<string, unknown>).message === "string"
+    ? ((error as Record<string, unknown>).message as string)
+    : null;
+}
+
+function summarizeWorkflowTaskAttemptProjection(
+  attempt: SmithersAttemptRow,
+  meta: Record<string, unknown> | null,
+): string {
+  const label = readMetaString(meta, "label") ?? attempt.nodeId;
+  const error = parseAttemptErrorMessage(attempt.errorJson);
+  switch (attempt.state) {
+    case "waiting-timer":
+      return `${label} is waiting on a timer.`;
+    case "finished":
+      return attempt.responseText?.trim()
+        ? `${label} finished with a task-agent response.`
+        : `${label} finished.`;
+    case "failed":
+      return error ? `${label} failed: ${error}` : `${label} failed.`;
+    case "cancelled":
+      return `${label} was cancelled.`;
+    default:
+      return `${label} is running.`;
+  }
+}
+
+function buildWorkflowTaskAttemptMessages(input: {
+  runId: string;
+  attempt: SmithersAttemptRow;
+  prompt: string | null;
+  responseText: string | null;
+  outputEvents: ParsedNodeOutputEvent[];
+}): Array<{
+  id: string;
+  role: "user" | "assistant" | "stderr";
+  source: "prompt" | "event" | "responseText";
+  smithersEventSeq?: number | null;
+  text: string;
+  createdAt: string;
+}> {
+  const messages: Array<{
+    id: string;
+    role: "user" | "assistant" | "stderr";
+    source: "prompt" | "event" | "responseText";
+    smithersEventSeq?: number | null;
+    text: string;
+    createdAt: string;
+  }> = [];
+  const attemptRef = `${input.runId}:${input.attempt.nodeId}:${input.attempt.iteration}:${input.attempt.attempt}`;
+  const prompt = input.prompt?.trim() ?? "";
+  if (prompt) {
+    messages.push({
+      id: `workflow-task-message:${attemptRef}:prompt`,
+      role: "user",
+      source: "prompt",
+      text: prompt,
+      createdAt: toIso(input.attempt.startedAtMs) ?? new Date(0).toISOString(),
+    });
+  }
+
+  const sortedOutputEvents = [...input.outputEvents].sort((left, right) =>
+    (left.timestampMs ?? 0) === (right.timestampMs ?? 0)
+      ? (left.seq ?? 0) - (right.seq ?? 0)
+      : (left.timestampMs ?? 0) - (right.timestampMs ?? 0),
+  );
+  let sawAssistantOutput = false;
+  for (const outputEvent of sortedOutputEvents) {
+    if (outputEvent.stream === "stdout") {
+      sawAssistantOutput = true;
+    }
+    messages.push({
+      id: `workflow-task-message:${input.runId}:event:${outputEvent.seq}`,
+      role: outputEvent.stream === "stderr" ? "stderr" : "assistant",
+      source: "event",
+      smithersEventSeq: outputEvent.seq,
+      text: outputEvent.text ?? "",
+      createdAt: toIso(outputEvent.timestampMs) ?? new Date(0).toISOString(),
+    });
+  }
+
+  const responseText = input.responseText?.trim() ?? "";
+  if (responseText && !sawAssistantOutput) {
+    messages.push({
+      id: `workflow-task-message:${attemptRef}:response`,
+      role: "assistant",
+      source: "responseText",
+      text: responseText,
+      createdAt:
+        toIso(input.attempt.finishedAtMs ?? input.attempt.startedAtMs) ?? new Date(0).toISOString(),
+    });
+  }
+
+  return messages;
+}
+
 function mapRunStatusToWaitKind(status: RunStatus): StructuredWorkflowWaitKind | null {
   switch (status) {
     case "waiting-approval":
@@ -1881,6 +2117,34 @@ async function listAllRunEvents(
 
   while (true) {
     const batch = await db.listEvents(runId, afterSeq, 1_000);
+    if (batch.length === 0) {
+      break;
+    }
+    events.push(...(batch as Array<Record<string, unknown>>));
+    const lastEvent = batch[batch.length - 1];
+    afterSeq = Number(lastEvent?.seq ?? afterSeq);
+    if (batch.length < 1_000) {
+      break;
+    }
+  }
+
+  return events;
+}
+
+async function listAllRunEventsByType(
+  db: SmithersDb,
+  runId: string,
+  types: string[],
+): Promise<Array<Record<string, unknown>>> {
+  const events: Array<Record<string, unknown>> = [];
+  let afterSeq = -1;
+
+  while (true) {
+    const batch = await db.listEventHistory(runId, {
+      afterSeq,
+      limit: 1_000,
+      types,
+    });
     if (batch.length === 0) {
       break;
     }

@@ -18,6 +18,7 @@ import {
   buildStructuredHandlerThreadSummaries,
   buildStructuredSessionSummaryProjection,
   buildStructuredSessionView,
+  buildStructuredWorkflowTaskAttemptInspector,
   deriveStructuredSessionStatus,
   getLatestFailureContext,
   groupThreadIdsByStatus,
@@ -32,6 +33,8 @@ type StructuredSessionSnapshotFixture = Omit<
   | "episodes"
   | "verifications"
   | "workflowRuns"
+  | "workflowTaskAttempts"
+  | "workflowTaskMessages"
   | "artifacts"
   | "events"
 > & {
@@ -41,6 +44,8 @@ type StructuredSessionSnapshotFixture = Omit<
   episodes?: Partial<StructuredEpisodeRecord>[];
   verifications?: Partial<StructuredVerificationRecord>[];
   workflowRuns?: Partial<StructuredWorkflowRunRecord>[];
+  workflowTaskAttempts?: Partial<StructuredSessionSnapshot["workflowTaskAttempts"][number]>[];
+  workflowTaskMessages?: Partial<StructuredSessionSnapshot["workflowTaskMessages"][number]>[];
   artifacts?: Partial<StructuredArtifactRecord>[];
   events?: Partial<StructuredLifecycleEventRecord>[];
 };
@@ -55,6 +60,8 @@ function createSessionSnapshot(
     episodes: overrideEpisodes,
     verifications: overrideVerifications,
     workflowRuns: overrideWorkflowRuns,
+    workflowTaskAttempts: overrideWorkflowTaskAttempts,
+    workflowTaskMessages: overrideWorkflowTaskMessages,
     artifacts: overrideArtifacts,
     events: overrideEvents,
     ...rest
@@ -102,6 +109,7 @@ function createSessionSnapshot(
         id: `command-00${index + 1}`,
         sessionId: "session-selectors",
         turnId: "turn-001",
+        workflowTaskAttemptId: null,
         surfacePiSessionId: "pi-thread-001",
         threadId: "thread-001",
         workflowRunId: null,
@@ -185,6 +193,57 @@ function createSessionSnapshot(
       return { ...base, ...workflowRun };
     }) ?? [];
 
+  const workflowTaskAttempts =
+    overrideWorkflowTaskAttempts?.map((workflowTaskAttempt, index) => {
+      const base: StructuredSessionSnapshot["workflowTaskAttempts"][number] = {
+        id: `workflow-task-attempt-00${index + 1}`,
+        sessionId: "session-selectors",
+        threadId: "thread-001",
+        workflowRunId: "workflow-001",
+        smithersRunId: `smithers-run-${index + 1}`,
+        nodeId: "task",
+        iteration: 0,
+        attempt: index + 1,
+        surfacePiSessionId: "pi-task-agent-001",
+        title: "task",
+        summary: "Workflow task attempt summary",
+        kind: "agent",
+        status: "completed",
+        smithersState: "finished",
+        prompt: "Solve the delegated task.",
+        responseText: "{\"status\":\"completed\"}",
+        error: null,
+        cached: false,
+        jjPointer: null,
+        jjCwd: null,
+        heartbeatAt: null,
+        agentId: "svvy-workflow-task-agent",
+        agentModel: "gpt-5.4",
+        agentEngine: "pi",
+        agentResume: "/tmp/task-agent-session",
+        meta: null,
+        startedAt: "2026-04-18T07:02:30.000Z",
+        updatedAt: "2026-04-18T07:03:00.000Z",
+        finishedAt: "2026-04-18T07:03:00.000Z",
+      };
+      return { ...base, ...workflowTaskAttempt };
+    }) ?? [];
+
+  const workflowTaskMessages =
+    overrideWorkflowTaskMessages?.map((workflowTaskMessage, index) => {
+      const base: StructuredSessionSnapshot["workflowTaskMessages"][number] = {
+        id: `workflow-task-message-00${index + 1}`,
+        sessionId: "session-selectors",
+        workflowTaskAttemptId: "workflow-task-attempt-001",
+        role: index === 0 ? "user" : "assistant",
+        source: index === 0 ? "prompt" : "responseText",
+        smithersEventSeq: null,
+        text: index === 0 ? "Solve the delegated task." : "{\"status\":\"completed\"}",
+        createdAt: "2026-04-18T07:02:45.000Z",
+      };
+      return { ...base, ...workflowTaskMessage };
+    }) ?? [];
+
   const artifacts =
     overrideArtifacts?.map((artifact, index) => {
       const base: StructuredArtifactRecord = {
@@ -192,6 +251,7 @@ function createSessionSnapshot(
         sessionId: "session-selectors",
         threadId: "thread-001",
         workflowRunId: null,
+        workflowTaskAttemptId: null,
         sourceCommandId: "command-001",
         kind: "text",
         name: `artifact-${index + 1}.md`,
@@ -243,6 +303,8 @@ function createSessionSnapshot(
     episodes,
     verifications,
     workflowRuns,
+    workflowTaskAttempts,
+    workflowTaskMessages,
     artifacts,
     events,
     ...rest,
@@ -468,6 +530,7 @@ describe("structured session selectors", () => {
           commandId: "command-001",
           threadId: "thread-001",
           workflowRunId: null,
+          workflowTaskAttemptId: null,
           toolName: "execute_typescript",
           visibility: "summary",
           status: "succeeded",
@@ -576,6 +639,7 @@ describe("structured session selectors", () => {
       commandId: "command-parent",
       threadId: "thread-001",
       workflowRunId: null,
+      workflowTaskAttemptId: null,
       toolName: "execute_typescript",
       visibility: "summary",
       status: "succeeded",
@@ -772,6 +836,7 @@ describe("structured session selectors", () => {
         finishedAt: "2026-04-18T10:04:30.000Z",
         commandCount: 2,
         workflowRunCount: 2,
+        workflowTaskAttemptCount: 0,
         episodeCount: 2,
         artifactCount: 1,
         verificationCount: 1,
@@ -804,6 +869,7 @@ describe("structured session selectors", () => {
       finishedAt: "2026-04-18T10:04:30.000Z",
       commandCount: 2,
       workflowRunCount: 2,
+      workflowTaskAttemptCount: 0,
       episodeCount: 2,
       artifactCount: 1,
       verificationCount: 1,
@@ -826,6 +892,7 @@ describe("structured session selectors", () => {
           commandId: "command-handler-parent",
           threadId: "thread-handler",
           workflowRunId: null,
+          workflowTaskAttemptId: null,
           toolName: "execute_typescript",
           visibility: "summary",
           status: "succeeded",
@@ -863,6 +930,7 @@ describe("structured session selectors", () => {
           updatedAt: "2026-04-18T10:03:25.000Z",
         },
       ],
+      workflowTaskAttempts: [],
       episodes: [
         {
           episodeId: "episode-handler-2",
@@ -1113,5 +1181,180 @@ describe("structured session selectors", () => {
     });
     expect(hasStructuredSessionFacts(snapshot)).toBe(true);
     expect(getLatestFailureContext(snapshot)).toBe("Thread failure context");
+  });
+
+  it("builds a workflow task attempt inspector with transcript, nested command rollups, and artifacts", () => {
+    const snapshot = createSessionSnapshot({
+      workflowRuns: [
+        {
+          id: "workflow-attempt-1",
+          threadId: "thread-001",
+          summary: "Task workflow completed.",
+        },
+      ],
+      workflowTaskAttempts: [
+        {
+          id: "workflow-task-attempt-1",
+          threadId: "thread-001",
+          workflowRunId: "workflow-attempt-1",
+          smithersRunId: "smithers-run-task-attempt",
+          nodeId: "task",
+          attempt: 1,
+          summary: "Task-agent attempt completed.",
+          status: "completed",
+          smithersState: "finished",
+          prompt: "Read the brief and write the proof file.",
+          responseText: '{"status":"completed"}',
+          agentResume: "/tmp/task-agent-session.json",
+          updatedAt: "2026-04-18T10:02:00.000Z",
+        },
+      ],
+      workflowTaskMessages: [
+        {
+          id: "workflow-task-message-1",
+          workflowTaskAttemptId: "workflow-task-attempt-1",
+          role: "user",
+          source: "prompt",
+          text: "Read the brief and write the proof file.",
+          createdAt: "2026-04-18T10:01:10.000Z",
+        },
+        {
+          id: "workflow-task-message-2",
+          workflowTaskAttemptId: "workflow-task-attempt-1",
+          role: "assistant",
+          source: "responseText",
+          text: '{"status":"completed"}',
+          createdAt: "2026-04-18T10:01:20.000Z",
+        },
+      ],
+      commands: [
+        {
+          id: "command-task-parent",
+          workflowTaskAttemptId: "workflow-task-attempt-1",
+          threadId: "thread-001",
+          workflowRunId: "workflow-attempt-1",
+          toolName: "execute_typescript",
+          executor: "workflow-task-agent",
+          visibility: "summary",
+          title: "Run task execute_typescript",
+          summary: "Generated the workflow proof file.",
+          updatedAt: "2026-04-18T10:01:25.000Z",
+        },
+        {
+          id: "command-task-child",
+          workflowTaskAttemptId: "workflow-task-attempt-1",
+          threadId: "thread-001",
+          workflowRunId: "workflow-attempt-1",
+          parentCommandId: "command-task-parent",
+          toolName: "repo.writeFile",
+          executor: "execute_typescript",
+          visibility: "summary",
+          title: "Write workflow-proof.txt",
+          summary: "Wrote workflow-proof.txt.",
+          updatedAt: "2026-04-18T10:01:15.000Z",
+          finishedAt: "2026-04-18T10:01:15.000Z",
+        },
+      ],
+      artifacts: [
+        {
+          id: "artifact-task-1",
+          workflowTaskAttemptId: "workflow-task-attempt-1",
+          threadId: "thread-001",
+          workflowRunId: "workflow-attempt-1",
+          sourceCommandId: "command-task-parent",
+          kind: "text",
+          name: "workflow-proof.txt",
+          path: "/repo/svvy/workflow-proof.txt",
+          createdAt: "2026-04-18T10:01:30.000Z",
+        },
+      ],
+    });
+
+    expect(
+      buildStructuredWorkflowTaskAttemptInspector(snapshot, "workflow-task-attempt-1"),
+    ).toEqual({
+      workflowTaskAttemptId: "workflow-task-attempt-1",
+      workflowRunId: "workflow-attempt-1",
+      smithersRunId: "smithers-run-task-attempt",
+      nodeId: "task",
+      iteration: 0,
+      attempt: 1,
+      title: "task",
+      kind: "agent",
+      status: "completed",
+      summary: "Task-agent attempt completed.",
+      updatedAt: "2026-04-18T10:02:00.000Z",
+      commandCount: 2,
+      artifactCount: 1,
+      transcriptMessageCount: 2,
+      surfacePiSessionId: "pi-task-agent-001",
+      smithersState: "finished",
+      prompt: "Read the brief and write the proof file.",
+      responseText: '{"status":"completed"}',
+      error: null,
+      cached: false,
+      jjPointer: null,
+      jjCwd: null,
+      heartbeatAt: null,
+      agentId: "svvy-workflow-task-agent",
+      agentModel: "gpt-5.4",
+      agentEngine: "pi",
+      agentResume: "/tmp/task-agent-session.json",
+      meta: null,
+      startedAt: "2026-04-18T07:02:30.000Z",
+      finishedAt: "2026-04-18T07:03:00.000Z",
+      transcript: [
+        {
+          messageId: "workflow-task-message-1",
+          role: "user",
+          source: "prompt",
+          text: "Read the brief and write the proof file.",
+          createdAt: "2026-04-18T10:01:10.000Z",
+        },
+        {
+          messageId: "workflow-task-message-2",
+          role: "assistant",
+          source: "responseText",
+          text: '{"status":"completed"}',
+          createdAt: "2026-04-18T10:01:20.000Z",
+        },
+      ],
+      commandRollups: [
+        {
+          commandId: "command-task-parent",
+          threadId: "thread-001",
+          workflowRunId: "workflow-attempt-1",
+          workflowTaskAttemptId: "workflow-task-attempt-1",
+          toolName: "execute_typescript",
+          visibility: "summary",
+          status: "succeeded",
+          title: "Run task execute_typescript",
+          summary: "Generated the workflow proof file.",
+          childCount: 1,
+          summaryChildCount: 1,
+          traceChildCount: 0,
+          summaryChildren: [
+            {
+              commandId: "command-task-child",
+              toolName: "repo.writeFile",
+              status: "succeeded",
+              title: "Write workflow-proof.txt",
+              summary: "Wrote workflow-proof.txt.",
+              error: null,
+            },
+          ],
+          updatedAt: "2026-04-18T10:01:25.000Z",
+        },
+      ],
+      artifacts: [
+        {
+          artifactId: "artifact-task-1",
+          kind: "text",
+          name: "workflow-proof.txt",
+          path: "/repo/svvy/workflow-proof.txt",
+          createdAt: "2026-04-18T10:01:30.000Z",
+        },
+      ],
+    });
   });
 });

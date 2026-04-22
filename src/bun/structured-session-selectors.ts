@@ -22,6 +22,7 @@ export interface StructuredCommandRollup {
   commandId: string;
   threadId: string | null;
   workflowRunId?: string | null;
+  workflowTaskAttemptId?: string | null;
   toolName: string;
   visibility: "summary" | "surface";
   status: StructuredCommandRecord["status"];
@@ -55,6 +56,7 @@ export interface StructuredCommandInspector {
   commandId: string;
   threadId: string | null;
   workflowRunId?: string | null;
+  workflowTaskAttemptId?: string | null;
   toolName: string;
   visibility: StructuredCommandRecord["visibility"];
   status: StructuredCommandRecord["status"];
@@ -89,6 +91,53 @@ export interface StructuredHandlerThreadEpisodeSummary {
   createdAt: string;
 }
 
+export interface StructuredWorkflowTaskAttemptTranscriptMessage {
+  messageId: string;
+  role: StructuredSessionSnapshot["workflowTaskMessages"][number]["role"];
+  source: StructuredSessionSnapshot["workflowTaskMessages"][number]["source"];
+  text: string;
+  createdAt: string;
+}
+
+export interface StructuredWorkflowTaskAttemptSummary {
+  workflowTaskAttemptId: string;
+  workflowRunId: string;
+  smithersRunId: string;
+  nodeId: string;
+  iteration: number;
+  attempt: number;
+  title: string;
+  kind: StructuredSessionSnapshot["workflowTaskAttempts"][number]["kind"];
+  status: StructuredSessionSnapshot["workflowTaskAttempts"][number]["status"];
+  summary: string;
+  updatedAt: string;
+  commandCount: number;
+  artifactCount: number;
+  transcriptMessageCount: number;
+}
+
+export interface StructuredWorkflowTaskAttemptInspector extends StructuredWorkflowTaskAttemptSummary {
+  surfacePiSessionId: string | null;
+  smithersState: string;
+  prompt: string | null;
+  responseText: string | null;
+  error: string | null;
+  cached: boolean;
+  jjPointer: string | null;
+  jjCwd: string | null;
+  heartbeatAt: string | null;
+  agentId: string | null;
+  agentModel: string | null;
+  agentEngine: string | null;
+  agentResume: string | null;
+  meta: Record<string, unknown> | null;
+  startedAt: string;
+  finishedAt: string | null;
+  transcript: StructuredWorkflowTaskAttemptTranscriptMessage[];
+  commandRollups: StructuredCommandRollup[];
+  artifacts: StructuredCommandArtifactLink[];
+}
+
 export interface StructuredHandlerThreadSummary {
   threadId: string;
   surfacePiSessionId: string;
@@ -101,6 +150,7 @@ export interface StructuredHandlerThreadSummary {
   finishedAt: string | null;
   commandCount: number;
   workflowRunCount: number;
+  workflowTaskAttemptCount: number;
   episodeCount: number;
   artifactCount: number;
   verificationCount: number;
@@ -111,6 +161,7 @@ export interface StructuredHandlerThreadSummary {
 export interface StructuredHandlerThreadInspector extends StructuredHandlerThreadSummary {
   commandRollups: StructuredCommandRollup[];
   workflowRuns: StructuredHandlerThreadWorkflowSummary[];
+  workflowTaskAttempts: StructuredWorkflowTaskAttemptSummary[];
   episodes: StructuredHandlerThreadEpisodeSummary[];
   artifacts: StructuredCommandArtifactLink[];
 }
@@ -210,6 +261,21 @@ function isCommandRollupSource(
   visibility: "summary" | "surface";
 } {
   return (
+    command.workflowTaskAttemptId === null &&
+    command.parentCommandId === null &&
+    (command.visibility === "summary" || command.visibility === "surface")
+  );
+}
+
+function isWorkflowTaskAttemptCommandRollupSource(
+  command: StructuredCommandRecord,
+): command is StructuredCommandRecord & {
+  parentCommandId: null;
+  visibility: "summary" | "surface";
+  workflowTaskAttemptId: string;
+} {
+  return (
+    command.workflowTaskAttemptId !== null &&
     command.parentCommandId === null &&
     (command.visibility === "summary" || command.visibility === "surface")
   );
@@ -268,7 +334,7 @@ function buildThreadArtifactLinks(
   threadId: string,
 ): StructuredCommandArtifactLink[] {
   return artifacts
-    .filter((artifact) => artifact.threadId === threadId)
+    .filter((artifact) => artifact.threadId === threadId && artifact.workflowTaskAttemptId === null)
     .map((artifact) => ({
       artifactId: artifact.id,
       kind: artifact.kind,
@@ -296,9 +362,15 @@ function buildCommandInspectorChild(
 
 function buildCommandRollups(
   session: Pick<StructuredSessionSnapshot, "commands">,
+  options: {
+    includeWorkflowTaskAttemptCommands?: boolean;
+  } = {},
 ): StructuredCommandRollup[] {
-  return session.commands
-    .filter(isCommandRollupSource)
+  const rollupSources = options.includeWorkflowTaskAttemptCommands
+    ? session.commands.filter(isWorkflowTaskAttemptCommandRollupSource)
+    : session.commands.filter(isCommandRollupSource);
+
+  return rollupSources
     .map((command) => {
       const childCommands = getChildCommands(session.commands, command.id);
       const summaryChildren = childCommands
@@ -312,6 +384,7 @@ function buildCommandRollups(
         commandId: command.id,
         threadId: command.threadId ?? null,
         workflowRunId: command.workflowRunId ?? null,
+        workflowTaskAttemptId: command.workflowTaskAttemptId ?? null,
         toolName: command.toolName,
         visibility: command.visibility,
         status: command.status,
@@ -407,8 +480,38 @@ function buildThreadCommandRollups(
   threadId: string,
 ): StructuredCommandRollup[] {
   return buildCommandRollups({
-    commands: session.commands.filter((command) => command.threadId === threadId),
+    commands: session.commands.filter(
+      (command) => command.threadId === threadId && command.workflowTaskAttemptId === null,
+    ),
   });
+}
+
+function buildWorkflowTaskAttemptSummary(
+  session: StructuredSessionSnapshot,
+  workflowTaskAttempt: StructuredSessionSnapshot["workflowTaskAttempts"][number],
+): StructuredWorkflowTaskAttemptSummary {
+  return {
+    workflowTaskAttemptId: workflowTaskAttempt.id,
+    workflowRunId: workflowTaskAttempt.workflowRunId,
+    smithersRunId: workflowTaskAttempt.smithersRunId,
+    nodeId: workflowTaskAttempt.nodeId,
+    iteration: workflowTaskAttempt.iteration,
+    attempt: workflowTaskAttempt.attempt,
+    title: workflowTaskAttempt.title,
+    kind: workflowTaskAttempt.kind,
+    status: workflowTaskAttempt.status,
+    summary: workflowTaskAttempt.summary,
+    updatedAt: workflowTaskAttempt.updatedAt,
+    commandCount: session.commands.filter(
+      (command) => command.workflowTaskAttemptId === workflowTaskAttempt.id,
+    ).length,
+    artifactCount: session.artifacts.filter(
+      (artifact) => artifact.workflowTaskAttemptId === workflowTaskAttempt.id,
+    ).length,
+    transcriptMessageCount: session.workflowTaskMessages.filter(
+      (message) => message.workflowTaskAttemptId === workflowTaskAttempt.id,
+    ).length,
+  };
 }
 
 function buildHandlerThreadSummary(
@@ -418,8 +521,13 @@ function buildHandlerThreadSummary(
   const workflowRuns = session.workflowRuns.filter(
     (workflowRun) => workflowRun.threadId === thread.id,
   );
+  const workflowTaskAttempts = session.workflowTaskAttempts.filter(
+    (workflowTaskAttempt) => workflowTaskAttempt.threadId === thread.id,
+  );
   const episodes = session.episodes.filter((episode) => episode.threadId === thread.id);
-  const artifacts = session.artifacts.filter((artifact) => artifact.threadId === thread.id);
+  const artifacts = session.artifacts.filter(
+    (artifact) => artifact.threadId === thread.id && artifact.workflowTaskAttemptId === null,
+  );
   const verifications = session.verifications.filter(
     (verification) => verification.threadId === thread.id,
   );
@@ -436,8 +544,11 @@ function buildHandlerThreadSummary(
     startedAt: thread.startedAt,
     updatedAt: thread.updatedAt,
     finishedAt: thread.finishedAt,
-    commandCount: session.commands.filter((command) => command.threadId === thread.id).length,
+    commandCount: session.commands.filter(
+      (command) => command.threadId === thread.id && command.workflowTaskAttemptId === null,
+    ).length,
     workflowRunCount: workflowRuns.length,
+    workflowTaskAttemptCount: workflowTaskAttempts.length,
     episodeCount: episodes.length,
     artifactCount: artifacts.length,
     verificationCount: verifications.length,
@@ -545,6 +656,10 @@ function deriveUpdatedAt(session: StructuredSessionSnapshot): string {
     ...session.episodes.map((episode) => Date.parse(episode.createdAt)),
     ...session.verifications.map((verification) => Date.parse(verification.finishedAt)),
     ...session.workflowRuns.map((workflowRun) => Date.parse(workflowRun.updatedAt)),
+    ...session.workflowTaskAttempts.map((workflowTaskAttempt) =>
+      Date.parse(workflowTaskAttempt.updatedAt),
+    ),
+    ...session.workflowTaskMessages.map((message) => Date.parse(message.createdAt)),
     ...session.artifacts.map((artifact) => Date.parse(artifact.createdAt)),
     ...session.events.map((event) => Date.parse(event.at)),
     ...(session.session.wait ? [Date.parse(session.session.wait.since)] : []),
@@ -686,6 +801,8 @@ export function hasStructuredSessionFacts(session: StructuredSessionSnapshot): b
     session.episodes.length > 0 ||
     session.verifications.length > 0 ||
     session.workflowRuns.length > 0 ||
+    session.workflowTaskAttempts.length > 0 ||
+    session.workflowTaskMessages.length > 0 ||
     session.artifacts.length > 0 ||
     session.events.length > 0
   );
@@ -717,6 +834,7 @@ export function buildStructuredCommandInspector(
     commandId: parentCommand.id,
     threadId: parentCommand.threadId ?? null,
     workflowRunId: parentCommand.workflowRunId ?? null,
+    workflowTaskAttemptId: parentCommand.workflowTaskAttemptId ?? null,
     toolName: parentCommand.toolName,
     visibility: parentCommand.visibility,
     status: parentCommand.status,
@@ -733,6 +851,68 @@ export function buildStructuredCommandInspector(
     traceChildCount: traceChildren.length,
     summaryChildren,
     traceChildren,
+  };
+}
+
+export function buildStructuredWorkflowTaskAttemptInspector(
+  session: StructuredSessionSnapshot,
+  workflowTaskAttemptId: string,
+): StructuredWorkflowTaskAttemptInspector | null {
+  const workflowTaskAttempt =
+    session.workflowTaskAttempts.find((candidate) => candidate.id === workflowTaskAttemptId) ?? null;
+  if (!workflowTaskAttempt) {
+    return null;
+  }
+
+  const commands = session.commands.filter(
+    (command) => command.workflowTaskAttemptId === workflowTaskAttemptId,
+  );
+  const commandRollups = buildCommandRollups(
+    { commands },
+    { includeWorkflowTaskAttemptCommands: true },
+  );
+  const artifacts = session.artifacts
+    .filter((artifact) => artifact.workflowTaskAttemptId === workflowTaskAttemptId)
+    .map((artifact) => ({
+      artifactId: artifact.id,
+      kind: artifact.kind,
+      name: artifact.name,
+      path: artifact.path,
+      createdAt: artifact.createdAt,
+    }))
+    .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const transcript = session.workflowTaskMessages
+    .filter((message) => message.workflowTaskAttemptId === workflowTaskAttemptId)
+    .map((message) => ({
+      messageId: message.id,
+      role: message.role,
+      source: message.source,
+      text: message.text,
+      createdAt: message.createdAt,
+    }))
+    .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+
+  return {
+    ...buildWorkflowTaskAttemptSummary(session, workflowTaskAttempt),
+    surfacePiSessionId: workflowTaskAttempt.surfacePiSessionId,
+    smithersState: workflowTaskAttempt.smithersState,
+    prompt: workflowTaskAttempt.prompt,
+    responseText: workflowTaskAttempt.responseText,
+    error: workflowTaskAttempt.error,
+    cached: workflowTaskAttempt.cached,
+    jjPointer: workflowTaskAttempt.jjPointer,
+    jjCwd: workflowTaskAttempt.jjCwd,
+    heartbeatAt: workflowTaskAttempt.heartbeatAt,
+    agentId: workflowTaskAttempt.agentId,
+    agentModel: workflowTaskAttempt.agentModel,
+    agentEngine: workflowTaskAttempt.agentEngine,
+    agentResume: workflowTaskAttempt.agentResume,
+    meta: workflowTaskAttempt.meta,
+    startedAt: workflowTaskAttempt.startedAt,
+    finishedAt: workflowTaskAttempt.finishedAt,
+    transcript,
+    commandRollups,
+    artifacts,
   };
 }
 
@@ -767,6 +947,10 @@ export function buildStructuredHandlerThreadInspector(
     ...buildHandlerThreadSummary(session, thread),
     commandRollups: buildThreadCommandRollups(session, threadId),
     workflowRuns,
+    workflowTaskAttempts: session.workflowTaskAttempts
+      .filter((workflowTaskAttempt) => workflowTaskAttempt.threadId === threadId)
+      .map((workflowTaskAttempt) => buildWorkflowTaskAttemptSummary(session, workflowTaskAttempt))
+      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     episodes,
     artifacts: buildThreadArtifactLinks(session.artifacts, threadId),
   };

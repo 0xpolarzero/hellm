@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, setDefaultTimeout, spyOn } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import React from "react";
@@ -147,6 +147,7 @@ function createWorkspaceFixture(
       cwd,
       agentDir,
       artifactDir: taskAgentArtifactDir(cwd),
+      store,
       provider: "openai",
       model: "gpt-5.4",
       thinkingLevel: "medium",
@@ -1649,6 +1650,7 @@ describe("SmithersRuntimeManager", () => {
         cwd,
         agentDir,
         artifactDir: taskAgentArtifactDir(cwd),
+        store,
         provider: "openai",
         model: "gpt-5.4",
         thinkingLevel: "medium",
@@ -1827,6 +1829,30 @@ describe("SmithersRuntimeManager", () => {
         status: "running-handler",
         wait: null,
       });
+      const workflowTaskAttempt = snapshot.workflowTaskAttempts.find(
+        (entry) => entry.workflowRunId === workflowRun?.id && entry.nodeId === "task",
+      );
+      expect(workflowTaskAttempt).toBeTruthy();
+      expect(workflowTaskAttempt).toMatchObject({
+        nodeId: "task",
+        iteration: 0,
+        attempt: 1,
+        kind: "agent",
+        status: "completed",
+        smithersState: "finished",
+        agentEngine: "pi",
+        workflowRunId: workflowRun?.id,
+      });
+      expect(snapshot.workflowTaskMessages.filter(
+        (message) => message.workflowTaskAttemptId === workflowTaskAttempt?.id,
+      )).not.toHaveLength(0);
+      expect(
+        snapshot.commands.some(
+          (command) =>
+            command.workflowTaskAttemptId === workflowTaskAttempt?.id &&
+            command.toolName === "execute_typescript",
+        ),
+      ).toBe(true);
 
       const taskNodeDetail = await manager.getNodeDetail({
         runId: launched.runId,
@@ -1842,9 +1868,15 @@ describe("SmithersRuntimeManager", () => {
         : null;
       expect(parsedTaskAttemptMeta?.agentResume).toEqual(expect.any(String));
       expect(parsedTaskAttemptMeta?.agentResume).toContain("/task-agent-sessions/");
-
-      const artifactFiles = readdirSync(taskAgentArtifactDir(cwd));
-      expect(artifactFiles.length).toBeGreaterThan(0);
+      const taskAttemptArtifacts = snapshot.artifacts.filter(
+        (artifact) => artifact.workflowTaskAttemptId === workflowTaskAttempt?.id,
+      );
+      expect(taskAttemptArtifacts.length).toBeGreaterThan(0);
+      for (const artifact of taskAttemptArtifacts) {
+        if (artifact.path) {
+          expect(existsSync(artifact.path)).toBe(true);
+        }
+      }
       expect(
         handlerAttentions.some((reason) =>
           reason.includes("finished and the handler must reconcile"),

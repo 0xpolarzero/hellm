@@ -109,6 +109,7 @@ function createHarness() {
       cwd,
       agentDir,
       artifactDir: join(cwd, ".svvy", "smithers-runtime", "artifacts", "task-agent"),
+      store,
       provider: "openai",
       model: "gpt-5.4",
       thinkingLevel: "medium",

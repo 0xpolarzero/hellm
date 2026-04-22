@@ -85,7 +85,7 @@ const ZERO_USAGE: AssistantMessage["usage"] = {
   },
 };
 
-const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v3.sqlite";
+const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v4.sqlite";
 
 interface ManagedSession {
   sessionId: string;

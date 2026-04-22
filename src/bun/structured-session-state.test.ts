@@ -608,4 +608,172 @@ describe("structured session state write API", () => {
       artifact.id,
     ]);
   });
+
+  it("stores workflow task attempts, transcript messages, and nested command or artifact ownership under the owning workflow run", () => {
+    const store = createStore();
+    seedSession(store, "session-workflow-task-attempts");
+
+    const orchestratorTurn = store.startTurn({
+      sessionId: "session-workflow-task-attempts",
+      surfacePiSessionId: "session-workflow-task-attempts",
+      requestSummary: "Open a delegated workflow handler",
+    });
+    const thread = store.createThread({
+      turnId: orchestratorTurn.id,
+      surfacePiSessionId: "pi-thread-workflow-task-attempts",
+      title: "Workflow task attempt thread",
+      objective: "Inspect durable task-agent attempts.",
+    });
+    const handlerTurn = store.startTurn({
+      sessionId: "session-workflow-task-attempts",
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.id,
+      requestSummary: "Launch a workflow that uses the task agent",
+    });
+    const launchCommand = store.createCommand({
+      turnId: handlerTurn.id,
+      threadId: thread.id,
+      toolName: "smithers.run_workflow.execute_typescript_task",
+      executor: "smithers",
+      visibility: "surface",
+      title: "Run task workflow",
+      summary: "Launch the task-agent workflow.",
+    });
+    const workflowRun = store.recordWorkflow({
+      threadId: thread.id,
+      commandId: launchCommand.id,
+      smithersRunId: "smithers-run-task-attempt",
+      workflowName: "execute_typescript_task",
+      workflowSource: "saved",
+      entryPath: ".svvy/workflows/entries/execute-typescript-task.tsx",
+      savedEntryId: "execute_typescript_task",
+      status: "running",
+      summary: "Task workflow is running.",
+    });
+
+    const workflowTaskAttempt = store.upsertWorkflowTaskAttempt({
+      workflowRunId: workflowRun.id,
+      smithersRunId: workflowRun.smithersRunId,
+      nodeId: "task",
+      iteration: 0,
+      attempt: 1,
+      surfacePiSessionId: "pi-task-agent-001",
+      title: "task",
+      summary: "Workflow task attempt is running.",
+      kind: "agent",
+      status: "running",
+      smithersState: "in-progress",
+      prompt: "Inspect docs and write a proof file.",
+      agentEngine: "pi",
+      agentResume: "/tmp/task-agent-session.json",
+      meta: {
+        kind: "agent",
+        agentResume: "/tmp/task-agent-session.json",
+      },
+    });
+    const taskCommand = store.createCommand({
+      workflowTaskAttemptId: workflowTaskAttempt.id,
+      surfacePiSessionId: "pi-task-agent-001",
+      toolName: "execute_typescript",
+      executor: "workflow-task-agent",
+      visibility: "summary",
+      title: "Run task execute_typescript",
+      summary: "Execute bounded task-agent work.",
+    });
+    store.startCommand(taskCommand.id);
+    store.finishCommand({
+      commandId: taskCommand.id,
+      status: "succeeded",
+      summary: "Task-agent execution completed.",
+    });
+    const taskArtifact = store.createArtifact({
+      workflowTaskAttemptId: workflowTaskAttempt.id,
+      sourceCommandId: taskCommand.id,
+      kind: "text",
+      name: "workflow-proof.txt",
+      content: "Workflow proof\n",
+    });
+    store.replaceWorkflowTaskMessages({
+      workflowTaskAttemptId: workflowTaskAttempt.id,
+      messages: [
+        {
+          id: "workflow-task-message-user",
+          role: "user",
+          source: "prompt",
+          text: "Inspect docs and write a proof file.",
+          createdAt: "2026-04-18T09:00:10.000Z",
+        },
+        {
+          id: "workflow-task-message-assistant",
+          role: "assistant",
+          source: "responseText",
+          text: '{"status":"completed"}',
+          createdAt: "2026-04-18T09:00:20.000Z",
+        },
+      ],
+    });
+    store.upsertWorkflowTaskAttempt({
+      workflowRunId: workflowRun.id,
+      smithersRunId: workflowRun.smithersRunId,
+      nodeId: "task",
+      iteration: 0,
+      attempt: 1,
+      summary: "Workflow task attempt completed.",
+      kind: "agent",
+      status: "completed",
+      smithersState: "finished",
+      responseText: '{"status":"completed"}',
+      agentResume: "/tmp/task-agent-session.json",
+      meta: {
+        kind: "agent",
+        agentResume: "/tmp/task-agent-session.json",
+      },
+      startedAt: "2026-04-18T09:00:10.000Z",
+      finishedAt: "2026-04-18T09:00:20.000Z",
+    });
+
+    const snapshot = store.getSessionState("session-workflow-task-attempts");
+    expect(snapshot.workflowTaskAttempts).toEqual([
+      expect.objectContaining({
+        id: workflowTaskAttempt.id,
+        threadId: thread.id,
+        workflowRunId: workflowRun.id,
+        nodeId: "task",
+        attempt: 1,
+        status: "completed",
+        agentResume: "/tmp/task-agent-session.json",
+      }),
+    ]);
+    expect(snapshot.commands).toContainEqual(
+      expect.objectContaining({
+        id: taskCommand.id,
+        workflowTaskAttemptId: workflowTaskAttempt.id,
+        workflowRunId: workflowRun.id,
+        threadId: thread.id,
+        executor: "workflow-task-agent",
+      }),
+    );
+    expect(snapshot.artifacts).toContainEqual(
+      expect.objectContaining({
+        id: taskArtifact.id,
+        workflowTaskAttemptId: workflowTaskAttempt.id,
+        workflowRunId: workflowRun.id,
+        sourceCommandId: taskCommand.id,
+      }),
+    );
+    expect(snapshot.workflowTaskMessages.map((message) => message.id)).toEqual([
+      "workflow-task-message-user",
+      "workflow-task-message-assistant",
+    ]);
+    expect(store.findWorkflowTaskAttemptByAgentResume("/tmp/task-agent-session.json")).toEqual(
+      expect.objectContaining({
+        id: workflowTaskAttempt.id,
+      }),
+    );
+    expect(store.getThreadDetail(thread.id).workflowTaskAttempts).toEqual([
+      expect.objectContaining({
+        id: workflowTaskAttempt.id,
+      }),
+    ]);
+  });
 });

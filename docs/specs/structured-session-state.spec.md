@@ -45,7 +45,7 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Keep `pi` as the canonical transcript and runtime substrate for the main orchestrator surface and delegated handler thread surfaces.
 - Keep Smithers as the canonical workflow execution substrate.
 - Add `svvy`-owned structured product state above those substrates.
-- Model turns, handler threads, workflow runs, commands, episodes, artifacts, verification, and waits explicitly.
+- Model turns, handler threads, workflow runs, workflow task attempts, commands, episodes, artifacts, verification, and waits explicitly.
 - Persist one top-level per-turn decision for every surface, with orchestrator routing decisions and handler supervision decisions sharing one field.
 - Treat every tool call as a `CommandRecord`.
 - Make `execute_typescript` the default generic work surface.
@@ -57,6 +57,7 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Keep status derivation and workflow lifecycle projection write-driven; do not overlay `activePrompt`, parse transcript files, or perform read-side Smithers repair writes.
 - Future Smithers lifecycle projection beyond explicit tool-boundary snapshots should arrive through bridge events rather than speculative read-side reconciliation.
 - Keep workflow-run state separate from handler-thread state.
+- Project workflow task attempts as first-class durable records keyed by Smithers `runId` plus `nodeId`, `iteration`, and `attempt`, while keeping their full transcript canonical in Smithers and their inspectable task-agent transcript, command, and artifact projection in `svvy`.
 - Keep thread state about handler ownership and attention, not as a lossy proxy for raw workflow outcome.
 - Preserve raw Smithers workflow status, wait kind, heartbeat freshness, cursor metadata, and lineage instead of flattening them into generic thread status.
 - Derive active and latest workflow selectors from workflow-run state and recency rules rather than persisting a thread-level latest-workflow pointer.
@@ -72,7 +73,7 @@ The product should model the durable things that actually affect routing, inspec
 
 That means:
 
-- keep first-class records for turns, threads, workflow runs, commands, episodes, verification runs, artifacts, and lifecycle events
+- keep first-class records for turns, threads, workflow runs, workflow task attempts, commands, episodes, verification runs, artifacts, and lifecycle events
 - keep file-backed artifact metadata and path indexes alongside those records
 - do not split every human-readable summary into a large bespoke schema
 - keep Smithers internals inside Smithers unless `svvy` truly needs a top-level summary of them
@@ -105,6 +106,7 @@ Smithers remains canonical for:
 - orchestrator and handler-thread projection
 - turns and handler-thread records
 - workflow-run records projected into the session model
+- workflow-task-attempt records projected into the session model
 - command records
 - episodes, including handler-thread handoff episodes
 - verification records
@@ -208,15 +210,50 @@ type StructuredSessionState = {
     finishedAt: string | null;
   }>;
 
+  workflowTaskAttempts: Array<{
+    id: string;
+    threadId: string;
+    workflowRunId: string;
+    smithersRunId: string;
+    nodeId: string;
+    iteration: number;
+    attempt: number;
+    surfacePiSessionId: string | null;
+    title: string;
+    summary: string;
+    kind: "agent" | "compute" | "static" | "unknown";
+    status: "running" | "waiting" | "completed" | "failed" | "cancelled";
+    smithersState: string;
+    prompt: string | null;
+    responseText: string | null;
+    error: string | null;
+    cached: boolean;
+    heartbeatAt: string | null;
+    agentId: string | null;
+    agentModel: string | null;
+    agentEngine: string | null;
+    agentResume: string | null;
+    startedAt: string;
+    updatedAt: string;
+    finishedAt: string | null;
+  }>;
+
   commands: Array<{
     id: string;
-    turnId: string;
+    turnId: string | null;
+    workflowTaskAttemptId: string | null;
     surfacePiSessionId: string;
     threadId: string | null;
     workflowRunId: string | null;
     parentCommandId: string | null;
     toolName: string;
-    executor: "orchestrator" | "handler" | "execute_typescript" | "runtime" | "smithers";
+    executor:
+      | "orchestrator"
+      | "handler"
+      | "workflow-task-agent"
+      | "execute_typescript"
+      | "runtime"
+      | "smithers";
     visibility: "trace" | "summary" | "surface";
     status: "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
     attempts: number;

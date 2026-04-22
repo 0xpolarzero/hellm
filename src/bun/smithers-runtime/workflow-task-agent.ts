@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import type { AgentMessage, AgentTool, ThinkingLevel } from "@mariozechner/pi-agent-core";
 import { getModel, getProviders } from "@mariozechner/pi-ai";
 import {
@@ -10,9 +11,8 @@ import {
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
 import type { AgentLike } from "smithers-orchestrator";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { resolveApiKey } from "../auth-store";
 import { DEFAULT_CHAT_SETTINGS } from "../../mainview/chat-settings";
 import {
@@ -27,11 +27,16 @@ import {
   type ExecuteTypescriptWebSearchResult,
 } from "../execute-typescript-tool";
 import { WORKFLOW_TASK_SYSTEM_PROMPT } from "../default-system-prompt";
+import type {
+  StructuredSessionStateStore,
+  StructuredWorkflowTaskAttemptRecord,
+} from "../structured-session-state";
 
 type WorkflowTaskAgentOptions = {
   cwd: string;
   agentDir: string;
   artifactDir: string;
+  store: StructuredSessionStateStore;
   provider?: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;
@@ -63,12 +68,10 @@ type WorkflowTaskAgentGenerateArgs = {
   outputSchema?: unknown;
 };
 
-type LocalCommandRecord = {
-  id: string;
-  toolName: string;
-  title: string;
-  summary: string;
-  status: string;
+type WorkflowTaskAttemptProjectionContext = {
+  threadId: string;
+  workflowRunId: string;
+  workflowTaskAttemptId: string;
 };
 
 export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): AgentLike {
@@ -119,16 +122,19 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
       });
       await resourceLoader.reload();
 
-      const commandStore = createLocalExecuteTypescriptStore({
-        artifactDir: options.artifactDir,
-      });
       const sessionIdentity = {
         surfacePiSessionId: sessionManager.getSessionId(),
       };
+      const promptText = buildWorkflowTaskPrompt(args);
+      const resumeHandleRef: { current: string | null } = {
+        current: args.resumeSession ?? null,
+      };
       const executeTypescriptTool = createWorkflowTaskExecuteTypescriptTool({
         cwd: options.cwd,
-        store: commandStore,
+        store: options.store,
         getSurfacePiSessionId: () => sessionIdentity.surfacePiSessionId,
+        getResumeHandle: () => resumeHandleRef.current,
+        promptText,
         runCommand: options.runCommand,
         webSearch: options.webSearch,
         fetchText: options.fetchText,
@@ -153,6 +159,7 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
       sessionIdentity.surfacePiSessionId = durableSessionManager.getSessionId();
       const resumeHandle =
         durableSessionManager.getSessionFile() ?? sessionIdentity.surfacePiSessionId;
+      resumeHandleRef.current = resumeHandle;
       args.onEvent?.({
         type: "started",
         engine: "pi",
@@ -196,7 +203,6 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
       args.abortSignal?.addEventListener("abort", abortPrompt, { once: true });
 
       try {
-        const promptText = buildWorkflowTaskPrompt(args);
         await session.prompt(promptText, { expandPromptTemplates: false });
 
         const text = getLatestAssistantText(session.agent.state.messages).trim();
@@ -246,8 +252,10 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
 
 function createWorkflowTaskExecuteTypescriptTool(input: {
   cwd: string;
-  store: ExecuteTypescriptCommandStore;
+  store: StructuredSessionStateStore;
   getSurfacePiSessionId: () => string;
+  getResumeHandle: () => string | null;
+  promptText: string;
   runCommand?: (
     args: ExecuteTypescriptRunCommandInput,
   ) => Promise<ExecuteTypescriptRunCommandResult>;
@@ -268,16 +276,28 @@ function createWorkflowTaskExecuteTypescriptTool(input: {
       "Run bounded TypeScript against the injected api.* SDK for repository work inside the workflow task agent.",
     parameters: executeTypescriptParamsSchema,
     execute: async (_toolCallId, params, signal) => {
+      const projection = await waitForWorkflowTaskAttemptProjection({
+        store: input.store,
+        cwd: input.cwd,
+        surfacePiSessionId: input.getSurfacePiSessionId(),
+        agentResume: input.getResumeHandle(),
+        promptText: input.promptText,
+      });
       const result = await runExecuteTypescript({
         cwd: input.cwd,
-        store: input.store,
+        store: createStructuredWorkflowTaskExecuteTypescriptStore({
+          store: input.store,
+          projectionContext: projection,
+        }),
         signal,
         typescriptCode: params.typescriptCode,
         context: {
           surfacePiSessionId: input.getSurfacePiSessionId(),
-          turnId: `workflow-task-turn-${randomUUID()}`,
-          threadId: null,
-          executor: "runtime",
+          turnId: null,
+          workflowTaskAttemptId: projection.workflowTaskAttemptId,
+          threadId: projection.threadId,
+          workflowRunId: projection.workflowRunId,
+          executor: "workflow-task-agent",
         },
         runCommand: input.runCommand,
         webSearch: input.webSearch,
@@ -297,49 +317,322 @@ function createWorkflowTaskExecuteTypescriptTool(input: {
   };
 }
 
-function createLocalExecuteTypescriptStore(input: {
-  artifactDir: string;
+function createStructuredWorkflowTaskExecuteTypescriptStore(input: {
+  store: StructuredSessionStateStore;
+  projectionContext: WorkflowTaskAttemptProjectionContext;
 }): ExecuteTypescriptCommandStore {
-  const commands = new Map<string, LocalCommandRecord>();
-  mkdirSync(input.artifactDir, { recursive: true });
-
   return {
     createCommand(config) {
-      const id = `workflow-task-command-${randomUUID()}`;
-      commands.set(id, {
-        id,
+      const command = input.store.createCommand({
+        turnId: config.turnId ?? null,
+        workflowTaskAttemptId:
+          config.workflowTaskAttemptId ?? input.projectionContext.workflowTaskAttemptId,
+        surfacePiSessionId: config.surfacePiSessionId,
+        threadId: config.threadId ?? input.projectionContext.threadId,
+        workflowRunId: config.workflowRunId ?? input.projectionContext.workflowRunId,
+        parentCommandId: config.parentCommandId,
         toolName: config.toolName,
+        executor: config.executor,
+        visibility: config.visibility,
         title: config.title,
         summary: config.summary,
-        status: "requested",
+        facts: config.facts,
+        attempts: config.attempts,
       });
-      return { id };
+      return { id: command.id };
     },
     startCommand(commandId) {
-      const command = commands.get(commandId);
-      if (command) {
-        command.status = "running";
-      }
+      input.store.startCommand(commandId);
     },
     finishCommand(config) {
-      const command = commands.get(config.commandId);
-      if (command) {
-        command.status = config.status;
-        command.summary = config.summary ?? command.summary;
-      }
+      input.store.finishCommand(config);
     },
     createArtifact(config) {
-      const id = `workflow-task-artifact-${randomUUID()}`;
-      const resolvedPath =
-        config.path ??
-        join(input.artifactDir, `${id}-${sanitizeArtifactName(config.name ?? "artifact")}`);
-      if (config.content !== undefined) {
-        mkdirSync(dirname(resolvedPath), { recursive: true });
-        writeFileSync(resolvedPath, config.content);
-      }
-      return { id, path: resolvedPath };
+      const artifact = input.store.createArtifact({
+        threadId: config.threadId ?? input.projectionContext.threadId,
+        workflowRunId: config.workflowRunId ?? input.projectionContext.workflowRunId,
+        workflowTaskAttemptId:
+          config.workflowTaskAttemptId ?? input.projectionContext.workflowTaskAttemptId,
+        sourceCommandId: config.sourceCommandId,
+        kind: config.kind,
+        name: config.name,
+        path: config.path,
+        content: config.content,
+      });
+      return { id: artifact.id, path: artifact.path };
     },
   };
+}
+
+async function waitForWorkflowTaskAttemptProjection(input: {
+  store: StructuredSessionStateStore;
+  cwd: string;
+  surfacePiSessionId: string;
+  agentResume: string | null;
+  promptText: string;
+  timeoutMs?: number;
+}): Promise<WorkflowTaskAttemptProjectionContext> {
+  const agentResume = input.agentResume?.trim() || null;
+  const promptText = input.promptText.trim();
+
+  const deadline = Date.now() + (input.timeoutMs ?? 5_000);
+  while (Date.now() <= deadline) {
+    const attempt =
+      (agentResume ? input.store.findWorkflowTaskAttemptByAgentResume(agentResume) : null) ??
+      findSmithersAttemptProjectionByPrompt({
+        store: input.store,
+        cwd: input.cwd,
+        surfacePiSessionId: input.surfacePiSessionId,
+        promptText,
+      });
+    if (attempt) {
+      return {
+        threadId: attempt.threadId,
+        workflowRunId: attempt.workflowRunId,
+        workflowTaskAttemptId: attempt.id,
+      };
+    }
+
+    const smithersAttempt = findSmithersAttemptForProjection({
+      cwd: input.cwd,
+      agentResume,
+      promptText,
+    });
+    const workflowRun = smithersAttempt
+      ? input.store.findWorkflowRunBySmithersRunId(smithersAttempt.runId)
+      : null;
+    if (workflowRun && smithersAttempt) {
+      const attemptRecord = input.store.upsertWorkflowTaskAttempt({
+        workflowRunId: workflowRun.id,
+        smithersRunId: smithersAttempt.runId,
+        nodeId: smithersAttempt.nodeId,
+        iteration: smithersAttempt.iteration,
+        attempt: smithersAttempt.attempt,
+        surfacePiSessionId: input.surfacePiSessionId,
+        title: readTaskAttemptMetaString(smithersAttempt.metaJson, "label") ?? smithersAttempt.nodeId,
+        summary: `Workflow task attempt ${smithersAttempt.nodeId} is running execute_typescript.`,
+        kind: "agent",
+        status: mapSmithersAttemptStateToStructuredStatus(smithersAttempt.state),
+        smithersState: smithersAttempt.state,
+        prompt: readTaskAttemptMetaString(smithersAttempt.metaJson, "prompt"),
+        responseText: smithersAttempt.responseText ?? null,
+        error: readTaskAttemptErrorMessage(smithersAttempt.errorJson),
+        cached: Boolean(smithersAttempt.cached),
+        jjPointer: smithersAttempt.jjPointer ?? null,
+        jjCwd: smithersAttempt.jjCwd ?? null,
+        heartbeatAt:
+          typeof smithersAttempt.heartbeatAtMs === "number"
+            ? new Date(smithersAttempt.heartbeatAtMs).toISOString()
+            : null,
+        agentId: readTaskAttemptMetaString(smithersAttempt.metaJson, "agentId"),
+        agentModel: readTaskAttemptMetaString(smithersAttempt.metaJson, "agentModel"),
+        agentEngine:
+          readTaskAttemptMetaString(smithersAttempt.metaJson, "agentEngine") ??
+          readTaskAttemptMetaString(smithersAttempt.heartbeatDataJson, "agentEngine"),
+        agentResume,
+        meta:
+          parseTaskAttemptMeta(smithersAttempt.metaJson) ??
+          parseTaskAttemptMeta(smithersAttempt.heartbeatDataJson),
+        startedAt: new Date(smithersAttempt.startedAtMs).toISOString(),
+        finishedAt:
+          typeof smithersAttempt.finishedAtMs === "number"
+            ? new Date(smithersAttempt.finishedAtMs).toISOString()
+            : null,
+      });
+      return {
+        threadId: attemptRecord.threadId,
+        workflowRunId: attemptRecord.workflowRunId,
+        workflowTaskAttemptId: attemptRecord.id,
+      };
+    }
+    await Bun.sleep(25);
+  }
+
+  throw new Error("Timed out waiting for workflow task attempt projection.");
+}
+
+type SmithersAttemptProjectionRow = {
+  runId: string;
+  nodeId: string;
+  iteration: number;
+  attempt: number;
+  state: string;
+  startedAtMs: number;
+  finishedAtMs?: number | null;
+  heartbeatAtMs?: number | null;
+  heartbeatDataJson?: string | null;
+  errorJson?: string | null;
+  metaJson?: string | null;
+  responseText?: string | null;
+  cached?: number | boolean | null;
+  jjPointer?: string | null;
+  jjCwd?: string | null;
+};
+
+function findSmithersAttemptForProjection(input: {
+  cwd: string;
+  agentResume: string | null;
+  promptText: string;
+}): SmithersAttemptProjectionRow | null {
+  const dbPath = join(input.cwd, ".svvy", "smithers-runtime", "smithers.db");
+  if (!existsSync(dbPath)) {
+    return null;
+  }
+
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const rows = db
+      .query(
+        `SELECT
+           run_id AS runId,
+           node_id AS nodeId,
+           iteration AS iteration,
+           attempt AS attempt,
+           state AS state,
+           started_at_ms AS startedAtMs,
+           finished_at_ms AS finishedAtMs,
+           heartbeat_at_ms AS heartbeatAtMs,
+           heartbeat_data_json AS heartbeatDataJson,
+           error_json AS errorJson,
+           meta_json AS metaJson,
+           response_text AS responseText,
+           cached AS cached,
+           jj_pointer AS jjPointer,
+           jj_cwd AS jjCwd
+         FROM _smithers_attempts
+         ORDER BY started_at_ms DESC
+         LIMIT 200`,
+      )
+      .all() as SmithersAttemptProjectionRow[];
+    return (
+      rows.find((row) =>
+        (input.agentResume &&
+          (readTaskAttemptMetaString(row.metaJson, "agentResume") === input.agentResume ||
+            readTaskAttemptMetaString(row.heartbeatDataJson, "agentResume") === input.agentResume)) ||
+        readTaskAttemptMetaString(row.metaJson, "prompt") === input.promptText,
+      ) ??
+      rows.find(
+        (row) =>
+          readTaskAttemptMetaString(row.metaJson, "kind") === "agent" &&
+          row.state === "in-progress",
+      ) ??
+      null
+    );
+  } finally {
+    db.close();
+  }
+}
+
+function findSmithersAttemptProjectionByPrompt(input: {
+  store: StructuredSessionStateStore;
+  cwd: string;
+  surfacePiSessionId: string;
+  promptText: string;
+}): StructuredWorkflowTaskAttemptRecord | null {
+  const smithersAttempt = findSmithersAttemptForProjection({
+    cwd: input.cwd,
+    agentResume: null,
+    promptText: input.promptText,
+  });
+  const workflowRun = smithersAttempt
+    ? input.store.findWorkflowRunBySmithersRunId(smithersAttempt.runId)
+    : null;
+  if (!smithersAttempt || !workflowRun) {
+    return null;
+  }
+
+  return input.store.upsertWorkflowTaskAttempt({
+    workflowRunId: workflowRun.id,
+    smithersRunId: smithersAttempt.runId,
+    nodeId: smithersAttempt.nodeId,
+    iteration: smithersAttempt.iteration,
+    attempt: smithersAttempt.attempt,
+    surfacePiSessionId: input.surfacePiSessionId,
+    title: readTaskAttemptMetaString(smithersAttempt.metaJson, "label") ?? smithersAttempt.nodeId,
+    summary: `Workflow task attempt ${smithersAttempt.nodeId} is running execute_typescript.`,
+    kind: "agent",
+    status: mapSmithersAttemptStateToStructuredStatus(smithersAttempt.state),
+    smithersState: smithersAttempt.state,
+    prompt: readTaskAttemptMetaString(smithersAttempt.metaJson, "prompt"),
+    responseText: smithersAttempt.responseText ?? null,
+    error: readTaskAttemptErrorMessage(smithersAttempt.errorJson),
+    cached: Boolean(smithersAttempt.cached),
+    jjPointer: smithersAttempt.jjPointer ?? null,
+    jjCwd: smithersAttempt.jjCwd ?? null,
+    heartbeatAt:
+      typeof smithersAttempt.heartbeatAtMs === "number"
+        ? new Date(smithersAttempt.heartbeatAtMs).toISOString()
+        : null,
+    agentId: readTaskAttemptMetaString(smithersAttempt.metaJson, "agentId"),
+    agentModel: readTaskAttemptMetaString(smithersAttempt.metaJson, "agentModel"),
+    agentEngine:
+      readTaskAttemptMetaString(smithersAttempt.metaJson, "agentEngine") ??
+      readTaskAttemptMetaString(smithersAttempt.heartbeatDataJson, "agentEngine"),
+    agentResume:
+      readTaskAttemptMetaString(smithersAttempt.metaJson, "agentResume") ??
+      readTaskAttemptMetaString(smithersAttempt.heartbeatDataJson, "agentResume"),
+    meta:
+      parseTaskAttemptMeta(smithersAttempt.metaJson) ??
+      parseTaskAttemptMeta(smithersAttempt.heartbeatDataJson),
+    startedAt: new Date(smithersAttempt.startedAtMs).toISOString(),
+    finishedAt:
+      typeof smithersAttempt.finishedAtMs === "number"
+        ? new Date(smithersAttempt.finishedAtMs).toISOString()
+        : null,
+  });
+}
+
+function parseTaskAttemptMeta(metaJson: string | null | undefined): Record<string, unknown> | null {
+  if (!metaJson) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(metaJson);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readTaskAttemptMetaString(
+  metaJson: string | null | undefined,
+  key: string,
+): string | null {
+  const meta = parseTaskAttemptMeta(metaJson);
+  return meta && typeof meta[key] === "string" ? (meta[key] as string) : null;
+}
+
+function readTaskAttemptErrorMessage(errorJson: string | null | undefined): string | null {
+  if (!errorJson) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(errorJson);
+    return parsed && typeof parsed === "object" && typeof parsed.message === "string"
+      ? (parsed.message as string)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function mapSmithersAttemptStateToStructuredStatus(
+  state: string,
+): StructuredWorkflowTaskAttemptRecord["status"] {
+  switch (state) {
+    case "waiting-timer":
+      return "waiting";
+    case "finished":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+    default:
+      return "running";
+  }
 }
 
 function resolveTaskAgentSessionDir(artifactDir: string): string {
@@ -480,11 +773,6 @@ function tryParseJson(text: string): unknown | undefined {
   }
 }
 
-function sanitizeArtifactName(name: string): string {
-  const normalized = basename(name).replace(/[^\w.-]+/g, "-");
-  return normalized || "artifact";
-}
-
 function normalizeWorkflowTaskAgentGenerateArgs(value: unknown): WorkflowTaskAgentGenerateArgs {
   if (!isRecord(value)) {
     return {};
@@ -498,6 +786,8 @@ function normalizeWorkflowTaskAgentGenerateArgs(value: unknown): WorkflowTaskAge
           content: message.content,
         }))
       : undefined,
+    resumeSession: typeof value.resumeSession === "string" ? value.resumeSession : undefined,
+    lastHeartbeat: value.lastHeartbeat,
     abortSignal: isAbortSignal(value.abortSignal) ? value.abortSignal : undefined,
     onEvent:
       typeof value.onEvent === "function"

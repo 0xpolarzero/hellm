@@ -25,6 +25,7 @@ export type StructuredWorkflowWaitKind = "approval" | "event" | "timer";
 export type StructuredCommandExecutor =
   | "orchestrator"
   | "handler"
+  | "workflow-task-agent"
   | "execute_typescript"
   | "runtime"
   | "smithers";
@@ -51,6 +52,15 @@ export type StructuredWorkflowStatus =
   | "completed"
   | "failed"
   | "cancelled";
+export type StructuredWorkflowTaskAttemptKind = "agent" | "compute" | "static" | "unknown";
+export type StructuredWorkflowTaskAttemptStatus =
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "cancelled";
+export type StructuredWorkflowTaskMessageRole = "user" | "assistant" | "stderr";
+export type StructuredWorkflowTaskMessageSource = "prompt" | "event" | "responseText";
 
 export interface StructuredWorkspaceRecord {
   id: string;
@@ -130,7 +140,8 @@ export interface StructuredThreadRecord {
 export interface StructuredCommandRecord {
   id: string;
   sessionId: string;
-  turnId: string;
+  turnId: string | null;
+  workflowTaskAttemptId: string | null;
   surfacePiSessionId: string;
   threadId: string | null;
   workflowRunId: string | null;
@@ -200,11 +211,55 @@ export interface StructuredWorkflowRunRecord {
   finishedAt: string | null;
 }
 
+export interface StructuredWorkflowTaskAttemptRecord {
+  id: string;
+  sessionId: string;
+  threadId: string;
+  workflowRunId: string;
+  smithersRunId: string;
+  nodeId: string;
+  iteration: number;
+  attempt: number;
+  surfacePiSessionId: string | null;
+  title: string;
+  summary: string;
+  kind: StructuredWorkflowTaskAttemptKind;
+  status: StructuredWorkflowTaskAttemptStatus;
+  smithersState: string;
+  prompt: string | null;
+  responseText: string | null;
+  error: string | null;
+  cached: boolean;
+  jjPointer: string | null;
+  jjCwd: string | null;
+  heartbeatAt: string | null;
+  agentId: string | null;
+  agentModel: string | null;
+  agentEngine: string | null;
+  agentResume: string | null;
+  meta: Record<string, unknown> | null;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+}
+
+export interface StructuredWorkflowTaskMessageRecord {
+  id: string;
+  sessionId: string;
+  workflowTaskAttemptId: string;
+  role: StructuredWorkflowTaskMessageRole;
+  source: StructuredWorkflowTaskMessageSource;
+  smithersEventSeq: number | null;
+  text: string;
+  createdAt: string;
+}
+
 export interface StructuredArtifactRecord {
   id: string;
   sessionId: string;
   threadId: string | null;
   workflowRunId: string | null;
+  workflowTaskAttemptId: string | null;
   sourceCommandId: string | null;
   kind: StructuredArtifactKind;
   name: string;
@@ -221,6 +276,7 @@ export type StructuredEventSubjectKind =
   | "episode"
   | "verification"
   | "workflowRun"
+  | "workflowTaskAttempt"
   | "artifact";
 
 export interface StructuredLifecycleEventRecord {
@@ -249,6 +305,8 @@ export interface StructuredSessionSnapshot {
   episodes: StructuredEpisodeRecord[];
   verifications: StructuredVerificationRecord[];
   workflowRuns: StructuredWorkflowRunRecord[];
+  workflowTaskAttempts: StructuredWorkflowTaskAttemptRecord[];
+  workflowTaskMessages: StructuredWorkflowTaskMessageRecord[];
   artifacts: StructuredArtifactRecord[];
   events: StructuredLifecycleEventRecord[];
 }
@@ -261,6 +319,8 @@ export interface StructuredThreadDetail {
   verifications: StructuredVerificationRecord[];
   workflowRuns: StructuredWorkflowRunRecord[];
   latestWorkflowRun: StructuredWorkflowRunRecord | null;
+  workflowTaskAttempts: StructuredWorkflowTaskAttemptRecord[];
+  workflowTaskMessages: StructuredWorkflowTaskMessageRecord[];
   artifacts: StructuredArtifactRecord[];
 }
 
@@ -320,7 +380,8 @@ export interface StructuredSessionStateStore {
     data?: Record<string, unknown>;
   }): void;
   createCommand(input: {
-    turnId: string;
+    turnId?: string | null;
+    workflowTaskAttemptId?: string | null;
     surfacePiSessionId?: string;
     threadId?: string | null;
     workflowRunId?: string | null;
@@ -353,12 +414,55 @@ export interface StructuredSessionStateStore {
   createArtifact(input: {
     threadId?: string | null;
     workflowRunId?: string | null;
+    workflowTaskAttemptId?: string | null;
     sourceCommandId?: string | null;
     kind: StructuredArtifactKind;
     name?: string;
     path?: string;
     content?: string;
   }): StructuredArtifactRecord;
+  upsertWorkflowTaskAttempt(input: {
+    workflowRunId: string;
+    smithersRunId: string;
+    nodeId: string;
+    iteration: number;
+    attempt: number;
+    surfacePiSessionId?: string | null;
+    title?: string;
+    summary: string;
+    kind: StructuredWorkflowTaskAttemptKind;
+    status: StructuredWorkflowTaskAttemptStatus;
+    smithersState: string;
+    prompt?: string | null;
+    responseText?: string | null;
+    error?: string | null;
+    cached?: boolean;
+    jjPointer?: string | null;
+    jjCwd?: string | null;
+    heartbeatAt?: string | null;
+    agentId?: string | null;
+    agentModel?: string | null;
+    agentEngine?: string | null;
+    agentResume?: string | null;
+    meta?: Record<string, unknown> | null;
+    startedAt?: string;
+    finishedAt?: string | null;
+  }): StructuredWorkflowTaskAttemptRecord;
+  replaceWorkflowTaskMessages(input: {
+    workflowTaskAttemptId: string;
+    messages: Array<{
+      id: string;
+      role: StructuredWorkflowTaskMessageRole;
+      source: StructuredWorkflowTaskMessageSource;
+      smithersEventSeq?: number | null;
+      text: string;
+      createdAt: string;
+    }>;
+  }): StructuredWorkflowTaskMessageRecord[];
+  findWorkflowRunBySmithersRunId(smithersRunId: string): StructuredWorkflowRunRecord | null;
+  findWorkflowTaskAttemptByAgentResume(
+    agentResume: string,
+  ): StructuredWorkflowTaskAttemptRecord | null;
   recordVerification(input: {
     threadId?: string;
     workflowRunId?: string;
@@ -462,7 +566,8 @@ type ThreadRow = {
 type CommandRow = {
   id: string;
   session_id: string;
-  turn_id: string;
+  turn_id: string | null;
+  workflow_task_attempt_id: string | null;
   surface_pi_session_id: string;
   thread_id: string | null;
   workflow_run_id: string | null;
@@ -532,11 +637,55 @@ type WorkflowRunRow = {
   finished_at: string | null;
 };
 
+type WorkflowTaskAttemptRow = {
+  id: string;
+  session_id: string;
+  thread_id: string;
+  workflow_run_id: string;
+  smithers_run_id: string;
+  node_id: string;
+  iteration: number;
+  attempt: number;
+  surface_pi_session_id: string | null;
+  title: string;
+  summary: string;
+  kind: StructuredWorkflowTaskAttemptKind;
+  status: StructuredWorkflowTaskAttemptStatus;
+  smithers_state: string;
+  prompt: string | null;
+  response_text: string | null;
+  error: string | null;
+  cached: number | null;
+  jj_pointer: string | null;
+  jj_cwd: string | null;
+  heartbeat_at: string | null;
+  agent_id: string | null;
+  agent_model: string | null;
+  agent_engine: string | null;
+  agent_resume: string | null;
+  meta_json: string | null;
+  started_at: string;
+  updated_at: string;
+  finished_at: string | null;
+};
+
+type WorkflowTaskMessageRow = {
+  id: string;
+  session_id: string;
+  workflow_task_attempt_id: string;
+  role: StructuredWorkflowTaskMessageRole;
+  source: StructuredWorkflowTaskMessageSource;
+  smithers_event_seq: number | null;
+  text: string;
+  created_at: string;
+};
+
 type ArtifactRow = {
   id: string;
   session_id: string;
   thread_id: string | null;
   workflow_run_id: string | null;
+  workflow_task_attempt_id: string | null;
   source_command_id: string | null;
   kind: StructuredArtifactKind;
   name: string;
@@ -1045,7 +1194,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   createCommand(input: {
-    turnId: string;
+    turnId?: string | null;
+    workflowTaskAttemptId?: string | null;
     surfacePiSessionId?: string;
     threadId?: string | null;
     workflowRunId?: string | null;
@@ -1058,9 +1208,17 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     facts?: Record<string, unknown> | null;
     attempts?: number;
   }): StructuredCommandRecord {
-    const turn = this.mustFindTurnRow(input.turnId);
-    const thread = input.threadId ? this.mustFindThreadRow(input.threadId) : null;
-    const workflowRunId = input.workflowRunId ?? null;
+    const workflowTaskAttempt = input.workflowTaskAttemptId
+      ? this.mustFindWorkflowTaskAttemptRow(input.workflowTaskAttemptId)
+      : null;
+    const turn = input.turnId ? this.mustFindTurnRow(input.turnId) : null;
+    if (!turn && !workflowTaskAttempt) {
+      throw new Error("Command creation requires a turn or workflow task attempt owner.");
+    }
+
+    const threadId = input.threadId ?? workflowTaskAttempt?.thread_id ?? null;
+    const thread = threadId ? this.mustFindThreadRow(threadId) : null;
+    const workflowRunId = input.workflowRunId ?? workflowTaskAttempt?.workflow_run_id ?? null;
     if (workflowRunId) {
       this.mustFindWorkflowRunRow(workflowRunId);
     }
@@ -1068,7 +1226,17 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const timestamp = this.now();
     const commandId = createId("command");
     const surfacePiSessionId =
-      input.surfacePiSessionId ?? thread?.surface_pi_session_id ?? turn.surface_pi_session_id;
+      input.surfacePiSessionId ??
+      workflowTaskAttempt?.surface_pi_session_id ??
+      thread?.surface_pi_session_id ??
+      turn?.surface_pi_session_id;
+    if (!surfacePiSessionId) {
+      throw new Error("Command creation requires a surface pi session id.");
+    }
+    const sessionId = turn?.session_id ?? workflowTaskAttempt?.session_id ?? thread?.session_id ?? null;
+    if (!sessionId) {
+      throw new Error("Command creation requires a session owner.");
+    }
 
     this.db
       .query(
@@ -1076,6 +1244,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            id,
            session_id,
            turn_id,
+           workflow_task_attempt_id,
            surface_pi_session_id,
            thread_id,
            workflow_run_id,
@@ -1092,14 +1261,15 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            started_at,
            updated_at,
            finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)`,
       )
       .run(
         commandId,
-        turn.session_id,
-        input.turnId,
+        sessionId,
+        turn?.id ?? null,
+        workflowTaskAttempt?.id ?? input.workflowTaskAttemptId ?? null,
         surfacePiSessionId,
-        input.threadId ?? null,
+        threadId,
         workflowRunId,
         input.parentCommandId ?? null,
         input.toolName,
@@ -1115,7 +1285,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       );
 
     this.recordEvent({
-      sessionId: turn.session_id,
+      sessionId,
       kind: "command.requested",
       subjectKind: "command",
       subjectId: commandId,
@@ -1246,6 +1416,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   createArtifact(input: {
     threadId?: string | null;
     workflowRunId?: string | null;
+    workflowTaskAttemptId?: string | null;
     sourceCommandId?: string | null;
     kind: StructuredArtifactKind;
     name?: string;
@@ -1257,17 +1428,39 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       : null;
     const workflowRun =
       input.workflowRunId != null ? this.mustFindWorkflowRunRow(input.workflowRunId) : null;
+    const workflowTaskAttempt =
+      input.workflowTaskAttemptId != null
+        ? this.mustFindWorkflowTaskAttemptRow(input.workflowTaskAttemptId)
+        : sourceCommand?.workflow_task_attempt_id
+          ? this.mustFindWorkflowTaskAttemptRow(sourceCommand.workflow_task_attempt_id)
+          : null;
 
-    const threadId = input.threadId ?? workflowRun?.thread_id ?? sourceCommand?.thread_id ?? null;
+    const threadId =
+      input.threadId ??
+      workflowTaskAttempt?.thread_id ??
+      workflowRun?.thread_id ??
+      sourceCommand?.thread_id ??
+      null;
     const thread = threadId ? this.mustFindThreadRow(threadId) : null;
     const workflowRunId =
-      input.workflowRunId ?? sourceCommand?.workflow_run_id ?? workflowRun?.id ?? null;
+      input.workflowRunId ??
+      workflowTaskAttempt?.workflow_run_id ??
+      sourceCommand?.workflow_run_id ??
+      workflowRun?.id ??
+      null;
+    const workflowTaskAttemptId = input.workflowTaskAttemptId ?? workflowTaskAttempt?.id ?? null;
     const sourceCommandId = input.sourceCommandId ?? null;
     const sessionId =
-      thread?.session_id ?? workflowRun?.session_id ?? sourceCommand?.session_id ?? null;
+      thread?.session_id ??
+      workflowTaskAttempt?.session_id ??
+      workflowRun?.session_id ??
+      sourceCommand?.session_id ??
+      null;
 
     if (!sessionId) {
-      throw new Error("Artifact creation requires thread, workflow run, or command ownership.");
+      throw new Error(
+        "Artifact creation requires thread, workflow run, workflow task attempt, or command ownership.",
+      );
     }
 
     const artifactId = createId("artifact");
@@ -1294,19 +1487,21 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            session_id,
            thread_id,
            workflow_run_id,
+           workflow_task_attempt_id,
            source_command_id,
            kind,
            name,
            path,
            content,
            created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         artifactId,
         sessionId,
         threadId,
         workflowRunId,
+        workflowTaskAttemptId,
         sourceCommandId,
         input.kind,
         name,
@@ -1324,6 +1519,246 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     });
 
     return this.mustFindArtifactRecord(artifactId);
+  }
+
+  upsertWorkflowTaskAttempt(input: {
+    workflowRunId: string;
+    smithersRunId: string;
+    nodeId: string;
+    iteration: number;
+    attempt: number;
+    surfacePiSessionId?: string | null;
+    title?: string;
+    summary: string;
+    kind: StructuredWorkflowTaskAttemptKind;
+    status: StructuredWorkflowTaskAttemptStatus;
+    smithersState: string;
+    prompt?: string | null;
+    responseText?: string | null;
+    error?: string | null;
+    cached?: boolean;
+    jjPointer?: string | null;
+    jjCwd?: string | null;
+    heartbeatAt?: string | null;
+    agentId?: string | null;
+    agentModel?: string | null;
+    agentEngine?: string | null;
+    agentResume?: string | null;
+    meta?: Record<string, unknown> | null;
+    startedAt?: string;
+    finishedAt?: string | null;
+  }): StructuredWorkflowTaskAttemptRecord {
+    const workflowRun = this.mustFindWorkflowRunRow(input.workflowRunId);
+    const existing = this.findWorkflowTaskAttemptRowByIdentity({
+      workflowRunId: input.workflowRunId,
+      nodeId: input.nodeId,
+      iteration: input.iteration,
+      attempt: input.attempt,
+    });
+    const timestamp = this.now();
+    const title = input.title?.trim() || input.nodeId;
+    const startedAt = input.startedAt ?? existing?.started_at ?? timestamp;
+    const finishedAt =
+      input.finishedAt === undefined
+        ? existing?.finished_at ?? (isTerminalWorkflowTaskAttemptStatus(input.status) ? timestamp : null)
+        : (input.finishedAt ?? null);
+
+    if (existing) {
+      this.db
+        .query(
+          `UPDATE workflow_task_attempt
+           SET surface_pi_session_id = ?,
+               title = ?,
+               summary = ?,
+               kind = ?,
+               status = ?,
+               smithers_state = ?,
+               prompt = ?,
+               response_text = ?,
+               error = ?,
+               cached = ?,
+               jj_pointer = ?,
+               jj_cwd = ?,
+               heartbeat_at = ?,
+               agent_id = ?,
+               agent_model = ?,
+               agent_engine = ?,
+               agent_resume = ?,
+               meta_json = ?,
+               started_at = ?,
+               updated_at = ?,
+               finished_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          input.surfacePiSessionId ?? existing.surface_pi_session_id,
+          title,
+          input.summary,
+          input.kind,
+          input.status,
+          input.smithersState,
+          input.prompt === undefined ? existing.prompt : (input.prompt ?? null),
+          input.responseText === undefined ? existing.response_text : (input.responseText ?? null),
+          input.error === undefined ? existing.error : (input.error ?? null),
+          input.cached === undefined ? existing.cached : input.cached,
+          input.jjPointer === undefined ? existing.jj_pointer : (input.jjPointer ?? null),
+          input.jjCwd === undefined ? existing.jj_cwd : (input.jjCwd ?? null),
+          input.heartbeatAt === undefined ? existing.heartbeat_at : (input.heartbeatAt ?? null),
+          input.agentId === undefined ? existing.agent_id : (input.agentId ?? null),
+          input.agentModel === undefined ? existing.agent_model : (input.agentModel ?? null),
+          input.agentEngine === undefined ? existing.agent_engine : (input.agentEngine ?? null),
+          input.agentResume === undefined ? existing.agent_resume : (input.agentResume ?? null),
+          input.meta === undefined ? existing.meta_json : toJson(input.meta ?? null),
+          startedAt,
+          timestamp,
+          finishedAt,
+          existing.id,
+        );
+
+      this.recordEvent({
+        sessionId: workflowRun.session_id,
+        kind: "workflowTaskAttempt.updated",
+        subjectKind: "workflowTaskAttempt",
+        subjectId: existing.id,
+        at: timestamp,
+      });
+      return this.mustFindWorkflowTaskAttemptRecord(existing.id);
+    }
+
+    const workflowTaskAttemptId = createId("workflow-task-attempt");
+    this.db
+      .query(
+        `INSERT INTO workflow_task_attempt (
+           id,
+           session_id,
+           thread_id,
+           workflow_run_id,
+           smithers_run_id,
+           node_id,
+           iteration,
+           attempt,
+           surface_pi_session_id,
+           title,
+           summary,
+           kind,
+           status,
+           smithers_state,
+           prompt,
+           response_text,
+           error,
+           cached,
+           jj_pointer,
+           jj_cwd,
+           heartbeat_at,
+           agent_id,
+           agent_model,
+           agent_engine,
+           agent_resume,
+           meta_json,
+           started_at,
+           updated_at,
+           finished_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        workflowTaskAttemptId,
+        workflowRun.session_id,
+        workflowRun.thread_id,
+        input.workflowRunId,
+        input.smithersRunId,
+        input.nodeId,
+        input.iteration,
+        input.attempt,
+        input.surfacePiSessionId ?? null,
+        title,
+        input.summary,
+        input.kind,
+        input.status,
+        input.smithersState,
+        input.prompt ?? null,
+        input.responseText ?? null,
+        input.error ?? null,
+        input.cached ?? false,
+        input.jjPointer ?? null,
+        input.jjCwd ?? null,
+        input.heartbeatAt ?? null,
+        input.agentId ?? null,
+        input.agentModel ?? null,
+        input.agentEngine ?? null,
+        input.agentResume ?? null,
+        toJson(input.meta ?? null),
+        startedAt,
+        timestamp,
+        finishedAt,
+      );
+
+    this.recordEvent({
+      sessionId: workflowRun.session_id,
+      kind: "workflowTaskAttempt.created",
+      subjectKind: "workflowTaskAttempt",
+      subjectId: workflowTaskAttemptId,
+      at: timestamp,
+    });
+    return this.mustFindWorkflowTaskAttemptRecord(workflowTaskAttemptId);
+  }
+
+  replaceWorkflowTaskMessages(input: {
+    workflowTaskAttemptId: string;
+    messages: Array<{
+      id: string;
+      role: StructuredWorkflowTaskMessageRole;
+      source: StructuredWorkflowTaskMessageSource;
+      smithersEventSeq?: number | null;
+      text: string;
+      createdAt: string;
+    }>;
+  }): StructuredWorkflowTaskMessageRecord[] {
+    const attempt = this.mustFindWorkflowTaskAttemptRow(input.workflowTaskAttemptId);
+    this.db
+      .query(`DELETE FROM workflow_task_message WHERE workflow_task_attempt_id = ?`)
+      .run(input.workflowTaskAttemptId);
+
+    for (const message of input.messages) {
+      this.db
+        .query(
+          `INSERT INTO workflow_task_message (
+             id,
+             session_id,
+             workflow_task_attempt_id,
+             role,
+             source,
+             smithers_event_seq,
+             text,
+             created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          message.id,
+          attempt.session_id,
+          input.workflowTaskAttemptId,
+          message.role,
+          message.source,
+          message.smithersEventSeq ?? null,
+          message.text,
+          message.createdAt,
+        );
+    }
+
+    return this.queryWorkflowTaskMessageRowsByAttempt(input.workflowTaskAttemptId).map((row) =>
+      this.mapWorkflowTaskMessage(row),
+    );
+  }
+
+  findWorkflowRunBySmithersRunId(smithersRunId: string): StructuredWorkflowRunRecord | null {
+    const row = this.findWorkflowRunRowBySmithersRunId(smithersRunId);
+    return row ? this.mapWorkflowRun(row) : null;
+  }
+
+  findWorkflowTaskAttemptByAgentResume(
+    agentResume: string,
+  ): StructuredWorkflowTaskAttemptRecord | null {
+    const row = this.findWorkflowTaskAttemptRowByAgentResume(agentResume);
+    return row ? this.mapWorkflowTaskAttempt(row) : null;
   }
 
   recordVerification(input: {
@@ -1570,6 +2005,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       episodes: this.queryEpisodeRecords(sessionId),
       verifications: this.queryVerificationRecords(sessionId),
       workflowRuns,
+      workflowTaskAttempts: this.queryWorkflowTaskAttemptRecords(sessionId),
+      workflowTaskMessages: this.queryWorkflowTaskMessageRecords(sessionId),
       artifacts: this.queryArtifactRecords(sessionId),
       events: this.queryEventRecords(sessionId),
     };
@@ -1585,6 +2022,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   getThreadDetail(threadId: string): StructuredThreadDetail {
     const thread = this.mustFindThreadRecord(threadId);
     const workflowRuns = this.queryWorkflowRunRecordsForThread(threadId);
+    const workflowTaskAttempts = this.queryWorkflowTaskAttemptRecordsForThread(threadId);
     const latestWorkflowRun =
       workflowRuns.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ??
       null;
@@ -1599,6 +2037,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       ),
       workflowRuns,
       latestWorkflowRun,
+      workflowTaskAttempts,
+      workflowTaskMessages: this.queryWorkflowTaskMessageRowsByThread(threadId).map((row) =>
+        this.mapWorkflowTaskMessage(row),
+      ),
       artifacts: this.queryArtifactRowsByThread(threadId).map((row) => this.mapArtifact(row)),
     };
   }
@@ -1701,6 +2143,61 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return row;
   }
 
+  private findWorkflowRunRowBySmithersRunId(smithersRunId: string): WorkflowRunRow | null {
+    return (
+      (this.db
+        .query(`SELECT * FROM workflow_run WHERE smithers_run_id = ? LIMIT 1`)
+        .get(smithersRunId) as WorkflowRunRow | undefined) ?? null
+    );
+  }
+
+  private mustFindWorkflowTaskAttemptRow(workflowTaskAttemptId: string): WorkflowTaskAttemptRow {
+    const row = this.db
+      .query(`SELECT * FROM workflow_task_attempt WHERE id = ?`)
+      .get(workflowTaskAttemptId) as WorkflowTaskAttemptRow | undefined;
+    if (!row) {
+      throw new Error(`Structured workflow task attempt not found: ${workflowTaskAttemptId}`);
+    }
+    return row;
+  }
+
+  private findWorkflowTaskAttemptRowByIdentity(input: {
+    workflowRunId: string;
+    nodeId: string;
+    iteration: number;
+    attempt: number;
+  }): WorkflowTaskAttemptRow | null {
+    return (
+      (this.db
+        .query(
+          `SELECT * FROM workflow_task_attempt
+           WHERE workflow_run_id = ? AND node_id = ? AND iteration = ? AND attempt = ?
+           LIMIT 1`,
+        )
+        .get(
+          input.workflowRunId,
+          input.nodeId,
+          input.iteration,
+          input.attempt,
+        ) as WorkflowTaskAttemptRow | undefined) ?? null
+    );
+  }
+
+  private findWorkflowTaskAttemptRowByAgentResume(
+    agentResume: string,
+  ): WorkflowTaskAttemptRow | null {
+    return (
+      (this.db
+        .query(
+          `SELECT * FROM workflow_task_attempt
+           WHERE agent_resume = ?
+           ORDER BY updated_at DESC, rowid DESC
+           LIMIT 1`,
+        )
+        .get(agentResume) as WorkflowTaskAttemptRow | undefined) ?? null
+    );
+  }
+
   private mustFindTurnRecord(turnId: string): StructuredTurnRecord {
     return this.mapTurn(this.mustFindTurnRow(turnId));
   }
@@ -1729,6 +2226,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   private mustFindWorkflowRunRecord(workflowId: string): StructuredWorkflowRunRecord {
     return this.mapWorkflowRun(this.mustFindWorkflowRunRow(workflowId));
+  }
+
+  private mustFindWorkflowTaskAttemptRecord(
+    workflowTaskAttemptId: string,
+  ): StructuredWorkflowTaskAttemptRecord {
+    return this.mapWorkflowTaskAttempt(this.mustFindWorkflowTaskAttemptRow(workflowTaskAttemptId));
   }
 
   private mustFindArtifactRecord(artifactId: string): StructuredArtifactRecord {
@@ -1785,6 +2288,18 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .all(sessionId) as WorkflowRunRow[];
   }
 
+  private queryWorkflowTaskAttemptRows(sessionId: string): WorkflowTaskAttemptRow[] {
+    return this.db
+      .query(`SELECT * FROM workflow_task_attempt WHERE session_id = ? ORDER BY rowid ASC`)
+      .all(sessionId) as WorkflowTaskAttemptRow[];
+  }
+
+  private queryWorkflowTaskMessageRows(sessionId: string): WorkflowTaskMessageRow[] {
+    return this.db
+      .query(`SELECT * FROM workflow_task_message WHERE session_id = ? ORDER BY rowid ASC`)
+      .all(sessionId) as WorkflowTaskMessageRow[];
+  }
+
   private queryArtifactRows(sessionId: string): ArtifactRow[] {
     return this.db
       .query(`SELECT * FROM artifact WHERE session_id = ? ORDER BY rowid ASC`)
@@ -1819,6 +2334,16 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   private queryWorkflowRunRecords(sessionId: string): StructuredWorkflowRunRecord[] {
     return this.queryWorkflowRunRows(sessionId).map((row) => this.mapWorkflowRun(row));
+  }
+
+  private queryWorkflowTaskAttemptRecords(sessionId: string): StructuredWorkflowTaskAttemptRecord[] {
+    return this.queryWorkflowTaskAttemptRows(sessionId).map((row) => this.mapWorkflowTaskAttempt(row));
+  }
+
+  private queryWorkflowTaskMessageRecords(sessionId: string): StructuredWorkflowTaskMessageRecord[] {
+    return this.queryWorkflowTaskMessageRows(sessionId).map((row) =>
+      this.mapWorkflowTaskMessage(row),
+    );
   }
 
   private queryArtifactRecords(sessionId: string): StructuredArtifactRecord[] {
@@ -1861,6 +2386,44 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   private queryWorkflowRunRecordsForThread(threadId: string): StructuredWorkflowRunRecord[] {
     return this.queryWorkflowRunRowsForThread(threadId).map((row) => this.mapWorkflowRun(row));
+  }
+
+  private queryWorkflowTaskAttemptRowsForThread(threadId: string): WorkflowTaskAttemptRow[] {
+    return this.db
+      .query(`SELECT * FROM workflow_task_attempt WHERE thread_id = ? ORDER BY rowid ASC`)
+      .all(threadId) as WorkflowTaskAttemptRow[];
+  }
+
+  private queryWorkflowTaskAttemptRecordsForThread(
+    threadId: string,
+  ): StructuredWorkflowTaskAttemptRecord[] {
+    return this.queryWorkflowTaskAttemptRowsForThread(threadId).map((row) =>
+      this.mapWorkflowTaskAttempt(row),
+    );
+  }
+
+  private queryWorkflowTaskMessageRowsByThread(threadId: string): WorkflowTaskMessageRow[] {
+    return this.db
+      .query(
+        `SELECT message.*
+         FROM workflow_task_message AS message
+         JOIN workflow_task_attempt AS attempt ON attempt.id = message.workflow_task_attempt_id
+         WHERE attempt.thread_id = ?
+         ORDER BY message.rowid ASC`,
+      )
+      .all(threadId) as WorkflowTaskMessageRow[];
+  }
+
+  private queryWorkflowTaskMessageRowsByAttempt(
+    workflowTaskAttemptId: string,
+  ): WorkflowTaskMessageRow[] {
+    return this.db
+      .query(
+        `SELECT * FROM workflow_task_message
+         WHERE workflow_task_attempt_id = ?
+         ORDER BY rowid ASC`,
+      )
+      .all(workflowTaskAttemptId) as WorkflowTaskMessageRow[];
   }
 
   private queryArtifactRowsByThread(threadId: string): ArtifactRow[] {
@@ -2030,6 +2593,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       id: row.id,
       sessionId: row.session_id,
       turnId: row.turn_id,
+      workflowTaskAttemptId: row.workflow_task_attempt_id,
       surfacePiSessionId: row.surface_pi_session_id,
       threadId: row.thread_id,
       workflowRunId: row.workflow_run_id,
@@ -2110,12 +2674,60 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     };
   }
 
+  private mapWorkflowTaskAttempt(row: WorkflowTaskAttemptRow): StructuredWorkflowTaskAttemptRecord {
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      threadId: row.thread_id,
+      workflowRunId: row.workflow_run_id,
+      smithersRunId: row.smithers_run_id,
+      nodeId: row.node_id,
+      iteration: row.iteration,
+      attempt: row.attempt,
+      surfacePiSessionId: row.surface_pi_session_id,
+      title: row.title,
+      summary: row.summary,
+      kind: row.kind,
+      status: row.status,
+      smithersState: row.smithers_state,
+      prompt: row.prompt,
+      responseText: row.response_text,
+      error: row.error,
+      cached: Boolean(row.cached),
+      jjPointer: row.jj_pointer,
+      jjCwd: row.jj_cwd,
+      heartbeatAt: row.heartbeat_at,
+      agentId: row.agent_id,
+      agentModel: row.agent_model,
+      agentEngine: row.agent_engine,
+      agentResume: row.agent_resume,
+      meta: fromJson<Record<string, unknown>>(row.meta_json),
+      startedAt: row.started_at,
+      updatedAt: row.updated_at,
+      finishedAt: row.finished_at,
+    };
+  }
+
+  private mapWorkflowTaskMessage(row: WorkflowTaskMessageRow): StructuredWorkflowTaskMessageRecord {
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      workflowTaskAttemptId: row.workflow_task_attempt_id,
+      role: row.role,
+      source: row.source,
+      smithersEventSeq: row.smithers_event_seq,
+      text: row.text,
+      createdAt: row.created_at,
+    };
+  }
+
   private mapArtifact(row: ArtifactRow): StructuredArtifactRecord {
     return {
       id: row.id,
       sessionId: row.session_id,
       threadId: row.thread_id,
       workflowRunId: row.workflow_run_id,
+      workflowTaskAttemptId: row.workflow_task_attempt_id,
       sourceCommandId: row.source_command_id,
       kind: row.kind,
       name: row.name,
@@ -2204,7 +2816,8 @@ function initializeSchema(db: Database): void {
     CREATE TABLE IF NOT EXISTS command (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
-      turn_id TEXT NOT NULL,
+      turn_id TEXT,
+      workflow_task_attempt_id TEXT,
       surface_pi_session_id TEXT NOT NULL,
       thread_id TEXT,
       workflow_run_id TEXT,
@@ -2274,11 +2887,55 @@ function initializeSchema(db: Database): void {
       finished_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS workflow_task_attempt (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      workflow_run_id TEXT NOT NULL,
+      smithers_run_id TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      iteration INTEGER NOT NULL,
+      attempt INTEGER NOT NULL,
+      surface_pi_session_id TEXT,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      smithers_state TEXT NOT NULL,
+      prompt TEXT,
+      response_text TEXT,
+      error TEXT,
+      cached INTEGER,
+      jj_pointer TEXT,
+      jj_cwd TEXT,
+      heartbeat_at TEXT,
+      agent_id TEXT,
+      agent_model TEXT,
+      agent_engine TEXT,
+      agent_resume TEXT,
+      meta_json TEXT,
+      started_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      finished_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_task_message (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      workflow_task_attempt_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      source TEXT NOT NULL,
+      smithers_event_seq INTEGER,
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS artifact (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
       thread_id TEXT,
       workflow_run_id TEXT,
+      workflow_task_attempt_id TEXT,
       source_command_id TEXT,
       kind TEXT NOT NULL,
       name TEXT NOT NULL,
@@ -2334,6 +2991,10 @@ function isTerminalWorkflowStatus(status: StructuredWorkflowStatus): boolean {
     status === "failed" ||
     status === "cancelled"
   );
+}
+
+function isTerminalWorkflowTaskAttemptStatus(status: StructuredWorkflowTaskAttemptStatus): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 function defaultSmithersStatusForWorkflowStatus(status: StructuredWorkflowStatus): string {
