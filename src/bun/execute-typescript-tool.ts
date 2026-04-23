@@ -25,10 +25,7 @@ import type {
   WebSearchResult,
 } from "./execute-typescript-api-contract";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
-import {
-  createWorkflowAssetDiscovery,
-  type WorkflowAssetDiscovery,
-} from "./smithers-runtime/workflow-asset-discovery";
+import { createWorkflowLibrary, type WorkflowLibrary } from "./smithers-runtime/workflow-library";
 import type {
   StructuredArtifactKind,
   StructuredCommandExecutor,
@@ -117,6 +114,8 @@ type ExecuteTypescriptContext = {
   visibility?: StructuredCommandVisibility;
 };
 
+type CapturedConsoleLevel = "log" | "info" | "warn" | "error";
+
 export interface ExecuteTypescriptCommandStore {
   createCommand(input: {
     turnId?: string | null;
@@ -163,7 +162,7 @@ type ExecuteTypescriptToolOptions = {
   cwd: string;
   runtime: PromptExecutionRuntimeHandle;
   store: StructuredSessionStateStore;
-  workflowDiscovery?: WorkflowAssetDiscovery;
+  workflowLibrary?: WorkflowLibrary;
   runCommand?: (
     input: ExecuteTypescriptRunCommandInput,
   ) => Promise<ExecuteTypescriptRunCommandResult>;
@@ -235,7 +234,7 @@ export function createExecuteTypescriptTool(
           threadId: runtime.surfaceKind === "handler" ? runtime.rootThreadId : null,
           executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
         },
-        workflowDiscovery: options.workflowDiscovery,
+        workflowLibrary: options.workflowLibrary,
         runCommand: options.runCommand,
         webSearch: options.webSearch,
         fetchText: options.fetchText,
@@ -284,7 +283,7 @@ export async function runExecuteTypescript(input: {
   signal?: AbortSignal;
   typescriptCode: string;
   context: ExecuteTypescriptContext;
-  workflowDiscovery?: WorkflowAssetDiscovery;
+  workflowLibrary?: WorkflowLibrary;
   runCommand?: (
     input: ExecuteTypescriptRunCommandInput,
   ) => Promise<ExecuteTypescriptRunCommandResult>;
@@ -364,10 +363,13 @@ export async function runExecuteTypescript(input: {
       workflowRunId: input.context.workflowRunId ?? null,
       parentCommandId: parentCommand.id,
       signal: input.signal,
-      workflowDiscovery: input.workflowDiscovery ?? createWorkflowAssetDiscovery(input.cwd),
+      workflowLibrary: input.workflowLibrary ?? createWorkflowLibrary(input.cwd),
       runCommand: input.runCommand ?? defaultRunCommand,
       webSearch: input.webSearch ?? defaultWebSearch,
       fetchText: input.fetchText ?? defaultFetchText,
+      emitConsole(level, ...args) {
+        appendCapturedConsoleLine(logs, level, ...args);
+      },
       recordChildActivity(activity) {
         childActivity.push(activity);
       },
@@ -565,19 +567,32 @@ async function runCompiledSnippet(
 }
 
 function createCapturedConsole(logs: string[]): SvvyConsole {
-  const append = (...args: unknown[]) => {
-    logs.push(args.map(formatConsoleValue).join(" "));
+  const append = (level: CapturedConsoleLevel, ...args: unknown[]) => {
+    appendCapturedConsoleLine(logs, level, ...args);
   };
   return {
-    log: append,
-    info: append,
-    warn: append,
-    error: append,
+    log: (...args) => append("log", ...args),
+    info: (...args) => append("info", ...args),
+    warn: (...args) => append("warn", ...args),
+    error: (...args) => append("error", ...args),
   };
 }
 
 function formatConsoleValue(value: unknown): string {
   return typeof value === "string" ? value : inspect(value, { depth: 5, breakLength: Infinity });
+}
+
+function appendCapturedConsoleLine(
+  logs: string[],
+  level: CapturedConsoleLevel,
+  ...args: unknown[]
+): void {
+  const text = args.map(formatConsoleValue).join(" ");
+  if (!text) {
+    return;
+  }
+  const prefix = level === "error" ? "[error] " : level === "warn" ? "[warn] " : "";
+  logs.push(`${prefix}${text}`);
 }
 
 function createExecuteTypescriptApi(input: {
@@ -590,7 +605,7 @@ function createExecuteTypescriptApi(input: {
   workflowRunId?: string | null;
   parentCommandId: string;
   signal?: AbortSignal;
-  workflowDiscovery: WorkflowAssetDiscovery;
+  workflowLibrary: WorkflowLibrary;
   runCommand: (
     input: ExecuteTypescriptRunCommandInput,
   ) => Promise<ExecuteTypescriptRunCommandResult>;
@@ -603,6 +618,7 @@ function createExecuteTypescriptApi(input: {
     url: string;
     signal?: AbortSignal;
   }) => Promise<ExecuteTypescriptWebFetchResult>;
+  emitConsole: (level: CapturedConsoleLevel, ...args: unknown[]) => void;
   recordChildActivity: (activity: ExecuteTypescriptChildActivity) => void;
 }): ExecuteTypescriptApi {
   const call = async <T>(config: {
@@ -676,6 +692,35 @@ function createExecuteTypescriptApi(input: {
       cwd: input.cwd,
       signal: input.signal,
     });
+
+  const validateWorkflowWrite = async (path: string) => {
+    const validation = await input.workflowLibrary.validateSavedWorkflowWrite(path);
+    if (!validation) {
+      return null;
+    }
+
+    if (validation.ok) {
+      input.emitConsole("info", `Workflow validation passed after writing ${validation.path}.`);
+    } else {
+      input.emitConsole(
+        "error",
+        `Workflow validation reported ${pluralize(validation.diagnostics.length, "error")} after writing ${validation.path}.`,
+      );
+      for (const diagnostic of validation.diagnostics) {
+        const location = [diagnostic.path, diagnostic.line, diagnostic.column]
+          .filter((value) => value !== undefined && value !== null && value !== "")
+          .join(":");
+        input.emitConsole(
+          diagnostic.severity === "warning" ? "warn" : "error",
+          [location, diagnostic.message, diagnostic.code ? `(TS${diagnostic.code})` : null]
+            .filter(Boolean)
+            .join(" "),
+        );
+      }
+    }
+
+    return validation;
+  };
 
   return {
     repo: {
@@ -752,10 +797,25 @@ function createExecuteTypescriptApi(input: {
             writeFileSync(filePath, params.text, "utf8");
             const path = normalizeWorkspaceRelativePath(input.cwd, filePath);
             const bytesWritten = byteLength(params.text);
+            const workflowValidation = await validateWorkflowWrite(path);
             return {
               value: { path, bytes: bytesWritten },
-              facts: { path, bytesWritten },
-              summary: `Wrote ${path}.`,
+              facts: {
+                path,
+                bytesWritten,
+                ...(workflowValidation
+                  ? {
+                      workflowValidationChecked: true,
+                      workflowValidationOk: workflowValidation.ok,
+                      workflowValidationDiagnosticCount: workflowValidation.diagnostics.length,
+                    }
+                  : {}),
+              },
+              summary: workflowValidation
+                ? workflowValidation.ok
+                  ? `Wrote ${path}. Workflow validation passed.`
+                  : `Wrote ${path}. Workflow validation reported ${pluralize(workflowValidation.diagnostics.length, "error")}.`
+                : `Wrote ${path}.`,
             };
           },
         }),
@@ -783,10 +843,25 @@ function createExecuteTypescriptApi(input: {
             writeFileSync(filePath, text, "utf8");
             const path = normalizeWorkspaceRelativePath(input.cwd, filePath);
             const bytesWritten = byteLength(text);
+            const workflowValidation = await validateWorkflowWrite(path);
             return {
               value: { path, bytes: bytesWritten },
-              facts: { path, bytesWritten },
-              summary: `Wrote JSON to ${path}.`,
+              facts: {
+                path,
+                bytesWritten,
+                ...(workflowValidation
+                  ? {
+                      workflowValidationChecked: true,
+                      workflowValidationOk: workflowValidation.ok,
+                      workflowValidationDiagnosticCount: workflowValidation.diagnostics.length,
+                    }
+                  : {}),
+              },
+              summary: workflowValidation
+                ? workflowValidation.ok
+                  ? `Wrote JSON to ${path}. Workflow validation passed.`
+                  : `Wrote JSON to ${path}. Workflow validation reported ${pluralize(workflowValidation.diagnostics.length, "error")}.`
+                : `Wrote JSON to ${path}.`,
             };
           },
         }),
@@ -1646,7 +1721,7 @@ function createExecuteTypescriptApi(input: {
           title: "List workflow assets",
           summary: "List workflow assets",
           run: async () => {
-            const value = await Promise.resolve(input.workflowDiscovery.listAssets(params));
+            const value = await Promise.resolve(input.workflowLibrary.listAssets(params));
             return {
               value,
               facts: {
@@ -1671,7 +1746,7 @@ function createExecuteTypescriptApi(input: {
           title: "List workflow models",
           summary: "List workflow models",
           run: async () => {
-            const value = await Promise.resolve(input.workflowDiscovery.listModels());
+            const value = await Promise.resolve(input.workflowLibrary.listModels());
             const providerCount = new Set(value.map((model) => model.providerId)).size;
             const authAvailableCount = value.filter((model) => model.authAvailable).length;
             return {

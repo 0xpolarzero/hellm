@@ -54,9 +54,6 @@
   - some workflow categories may justify specialized UI treatment instead of a generic workflow card
   - verification is the obvious first example because build/test/lint state often wants purpose-built display and progress semantics
 
-- smithers workflow authoring:
-  - consider automatic typecheck for workflow definitions and components so the agent gets diagnostics while writing them
-
 - cron job on a repo that pools for updates on selected dependencies with a short summary so we can update adap
   - especially docs/references/ so we can notice if they changed something we borrowed to something better or added a useful feature
 
@@ -73,3 +70,7 @@
   - maybe it can be the one to decide when to run CI during agent sessions, this kind of stuff
   - this helps agents in sessions focus purely on product and not in anything-harness, so you have clear separation of concerns, and snitch suggesting stuff so you don't have to think too much about this either
   - including maybe having it help on a specific set of surfaces, e.g. its notes, todos, this kind of more user-facing stuff?
+
+- a benefit of our api inside execute_typescript is that we can add hooks and programatically enforce rules, which will automatically run and return back diagnostics/output to the agent, without expanding conceptual surface for the agent to remember to use special tools or whatever
+  - e.g. typecheck on editing workflows (writeFile/writeJson inside .svvy/workflows/)
+  - e.g. run CI on git commit/push

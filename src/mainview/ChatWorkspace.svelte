@@ -749,6 +749,33 @@
     await handleInspectCommand(commandId);
   }
 
+  async function handleAskHandlerToSaveWorkflow(
+    thread: Pick<WorkspaceHandlerThreadSummary, "threadId" | "surfacePiSessionId">,
+  ) {
+    const session = currentSession;
+    if (!session) {
+      return;
+    }
+
+    const target = {
+      workspaceSessionId: session.id,
+      surface: "thread" as const,
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.threadId,
+    };
+    const prompt = [
+      "Inspect the workflow work owned by this thread.",
+      "If there are reusable saved workflow files worth keeping, write them directly into `.svvy/workflows/...` using the normal repo write APIs.",
+      "Rely on the automatic workflow validation feedback returned in the surrounding `execute_typescript` logs, and keep editing until the final saved workflow state validates cleanly.",
+      "If nothing here is worth saving, say so briefly inside the thread.",
+    ].join(" ");
+
+    await runSessionMutation(async () => {
+      await runtime.openSurface(target, runtime.primaryPaneId);
+      await runtime.sendPromptToTarget(target, prompt);
+    });
+  }
+
   async function handleInspectWorkflowTaskAttempt(
     workflowTaskAttempt: Pick<WorkspaceWorkflowTaskAttemptSummary, "workflowTaskAttemptId">,
   ) {
@@ -1471,6 +1498,14 @@
               onclick={() => void handleOpenHandlerThread(threadInspector)}
             >
               Open thread
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={promptBusy || mutatingSession}
+              onclick={() => void handleAskHandlerToSaveWorkflow(threadInspector)}
+            >
+              Ask to save workflow
             </Button>
           </div>
         </section>

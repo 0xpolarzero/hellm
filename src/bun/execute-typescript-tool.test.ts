@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
-import { createWorkflowAssetDiscovery } from "./smithers-runtime/workflow-asset-discovery";
+import { createWorkflowLibrary } from "./smithers-runtime/workflow-library";
 import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
@@ -1101,7 +1101,7 @@ describe("execute_typescript tool", () => {
       "session-workflow-models",
       "Inspect workflow model options before creating a new agent profile",
     );
-    const workflowDiscovery = createWorkflowAssetDiscovery(workspaceCwd, {
+    const workflowLibrary = createWorkflowLibrary(workspaceCwd, {
       getProviders: (() => ["openai", "anthropic"]) as any,
       getModels: ((providerId: string) =>
         providerId === "openai"
@@ -1125,7 +1125,7 @@ describe("execute_typescript tool", () => {
       cwd: workspaceCwd,
       runtime,
       store,
-      workflowDiscovery,
+      workflowLibrary,
     });
 
     const result = await tool.execute("tool-call-workflow-models", {
@@ -1171,6 +1171,109 @@ describe("execute_typescript tool", () => {
           providerCount: 2,
           authAvailableCount: 1,
         },
+      }),
+    ]);
+  });
+
+  it("logs clean workflow validation after writing saved workflow files", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-workflow-write-validate", workspaceCwd);
+    const runtime = createRuntime(
+      store,
+      "session-workflow-write-validate",
+      "Write a reusable saved workflow component",
+    );
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+    });
+
+    const result = await tool.execute("tool-call-workflow-write-validate", {
+      typescriptCode: [
+        "await api.repo.writeFile({",
+        '  path: ".svvy/workflows/components/oauth-security-reviewer.ts",',
+        "  text: `/**\\n * @svvyAssetKind component\\n * @svvyId oauth_security_reviewer\\n * @svvyTitle OAuth Security Reviewer\\n * @svvySummary Reusable OAuth security reviewer profile.\\n * @svvySubtype agent-profile\\n * @svvyProviderModelSummary openai/gpt-5.4\\n * @svvyToolsetSummary execute_typescript\\n */\\nexport const oauthSecurityReviewer = {};`,",
+        "  createDirectories: true,",
+        "});",
+        "return { ok: true };",
+      ].join("\n"),
+    });
+
+    expect(result.details.success).toBe(true);
+    expect(result.details.logs).toEqual(
+      expect.arrayContaining([
+        "Workflow validation passed after writing .svvy/workflows/components/oauth-security-reviewer.ts.",
+      ]),
+    );
+    expect(
+      existsSync(join(workspaceCwd, ".svvy/workflows/components/oauth-security-reviewer.ts")),
+    ).toBe(true);
+
+    const snapshot = store.getSessionState("session-workflow-write-validate");
+    const [, ...childCommands] = snapshot.commands;
+    expect(childCommands).toEqual([
+      expect.objectContaining({
+        toolName: "repo.writeFile",
+        status: "succeeded",
+        facts: expect.objectContaining({
+          path: ".svvy/workflows/components/oauth-security-reviewer.ts",
+          workflowValidationChecked: true,
+          workflowValidationOk: true,
+          workflowValidationDiagnosticCount: 0,
+        }),
+      }),
+    ]);
+  });
+
+  it("logs workflow validation errors after writing invalid saved workflow files", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-workflow-write-validate-fail", workspaceCwd);
+    const runtime = createRuntime(
+      store,
+      "session-workflow-write-validate-fail",
+      "Write an invalid reusable saved workflow component",
+    );
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+    });
+
+    const result = await tool.execute("tool-call-workflow-write-validate-fail", {
+      typescriptCode: [
+        "await api.repo.writeFile({",
+        '  path: ".svvy/workflows/components/broken-reviewer.ts",',
+        '  text: `/**\\n * @svvyAssetKind component\\n * @svvyId broken_reviewer\\n * @svvyTitle Broken Reviewer\\n * @svvySummary Broken reusable reviewer profile.\\n */\\nconst broken: number = \\\"oops\\\";\\nexport const brokenReviewer = broken;`,',
+        "  createDirectories: true,",
+        "});",
+        "return { ok: true };",
+      ].join("\n"),
+    });
+
+    expect(result.details.success).toBe(true);
+    expect(result.details.logs).toEqual(
+      expect.arrayContaining([
+        "[error] Workflow validation reported 1 error after writing .svvy/workflows/components/broken-reviewer.ts.",
+        expect.stringContaining(".svvy/workflows/components/broken-reviewer.ts"),
+      ]),
+    );
+    expect(existsSync(join(workspaceCwd, ".svvy/workflows/components/broken-reviewer.ts"))).toBe(
+      true,
+    );
+
+    const snapshot = store.getSessionState("session-workflow-write-validate-fail");
+    const [, ...childCommands] = snapshot.commands;
+    expect(childCommands).toEqual([
+      expect.objectContaining({
+        toolName: "repo.writeFile",
+        status: "succeeded",
+        facts: expect.objectContaining({
+          path: ".svvy/workflows/components/broken-reviewer.ts",
+          workflowValidationChecked: true,
+          workflowValidationOk: false,
+          workflowValidationDiagnosticCount: 1,
+        }),
       }),
     ]);
   });

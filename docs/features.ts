@@ -87,7 +87,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workflow Authoring And Artifact Workflows",
     status: "in-progress",
     summary:
-      "Centers workflow execution around authored artifact workflows stored under `.svvy/artifacts/workflows/`, with workflow-writing actors receiving an injected authoring guide plus curated examples, authoring through reusable definitions, prompts, components, and agent-profile assets, and launching concrete saved or artifact entries through the Smithers-native runtime surface.",
+      "Centers workflow execution around authored artifact workflows stored under `.svvy/artifacts/workflows/`, with every handler thread receiving an injected workflow-authoring guide plus curated examples, checking saved entries and reusable assets before authoring, authoring through reusable definitions, prompts, components, and agent-profile assets when needed, and launching concrete saved or artifact entries through the Smithers-native runtime surface.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
   },
   {
@@ -95,7 +95,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workspace Saved Workflow Library",
     status: "in-progress",
     summary:
-      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, compiles discovery metadata for assets from JSDoc and MDX frontmatter, treats agent profiles as discoverable component assets, lets workflow-writing actors list and read saved assets through the `execute_typescript` host SDK, and promotes selected reusable definitions, prompts, components, or entries out of artifact workflows into the saved library only on explicit save.",
+      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, compiles discovery metadata for assets from JSDoc and MDX frontmatter, treats agent profiles as discoverable component assets, lets handlers list and read saved assets through the `execute_typescript` host SDK, and validates writes under `.svvy/workflows/...` automatically through the enclosing `execute_typescript` result logs.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
   },
   {

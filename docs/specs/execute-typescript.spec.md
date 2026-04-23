@@ -443,6 +443,10 @@ type SvvyApi = {
 };
 ```
 
+When `api.repo.writeFile(...)` or `api.repo.writeJson(...)` writes under `.svvy/workflows/...`, the host should automatically validate the current saved workflow library state.
+
+That validation feedback belongs in the returned `execute_typescript` result through captured console logs, not in a separate workflow-save tool surface.
+
 ## Command Model
 
 Each top-level `execute_typescript` invocation creates one parent command with:

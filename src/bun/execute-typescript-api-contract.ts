@@ -196,6 +196,9 @@ export interface SvvyApi {
      * Write one UTF-8 text file into the workspace.
      *
      * Set `createDirectories` when parent directories may not exist yet.
+     * Writes under `.svvy/workflows/...` trigger automatic saved-workflow
+     * validation; any diagnostics are surfaced through captured console logs in
+     * the surrounding `execute_typescript` result.
      */
     writeFile(input: {
       path: string;
@@ -207,6 +210,9 @@ export interface SvvyApi {
      * Serialize and write JSON into the workspace.
      *
      * `pretty` defaults to compact JSON unless explicitly enabled.
+     * Writes under `.svvy/workflows/...` trigger automatic saved-workflow
+     * validation; any diagnostics are surfaced through captured console logs in
+     * the surrounding `execute_typescript` result.
      */
     writeJson<T>(input: {
       path: string;

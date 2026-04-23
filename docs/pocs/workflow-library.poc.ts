@@ -9,10 +9,11 @@
  * - `smithers.list_workflows` is reserved for runnable entries and lists both saved and artifact entries
  * - launch goes through a minimal bridge-shaped `smithers.*` seam rather than a trace-local helper
  * - runnable entries publish explicit grouped asset refs instead of relying on inferred import graphs
- * - saving is explicit promotion of selected reusable files out of an artifact workflow into `.svvy/workflows/...`
+ * - writing reusable saved workflow files happens through ordinary repo writes into `.svvy/workflows/...`
+ * - writes under `.svvy/workflows/...` return validation feedback through the surrounding `execute_typescript` result
  *
  * Proof boundaries:
- * - this POC proves asset discovery, runnable-entry registry validation, bridge-shaped launch, and promotion semantics
+ * - this POC proves asset discovery, runnable-entry registry validation, bridge-shaped launch, and saved-library write semantics
  * - it does not attempt to prove live supervision monitors, reconnect, synthetic wake-ups, workflow-task-agent execution, or real verification command execution
  */
 
@@ -126,7 +127,7 @@ type ArtifactDraft = {
   reviewerModel: ModelInfo;
 };
 
-type PromotionResult = {
+type SaveAssetsResult = {
   promptPath: string;
   componentPath: string;
   entryPath: string;
@@ -1103,7 +1104,7 @@ function writeArtifactWorkflow(
   };
 }
 
-function promoteArtifactAssets(
+function saveArtifactAssetsToLibrary(
   workspaceRoot: string,
   input: {
     artifact: ArtifactDraft;
@@ -1111,12 +1112,12 @@ function promoteArtifactAssets(
     savedPromptPath: string;
     savedComponentPath: string;
   },
-): PromotionResult {
-  const promotedPromptPath = join(workspaceRoot, ".svvy", "workflows", "prompts", "oauth", "implement-oauth.mdx");
-  const promotedComponentPath = join(workspaceRoot, ".svvy", "workflows", "components", "oauth-security-reviewer.tsx");
-  const promotedEntryPath = join(workspaceRoot, ".svvy", "workflows", "entries", "oauth-review.tsx");
+): SaveAssetsResult {
+  const savedPromptPath = join(workspaceRoot, ".svvy", "workflows", "prompts", "oauth", "implement-oauth.mdx");
+  const savedComponentPath = join(workspaceRoot, ".svvy", "workflows", "components", "oauth-security-reviewer.tsx");
+  const savedEntryPath = join(workspaceRoot, ".svvy", "workflows", "entries", "oauth-review.tsx");
 
-  writePromptAsset(promotedPromptPath, {
+  writePromptAsset(savedPromptPath, {
     id: "oauth_review.implement_prompt",
     title: "OAuth Implement Prompt",
     summary: "Saved implementation prompt for the reusable OAuth review entry.",
@@ -1124,7 +1125,7 @@ function promoteArtifactAssets(
     body: readPromptBody(join(workspaceRoot, input.artifact.promptPath)),
   });
 
-  writeAgentProfileComponent(promotedComponentPath, {
+  writeAgentProfileComponent(savedComponentPath, {
     assetId: "oauth_security_reviewer",
     title: "OAuth Security Reviewer",
     summary: "Saved OAuth-focused security reviewer profile for reusable workflow entries.",
@@ -1143,25 +1144,25 @@ function promoteArtifactAssets(
   });
 
   writeOAuthReviewEntry(workspaceRoot, {
-    entryPath: relativeWorkspacePath(workspaceRoot, promotedEntryPath),
+    entryPath: relativeWorkspacePath(workspaceRoot, savedEntryPath),
     workflowId: "oauth_review",
     label: "OAuth Review",
     summary: "Saved runnable entry fixture for OAuth-specific prompt and profile binding.",
     workflowSource: "saved",
     definitionPath: input.savedDefinitionPath,
     savedComponentPath: input.savedComponentPath,
-    reviewerComponentPath: relativeWorkspacePath(workspaceRoot, promotedComponentPath),
+    reviewerComponentPath: relativeWorkspacePath(workspaceRoot, savedComponentPath),
     reviewPromptPath: input.savedPromptPath,
-    implementPromptPath: relativeWorkspacePath(workspaceRoot, promotedPromptPath),
+    implementPromptPath: relativeWorkspacePath(workspaceRoot, savedPromptPath),
     definitionPaths: [input.savedDefinitionPath],
-    promptPaths: [input.savedPromptPath, relativeWorkspacePath(workspaceRoot, promotedPromptPath)],
-    componentPaths: [input.savedComponentPath, relativeWorkspacePath(workspaceRoot, promotedComponentPath)],
+    promptPaths: [input.savedPromptPath, relativeWorkspacePath(workspaceRoot, savedPromptPath)],
+    componentPaths: [input.savedComponentPath, relativeWorkspacePath(workspaceRoot, savedComponentPath)],
   });
 
   return {
-    promptPath: relativeWorkspacePath(workspaceRoot, promotedPromptPath),
-    componentPath: relativeWorkspacePath(workspaceRoot, promotedComponentPath),
-    entryPath: relativeWorkspacePath(workspaceRoot, promotedEntryPath),
+    promptPath: relativeWorkspacePath(workspaceRoot, savedPromptPath),
+    componentPath: relativeWorkspacePath(workspaceRoot, savedComponentPath),
+    entryPath: relativeWorkspacePath(workspaceRoot, savedEntryPath),
   };
 }
 
@@ -1448,7 +1449,7 @@ async function runArtifactAuthoringScenario(
   };
 }
 
-async function runPromotionScenario(
+async function runExplicitSaveScenario(
   workspaceRoot: string,
   seed: SavedSeed,
   artifact: ArtifactDraft,
@@ -1458,7 +1459,7 @@ async function runPromotionScenario(
 
   trace.push({
     toolName: "execute_typescript",
-    args: { purpose: "inspect the reusable artifact files selected for promotion" },
+    args: { purpose: "inspect the reusable artifact files selected for explicit save" },
     childCalls: [
       {
         toolName: "api.repo.readFiles",
@@ -1469,7 +1470,7 @@ async function runPromotionScenario(
     result: { selectedArtifactPaths: [artifact.promptPath, artifact.componentPath, artifact.entryPath] },
   });
 
-  const promoted = promoteArtifactAssets(workspaceRoot, {
+  const saved = saveArtifactAssetsToLibrary(workspaceRoot, {
     artifact,
     savedDefinitionPath: seed.definitionPath,
     savedPromptPath: seed.promptPath,
@@ -1477,43 +1478,48 @@ async function runPromotionScenario(
   });
   trace.push({
     toolName: "execute_typescript",
-    args: { purpose: "promote the reusable prompt, profile, and entry into the saved workflow library" },
+    args: { purpose: "write the reusable prompt, profile, and entry into the saved workflow library and inspect validation feedback" },
     childCalls: [
       {
         toolName: "api.repo.writeFile",
-        args: { path: promoted.promptPath },
-        result: { path: promoted.promptPath },
+        args: { path: saved.promptPath },
+        result: { path: saved.promptPath },
       },
       {
         toolName: "api.repo.writeFile",
-        args: { path: promoted.componentPath },
-        result: { path: promoted.componentPath },
+        args: { path: saved.componentPath },
+        result: { path: saved.componentPath },
       },
       {
         toolName: "api.repo.writeFile",
-        args: { path: promoted.entryPath },
-        result: { path: promoted.entryPath },
+        args: { path: saved.entryPath },
+        result: { path: saved.entryPath },
+      },
+      {
+        toolName: "console.log",
+        args: { pathPrefix: ".svvy/workflows/" },
+        result: { message: "Workflow validation passed for the saved workflow library state." },
       },
     ],
-    result: promoted,
+    result: saved,
   });
 
-  const promotedAssets = listAssets(workspaceRoot, {
+  const savedAssets = listAssets(workspaceRoot, {
     scope: "saved",
     pathPrefix: ".svvy/workflows/",
     tags: ["oauth"],
   });
   trace.push({
     toolName: "execute_typescript",
-    args: { purpose: "confirm promoted saved assets are discoverable through the authoring API" },
+    args: { purpose: "confirm saved assets are discoverable through the authoring API after explicit save" },
     childCalls: [
       {
         toolName: "api.workflow.listAssets",
         args: { scope: "saved", pathPrefix: ".svvy/workflows/", tags: ["oauth"] },
-        result: summarizeAssets(promotedAssets),
+        result: summarizeAssets(savedAssets),
       },
     ],
-    result: { promotedSavedAssetIds: promotedAssets.map((asset) => asset.id) },
+    result: { savedAssetIds: savedAssets.map((asset) => asset.id) },
   });
 
   const workflows = await bridge.listWorkflows();
@@ -1526,53 +1532,53 @@ async function runPromotionScenario(
     },
   });
 
-  const promotedEntry = workflows.find((workflow) => workflow.id === "oauth_review");
-  if (!promotedEntry) {
-    throw new Error("Expected oauth_review saved entry after promotion.");
+  const savedEntry = workflows.find((workflow) => workflow.id === "oauth_review");
+  if (!savedEntry) {
+    throw new Error("Expected oauth_review saved entry after explicit save.");
   }
 
   trace.push({
     toolName: "execute_typescript",
-    args: { purpose: "inspect the promoted saved entry and its declared assets before relaunch" },
+    args: { purpose: "inspect the saved entry and its declared assets before relaunch" },
     childCalls: [
       {
         toolName: "api.repo.readFiles",
-        args: { paths: [promotedEntry.entryPath, ...promotedEntry.assetPaths] },
-        result: { files: [promotedEntry.entryPath, ...promotedEntry.assetPaths] },
+        args: { paths: [savedEntry.entryPath, ...savedEntry.assetPaths] },
+        result: { files: [savedEntry.entryPath, ...savedEntry.assetPaths] },
       },
     ],
-    result: { inspectedPaths: [promotedEntry.entryPath, ...promotedEntry.assetPaths] },
+    result: { inspectedPaths: [savedEntry.entryPath, ...savedEntry.assetPaths] },
   });
 
-  const promotedExecution = await bridge.runWorkflow(promotedEntry.id, {
+  const savedExecution = await bridge.runWorkflow(savedEntry.id, {
     objective: "Fix the OAuth callback bug",
     verificationCommands: ["bun test src/auth"],
   });
   trace.push({
-    toolName: promotedEntry.launchToolName,
+    toolName: savedEntry.launchToolName,
     args: {
       objective: "Fix the OAuth callback bug",
       verificationCommands: ["bun test src/auth"],
     },
-    result: promotedExecution,
+    result: savedExecution,
   });
 
   return {
-    id: "explicit_save_promotion_and_relaunch",
+    id: "explicit_save_and_relaunch",
     trace,
     proof: {
-      promotedPaths: promoted,
+      savedPaths: saved,
       savedEntryIds: workflows.filter((workflow) => workflow.sourceScope === "saved").map((workflow) => workflow.id),
       artifactStillExists: existsSync(join(workspaceRoot, artifact.entryPath)),
-      promotedAssetsDroppedDraftIdentity: !promotedAssets.some((asset) => asset.id.includes("draft")),
-      promotedEntryUsesPromotedAssets: (() => {
+      savedAssetsDroppedDraftIdentity: !savedAssets.some((asset) => asset.id.includes("draft")),
+      savedEntryUsesSavedAssets: (() => {
         return (
-          promotedEntry.promptPaths.includes(promoted.promptPath) &&
-          promotedEntry.componentPaths.includes(promoted.componentPath) &&
-          promotedEntry.definitionPaths.includes(seed.definitionPath)
+          savedEntry.promptPaths.includes(saved.promptPath) &&
+          savedEntry.componentPaths.includes(saved.componentPath) &&
+          savedEntry.definitionPaths.includes(seed.definitionPath)
         );
       })(),
-      promotedEntryLaunchWorks: promotedExecution.workflowId === "oauth_review",
+      savedEntryLaunchWorks: savedExecution.workflowId === "oauth_review",
     },
   };
 }
@@ -1583,7 +1589,7 @@ async function runPoc(): Promise<Record<string, unknown>> {
     const seed = seedSavedWorkflowLibrary(workspaceRoot);
     const savedEntryScenario = await runSavedEntryScenario(workspaceRoot);
     const authoredArtifact = await runArtifactAuthoringScenario(workspaceRoot, seed);
-    const promotion = await runPromotionScenario(workspaceRoot, seed, authoredArtifact.artifact);
+    const explicitSave = await runExplicitSaveScenario(workspaceRoot, seed, authoredArtifact.artifact);
 
     return {
       workspaceRoot: relativeWorkspacePath(REPO_ROOT, workspaceRoot),
@@ -1595,7 +1601,7 @@ async function runPoc(): Promise<Record<string, unknown>> {
           trace: authoredArtifact.trace,
           proof: authoredArtifact.proof,
         },
-        promotion,
+        explicitSave,
       ],
     };
   } finally {

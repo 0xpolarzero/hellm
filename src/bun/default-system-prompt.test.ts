@@ -42,6 +42,13 @@ describe("default system prompt", () => {
     expect(HANDLER_SYSTEM_PROMPT).toContain(
       "Do not call thread.start from this surface in the adopted supervision model.",
     );
+    expect(HANDLER_SYSTEM_PROMPT).toContain("Workflow authoring guide for handler threads:");
+    expect(HANDLER_SYSTEM_PROMPT).toContain(
+      "Use the normal api.repo.writeFile(...) or api.repo.writeJson(...) helpers",
+    );
+    expect(HANDLER_SYSTEM_PROMPT).toContain(
+      "Writes under .svvy/workflows/ automatically trigger saved-workflow validation.",
+    );
   });
 
   it("gives workflow task agents an execute_typescript-only product surface", () => {

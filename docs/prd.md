@@ -547,7 +547,7 @@ One handler thread may own many workflow runs over time.
 
 The delegated workflow library has three layers:
 
-1. bundled workflow authoring guidance and examples injected into the workflow-writing actor
+1. bundled workflow authoring guidance and examples injected into every handler thread
 2. workspace-saved reusable workflow assets under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and launchable saved entries under `.svvy/workflows/entries/`
 3. short-lived authored artifact workflows under `.svvy/artifacts/workflows/`
 
@@ -571,11 +571,13 @@ The intended decision order inside a handler thread is:
 
 Artifact workflows are persisted by default under `.svvy/artifacts/workflows/`.
 
-Saving is explicit promotion of reusable files out of an artifact workflow into `.svvy/workflows/`.
+Saving reusable workflow files means the handler writes those files directly into `.svvy/workflows/` through the normal repo write APIs.
+
+Writes under `.svvy/workflows/` automatically surface saved-workflow validation feedback in the enclosing `execute_typescript` result.
 
 The UI should expose:
 
-- a `Save workflow` action on saveable artifact workflows
+- a save shortcut that sends a predefined save request prompt to the handler thread
 - a saved workflow library tab where the user can inspect and delete saved definitions, prompts, components, and entries
 
 Handler-thread instructions should treat saving as explicit reuse curation:

@@ -155,6 +155,7 @@ export interface ChatRuntime {
   renameSession: (sessionId: string, title: string) => Promise<void>;
   forkSession: (sessionId: string, title?: string, paneId?: string) => Promise<void>;
   deleteSession: (sessionId: string, paneId?: string) => Promise<void>;
+  sendPromptToTarget: (target: PromptTarget, input: string) => Promise<void>;
   syncProviderAuth: (providerId: string) => Promise<boolean>;
   requireProviderAccess: (providerId: string) => Promise<boolean>;
   listConfiguredProviders: () => Promise<string[]>;
@@ -960,6 +961,17 @@ export async function createChatRuntime(
       }
 
       emit();
+    },
+    sendPromptToTarget: async (target, input) => {
+      const text = input.trim();
+      if (!text) {
+        return;
+      }
+      await rpcClient.request.sendPrompt({
+        streamId: createRpcStreamId(),
+        messages: [{ role: "user", content: text } as Message],
+        target: normalizePromptTarget(target),
+      });
     },
     syncProviderAuth,
     requireProviderAccess,

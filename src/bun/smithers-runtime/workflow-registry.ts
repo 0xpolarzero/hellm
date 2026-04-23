@@ -248,6 +248,13 @@ export async function loadRunnableWorkflowRegistry(
   );
 }
 
+export async function loadRunnableWorkflowEntryAtPath(
+  workspaceRoot: string,
+  entryPath: string,
+): Promise<RunnableWorkflowRegistryEntry> {
+  return await loadRunnableWorkflowEntryModule(workspaceRoot, entryPath);
+}
+
 export async function loadRunnableWorkflowById(
   workspaceRoot: string,
   workflowId: string,
