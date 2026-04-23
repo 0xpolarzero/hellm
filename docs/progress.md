@@ -103,20 +103,20 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Keep `thread.handoff`, Smithers read APIs, selectors, and renderer reads free of lifecycle repair writes. Commit(s): `2f874a7`
 - [x] Guarantee that a workflow-run failure or cancellation moves the handler thread into troubleshooting before any later user-directed closure or handoff. Commit(s): `a02bd48`
 
-## 6. Workflow Authoring, Saved Assets, And Artifact Promotion
+## 6. Workflow Authoring And Saved Workflow Files
 
-- [ ] Define the bundled workflow authoring guide and curated best-practice example bundle injected into workflow-writing context.
-- [ ] Build a POC handler-thread flow that authors a short-lived workflow artifact for one delegated objective instead of selecting from a tiny structural template menu.
+- [x] Define the bundled workflow authoring guide and curated best-practice example bundle injected into every handler-thread context. Commit(s): `0b2d1ff`
+- [ ] Build an end-to-end handler-thread flow that checks direct work, saved runnable entries, and reusable assets, then authors and runs a short-lived workflow artifact when needed.
 - [ ] Persist every authored short-lived workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/` with `definitions/`, `prompts/`, `components/`, `entries/`, and provenance metadata.
-- [ ] Define the saved workflow library layout under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and `.svvy/workflows/entries/`.
-- [ ] Define the discovery metadata contract compiled from JSDoc headers in `ts` or `tsx` files and frontmatter in `mdx` prompt files.
-- [ ] Expose `api.workflow.listAssets(...)` inside `execute_typescript` so workflow-writing actors can discover saved definitions, prompts, components, and agent profiles before reading files directly.
-- [ ] Expose `api.workflow.listModels()` inside `execute_typescript` for the escape hatch where no saved agent profile fits.
-- [ ] Build a POC saved definition plus saved entry that are reused by a new short-lived artifact entry with different prompts, profiles, or config bound at authoring time.
-- [ ] Keep authored workflows artifact-only by default until an explicit save action is taken.
-- [ ] Add an explicit save or promotion path that copies selected reusable definitions, prompts, components, or entries out of an artifact workflow into `.svvy/workflows/` while preserving the original artifact for provenance.
-- [ ] Surface all runnable saved and artifact entries through `smithers.list_workflows` and `smithers.run_workflow.<workflow_id>`, with each entry publishing an explicit launch contract and grouped asset refs rather than relying on inferred import graphs.
-- [ ] Persist agent profile components as discoverable saved workflow components with explicit profile-oriented metadata.
+- [x] Define the saved workflow library layout under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and `.svvy/workflows/entries/`. Commit(s): `37afcb3`, `4515233`
+- [x] Define the discovery metadata contract compiled from JSDoc headers in `ts` or `tsx` files and frontmatter in `mdx` prompt files. Commit(s): `37afcb3`, `4515233`
+- [x] Expose `api.workflow.listAssets(...)` inside `execute_typescript` so handlers can discover saved definitions, prompts, components, and agent profiles before reading files directly. Commit(s): `4515233`
+- [x] Expose `api.workflow.listModels()` inside `execute_typescript` for the escape hatch where no saved agent profile fits. Commit(s): `4515233`
+- [x] Build a POC saved definition plus saved entry that are reused by a new short-lived artifact entry with different prompts, profiles, or config bound at authoring time. Commit(s): `37afcb3`
+- [x] Keep authored workflows artifact-only by default until the handler explicitly writes reusable files into `.svvy/workflows/`. Commit(s): `0b2d1ff`
+- [x] Run automatic saved-workflow validation after `api.repo.writeFile(...)` and `api.repo.writeJson(...)` writes under `.svvy/workflows/...`, surfacing diagnostics in the enclosing `execute_typescript` result logs. Commit(s): `0b2d1ff`
+- [x] Surface all runnable saved and artifact entries through `smithers.list_workflows` and `smithers.run_workflow.<workflow_id>`, with each entry publishing an explicit launch contract and grouped asset refs rather than relying on inferred import graphs. Commit(s): `4515233`
+- [x] Persist agent profile components as discoverable saved workflow components with explicit profile-oriented metadata. Commit(s): `4515233`
 
 ## 7. Verification As First-Class State
 
@@ -136,7 +136,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Persist session folder membership.
 - [ ] Render flat folder groupings in the session sidebar.
 - [ ] Define the workspace read model for saved workflow assets and artifact workflows.
-- [ ] Render a `Save workflow` action for saveable artifact workflows in the relevant thread or workflow surfaces.
+- [x] Render a save shortcut in relevant thread or workflow surfaces that sends a predefined save request prompt to the handler. Commit(s): `0b2d1ff`
 - [ ] Render a saved workflow library tab in the workspace shell with separate definitions, prompts, components, and entries groupings.
 - [ ] Show saved asset title, summary, kind, path, tags, and recency metadata in the saved workflow library tab, including explicit indication when a component is an agent profile and grouped asset refs for entries.
 - [ ] Allow deleting a saved workflow definition, prompt, component, or entry from the library without deleting historical artifact workflows that previously used it.
