@@ -144,9 +144,9 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Split workspace-summary updates from live surface transcript updates in the renderer runtime. Commit(s): `9a21f87`, `b0ee858`
 - [x] Manage open live surfaces in a shared registry keyed by `surfacePiSessionId`. Commit(s): `9a21f87`, `b0ee858`
 - [x] Give each live surface its own prompt lock, model state, reasoning state, and cancellation lifecycle. Commit(s): `9a21f87`, `b0ee858`
-- [ ] Render handler-thread lists from structured thread data in the workspace shell and focused pane.
-- [ ] Show thread objective, status, latest workflow-run summary, and blocked reason in pane-local thread views.
-- [ ] Render the latest handoff episode for an inspected thread while preserving earlier handoff points in thread history.
+- [x] Render handler-thread lists from structured thread data in the workspace shell and focused pane. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
+- [x] Show thread objective, status, latest workflow-run summary, and blocked reason in pane-local thread views. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
+- [x] Render the latest handoff episode for an inspected thread while preserving earlier handoff points in thread history. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
 - [ ] Render thread- and workflow-run-linked artifacts before relying on transcript reconstruction.
 - [ ] Render a verification summary block for the focused surface or inspected thread.
 - [ ] Restore focused pane, pane-to-surface bindings, and inspector selection after restart.
@@ -166,7 +166,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 
 ## 10. Session Titles
 
-- [ ] Define the stored title states for top-level sessions and handler threads.
+- [x] Define the stored title states for top-level sessions and handler threads. Commit(s): `b510857`, `fe53a3b`
 - [ ] Add the hidden `namer` system agent for one-shot top-level session naming.
 - [ ] Seed the `namer` agent to `gpt-5.4-mini` with low reasoning effort.
 - [ ] Build a POC one-shot title generation after the first real user turn for a top-level session.
@@ -185,17 +185,17 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 
 ## 12. Layered Workflow Knowledge
 
-- [ ] Inventory the workflow-related prompt, skill, and knowledge assets the product needs.
-- [ ] Build a POC repo layout for workflow knowledge with separate orchestrator-facing and handler-facing assets.
-- [ ] Define the first minimal orchestrator-facing workflow summary shape.
-- [ ] Define the first richer handler-facing workflow prompt or example shape.
-- [ ] Load only minimal workflow summaries into orchestrator routing context.
-- [ ] Build a POC delegated workflow that receives extended workflow knowledge without expanding orchestrator context.
+- [x] Inventory the workflow-related prompt, skill, and knowledge assets the product needs. Commit(s): `0b2d1ff`, `4515233`, `a02bd48`
+- [x] Build a POC repo layout for workflow knowledge with separate orchestrator-facing and handler-facing assets. Commit(s): `0b2d1ff`, `4515233`
+- [x] Define the first minimal orchestrator-facing workflow summary shape. Commit(s): `a02bd48`
+- [x] Define the first richer handler-facing workflow prompt or example shape. Commit(s): `0b2d1ff`
+- [x] Load only minimal workflow summaries into orchestrator routing context. Commit(s): `a02bd48`
+- [x] Build a POC delegated workflow that receives extended workflow knowledge without expanding orchestrator context. Commit(s): `0b2d1ff`, `4515233`
 
 ## 13. Worktree-Aware Execution
 
 - [ ] Build a POC thread-to-worktree binding model and inspect how it should appear in the UI.
-- [ ] Persist worktree binding on threads.
+- [x] Persist worktree binding on threads. Commit(s): `f53c9b8`
 - [ ] Persist worktree binding on workflow runs.
 - [ ] Show active worktree on orchestrator and thread surfaces.
 - [ ] Warn when the focused pane surface context and current filesystem context diverge.
@@ -251,8 +251,8 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Restore pending clarification and waiting state after app restart.
 - [ ] Restore active workflow-run state after app restart.
 - [ ] Restore pending handler attention queues and per-surface prompt-lock state after app restart.
-- [ ] Add integration tests that exercise the real pi-backed runtime seam for direct work.
-- [ ] Expand from the current real embedded-runtime supervision coverage in `src/bun/smithers-runtime/manager.test.ts` and `src/bun/smithers-tools.test.ts` to full pi-backed handler-thread delegation and workflow-run supervision.
+- [x] Add integration tests that exercise the real pi-backed runtime seam for direct work. Commit(s): `b0ee858`
+- [x] Expand from the current real embedded-runtime supervision coverage in `src/bun/smithers-runtime/manager.test.ts` and `src/bun/smithers-tools.test.ts` to full pi-backed handler-thread delegation and workflow-run supervision. Commit(s): `f8557d9`, `b0ee858`, `55963d9`, `097ae47`
 - [ ] Add integration tests that exercise restart and resume behavior across workspace state, live surface state, and pane bindings.
 
 ## 18. Context Budget Observability
