@@ -14,18 +14,19 @@
 - figure out reliable diff tracking for both the full session and individual threads; flat changed-file lists are not enough, so we need the right snapshot/checkpoint model and likely git-backed diffing semantics
 
 - nice moat but need to nail it:
-  - CI as a verification check on every session
+  - Project CI as a dedicated check lane for every session
   - basically same as github workflows on push except it's smithers workflows
   - likely needs a CI onboarding flow for a new workspace where the AI guides the user through setting up the workspace's CI workflow
   - that onboarding should end with a reusable workflow configuration for that workspace rather than a one-off conversation artifact
   - the execution model should stay the same as everything else: it runs on a thread through a workflow, not through a separate CI engine
-  - the difference should mostly be UI and automation: easier setup, better default triggers, and more purpose-built verification displays
+  - the difference should mostly be UI and automation: easier setup, better default triggers, and more purpose-built CI displays
   - need to figure out when it's sensible to run so it doesn't bloat the machine; in a vm it would solve it but the (remote) vm is something we need to figure out separately
   - should support both automatic post-work runs and manual runs from a clearer UX surface
 
 - use sandboxing separate from environment 
   - https://x.com/nicoalbanese10/status/2043745569278251112
   - keep the initial `execute_typescript` implementation unsandboxed; sandboxing should be a later hardening layer around the same `execute_typescript` and `api.*` contract, not a different execution model
+  - https://github.com/vercel-labs/open-agents
 
 - integration with jjhub/codeplane would make sense, for instance:
   - every time a piece of work in a session is done and orchestrator considers we run CI workflow, it takes a jj snapshot and executes the CI on jjhub/codeplane
@@ -52,7 +53,7 @@
 
 - workflow-category-specific UI:
   - some workflow categories may justify specialized UI treatment instead of a generic workflow card
-  - verification is the obvious first example because build/test/lint state often wants purpose-built display and progress semantics
+  - Project CI is the obvious first example because build/test/lint state often wants purpose-built display and progress semantics
 
 - cron job on a repo that pools for updates on selected dependencies with a short summary so we can update adap
   - especially docs/references/ so we can notice if they changed something we borrowed to something better or added a useful feature
