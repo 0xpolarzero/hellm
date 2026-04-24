@@ -588,9 +588,11 @@ One handler thread may own many workflow runs over time.
 
 The delegated workflow library has three layers:
 
-1. bundled workflow authoring guidance and examples injected into every handler thread
+1. generated workflow-authoring contracts plus curated workflow guidance injected into every handler thread
 2. workspace-saved reusable workflow assets under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and launchable saved entries under `.svvy/workflows/entries/`
 3. short-lived authored artifact workflows under `.svvy/artifacts/workflows/`
+
+The generated workflow-authoring contract is the handler-visible source of truth for runnable entry modules, product lane metadata, grouped asset refs, `createRunnableEntry(...)`, and workflow task-agent profiles. The curated guide teaches the Smithers render/task/output model, artifact layout, saved library layout, validation loop, and `AgentLike` task usage without restating generated `api.*` or workflow contract shapes in prose.
 
 Saved workflow assets are reusable source assets.
 

@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "generate:execute-typescript-api": "bun scripts/generate-execute-typescript-api.ts",
-    "generate:api": "bun run generate:execute-typescript-api && bun x oxfmt generated/execute-typescript-api.generated.ts",
+    "generate:api": "bun scripts/generate-api-declarations.ts && bun x oxfmt generated/*.generated.ts",
     "start": "bun run generate:api && vite build && electrobun dev",
     "dev": "bun run generate:api && bun scripts/dev.ts",
     "dev:clean": "bun run clean:session-state && bun run dev",

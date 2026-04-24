@@ -100,7 +100,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workflow Authoring And Artifact Workflows",
     status: "in-progress",
     summary:
-      "Centers workflow execution around authored artifact workflows stored under `.svvy/artifacts/workflows/`, with every handler thread receiving an injected workflow-authoring guide plus curated examples, checking saved entries and reusable assets before authoring, authoring through reusable definitions, prompts, components, and agent-profile assets when needed, and launching concrete saved or artifact entries through the Smithers-native runtime surface.",
+      "Centers workflow execution around authored artifact workflows stored under `.svvy/artifacts/workflows/`, with every handler thread receiving generated workflow-authoring TypeScript contracts plus curated Smithers guidance and examples, checking saved entries and reusable assets before authoring, authoring through reusable definitions, prompts, components, and agent-profile assets when needed, and launching concrete saved or artifact entries through the Smithers-native runtime surface.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
   },
   {
@@ -176,7 +176,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Project CI Lane",
     status: "in-progress",
     summary:
-      "Provides a dedicated Project CI configuration and run lane backed by normal saved Smithers entries under `.svvy/workflows/.../ci/`, records CI run and CI check result state only from entries declaring `productKind = \"project-ci\"` whose terminal output validates against the declared result schema, exposes latest CI status in specialized UI, and delivers CI authoring guidance only through the typed `ci` context pack loaded by `thread.start({ context: [\"ci\"] })` or handler-side `request_context({ keys: [\"ci\"] })`.",
+      'Provides a dedicated Project CI configuration and run lane backed by normal saved Smithers entries under `.svvy/workflows/.../ci/`, records CI run and CI check result state only from entries declaring `productKind = "project-ci"` whose terminal output validates against the declared result schema, exposes latest CI status in specialized UI, and delivers CI authoring guidance only through the typed `ci` context pack loaded by `thread.start({ context: ["ci"] })` or handler-side `request_context({ keys: ["ci"] })`.',
     sourceSpecs: [
       "docs/specs/project-ci.spec.md",
       "docs/specs/handler-context-packs.spec.md",

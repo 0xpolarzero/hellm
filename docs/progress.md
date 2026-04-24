@@ -105,7 +105,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 
 ## 6. Workflow Authoring And Saved Workflow Files
 
-- [x] Define the bundled workflow authoring guide and curated best-practice example bundle injected into every handler-thread context. Commit(s): `0b2d1ff`
+- [x] Define the generated workflow-authoring contract plus curated Smithers authoring guide and example bundle injected into every handler-thread context. Commit(s): `0b2d1ff`
 - [x] Build an end-to-end handler-thread flow that checks direct work, saved runnable entries, and reusable assets, then authors and runs a short-lived workflow artifact when needed. Commit(s): `dc1da8c`
 - [x] Persist every authored short-lived workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/` with `definitions/`, `prompts/`, `components/`, `entries/`, and `metadata.json`. Commit(s): `dc1da8c`
 - [x] Define the saved workflow library layout under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and `.svvy/workflows/entries/`. Commit(s): `37afcb3`, `4515233`

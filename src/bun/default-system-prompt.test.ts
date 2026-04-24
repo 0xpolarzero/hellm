@@ -6,6 +6,8 @@ import {
   WORKFLOW_TASK_SYSTEM_PROMPT,
 } from "./default-system-prompt";
 import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
+import { WORKFLOW_AUTHORING_CONTRACT_DECLARATION } from "../../generated/workflow-authoring-contract.generated";
+import { HANDLER_WORKFLOW_AUTHORING_APPENDIX } from "./smithers-runtime/workflow-authoring-guide";
 
 describe("default system prompt", () => {
   it("embeds the generated execute_typescript API contract", () => {
@@ -45,13 +47,34 @@ describe("default system prompt", () => {
     );
     expect(HANDLER_SYSTEM_PROMPT).toContain("Workflow authoring guide for handler threads:");
     expect(HANDLER_SYSTEM_PROMPT).toContain(
-      "Use the normal api.repo.writeFile(...) or api.repo.writeJson(...) helpers",
+      "The handler workflow-authoring TypeScript contract follows",
     );
-    expect(HANDLER_SYSTEM_PROMPT).toContain(
-      "Writes under .svvy/workflows/ automatically trigger saved-workflow validation.",
-    );
+    expect(HANDLER_SYSTEM_PROMPT).toContain(WORKFLOW_AUTHORING_CONTRACT_DECLARATION.trim());
+    expect(HANDLER_SYSTEM_PROMPT).toContain(".svvy/artifacts/workflows/<artifact_workflow_id>/");
     expect(HANDLER_SYSTEM_PROMPT).toContain('request_context({ keys: ["ci"] })');
     expect(EXECUTE_TYPESCRIPT_API_DECLARATION).not.toContain("request_context");
+  });
+
+  it("injects generated workflow authoring contracts only into handler prompts", () => {
+    expect(HANDLER_SYSTEM_PROMPT).toContain("interface RunnableWorkflowEntryModule");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("interface WorkflowTaskAgentProfile");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("type SvvyWorkflowTaskAgent = AgentLike");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("createSmithers");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("launchSchema");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("createRunnableEntry");
+    expect(HANDLER_SYSTEM_PROMPT).toContain(
+      'import type { AgentLike } from "smithers-orchestrator";',
+    );
+
+    expect(DEFAULT_SYSTEM_PROMPT).not.toContain(WORKFLOW_AUTHORING_CONTRACT_DECLARATION.trim());
+    expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain(
+      WORKFLOW_AUTHORING_CONTRACT_DECLARATION.trim(),
+    );
+    expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).not.toContain("interface WorkflowTaskAgentProfile");
+    expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).not.toContain("interface SvvyApi");
+    expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).not.toContain(
+      "listAssets(input?: WorkflowListAssetsInput)",
+    );
   });
 
   it("injects full handler context only after that context pack is loaded", () => {

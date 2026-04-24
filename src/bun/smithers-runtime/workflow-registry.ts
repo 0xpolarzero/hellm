@@ -12,36 +12,13 @@ import {
 import { dirname, extname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { SmithersWorkflow } from "smithers-orchestrator";
 import { z } from "zod";
-
-export type RunnableWorkflowSourceScope = "saved" | "artifact";
-export type RunnableWorkflowProductKind = "project-ci";
-
-export type RunnableWorkflowRuntimeEntry = {
-  workflowId: string;
-  workflowSource: RunnableWorkflowSourceScope;
-  productKind?: RunnableWorkflowProductKind;
-  launchSchema: z.ZodTypeAny;
-  resultSchema?: z.ZodTypeAny;
-  workflow: SmithersWorkflow<any>;
-};
-
-export type RunnableWorkflowRegistryEntry = {
-  workflowId: string;
-  label: string;
-  summary: string;
-  sourceScope: RunnableWorkflowSourceScope;
-  entryPath: string;
-  productKind?: RunnableWorkflowProductKind;
-  launchSchema: z.ZodTypeAny;
-  resultSchema?: z.ZodTypeAny;
-  definitionPaths: string[];
-  promptPaths: string[];
-  componentPaths: string[];
-  assetPaths: string[];
-  createRunnableEntry: (input: { dbPath: string }) => RunnableWorkflowRuntimeEntry;
-};
+import type {
+  RunnableWorkflowProductKind,
+  RunnableWorkflowRegistryEntry,
+  RunnableWorkflowRuntimeEntry,
+  RunnableWorkflowSourceScope,
+} from "./workflow-authoring-contract";
 
 const runtimeRequire = createRequire(import.meta.url);
 const importSandboxByWorkspaceRoot = new Map<string, string>();

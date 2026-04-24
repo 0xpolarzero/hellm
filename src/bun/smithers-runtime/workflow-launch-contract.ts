@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { RunnableWorkflowRegistryEntry } from "./workflow-registry";
+import type { RunnableWorkflowRegistryEntry } from "./workflow-authoring-contract";
 
 export const SMITHERS_RUN_WORKFLOW_TOOL_NAME = "smithers.run_workflow";
 

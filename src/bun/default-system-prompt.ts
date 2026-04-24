@@ -1,4 +1,5 @@
 import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
+import { WORKFLOW_AUTHORING_CONTRACT_DECLARATION } from "../../generated/workflow-authoring-contract.generated";
 import {
   buildHandlerContextRegistryPrompt,
   buildLoadedHandlerContextPrompt,
@@ -15,6 +16,13 @@ const EXECUTE_TYPESCRIPT_PROMPT_SECTION = [
   "The full execute_typescript SDK contract follows and is the source of truth for the snippet environment:",
   "```ts",
   EXECUTE_TYPESCRIPT_API_DECLARATION.trim(),
+  "```",
+].join("\n");
+
+const WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION = [
+  "The handler workflow-authoring TypeScript contract follows and is the source of truth for runnable entries and task-agent profiles:",
+  "```ts",
+  WORKFLOW_AUTHORING_CONTRACT_DECLARATION.trim(),
   "```",
 ].join("\n");
 
@@ -64,6 +72,7 @@ export function buildSystemPrompt(
 ): string {
   const sections = [...buildActorInstructions(actor)];
   if (actor === "handler") {
+    sections.push(WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION);
     sections.push(HANDLER_WORKFLOW_AUTHORING_APPENDIX);
     const loadedContextPrompt = buildLoadedHandlerContextPrompt(options.loadedContextKeys ?? []);
     if (loadedContextPrompt) {

@@ -42,10 +42,8 @@ import {
   compileRunnableWorkflowLaunchContract,
   type RunnableWorkflowLaunchContract,
 } from "./workflow-launch-contract";
-import {
-  loadRunnableWorkflowRegistry,
-  type RunnableWorkflowRegistryEntry,
-} from "./workflow-registry";
+import { loadRunnableWorkflowRegistry } from "./workflow-registry";
+import type { RunnableWorkflowRegistryEntry } from "./workflow-authoring-contract";
 
 type WorkflowTaskAgentDefaults = {
   provider: string;

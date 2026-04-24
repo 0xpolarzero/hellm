@@ -7,7 +7,7 @@
 - Scope of this document:
   - define the workspace-owned workflow library shape under `.svvy/workflows/`
   - define the authored artifact-workflow shape under `.svvy/artifacts/workflows/`
-  - define handler-side workflow authoring guidance and discovery
+  - define handler-side workflow authoring guidance, generated contracts, and discovery
   - define the runnable entry contract consumed by `smithers.list_workflows`
   - define optional product metadata and result schemas for special product lanes such as Project CI
   - define how saved workflow files are written and validated
@@ -27,6 +27,7 @@ The product should optimize for:
 - authoring a short-lived artifact workflow when saved entries do not fit
 - writing reusable saved workflow files only when the user explicitly asks for that
 - surfacing validation feedback automatically when saved workflow files are written
+- keeping exact handler-authored workflow and task-agent profile shapes in generated TypeScript declarations
 
 ## Core Model
 
@@ -46,11 +47,13 @@ This split is intentional.
 
 Asset discovery and saved-library writes are not workflow launch.
 
+Exact `api.*` shapes are provided by the generated `execute_typescript` declaration. Exact handler-authored runnable entry and workflow task-agent profile shapes are provided by the generated workflow-authoring declaration.
+
 ## Handler-Owned Authoring
 
 Handler threads own workflow authoring.
 
-Each handler thread receives bundled workflow-authoring guidance and curated examples in its prompt context.
+Each handler thread receives generated workflow-authoring TypeScript declarations plus bundled workflow-authoring guidance and curated examples in its prompt context.
 
 The handler owns:
 
@@ -61,6 +64,15 @@ The handler owns:
 - deciding whether reusable saved workflow files should be written
 - writing those saved workflow files directly into `.svvy/workflows/...`
 - checking the returned validation feedback before considering the write complete
+
+The generated workflow-authoring declaration is the prompt source of truth for:
+
+- runnable entry modules
+- runtime entry factory return values
+- source scope and product lane metadata
+- grouped asset refs
+- workflow task-agent profiles
+- `AgentLike` task-agent usage
 
 ## Adopted Layout
 
@@ -166,6 +178,8 @@ Examples:
 - workflow building blocks
 - agent profile values or factories
 
+Agent profile components export values that conform to the generated `WorkflowTaskAgentProfile` contract. Workflow definitions and entries use Smithers `AgentLike` values for adaptive task execution, with the profile describing the svvy task-agent configuration and task-local tool surface.
+
 ### Entries
 
 Entry files are launchable workflow wrappers under `entries/`.
@@ -223,18 +237,7 @@ variables:
 
 ## Runnable Entry Contract
 
-Each runnable entry file should export:
-
-- `workflowId`
-- `label`
-- `summary`
-- `launchSchema`
-- optional `productKind`
-- optional `resultSchema`
-- `definitionPaths`
-- `promptPaths`
-- `componentPaths`
-- `createRunnableEntry(...)`
+Each runnable entry file conforms to the generated `RunnableWorkflowEntryModule` contract.
 
 The grouped asset refs are mandatory.
 
@@ -247,32 +250,6 @@ For artifact entries, grouped refs may mix saved-library paths and artifact-loca
 The flat `assetPaths` value returned by `smithers.list_workflows` is derived from the union of the grouped refs.
 
 `entryPath` is derived from the file location in the registry, not handwritten inside the module.
-
-Normative shape:
-
-```ts
-export const workflowId = "implement_review";
-export const label = "Implement Review";
-export const summary = "Run sequential implement and review stages.";
-export const launchSchema = implementReviewLaunchSchema;
-
-export const definitionPaths = [
-  ".svvy/workflows/definitions/create-implement-review.tsx",
-];
-
-export const promptPaths = [".svvy/workflows/prompts/review-base.mdx"];
-
-export const componentPaths = [".svvy/workflows/components/agent-profiles.tsx"];
-
-export function createRunnableEntry(input: { dbPath: string }) {
-  return {
-    workflowId,
-    workflowSource: "saved" as const,
-    launchSchema,
-    workflow: createImplementReviewWorkflow(...),
-  };
-}
-```
 
 `productKind` is reserved for product lanes that need specialized projection.
 
@@ -293,7 +270,7 @@ Project CI details are defined in [Project CI Lane Spec](./project-ci.spec.md).
 The adopted handler-side workflow-authoring flow is:
 
 1. A handler thread decides that direct bounded work is not enough and a workflow is justified.
-2. The handler uses its injected workflow-authoring guide and examples first.
+2. The handler uses its injected generated workflow-authoring contract, guide, and examples first.
 3. The handler calls `api.workflow.listAssets(...)` as needed.
 4. The handler reads promising saved definitions, prompts, components, or agent-profile files through ordinary file reads.
 5. The handler optionally calls `api.workflow.listModels()` when it must create or revise an agent profile.
@@ -312,30 +289,7 @@ Handlers discover reusable assets through:
 
 This is the primary discovery surface for saved and artifact authoring assets.
 
-It should support filters such as:
-
-- `kind`: `definition | prompt | component`
-- `subtype`: optional finer-grained filter such as `agent-profile`
-- `tags`
-- `pathPrefix`
-- `exports`
-- `scope`: `saved | artifact | both`
-
-The response should return compact but exhaustive asset metadata, including:
-
-- asset id
-- asset kind
-- asset subtype when relevant
-- title
-- summary
-- tags
-- path
-- exported symbols when relevant
-- prompt variables when relevant
-- provider and model summary when relevant
-- toolset summary when relevant
-- source scope: `saved` or `artifact`
-- created and updated timestamps when known
+The generated `execute_typescript` declaration is the exact input and output contract for this method.
 
 `listAssets(...)` does not list runnable entries.
 
@@ -345,13 +299,7 @@ Handlers use:
 
 - `api.workflow.listModels()`
 
-Each entry should include:
-
-- provider id
-- model id
-- auth availability
-- source of auth when useful for diagnostics
-- capability flags the product already knows about
+The generated `execute_typescript` declaration is the exact result contract for model discovery.
 
 ### Runnable Workflow Discovery
 
@@ -368,20 +316,7 @@ It should support optional filters such as:
 - `productKind?`
 - `sourceScope?`
 
-Each returned runnable workflow entry should include the full workflow contract data needed for handler-side selection and launch:
-
-- `workflowId`
-- `label`
-- `summary`
-- `sourceScope`: `saved | artifact`
-- `entryPath`
-- `definitionPaths`
-- `promptPaths`
-- `componentPaths`
-- derived `assetPaths`
-- `launchInputSchema`
-- optional `productKind`
-- optional `resultSchema`
+Each returned runnable workflow entry includes the handler-visible launch contract compiled from the generated workflow-authoring contract plus the entry's launch schema.
 
 This preserves the intended split:
 
@@ -459,6 +394,7 @@ The UI save affordance is a shortcut prompt to the handler thread.
 Handler-thread instructions should say:
 
 - prefer direct `execute_typescript` for small one-off work that does not benefit from workflow supervision
+- use generated declarations for exact `api.*`, runnable-entry, and workflow task-agent profile shapes
 - reuse a saved runnable entry when one clearly fits
 - otherwise author a short-lived artifact workflow
 - mix saved definitions, prompts, components, and agent profiles freely when that produces a clearer workflow than reusing one saved entry unchanged
