@@ -120,19 +120,19 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 
 ## 7. Project CI Lane
 
-- [ ] Build a POC typed context-pack registry with `ci` as the first key.
-- [ ] Add the handler-only `request_context({ keys })` tool and persist loaded context keys on handler threads.
-- [ ] Extend `thread.start` so the orchestrator can preload typed handler context with `context: ["ci"]`.
+- [x] Build a POC typed context-pack registry with `ci` as the first key. Commit(s): `2a5dbbe`
+- [x] Add the handler-only `request_context({ keys })` tool and persist loaded context keys on handler threads. Commit(s): `2a5dbbe`
+- [x] Extend `thread.start` so the orchestrator can preload typed handler context with `context: ["ci"]`. Commit(s): `2a5dbbe`
 - [ ] Build a POC Project CI setup flow that opens a normal handler thread with the `ci` context pack loaded.
 - [ ] Define the Project CI saved-workflow layout under `.svvy/workflows/{definitions,prompts,components,entries}/ci/`.
-- [ ] Extend runnable workflow entry discovery with optional `productKind` and `resultSchema` metadata.
+- [x] Extend runnable workflow entry discovery with optional `productKind` and `resultSchema` metadata. Commit(s): `2a5dbbe`
 - [ ] Build a POC saved Project CI entry that declares `productKind = "project-ci"` and returns output that validates against its declared CI result schema.
-- [ ] Persist `ci_run` and `ci_check_result` records only from terminal Smithers runs launched from declared Project CI entries.
-- [ ] Record CI check results with stable check ids, kind, status, required flag, command, exit code, summary, timestamps, and linked artifacts.
-- [ ] Treat invalid or missing CI result output as a CI workflow troubleshooting state instead of parsing logs, node outputs, final prose, or command names.
-- [ ] Let normal handler threads discover and run configured Project CI entries without loading the `ci` context pack, while using `request_context({ keys: ["ci"] })` before configuring or modifying CI.
+- [x] Persist `ci_run` and `ci_check_result` records only from terminal Smithers runs launched from declared Project CI entries. Commit(s): `2a5dbbe`
+- [x] Record CI check results with stable check ids, kind, status, required flag, command, exit code, summary, timestamps, and linked artifacts. Commit(s): `2a5dbbe`
+- [x] Treat invalid or missing CI result output as a CI workflow troubleshooting state instead of parsing logs, node outputs, final prose, or command names. Commit(s): `2a5dbbe`
+- [x] Let normal handler threads discover and run configured Project CI entries without loading the `ci` context pack, while using `request_context({ keys: ["ci"] })` before configuring or modifying CI. Commit(s): `2a5dbbe`
 - [ ] Render `not configured`, `configured`, `running`, `passed`, `failed`, `blocked`, and `cancelled` Project CI states in a dedicated CI surface.
-- [ ] Surface the latest Project CI outcome as routing input for orchestrator and handler decisions without making CI a native control tool.
+- [x] Surface the latest Project CI outcome as routing input for orchestrator and handler decisions without making CI a native control tool. Commit(s): `2a5dbbe`
 
 ## 8. Workspace Navigation, Live Surfaces, And Core Projection
 
@@ -159,7 +159,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 ## 9. Session Modes And Runtime Profiles
 
 - [ ] Define the runtime profile ids and stored shape for orchestrator, quick, handler, explorer, implementer, reviewer, and workflow-writer.
-- [ ] Keep runtime profiles separate from typed handler context packs so Project CI uses the default handler runtime profile plus `context: ["ci"]`.
+- [x] Keep runtime profiles separate from typed handler context packs so Project CI uses the default handler runtime profile plus `context: ["ci"]`. Commit(s): `2a5dbbe`
 - [ ] Seed initial app-wide default values for those runtime profiles.
 - [ ] Build a POC settings model for editing app-wide runtime profile defaults.
 - [ ] Persist app-wide runtime profile defaults.
@@ -197,8 +197,8 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Define the first richer handler-facing workflow prompt or example shape. Commit(s): `0b2d1ff`
 - [x] Load only minimal workflow summaries into orchestrator routing context. Commit(s): `a02bd48`
 - [x] Build a POC delegated workflow that receives extended workflow knowledge without expanding orchestrator context. Commit(s): `0b2d1ff`, `4515233`
-- [ ] Define typed handler context packs as the optional-knowledge layer between minimal handler prompts and specialized product authoring guidance.
-- [ ] Render loaded handler context keys in thread metadata so users can see when optional context such as `ci` is active.
+- [x] Define typed handler context packs as the optional-knowledge layer between minimal handler prompts and specialized product authoring guidance. Commit(s): `2a5dbbe`
+- [x] Render loaded handler context keys in thread metadata so users can see when optional context such as `ci` is active. Commit(s): `2a5dbbe`
 
 ## 13. Worktree-Aware Execution
 
