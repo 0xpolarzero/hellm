@@ -106,8 +106,8 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 ## 6. Workflow Authoring And Saved Workflow Files
 
 - [x] Define the bundled workflow authoring guide and curated best-practice example bundle injected into every handler-thread context. Commit(s): `0b2d1ff`
-- [ ] Build an end-to-end handler-thread flow that checks direct work, saved runnable entries, and reusable assets, then authors and runs a short-lived workflow artifact when needed.
-- [ ] Persist every authored short-lived workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/` with `definitions/`, `prompts/`, `components/`, `entries/`, and provenance metadata.
+- [x] Build an end-to-end handler-thread flow that checks direct work, saved runnable entries, and reusable assets, then authors and runs a short-lived workflow artifact when needed. Commit(s): `dc1da8c`
+- [x] Persist every authored short-lived workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/` with `definitions/`, `prompts/`, `components/`, `entries/`, and `metadata.json`. Commit(s): `dc1da8c`
 - [x] Define the saved workflow library layout under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and `.svvy/workflows/entries/`. Commit(s): `37afcb3`, `4515233`
 - [x] Define the discovery metadata contract compiled from JSDoc headers in `ts` or `tsx` files and frontmatter in `mdx` prompt files. Commit(s): `37afcb3`, `4515233`
 - [x] Expose `api.workflow.listAssets(...)` inside `execute_typescript` so handlers can discover saved definitions, prompts, components, and agent profiles before reading files directly. Commit(s): `4515233`
@@ -115,7 +115,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Build a POC saved definition plus saved entry that are reused by a new short-lived artifact entry with different prompts, profiles, or config bound at authoring time. Commit(s): `37afcb3`
 - [x] Keep authored workflows artifact-only by default until the handler explicitly writes reusable files into `.svvy/workflows/`. Commit(s): `0b2d1ff`
 - [x] Run automatic saved-workflow validation after `api.repo.writeFile(...)` and `api.repo.writeJson(...)` writes under `.svvy/workflows/...`, surfacing diagnostics in the enclosing `execute_typescript` result logs. Commit(s): `0b2d1ff`
-- [x] Surface all runnable saved and artifact entries through `smithers.list_workflows` and `smithers.run_workflow.<workflow_id>`, with each entry publishing an explicit launch contract and grouped asset refs rather than relying on inferred import graphs. Commit(s): `4515233`
+- [x] Surface all runnable saved and artifact entries through `smithers.list_workflows` and `smithers.run_workflow({ workflowId, input, runId? })`, with `smithers.list_workflows` returning each entry's explicit launch contract, `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `workflowId` filter support rather than relying on inferred import graphs. Commit(s): `4515233`, `dc1da8c`
 - [x] Persist agent profile components as discoverable saved workflow components with explicit profile-oriented metadata. Commit(s): `4515233`
 
 ## 7. Verification As First-Class State
