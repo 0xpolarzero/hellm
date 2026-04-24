@@ -476,12 +476,12 @@ describe("WorkspaceSessionCatalog", () => {
       const turn = store.startTurn({
         sessionId: created.target.workspaceSessionId,
         surfacePiSessionId: created.target.surfacePiSessionId,
-        requestSummary: "Delegate Project CI setup",
+        requestSummary: "Delegate Project CI context work",
       });
       const orchestratorThread = store.createThread({
         turnId: turn.id,
         surfacePiSessionId: created.target.surfacePiSessionId,
-        title: "Delegate Project CI setup",
+        title: "Delegate Project CI context work",
         objective: "Open a handler thread with Project CI context.",
       });
       const command = store.createCommand({
@@ -513,7 +513,7 @@ describe("WorkspaceSessionCatalog", () => {
         parentThreadId: orchestratorThread.id,
         parentSurfacePiSessionId: created.target.surfacePiSessionId,
         title: "Project CI Handler",
-        objective: "Configure Project CI.",
+        objective: "Create or update Project CI when requested.",
         contextKeys: ["ci"],
         loadedByCommandId: command.id,
       });

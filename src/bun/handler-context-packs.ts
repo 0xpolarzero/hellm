@@ -22,7 +22,7 @@ const CI_CONTEXT_PROMPT = [
   "- Inspect real repository facts first, including package scripts, lockfiles, task runners, existing CI files, Makefiles, README guidance, and test configuration.",
   "- Ask the user when the durable confidence policy is ambiguous instead of guessing every repository has test, lint, typecheck, or build scripts.",
   "- Write reusable Project CI workflow assets only under `.svvy/workflows/{definitions,prompts,components,entries}/ci/`.",
-  "- The default saved entry path is `.svvy/workflows/entries/ci/project-ci.tsx` and the default workflow id is `project_ci`.",
+  "- The conventional saved entry path is `.svvy/workflows/entries/ci/project-ci.tsx` and the conventional workflow id is `project_ci`; svvy does not ship or auto-create that entry.",
   '- CI entries are normal Smithers runnable saved entries. They must export `productKind = "project-ci" as const` and a `resultSchema`.',
   "- The entry's terminal output must validate against `resultSchema` and must contain a Project CI result with `status`, `summary`, and stable `checks`.",
   "- Use stable `checkId` values such as `typecheck`, `unit_tests`, `eslint`, `build`, `integration`, `docs`, or repository-specific ids.",

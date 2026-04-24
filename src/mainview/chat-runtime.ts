@@ -15,6 +15,7 @@ import type {
   WorkspaceCommandInspector,
   WorkspaceHandlerThreadInspector,
   WorkspaceHandlerThreadSummary,
+  WorkspaceProjectCiStatusPanel,
   WorkspaceSessionSummary,
   WorkspaceSyncMessage,
   WorkspaceWorkflowTaskAttemptInspector,
@@ -95,6 +96,7 @@ export interface ChatRuntimeRpcClient {
     listHandlerThreads: typeof rpc.request.listHandlerThreads;
     getHandlerThreadInspector: typeof rpc.request.getHandlerThreadInspector;
     getWorkflowTaskAttemptInspector: typeof rpc.request.getWorkflowTaskAttemptInspector;
+    getProjectCiStatus: typeof rpc.request.getProjectCiStatus;
     createSession: typeof rpc.request.createSession;
     openSession: typeof rpc.request.openSession;
     openSurface: typeof rpc.request.openSurface;
@@ -148,6 +150,7 @@ export interface ChatRuntime {
     workflowTaskAttemptId: string,
     sessionId?: string,
   ) => Promise<WorkspaceWorkflowTaskAttemptInspector>;
+  getProjectCiStatus: (sessionId?: string) => Promise<WorkspaceProjectCiStatusPanel>;
   createSession: (request?: CreateSessionRequest, paneId?: string) => Promise<void>;
   openSession: (sessionId: string, paneId?: string) => Promise<void>;
   openSurface: (target: PromptTarget, paneId?: string) => Promise<void>;
@@ -749,6 +752,16 @@ export async function createChatRuntime(
     return inspector;
   };
 
+  const getProjectCiStatus = async (
+    sessionId = getSelectedSessionId(),
+  ): Promise<WorkspaceProjectCiStatusPanel> => {
+    if (!sessionId) {
+      throw new Error("Expected a workspace session before loading Project CI status.");
+    }
+
+    return await rpcClient.request.getProjectCiStatus({ sessionId });
+  };
+
   const resolvePaneId = (paneId?: string): string => {
     const nextPaneId = paneId ?? focusedPaneId ?? PRIMARY_CHAT_PANE_ID;
     ensurePane(nextPaneId);
@@ -871,6 +884,7 @@ export async function createChatRuntime(
     listHandlerThreads,
     getHandlerThreadInspector,
     getWorkflowTaskAttemptInspector,
+    getProjectCiStatus,
     createSession: async (request = {}, paneId) => {
       const nextPaneId = resolvePaneId(paneId);
       const snapshot = await rpcClient.request.createSession(request);

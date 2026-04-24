@@ -260,7 +260,7 @@ Instead, the orchestrator knows the small list of available context keys and may
 
 ```ts
 thread.start({
-  objective: "Configure Project CI for this repository",
+  objective: "Define Project CI checks for this repository",
   context: ["ci"],
 });
 ```
@@ -304,7 +304,9 @@ The intended use of the native control subset is:
 
 Project CI is not a separate native control tool in the adopted model.
 
-Project CI is a dedicated product lane over normal Smithers runnable entries that declare `productKind = "project-ci"` and a CI result schema. CI state is recorded only from terminal output that validates against that declared result schema.
+Project CI is a dedicated product status and result lane over normal Smithers runnable entries that declare `productKind = "project-ci"` and a CI result schema. CI state is recorded only from terminal output that validates against that declared result schema.
+
+The lane is a projection and UI concept, not a setup launcher, CI-specific orchestrator, or separate runtime profile.
 
 CI authoring knowledge is delivered through the typed `ci` context pack.
 
@@ -684,23 +686,27 @@ It is represented as normal Smithers workflow execution plus explicit `svvy` CI 
 
 In practice that means:
 
-- reusable Project CI assets live in the saved workflow library under `.svvy/workflows/{definitions,prompts,components,entries}/ci/`
+- reusable Project CI assets, when configured, live in the saved workflow library under `.svvy/workflows/{definitions,prompts,components,entries}/ci/`
 - a runnable CI entry is an ordinary saved workflow entry that declares `productKind = "project-ci"` and a `resultSchema`
 - the runtime records CI state only from the terminal output of a declared CI entry after that output validates against the entry's `resultSchema`
 - CI run and CI check result records summarize build, test, lint, typecheck, integration, docs, manual, or repository-specific checks when the configured CI entry returns them
-- the UI exposes a dedicated Project CI surface for not-configured, configured, running, passed, failed, blocked, and cancelled states
+- the UI exposes a dedicated Project CI status surface or panel for not-configured, configured, running, passed, failed, blocked, and cancelled states
 
 Project CI deliberately avoids heuristic inference.
 
 The runtime must not parse arbitrary workflow logs, node outputs, final prose, or command names to guess CI results.
 
-The product must not scaffold a fake passing CI entry for repositories that have not configured real checks.
+The product must not ship, auto-create, or scaffold a fake passing CI entry for repositories that have not configured real checks.
 
 CI authoring context belongs only to handler threads that load the typed `ci` context pack.
 
 Normal handler threads may discover and run configured CI entries without that pack.
 
 If a normal handler needs to configure or modify Project CI, it should call `request_context({ keys: ["ci"] })` rather than relying on default prompt knowledge.
+
+There is no required Project CI setup wizard or launcher.
+
+Configuration happens organically in a normal handler thread when the user asks for it or when an implementation handler discovers that durable Project CI needs to be created or modified.
 
 ### Worktree
 

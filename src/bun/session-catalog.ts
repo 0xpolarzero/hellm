@@ -29,6 +29,7 @@ import type {
   PromptTarget,
   SurfaceSyncMessage,
   WorkspaceMutationResponse,
+  WorkspaceProjectCiStatusPanel,
   WorkspaceSyncMessage,
   WorkspaceCommandInspector,
   WorkspaceHandlerThreadInspector,
@@ -45,6 +46,7 @@ import {
   buildStructuredCommandInspector,
   buildStructuredHandlerThreadInspector,
   buildStructuredHandlerThreadSummaries,
+  buildStructuredProjectCiStatusPanel,
   buildStructuredSessionSummaryProjection,
   buildStructuredSessionView,
   buildStructuredWorkflowTaskAttemptInspector,
@@ -302,6 +304,24 @@ export class WorkspaceSessionCatalog {
     }
 
     return inspector;
+  }
+
+  async getProjectCiStatus(input: { sessionId: string }): Promise<WorkspaceProjectCiStatusPanel> {
+    await this.smithersRuntimeManager.refreshWorkflowRegistry();
+    const entries = this.smithersRuntimeManager
+      .listWorkflows({ productKind: "project-ci" })
+      .map((entry) => ({
+        workflowId: entry.workflowId,
+        label: entry.label,
+        summary: entry.summary,
+        sourceScope: entry.sourceScope,
+        entryPath: entry.entryPath,
+      }));
+
+    return buildStructuredProjectCiStatusPanel({
+      session: this.getStructuredSnapshot(input.sessionId),
+      entries,
+    });
   }
 
   async createSession(

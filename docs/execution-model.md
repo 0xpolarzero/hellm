@@ -267,13 +267,13 @@ The first adopted context key is `ci`.
 The orchestrator can preload context for a delegated objective:
 
 ```ts
-thread.start({ objective: "Configure Project CI", context: ["ci"] })
+thread.start({ objective: "Define Project CI checks", context: ["ci"] });
 ```
 
 A handler can load context later:
 
 ```ts
-request_context({ keys: ["ci"] })
+request_context({ keys: ["ci"] });
 ```
 
 `request_context` is a top-level handler tool, not part of the `execute_typescript` `api.*` SDK.

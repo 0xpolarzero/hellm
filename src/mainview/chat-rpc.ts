@@ -1,5 +1,14 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessageEvent, Message } from "@mariozechner/pi-ai";
+import type {
+  StructuredProjectCiActiveWorkflowSummary,
+  StructuredProjectCiCheckSummary,
+  StructuredProjectCiEntrySummary,
+  StructuredProjectCiPanelStatus,
+  StructuredProjectCiRunDetail,
+  StructuredProjectCiRunSummary,
+  StructuredProjectCiStatusPanel,
+} from "../bun/structured-session-selectors";
 import type { ChatDefaults, ReasoningEffort } from "./chat-settings";
 
 export type AuthKeyType = "apikey" | "oauth" | "env" | "none";
@@ -161,14 +170,13 @@ export interface WorkspaceHandlerThreadEpisodeSummary {
   createdAt: string;
 }
 
-export interface WorkspaceProjectCiRunSummary {
-  ciRunId: string;
-  workflowRunId: string;
-  workflowId: string;
-  status: "passed" | "failed" | "cancelled" | "blocked";
-  summary: string;
-  updatedAt: string;
-}
+export type WorkspaceProjectCiRunSummary = StructuredProjectCiRunSummary;
+export type WorkspaceProjectCiPanelStatus = StructuredProjectCiPanelStatus;
+export type WorkspaceProjectCiEntrySummary = StructuredProjectCiEntrySummary;
+export type WorkspaceProjectCiActiveWorkflowSummary = StructuredProjectCiActiveWorkflowSummary;
+export type WorkspaceProjectCiCheckSummary = StructuredProjectCiCheckSummary;
+export type WorkspaceProjectCiRunDetail = StructuredProjectCiRunDetail;
+export type WorkspaceProjectCiStatusPanel = StructuredProjectCiStatusPanel;
 
 export interface WorkspaceWorkflowTaskAttemptTranscriptMessage {
   messageId: string;
@@ -382,6 +390,10 @@ export interface ChatRPCSchema {
       getWorkflowTaskAttemptInspector: {
         params: { sessionId: string; workflowTaskAttemptId: string };
         response: WorkspaceWorkflowTaskAttemptInspector | null;
+      };
+      getProjectCiStatus: {
+        params: { sessionId: string };
+        response: WorkspaceProjectCiStatusPanel;
       };
       createSession: {
         params: CreateSessionRequest;

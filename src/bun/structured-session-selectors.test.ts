@@ -18,6 +18,7 @@ import {
   buildStructuredCommandInspector,
   buildStructuredHandlerThreadInspector,
   buildStructuredHandlerThreadSummaries,
+  buildStructuredProjectCiStatusPanel,
   buildStructuredSessionSummaryProjection,
   buildStructuredSessionView,
   buildStructuredWorkflowTaskAttemptInspector,
@@ -780,6 +781,185 @@ describe("structured session selectors", () => {
         },
       ],
     });
+  });
+
+  it("builds Project CI status panel states from declared entries and structured CI records", () => {
+    const entries = [
+      {
+        workflowId: "project_ci",
+        label: "Project CI",
+        summary: "Runs Project CI checks.",
+        sourceScope: "saved" as const,
+        entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
+      },
+    ];
+
+    expect(buildStructuredProjectCiStatusPanel({ session: null, entries: [] })).toMatchObject({
+      status: "not-configured",
+      summary: "No Project CI entry has been configured.",
+      entries: [],
+      checks: [],
+    });
+
+    expect(buildStructuredProjectCiStatusPanel({ session: null, entries })).toMatchObject({
+      status: "configured",
+      summary: "Ready to run Project CI.",
+      entries,
+      checks: [],
+    });
+
+    const lookalikeRunningSnapshot = createSessionSnapshot({
+      workflowRuns: [
+        {
+          id: "workflow-ci-lookalike",
+          workflowName: "project_ci",
+          savedEntryId: "project_ci",
+          entryPath: ".svvy/workflows/entries/non-ci/project-ci.tsx",
+          status: "running",
+          summary: "A non-CI workflow happens to share the CI workflow id.",
+          updatedAt: "2026-04-18T10:03:00.000Z",
+        },
+      ],
+    });
+
+    expect(
+      buildStructuredProjectCiStatusPanel({ session: lookalikeRunningSnapshot, entries }),
+    ).toMatchObject({
+      status: "configured",
+      summary: "Ready to run Project CI.",
+      activeWorkflowRun: null,
+      latestRun: null,
+      checks: [],
+    });
+
+    const runningSnapshot = createSessionSnapshot({
+      threads: [
+        {
+          id: "thread-ci",
+          surfacePiSessionId: "pi-thread-ci",
+          title: "Project CI Handler",
+          status: "running-workflow",
+        },
+      ],
+      workflowRuns: [
+        {
+          id: "workflow-ci-running",
+          threadId: "thread-ci",
+          workflowName: "project_ci",
+          entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
+          status: "running",
+          summary: "Project CI is running.",
+          updatedAt: "2026-04-18T10:04:00.000Z",
+        },
+      ],
+    });
+
+    expect(
+      buildStructuredProjectCiStatusPanel({ session: runningSnapshot, entries }),
+    ).toMatchObject({
+      status: "running",
+      summary: "Project CI is running.",
+      activeWorkflowRun: {
+        workflowRunId: "workflow-ci-running",
+        workflowId: "project_ci",
+        threadId: "thread-ci",
+        threadTitle: "Project CI Handler",
+      },
+      latestRun: null,
+      checks: [],
+    });
+
+    const waitingSnapshot = createSessionSnapshot({
+      threads: [
+        {
+          id: "thread-ci",
+          surfacePiSessionId: "pi-thread-ci",
+          title: "Project CI Handler",
+          status: "running-workflow",
+        },
+      ],
+      workflowRuns: [
+        {
+          id: "workflow-ci-waiting",
+          threadId: "thread-ci",
+          workflowName: "project_ci",
+          entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
+          status: "waiting",
+          summary: "Project CI is waiting for required input.",
+          updatedAt: "2026-04-18T10:04:30.000Z",
+        },
+      ],
+    });
+
+    expect(
+      buildStructuredProjectCiStatusPanel({ session: waitingSnapshot, entries }),
+    ).toMatchObject({
+      status: "blocked",
+      summary: "Project CI is waiting for required input.",
+      activeWorkflowRun: {
+        workflowRunId: "workflow-ci-waiting",
+        status: "waiting",
+      },
+      latestRun: null,
+      checks: [],
+    });
+
+    const passedSnapshot = createSessionSnapshot({
+      threads: [
+        {
+          id: "thread-ci",
+          surfacePiSessionId: "pi-thread-ci",
+          title: "Project CI Handler",
+          status: "completed",
+        },
+      ],
+      ciRuns: [
+        {
+          id: "ci-run-latest",
+          threadId: "thread-ci",
+          workflowRunId: "workflow-ci",
+          workflowId: "project_ci",
+          entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
+          status: "passed",
+          summary: "Project CI passed.",
+          updatedAt: "2026-04-18T10:05:00.000Z",
+        },
+      ],
+      ciCheckResults: [
+        {
+          id: "ci-check-typecheck",
+          ciRunId: "ci-run-latest",
+          checkId: "typecheck",
+          label: "Typecheck",
+          kind: "typecheck",
+          status: "passed",
+          command: ["bun", "run", "typecheck"],
+          exitCode: 0,
+          summary: "Typecheck passed.",
+        },
+      ],
+    });
+
+    expect(buildStructuredProjectCiStatusPanel({ session: passedSnapshot, entries })).toMatchObject(
+      {
+        status: "passed",
+        summary: "Project CI passed.",
+        latestRun: {
+          ciRunId: "ci-run-latest",
+          threadId: "thread-ci",
+          threadTitle: "Project CI Handler",
+        },
+        checks: [
+          {
+            checkResultId: "ci-check-typecheck",
+            checkId: "typecheck",
+            label: "Typecheck",
+            command: ["bun", "run", "typecheck"],
+            exitCode: 0,
+          },
+        ],
+      },
+    );
   });
 
   it("projects delegated handler-thread summaries and inspector detail without pulling in orchestrator-local threads", () => {

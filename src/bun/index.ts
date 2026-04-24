@@ -334,6 +334,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           workflowTaskAttemptId,
         });
       },
+      getProjectCiStatus: async ({ sessionId }: { sessionId: string }) => {
+        return await workspaceSessionCatalog.getProjectCiStatus({ sessionId });
+      },
       createSession: async ({
         title,
         parentSessionId,
@@ -508,13 +511,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return { ok: true };
       },
-      setSurfaceModel: async ({
-        target,
-        model,
-      }: {
-        target: PromptTarget;
-        model: string;
-      }) => {
+      setSurfaceModel: async ({ target, model }: { target: PromptTarget; model: string }) => {
         const result = await workspaceSessionCatalog.setSurfaceModel(target, model);
         if (result.ok) {
           recordBridgeEvent("surface.model.changed", {

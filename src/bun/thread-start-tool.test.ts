@@ -46,12 +46,12 @@ function createOrchestratorRuntime(
   const turn = store.startTurn({
     sessionId: "session-thread-start-tool",
     surfacePiSessionId: "session-thread-start-tool",
-    requestSummary: "Delegate Project CI setup",
+    requestSummary: "Delegate Project CI context work",
   });
   const rootThread = store.createThread({
     turnId: turn.id,
     surfacePiSessionId: "session-thread-start-tool",
-    title: "Delegate Project CI setup",
+    title: "Delegate Project CI context work",
     objective: "Open a handler thread.",
   });
 
@@ -64,7 +64,7 @@ function createOrchestratorRuntime(
       surfaceKind: "orchestrator",
       defaultEpisodeKind: "analysis",
       rootThreadId: rootThread.id,
-      promptText: "Delegate Project CI setup",
+      promptText: "Delegate Project CI context work",
       rootEpisodeKind: "analysis",
       sessionWaitApplied: false,
       threadWasTerminalAtStart: false,
@@ -107,8 +107,8 @@ describe("thread.start tool", () => {
     });
 
     const result = await tool.execute("tool-call-thread-start", {
-      title: "Configure Project CI",
-      objective: "Create the Project CI saved workflow.",
+      title: "Define Project CI checks",
+      objective: "Create or update the Project CI saved workflow when requested.",
       context: ["ci"],
     });
 

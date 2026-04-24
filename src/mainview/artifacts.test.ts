@@ -197,6 +197,9 @@ describe("ArtifactsController", () => {
   });
 
   test("syncFromMessages matches full replay for mixed artifact operations", async () => {
+    const originalDateNow = Date.now;
+    Date.now = () => 1_777_067_967_604;
+
     const fullReplayController = new ArtifactsController();
     const incrementalController = new ArtifactsController();
     (
@@ -241,11 +244,15 @@ describe("ArtifactsController", () => {
     const allMessages = createArtifactMessages(operations);
     const initialBatch = createArtifactMessages(operations.slice(0, 2));
 
-    await fullReplayController.syncFromMessages(allMessages, { replace: true });
-    await incrementalController.syncFromMessages(initialBatch, { replace: true });
-    await incrementalController.syncFromMessages(allMessages);
+    try {
+      await fullReplayController.syncFromMessages(allMessages, { replace: true });
+      await incrementalController.syncFromMessages(initialBatch, { replace: true });
+      await incrementalController.syncFromMessages(allMessages);
 
-    expect(incrementalController.getSnapshot()).toEqual(fullReplayController.getSnapshot());
+      expect(incrementalController.getSnapshot()).toEqual(fullReplayController.getSnapshot());
+    } finally {
+      Date.now = originalDateNow;
+    }
   });
 
   test("syncFromMessages is idempotent for an unchanged committed prefix", async () => {

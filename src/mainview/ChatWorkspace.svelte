@@ -26,6 +26,9 @@
     WorkspaceHandlerThreadInspector,
     WorkspaceHandlerThreadSummary,
     WorkspaceHandlerThreadWorkflowSummary,
+    WorkspaceProjectCiCheckSummary,
+    WorkspaceProjectCiPanelStatus,
+    WorkspaceProjectCiStatusPanel,
     WorkspaceWorkflowTaskAttemptInspector,
     WorkspaceWorkflowTaskAttemptSummary,
     PromptTarget,
@@ -113,6 +116,8 @@
   let handlerThreads = $state<WorkspaceHandlerThreadSummary[]>([]);
   let handlerThreadsLoading = $state(false);
   let handlerThreadsError = $state<string | undefined>(undefined);
+  let projectCiStatus = $state<WorkspaceProjectCiStatusPanel | null>(null);
+  let projectCiError = $state<string | undefined>(undefined);
   let showThreadInspector = $state(false);
   let threadInspector = $state<WorkspaceHandlerThreadInspector | null>(null);
   let threadInspectorError = $state<string | undefined>(undefined);
@@ -130,6 +135,7 @@
   let copyTranscriptResetTimer: ReturnType<typeof setTimeout> | null = null;
   let commandInspectorSessionId: string | null = null;
   let handlerThreadLoadToken = 0;
+  let projectCiLoadToken = 0;
   let threadInspectorSessionId: string | null = null;
   let workflowTaskAttemptInspectorSessionId: string | null = null;
   let unsubscribeSurfaceController: (() => void) | null = null;
@@ -581,6 +587,65 @@
     }
   }
 
+  function getProjectCiStatusLabel(status: WorkspaceProjectCiPanelStatus): string {
+    switch (status) {
+      case "not-configured":
+        return "Not configured";
+      case "configured":
+        return "Configured";
+      case "running":
+        return "Running";
+      case "passed":
+        return "Passed";
+      case "failed":
+        return "Failed";
+      case "blocked":
+        return "Blocked";
+      case "cancelled":
+        return "Cancelled";
+      default:
+        return status;
+    }
+  }
+
+  function getProjectCiStatusTone(
+    status: WorkspaceProjectCiPanelStatus | WorkspaceProjectCiCheckSummary["status"],
+  ): "neutral" | "info" | "success" | "warning" | "danger" {
+    switch (status) {
+      case "running":
+        return "info";
+      case "passed":
+        return "success";
+      case "configured":
+      case "not-configured":
+      case "skipped":
+      case "cancelled":
+        return "neutral";
+      case "blocked":
+        return "warning";
+      case "failed":
+        return "danger";
+      default:
+        return "neutral";
+    }
+  }
+
+  function formatProjectCiCommand(command: string[] | null): string | null {
+    if (!command || command.length === 0) {
+      return null;
+    }
+
+    return command.join(" ");
+  }
+
+  function formatProjectCiExitCode(exitCode: number | null): string | null {
+    if (exitCode === null) {
+      return null;
+    }
+
+    return `exit code ${exitCode}`;
+  }
+
   function getWorkflowTaskAttemptStatusLabel(
     status: WorkspaceWorkflowTaskAttemptSummary["status"] | WorkspaceWorkflowTaskAttemptInspector["status"],
   ): string {
@@ -866,6 +931,37 @@
 
   $effect(() => {
     const session = currentSession;
+    if (!session) {
+      projectCiStatus = null;
+      projectCiError = undefined;
+      return;
+    }
+
+    const loadToken = ++projectCiLoadToken;
+    projectCiError = undefined;
+    projectCiStatus = null;
+    void runtime
+      .getProjectCiStatus(session.id)
+      .then((status) => {
+        if (loadToken !== projectCiLoadToken) {
+          return;
+        }
+
+        projectCiStatus = status;
+      })
+      .catch((error) => {
+        if (loadToken !== projectCiLoadToken) {
+          return;
+        }
+
+        projectCiError =
+          error instanceof Error ? error.message : "Unable to load Project CI status.";
+        projectCiStatus = null;
+      })
+  });
+
+  $effect(() => {
+    const session = currentSession;
     const surface = currentSurface?.surface;
     if (!session || surface !== "orchestrator") {
       handlerThreads = [];
@@ -1124,6 +1220,117 @@
 
       <section class="chat-pane" id="conversation">
         <div class="chat-pane-shell">
+          {#if currentSession && (projectCiStatus || projectCiError)}
+            <section class="project-ci-panel" aria-label="Project CI">
+              <header class="project-ci-header">
+                <div>
+                  <p class="project-ci-eyebrow">Project CI</p>
+                  <h3>
+                  {#if projectCiStatus}
+                    {getProjectCiStatusLabel(projectCiStatus.status)}
+                  {:else}
+                    Unavailable
+                  {/if}
+                  </h3>
+                </div>
+                {#if projectCiStatus}
+                  <Badge tone={getProjectCiStatusTone(projectCiStatus.status)}>
+                    {getProjectCiStatusLabel(projectCiStatus.status)}
+                  </Badge>
+                {/if}
+              </header>
+
+              {#if projectCiError}
+                <p class="project-ci-empty error">{projectCiError}</p>
+              {:else if projectCiStatus}
+                <div class="project-ci-body">
+                  <p class="project-ci-summary">{projectCiStatus.summary}</p>
+
+                  {#if projectCiStatus.status === "not-configured"}
+                    <p class="project-ci-muted">Ask svvy to configure Project CI.</p>
+                  {/if}
+
+                  {#if projectCiStatus.entries.length > 0}
+                    <div class="project-ci-entries" aria-label="Configured Project CI entries">
+                      {#each projectCiStatus.entries as entry (entry.workflowId)}
+                        <div class="project-ci-entry">
+                          <strong>{entry.workflowId}</strong>
+                          <span>{entry.entryPath}</span>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+
+                  {#if projectCiStatus.status === "configured"}
+                    <p class="project-ci-muted">No Project CI runs yet.</p>
+                  {/if}
+
+                  {#if projectCiStatus.activeWorkflowRun}
+                    <div class="project-ci-run-card">
+                      <div class="project-ci-run-card-top">
+                        <div>
+                          <strong>{projectCiStatus.activeWorkflowRun.workflowId}</strong>
+                          <span>
+                            {projectCiStatus.activeWorkflowRun.status === "waiting"
+                              ? "Workflow Blocked"
+                              : "Workflow Running"}
+                          </span>
+                        </div>
+                        <span>{formatTimestamp(projectCiStatus.activeWorkflowRun.updatedAt)}</span>
+                      </div>
+                      <p>{projectCiStatus.activeWorkflowRun.summary}</p>
+                      {#if projectCiStatus.activeWorkflowRun.entryPath}
+                        <code>{projectCiStatus.activeWorkflowRun.entryPath}</code>
+                      {/if}
+                    </div>
+                  {/if}
+
+                  {#if projectCiStatus.latestRun}
+                    <div class="project-ci-run-card">
+                      <div class="project-ci-run-card-top">
+                        <div>
+                          <strong>{projectCiStatus.latestRun.workflowId}</strong>
+                          <span>{projectCiStatus.latestRun.threadTitle}</span>
+                        </div>
+                        <span>{formatTimestamp(projectCiStatus.latestRun.updatedAt)}</span>
+                      </div>
+                      <p>{projectCiStatus.latestRun.summary}</p>
+                      <code>{projectCiStatus.latestRun.entryPath}</code>
+                    </div>
+                  {/if}
+
+                  {#if projectCiStatus.checks.length > 0}
+                    <div class="project-ci-check-list" aria-label="Project CI check results">
+                      {#each projectCiStatus.checks as check (check.checkResultId)}
+                        <article class="project-ci-check">
+                          <div class="project-ci-check-top">
+                            <div class="project-ci-check-copy">
+                              <strong>{check.label}</strong>
+                              <span>{check.kind} · {check.status}</span>
+                            </div>
+                            <Badge tone={getProjectCiStatusTone(check.status)}>
+                              {check.status}
+                            </Badge>
+                          </div>
+                          <p>{check.summary}</p>
+                          <div class="project-ci-check-meta">
+                            <span>{check.required ? "required" : "optional"}</span>
+                            {#if formatProjectCiCommand(check.command)}
+                              <code>{formatProjectCiCommand(check.command)}</code>
+                            {/if}
+                            {#if formatProjectCiExitCode(check.exitCode)}
+                              <span>{formatProjectCiExitCode(check.exitCode)}</span>
+                            {/if}
+                          </div>
+                        </article>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+            </section>
+          {/if}
+
           {#if showHandlerThreadPanel}
             <section class="handler-thread-panel" aria-label="Delegated handler threads">
               <header class="handler-thread-header">
@@ -2258,6 +2465,7 @@
     box-shadow: var(--ui-shadow-soft);
   }
 
+  .project-ci-panel,
   .handler-thread-panel,
   .structured-command-panel {
     display: grid;
@@ -2273,6 +2481,7 @@
       color-mix(in oklab, var(--ui-surface-subtle) 54%, transparent);
   }
 
+  .project-ci-header,
   .handler-thread-header,
   .structured-command-header {
     display: flex;
@@ -2281,6 +2490,8 @@
     gap: 1rem;
   }
 
+  .project-ci-header h3,
+  .project-ci-eyebrow,
   .handler-thread-header h3,
   .handler-thread-eyebrow,
   .handler-thread-copy,
@@ -2290,6 +2501,7 @@
     margin: 0;
   }
 
+  .project-ci-eyebrow,
   .handler-thread-eyebrow,
   .structured-command-eyebrow {
     font-size: 0.64rem;
@@ -2299,6 +2511,7 @@
     color: var(--ui-text-tertiary);
   }
 
+  .project-ci-header h3,
   .handler-thread-header h3,
   .structured-command-header h3 {
     margin-top: 0.18rem;
@@ -2314,6 +2527,111 @@
     font-size: 0.72rem;
     line-height: 1.5;
     color: var(--ui-text-secondary);
+  }
+
+  .project-ci-body {
+    display: grid;
+    gap: 0.56rem;
+  }
+
+  .project-ci-summary,
+  .project-ci-muted,
+  .project-ci-empty,
+  .project-ci-run-card p,
+  .project-ci-check p {
+    margin: 0;
+    font-size: 0.73rem;
+    line-height: 1.52;
+    color: var(--ui-text-secondary);
+  }
+
+  .project-ci-summary {
+    color: var(--ui-text-primary);
+  }
+
+  .project-ci-muted {
+    color: var(--ui-text-tertiary);
+  }
+
+  .project-ci-entries,
+  .project-ci-check-list {
+    display: grid;
+    gap: 0.45rem;
+  }
+
+  .project-ci-entry,
+  .project-ci-run-card,
+  .project-ci-check {
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+    border-radius: var(--ui-radius-md);
+    background: color-mix(in oklab, var(--ui-surface) 94%, transparent);
+  }
+
+  .project-ci-entry {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.55rem 0.62rem;
+  }
+
+  .project-ci-entry strong,
+  .project-ci-run-card strong,
+  .project-ci-check-copy strong {
+    font-size: 0.76rem;
+    font-weight: 660;
+    color: var(--ui-text-primary);
+  }
+
+  .project-ci-entry span,
+  .project-ci-run-card span,
+  .project-ci-check-copy span,
+  .project-ci-check-meta {
+    font-size: 0.68rem;
+    color: var(--ui-text-tertiary);
+  }
+
+  .project-ci-entry span,
+  .project-ci-run-card code,
+  .project-ci-check-meta code {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .project-ci-run-card,
+  .project-ci-check {
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.68rem 0.72rem;
+  }
+
+  .project-ci-run-card-top,
+  .project-ci-check-top,
+  .project-ci-check-meta {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.72rem;
+  }
+
+  .project-ci-run-card-top > div,
+  .project-ci-check-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .project-ci-run-card code,
+  .project-ci-check-meta code {
+    font-family: var(--font-mono);
+    font-size: 0.67rem;
+    color: var(--ui-text-secondary);
+  }
+
+  .project-ci-check-meta {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .handler-thread-list {
@@ -2600,6 +2918,7 @@
   }
 
   .handler-thread-empty,
+  .project-ci-empty,
   .thread-inspector-empty,
   .thread-inspector-wait,
   .command-inspector-error,
@@ -2615,6 +2934,7 @@
   }
 
   .handler-thread-empty,
+  .project-ci-empty,
   .thread-inspector-empty,
   .command-inspector-empty {
     padding: 0.9rem;
@@ -2624,6 +2944,7 @@
   }
 
   .handler-thread-empty.error,
+  .project-ci-empty.error,
   .thread-inspector-empty.error,
   .command-inspector-empty.error {
     border-color: color-mix(in oklab, var(--ui-danger) 32%, transparent);
@@ -2822,6 +3143,11 @@
       justify-content: flex-start;
     }
 
+    .project-ci-header,
+    .project-ci-entry,
+    .project-ci-run-card-top,
+    .project-ci-check-top,
+    .project-ci-check-meta,
     .structured-command-header,
     .structured-command-card-top,
     .structured-command-card-footer,
@@ -2838,6 +3164,7 @@
       max-width: none;
     }
 
+    .project-ci-check-meta,
     .structured-command-card-meta,
     .command-inspector-summary-meta,
     .command-inspector-child-meta {

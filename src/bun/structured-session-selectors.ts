@@ -92,6 +92,66 @@ export interface StructuredProjectCiRunSummary {
   updatedAt: string;
 }
 
+export type StructuredProjectCiPanelStatus =
+  | "not-configured"
+  | "configured"
+  | "running"
+  | StructuredSessionSnapshot["ciRuns"][number]["status"];
+
+export interface StructuredProjectCiEntrySummary {
+  workflowId: string;
+  label: string;
+  summary: string;
+  sourceScope: StructuredWorkflowRunRecord["workflowSource"];
+  entryPath: string;
+}
+
+export interface StructuredProjectCiActiveWorkflowSummary {
+  workflowRunId: string;
+  workflowId: string;
+  entryPath: string | null;
+  threadId: string;
+  threadTitle: string;
+  status: Extract<StructuredWorkflowRunRecord["status"], "running" | "waiting">;
+  summary: string;
+  updatedAt: string;
+}
+
+export interface StructuredProjectCiCheckSummary {
+  checkResultId: string;
+  checkId: string;
+  label: string;
+  kind: string;
+  status: StructuredSessionSnapshot["ciCheckResults"][number]["status"];
+  required: boolean;
+  command: string[] | null;
+  exitCode: number | null;
+  summary: string;
+  artifactIds: string[];
+  startedAt: string | null;
+  finishedAt: string | null;
+  updatedAt: string;
+}
+
+export interface StructuredProjectCiRunDetail extends StructuredProjectCiRunSummary {
+  threadId: string;
+  threadTitle: string;
+  smithersRunId: string;
+  entryPath: string;
+  startedAt: string;
+  finishedAt: string;
+}
+
+export interface StructuredProjectCiStatusPanel {
+  status: StructuredProjectCiPanelStatus;
+  summary: string;
+  entries: StructuredProjectCiEntrySummary[];
+  activeWorkflowRun: StructuredProjectCiActiveWorkflowSummary | null;
+  latestRun: StructuredProjectCiRunDetail | null;
+  checks: StructuredProjectCiCheckSummary[];
+  updatedAt: string | null;
+}
+
 export interface StructuredHandlerThreadEpisodeSummary {
   episodeId: string;
   kind: StructuredEpisodeRecord["kind"];
@@ -440,6 +500,88 @@ function buildProjectCiRunSummary(
     status: ciRun.status,
     summary: ciRun.summary,
     updatedAt: ciRun.updatedAt,
+  };
+}
+
+function findProjectCiEntryForWorkflowRun(
+  entries: readonly StructuredProjectCiEntrySummary[],
+  workflowRun: StructuredWorkflowRunRecord,
+): StructuredProjectCiEntrySummary | null {
+  if (!workflowRun.entryPath) {
+    return null;
+  }
+
+  return entries.find((entry) => workflowRun.entryPath === entry.entryPath) ?? null;
+}
+
+function projectCiEntryMatchesWorkflowRun(
+  entries: readonly StructuredProjectCiEntrySummary[],
+  workflowRun: StructuredWorkflowRunRecord,
+): boolean {
+  return findProjectCiEntryForWorkflowRun(entries, workflowRun) !== null;
+}
+
+function projectCiEntryMatchesCiRun(
+  entries: readonly StructuredProjectCiEntrySummary[],
+  ciRun: StructuredSessionSnapshot["ciRuns"][number],
+): boolean {
+  return entries.some((entry) => ciRun.entryPath === entry.entryPath);
+}
+
+function getThreadTitle(session: StructuredSessionSnapshot, threadId: string): string {
+  const thread = session.threads.find((candidate) => candidate.id === threadId);
+  return thread?.title || thread?.objective || threadId;
+}
+
+function buildProjectCiRunDetail(
+  session: StructuredSessionSnapshot,
+  ciRun: StructuredSessionSnapshot["ciRuns"][number],
+): StructuredProjectCiRunDetail {
+  return {
+    ...buildProjectCiRunSummary(ciRun),
+    threadId: ciRun.threadId,
+    threadTitle: getThreadTitle(session, ciRun.threadId),
+    smithersRunId: ciRun.smithersRunId,
+    entryPath: ciRun.entryPath,
+    startedAt: ciRun.startedAt,
+    finishedAt: ciRun.finishedAt,
+  };
+}
+
+function buildProjectCiCheckSummary(
+  checkResult: StructuredSessionSnapshot["ciCheckResults"][number],
+): StructuredProjectCiCheckSummary {
+  return {
+    checkResultId: checkResult.id,
+    checkId: checkResult.checkId,
+    label: checkResult.label,
+    kind: checkResult.kind,
+    status: checkResult.status,
+    required: checkResult.required,
+    command: checkResult.command ? checkResult.command.slice() : null,
+    exitCode: checkResult.exitCode,
+    summary: checkResult.summary,
+    artifactIds: checkResult.artifactIds.slice(),
+    startedAt: checkResult.startedAt,
+    finishedAt: checkResult.finishedAt,
+    updatedAt: checkResult.updatedAt,
+  };
+}
+
+function buildProjectCiActiveWorkflowSummary(
+  session: StructuredSessionSnapshot,
+  workflowRun: StructuredWorkflowRunRecord & { status: "running" | "waiting" },
+  entry: StructuredProjectCiEntrySummary,
+): StructuredProjectCiActiveWorkflowSummary {
+  return {
+    workflowRunId: workflowRun.id,
+    workflowId: entry.workflowId,
+    entryPath: entry.entryPath,
+    threadId: workflowRun.threadId,
+    threadTitle: getThreadTitle(session, workflowRun.threadId),
+    status: workflowRun.status,
+    summary: workflowRun.summary,
+    updatedAt: workflowRun.updatedAt,
   };
 }
 
@@ -834,6 +976,111 @@ export function hasStructuredSessionFacts(session: StructuredSessionSnapshot): b
     session.artifacts.length > 0 ||
     session.events.length > 0
   );
+}
+
+export function buildStructuredProjectCiStatusPanel(input: {
+  session: StructuredSessionSnapshot | null;
+  entries: readonly StructuredProjectCiEntrySummary[];
+}): StructuredProjectCiStatusPanel {
+  const entries = input.entries.map((entry) => ({
+    workflowId: entry.workflowId,
+    label: entry.label,
+    summary: entry.summary,
+    sourceScope: entry.sourceScope,
+    entryPath: entry.entryPath,
+  }));
+
+  if (entries.length === 0) {
+    return {
+      status: "not-configured",
+      summary: "No Project CI entry has been configured.",
+      entries,
+      activeWorkflowRun: null,
+      latestRun: null,
+      checks: [],
+      updatedAt: null,
+    };
+  }
+
+  const session = input.session;
+  if (!session) {
+    return {
+      status: "configured",
+      summary: "Ready to run Project CI.",
+      entries,
+      activeWorkflowRun: null,
+      latestRun: null,
+      checks: [],
+      updatedAt: null,
+    };
+  }
+
+  const activeWorkflowRun =
+    session.workflowRuns
+      .filter(
+        (
+          workflowRun,
+        ): workflowRun is StructuredWorkflowRunRecord & {
+          status: "running" | "waiting";
+        } => workflowRun.status === "running" || workflowRun.status === "waiting",
+      )
+      .filter((workflowRun) => projectCiEntryMatchesWorkflowRun(entries, workflowRun))
+      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
+
+  if (activeWorkflowRun) {
+    const activeEntry = findProjectCiEntryForWorkflowRun(entries, activeWorkflowRun);
+    if (!activeEntry) {
+      throw new Error(
+        `Matched Project CI workflow run ${activeWorkflowRun.id} without a declared entry path.`,
+      );
+    }
+    const activeSummary = buildProjectCiActiveWorkflowSummary(
+      session,
+      activeWorkflowRun,
+      activeEntry,
+    );
+    return {
+      status: activeWorkflowRun.status === "waiting" ? "blocked" : "running",
+      summary: activeSummary.summary,
+      entries,
+      activeWorkflowRun: activeSummary,
+      latestRun: null,
+      checks: [],
+      updatedAt: activeSummary.updatedAt,
+    };
+  }
+
+  const latestCiRun =
+    session.ciRuns
+      .filter((ciRun) => projectCiEntryMatchesCiRun(entries, ciRun))
+      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
+
+  if (!latestCiRun) {
+    return {
+      status: "configured",
+      summary: "Ready to run Project CI.",
+      entries,
+      activeWorkflowRun: null,
+      latestRun: null,
+      checks: [],
+      updatedAt: null,
+    };
+  }
+
+  const checks = session.ciCheckResults
+    .filter((checkResult) => checkResult.ciRunId === latestCiRun.id)
+    .map(buildProjectCiCheckSummary)
+    .toSorted((left, right) => left.checkId.localeCompare(right.checkId));
+
+  return {
+    status: latestCiRun.status,
+    summary: latestCiRun.summary,
+    entries,
+    activeWorkflowRun: null,
+    latestRun: buildProjectCiRunDetail(session, latestCiRun),
+    checks,
+    updatedAt: latestCiRun.updatedAt,
+  };
 }
 
 export function buildStructuredCommandInspector(

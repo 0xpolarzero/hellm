@@ -123,15 +123,15 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Build a POC typed context-pack registry with `ci` as the first key. Commit(s): `2a5dbbe`
 - [x] Add the handler-only `request_context({ keys })` tool and persist loaded context keys on handler threads. Commit(s): `2a5dbbe`
 - [x] Extend `thread.start` so the orchestrator can preload typed handler context with `context: ["ci"]`. Commit(s): `2a5dbbe`
-- [ ] Build a POC Project CI setup flow that opens a normal handler thread with the `ci` context pack loaded.
-- [ ] Define the Project CI saved-workflow layout under `.svvy/workflows/{definitions,prompts,components,entries}/ci/`.
+- [x] Make Project CI configuration happen organically through normal handler-thread work, with `context: ["ci"]` preloaded for first-turn CI authoring or requested later through `request_context({ keys: ["ci"] })`, instead of a setup launcher or CI-specific runtime. Commit(s): `2a5dbbe`
+- [x] Define the conventional Project CI saved-workflow layout under `.svvy/workflows/{definitions,prompts,components,entries}/ci/`, without implying a shipped or auto-created default CI entry. Commit(s): `2a5dbbe`
 - [x] Extend runnable workflow entry discovery with optional `productKind` and `resultSchema` metadata. Commit(s): `2a5dbbe`
-- [ ] Build a POC saved Project CI entry that declares `productKind = "project-ci"` and returns output that validates against its declared CI result schema.
+- [x] Validate a saved Project CI entry under the conventional `.svvy/workflows/entries/ci/project-ci.tsx` path that declares `productKind = "project-ci"` and returns output that validates against its declared CI result schema. Commit(s): `2a5dbbe`
 - [x] Persist `ci_run` and `ci_check_result` records only from terminal Smithers runs launched from declared Project CI entries. Commit(s): `2a5dbbe`
 - [x] Record CI check results with stable check ids, kind, status, required flag, command, exit code, summary, timestamps, and linked artifacts. Commit(s): `2a5dbbe`
 - [x] Treat invalid or missing CI result output as a CI workflow troubleshooting state instead of parsing logs, node outputs, final prose, or command names. Commit(s): `2a5dbbe`
 - [x] Let normal handler threads discover and run configured Project CI entries without loading the `ci` context pack, while using `request_context({ keys: ["ci"] })` before configuring or modifying CI. Commit(s): `2a5dbbe`
-- [ ] Render `not configured`, `configured`, `running`, `passed`, `failed`, `blocked`, and `cancelled` Project CI states in a dedicated CI surface.
+- [ ] Render `not configured`, `configured`, `running`, `passed`, `failed`, `blocked`, and `cancelled` Project CI states in a dedicated CI status surface or panel.
 - [x] Surface the latest Project CI outcome as routing input for orchestrator and handler decisions without making CI a native control tool. Commit(s): `2a5dbbe`
 
 ## 8. Workspace Navigation, Live Surfaces, And Core Projection

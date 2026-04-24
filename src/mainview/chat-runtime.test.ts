@@ -10,6 +10,7 @@ import type {
   WorkspaceCommandInspector,
   WorkspaceHandlerThreadInspector,
   WorkspaceHandlerThreadSummary,
+  WorkspaceProjectCiStatusPanel,
   WorkspaceSessionSummary,
   WorkspaceSyncMessage,
   WorkspaceWorkflowTaskAttemptInspector,
@@ -74,6 +75,7 @@ type FakeRpcHarness = {
     sessionId: string;
     workflowTaskAttemptId: string;
   }>;
+  projectCiStatusRequests: string[];
   setPromptHandler: (surfacePiSessionId: string, handler: PromptHandler) => void;
   updateSummary: (sessionId: string, updater: (summary: WorkspaceSessionSummary) => void) => void;
   emitWorkspaceSync: (reason?: WorkspaceSyncMessage["reason"]) => void;
@@ -362,6 +364,55 @@ function createHandlerThreadInspector(threadId = "thread-1"): WorkspaceHandlerTh
   };
 }
 
+function createProjectCiStatusPanel(): WorkspaceProjectCiStatusPanel {
+  return {
+    status: "passed",
+    summary: "Project CI passed.",
+    entries: [
+      {
+        workflowId: "project_ci",
+        label: "Project CI",
+        summary: "Runs Project CI checks.",
+        sourceScope: "saved",
+        entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
+      },
+    ],
+    activeWorkflowRun: null,
+    latestRun: {
+      ciRunId: "ci-run-1",
+      workflowRunId: "workflow-1",
+      workflowId: "project_ci",
+      status: "passed",
+      summary: "Project CI passed.",
+      updatedAt: "2026-04-10T10:04:30.000Z",
+      threadId: "thread-1",
+      threadTitle: "Parser fix thread",
+      smithersRunId: "smithers-run-1",
+      entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
+      startedAt: "2026-04-10T10:03:30.000Z",
+      finishedAt: "2026-04-10T10:04:30.000Z",
+    },
+    checks: [
+      {
+        checkResultId: "ci-check-1",
+        checkId: "typecheck",
+        label: "Typecheck",
+        kind: "typecheck",
+        status: "passed",
+        required: true,
+        command: ["bun", "run", "typecheck"],
+        exitCode: 0,
+        summary: "Typecheck passed.",
+        artifactIds: [],
+        startedAt: "2026-04-10T10:03:30.000Z",
+        finishedAt: "2026-04-10T10:04:30.000Z",
+        updatedAt: "2026-04-10T10:04:30.000Z",
+      },
+    ],
+    updatedAt: "2026-04-10T10:04:30.000Z",
+  };
+}
+
 function createWorkflowTaskAttemptInspector(
   workflowTaskAttemptId = "workflow-task-attempt-1",
 ): WorkspaceWorkflowTaskAttemptInspector {
@@ -464,6 +515,7 @@ function createFakeRpc(input: {
   handlerThreads?: WorkspaceHandlerThreadSummary[];
   handlerThreadInspector?: WorkspaceHandlerThreadInspector;
   workflowTaskAttemptInspector?: WorkspaceWorkflowTaskAttemptInspector;
+  projectCiStatus?: WorkspaceProjectCiStatusPanel;
 }): FakeRpcHarness {
   const streamListeners = new Set<
     (payload: { streamId: string; event: AssistantMessageEvent }) => void
@@ -495,6 +547,7 @@ function createFakeRpc(input: {
     sessionId: string;
     workflowTaskAttemptId: string;
   }> = [];
+  const projectCiStatusRequests: string[] = [];
   const requestCounts = {
     listSessions: 0,
   };
@@ -635,6 +688,10 @@ function createFakeRpc(input: {
             input.workflowTaskAttemptInspector ??
               createWorkflowTaskAttemptInspector(workflowTaskAttemptId),
           );
+        },
+        getProjectCiStatus: async ({ sessionId }) => {
+          projectCiStatusRequests.push(sessionId);
+          return structuredClone(input.projectCiStatus ?? createProjectCiStatusPanel());
         },
         createSession: async ({ title } = {}) => {
           const sessionId = `session-${summaries.size + 1}`;
@@ -869,6 +926,7 @@ function createFakeRpc(input: {
     handlerThreadListRequests,
     handlerThreadInspectorRequests,
     workflowTaskAttemptInspectorRequests,
+    projectCiStatusRequests,
     setPromptHandler: (surfacePiSessionId, handler) => {
       promptHandlers.set(surfacePiSessionId, handler);
     },
@@ -1235,11 +1293,13 @@ describe("createChatRuntime", () => {
     const workflowTaskAttemptDetail = await runtime.getWorkflowTaskAttemptInspector(
       "workflow-task-attempt-77",
     );
+    const projectCiStatus = await runtime.getProjectCiStatus();
 
     expect(detail).toEqual(commandInspector);
     expect(threads).toEqual(handlerThreads);
     expect(threadDetail).toEqual(handlerThreadInspector);
     expect(workflowTaskAttemptDetail).toEqual(workflowTaskAttemptInspector);
+    expect(projectCiStatus).toEqual(createProjectCiStatusPanel());
     expect(harness.commandInspectorRequests).toEqual([
       { sessionId: "session-2", commandId: "command-77" },
     ]);
@@ -1250,6 +1310,7 @@ describe("createChatRuntime", () => {
     expect(harness.workflowTaskAttemptInspectorRequests).toEqual([
       { sessionId: "session-2", workflowTaskAttemptId: "workflow-task-attempt-77" },
     ]);
+    expect(harness.projectCiStatusRequests).toEqual(["session-2"]);
 
     runtime.dispose();
   });

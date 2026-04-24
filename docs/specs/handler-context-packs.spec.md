@@ -95,7 +95,7 @@ The orchestrator does not receive the full context-pack content.
 
 ```ts
 thread.start({
-  objective: "Configure Project CI for this repository",
+  objective: "Define Project CI checks for this repository",
   context: ["ci"],
 });
 ```
@@ -118,7 +118,7 @@ There is no CI-specific orchestrator.
 Handler threads receive a top-level tool:
 
 ```ts
-request_context({ keys: ["ci"] })
+request_context({ keys: ["ci"] });
 ```
 
 Rules:

@@ -16,6 +16,7 @@ const APP_WORKSPACE_DIR = resolveElectrobunWorkspaceDir(PROJECT_DIR);
 const FALLBACK_APP_ID = "svvy";
 const FALLBACK_APP_READY_PATTERN = /^svvy desktop app started$/;
 const PREPARED_HOME_SNAPSHOT_DIRNAME = ".svvy-e2e-launch-snapshot";
+const MAX_LOCAL_LAUNCH_ATTEMPTS = 3;
 
 const parseBridgeMetadata = (() => {
   const parseJsonBridgeMetadata = createJsonBridgeMetadataParser("svvy bridge:");
@@ -83,11 +84,38 @@ export async function withSvvyApp<T>(
     throw new Error("withSvvyApp requires a test callback.");
   }
 
-  return await withElectrobunApp(createLaunchOptions(options), fn);
+  const launchOptions = createLaunchOptions(options);
+  return await withLocalLaunchRetries(() => withElectrobunApp(launchOptions, fn));
 }
 
 export async function launchSvvyApp(options: SvvyAppLaunchOptions = {}): Promise<SvvyApp> {
-  return await launchElectrobunApp(createLaunchOptions(options));
+  const launchOptions = createLaunchOptions(options);
+  return await withLocalLaunchRetries(() => launchElectrobunApp(launchOptions));
+}
+
+async function withLocalLaunchRetries<T>(action: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_LOCAL_LAUNCH_ATTEMPTS; attempt += 1) {
+    try {
+      return await action();
+    } catch (error) {
+      lastError = error;
+      if (attempt >= MAX_LOCAL_LAUNCH_ATTEMPTS || !isTransientLaunchMetadataError(error)) {
+        throw error;
+      }
+
+      console.warn(
+        `launchSvvyApp: retrying transient bridge metadata failure (${attempt}/${MAX_LOCAL_LAUNCH_ATTEMPTS - 1})`,
+      );
+      await Bun.sleep(500);
+    }
+  }
+
+  throw lastError;
+}
+
+function isTransientLaunchMetadataError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Timed out waiting for svvy bridge metadata");
 }
 
 function getPreparedHomeSnapshotDir(homeDir: string): string {

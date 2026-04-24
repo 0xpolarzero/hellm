@@ -5,11 +5,12 @@
 - Date: 2026-04-24
 - Status: adopted direction for project CI configuration, execution, persistence, and UI
 - Scope of this document:
-  - define the dedicated Project CI product lane
+  - define the Project CI product lane as a status and result projection over normal workflow execution
   - define how CI assets live inside the existing Smithers saved workflow library
   - define the CI runnable-entry contract
   - define when CI state is recorded
   - define how handler threads load CI authoring context only when needed
+  - define how Project CI is configured organically through normal handler work rather than a setup launcher
 
 Typed context-pack mechanics are defined in [Handler Context Packs Spec](./handler-context-packs.spec.md).
 
@@ -20,7 +21,8 @@ The product feature is called **Project CI**.
 Use these terms consistently:
 
 - **Project CI**: the dedicated product lane for configuring and running the repository's repeatable confidence checks.
-- **CI lane**: the UI entry point that opens or focuses a normal handler thread with the `ci` context pack loaded.
+- **CI lane**: the product projection for Project CI status, configured entries, latest run, check results, and linked workflow artifacts.
+- **CI status surface**: the UI surface or panel that renders the CI lane. It may route user requests into normal handler threads, but it is not a separate setup launcher or runtime.
 - **CI context pack**: the typed optional context loaded by `thread.start({ context: ["ci"] })` or by a handler calling `request_context({ keys: ["ci"] })`.
 - **CI entry**: a normal Smithers runnable saved workflow entry that declares `productKind = "project-ci"`.
 - **CI run**: one Smithers workflow run launched from a CI entry and recorded as Project CI state.
@@ -46,6 +48,8 @@ Project CI must be first-class without becoming a large extra concept that every
 
 That means:
 
+- the CI lane is a product status and result projection, not a separate setup flow
+- Project CI configuration happens through ordinary handler work when a user asks for it or a handler discovers it is needed
 - no heuristic inference from arbitrary workflow outputs
 - no parsing node logs or final text to guess check results
 - no custom `svvy` CI component that agents must import into every workflow
@@ -69,16 +73,23 @@ Project CI does not:
 
 ## Product Shape
 
-Project CI is a dedicated lane beside normal orchestrator and handler work.
+Project CI is a dedicated status and result lane over normal orchestrator, handler, and Smithers workflow work.
 
 The UI should expose at least:
 
-- a `Configure CI` action when Project CI is not configured
-- a `Run CI` action when one or more CI entries are configured
-- a Project CI surface that shows configuration status, latest CI run, check results, and linked artifacts
+- configuration status
+- latest CI run, check results, and linked artifacts
+- configured Project CI entries when they exist
+- a way for user requests to configure or run Project CI to land in a normal handler thread
 - a clear `CI not configured` state instead of fake green status
 
-The `Configure CI` action starts or focuses a normal handler thread with the `ci` context pack loaded.
+The UI must not require or imply a separate Project CI setup wizard, setup launcher, CI-specific orchestrator, or CI-specific runtime profile.
+
+When the user asks to configure Project CI from chat or from the CI status surface, that request is handled as ordinary handler-thread work.
+
+The orchestrator may start a normal handler thread with `context: ["ci"]` when the request clearly needs CI authoring context from the first handler turn.
+
+An existing handler may load the same context later with `request_context({ keys: ["ci"] })`.
 
 Mechanically, this is the same handler-thread actor class and default handler runtime shape used for other delegated work.
 
@@ -107,7 +118,7 @@ There is also no special CI-specific `thread.start` tool.
 The orchestrator may:
 
 - tell the user whether Project CI is configured
-- open the CI lane when the user asks to configure checks by calling `thread.start` with `context: ["ci"]`
+- start or reuse a normal handler thread with `context: ["ci"]` when the user asks to configure checks and the next handler turn clearly needs CI authoring context
 - delegate implementation work to normal handler threads
 - reconcile handoffs that include CI state
 
@@ -198,17 +209,21 @@ Reusable CI assets live under CI subdirectories:
     ci/
 ```
 
-The default project entry should be:
+The recommended conventional project entry path is:
 
 ```text
 .svvy/workflows/entries/ci/project-ci.tsx
 ```
 
-The default workflow id should be:
+The recommended conventional workflow id is:
 
 ```text
 project_ci
 ```
+
+These conventions guide handler-authored reusable CI configuration.
+
+They do not mean `svvy` ships, auto-creates, or assumes a built-in saved Project CI entry.
 
 Additional CI entries are allowed when they represent distinct repeatable lanes, such as:
 
@@ -266,17 +281,11 @@ export const productKind = "project-ci" as const;
 export const launchSchema = projectCiLaunchSchema;
 export const resultSchema = projectCiResultSchema;
 
-export const definitionPaths = [
-  ".svvy/workflows/definitions/ci/project-ci.tsx",
-] as const;
+export const definitionPaths = [".svvy/workflows/definitions/ci/project-ci.tsx"] as const;
 
-export const promptPaths = [
-  ".svvy/workflows/prompts/ci/check-policy.mdx",
-] as const;
+export const promptPaths = [".svvy/workflows/prompts/ci/check-policy.mdx"] as const;
 
-export const componentPaths = [
-  ".svvy/workflows/components/ci/check-runner.tsx",
-] as const;
+export const componentPaths = [".svvy/workflows/components/ci/check-runner.tsx"] as const;
 
 export function createRunnableEntry(input: { dbPath: string }) {
   return {
@@ -323,13 +332,7 @@ Project CI records come only from terminal output that validates against the CI 
 Recommended default result schema:
 
 ```ts
-export const ciCheckStatusSchema = z.enum([
-  "passed",
-  "failed",
-  "cancelled",
-  "skipped",
-  "blocked",
-]);
+export const ciCheckStatusSchema = z.enum(["passed", "failed", "cancelled", "skipped", "blocked"]);
 
 export const projectCiResultSchema = z.object({
   status: z.enum(["passed", "failed", "cancelled", "blocked"]),
@@ -470,29 +473,30 @@ The latest CI panel should show:
 - check list with status, label, kind, command, and summary
 - linked artifacts and logs
 
-## Handler Lifecycle Example
+## Handler Lifecycle Examples
 
-### First-Time Setup
+### Configuring CI From A User Request
 
-1. User clicks `Configure CI`.
-2. `svvy` opens a normal handler thread with `context: ["ci"]`.
-3. The handler starts with the default handler runtime shape plus the `ci` context pack.
-4. The handler inspects repository facts through `execute_typescript`.
-5. The handler sees `package.json` with `test` and `typecheck`, but no `lint`.
-6. The handler asks whether lint should be part of Project CI or omitted.
-7. The user says to include `test` and `typecheck` only.
-8. The handler writes:
+1. User asks in chat, or from the CI status surface, to configure Project CI.
+2. If the request clearly needs CI authoring from the first delegated turn, the orchestrator starts a normal handler thread with `context: ["ci"]`.
+3. If the request arrives in an existing normal handler thread, that handler calls `request_context({ keys: ["ci"] })` before authoring CI assets.
+4. The handler runs with the default handler runtime shape plus the `ci` context pack.
+5. The handler inspects repository facts through `execute_typescript`.
+6. The handler sees `package.json` with `test` and `typecheck`, but no `lint`.
+7. The handler asks whether lint should be part of Project CI or omitted.
+8. The user says to include `test` and `typecheck` only.
+9. The handler writes:
    - `.svvy/workflows/definitions/ci/project-ci.tsx`
    - `.svvy/workflows/components/ci/check-runner.tsx`
    - `.svvy/workflows/prompts/ci/check-policy.mdx`
    - `.svvy/workflows/entries/ci/project-ci.tsx`
-9. Saved-workflow validation runs automatically after the writes.
-10. The handler fixes any saved-workflow validation diagnostics.
-11. The handler calls `smithers.list_workflows` and confirms `project_ci` is listed with `productKind = "project-ci"`.
-12. The handler calls `smithers.run_workflow({ workflowId: "project_ci", input: { scope: "fast", reason: "initial setup" } })`.
-13. The workflow returns output that validates against `resultSchema`.
-14. The runtime records one `ci_run` plus one `ci_check_result` per returned check.
-15. The UI leaves `not-configured` and shows the latest Project CI result.
+10. Saved-workflow validation runs automatically after the writes.
+11. The handler fixes any saved-workflow validation diagnostics.
+12. The handler calls `smithers.list_workflows` and confirms `project_ci` is listed with `productKind = "project-ci"`.
+13. The handler calls `smithers.run_workflow({ workflowId: "project_ci", input: { scope: "fast", reason: "initial configuration" } })`.
+14. The workflow returns output that validates against `resultSchema`.
+15. The runtime records one `ci_run` plus one `ci_check_result` per returned check.
+16. The CI status surface leaves `not-configured` and shows the latest Project CI result.
 
 ### Normal Implementation Work
 
@@ -570,6 +574,7 @@ It points back to them.
 - Project CI records are created only from declared CI entries.
 - CI entries are normal Smithers runnable entries.
 - CI entries live in the saved workflow library when reusable.
+- CI configuration is ordinary handler-thread work, not a dedicated setup launcher or runtime.
 - CI authoring context is isolated to the typed `ci` context pack.
 - Normal handler threads may run configured CI entries without loading the `ci` context pack.
 - Normal handler threads may configure or modify Project CI after loading the `ci` context pack with `request_context`.

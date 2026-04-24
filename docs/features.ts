@@ -176,7 +176,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Project CI Lane",
     status: "in-progress",
     summary:
-      'Provides a dedicated Project CI configuration and run lane backed by normal saved Smithers entries under `.svvy/workflows/.../ci/`, records CI run and CI check result state only from entries declaring `productKind = "project-ci"` whose terminal output validates against the declared result schema, exposes latest CI status in specialized UI, and delivers CI authoring guidance only through the typed `ci` context pack loaded by `thread.start({ context: ["ci"] })` or handler-side `request_context({ keys: ["ci"] })`.',
+      'Provides Project CI status and result projection over normal saved Smithers entries under `.svvy/workflows/.../ci/`, records CI run and CI check result state only from entries declaring `productKind = "project-ci"` whose terminal output validates against the declared result schema, exposes latest CI status in specialized UI, and delivers CI authoring guidance only through the typed `ci` context pack loaded by `thread.start({ context: ["ci"] })` or handler-side `request_context({ keys: ["ci"] })`, without a setup launcher, CI-specific orchestrator, or shipped placeholder CI entry.',
     sourceSpecs: [
       "docs/specs/project-ci.spec.md",
       "docs/specs/handler-context-packs.spec.md",

@@ -23,6 +23,8 @@ describe("handler context packs", () => {
     });
     expect(pack.prompt).toContain('productKind = "project-ci"');
     expect(pack.prompt).toContain("resultSchema");
+    expect(pack.prompt).toContain("conventional saved entry path");
+    expect(pack.prompt).toContain("does not ship or auto-create");
     expect(pack.prompt).toContain("Never infer CI state from logs");
   });
 
