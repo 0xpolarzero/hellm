@@ -9,6 +9,7 @@ import type {
 const SPECIALIZED_TOOL_NAMES = new Set([
   "execute_typescript",
   "thread.start",
+  "request_context",
   "thread.handoff",
   "wait",
 ]);

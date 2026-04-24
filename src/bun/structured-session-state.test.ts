@@ -146,13 +146,24 @@ describe("structured session state write API", () => {
       summary: "Paused for clarification about workflow resume ownership.",
     });
 
-    const verification = store.recordVerification({
+    const ci = store.recordProjectCiResult({
       workflowRunId: runOne.id,
-      commandId: startWorkflow.id,
-      kind: "test",
       status: "failed",
-      summary: "The first validation pass failed.",
-      command: "bun test",
+      workflowId: "project_ci",
+      entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
+      summary: "The first CI pass failed.",
+      checks: [
+        {
+          checkId: "unit_tests",
+          label: "Unit tests",
+          kind: "test",
+          status: "failed",
+          required: true,
+          command: ["bun", "test"],
+          exitCode: 1,
+          summary: "Unit tests failed.",
+        },
+      ],
     });
 
     const workflowArtifact = store.createArtifact({
@@ -273,12 +284,20 @@ describe("structured session state write API", () => {
       runOne.id,
       runTwo.id,
     ]);
-    expect(snapshot.verifications).toEqual([
+    expect(snapshot.ciRuns).toEqual([
       expect.objectContaining({
-        id: verification.id,
+        id: ci.ciRun.id,
         threadId: handlerThread.id,
         workflowRunId: runOne.id,
-        commandId: startWorkflow.id,
+        workflowId: "project_ci",
+      }),
+    ]);
+    expect(snapshot.ciCheckResults).toEqual([
+      expect.objectContaining({
+        id: ci.checkResults[0]!.id,
+        ciRunId: ci.ciRun.id,
+        workflowRunId: runOne.id,
+        checkId: "unit_tests",
       }),
     ]);
     expect(snapshot.episodes).toEqual([
@@ -318,7 +337,8 @@ describe("structured session state write API", () => {
       "command.started",
       "command.finished",
       "workflowRun.created",
-      "verification.recorded",
+      "ciRun.recorded",
+      "ciCheckResult.recorded",
       "artifact.created",
       "thread.updated",
       "command.requested",
@@ -487,26 +507,36 @@ describe("structured session state write API", () => {
     expect(store.getSessionState("session-orchestrator-wait").session.wait).toBeNull();
   });
 
-  it("records verification against the latest workflow run on a thread when workflowRunId is omitted", () => {
+  it("loads thread context idempotently and records Project CI results by workflow run", () => {
     const store = createStore();
-    seedSession(store, "session-verification");
+    seedSession(store, "session-project-ci");
 
     const orchestratorTurn = store.startTurn({
-      sessionId: "session-verification",
-      surfacePiSessionId: "session-verification",
+      sessionId: "session-project-ci",
+      surfacePiSessionId: "session-project-ci",
       requestSummary: "Start a handler thread",
     });
     const thread = store.createThread({
       turnId: orchestratorTurn.id,
-      surfacePiSessionId: "pi-thread-verification",
-      title: "Verification thread",
-      objective: "Run verification against the latest workflow run.",
+      surfacePiSessionId: "pi-thread-ci",
+      title: "Project CI thread",
+      objective: "Run Project CI against a declared CI workflow.",
+    });
+    const context = store.loadThreadContext({
+      threadId: thread.id,
+      contextKey: "ci",
+      contextVersion: "2026-04-24",
+    });
+    const duplicateContext = store.loadThreadContext({
+      threadId: thread.id,
+      contextKey: "ci",
+      contextVersion: "2026-04-24",
     });
     const handlerTurn = store.startTurn({
-      sessionId: "session-verification",
+      sessionId: "session-project-ci",
       surfacePiSessionId: thread.surfacePiSessionId,
       threadId: thread.id,
-      requestSummary: "Run workflow and verification",
+      requestSummary: "Run Project CI",
     });
     const workflowCommand = store.createCommand({
       turnId: handlerTurn.id,
@@ -520,36 +550,74 @@ describe("structured session state write API", () => {
     const workflowRun = store.recordWorkflow({
       threadId: thread.id,
       commandId: workflowCommand.id,
-      smithersRunId: "smithers-run-verification",
-      workflowName: "verification-run",
+      smithersRunId: "smithers-run-ci",
+      workflowName: "project_ci",
       workflowSource: "saved",
-      entryPath: ".svvy/workflows/entries/verification-run.tsx",
-      savedEntryId: "verification_run",
-      status: "running",
-      summary: "Workflow is running verification.",
-    });
-    const verificationCommand = store.createCommand({
-      turnId: handlerTurn.id,
-      threadId: thread.id,
-      toolName: "execute_typescript",
-      executor: "handler",
-      visibility: "summary",
-      title: "Interpret workflow output",
-      summary: "Interpret the workflow output and record verification.",
+      entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
+      savedEntryId: "project_ci",
+      status: "completed",
+      summary: "Project CI finished.",
     });
 
-    const verification = store.recordVerification({
-      threadId: thread.id,
-      commandId: verificationCommand.id,
-      kind: "test",
+    const ci = store.recordProjectCiResult({
+      workflowRunId: workflowRun.id,
+      workflowId: "project_ci",
+      entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
       status: "passed",
-      summary: "Verification passed.",
-      command: "bun test",
+      summary: "Project CI passed.",
+      checks: [
+        {
+          checkId: "typecheck",
+          label: "Typecheck",
+          kind: "typecheck",
+          status: "passed",
+          required: true,
+          command: ["bun", "run", "typecheck"],
+          exitCode: 0,
+          summary: "Typecheck passed.",
+        },
+      ],
+    });
+    const replay = store.recordProjectCiResult({
+      workflowRunId: workflowRun.id,
+      workflowId: "project_ci",
+      entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
+      status: "passed",
+      summary: "Project CI passed again.",
+      checks: [
+        {
+          checkId: "typecheck",
+          label: "Typecheck",
+          kind: "typecheck",
+          status: "passed",
+          required: true,
+          command: ["bun", "run", "typecheck"],
+          exitCode: 0,
+          summary: "Typecheck still passed.",
+        },
+      ],
     });
 
-    expect(verification.threadId).toBe(thread.id);
-    expect(verification.workflowRunId).toBe(workflowRun.id);
-    expect(verification.commandId).toBe(verificationCommand.id);
+    const snapshot = store.getSessionState("session-project-ci");
+    expect(context.id).toBe(duplicateContext.id);
+    expect(snapshot.threads[0]?.loadedContextKeys).toEqual(["ci"]);
+    expect(snapshot.threadContexts).toEqual([expect.objectContaining({ contextKey: "ci" })]);
+    expect(snapshot.ciRuns).toHaveLength(1);
+    expect(snapshot.ciRuns[0]).toEqual(
+      expect.objectContaining({
+        id: ci.ciRun.id,
+        summary: "Project CI passed again.",
+        workflowRunId: workflowRun.id,
+      }),
+    );
+    expect(snapshot.ciCheckResults).toHaveLength(1);
+    expect(snapshot.ciCheckResults[0]).toEqual(
+      expect.objectContaining({
+        id: replay.checkResults[0]!.id,
+        checkId: "typecheck",
+        summary: "Typecheck still passed.",
+      }),
+    );
   });
 
   it("keeps artifact ownership thread-based after an episode exists", () => {

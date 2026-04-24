@@ -83,6 +83,15 @@ export interface StructuredHandlerThreadWorkflowSummary {
   updatedAt: string;
 }
 
+export interface StructuredProjectCiRunSummary {
+  ciRunId: string;
+  workflowRunId: string;
+  workflowId: string;
+  status: StructuredSessionSnapshot["ciRuns"][number]["status"];
+  summary: string;
+  updatedAt: string;
+}
+
 export interface StructuredHandlerThreadEpisodeSummary {
   episodeId: string;
   kind: StructuredEpisodeRecord["kind"];
@@ -153,8 +162,10 @@ export interface StructuredHandlerThreadSummary {
   workflowTaskAttemptCount: number;
   episodeCount: number;
   artifactCount: number;
-  verificationCount: number;
+  ciRunCount: number;
+  loadedContextKeys: string[];
   latestWorkflowRun: StructuredHandlerThreadWorkflowSummary | null;
+  latestCiRun: StructuredProjectCiRunSummary | null;
   latestEpisode: StructuredHandlerThreadEpisodeSummary | null;
 }
 
@@ -175,7 +186,8 @@ export interface StructuredSessionView {
     threads: number;
     commands: number;
     episodes: number;
-    verifications: number;
+    ciRuns: number;
+    ciChecks: number;
     workflows: number;
     artifacts: number;
     events: number;
@@ -219,11 +231,10 @@ function getMostRecentEpisode(session: StructuredSessionSnapshot): StructuredEpi
   );
 }
 
-function getMostRecentVerificationSummary(session: StructuredSessionSnapshot): string | null {
+function getMostRecentProjectCiRun(session: StructuredSessionSnapshot) {
   return (
-    session.verifications.toSorted((left, right) =>
-      right.finishedAt.localeCompare(left.finishedAt),
-    )[0]?.summary ?? null
+    session.ciRuns.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ??
+    null
   );
 }
 
@@ -419,6 +430,19 @@ function buildThreadWorkflowSummary(
   };
 }
 
+function buildProjectCiRunSummary(
+  ciRun: StructuredSessionSnapshot["ciRuns"][number],
+): StructuredProjectCiRunSummary {
+  return {
+    ciRunId: ciRun.id,
+    workflowRunId: ciRun.workflowRunId,
+    workflowId: ciRun.workflowId,
+    status: ciRun.status,
+    summary: ciRun.summary,
+    updatedAt: ciRun.updatedAt,
+  };
+}
+
 function buildThreadEpisodeSummary(
   episode: StructuredEpisodeRecord,
 ): StructuredHandlerThreadEpisodeSummary {
@@ -528,10 +552,10 @@ function buildHandlerThreadSummary(
   const artifacts = session.artifacts.filter(
     (artifact) => artifact.threadId === thread.id && artifact.workflowTaskAttemptId === null,
   );
-  const verifications = session.verifications.filter(
-    (verification) => verification.threadId === thread.id,
-  );
+  const ciRuns = session.ciRuns.filter((ciRun) => ciRun.threadId === thread.id);
   const latestWorkflowRun = getThreadLatestWorkflowRun(session, thread);
+  const latestCiRun =
+    ciRuns.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
   const latestEpisode = getThreadLatestEpisode(session, thread.id);
 
   return {
@@ -551,8 +575,10 @@ function buildHandlerThreadSummary(
     workflowTaskAttemptCount: workflowTaskAttempts.length,
     episodeCount: episodes.length,
     artifactCount: artifacts.length,
-    verificationCount: verifications.length,
+    ciRunCount: ciRuns.length,
+    loadedContextKeys: thread.loadedContextKeys.slice(),
     latestWorkflowRun: latestWorkflowRun ? buildThreadWorkflowSummary(latestWorkflowRun) : null,
+    latestCiRun: latestCiRun ? buildProjectCiRunSummary(latestCiRun) : null,
     latestEpisode: latestEpisode ? buildThreadEpisodeSummary(latestEpisode) : null,
   };
 }
@@ -583,8 +609,6 @@ function formatEpisodePreview(episode: StructuredEpisodeRecord): string {
   switch (episode.kind) {
     case "workflow":
       return `Workflow: ${episode.summary}`;
-    case "verification":
-      return `Verification: ${episode.summary}`;
     case "clarification":
       return `Waiting: ${episode.summary}`;
     default:
@@ -621,9 +645,9 @@ function derivePreview(session: StructuredSessionSnapshot): string {
     return latestCommandRollup.summary;
   }
 
-  const latestVerificationSummary = getMostRecentVerificationSummary(session);
-  if (latestVerificationSummary) {
-    return `Verification: ${latestVerificationSummary}`;
+  const latestProjectCiRun = getMostRecentProjectCiRun(session);
+  if (latestProjectCiRun) {
+    return `Project CI: ${latestProjectCiRun.summary}`;
   }
 
   const latestWorkflowRun = getMostRecentWorkflowRun(session);
@@ -654,7 +678,8 @@ function deriveUpdatedAt(session: StructuredSessionSnapshot): string {
     ...session.threads.map((thread) => Date.parse(thread.updatedAt)),
     ...session.commands.map((command) => Date.parse(command.updatedAt)),
     ...session.episodes.map((episode) => Date.parse(episode.createdAt)),
-    ...session.verifications.map((verification) => Date.parse(verification.finishedAt)),
+    ...session.ciRuns.map((ciRun) => Date.parse(ciRun.updatedAt)),
+    ...session.ciCheckResults.map((checkResult) => Date.parse(checkResult.updatedAt)),
     ...session.workflowRuns.map((workflowRun) => Date.parse(workflowRun.updatedAt)),
     ...session.workflowTaskAttempts.map((workflowTaskAttempt) =>
       Date.parse(workflowTaskAttempt.updatedAt),
@@ -729,7 +754,8 @@ export function buildStructuredSessionView(
       threads: delegatedThreads.length,
       commands: session.commands.length,
       episodes: session.episodes.length,
-      verifications: session.verifications.length,
+      ciRuns: session.ciRuns.length,
+      ciChecks: session.ciCheckResults.length,
       workflows: session.workflowRuns.length,
       artifacts: session.artifacts.length,
       events: session.events.length,
@@ -797,9 +823,11 @@ export function hasStructuredSessionFacts(session: StructuredSessionSnapshot): b
     session.session.wait !== null ||
     session.turns.length > 0 ||
     session.threads.length > 0 ||
+    session.threadContexts.length > 0 ||
     buildCommandRollups(session).length > 0 ||
     session.episodes.length > 0 ||
-    session.verifications.length > 0 ||
+    session.ciRuns.length > 0 ||
+    session.ciCheckResults.length > 0 ||
     session.workflowRuns.length > 0 ||
     session.workflowTaskAttempts.length > 0 ||
     session.workflowTaskMessages.length > 0 ||
@@ -859,7 +887,8 @@ export function buildStructuredWorkflowTaskAttemptInspector(
   workflowTaskAttemptId: string,
 ): StructuredWorkflowTaskAttemptInspector | null {
   const workflowTaskAttempt =
-    session.workflowTaskAttempts.find((candidate) => candidate.id === workflowTaskAttemptId) ?? null;
+    session.workflowTaskAttempts.find((candidate) => candidate.id === workflowTaskAttemptId) ??
+    null;
   if (!workflowTaskAttempt) {
     return null;
   }

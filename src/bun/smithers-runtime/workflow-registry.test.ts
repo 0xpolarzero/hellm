@@ -85,3 +85,108 @@ test("loads authored workflow entries from the import sandbox instead of the wor
   expect(entry.summary).not.toBe(fakeWorkspaceReactPackageJsonPath);
   expect(entry.summary).not.toContain(workspaceRoot);
 });
+
+test("loads declared Project CI entries with result schema metadata", async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "svvy-workflow-registry-ci-test-"));
+  tempDirs.push(workspaceRoot);
+
+  const entryPath = join(workspaceRoot, ".svvy", "workflows", "entries", "ci", "project-ci.ts");
+  const definitionPath = join(
+    workspaceRoot,
+    ".svvy",
+    "workflows",
+    "definitions",
+    "ci",
+    "project-ci.ts",
+  );
+  const promptPath = join(workspaceRoot, ".svvy", "workflows", "prompts", "ci", "project-ci.mdx");
+  const componentPath = join(
+    workspaceRoot,
+    ".svvy",
+    "workflows",
+    "components",
+    "ci",
+    "project-ci.ts",
+  );
+
+  await mkdir(dirname(entryPath), { recursive: true });
+  await mkdir(dirname(definitionPath), { recursive: true });
+  await mkdir(dirname(promptPath), { recursive: true });
+  await mkdir(dirname(componentPath), { recursive: true });
+  await writeFile(definitionPath, "export const definition = true;\n");
+  await writeFile(promptPath, "# Project CI\n");
+  await writeFile(componentPath, "export const component = true;\n");
+  await writeFile(
+    entryPath,
+    [
+      'import { z } from "zod";',
+      "",
+      'export const workflowId = "project_ci";',
+      'export const label = "Project CI";',
+      'export const summary = "Runs the workspace Project CI checks."; ',
+      'export const productKind = "project-ci";',
+      "export const launchSchema = z.object({ scope: z.enum(['fast', 'full']).default('fast') });",
+      "export const resultSchema = z.object({",
+      "  status: z.enum(['passed', 'failed', 'cancelled', 'blocked']),",
+      "  summary: z.string().min(1),",
+      "  checks: z.array(z.object({",
+      "    checkId: z.string().min(1),",
+      "    label: z.string().min(1),",
+      "    kind: z.string().min(1),",
+      "    status: z.enum(['passed', 'failed', 'cancelled', 'skipped', 'blocked']),",
+      "    required: z.boolean().default(true),",
+      "    summary: z.string().min(1),",
+      "    artifactIds: z.array(z.string()).default([]),",
+      "  })),",
+      "});",
+      'export const definitionPaths = [".svvy/workflows/definitions/ci/project-ci.ts"];',
+      'export const promptPaths = [".svvy/workflows/prompts/ci/project-ci.mdx"];',
+      'export const componentPaths = [".svvy/workflows/components/ci/project-ci.ts"];',
+      "",
+      "export function createRunnableEntry() {",
+      "  return {",
+      "    workflowId,",
+      '    workflowSource: "saved",',
+      "    productKind,",
+      "    launchSchema,",
+      "    resultSchema,",
+      "    workflow: {} as any,",
+      "  };",
+      "}",
+      "",
+    ].join("\n"),
+  );
+
+  const entry = await loadRunnableWorkflowEntryAtPath(
+    workspaceRoot,
+    ".svvy/workflows/entries/ci/project-ci.ts",
+  );
+
+  expect(entry).toMatchObject({
+    workflowId: "project_ci",
+    productKind: "project-ci",
+    entryPath: ".svvy/workflows/entries/ci/project-ci.ts",
+    sourceScope: "saved",
+    assetPaths: [
+      ".svvy/workflows/components/ci/project-ci.ts",
+      ".svvy/workflows/definitions/ci/project-ci.ts",
+      ".svvy/workflows/prompts/ci/project-ci.mdx",
+    ],
+  });
+  expect(entry.resultSchema).toBeTruthy();
+  expect(
+    entry.resultSchema?.safeParse({
+      status: "passed",
+      summary: "Project CI passed.",
+      checks: [
+        {
+          checkId: "typecheck",
+          label: "Typecheck",
+          kind: "typecheck",
+          status: "passed",
+          summary: "Typecheck passed.",
+        },
+      ],
+    }).success,
+  ).toBe(true);
+});

@@ -133,7 +133,7 @@ async function clickWhenEnabled(
 
 async function sendPrompt(page: SvvyApp["page"], text: string): Promise<void> {
   const composer = page.locator(
-    'textarea[placeholder="Ask svvy to inspect the repo, make a change, or run verification."]',
+    'textarea[placeholder="Ask svvy to inspect the repo, make a change, or run Project CI."]',
   );
   await composer.fill(text);
   await clickWhenEnabled(page.getByRole("button", { name: "Send" }));
@@ -637,7 +637,7 @@ function collectAvailableToolNames(
         .map((tool) => tool.function?.name)
         .filter((name): name is string => typeof name === "string"),
     ),
-  ).sort();
+  ).toSorted();
 }
 
 function collectAssistantToolCalls(requests: StubRequest[]): StubAssistantToolCall[] {

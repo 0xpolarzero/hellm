@@ -263,7 +263,9 @@ export function createTranscriptProbeTestWorkflow(dbPath: string): TestWorkflowD
     launchSchema,
     workflow: smithersApi.smithers((ctx) => {
       const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);
-      const reply = getLatestOutput<z.infer<typeof transcriptReplySchema>>(ctx.outputs.transcriptReply);
+      const reply = getLatestOutput<z.infer<typeof transcriptReplySchema>>(
+        ctx.outputs.transcriptReply,
+      );
       return React.createElement(
         smithersApi.Workflow,
         { name: "svvy-chat-transcript-probe" },
@@ -294,6 +296,105 @@ export function createTranscriptProbeTestWorkflow(dbPath: string): TestWorkflowD
     }),
     sourceScope: "saved",
     entryPath: ".svvy/workflows/entries/chat-transcript-probe.tsx",
+  };
+}
+
+export const testProjectCiResultSchema = z.object({
+  status: z.enum(["passed", "failed", "cancelled", "blocked"]),
+  summary: z.string().min(1),
+  startedAt: z.string().optional(),
+  finishedAt: z.string().optional(),
+  checks: z.array(
+    z.object({
+      checkId: z.string().min(1),
+      label: z.string().min(1),
+      kind: z.string().min(1),
+      status: z.enum(["passed", "failed", "cancelled", "skipped", "blocked"]),
+      required: z.boolean().default(true),
+      command: z.array(z.string()).optional(),
+      exitCode: z.number().int().nullable().optional(),
+      summary: z.string().min(1),
+      artifactIds: z.array(z.string()).default([]),
+      startedAt: z.string().nullable().optional(),
+      finishedAt: z.string().nullable().optional(),
+    }),
+  ),
+});
+const invalidTestProjectCiResultSchema = testProjectCiResultSchema.extend({
+  validatorToken: z.literal("valid"),
+});
+
+export function createProjectCiTestWorkflow(input: {
+  dbPath: string;
+  validOutput?: boolean;
+  id?: string;
+  productKind?: "project-ci";
+}): TestWorkflowDefinition {
+  const launchSchema = z.object({
+    scope: z.enum(["fast", "full", "release"]).default("fast"),
+    reason: z.string().optional(),
+  });
+  const smithersApi = createSmithers(
+    {
+      input: bundledWorkflowRuntimeStoredInputSchema,
+      output: testProjectCiResultSchema,
+    },
+    { dbPath: input.dbPath },
+  );
+  const workflowId = input.id ?? "project_ci";
+
+  return {
+    id: workflowId,
+    label: input.productKind ? "Project CI" : "Project CI Lookalike",
+    summary: input.productKind
+      ? "Test Project CI workflow."
+      : "Non-CI workflow with CI-shaped output.",
+    launchSchema,
+    productKind: input.productKind,
+    resultSchema: input.productKind
+      ? input.validOutput === false
+        ? invalidTestProjectCiResultSchema
+        : testProjectCiResultSchema
+      : undefined,
+    workflow: smithersApi.smithers((ctx) => {
+      const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);
+      const validResult = {
+        status: workflowInput.scope === "release" ? "blocked" : "passed",
+        summary: `Project CI ${workflowInput.scope} checks passed.`,
+        checks: [
+          {
+            checkId: "typecheck",
+            label: "Typecheck",
+            kind: "typecheck",
+            status: "passed",
+            required: true,
+            command: ["bun", "run", "typecheck"],
+            exitCode: 0,
+            summary: "Typecheck passed.",
+            artifactIds: [],
+          },
+        ],
+      };
+      return React.createElement(
+        smithersApi.Workflow,
+        { name: input.productKind ? "svvy-project-ci" : "svvy-project-ci-lookalike" },
+        React.createElement(smithersApi.Task, {
+          id: "result",
+          output: smithersApi.outputs.output,
+          children:
+            input.validOutput === false
+              ? {
+                  ...validResult,
+                  summary: `Project CI ${workflowInput.scope} checks reported an invalid terminal contract.`,
+                }
+              : validResult,
+        }),
+      );
+    }),
+    sourceScope: "saved",
+    entryPath: input.productKind
+      ? ".svvy/workflows/entries/ci/project-ci.tsx"
+      : ".svvy/workflows/entries/ci-looking-workflow.tsx",
   };
 }
 

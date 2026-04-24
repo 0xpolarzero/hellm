@@ -13,6 +13,7 @@ import {
   ensureSmithersTables,
   runWorkflow,
   signalRun,
+  type RunResult,
   type RunStatus,
   type SmithersEvent,
   type SmithersWorkflow,
@@ -22,6 +23,7 @@ import { Effect } from "effect";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import type {
   ExecuteTypescriptRunCommandInput,
   ExecuteTypescriptRunCommandResult,
@@ -33,6 +35,8 @@ import type {
   StructuredWorkflowWaitKind,
   StructuredWorkflowRunRecord,
   StructuredWorkflowStatus,
+  StructuredProjectCiCheckStatus,
+  StructuredProjectCiStatus,
 } from "../structured-session-state";
 import {
   compileRunnableWorkflowLaunchContract,
@@ -66,7 +70,7 @@ type WorkflowOwnership = {
   commandId: string;
 };
 
-type ProjectionSource = "launch" | "progress" | "control" | "bootstrap" | "failure";
+type ProjectionSource = "launch" | "progress" | "control" | "bootstrap" | "failure" | "query";
 
 type SmithersRuntimeManagerOptions = {
   cwd: string;
@@ -127,6 +131,7 @@ type LaunchWorkflowResult = {
 type WorkflowListInput = {
   workflowId?: string;
   sourceScope?: RunnableWorkflowRegistryEntry["sourceScope"];
+  productKind?: RunnableWorkflowRegistryEntry["productKind"];
   pathPrefix?: string;
 };
 
@@ -136,11 +141,13 @@ type WorkflowListEntry = {
   summary: string;
   sourceScope: RunnableWorkflowRegistryEntry["sourceScope"];
   entryPath: string;
+  productKind?: RunnableWorkflowRegistryEntry["productKind"];
   definitionPaths: string[];
   promptPaths: string[];
   componentPaths: string[];
   assetPaths: string[];
   launchInputSchema: Record<string, unknown>;
+  resultSchema?: Record<string, unknown>;
 };
 
 export type WorkflowLaunchDiagnostic = {
@@ -185,6 +192,8 @@ export type TestWorkflowDefinition = {
   summary: string;
   workflowName?: string;
   launchSchema: RunnableWorkflowRegistryEntry["launchSchema"];
+  productKind?: RunnableWorkflowRegistryEntry["productKind"];
+  resultSchema?: RunnableWorkflowRegistryEntry["resultSchema"];
   workflow: SmithersWorkflow<any>;
   sourceScope?: RunnableWorkflowRegistryEntry["sourceScope"];
   entryPath?: string;
@@ -192,6 +201,44 @@ export type TestWorkflowDefinition = {
   promptPaths?: string[];
   componentPaths?: string[];
 };
+
+const projectCiCheckStatusSchema = z.enum(["passed", "failed", "cancelled", "skipped", "blocked"]);
+
+const projectCiResultProjectionSchema = z.object({
+  status: z.enum(["passed", "failed", "cancelled", "blocked"]),
+  summary: z.string().min(1),
+  startedAt: z.string().optional(),
+  finishedAt: z.string().optional(),
+  checks: z.array(
+    z.object({
+      checkId: z.string().min(1),
+      label: z.string().min(1),
+      kind: z.string().min(1),
+      status: projectCiCheckStatusSchema,
+      required: z.boolean().default(true),
+      command: z.array(z.string()).optional(),
+      exitCode: z.number().int().nullable().optional(),
+      summary: z.string().min(1),
+      artifactIds: z.array(z.string()).default([]),
+      startedAt: z.string().nullable().optional(),
+      finishedAt: z.string().nullable().optional(),
+    }),
+  ),
+});
+
+type ProjectCiResultProjection = z.infer<typeof projectCiResultProjectionSchema>;
+
+type ProjectCiProjection =
+  | {
+      workflowStatus: "completed";
+      summary: string;
+      result: ProjectCiResultProjection | null;
+    }
+  | {
+      workflowStatus: "failed";
+      summary: string;
+      result: null;
+    };
 
 export class SmithersRuntimeManager {
   private readonly runtimeRoot: string;
@@ -205,6 +252,7 @@ export class SmithersRuntimeManager {
   private readonly monitorByRunId = new Map<string, WorkflowMonitor>();
   private readonly flushPromiseByRunId = new Map<string, Promise<void>>();
   private readonly activeWorkflowPromises = new Set<Promise<void>>();
+  private readonly terminalOutputByRunId = new Map<string, unknown>();
 
   constructor(private readonly options: SmithersRuntimeManagerOptions) {
     this.runtimeRoot = join(options.cwd, ".svvy", "smithers-runtime");
@@ -219,6 +267,7 @@ export class SmithersRuntimeManager {
     return this.workflowLaunchContracts
       .filter((contract) => (input.workflowId ? contract.workflowId === input.workflowId : true))
       .filter((contract) => (input.sourceScope ? contract.sourceScope === input.sourceScope : true))
+      .filter((contract) => (input.productKind ? contract.productKind === input.productKind : true))
       .filter((contract) =>
         input.pathPrefix
           ? [
@@ -236,11 +285,15 @@ export class SmithersRuntimeManager {
         summary: contract.summary,
         sourceScope: contract.sourceScope,
         entryPath: contract.entryPath,
+        productKind: contract.productKind,
         definitionPaths: contract.definitionPaths.slice(),
         promptPaths: contract.promptPaths.slice(),
         componentPaths: contract.componentPaths.slice(),
         assetPaths: contract.assetPaths.slice(),
         launchInputSchema: structuredClone(contract.launchInputJsonSchema),
+        resultSchema: contract.resultSchemaJsonSchema
+          ? structuredClone(contract.resultSchemaJsonSchema)
+          : undefined,
       }));
   }
 
@@ -262,7 +315,9 @@ export class SmithersRuntimeManager {
       summary: definition.summary,
       sourceScope,
       entryPath,
+      productKind: definition.productKind,
       launchSchema: definition.launchSchema,
+      resultSchema: definition.resultSchema,
       definitionPaths: definition.definitionPaths ?? [],
       promptPaths: definition.promptPaths ?? [],
       componentPaths: definition.componentPaths ?? [],
@@ -276,7 +331,9 @@ export class SmithersRuntimeManager {
       createRunnableEntry: () => ({
         workflowId: definition.id,
         workflowSource: sourceScope,
+        productKind: definition.productKind,
         launchSchema: definition.launchSchema,
+        resultSchema: definition.resultSchema,
         workflow: definition.workflow,
       }),
     };
@@ -1122,7 +1179,7 @@ export class SmithersRuntimeManager {
     resume: boolean;
   }) {
     try {
-      await Effect.runPromise(
+      const result = (await Effect.runPromise(
         runWorkflow(input.runnableEntry.workflow, {
           runId: input.runId,
           input: input.input,
@@ -1133,7 +1190,8 @@ export class SmithersRuntimeManager {
             void this.handleProgressEvent(input.monitor, event);
           },
         }),
-      );
+      )) as RunResult;
+      this.terminalOutputByRunId.set(input.runId, result.output);
     } catch (error) {
       if (!input.monitor.abortController.signal.aborted) {
         await this.captureUnexpectedWorkflowFailure(input.runId, error);
@@ -1311,10 +1369,16 @@ export class SmithersRuntimeManager {
       ownership.sessionId,
       ownership.structuredWorkflowId,
     );
-    const status = mapRunStatusToWorkflowStatus(run.status);
     const diagnosis = run.status === "waiting-event" ? await this.getRunDiagnosis(runId) : null;
     const waitKind = mapRunStatusToWaitKind(run.status);
-    const summary = diagnosis?.summary ?? (await this.buildRunSummary(run));
+    const projectCiProjection = this.resolveProjectCiProjection({
+      runId,
+      ownership,
+      runStatus: run.status,
+    });
+    const status = projectCiProjection?.workflowStatus ?? mapRunStatusToWorkflowStatus(run.status);
+    const summary =
+      projectCiProjection?.summary ?? diagnosis?.summary ?? (await this.buildRunSummary(run));
     const heartbeatAt = toIso(run.heartbeatAtMs);
     const currentPendingAttentionSeq = currentWorkflowRun?.pendingAttentionSeq ?? null;
     const currentDeliveredAttentionSeq = currentWorkflowRun?.lastAttentionSeq ?? null;
@@ -1367,6 +1431,31 @@ export class SmithersRuntimeManager {
     }
 
     await this.projectWorkflowTaskAttempts(runId, ownership);
+    if (projectCiProjection?.workflowStatus === "completed" && projectCiProjection.result) {
+      const entry = this.workflowEntriesById.get(ownership.workflowId);
+      this.options.store.recordProjectCiResult({
+        workflowRunId: nextWorkflowRun.id,
+        workflowId: ownership.workflowId,
+        entryPath: entry?.entryPath ?? nextWorkflowRun.entryPath ?? "",
+        status: projectCiProjection.result.status as StructuredProjectCiStatus,
+        summary: projectCiProjection.result.summary,
+        startedAt: projectCiProjection.result.startedAt ?? nextWorkflowRun.startedAt,
+        finishedAt: projectCiProjection.result.finishedAt ?? nextWorkflowRun.finishedAt,
+        checks: projectCiProjection.result.checks.map((check) => ({
+          checkId: check.checkId,
+          label: check.label,
+          kind: check.kind,
+          status: check.status as StructuredProjectCiCheckStatus,
+          required: check.required,
+          command: check.command ?? null,
+          exitCode: check.exitCode ?? null,
+          summary: check.summary,
+          artifactIds: check.artifactIds,
+          startedAt: check.startedAt ?? null,
+          finishedAt: check.finishedAt ?? null,
+        })),
+      });
+    }
     this.applyThreadProjection({
       sessionId: ownership.sessionId,
       threadId: ownership.threadId,
@@ -1474,6 +1563,74 @@ export class SmithersRuntimeManager {
         }),
       });
     }
+  }
+
+  private resolveProjectCiProjection(input: {
+    runId: string;
+    ownership: WorkflowOwnership;
+    runStatus: RunStatus;
+  }): ProjectCiProjection | null {
+    if (input.runStatus !== "finished") {
+      return null;
+    }
+
+    const entry = this.workflowEntriesById.get(input.ownership.workflowId);
+    if (entry?.productKind !== "project-ci") {
+      return null;
+    }
+
+    const existingCiRun =
+      this.options.store
+        .getSessionState(input.ownership.sessionId)
+        .ciRuns.find((ciRun) => ciRun.workflowRunId === input.ownership.structuredWorkflowId) ??
+      null;
+    if (existingCiRun) {
+      return {
+        workflowStatus: "completed",
+        summary: existingCiRun.summary,
+        result: null,
+      };
+    }
+
+    if (!this.terminalOutputByRunId.has(input.runId)) {
+      return null;
+    }
+
+    if (!entry.resultSchema) {
+      return {
+        workflowStatus: "failed",
+        summary:
+          "Project CI entry declared productKind but did not provide a result schema, so no CI records were created.",
+        result: null,
+      };
+    }
+
+    const output = this.terminalOutputByRunId.get(input.runId);
+    const entryValidation = entry.resultSchema.safeParse(output);
+    if (!entryValidation.success) {
+      return {
+        workflowStatus: "failed",
+        summary:
+          "Project CI terminal result output did not validate against the entry result schema.",
+        result: null,
+      };
+    }
+
+    const projectionValidation = projectCiResultProjectionSchema.safeParse(entryValidation.data);
+    if (!projectionValidation.success) {
+      return {
+        workflowStatus: "failed",
+        summary:
+          "Project CI terminal result output validated against its entry schema but did not match the Project CI projection contract.",
+        result: null,
+      };
+    }
+
+    return {
+      workflowStatus: "completed",
+      summary: projectionValidation.data.summary,
+      result: projectionValidation.data,
+    };
   }
 
   private applyThreadProjection(input: {
@@ -2025,7 +2182,7 @@ function buildWorkflowTaskAttemptMessages(input: {
     });
   }
 
-  const sortedOutputEvents = [...input.outputEvents].sort((left, right) =>
+  const sortedOutputEvents = input.outputEvents.toSorted((left, right) =>
     (left.timestampMs ?? 0) === (right.timestampMs ?? 0)
       ? (left.seq ?? 0) - (right.seq ?? 0)
       : (left.timestampMs ?? 0) - (right.timestampMs ?? 0),

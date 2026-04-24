@@ -16,11 +16,14 @@ import type { SmithersWorkflow } from "smithers-orchestrator";
 import { z } from "zod";
 
 export type RunnableWorkflowSourceScope = "saved" | "artifact";
+export type RunnableWorkflowProductKind = "project-ci";
 
 export type RunnableWorkflowRuntimeEntry = {
   workflowId: string;
   workflowSource: RunnableWorkflowSourceScope;
+  productKind?: RunnableWorkflowProductKind;
   launchSchema: z.ZodTypeAny;
+  resultSchema?: z.ZodTypeAny;
   workflow: SmithersWorkflow<any>;
 };
 
@@ -30,7 +33,9 @@ export type RunnableWorkflowRegistryEntry = {
   summary: string;
   sourceScope: RunnableWorkflowSourceScope;
   entryPath: string;
+  productKind?: RunnableWorkflowProductKind;
   launchSchema: z.ZodTypeAny;
+  resultSchema?: z.ZodTypeAny;
   definitionPaths: string[];
   promptPaths: string[];
   componentPaths: string[];
@@ -147,7 +152,10 @@ function syncWorkflowTreeIntoSandbox(sourceRoot: string, destinationRoot: string
 function ensureWorkspaceImportSandbox(workspaceRoot: string): string {
   const existing = importSandboxByWorkspaceRoot.get(workspaceRoot);
   if (existing && existsSync(existing)) {
-    syncWorkflowTreeIntoSandbox(join(workspaceRoot, ".svvy", "workflows"), join(existing, ".svvy", "workflows"));
+    syncWorkflowTreeIntoSandbox(
+      join(workspaceRoot, ".svvy", "workflows"),
+      join(existing, ".svvy", "workflows"),
+    );
     syncWorkflowTreeIntoSandbox(
       join(workspaceRoot, ".svvy", "artifacts", "workflows"),
       join(existing, ".svvy", "artifacts", "workflows"),
@@ -159,7 +167,10 @@ function ensureWorkspaceImportSandbox(workspaceRoot: string): string {
   mkdirSync(join(sandboxRoot, ".svvy", "artifacts"), { recursive: true });
   mkdirSync(join(sandboxRoot, "node_modules"), { recursive: true });
 
-  syncWorkflowTreeIntoSandbox(join(workspaceRoot, ".svvy", "workflows"), join(sandboxRoot, ".svvy", "workflows"));
+  syncWorkflowTreeIntoSandbox(
+    join(workspaceRoot, ".svvy", "workflows"),
+    join(sandboxRoot, ".svvy", "workflows"),
+  );
   syncWorkflowTreeIntoSandbox(
     join(workspaceRoot, ".svvy", "artifacts", "workflows"),
     join(sandboxRoot, ".svvy", "artifacts", "workflows"),
@@ -221,6 +232,22 @@ function schemaFingerprint(schema: z.ZodTypeAny): string {
   return JSON.stringify(z.toJSONSchema(schema as any, { io: "input" }));
 }
 
+function readProductKind(
+  module: Record<string, unknown>,
+  entryPath: string,
+): RunnableWorkflowProductKind | undefined {
+  const value = module.productKind;
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "project-ci") {
+    throw new Error(
+      `Runnable workflow entry ${entryPath} declared unsupported productKind ${String(value)}.`,
+    );
+  }
+  return value;
+}
+
 function createValidationDbPath(): { dir: string; dbPath: string } {
   const dir = mkdtempSync(join(tmpdir(), "svvy-workflow-entry-"));
   return {
@@ -242,6 +269,8 @@ async function loadRunnableWorkflowEntryModule(
   const label = String(module.label ?? "");
   const summary = String(module.summary ?? "");
   const launchSchema = module.launchSchema as z.ZodTypeAny | undefined;
+  const productKind = readProductKind(module, entryPath);
+  const resultSchema = module.resultSchema as z.ZodTypeAny | undefined;
   const createRunnableEntry = module.createRunnableEntry as
     | ((input: { dbPath: string }) => RunnableWorkflowRuntimeEntry)
     | undefined;
@@ -253,6 +282,11 @@ async function loadRunnableWorkflowEntryModule(
   }
   if (typeof createRunnableEntry !== "function") {
     throw new Error(`Runnable workflow entry ${entryPath} is missing createRunnableEntry(...).`);
+  }
+  if (productKind === "project-ci" && !resultSchema) {
+    throw new Error(
+      `Runnable workflow entry ${entryPath} declares productKind "project-ci" but is missing resultSchema.`,
+    );
   }
 
   const definitionPaths = validateEntryAssetPaths(
@@ -290,10 +324,27 @@ async function loadRunnableWorkflowEntryModule(
         `Runnable workflow entry ${entryPath} returned workflowSource ${runtimeEntry.workflowSource}, which does not match derived scope ${sourceScope}.`,
       );
     }
+    if (runtimeEntry.productKind !== productKind) {
+      throw new Error(
+        `Runnable workflow entry ${entryPath} returned productKind ${String(runtimeEntry.productKind)}, which does not match exported productKind ${String(productKind)}.`,
+      );
+    }
     if (schemaFingerprint(runtimeEntry.launchSchema) !== schemaFingerprint(launchSchema)) {
       throw new Error(
         `Runnable workflow entry ${entryPath} returned a launchSchema that does not match the exported launchSchema.`,
       );
+    }
+    if (productKind === "project-ci") {
+      if (!runtimeEntry.resultSchema) {
+        throw new Error(
+          `Runnable workflow entry ${entryPath} returned productKind "project-ci" without resultSchema.`,
+        );
+      }
+      if (schemaFingerprint(runtimeEntry.resultSchema) !== schemaFingerprint(resultSchema!)) {
+        throw new Error(
+          `Runnable workflow entry ${entryPath} returned a resultSchema that does not match the exported resultSchema.`,
+        );
+      }
     }
     if (!runtimeEntry.workflow) {
       throw new Error(`Runnable workflow entry ${entryPath} returned an empty workflow graph.`);
@@ -308,7 +359,9 @@ async function loadRunnableWorkflowEntryModule(
     summary,
     sourceScope,
     entryPath,
+    productKind,
     launchSchema,
+    resultSchema,
     definitionPaths,
     promptPaths,
     componentPaths,

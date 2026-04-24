@@ -1,4 +1,9 @@
 import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
+import {
+  buildHandlerContextRegistryPrompt,
+  buildLoadedHandlerContextPrompt,
+  buildOrchestratorContextRoutingPrompt,
+} from "./handler-context-packs";
 import { HANDLER_WORKFLOW_AUTHORING_APPENDIX } from "./smithers-runtime/workflow-authoring-guide";
 
 export type SvvyActorProfile = "orchestrator" | "handler" | "workflow-task";
@@ -17,7 +22,7 @@ function buildActorInstructions(actor: SvvyActorProfile): string[] {
   const common = [
     "You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.",
     "Everything you do is a tool call inside one shared execution model.",
-    "Threads, commands, verification, workflows, wait state, and handoff episodes come from real tool execution rather than assistant prose.",
+    "Threads, commands, Project CI, workflows, wait state, and handoff episodes come from real tool execution rather than assistant prose.",
     "Use execute_typescript for ordinary generic work.",
   ];
 
@@ -29,6 +34,7 @@ function buildActorInstructions(actor: SvvyActorProfile): string[] {
         "The orchestrator delegates objectives into handler threads. It does not directly supervise Smithers workflow runs.",
         "Handler threads can supervise workflows through smithers.* tools, but those tool declarations are not callable from this surface.",
         "If a delegated objective needs workflow authoring or saving reusable workflow assets, delegate that work to a handler thread instead of trying to do it from the orchestrator surface.",
+        buildOrchestratorContextRoutingPrompt(),
       ];
     case "handler":
       return [
@@ -39,6 +45,7 @@ function buildActorInstructions(actor: SvvyActorProfile): string[] {
         "Workflow waits, approvals, and resumes stay inside this handler thread. Do not call thread.handoff while a supervised workflow on this thread is still running or waiting; resolve it, wait for the needed input, or cancel it first.",
         "Do not call thread.start from this surface in the adopted supervision model.",
         "When workflow help is justified, use this decision order: direct execute_typescript work, then saved runnable entries, then artifact-workflow authoring, and save reusable pieces only on explicit request through normal repo writes into `.svvy/workflows/...`.",
+        buildHandlerContextRegistryPrompt(),
       ];
     case "workflow-task":
       return [
@@ -51,10 +58,17 @@ function buildActorInstructions(actor: SvvyActorProfile): string[] {
   }
 }
 
-export function buildSystemPrompt(actor: SvvyActorProfile): string {
+export function buildSystemPrompt(
+  actor: SvvyActorProfile,
+  options: { loadedContextKeys?: readonly string[] } = {},
+): string {
   const sections = [...buildActorInstructions(actor)];
   if (actor === "handler") {
     sections.push(HANDLER_WORKFLOW_AUTHORING_APPENDIX);
+    const loadedContextPrompt = buildLoadedHandlerContextPrompt(options.loadedContextKeys ?? []);
+    if (loadedContextPrompt) {
+      sections.push(loadedContextPrompt);
+    }
   }
   sections.push(EXECUTE_TYPESCRIPT_PROMPT_SECTION);
   return sections.join("\n\n");

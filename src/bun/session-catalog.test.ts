@@ -346,6 +346,8 @@ async function createHandlerThreadHarness(
         parentSurfacePiSessionId: string;
         title: string;
         objective: string;
+        contextKeys: [];
+        loadedByCommandId: string;
       }): Promise<{ id: string; surfacePiSessionId: string }>;
     }
   ).createHandlerThread({
@@ -355,6 +357,8 @@ async function createHandlerThreadHarness(
     parentSurfacePiSessionId: workspaceSessionId,
     title: input.title,
     objective: input.objective,
+    contextKeys: [],
+    loadedByCommandId: orchestratorThread.id,
   });
 
   return {
@@ -457,6 +461,79 @@ describe("WorkspaceSessionCatalog", () => {
       expect(handlerManaged.session.agent.state.systemPrompt).toBe(
         openedHandler.resolvedSystemPrompt,
       );
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("preloads typed handler context packs into handler surface prompts", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Context Prompt Channel" }, DEFAULTS);
+      const store = getStructuredSessionStore(catalog);
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Delegate Project CI setup",
+      });
+      const orchestratorThread = store.createThread({
+        turnId: turn.id,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        title: "Delegate Project CI setup",
+        objective: "Open a handler thread with Project CI context.",
+      });
+      const command = store.createCommand({
+        turnId: turn.id,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        threadId: orchestratorThread.id,
+        toolName: "thread.start",
+        executor: "orchestrator",
+        visibility: "surface",
+        title: "Start Project CI handler",
+        summary: "Start a handler thread with Project CI context.",
+      });
+      const handlerThread = await (
+        catalog as unknown as {
+          createHandlerThread(input: {
+            sessionId: string;
+            turnId: string;
+            parentThreadId: string;
+            parentSurfacePiSessionId: string;
+            title: string;
+            objective: string;
+            contextKeys: ["ci"];
+            loadedByCommandId: string;
+          }): Promise<{ id: string; surfacePiSessionId: string }>;
+        }
+      ).createHandlerThread({
+        sessionId: created.target.workspaceSessionId,
+        turnId: turn.id,
+        parentThreadId: orchestratorThread.id,
+        parentSurfacePiSessionId: created.target.surfacePiSessionId,
+        title: "Project CI Handler",
+        objective: "Configure Project CI.",
+        contextKeys: ["ci"],
+        loadedByCommandId: command.id,
+      });
+
+      const openedHandler = await catalog.openSurface(
+        createThreadTarget(
+          created.target.workspaceSessionId,
+          handlerThread.surfacePiSessionId,
+          handlerThread.id,
+        ),
+      );
+
+      expect(openedHandler.systemPrompt).toBe(
+        buildSystemPrompt("handler", { loadedContextKeys: ["ci"] }),
+      );
+      expect(openedHandler.resolvedSystemPrompt).toContain(
+        "Loaded handler context pack: Project CI.",
+      );
+      expect(openedHandler.resolvedSystemPrompt).toContain('productKind = "project-ci"');
+      expect(store.getThreadDetail(handlerThread.id).thread.loadedContextKeys).toEqual(["ci"]);
     } finally {
       await catalog.dispose();
     }

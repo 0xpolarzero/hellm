@@ -5,11 +5,13 @@ import type {
   StructuredEpisodeRecord,
   StructuredLifecycleEventRecord,
   StructuredPiSessionRecord,
+  StructuredProjectCiCheckResultRecord,
+  StructuredProjectCiRunRecord,
   StructuredSessionSnapshot,
+  StructuredThreadContextRecord,
   StructuredThreadRecord,
   StructuredThreadStatus,
   StructuredTurnRecord,
-  StructuredVerificationRecord,
   StructuredWorkflowRunRecord,
 } from "./structured-session-state";
 import {
@@ -29,9 +31,11 @@ type StructuredSessionSnapshotFixture = Omit<
   Partial<StructuredSessionSnapshot>,
   | "turns"
   | "threads"
+  | "threadContexts"
   | "commands"
   | "episodes"
-  | "verifications"
+  | "ciRuns"
+  | "ciCheckResults"
   | "workflowRuns"
   | "workflowTaskAttempts"
   | "workflowTaskMessages"
@@ -39,10 +43,12 @@ type StructuredSessionSnapshotFixture = Omit<
   | "events"
 > & {
   threads?: Partial<StructuredThreadRecord>[];
+  threadContexts?: Partial<StructuredThreadContextRecord>[];
   turns?: Partial<StructuredTurnRecord>[];
   commands?: Partial<StructuredCommandRecord>[];
   episodes?: Partial<StructuredEpisodeRecord>[];
-  verifications?: Partial<StructuredVerificationRecord>[];
+  ciRuns?: Partial<StructuredProjectCiRunRecord>[];
+  ciCheckResults?: Partial<StructuredProjectCiCheckResultRecord>[];
   workflowRuns?: Partial<StructuredWorkflowRunRecord>[];
   workflowTaskAttempts?: Partial<StructuredSessionSnapshot["workflowTaskAttempts"][number]>[];
   workflowTaskMessages?: Partial<StructuredSessionSnapshot["workflowTaskMessages"][number]>[];
@@ -55,10 +61,12 @@ function createSessionSnapshot(
 ): StructuredSessionSnapshot {
   const {
     threads: overrideThreads,
+    threadContexts: overrideThreadContexts,
     turns: overrideTurns,
     commands: overrideCommands,
     episodes: overrideEpisodes,
-    verifications: overrideVerifications,
+    ciRuns: overrideCiRuns,
+    ciCheckResults: overrideCiCheckResults,
     workflowRuns: overrideWorkflowRuns,
     workflowTaskAttempts: overrideWorkflowTaskAttempts,
     workflowTaskMessages: overrideWorkflowTaskMessages,
@@ -96,11 +104,26 @@ function createSessionSnapshot(
         objective: "Selector objective",
         status: "completed" as StructuredThreadStatus,
         wait: null,
+        loadedContextKeys: [],
         startedAt: "2026-04-18T07:00:00.000Z",
         updatedAt: "2026-04-18T07:01:00.000Z",
         finishedAt: "2026-04-18T07:01:00.000Z",
       };
       return { ...base, ...thread };
+    }) ?? [];
+
+  const threadContexts =
+    overrideThreadContexts?.map((threadContext, index) => {
+      const base: StructuredThreadContextRecord = {
+        id: `thread-context-00${index + 1}`,
+        sessionId: "session-selectors",
+        threadId: "thread-001",
+        contextKey: "ci",
+        contextVersion: "2026-04-18",
+        loadedByCommandId: null,
+        loadedAt: "2026-04-18T07:00:30.000Z",
+      };
+      return { ...base, ...threadContext };
     }) ?? [];
 
   const commands =
@@ -146,22 +169,48 @@ function createSessionSnapshot(
       return { ...base, ...episode };
     }) ?? [];
 
-  const verifications =
-    overrideVerifications?.map((verification, index) => {
-      const base: StructuredVerificationRecord = {
-        id: `verification-00${index + 1}`,
+  const ciRuns =
+    overrideCiRuns?.map((ciRun, index) => {
+      const base: StructuredProjectCiRunRecord = {
+        id: `ci-run-00${index + 1}`,
         sessionId: "session-selectors",
         threadId: "thread-002",
         workflowRunId: "workflow-001",
-        commandId: "command-002",
-        kind: "test",
+        smithersRunId: `smithers-ci-run-${index + 1}`,
+        workflowId: "project_ci",
+        entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
         status: "passed",
-        summary: "Verification summary",
-        command: "bun test",
+        summary: "Project CI summary",
+        createdAt: "2026-04-18T07:01:30.000Z",
+        updatedAt: "2026-04-18T07:02:00.000Z",
         startedAt: "2026-04-18T07:01:30.000Z",
         finishedAt: "2026-04-18T07:02:00.000Z",
       };
-      return { ...base, ...verification };
+      return { ...base, ...ciRun };
+    }) ?? [];
+
+  const ciCheckResults =
+    overrideCiCheckResults?.map((ciCheckResult, index) => {
+      const base: StructuredProjectCiCheckResultRecord = {
+        id: `ci-check-00${index + 1}`,
+        sessionId: "session-selectors",
+        ciRunId: "ci-run-001",
+        workflowRunId: "workflow-001",
+        checkId: "test",
+        label: "Tests",
+        kind: "test",
+        status: "passed",
+        required: true,
+        command: ["bun", "test"],
+        exitCode: 0,
+        summary: "Tests passed.",
+        artifactIds: [],
+        startedAt: "2026-04-18T07:01:30.000Z",
+        finishedAt: "2026-04-18T07:02:00.000Z",
+        createdAt: "2026-04-18T07:01:30.000Z",
+        updatedAt: "2026-04-18T07:02:00.000Z",
+      };
+      return { ...base, ...ciCheckResult };
     }) ?? [];
 
   const workflowRuns =
@@ -211,7 +260,7 @@ function createSessionSnapshot(
         status: "completed",
         smithersState: "finished",
         prompt: "Solve the delegated task.",
-        responseText: "{\"status\":\"completed\"}",
+        responseText: '{"status":"completed"}',
         error: null,
         cached: false,
         jjPointer: null,
@@ -238,7 +287,7 @@ function createSessionSnapshot(
         role: index === 0 ? "user" : "assistant",
         source: index === 0 ? "prompt" : "responseText",
         smithersEventSeq: null,
-        text: index === 0 ? "Solve the delegated task." : "{\"status\":\"completed\"}",
+        text: index === 0 ? "Solve the delegated task." : '{"status":"completed"}',
         createdAt: "2026-04-18T07:02:45.000Z",
       };
       return { ...base, ...workflowTaskMessage };
@@ -299,9 +348,11 @@ function createSessionSnapshot(
     },
     turns,
     threads,
+    threadContexts,
     commands,
     episodes,
-    verifications,
+    ciRuns,
+    ciCheckResults,
     workflowRuns,
     workflowTaskAttempts,
     workflowTaskMessages,
@@ -415,8 +466,8 @@ describe("structured session selectors", () => {
         },
         {
           id: "thread-002",
-          title: "Verification objective",
-          objective: "Verification body",
+          title: "Project CI objective",
+          objective: "Project CI body",
           status: "troubleshooting",
           startedAt: "2026-04-18T10:00:30.000Z",
           updatedAt: "2026-04-18T10:02:00.000Z",
@@ -467,12 +518,28 @@ describe("structured session selectors", () => {
           createdAt: "2026-04-18T10:03:30.000Z",
         },
       ],
-      verifications: [
+      ciRuns: [
         {
-          id: "verification-001",
+          id: "ci-run-001",
           threadId: "thread-002",
           workflowRunId: "workflow-002",
-          summary: "Verification failed",
+          status: "failed",
+          summary: "Project CI failed",
+          updatedAt: "2026-04-18T10:02:00.000Z",
+          finishedAt: "2026-04-18T10:02:00.000Z",
+        },
+      ],
+      ciCheckResults: [
+        {
+          id: "ci-check-001",
+          ciRunId: "ci-run-001",
+          workflowRunId: "workflow-002",
+          checkId: "test",
+          label: "Tests",
+          status: "failed",
+          exitCode: 1,
+          summary: "Regression test failed.",
+          updatedAt: "2026-04-18T10:02:00.000Z",
           finishedAt: "2026-04-18T10:02:00.000Z",
         },
       ],
@@ -511,7 +578,8 @@ describe("structured session selectors", () => {
         threads: 3,
         commands: 2,
         episodes: 2,
-        verifications: 1,
+        ciRuns: 1,
+        ciChecks: 1,
         workflows: 1,
         artifacts: 1,
         events: 1,
@@ -736,6 +804,7 @@ describe("structured session selectors", () => {
           title: "Parser fix thread",
           objective: "Patch the parser bug and add regression coverage.",
           status: "completed",
+          loadedContextKeys: ["ci"],
           updatedAt: "2026-04-18T10:04:30.000Z",
           finishedAt: "2026-04-18T10:04:30.000Z",
         },
@@ -795,18 +864,34 @@ describe("structured session selectors", () => {
         {
           id: "workflow-handler-2",
           threadId: "thread-handler",
-          workflowName: "verification_run",
+          workflowName: "project_ci",
           status: "completed",
-          summary: "Verification passed after adding regression coverage.",
+          summary: "Project CI passed after adding regression coverage.",
           updatedAt: "2026-04-18T10:04:10.000Z",
         },
       ],
-      verifications: [
+      ciRuns: [
         {
-          id: "verification-handler-1",
+          id: "ci-run-handler-1",
           threadId: "thread-handler",
           workflowRunId: "workflow-handler-2",
+          workflowId: "project_ci",
+          status: "passed",
+          summary: "Project CI passed.",
+          updatedAt: "2026-04-18T10:04:10.000Z",
+          finishedAt: "2026-04-18T10:04:10.000Z",
+        },
+      ],
+      ciCheckResults: [
+        {
+          id: "ci-check-handler-1",
+          ciRunId: "ci-run-handler-1",
+          workflowRunId: "workflow-handler-2",
+          checkId: "regression",
+          label: "Regression coverage",
+          status: "passed",
           summary: "Regression coverage passed.",
+          updatedAt: "2026-04-18T10:04:10.000Z",
           finishedAt: "2026-04-18T10:04:10.000Z",
         },
       ],
@@ -839,12 +924,21 @@ describe("structured session selectors", () => {
         workflowTaskAttemptCount: 0,
         episodeCount: 2,
         artifactCount: 1,
-        verificationCount: 1,
+        ciRunCount: 1,
+        loadedContextKeys: ["ci"],
         latestWorkflowRun: {
           workflowRunId: "workflow-handler-2",
-          workflowName: "verification_run",
+          workflowName: "project_ci",
           status: "completed",
-          summary: "Verification passed after adding regression coverage.",
+          summary: "Project CI passed after adding regression coverage.",
+          updatedAt: "2026-04-18T10:04:10.000Z",
+        },
+        latestCiRun: {
+          ciRunId: "ci-run-handler-1",
+          workflowRunId: "workflow-handler-2",
+          workflowId: "project_ci",
+          status: "passed",
+          summary: "Project CI passed.",
           updatedAt: "2026-04-18T10:04:10.000Z",
         },
         latestEpisode: {
@@ -872,12 +966,21 @@ describe("structured session selectors", () => {
       workflowTaskAttemptCount: 0,
       episodeCount: 2,
       artifactCount: 1,
-      verificationCount: 1,
+      ciRunCount: 1,
+      loadedContextKeys: ["ci"],
       latestWorkflowRun: {
         workflowRunId: "workflow-handler-2",
-        workflowName: "verification_run",
+        workflowName: "project_ci",
         status: "completed",
-        summary: "Verification passed after adding regression coverage.",
+        summary: "Project CI passed after adding regression coverage.",
+        updatedAt: "2026-04-18T10:04:10.000Z",
+      },
+      latestCiRun: {
+        ciRunId: "ci-run-handler-1",
+        workflowRunId: "workflow-handler-2",
+        workflowId: "project_ci",
+        status: "passed",
+        summary: "Project CI passed.",
         updatedAt: "2026-04-18T10:04:10.000Z",
       },
       latestEpisode: {
@@ -917,9 +1020,9 @@ describe("structured session selectors", () => {
       workflowRuns: [
         {
           workflowRunId: "workflow-handler-2",
-          workflowName: "verification_run",
+          workflowName: "project_ci",
           status: "completed",
-          summary: "Verification passed after adding regression coverage.",
+          summary: "Project CI passed after adding regression coverage.",
           updatedAt: "2026-04-18T10:04:10.000Z",
         },
         {
@@ -1011,7 +1114,7 @@ describe("structured session selectors", () => {
     });
   });
 
-  it("prefers active workflow runs, then terminal episodes, then verification summaries in preview", () => {
+  it("prefers active workflow runs, then terminal episodes, then Project CI summaries in preview", () => {
     const workflowSnapshot = createSessionSnapshot({
       session: {
         id: "session-workflow-preview",
@@ -1052,24 +1155,47 @@ describe("structured session selectors", () => {
         {
           id: "episode-400",
           threadId: "thread-400",
-          kind: "verification",
-          summary: "Verification completed successfully.",
+          kind: "change",
+          summary: "Handler completed successfully.",
           createdAt: "2026-04-18T10:04:00.000Z",
         },
       ],
-      verifications: [
+      ciRuns: [
         {
-          id: "verification-400",
+          id: "ci-run-400",
           threadId: "thread-401",
           workflowRunId: "workflow-401",
-          summary: "Older verification summary",
+          summary: "Older Project CI summary",
+          updatedAt: "2026-04-18T10:02:00.000Z",
           finishedAt: "2026-04-18T10:02:00.000Z",
         },
       ],
     });
     const episodeSummary = buildStructuredSessionSummaryProjection(episodeSnapshot);
-    expect(episodeSummary.preview).toBe("Verification: Verification completed successfully.");
-    expect(episodeSummary.latestEpisodePreview).toBe("Verification completed successfully.");
+    expect(episodeSummary.preview).toBe("Handler completed successfully.");
+    expect(episodeSummary.latestEpisodePreview).toBe("Handler completed successfully.");
+
+    const ciSnapshot = createSessionSnapshot({
+      session: {
+        id: "session-ci-preview",
+        orchestratorPiSessionId: "session-ci-preview",
+        wait: null,
+      },
+      workflowRuns: [],
+      episodes: [],
+      ciRuns: [
+        {
+          id: "ci-run-401",
+          threadId: "thread-401",
+          workflowRunId: "workflow-401",
+          summary: "Project CI passed.",
+          updatedAt: "2026-04-18T10:05:00.000Z",
+          finishedAt: "2026-04-18T10:05:00.000Z",
+        },
+      ],
+    });
+    const ciSummary = buildStructuredSessionSummaryProjection(ciSnapshot);
+    expect(ciSummary.preview).toBe("Project CI: Project CI passed.");
 
     const waitingSnapshot = createSessionSnapshot({
       session: {
@@ -1126,7 +1252,8 @@ describe("structured session selectors", () => {
       threads: [],
       commands: [],
       episodes: [],
-      verifications: [],
+      ciRuns: [],
+      ciCheckResults: [],
       workflowRuns: [],
       artifacts: [],
       events: [],

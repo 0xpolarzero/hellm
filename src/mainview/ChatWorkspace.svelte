@@ -168,10 +168,6 @@
       return undefined;
     }
 
-    if (/verification failed/i.test(message) && !message.includes("verification failed")) {
-      return `${message}\nverification failed`;
-    }
-
     return message;
   });
   const promptBusy = $derived(isStreaming || sendingPrompt);
@@ -1177,11 +1173,14 @@
                           {thread.commandCount}
                           {thread.commandCount === 1 ? " command" : " commands"}
                         </span>
-                        {#if thread.verificationCount > 0}
+                        {#if thread.ciRunCount > 0}
                           <span>
-                            {thread.verificationCount}
-                            {thread.verificationCount === 1 ? " verification" : " verifications"}
+                            {thread.ciRunCount}
+                            {thread.ciRunCount === 1 ? " CI run" : " CI runs"}
                           </span>
+                        {/if}
+                        {#if thread.loadedContextKeys.length > 0}
+                          <span>Context {thread.loadedContextKeys.join(", ")}</span>
                         {/if}
                       </div>
 
@@ -1461,11 +1460,14 @@
                 {threadInspector.workflowTaskAttemptCount === 1 ? " task attempt" : " task attempts"}
               </span>
             {/if}
-            {#if threadInspector.verificationCount > 0}
+            {#if threadInspector.ciRunCount > 0}
               <span>
-                {threadInspector.verificationCount}
-                {threadInspector.verificationCount === 1 ? " verification" : " verifications"}
+                {threadInspector.ciRunCount}
+                {threadInspector.ciRunCount === 1 ? " CI run" : " CI runs"}
               </span>
+            {/if}
+            {#if threadInspector.loadedContextKeys.length > 0}
+              <span>Context {threadInspector.loadedContextKeys.join(", ")}</span>
             {/if}
             <span>{threadInspector.threadId}</span>
           </div>

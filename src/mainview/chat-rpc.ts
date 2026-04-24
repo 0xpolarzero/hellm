@@ -155,10 +155,19 @@ export interface WorkspaceHandlerThreadWorkflowSummary {
 
 export interface WorkspaceHandlerThreadEpisodeSummary {
   episodeId: string;
-  kind: "analysis" | "change" | "verification" | "workflow" | "clarification";
+  kind: "analysis" | "change" | "workflow" | "clarification";
   title: string;
   summary: string;
   createdAt: string;
+}
+
+export interface WorkspaceProjectCiRunSummary {
+  ciRunId: string;
+  workflowRunId: string;
+  workflowId: string;
+  status: "passed" | "failed" | "cancelled" | "blocked";
+  summary: string;
+  updatedAt: string;
 }
 
 export interface WorkspaceWorkflowTaskAttemptTranscriptMessage {
@@ -229,8 +238,10 @@ export interface WorkspaceHandlerThreadSummary {
   workflowTaskAttemptCount?: number;
   episodeCount: number;
   artifactCount: number;
-  verificationCount: number;
+  ciRunCount: number;
+  loadedContextKeys: string[];
   latestWorkflowRun: WorkspaceHandlerThreadWorkflowSummary | null;
+  latestCiRun: WorkspaceProjectCiRunSummary | null;
   latestEpisode: WorkspaceHandlerThreadEpisodeSummary | null;
 }
 
@@ -268,7 +279,8 @@ export interface WorkspaceSessionSummary {
     threads: number;
     commands: number;
     episodes: number;
-    verifications: number;
+    ciRuns: number;
+    ciChecks: number;
     workflows: number;
     artifacts: number;
     events: number;

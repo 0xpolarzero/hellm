@@ -6,6 +6,11 @@ import type {
   StructuredSessionStateStore,
   StructuredThreadRecord,
 } from "./structured-session-state";
+import {
+  getHandlerContextPack,
+  validateHandlerContextKeys,
+  type HandlerContextKey,
+} from "./handler-context-packs";
 
 export const START_THREAD_TOOL_NAME = "thread.start";
 
@@ -13,6 +18,7 @@ export const startThreadParamsSchema = Type.Object(
   {
     objective: Type.String({ minLength: 1 }),
     title: Type.Optional(Type.String({ minLength: 1 })),
+    context: Type.Optional(Type.Array(Type.Literal("ci"))),
   },
   { additionalProperties: false },
 );
@@ -32,6 +38,8 @@ export interface ThreadStartBridge {
     parentSurfacePiSessionId: string;
     title: string;
     objective: string;
+    contextKeys: HandlerContextKey[];
+    loadedByCommandId: string;
   }): Promise<StructuredThreadRecord>;
 }
 
@@ -59,6 +67,7 @@ export function createStartThreadTool(options: {
 
       const objective = params.objective.trim();
       const title = params.title?.trim() || objective;
+      const contextKeys = validateHandlerContextKeys(params.context ?? []);
       const command = options.store.createCommand({
         turnId: runtime.turnId,
         surfacePiSessionId: runtime.surfacePiSessionId,
@@ -79,6 +88,8 @@ export function createStartThreadTool(options: {
           parentSurfacePiSessionId: runtime.surfacePiSessionId,
           title,
           objective,
+          contextKeys,
+          loadedByCommandId: command.id,
         });
 
         options.store.finishCommand({
@@ -89,6 +100,7 @@ export function createStartThreadTool(options: {
             threadId: thread.id,
             surfacePiSessionId: thread.surfacePiSessionId ?? null,
             objective: thread.objective,
+            contextKeys: contextKeys.map((key) => getHandlerContextPack(key).key),
           },
         });
 
@@ -102,6 +114,7 @@ export function createStartThreadTool(options: {
                 surfacePiSessionId: thread.surfacePiSessionId ?? null,
                 title: thread.title,
                 objective: thread.objective,
+                loadedContextKeys: thread.loadedContextKeys,
               }),
             },
           ],
@@ -111,6 +124,7 @@ export function createStartThreadTool(options: {
             surfacePiSessionId: thread.surfacePiSessionId ?? null,
             title: thread.title,
             objective: thread.objective,
+            loadedContextKeys: thread.loadedContextKeys,
           },
         };
       } catch (error) {

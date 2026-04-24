@@ -10,6 +10,7 @@ export type StructuredTurnDecision =
   | "execute_typescript"
   | "clarify"
   | "thread.start"
+  | "request_context"
   | "thread.handoff"
   | "wait"
   | `smithers.${string}`;
@@ -37,14 +38,15 @@ export type StructuredCommandStatus =
   | "succeeded"
   | "failed"
   | "cancelled";
-export type StructuredEpisodeKind =
-  | "analysis"
-  | "change"
-  | "verification"
-  | "workflow"
-  | "clarification";
+export type StructuredEpisodeKind = "analysis" | "change" | "workflow" | "clarification";
 export type StructuredArtifactKind = "text" | "log" | "json" | "file";
-export type StructuredVerificationStatus = "passed" | "failed" | "cancelled";
+export type StructuredProjectCiStatus = "passed" | "failed" | "cancelled" | "blocked";
+export type StructuredProjectCiCheckStatus =
+  | "passed"
+  | "failed"
+  | "cancelled"
+  | "skipped"
+  | "blocked";
 export type StructuredWorkflowStatus =
   | "running"
   | "waiting"
@@ -131,10 +133,21 @@ export interface StructuredThreadRecord {
   objective: string;
   status: StructuredThreadStatus;
   wait: StructuredWaitState | null;
+  loadedContextKeys: string[];
   worktree?: string;
   startedAt: string;
   updatedAt: string;
   finishedAt: string | null;
+}
+
+export interface StructuredThreadContextRecord {
+  id: string;
+  sessionId: string;
+  threadId: string;
+  contextKey: string;
+  contextVersion: string;
+  loadedByCommandId: string | null;
+  loadedAt: string;
 }
 
 export interface StructuredCommandRecord {
@@ -172,18 +185,40 @@ export interface StructuredEpisodeRecord {
   createdAt: string;
 }
 
-export interface StructuredVerificationRecord {
+export interface StructuredProjectCiRunRecord {
   id: string;
   sessionId: string;
   threadId: string;
   workflowRunId: string;
-  commandId: string;
-  kind: string;
-  status: StructuredVerificationStatus;
+  smithersRunId: string;
+  workflowId: string;
+  entryPath: string;
+  status: StructuredProjectCiStatus;
   summary: string;
-  command?: string;
+  createdAt: string;
+  updatedAt: string;
   startedAt: string;
   finishedAt: string;
+}
+
+export interface StructuredProjectCiCheckResultRecord {
+  id: string;
+  sessionId: string;
+  ciRunId: string;
+  workflowRunId: string;
+  checkId: string;
+  label: string;
+  kind: string;
+  status: StructuredProjectCiCheckStatus;
+  required: boolean;
+  command: string[] | null;
+  exitCode: number | null;
+  summary: string;
+  artifactIds: string[];
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface StructuredWorkflowRunRecord {
@@ -274,7 +309,8 @@ export type StructuredEventSubjectKind =
   | "thread"
   | "command"
   | "episode"
-  | "verification"
+  | "ciRun"
+  | "ciCheckResult"
   | "workflowRun"
   | "workflowTaskAttempt"
   | "artifact";
@@ -301,9 +337,11 @@ export interface StructuredSessionSnapshot {
   };
   turns: StructuredTurnRecord[];
   threads: StructuredThreadRecord[];
+  threadContexts: StructuredThreadContextRecord[];
   commands: StructuredCommandRecord[];
   episodes: StructuredEpisodeRecord[];
-  verifications: StructuredVerificationRecord[];
+  ciRuns: StructuredProjectCiRunRecord[];
+  ciCheckResults: StructuredProjectCiCheckResultRecord[];
   workflowRuns: StructuredWorkflowRunRecord[];
   workflowTaskAttempts: StructuredWorkflowTaskAttemptRecord[];
   workflowTaskMessages: StructuredWorkflowTaskMessageRecord[];
@@ -316,7 +354,9 @@ export interface StructuredThreadDetail {
   childThreads: StructuredThreadRecord[];
   commands: StructuredCommandRecord[];
   episodes: StructuredEpisodeRecord[];
-  verifications: StructuredVerificationRecord[];
+  threadContexts: StructuredThreadContextRecord[];
+  ciRuns: StructuredProjectCiRunRecord[];
+  ciCheckResults: StructuredProjectCiCheckResultRecord[];
   workflowRuns: StructuredWorkflowRunRecord[];
   latestWorkflowRun: StructuredWorkflowRunRecord | null;
   workflowTaskAttempts: StructuredWorkflowTaskAttemptRecord[];
@@ -355,6 +395,12 @@ export interface StructuredSessionStateStore {
     objective: string;
     worktree?: string;
   }): StructuredThreadRecord;
+  loadThreadContext(input: {
+    threadId: string;
+    contextKey: string;
+    contextVersion: string;
+    loadedByCommandId?: string | null;
+  }): StructuredThreadContextRecord;
   updateThread(input: {
     threadId: string;
     status?: StructuredThreadStatus;
@@ -463,15 +509,28 @@ export interface StructuredSessionStateStore {
   findWorkflowTaskAttemptByAgentResume(
     agentResume: string,
   ): StructuredWorkflowTaskAttemptRecord | null;
-  recordVerification(input: {
-    threadId?: string;
-    workflowRunId?: string;
-    commandId: string;
-    kind: string;
-    status: StructuredVerificationStatus;
+  recordProjectCiResult(input: {
+    workflowRunId: string;
+    workflowId: string;
+    entryPath: string;
+    status: StructuredProjectCiStatus;
     summary: string;
-    command?: string;
-  }): StructuredVerificationRecord;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+    checks: Array<{
+      checkId: string;
+      label: string;
+      kind: string;
+      status: StructuredProjectCiCheckStatus;
+      required: boolean;
+      command?: string[] | null;
+      exitCode?: number | null;
+      summary: string;
+      artifactIds?: string[];
+      startedAt?: string | null;
+      finishedAt?: string | null;
+    }>;
+  }): { ciRun: StructuredProjectCiRunRecord; checkResults: StructuredProjectCiCheckResultRecord[] };
   recordWorkflow(input: {
     threadId: string;
     commandId: string;
@@ -563,6 +622,16 @@ type ThreadRow = {
   finished_at: string | null;
 };
 
+type ThreadContextRow = {
+  id: string;
+  session_id: string;
+  thread_id: string;
+  context_key: string;
+  context_version: string;
+  loaded_by_command_id: string | null;
+  loaded_at: string;
+};
+
 type CommandRow = {
   id: string;
   session_id: string;
@@ -598,18 +667,40 @@ type EpisodeRow = {
   created_at: string;
 };
 
-type VerificationRow = {
+type ProjectCiRunRow = {
   id: string;
   session_id: string;
   thread_id: string;
   workflow_run_id: string;
-  command_id: string;
-  kind: string;
-  status: StructuredVerificationStatus;
+  smithers_run_id: string;
+  workflow_id: string;
+  entry_path: string;
+  status: StructuredProjectCiStatus;
   summary: string;
-  command: string | null;
+  created_at: string;
+  updated_at: string;
   started_at: string;
   finished_at: string;
+};
+
+type ProjectCiCheckResultRow = {
+  id: string;
+  session_id: string;
+  ci_run_id: string;
+  workflow_run_id: string;
+  check_id: string;
+  label: string;
+  kind: string;
+  status: StructuredProjectCiCheckStatus;
+  required: number;
+  command_json: string | null;
+  exit_code: number | null;
+  summary: string;
+  artifact_ids_json: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 type WorkflowRunRow = {
@@ -1024,6 +1115,61 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.mustFindThreadRecord(threadId);
   }
 
+  loadThreadContext(input: {
+    threadId: string;
+    contextKey: string;
+    contextVersion: string;
+    loadedByCommandId?: string | null;
+  }): StructuredThreadContextRecord {
+    const thread = this.mustFindThreadRow(input.threadId);
+    const existing = this.findThreadContextRow(input.threadId, input.contextKey);
+    if (existing) {
+      return this.mapThreadContext(existing);
+    }
+
+    if (input.loadedByCommandId) {
+      this.mustFindCommandRow(input.loadedByCommandId);
+    }
+
+    const timestamp = this.now();
+    const contextId = createId("thread-context");
+    this.db
+      .query(
+        `INSERT INTO thread_context (
+           id,
+           session_id,
+           thread_id,
+           context_key,
+           context_version,
+           loaded_by_command_id,
+           loaded_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        contextId,
+        thread.session_id,
+        input.threadId,
+        input.contextKey,
+        input.contextVersion,
+        input.loadedByCommandId ?? null,
+        timestamp,
+      );
+
+    this.recordEvent({
+      sessionId: thread.session_id,
+      kind: "context.loaded",
+      subjectKind: "thread",
+      subjectId: input.threadId,
+      at: timestamp,
+      data: {
+        contextKey: input.contextKey,
+        contextVersion: input.contextVersion,
+      },
+    });
+
+    return this.mustFindThreadContextRecord(contextId);
+  }
+
   updateThread(input: {
     threadId: string;
     status?: StructuredThreadStatus;
@@ -1233,7 +1379,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     if (!surfacePiSessionId) {
       throw new Error("Command creation requires a surface pi session id.");
     }
-    const sessionId = turn?.session_id ?? workflowTaskAttempt?.session_id ?? thread?.session_id ?? null;
+    const sessionId =
+      turn?.session_id ?? workflowTaskAttempt?.session_id ?? thread?.session_id ?? null;
     if (!sessionId) {
       throw new Error("Command creation requires a session owner.");
     }
@@ -1560,7 +1707,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const startedAt = input.startedAt ?? existing?.started_at ?? timestamp;
     const finishedAt =
       input.finishedAt === undefined
-        ? existing?.finished_at ?? (isTerminalWorkflowTaskAttemptStatus(input.status) ? timestamp : null)
+        ? (existing?.finished_at ??
+          (isTerminalWorkflowTaskAttemptStatus(input.status) ? timestamp : null))
         : (input.finishedAt ?? null);
 
     if (existing) {
@@ -1761,74 +1909,171 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return row ? this.mapWorkflowTaskAttempt(row) : null;
   }
 
-  recordVerification(input: {
-    threadId?: string;
-    workflowRunId?: string;
-    commandId: string;
-    kind: string;
-    status: StructuredVerificationStatus;
+  recordProjectCiResult(input: {
+    workflowRunId: string;
+    workflowId: string;
+    entryPath: string;
+    status: StructuredProjectCiStatus;
     summary: string;
-    command?: string;
-  }): StructuredVerificationRecord {
-    const command = this.mustFindCommandRow(input.commandId);
-    const workflowRun =
-      input.workflowRunId != null
-        ? this.mustFindWorkflowRunRow(input.workflowRunId)
-        : command.workflow_run_id
-          ? this.mustFindWorkflowRunRow(command.workflow_run_id)
-          : input.threadId
-            ? this.findLatestWorkflowRunRowForThread(input.threadId)
-            : command.thread_id
-              ? this.findLatestWorkflowRunRowForThread(command.thread_id)
-              : null;
-
-    if (!workflowRun) {
-      throw new Error("Verification records require an owning workflow run.");
-    }
-
-    const threadId = input.threadId ?? workflowRun.thread_id;
-    const thread = this.mustFindThreadRow(threadId);
-    const verificationId = createId("verification");
+    startedAt?: string | null;
+    finishedAt?: string | null;
+    checks: Array<{
+      checkId: string;
+      label: string;
+      kind: string;
+      status: StructuredProjectCiCheckStatus;
+      required: boolean;
+      command?: string[] | null;
+      exitCode?: number | null;
+      summary: string;
+      artifactIds?: string[];
+      startedAt?: string | null;
+      finishedAt?: string | null;
+    }>;
+  }): {
+    ciRun: StructuredProjectCiRunRecord;
+    checkResults: StructuredProjectCiCheckResultRecord[];
+  } {
+    const workflowRun = this.mustFindWorkflowRunRow(input.workflowRunId);
+    const thread = this.mustFindThreadRow(workflowRun.thread_id);
     const timestamp = this.now();
+    const startedAt = input.startedAt ?? workflowRun.started_at;
+    const finishedAt = input.finishedAt ?? workflowRun.finished_at ?? timestamp;
+    const existingCiRun = this.findProjectCiRunRowByWorkflowRunId(input.workflowRunId);
+    const ciRunId = existingCiRun?.id ?? createId("ci-run");
+    const createdAt = existingCiRun?.created_at ?? timestamp;
+
     this.db
       .query(
-        `INSERT INTO verification (
+        `INSERT INTO ci_run (
            id,
            session_id,
            thread_id,
            workflow_run_id,
-           command_id,
-           kind,
+           smithers_run_id,
+           workflow_id,
+           entry_path,
            status,
            summary,
-           command,
            started_at,
-           finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           finished_at,
+           created_at,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(workflow_run_id) DO UPDATE SET
+           thread_id = excluded.thread_id,
+           smithers_run_id = excluded.smithers_run_id,
+           workflow_id = excluded.workflow_id,
+           entry_path = excluded.entry_path,
+           status = excluded.status,
+           summary = excluded.summary,
+           started_at = excluded.started_at,
+           finished_at = excluded.finished_at,
+           updated_at = excluded.updated_at`,
       )
       .run(
-        verificationId,
-        thread.session_id,
-        threadId,
+        ciRunId,
+        workflowRun.session_id,
+        workflowRun.thread_id,
         workflowRun.id,
-        input.commandId,
-        input.kind,
+        workflowRun.smithers_run_id,
+        input.workflowId,
+        input.entryPath,
         input.status,
         input.summary,
-        input.command ?? null,
-        timestamp,
+        startedAt,
+        finishedAt,
+        createdAt,
         timestamp,
       );
 
-    this.recordEvent({
-      sessionId: thread.session_id,
-      kind: "verification.recorded",
-      subjectKind: "verification",
-      subjectId: verificationId,
-      at: timestamp,
-    });
+    if (!existingCiRun) {
+      this.recordEvent({
+        sessionId: thread.session_id,
+        kind: "ciRun.recorded",
+        subjectKind: "ciRun",
+        subjectId: ciRunId,
+        at: timestamp,
+      });
+    }
 
-    return this.mustFindVerificationRecord(verificationId);
+    const checkResults: StructuredProjectCiCheckResultRecord[] = [];
+    for (const check of input.checks) {
+      const existingCheck = this.findProjectCiCheckResultRow(ciRunId, check.checkId);
+      const checkResultId = existingCheck?.id ?? createId("ci-check-result");
+      const checkCreatedAt = existingCheck?.created_at ?? timestamp;
+      this.db
+        .query(
+          `INSERT INTO ci_check_result (
+             id,
+             session_id,
+             ci_run_id,
+             workflow_run_id,
+             check_id,
+             label,
+             kind,
+             status,
+             required,
+             command_json,
+             exit_code,
+             summary,
+             artifact_ids_json,
+             started_at,
+             finished_at,
+             created_at,
+             updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(ci_run_id, check_id) DO UPDATE SET
+             workflow_run_id = excluded.workflow_run_id,
+             label = excluded.label,
+             kind = excluded.kind,
+             status = excluded.status,
+             required = excluded.required,
+             command_json = excluded.command_json,
+             exit_code = excluded.exit_code,
+             summary = excluded.summary,
+             artifact_ids_json = excluded.artifact_ids_json,
+             started_at = excluded.started_at,
+             finished_at = excluded.finished_at,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          checkResultId,
+          workflowRun.session_id,
+          ciRunId,
+          workflowRun.id,
+          check.checkId,
+          check.label,
+          check.kind,
+          check.status,
+          check.required ? 1 : 0,
+          toJson(check.command ?? null),
+          check.exitCode ?? null,
+          check.summary,
+          toJson(check.artifactIds ?? []),
+          check.startedAt ?? null,
+          check.finishedAt ?? null,
+          checkCreatedAt,
+          timestamp,
+        );
+
+      if (!existingCheck) {
+        this.recordEvent({
+          sessionId: thread.session_id,
+          kind: "ciCheckResult.recorded",
+          subjectKind: "ciCheckResult",
+          subjectId: checkResultId,
+          at: timestamp,
+        });
+      }
+
+      checkResults.push(this.mustFindProjectCiCheckResultRecord(checkResultId));
+    }
+
+    return {
+      ciRun: this.mustFindProjectCiRunRecord(ciRunId),
+      checkResults,
+    };
   }
 
   recordWorkflow(input: {
@@ -2001,9 +2246,11 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       },
       turns: this.queryTurnRecords(sessionId),
       threads: this.queryThreadRecords(sessionId),
+      threadContexts: this.queryThreadContextRecords(sessionId),
       commands: this.queryCommandRecords(sessionId),
       episodes: this.queryEpisodeRecords(sessionId),
-      verifications: this.queryVerificationRecords(sessionId),
+      ciRuns: this.queryProjectCiRunRecords(sessionId),
+      ciCheckResults: this.queryProjectCiCheckResultRecords(sessionId),
       workflowRuns,
       workflowTaskAttempts: this.queryWorkflowTaskAttemptRecords(sessionId),
       workflowTaskMessages: this.queryWorkflowTaskMessageRecords(sessionId),
@@ -2032,8 +2279,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       childThreads: this.queryThreadRowsByParent(threadId).map((row) => this.mapThread(row)),
       commands: this.queryCommandRowsByThread(threadId).map((row) => this.mapCommand(row)),
       episodes: this.queryEpisodeRowsByThread(threadId).map((row) => this.mapEpisode(row)),
-      verifications: this.queryVerificationRowsByThread(threadId).map((row) =>
-        this.mapVerification(row),
+      threadContexts: this.queryThreadContextRowsByThread(threadId).map((row) =>
+        this.mapThreadContext(row),
+      ),
+      ciRuns: this.queryProjectCiRunRowsByThread(threadId).map((row) => this.mapProjectCiRun(row)),
+      ciCheckResults: this.queryProjectCiCheckResultRowsByThread(threadId).map((row) =>
+        this.mapProjectCiCheckResult(row),
       ),
       workflowRuns,
       latestWorkflowRun,
@@ -2113,6 +2364,18 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return row;
   }
 
+  private findThreadContextRow(threadId: string, contextKey: string): ThreadContextRow | null {
+    return (
+      (this.db
+        .query(
+          `SELECT * FROM thread_context
+           WHERE thread_id = ? AND context_key = ?
+           LIMIT 1`,
+        )
+        .get(threadId, contextKey) as ThreadContextRow | undefined) ?? null
+    );
+  }
+
   private mustFindCommandRow(commandId: string): CommandRow {
     const row = this.db.query(`SELECT * FROM command WHERE id = ?`).get(commandId) as
       | CommandRow
@@ -2174,12 +2437,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            WHERE workflow_run_id = ? AND node_id = ? AND iteration = ? AND attempt = ?
            LIMIT 1`,
         )
-        .get(
-          input.workflowRunId,
-          input.nodeId,
-          input.iteration,
-          input.attempt,
-        ) as WorkflowTaskAttemptRow | undefined) ?? null
+        .get(input.workflowRunId, input.nodeId, input.iteration, input.attempt) as
+        | WorkflowTaskAttemptRow
+        | undefined) ?? null
     );
   }
 
@@ -2214,14 +2474,36 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.mapEpisode(this.mustFindEpisodeRow(episodeId));
   }
 
-  private mustFindVerificationRecord(verificationId: string): StructuredVerificationRecord {
-    const row = this.db.query(`SELECT * FROM verification WHERE id = ?`).get(verificationId) as
-      | VerificationRow
+  private mustFindThreadContextRecord(contextId: string): StructuredThreadContextRecord {
+    const row = this.db.query(`SELECT * FROM thread_context WHERE id = ?`).get(contextId) as
+      | ThreadContextRow
       | undefined;
     if (!row) {
-      throw new Error(`Structured verification not found: ${verificationId}`);
+      throw new Error(`Structured thread context not found: ${contextId}`);
     }
-    return this.mapVerification(row);
+    return this.mapThreadContext(row);
+  }
+
+  private mustFindProjectCiRunRecord(ciRunId: string): StructuredProjectCiRunRecord {
+    const row = this.db.query(`SELECT * FROM ci_run WHERE id = ?`).get(ciRunId) as
+      | ProjectCiRunRow
+      | undefined;
+    if (!row) {
+      throw new Error(`Structured Project CI run not found: ${ciRunId}`);
+    }
+    return this.mapProjectCiRun(row);
+  }
+
+  private mustFindProjectCiCheckResultRecord(
+    checkResultId: string,
+  ): StructuredProjectCiCheckResultRecord {
+    const row = this.db.query(`SELECT * FROM ci_check_result WHERE id = ?`).get(checkResultId) as
+      | ProjectCiCheckResultRow
+      | undefined;
+    if (!row) {
+      throw new Error(`Structured Project CI check result not found: ${checkResultId}`);
+    }
+    return this.mapProjectCiCheckResult(row);
   }
 
   private mustFindWorkflowRunRecord(workflowId: string): StructuredWorkflowRunRecord {
@@ -2264,6 +2546,12 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .all(sessionId) as ThreadRow[];
   }
 
+  private queryThreadContextRows(sessionId: string): ThreadContextRow[] {
+    return this.db
+      .query(`SELECT * FROM thread_context WHERE session_id = ? ORDER BY rowid ASC`)
+      .all(sessionId) as ThreadContextRow[];
+  }
+
   private queryCommandRows(sessionId: string): CommandRow[] {
     return this.db
       .query(`SELECT * FROM command WHERE session_id = ? ORDER BY rowid ASC`)
@@ -2276,10 +2564,16 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .all(sessionId) as EpisodeRow[];
   }
 
-  private queryVerificationRows(sessionId: string): VerificationRow[] {
+  private queryProjectCiRunRows(sessionId: string): ProjectCiRunRow[] {
     return this.db
-      .query(`SELECT * FROM verification WHERE session_id = ? ORDER BY rowid ASC`)
-      .all(sessionId) as VerificationRow[];
+      .query(`SELECT * FROM ci_run WHERE session_id = ? ORDER BY rowid ASC`)
+      .all(sessionId) as ProjectCiRunRow[];
+  }
+
+  private queryProjectCiCheckResultRows(sessionId: string): ProjectCiCheckResultRow[] {
+    return this.db
+      .query(`SELECT * FROM ci_check_result WHERE session_id = ? ORDER BY rowid ASC`)
+      .all(sessionId) as ProjectCiCheckResultRow[];
   }
 
   private queryWorkflowRunRows(sessionId: string): WorkflowRunRow[] {
@@ -2320,6 +2614,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.queryThreadRows(sessionId).map((row) => this.mapThread(row));
   }
 
+  private queryThreadContextRecords(sessionId: string): StructuredThreadContextRecord[] {
+    return this.queryThreadContextRows(sessionId).map((row) => this.mapThreadContext(row));
+  }
+
   private queryCommandRecords(sessionId: string): StructuredCommandRecord[] {
     return this.queryCommandRows(sessionId).map((row) => this.mapCommand(row));
   }
@@ -2328,19 +2626,33 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.queryEpisodeRows(sessionId).map((row) => this.mapEpisode(row));
   }
 
-  private queryVerificationRecords(sessionId: string): StructuredVerificationRecord[] {
-    return this.queryVerificationRows(sessionId).map((row) => this.mapVerification(row));
+  private queryProjectCiRunRecords(sessionId: string): StructuredProjectCiRunRecord[] {
+    return this.queryProjectCiRunRows(sessionId).map((row) => this.mapProjectCiRun(row));
+  }
+
+  private queryProjectCiCheckResultRecords(
+    sessionId: string,
+  ): StructuredProjectCiCheckResultRecord[] {
+    return this.queryProjectCiCheckResultRows(sessionId).map((row) =>
+      this.mapProjectCiCheckResult(row),
+    );
   }
 
   private queryWorkflowRunRecords(sessionId: string): StructuredWorkflowRunRecord[] {
     return this.queryWorkflowRunRows(sessionId).map((row) => this.mapWorkflowRun(row));
   }
 
-  private queryWorkflowTaskAttemptRecords(sessionId: string): StructuredWorkflowTaskAttemptRecord[] {
-    return this.queryWorkflowTaskAttemptRows(sessionId).map((row) => this.mapWorkflowTaskAttempt(row));
+  private queryWorkflowTaskAttemptRecords(
+    sessionId: string,
+  ): StructuredWorkflowTaskAttemptRecord[] {
+    return this.queryWorkflowTaskAttemptRows(sessionId).map((row) =>
+      this.mapWorkflowTaskAttempt(row),
+    );
   }
 
-  private queryWorkflowTaskMessageRecords(sessionId: string): StructuredWorkflowTaskMessageRecord[] {
+  private queryWorkflowTaskMessageRecords(
+    sessionId: string,
+  ): StructuredWorkflowTaskMessageRecord[] {
     return this.queryWorkflowTaskMessageRows(sessionId).map((row) =>
       this.mapWorkflowTaskMessage(row),
     );
@@ -2372,10 +2684,28 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .all(threadId) as EpisodeRow[];
   }
 
-  private queryVerificationRowsByThread(threadId: string): VerificationRow[] {
+  private queryThreadContextRowsByThread(threadId: string): ThreadContextRow[] {
     return this.db
-      .query(`SELECT * FROM verification WHERE thread_id = ? ORDER BY rowid ASC`)
-      .all(threadId) as VerificationRow[];
+      .query(`SELECT * FROM thread_context WHERE thread_id = ? ORDER BY rowid ASC`)
+      .all(threadId) as ThreadContextRow[];
+  }
+
+  private queryProjectCiRunRowsByThread(threadId: string): ProjectCiRunRow[] {
+    return this.db
+      .query(`SELECT * FROM ci_run WHERE thread_id = ? ORDER BY rowid ASC`)
+      .all(threadId) as ProjectCiRunRow[];
+  }
+
+  private queryProjectCiCheckResultRowsByThread(threadId: string): ProjectCiCheckResultRow[] {
+    return this.db
+      .query(
+        `SELECT check_result.*
+         FROM ci_check_result AS check_result
+         JOIN ci_run AS ci_run ON ci_run.id = check_result.ci_run_id
+         WHERE ci_run.thread_id = ?
+         ORDER BY check_result.rowid ASC`,
+      )
+      .all(threadId) as ProjectCiCheckResultRow[];
   }
 
   private queryWorkflowRunRowsForThread(threadId: string): WorkflowRunRow[] {
@@ -2432,13 +2762,26 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .all(threadId) as ArtifactRow[];
   }
 
-  private findLatestWorkflowRunRowForThread(threadId: string): WorkflowRunRow | null {
+  private findProjectCiRunRowByWorkflowRunId(workflowRunId: string): ProjectCiRunRow | null {
+    return (
+      (this.db
+        .query(`SELECT * FROM ci_run WHERE workflow_run_id = ? LIMIT 1`)
+        .get(workflowRunId) as ProjectCiRunRow | undefined) ?? null
+    );
+  }
+
+  private findProjectCiCheckResultRow(
+    ciRunId: string,
+    checkId: string,
+  ): ProjectCiCheckResultRow | null {
     return (
       (this.db
         .query(
-          `SELECT * FROM workflow_run WHERE thread_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
+          `SELECT * FROM ci_check_result
+           WHERE ci_run_id = ? AND check_id = ?
+           LIMIT 1`,
         )
-        .get(threadId) as WorkflowRunRow | undefined) ?? null
+        .get(ciRunId, checkId) as ProjectCiCheckResultRow | undefined) ?? null
     );
   }
 
@@ -2581,10 +2924,25 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       objective: row.objective,
       status: row.status,
       wait: this.mapThreadWait(row),
+      loadedContextKeys: this.queryThreadContextRowsByThread(row.id).map(
+        (context) => context.context_key,
+      ),
       worktree: row.worktree ?? undefined,
       startedAt: row.started_at,
       updatedAt: row.updated_at,
       finishedAt: row.finished_at,
+    };
+  }
+
+  private mapThreadContext(row: ThreadContextRow): StructuredThreadContextRecord {
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      threadId: row.thread_id,
+      contextKey: row.context_key,
+      contextVersion: row.context_version,
+      loadedByCommandId: row.loaded_by_command_id,
+      loadedAt: row.loaded_at,
     };
   }
 
@@ -2631,19 +2989,45 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     };
   }
 
-  private mapVerification(row: VerificationRow): StructuredVerificationRecord {
+  private mapProjectCiRun(row: ProjectCiRunRow): StructuredProjectCiRunRecord {
     return {
       id: row.id,
       sessionId: row.session_id,
       threadId: row.thread_id,
       workflowRunId: row.workflow_run_id,
-      commandId: row.command_id,
-      kind: row.kind,
+      smithersRunId: row.smithers_run_id,
+      workflowId: row.workflow_id,
+      entryPath: row.entry_path,
       status: row.status,
       summary: row.summary,
-      command: row.command ?? undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
       startedAt: row.started_at,
       finishedAt: row.finished_at,
+    };
+  }
+
+  private mapProjectCiCheckResult(
+    row: ProjectCiCheckResultRow,
+  ): StructuredProjectCiCheckResultRecord {
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      ciRunId: row.ci_run_id,
+      workflowRunId: row.workflow_run_id,
+      checkId: row.check_id,
+      label: row.label,
+      kind: row.kind,
+      status: row.status,
+      required: Boolean(row.required),
+      command: fromJson<string[]>(row.command_json),
+      exitCode: row.exit_code,
+      summary: row.summary,
+      artifactIds: fromJson<string[]>(row.artifact_ids_json) ?? [],
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     };
   }
 
@@ -2813,6 +3197,17 @@ function initializeSchema(db: Database): void {
       finished_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS thread_context (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      context_key TEXT NOT NULL,
+      context_version TEXT NOT NULL,
+      loaded_by_command_id TEXT,
+      loaded_at TEXT NOT NULL,
+      UNIQUE(thread_id, context_key)
+    );
+
     CREATE TABLE IF NOT EXISTS command (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
@@ -2848,18 +3243,42 @@ function initializeSchema(db: Database): void {
       created_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS verification (
+    CREATE TABLE IF NOT EXISTS ci_run (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
       thread_id TEXT NOT NULL,
       workflow_run_id TEXT NOT NULL,
-      command_id TEXT NOT NULL,
-      kind TEXT NOT NULL,
+      smithers_run_id TEXT NOT NULL,
+      workflow_id TEXT NOT NULL,
+      entry_path TEXT NOT NULL,
       status TEXT NOT NULL,
       summary TEXT NOT NULL,
-      command TEXT,
       started_at TEXT NOT NULL,
-      finished_at TEXT NOT NULL
+      finished_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(workflow_run_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ci_check_result (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      ci_run_id TEXT NOT NULL,
+      workflow_run_id TEXT NOT NULL,
+      check_id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      required INTEGER NOT NULL,
+      command_json TEXT,
+      exit_code INTEGER,
+      summary TEXT NOT NULL,
+      artifact_ids_json TEXT,
+      started_at TEXT,
+      finished_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(ci_run_id, check_id)
     );
 
     CREATE TABLE IF NOT EXISTS workflow_run (

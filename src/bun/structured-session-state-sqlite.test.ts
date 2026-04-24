@@ -94,6 +94,11 @@ describe("structured session state SQLite persistence", () => {
       title: "Persisted handler thread",
       objective: "Own the delegated task and supervise workflow runs.",
     });
+    const context = first.store.loadThreadContext({
+      threadId: handlerThread.id,
+      contextKey: "ci",
+      contextVersion: "2026-04-24",
+    });
     first.store.finishTurn({
       turnId: orchestratorTurn.id,
       status: "completed",
@@ -145,13 +150,24 @@ describe("structured session state SQLite persistence", () => {
       status: "completed",
       summary: "The repaired workflow run completed.",
     });
-    const verification = first.store.recordVerification({
+    const projectCi = first.store.recordProjectCiResult({
       workflowRunId: runTwo.id,
-      commandId: secondCommand.id,
-      kind: "test",
+      workflowId: "persist_project_ci",
+      entryPath: ".svvy/workflows/entries/persist-project-ci.tsx",
       status: "passed",
-      summary: "Verification passed on the second run.",
-      command: "bun test",
+      summary: "Project CI passed on the second run.",
+      checks: [
+        {
+          checkId: "unit_tests",
+          label: "Unit tests",
+          kind: "test",
+          status: "passed",
+          required: true,
+          command: ["bun", "test"],
+          exitCode: 0,
+          summary: "Unit tests passed.",
+        },
+      ],
     });
     const artifact = first.store.createArtifact({
       workflowRunId: runTwo.id,
@@ -193,10 +209,28 @@ describe("structured session state SQLite persistence", () => {
       runOne.id,
       runTwo.id,
     ]);
-    expect(afterReload.verifications).toEqual([
+    expect(afterReload.threadContexts).toEqual([
       expect.objectContaining({
-        id: verification.id,
+        id: context.id,
+        threadId: handlerThread.id,
+        contextKey: "ci",
+      }),
+    ]);
+    expect(afterReload.ciRuns).toEqual([
+      expect.objectContaining({
+        id: projectCi.ciRun.id,
         workflowRunId: runTwo.id,
+        workflowId: "persist_project_ci",
+        status: "passed",
+      }),
+    ]);
+    expect(afterReload.ciCheckResults).toEqual([
+      expect.objectContaining({
+        id: projectCi.checkResults[0]?.id,
+        ciRunId: projectCi.ciRun.id,
+        workflowRunId: runTwo.id,
+        checkId: "unit_tests",
+        status: "passed",
       }),
     ]);
     expect(afterReload.artifacts).toEqual([
@@ -218,6 +252,7 @@ describe("structured session state SQLite persistence", () => {
       runTwo.id,
     ]);
     expect(detail.latestWorkflowRun?.id).toBe(runTwo.id);
+    expect(detail.thread.loadedContextKeys).toEqual(["ci"]);
   });
 
   it("writes artifacts into the workspace-scoped artifact directory with persisted ownership metadata", () => {

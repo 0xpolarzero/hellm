@@ -82,6 +82,14 @@ type FakeRpcHarness = {
   getSurfaceSnapshot: (surfacePiSessionId: string) => ConversationSurfaceSnapshot;
 };
 
+function cloneTarget(target: PromptTarget): PromptTarget {
+  return structuredClone(target);
+}
+
+const defaultPromptHandler: PromptHandler = async (request) => ({
+  assistantText: `Reply for ${request.target.surfacePiSessionId}`,
+});
+
 function userMessage(text: string): AgentMessage {
   return {
     role: "user",
@@ -184,7 +192,8 @@ function createSummary(
       threads: 0,
       commands: 0,
       episodes: 0,
-      verifications: 0,
+      ciRuns: 0,
+      ciChecks: 0,
       workflows: 0,
       artifacts: 0,
       events: 0,
@@ -282,12 +291,21 @@ function createHandlerThreadSummary(threadId = "thread-1"): WorkspaceHandlerThre
     workflowRunCount: 1,
     episodeCount: 1,
     artifactCount: 1,
-    verificationCount: 1,
+    ciRunCount: 1,
+    loadedContextKeys: ["ci"],
     latestWorkflowRun: {
       workflowRunId: "workflow-1",
-      workflowName: "verification_run",
+      workflowName: "project_ci",
       status: "completed",
-      summary: "Verification passed.",
+      summary: "Project CI workflow completed.",
+      updatedAt: "2026-04-10T10:04:30.000Z",
+    },
+    latestCiRun: {
+      ciRunId: "ci-run-1",
+      workflowRunId: "workflow-1",
+      workflowId: "project_ci",
+      status: "passed",
+      summary: "Project CI passed.",
       updatedAt: "2026-04-10T10:04:30.000Z",
     },
     latestEpisode: {
@@ -307,9 +325,9 @@ function createHandlerThreadInspector(threadId = "thread-1"): WorkspaceHandlerTh
     workflowRuns: [
       {
         workflowRunId: "workflow-1",
-        workflowName: "verification_run",
+        workflowName: "project_ci",
         status: "completed",
-        summary: "Verification passed.",
+        summary: "Project CI workflow completed.",
         updatedAt: "2026-04-10T10:04:30.000Z",
       },
     ],
@@ -365,7 +383,7 @@ function createWorkflowTaskAttemptInspector(
     surfacePiSessionId: "pi-task-agent-1",
     smithersState: "finished",
     prompt: "Summarize the transcript probe.",
-    responseText: "{\"reply\":\"Handled: Summarize the transcript probe.\"}",
+    responseText: '{"reply":"Handled: Summarize the transcript probe."}',
     error: null,
     cached: false,
     jjPointer: null,
@@ -390,7 +408,7 @@ function createWorkflowTaskAttemptInspector(
         messageId: "workflow-task-message-2",
         role: "assistant",
         source: "responseText",
-        text: "{\"reply\":\"Handled: Summarize the transcript probe.\"}",
+        text: '{"reply":"Handled: Summarize the transcript probe."}',
         createdAt: "2026-04-10T10:03:30.000Z",
       },
     ],
@@ -480,8 +498,6 @@ function createFakeRpc(input: {
   const requestCounts = {
     listSessions: 0,
   };
-
-  const cloneTarget = (target: PromptTarget): PromptTarget => structuredClone(target);
 
   const listSessions = (): WorkspaceSessionSummary[] =>
     Array.from(summaries.values()).map((summary) => structuredClone(summary));
@@ -575,10 +591,6 @@ function createFakeRpc(input: {
       });
     }
   };
-
-  const defaultPromptHandler: PromptHandler = async (request) => ({
-    assistantText: `Reply for ${request.target.surfacePiSessionId}`,
-  });
 
   const harness: FakeRpcHarness = {
     client: {

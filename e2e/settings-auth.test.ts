@@ -282,7 +282,7 @@ test("removing provider auth clears the status and shows feedback", async () => 
 test("missing provider access opens settings when trying to send a prompt", async () => {
   await withSvvyApp({ env: noAuthEnv() }, async ({ page }) => {
     const prompt = page.locator(
-      'textarea[placeholder="Ask svvy to inspect the repo, make a change, or run verification."]',
+      'textarea[placeholder="Ask svvy to inspect the repo, make a change, or run Project CI."]',
     );
     await prompt.fill("Check auth gating.");
     await page.getByRole("button", { name: "Send" }).click();

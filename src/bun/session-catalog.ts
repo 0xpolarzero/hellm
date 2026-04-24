@@ -72,6 +72,8 @@ import { buildSystemPrompt, type SvvyActorProfile } from "./default-system-promp
 import { createSmithersTools } from "./smithers-tools";
 import { SmithersRuntimeManager } from "./smithers-runtime/manager";
 import { createBundledWorkflowDefinitions } from "./smithers-runtime/bundled-workflows";
+import { createRequestContextTool } from "./request-context-tool";
+import { getHandlerContextPack, type HandlerContextKey } from "./handler-context-packs";
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
   input: 0,
@@ -88,7 +90,7 @@ const ZERO_USAGE: AssistantMessage["usage"] = {
   },
 };
 
-const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v4.sqlite";
+const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v5.sqlite";
 
 interface ManagedSession {
   sessionId: string;
@@ -180,7 +182,7 @@ export class WorkspaceSessionCatalog {
         await this.emitStructuredStateSync(sessionId);
       },
       onHandlerAttention: async (event) => {
-        return await this.resumeHandlerAfterWorkflowAttention(event, buildSystemPrompt("handler"));
+        return await this.resumeHandlerAfterWorkflowAttention(event);
       },
     });
     for (const definition of createBundledWorkflowDefinitions(
@@ -343,13 +345,10 @@ export class WorkspaceSessionCatalog {
 
   async openSurface(
     target: PromptTarget,
-    systemPrompt?: string,
+    _systemPrompt?: string,
   ): Promise<ConversationSurfaceSnapshot> {
     this.assertValidPromptTarget(target);
-    const session = await this.retainManagedSurface(
-      target,
-      systemPrompt ?? buildSystemPrompt(getActorProfileForTarget(target)),
-    );
+    const session = await this.retainManagedSurface(target);
     await this.restoreWorkflowSupervisionIfTracked(target.workspaceSessionId);
     return this.buildSurfaceSnapshot(session, target);
   }
@@ -467,7 +466,7 @@ export class WorkspaceSessionCatalog {
     setTimeout(() => {
       void (async () => {
         await this.runAgentPrompt(session, options, promptExecution);
-        await this.resumeOrchestratorAfterHandlerHandoff(promptExecution, session.systemPrompt);
+        await this.resumeOrchestratorAfterHandlerHandoff(promptExecution);
       })().catch((error) => {
         console.error("Failed to continue orchestrator control after prompt execution:", error);
       });
@@ -565,20 +564,17 @@ export class WorkspaceSessionCatalog {
     const session = await this.loadManagedSurface(
       options.target.surfacePiSessionId,
       actorProfile,
-      buildSystemPrompt(actorProfile),
+      this.buildSystemPromptForTarget(options.target),
     );
     await this.restoreWorkflowSupervisionIfTracked(options.target.workspaceSessionId);
     return this.prepareManagedSession(session, options);
   }
 
-  private async retainManagedSurface(
-    target: PromptTarget,
-    systemPrompt: string,
-  ): Promise<ManagedSession> {
+  private async retainManagedSurface(target: PromptTarget): Promise<ManagedSession> {
     const session = await this.loadManagedSurface(
       target.surfacePiSessionId,
       getActorProfileForTarget(target),
-      systemPrompt,
+      this.buildSystemPromptForTarget(target),
     );
     session.retainCount += 1;
     return session;
@@ -626,7 +622,7 @@ export class WorkspaceSessionCatalog {
     >,
   ): Promise<ManagedSession> {
     const actorProfile = getActorProfileForTarget(options.target);
-    const resolvedSystemPrompt = buildSystemPrompt(actorProfile);
+    const resolvedSystemPrompt = this.buildSystemPromptForTarget(options.target);
     if (
       session.actorProfile !== actorProfile ||
       session.provider !== options.provider ||
@@ -873,6 +869,20 @@ export class WorkspaceSessionCatalog {
       surface: "orchestrator",
       surfacePiSessionId: workspaceSessionId,
     };
+  }
+
+  private buildSystemPromptForTarget(target: PromptTarget): string {
+    if (target.surface !== "thread" || !target.threadId) {
+      return buildSystemPrompt("orchestrator");
+    }
+
+    const thread =
+      this.getStructuredSnapshot(target.workspaceSessionId)?.threads.find(
+        (candidate) => candidate.id === target.threadId,
+      ) ?? null;
+    return buildSystemPrompt("handler", {
+      loadedContextKeys: thread?.loadedContextKeys ?? [],
+    });
   }
 
   private resolvePromptTargetForSurfacePiSessionId(surfacePiSessionId: string): PromptTarget {
@@ -1124,6 +1134,8 @@ export class WorkspaceSessionCatalog {
     parentSurfacePiSessionId: string;
     title: string;
     objective: string;
+    contextKeys: HandlerContextKey[];
+    loadedByCommandId: string;
   }) {
     const parentSessionFile = await this.getSessionFileForId(input.parentSurfacePiSessionId);
     const threadSessionManager = SessionManager.create(this.cwd, this.threadSurfaceDir);
@@ -1135,13 +1147,23 @@ export class WorkspaceSessionCatalog {
     }
     persistSessionManagerSnapshot(threadSessionManager);
 
-    return this.structuredSessionStore.createThread({
+    const thread = this.structuredSessionStore.createThread({
       turnId: input.turnId,
       parentThreadId: input.parentThreadId,
       surfacePiSessionId: threadSessionManager.getSessionId(),
       title: input.title,
       objective: input.objective,
     });
+    for (const key of input.contextKeys) {
+      const pack = getHandlerContextPack(key);
+      this.structuredSessionStore.loadThreadContext({
+        threadId: thread.id,
+        contextKey: pack.key,
+        contextVersion: pack.version,
+        loadedByCommandId: input.loadedByCommandId,
+      });
+    }
+    return this.structuredSessionStore.getThreadDetail(thread.id).thread;
   }
 
   private async runAgentPrompt(
@@ -1230,7 +1252,6 @@ export class WorkspaceSessionCatalog {
         session.provider = options.provider;
         session.model = options.model;
         session.thinkingLevel = options.thinkingLevel;
-        session.systemPrompt = options.systemPrompt;
         session.recreateOnNextPrompt = false;
         this.completePromptExecution(promptContext, visibleMessage);
       } catch (error) {
@@ -1262,7 +1283,6 @@ export class WorkspaceSessionCatalog {
         session.provider = options.provider;
         session.model = options.model;
         session.thinkingLevel = options.thinkingLevel;
-        session.systemPrompt = options.systemPrompt;
         this.failPromptExecution(promptContext, failure);
       } finally {
         unsubscribe();
@@ -1300,7 +1320,6 @@ export class WorkspaceSessionCatalog {
 
   private async resumeOrchestratorAfterHandlerHandoff(
     promptContext: PromptExecutionContext | null,
-    systemPrompt: string,
   ): Promise<void> {
     if (!promptContext || promptContext.surfaceKind !== "handler") {
       return;
@@ -1326,7 +1345,7 @@ export class WorkspaceSessionCatalog {
 
     const orchestratorSessionId = snapshot.session.orchestratorPiSessionId;
     const target = this.buildOrchestratorPromptTarget(orchestratorSessionId);
-    const orchestratorSession = await this.retainManagedSurface(target, systemPrompt);
+    const orchestratorSession = await this.retainManagedSurface(target);
     if (orchestratorSession.activePrompt) {
       await this.releaseManagedSurface(target.surfacePiSessionId);
       return;
@@ -1366,18 +1385,15 @@ export class WorkspaceSessionCatalog {
     }
   }
 
-  private async resumeHandlerAfterWorkflowAttention(
-    input: {
-      sessionId: string;
-      threadId: string;
-      workflowRunId: string;
-      smithersRunId: string;
-      workflowId: string;
-      summary: string;
-      reason: string;
-    },
-    systemPrompt: string,
-  ): Promise<boolean> {
+  private async resumeHandlerAfterWorkflowAttention(input: {
+    sessionId: string;
+    threadId: string;
+    workflowRunId: string;
+    smithersRunId: string;
+    workflowId: string;
+    summary: string;
+    reason: string;
+  }): Promise<boolean> {
     const snapshot = this.getStructuredSnapshot(input.sessionId);
     const thread = snapshot?.threads.find((entry) => entry.id === input.threadId) ?? null;
     if (!snapshot || !thread) {
@@ -1390,7 +1406,7 @@ export class WorkspaceSessionCatalog {
       surfacePiSessionId: thread.surfacePiSessionId,
       threadId: thread.id,
     };
-    const handlerSession = await this.retainManagedSurface(target, systemPrompt);
+    const handlerSession = await this.retainManagedSurface(target);
     if (handlerSession.activePrompt) {
       await this.releaseManagedSurface(target.surfacePiSessionId);
       return false;
@@ -1595,9 +1611,14 @@ async function createManagedSession(
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
   });
+  const requestContextTool = createRequestContextTool({
+    runtime: promptExecutionRuntime,
+    store: options.structuredSessionStore,
+  });
   const buildHandlerTools = () =>
     [
       executeTypescriptTool,
+      requestContextTool,
       threadHandoffTool,
       ...createSmithersTools({
         runtime: promptExecutionRuntime,
@@ -2010,6 +2031,9 @@ function buildHandlerDurablePromptContext(
     `Title: ${collapsePromptContextValue(thread.title, 120)}`,
     `Objective: ${collapsePromptContextValue(thread.objective, 280)}`,
     `Current objective status: ${thread.status}`,
+    `Loaded context keys: ${
+      thread.loadedContextKeys.length > 0 ? thread.loadedContextKeys.join(", ") : "none"
+    }`,
     "Use thread.handoff only when you want to return control to the orchestrator with a durable episode.",
     "Workflow waits, approvals, and resumes stay inside this thread. Do not call thread.handoff while this thread still owns a running or waiting workflow run.",
     "Ordinary replies, clarification, and follow-up chat should stay inside this thread.",

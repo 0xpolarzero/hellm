@@ -108,8 +108,8 @@ while (pendingPackages.length > 0) {
 
   const manifest = readPackageManifest(packageName);
   const dependencyNames = Object.keys({
-    ...(manifest?.dependencies ?? {}),
-    ...(manifest?.optionalDependencies ?? {}),
+    ...manifest?.dependencies,
+    ...manifest?.optionalDependencies,
   });
   for (const dependencyName of dependencyNames) {
     enqueuePackage(dependencyName);

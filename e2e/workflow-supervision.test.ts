@@ -95,7 +95,7 @@ async function clickWhenEnabled(
 
 async function sendPrompt(page: SvvyApp["page"], text: string): Promise<void> {
   const composer = page.locator(
-    'textarea[placeholder="Ask svvy to inspect the repo, make a change, or run verification."]',
+    'textarea[placeholder="Ask svvy to inspect the repo, make a change, or run Project CI."]',
   );
   await composer.fill(text);
   const sendButton = page.getByRole("button", { name: "Send" });
@@ -253,96 +253,93 @@ test("drives a real delegated workflow run through the app and routes workflow a
   expect(toolNames(workflowAttentionRequest)).not.toContain("thread.start");
 });
 
-test(
-  "drives a real delegated workflow run through the app with z.ai loaded from workspace .env",
-  async () => {
-    await withIsolatedLaunchState(async (launchState) => {
-      await writeWorkspaceEnvFile(launchState.workspaceDir, {
-        ZAI_API_KEY: REAL_ZAI_API_KEY,
-      });
-
-      await withSvvyApp(
-        {
-          env: {
-            ANTHROPIC_API_KEY: "",
-            OPENAI_API_KEY: "",
-          },
-          homeDir: launchState.homeDir,
-          workspaceDir: launchState.workspaceDir,
-        },
-        async ({ page }) => {
-          await page.getByRole("button", { name: "Open settings" }).waitFor({ state: "visible" });
-          await waitForVisible(page.getByText("New Session"), 30_000);
-
-          await sendPrompt(
-            page,
-            [
-              "Open a handler thread with the exact title `Hello World Workflow Thread`.",
-              "Use the exact objective `Run the bundled hello_world workflow, wait for it to finish, and hand the result back.`",
-              "Do not run the workflow from the orchestrator.",
-            ].join(" "),
-          );
-
-          await waitForVisible(page.getByText("Delegated Threads"), 60_000);
-          await waitForVisible(
-            page.getByText("Hello World Workflow Thread", { exact: true }),
-            60_000,
-          );
-
-          const threadCard = page.locator(".handler-thread-card").filter({
-            has: page.getByText("Hello World Workflow Thread", { exact: true }),
-          });
-          await waitForVisible(threadCard, 60_000);
-          await clickWhenEnabled(threadCard.getByRole("button", { name: "Open thread" }), 60_000);
-          await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
-
-          await sendPrompt(
-            page,
-            [
-              "Run the bundled hello_world workflow with input message `hello from the real provider workflow supervision e2e`.",
-              "Use smithers.* tools only as needed.",
-              "Do not call execute_typescript.",
-              "Stay in the thread until smithers.get_run reports the workflow is finished.",
-              "Then call thread.handoff with title `hello_world completed` and kind `workflow`.",
-            ].join(" "),
-          );
-
-          await waitForVisible(page.getByRole("button", { name: "Send" }), 90_000);
-          await returnToOrchestrator(page);
-          await waitForVisible(page.getByText("Delegated Threads"), 90_000);
-
-          const completedThreadCard = page.locator(".handler-thread-card").filter({
-            has: page.getByText("Hello World Workflow Thread", { exact: true }),
-          });
-          await waitForVisible(completedThreadCard, 90_000);
-          expect((await completedThreadCard.textContent()) ?? "").toContain("Completed");
-
-          await clickWhenEnabled(completedThreadCard.getByRole("button", { name: "Inspect" }));
-
-          const inspector = page.getByRole("dialog", { name: "Hello World Workflow Thread" });
-          await waitForVisible(inspector, 60_000);
-          expect((await inspector.textContent()) ?? "").toContain("Workflow Runs");
-          expect((await inspector.textContent()) ?? "").toContain("svvy-hello-world");
-          expect((await inspector.textContent()) ?? "").toContain("smithers.run_workflow");
-
-          await page.locator(".ui-dialog-close").click({ force: true });
-          await inspector.waitFor({ state: "hidden" });
-        },
-      );
-
-      const smithersDb = join(launchState.workspaceDir, ".svvy", "smithers-runtime", "smithers.db");
-      expect(existsSync(smithersDb)).toBe(true);
-
-      const executionRoot = join(launchState.workspaceDir, ".smithers", "executions");
-      const executionDirs = await readdir(executionRoot, { withFileTypes: true });
-      const runDirectories = executionDirs.filter((entry) => entry.isDirectory());
-      expect(runDirectories.length).toBeGreaterThan(0);
-      expect(
-        existsSync(join(executionRoot, runDirectories[0]?.name ?? "", "logs", "stream.ndjson")),
-      ).toBe(true);
+test("drives a real delegated workflow run through the app with z.ai loaded from workspace .env", async () => {
+  await withIsolatedLaunchState(async (launchState) => {
+    await writeWorkspaceEnvFile(launchState.workspaceDir, {
+      ZAI_API_KEY: REAL_ZAI_API_KEY,
     });
-  },
-);
+
+    await withSvvyApp(
+      {
+        env: {
+          ANTHROPIC_API_KEY: "",
+          OPENAI_API_KEY: "",
+        },
+        homeDir: launchState.homeDir,
+        workspaceDir: launchState.workspaceDir,
+      },
+      async ({ page }) => {
+        await page.getByRole("button", { name: "Open settings" }).waitFor({ state: "visible" });
+        await waitForVisible(page.getByText("New Session"), 30_000);
+
+        await sendPrompt(
+          page,
+          [
+            "Open a handler thread with the exact title `Hello World Workflow Thread`.",
+            "Use the exact objective `Run the bundled hello_world workflow, wait for it to finish, and hand the result back.`",
+            "Do not run the workflow from the orchestrator.",
+          ].join(" "),
+        );
+
+        await waitForVisible(page.getByText("Delegated Threads"), 60_000);
+        await waitForVisible(
+          page.getByText("Hello World Workflow Thread", { exact: true }),
+          60_000,
+        );
+
+        const threadCard = page.locator(".handler-thread-card").filter({
+          has: page.getByText("Hello World Workflow Thread", { exact: true }),
+        });
+        await waitForVisible(threadCard, 60_000);
+        await clickWhenEnabled(threadCard.getByRole("button", { name: "Open thread" }), 60_000);
+        await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
+
+        await sendPrompt(
+          page,
+          [
+            "Run the bundled hello_world workflow with input message `hello from the real provider workflow supervision e2e`.",
+            "Use smithers.* tools only as needed.",
+            "Do not call execute_typescript.",
+            "Stay in the thread until smithers.get_run reports the workflow is finished.",
+            "Then call thread.handoff with title `hello_world completed` and kind `workflow`.",
+          ].join(" "),
+        );
+
+        await waitForVisible(page.getByRole("button", { name: "Send" }), 90_000);
+        await returnToOrchestrator(page);
+        await waitForVisible(page.getByText("Delegated Threads"), 90_000);
+
+        const completedThreadCard = page.locator(".handler-thread-card").filter({
+          has: page.getByText("Hello World Workflow Thread", { exact: true }),
+        });
+        await waitForVisible(completedThreadCard, 90_000);
+        expect((await completedThreadCard.textContent()) ?? "").toContain("Completed");
+
+        await clickWhenEnabled(completedThreadCard.getByRole("button", { name: "Inspect" }));
+
+        const inspector = page.getByRole("dialog", { name: "Hello World Workflow Thread" });
+        await waitForVisible(inspector, 60_000);
+        expect((await inspector.textContent()) ?? "").toContain("Workflow Runs");
+        expect((await inspector.textContent()) ?? "").toContain("svvy-hello-world");
+        expect((await inspector.textContent()) ?? "").toContain("smithers.run_workflow");
+
+        await page.locator(".ui-dialog-close").click({ force: true });
+        await inspector.waitFor({ state: "hidden" });
+      },
+    );
+
+    const smithersDb = join(launchState.workspaceDir, ".svvy", "smithers-runtime", "smithers.db");
+    expect(existsSync(smithersDb)).toBe(true);
+
+    const executionRoot = join(launchState.workspaceDir, ".smithers", "executions");
+    const executionDirs = await readdir(executionRoot, { withFileTypes: true });
+    const runDirectories = executionDirs.filter((entry) => entry.isDirectory());
+    expect(runDirectories.length).toBeGreaterThan(0);
+    expect(
+      existsSync(join(executionRoot, runDirectories[0]?.name ?? "", "logs", "stream.ndjson")),
+    ).toBe(true);
+  });
+});
 
 function latestUserText(
   request:

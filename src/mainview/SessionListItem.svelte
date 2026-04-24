@@ -62,8 +62,8 @@
         labels.push(`Workflow ${counts.workflows}`);
       }
 
-      if (counts.verifications > 0) {
-        labels.push(`Gates ${counts.verifications}`);
+      if (counts.ciRuns > 0) {
+        labels.push(`CI ${counts.ciRuns}`);
       }
 
       if (counts.threads > 0) {

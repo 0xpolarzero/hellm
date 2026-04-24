@@ -529,6 +529,124 @@ function createTranscriptWorkflowDefinition(dbPath: string): TestWorkflowDefinit
   };
 }
 
+const projectCiTerminalResultObjectSchema = z.object({
+  status: z.enum(["passed", "failed", "cancelled", "blocked"]),
+  summary: z.string().min(1),
+  startedAt: z.string().optional(),
+  finishedAt: z.string().optional(),
+  checks: z.array(
+    z.object({
+      checkId: z.string().min(1),
+      label: z.string().min(1),
+      kind: z.string().min(1),
+      status: z.enum(["passed", "failed", "cancelled", "skipped", "blocked"]),
+      required: z.boolean().default(true),
+      command: z.array(z.string()).optional(),
+      exitCode: z.number().int().nullable().optional(),
+      summary: z.string().min(1),
+      artifactIds: z.array(z.string()).default([]),
+      startedAt: z.string().nullable().optional(),
+      finishedAt: z.string().nullable().optional(),
+    }),
+  ),
+});
+
+function normalizeProjectCiTerminalOutput(value: unknown): unknown {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  if (!candidate || typeof candidate !== "object") {
+    return candidate;
+  }
+  const result = { ...(candidate as Record<string, unknown>) };
+  if (result.startedAt === null) {
+    delete result.startedAt;
+  }
+  if (result.finishedAt === null) {
+    delete result.finishedAt;
+  }
+  return result;
+}
+
+const projectCiTerminalResultSchema = z.preprocess(
+  normalizeProjectCiTerminalOutput,
+  projectCiTerminalResultObjectSchema,
+);
+const invalidProjectCiTerminalResultSchema = z.preprocess(
+  normalizeProjectCiTerminalOutput,
+  projectCiTerminalResultObjectSchema.extend({
+    validatorToken: z.literal("valid"),
+  }),
+);
+
+function createProjectCiTerminalOutputWorkflowDefinition(input: {
+  dbPath: string;
+  validOutput?: boolean;
+  id?: string;
+  productKind?: "project-ci";
+}): TestWorkflowDefinition {
+  const launchSchema = z.object({
+    scope: z.enum(["fast", "full", "release"]).default("fast"),
+    reason: z.string().optional(),
+  });
+  const workflowId = input.id ?? "project_ci";
+  const smithersApi = createSmithers(
+    {
+      input: bundledWorkflowRuntimeStoredInputSchema,
+      output: projectCiTerminalResultObjectSchema,
+    },
+    { dbPath: input.dbPath },
+  );
+  return {
+    id: workflowId,
+    label: input.productKind ? "Project CI" : "Project CI Lookalike",
+    summary: input.productKind
+      ? "Test Project CI workflow."
+      : "Non-CI workflow with CI-shaped output.",
+    launchSchema,
+    productKind: input.productKind,
+    resultSchema: input.productKind
+      ? input.validOutput === false
+        ? invalidProjectCiTerminalResultSchema
+        : projectCiTerminalResultSchema
+      : undefined,
+    workflow: smithersApi.smithers((ctx) => {
+      const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);
+      const terminalOutput = {
+        status: workflowInput.scope === "release" ? "blocked" : "passed",
+        summary:
+          input.validOutput === false
+            ? `Project CI ${workflowInput.scope} checks reported an invalid terminal contract.`
+            : `Project CI ${workflowInput.scope} checks passed.`,
+        checks: [
+          {
+            checkId: "typecheck",
+            label: "Typecheck",
+            kind: "typecheck",
+            status: "passed",
+            required: true,
+            command: ["bun", "run", "typecheck"],
+            exitCode: 0,
+            summary: "Typecheck passed.",
+            artifactIds: [],
+          },
+        ],
+      };
+      return React.createElement(
+        smithersApi.Workflow,
+        { name: input.productKind ? "svvy-project-ci" : "svvy-project-ci-lookalike" },
+        React.createElement(smithersApi.Task, {
+          id: "result",
+          output: smithersApi.outputs.output,
+          children: terminalOutput,
+        }),
+      );
+    }),
+    sourceScope: "saved",
+    entryPath: input.productKind
+      ? ".svvy/workflows/entries/ci/project-ci.tsx"
+      : ".svvy/workflows/entries/ci-looking-workflow.tsx",
+  };
+}
+
 describe("SmithersRuntimeManager", () => {
   it("publishes workflow discovery metadata with input-side defaults", () => {
     const { cwd, manager } = createWorkspaceFixture();
@@ -559,6 +677,175 @@ describe("SmithersRuntimeManager", () => {
     expect(manager.listWorkflows().map((workflow) => workflow.workflowId)).toEqual(
       expect.arrayContaining(["approval_gate"]),
     );
+  });
+
+  it("exposes declared Project CI entries with result schema discovery metadata", () => {
+    const { cwd, manager } = createWorkspaceFixture();
+    registerWorkflow(
+      manager,
+      createProjectCiTerminalOutputWorkflowDefinition({
+        dbPath: smithersDbPath(cwd),
+        productKind: "project-ci",
+      }),
+    );
+
+    const workflows = manager.listWorkflows({ productKind: "project-ci" });
+
+    expect(workflows).toHaveLength(1);
+    expect(workflows[0]).toMatchObject({
+      workflowId: "project_ci",
+      productKind: "project-ci",
+      entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
+      resultSchema: {
+        type: "object",
+        required: ["status", "summary", "checks"],
+        properties: expect.objectContaining({
+          status: expect.objectContaining({
+            enum: ["passed", "failed", "cancelled", "blocked"],
+          }),
+          checks: expect.objectContaining({
+            type: "array",
+          }),
+        }),
+      },
+    });
+  });
+
+  it("records Project CI results only for declared entries with schema-valid terminal output", async () => {
+    const fixture = createWorkspaceFixture();
+    const { cwd, store, manager, sessionId, threadId, surfacePiSessionId } = fixture;
+    registerWorkflow(
+      manager,
+      createProjectCiTerminalOutputWorkflowDefinition({
+        dbPath: smithersDbPath(cwd),
+        productKind: "project-ci",
+      }),
+    );
+    registerWorkflow(
+      manager,
+      createProjectCiTerminalOutputWorkflowDefinition({
+        dbPath: smithersDbPath(cwd),
+        id: "ci_shaped_non_ci",
+      }),
+    );
+    registerWorkflow(
+      manager,
+      createProjectCiTerminalOutputWorkflowDefinition({
+        dbPath: smithersDbPath(cwd),
+        id: "invalid_project_ci",
+        productKind: "project-ci",
+        validOutput: false,
+      }),
+    );
+
+    const validCommand = createWorkflowCommand({
+      store,
+      sessionId,
+      threadId,
+      surfacePiSessionId,
+      requestSummary: "Run declared Project CI",
+      title: "Run Project CI",
+      summary: "Launch the declared Project CI workflow.",
+    });
+    const validCiRun = await manager.launchWorkflow({
+      sessionId,
+      threadId,
+      workflowId: "project_ci",
+      launchInput: { scope: "fast" },
+      commandId: validCommand.commandId,
+    });
+
+    await waitFor("valid Project CI completion", async () => {
+      const run = await manager.getRun(validCiRun.runId);
+      return run.status === "finished";
+    });
+    await waitFor("valid Project CI record", async () => {
+      await manager.getRun(validCiRun.runId);
+      const snapshot = store.getSessionState(sessionId);
+      return snapshot.ciRuns.length === 1 && snapshot.ciCheckResults.length === 1;
+    });
+
+    const firstSnapshot = store.getSessionState(sessionId);
+    const firstCiRunId = firstSnapshot.ciRuns[0]?.id;
+    const firstCheckResultId = firstSnapshot.ciCheckResults[0]?.id;
+    expect(firstSnapshot.ciRuns[0]).toMatchObject({
+      workflowId: "project_ci",
+      entryPath: ".svvy/workflows/entries/ci/project-ci.tsx",
+      status: "passed",
+      summary: "Project CI fast checks passed.",
+    });
+    expect(firstSnapshot.ciCheckResults[0]).toMatchObject({
+      ciRunId: firstCiRunId,
+      checkId: "typecheck",
+      status: "passed",
+      command: ["bun", "run", "typecheck"],
+      exitCode: 0,
+    });
+
+    await manager.getRun(validCiRun.runId);
+    await manager.getRun(validCiRun.runId);
+    const repeatedSnapshot = store.getSessionState(sessionId);
+    expect(repeatedSnapshot.ciRuns).toHaveLength(1);
+    expect(repeatedSnapshot.ciCheckResults).toHaveLength(1);
+    expect(repeatedSnapshot.ciRuns[0]?.id).toBe(firstCiRunId);
+    expect(repeatedSnapshot.ciCheckResults[0]?.id).toBe(firstCheckResultId);
+
+    const nonCiCommand = createWorkflowCommand({
+      store,
+      sessionId,
+      threadId,
+      surfacePiSessionId,
+      requestSummary: "Run CI-shaped non-CI workflow",
+      title: "Run CI-shaped workflow",
+      summary: "Launch a workflow that emits CI-shaped output without declaring Project CI.",
+    });
+    const nonCiRun = await manager.launchWorkflow({
+      sessionId,
+      threadId,
+      workflowId: "ci_shaped_non_ci",
+      launchInput: { scope: "full" },
+      commandId: nonCiCommand.commandId,
+    });
+
+    await waitFor("CI-shaped non-CI completion", async () => {
+      const run = await manager.getRun(nonCiRun.runId);
+      return run.status === "finished";
+    });
+    const afterNonCiSnapshot = store.getSessionState(sessionId);
+    expect(afterNonCiSnapshot.ciRuns).toHaveLength(1);
+    expect(afterNonCiSnapshot.ciCheckResults).toHaveLength(1);
+
+    const invalidCiCommand = createWorkflowCommand({
+      store,
+      sessionId,
+      threadId,
+      surfacePiSessionId,
+      requestSummary: "Run invalid declared Project CI workflow",
+      title: "Run invalid Project CI",
+      summary: "Launch a declared Project CI workflow that emits invalid output.",
+    });
+    const invalidCiRun = await manager.launchWorkflow({
+      sessionId,
+      threadId,
+      workflowId: "invalid_project_ci",
+      launchInput: { scope: "fast" },
+      commandId: invalidCiCommand.commandId,
+    });
+
+    await waitFor("invalid Project CI failure projection", async () => {
+      const run = await manager.getRun(invalidCiRun.runId);
+      const workflowRun = store
+        .getSessionState(sessionId)
+        .workflowRuns.find((entry) => entry.smithersRunId === invalidCiRun.runId);
+      return (
+        run.status === "finished" &&
+        workflowRun?.status === "failed" &&
+        workflowRun.summary.includes("did not validate against the entry result schema")
+      );
+    });
+    const afterInvalidSnapshot = store.getSessionState(sessionId);
+    expect(afterInvalidSnapshot.ciRuns).toHaveLength(1);
+    expect(afterInvalidSnapshot.ciCheckResults).toHaveLength(1);
   });
 
   it("runs the bundled hello_world workflow through the real Smithers runtime and projects completion back to the handler thread", async () => {
@@ -1718,7 +2005,12 @@ describe("SmithersRuntimeManager", () => {
             state: {
               messages,
             },
-            async prompt(promptMessages: Array<{ role: string; content: Array<{ type: string; text: string }> }>) {
+            async prompt(
+              promptMessages: Array<{
+                role: string;
+                content: Array<{ type: string; text: string }>;
+              }>,
+            ) {
               messages.push(...promptMessages);
 
               const executeTypescript = options.customTools.find(
@@ -1900,9 +2192,11 @@ describe("SmithersRuntimeManager", () => {
         agentEngine: "pi",
         workflowRunId: workflowRun?.id,
       });
-      expect(snapshot.workflowTaskMessages.filter(
-        (message) => message.workflowTaskAttemptId === workflowTaskAttempt?.id,
-      )).not.toHaveLength(0);
+      expect(
+        snapshot.workflowTaskMessages.filter(
+          (message) => message.workflowTaskAttemptId === workflowTaskAttempt?.id,
+        ),
+      ).not.toHaveLength(0);
       expect(
         snapshot.commands.some(
           (command) =>

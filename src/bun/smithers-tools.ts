@@ -13,6 +13,7 @@ const listWorkflowsParamsSchema = Type.Object(
   {
     workflowId: Type.Optional(Type.String({ minLength: 1 })),
     sourceScope: Type.Optional(Type.Union([Type.Literal("saved"), Type.Literal("artifact")])),
+    productKind: Type.Optional(Type.Literal("project-ci")),
     pathPrefix: Type.Optional(Type.String({ minLength: 1 })),
   },
   { additionalProperties: false },
@@ -171,6 +172,7 @@ export function createSmithersTools(options: CreateSmithersToolsOptions): AgentT
         const workflows = options.manager.listWorkflows({
           workflowId: params.workflowId?.trim() || undefined,
           sourceScope: params.sourceScope,
+          productKind: params.productKind,
           pathPrefix: params.pathPrefix?.trim() || undefined,
         });
         return {

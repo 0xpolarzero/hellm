@@ -26,6 +26,7 @@ describe("default system prompt", () => {
   it("describes the adopted orchestrator and handler-thread tool split", () => {
     expect(DEFAULT_SYSTEM_PROMPT).toBe(buildSystemPrompt("orchestrator"));
     expect(DEFAULT_SYSTEM_PROMPT).toContain("delegate with thread.start");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain('context: ["ci"]');
     expect(DEFAULT_SYSTEM_PROMPT).toContain(
       "Handler threads can supervise workflows through smithers.* tools",
     );
@@ -49,6 +50,18 @@ describe("default system prompt", () => {
     expect(HANDLER_SYSTEM_PROMPT).toContain(
       "Writes under .svvy/workflows/ automatically trigger saved-workflow validation.",
     );
+    expect(HANDLER_SYSTEM_PROMPT).toContain('request_context({ keys: ["ci"] })');
+    expect(EXECUTE_TYPESCRIPT_API_DECLARATION).not.toContain("request_context");
+  });
+
+  it("injects full handler context only after that context pack is loaded", () => {
+    expect(buildSystemPrompt("handler")).not.toContain("Loaded handler context pack: Project CI.");
+
+    const handlerPrompt = buildSystemPrompt("handler", { loadedContextKeys: ["ci"] });
+
+    expect(handlerPrompt).toContain("Loaded handler context pack: Project CI.");
+    expect(handlerPrompt).toContain('productKind = "project-ci"');
+    expect(handlerPrompt).toContain("resultSchema");
   });
 
   it("gives workflow task agents an execute_typescript-only product surface", () => {

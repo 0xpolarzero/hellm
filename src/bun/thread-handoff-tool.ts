@@ -13,7 +13,6 @@ export const THREAD_HANDOFF_TOOL_NAME = "thread.handoff";
 const handoffKindSchema = Type.Union([
   Type.Literal("analysis"),
   Type.Literal("change"),
-  Type.Literal("verification"),
   Type.Literal("workflow"),
   Type.Literal("clarification"),
 ]);

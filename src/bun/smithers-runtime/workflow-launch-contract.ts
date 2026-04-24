@@ -9,12 +9,14 @@ export type RunnableWorkflowLaunchContract = {
   summary: string;
   sourceScope: RunnableWorkflowRegistryEntry["sourceScope"];
   entryPath: string;
+  productKind?: RunnableWorkflowRegistryEntry["productKind"];
   definitionPaths: string[];
   promptPaths: string[];
   componentPaths: string[];
   assetPaths: string[];
   launchSchema: z.ZodTypeAny;
   launchInputJsonSchema: Record<string, unknown>;
+  resultSchemaJsonSchema?: Record<string, unknown>;
 };
 
 type JsonObject = Record<string, unknown>;
@@ -28,6 +30,11 @@ export function compileRunnableWorkflowLaunchContract(
   const launchInputJsonSchema = sanitizeToolJsonSchema(
     z.toJSONSchema(entry.launchSchema as any, { io: "input" }) as JsonObject,
   );
+  const resultSchemaJsonSchema = entry.resultSchema
+    ? sanitizeToolJsonSchema(
+        z.toJSONSchema(entry.resultSchema as any, { io: "output" }) as JsonObject,
+      )
+    : undefined;
   ensureRootObjectSchema(launchInputJsonSchema, entry.workflowId);
 
   return {
@@ -36,12 +43,14 @@ export function compileRunnableWorkflowLaunchContract(
     summary: entry.summary,
     sourceScope: entry.sourceScope,
     entryPath: entry.entryPath,
+    productKind: entry.productKind,
     definitionPaths: entry.definitionPaths.slice(),
     promptPaths: entry.promptPaths.slice(),
     componentPaths: entry.componentPaths.slice(),
     assetPaths: entry.assetPaths.slice(),
     launchSchema: entry.launchSchema,
     launchInputJsonSchema,
+    resultSchemaJsonSchema,
   };
 }
 
