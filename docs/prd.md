@@ -22,7 +22,7 @@ The product combines:
 - pi-backed delegated handler threads for bounded delegated objectives
 - Smithers-backed workflow runs executed under those handler threads
 - authored artifact workflows plus workspace-saved reusable workflow assets and runnable workflow entries
-- first-class threads, workflow runs, commands, episodes, artifacts, verification, and worktree awareness
+- first-class threads, workflow runs, commands, episodes, artifacts, Project CI, and worktree awareness
 
 The intended feel is closer to Slate than to stock pi:
 
@@ -41,7 +41,7 @@ The shipped product must let a user:
 - inspect durable outputs from each meaningful unit of work
 - delegate bounded work while keeping top-level strategy and state visible
 - talk directly inside delegated thread surfaces when that work needs clarification or follow-up
-- run and interpret verification as first-class product behavior
+- configure, run, and interpret Project CI as first-class product behavior
 - save a reusable authored workflow into the workspace workflow library and discover it later
 - pause and resume safely when user input or an external prerequisite is required
 - keep session context and worktree context aligned
@@ -64,7 +64,7 @@ No worker, handler thread, or workflow run becomes the source of truth for overa
 
 ### 2. One Execution Model
 
-`svvy` does not have separate product execution engines for direct work, delegated work, verification, and waiting.
+`svvy` does not have separate product execution engines for direct work, delegated work, Project CI, and waiting.
 
 It has one shared execution model:
 
@@ -90,7 +90,7 @@ Before any target surface runs a turn through pi:
 The actor-specific capability split is:
 
 - the orchestrator prompt knows that handler threads can supervise Smithers workflows, but it does not receive the `smithers.*` tool declarations; if it wants workflow action, it must delegate by calling `thread.start`
-- a handler-thread prompt receives `smithers.*`, `thread.handoff`, `wait`, and any allowed generic work surface such as `execute_typescript`, but it does not receive `thread.start` in the default adopted model
+- a handler-thread prompt receives `smithers.*`, `request_context`, `thread.handoff`, `wait`, and any allowed generic work surface such as `execute_typescript`, but it does not receive `thread.start` in the default adopted model
 - a workflow-task-agent prompt receives only task-local instructions and task-local callable declarations; in the default adopted model it should receive `execute_typescript` and not `thread.start`, `thread.handoff`, `wait`, or `smithers.*`
 - a workflow-task-agent runtime must not load ambient pi built-in tools or workspace-discovered extension tools that would widen that callable surface beyond the explicit task-local tool set
 - if `svvy` later adopts nested delegation or additional actor classes, those capabilities must be added explicitly rather than leaked through one shared global prompt surface
@@ -138,7 +138,7 @@ That means:
 
 - a short-lived worker is a one-task workflow
 - parallel delegated work is a workflow graph authored from saved or artifact-local assets when needed
-- verification uses the same workflow runtime and structured output model rather than a separate engine
+- Project CI uses the same workflow runtime and explicit structured result model rather than a separate engine
 - a custom delegated plan is authored as a workflow and then executed
 
 The handler thread is not the heavy execution engine.
@@ -233,15 +233,41 @@ Structured diagnostics must be produced, and invalid snippets must not run.
 
 ### 7. Native Control Tools Stay Small And Explicit
 
-Some actions are not ordinary generic work because they change product-level control flow.
+Some actions are not ordinary generic work because they change product-level control flow or handler prompt context.
 
 Those actions stay as `svvy`-native control tools:
 
 - `thread.start`
+- `request_context`
 - `thread.handoff`
 - `wait`
 
 These are still tool calls.
+
+`request_context` is handler-only.
+
+It loads typed `svvy` context packs into the current handler thread when that handler needs optional product knowledge that should not be preloaded by default.
+
+It is not part of the `execute_typescript` `api.*` SDK because it changes the handler's prompt context rather than performing bounded repository work.
+
+The first adopted context key is:
+
+- `ci`
+
+The orchestrator does not receive `request_context`.
+
+Instead, the orchestrator knows the small list of available context keys and may pass them when starting a handler thread:
+
+```ts
+thread.start({
+  objective: "Configure Project CI for this repository",
+  context: ["ci"],
+});
+```
+
+That starts a normal handler thread with the default handler runtime shape and the requested context pack preloaded before its first turn.
+
+There is no `thread.start_ci`, no `ci.start`, and no CI-specific orchestrator.
 
 Workflow supervision is different.
 
@@ -267,6 +293,8 @@ More precisely, this means:
 The intended use of the native control subset is:
 
 - the orchestrator normally uses `thread.start` to open a delegated handler thread
+- the orchestrator may pass `context: ["ci"]` to `thread.start` when the delegated objective clearly needs Project CI authoring context
+- a handler thread may call `request_context({ keys: ["ci"] })` when it later discovers that Project CI configuration or modification is required
 - a handler thread uses `thread.handoff` to emit a durable handoff episode and mark the current objective span complete without losing direct interactivity in that thread surface, but only after no running or waiting workflow run still belongs to that span
 - a successful `thread.handoff` immediately opens a fresh orchestrator reconciliation turn so the orchestrator can act on the latest durable handoff without waiting for another user-authored orchestrator message
 - a handler thread normally uses Smithers-native bridge tools such as `smithers.list_workflows`, `smithers.run_workflow`, `smithers.get_run`, `smithers.explain_run`, `smithers.list_pending_approvals`, `smithers.resolve_approval`, `smithers.get_node_detail`, `smithers.list_artifacts`, and `smithers.get_run_events` to supervise Smithers execution
@@ -274,9 +302,13 @@ The intended use of the native control subset is:
 
 `smithers.list_workflows` is the runnable-entry discovery surface and should expose each entry's `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `launchInputSchema`. Handlers launch or resume through the stable `smithers.run_workflow({ workflowId, input, runId? })` tool.
 
-Verification is not a separate native control tool in the adopted model.
+Project CI is not a separate native control tool in the adopted model.
 
-Verification is delegated work expressed through saved runnable entries and artifact entries that still run on the same Smithers runtime.
+Project CI is a dedicated product lane over normal Smithers runnable entries that declare `productKind = "project-ci"` and a CI result schema. CI state is recorded only from terminal output that validates against that declared result schema.
+
+CI authoring knowledge is delivered through the typed `ci` context pack.
+
+It may be preloaded by `thread.start({ context: ["ci"] })` or loaded later by a handler through `request_context({ keys: ["ci"] })`.
 
 ### 8. Sessions Contain Many Interactive Surfaces
 
@@ -289,7 +321,7 @@ A session is the durable user-facing container for:
 - workflow runs
 - episodes
 - artifacts
-- verification records
+- CI run and CI check result records
 - wait state
 
 The main orchestrator surface and a handler thread surface are intentionally similar interaction surfaces:
@@ -399,7 +431,7 @@ It must not replace pi with a second agent shell.
 - product behavior above the pi seam
 - the orchestrator
 - delegated handler thread creation and supervision policy
-- session, turn, thread, workflow-run, command, episode, artifact, verification, and wait models
+- session, turn, thread, workflow-run, command, episode, artifact, Project CI, and wait models
 - reconciliation
 - desktop UI product semantics
 - read models and selectors that drive the app
@@ -529,8 +561,15 @@ Each handler thread should have:
 - an objective
 - its own direct conversation history
 - durable lifecycle status
+- loaded typed context keys, when optional product context has been preloaded or requested
 - zero or more workflow runs
 - zero or more handoff episodes
+
+Typed context keys are not runtime profiles.
+
+A runtime profile describes execution shape such as model, reasoning, and tool surface.
+
+A context key describes optional product knowledge loaded into a handler prompt, such as `ci`.
 
 ### Workflow Run
 
@@ -635,15 +674,31 @@ Artifacts are thread- and command-addressable first.
 
 They may later be surfaced through an episode or another read model, but they should not depend on transcript parsing.
 
-### Verification
+### Project CI
 
-Verification is a first-class feature area, but it is represented as delegated workflow execution rather than as a separate native execution subsystem.
+Project CI is a first-class product lane for the repository's repeatable confidence checks.
+
+It is represented as normal Smithers workflow execution plus explicit `svvy` CI projection.
 
 In practice that means:
 
-- build, test, lint, integration, and manual verification may be expressed as saved runnable entries or artifact entries
-- verification outcomes still need structured records for summary, routing, and UI
-- verification-specific UI is allowed where it improves clarity
+- reusable Project CI assets live in the saved workflow library under `.svvy/workflows/{definitions,prompts,components,entries}/ci/`
+- a runnable CI entry is an ordinary saved workflow entry that declares `productKind = "project-ci"` and a `resultSchema`
+- the runtime records CI state only from the terminal output of a declared CI entry after that output validates against the entry's `resultSchema`
+- CI run and CI check result records summarize build, test, lint, typecheck, integration, docs, manual, or repository-specific checks when the configured CI entry returns them
+- the UI exposes a dedicated Project CI surface for not-configured, configured, running, passed, failed, blocked, and cancelled states
+
+Project CI deliberately avoids heuristic inference.
+
+The runtime must not parse arbitrary workflow logs, node outputs, final prose, or command names to guess CI results.
+
+The product must not scaffold a fake passing CI entry for repositories that have not configured real checks.
+
+CI authoring context belongs only to handler threads that load the typed `ci` context pack.
+
+Normal handler threads may discover and run configured CI entries without that pack.
+
+If a normal handler needs to configure or modify Project CI, it should call `request_context({ keys: ["ci"] })` rather than relying on default prompt knowledge.
 
 ### Worktree
 
@@ -663,7 +718,7 @@ At minimum:
 
 Every user request goes through one orchestrator-controlled product loop:
 
-1. load current workspace, session, thread, workflow-run, episode, artifact, verification, and wait context
+1. load current workspace, session, thread, workflow-run, episode, artifact, Project CI, and wait context
 2. identify the target surface of the message
 3. resolve that surface's active system prompt and load it into pi's true `systemPrompt` channel before any transcript reconstruction
 4. open a new turn for that surface
@@ -690,6 +745,7 @@ When the target surface is the main orchestrator:
 4. if delegated:
    - call `thread.start`
    - hand off the delegated objective to a handler thread
+   - include typed context keys such as `context: ["ci"]` only when the objective needs that optional product context from the first handler turn
 5. when a handler thread explicitly hands control back, open an orchestrator turn that reconciles the latest handoff from durable state: thread durable state plus the latest handoff episode
 
 ### Handler Thread Loop
@@ -700,6 +756,7 @@ When the target surface is a handler thread:
 2. decide and persist whether to:
    - reply directly inside the thread
    - use `execute_typescript`
+   - request optional product context through `request_context`
    - reuse a saved runnable entry
    - author a short-lived artifact workflow, often by importing saved definitions, prompts, components, and agent profiles
    - inspect workflow state through Smithers-native bridge tools such as `smithers.get_run`, `smithers.explain_run`, `smithers.get_node_detail`, and `smithers.get_run_events`
@@ -811,7 +868,7 @@ The workflow inspector should let the user inspect:
 
 Some workflow categories may justify specialized UI instead of a generic workflow card.
 
-Verification is the clearest first example.
+Project CI is the clearest first example because it is backed by declared CI entries and validated CI result records rather than inferred from arbitrary workflow output.
 
 ## Product Outcomes
 

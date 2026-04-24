@@ -857,7 +857,7 @@ The ideal product flow looks like this:
    - secret injection
    - protected files
    - approval gates
-7. the sandbox returns logs, artifacts, diffs, and verification results
+7. the sandbox returns logs, artifacts, diffs, and Project CI results when the sandboxed work ran a declared CI entry
 8. only after that does `svvy` sync approved changes back to the real workspace
 
 The mental model is:

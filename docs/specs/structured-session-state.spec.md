@@ -45,12 +45,13 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Keep `pi` as the canonical transcript and runtime substrate for the main orchestrator surface and delegated handler thread surfaces.
 - Keep Smithers as the canonical workflow execution substrate.
 - Add `svvy`-owned structured product state above those substrates.
-- Model turns, handler threads, workflow runs, workflow task attempts, commands, episodes, artifacts, verification, and waits explicitly.
+- Model turns, handler threads, workflow runs, workflow task attempts, commands, episodes, artifacts, Project CI, and waits explicitly.
 - Persist one top-level per-turn decision for every surface, with orchestrator routing decisions and handler supervision decisions sharing one field.
 - Treat every tool call as a `CommandRecord`.
 - Make `execute_typescript` the default generic work surface.
 - Treat every top-level `execute_typescript` invocation as one parent command record and every nested `api.*` call as a child command record.
-- Keep only a very small set of native control tools for thread spawning, explicit thread handoff, and wait; workflow control belongs on Smithers-native `smithers.*` bridge tools.
+- Keep only a very small set of native control tools for thread spawning, handler context loading, explicit thread handoff, and wait; workflow control belongs on Smithers-native `smithers.*` bridge tools.
+- Treat handler context-pack loading as explicit handler state through `thread.start` context keys and the top-level handler-only `request_context` tool, not as an `execute_typescript` API.
 - Drive durable facts from real runtime handlers and bridge events, not transcript heuristics.
 - Use one explicit surface-target identity model with `workspaceSessionId`, `surfacePiSessionId`, and `threadId` instead of overloading `session.id`.
 - Emit workspace-level read-model updates independently from live surface transcript updates; the renderer should join durable workspace facts, live surface facts, and pane bindings locally instead of depending on one active-session payload.
@@ -74,7 +75,7 @@ The product should model the durable things that actually affect routing, inspec
 
 That means:
 
-- keep first-class records for turns, threads, workflow runs, workflow task attempts, commands, episodes, verification runs, artifacts, and lifecycle events
+- keep first-class records for turns, threads, loaded handler context keys, workflow runs, workflow task attempts, commands, episodes, Project CI runs, CI check results, artifacts, and lifecycle events
 - keep file-backed artifact metadata and path indexes alongside those records
 - do not split every human-readable summary into a large bespoke schema
 - keep Smithers internals inside Smithers unless `svvy` truly needs a top-level summary of them
@@ -108,9 +109,10 @@ Smithers remains canonical for:
 - turns and handler-thread records
 - workflow-run records projected into the session model
 - workflow-task-attempt records projected into the session model
+- loaded handler context keys
 - command records
 - episodes, including handler-thread handoff episodes
-- verification records
+- Project CI run and CI check result records
 - artifacts and artifact indexes
 - session summary read models and selectors
 - wait state and lifecycle selectors
@@ -151,6 +153,7 @@ type StructuredSessionState = {
       | "execute_typescript"
       | "clarify"
       | "thread.start"
+      | "request_context"
       | "thread.handoff"
       | "wait"
       | `smithers.${string}`;
@@ -174,6 +177,7 @@ type StructuredSessionState = {
       resumeWhen: string;
       since: string;
     };
+    loadedContextKeys: string[];
     worktree?: string;
     startedAt: string;
     updatedAt: string;
@@ -277,15 +281,36 @@ type StructuredSessionState = {
     createdAt: string;
   }>;
 
-  verifications: Array<{
+  ciRuns: Array<{
     id: string;
     threadId: string;
     workflowRunId: string;
-    kind: string;
-    status: "passed" | "failed" | "cancelled";
+    smithersRunId: string;
+    workflowId: string;
+    entryPath: string;
+    status: "passed" | "failed" | "cancelled" | "blocked";
     summary: string;
+    createdAt: string;
+    updatedAt: string;
     startedAt: string;
     finishedAt: string;
+  }>;
+
+  ciCheckResults: Array<{
+    id: string;
+    ciRunId: string;
+    workflowRunId: string;
+    checkId: string;
+    label: string;
+    kind: string;
+    status: "passed" | "failed" | "cancelled" | "skipped" | "blocked";
+    required: boolean;
+    command: string[] | null;
+    exitCode: number | null;
+    summary: string;
+    artifactIds: string[];
+    startedAt: string | null;
+    finishedAt: string | null;
   }>;
 
   artifacts: Array<{
@@ -312,7 +337,8 @@ type StructuredSessionState = {
         | "workflowRun"
         | "command"
         | "episode"
-        | "verification"
+        | "ciRun"
+        | "ciCheckResult"
         | "artifact";
       id: string;
     };
@@ -390,6 +416,7 @@ They exist because the product needs a durable answer to:
 - which delegated objectives exist
 - which pi-backed interactive surface owns each objective
 - whether the handler is actively working, a workflow is actively running, the objective is waiting, the thread is troubleshooting, or the current span is completed
+- which optional typed context packs are loaded into that handler thread
 - which workflow run is currently active or most recent under that thread
 
 A thread is not itself a workflow run.
@@ -441,9 +468,20 @@ The terminal handoff back to the orchestrator is:
 - the thread's terminal durable state
 - the latest handoff episode emitted by that thread
 
-### Verification
+### Project CI
 
-Verification records exist because build, test, lint, and related checks still need structured product state even though they now execute as workflow-shaped delegated work.
+Project CI records exist because configured repository checks need structured product state while still executing through normal Smithers workflow runs.
+
+They answer:
+
+- whether the latest configured CI run passed, failed, was blocked, or was cancelled
+- which workflow run produced that answer
+- which exact checks ran inside that CI run
+- which artifacts and logs explain failures
+
+Project CI records are not inferred from arbitrary workflow output.
+
+They are recorded only from terminal output of a runnable entry that declares `productKind = "project-ci"` and whose output validates against that entry's declared `resultSchema`.
 
 ### Artifact
 
@@ -506,7 +544,7 @@ Use `turnDecision` this way:
 
 - `pending` is allowed only between turn creation and the moment the surface chooses how to proceed
 - orchestrator turns persist session-level routing decisions such as `reply`, `execute_typescript`, `clarify`, or `thread.start`
-- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `smithers.run_workflow`, `smithers.get_run`, `smithers.resolve_approval`, `thread.handoff`, or `wait`
+- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `request_context`, `smithers.run_workflow`, `smithers.get_run`, `smithers.resolve_approval`, `thread.handoff`, or `wait`
 - this symmetry is intentional even though only orchestrator turns own session-level routing
 - the turn decision is the top-level classification of the turn, not a replacement for command records
 - linkage to spawned threads, workflow runs, artifacts, and episodes still belongs in their own records plus linked commands
@@ -524,6 +562,7 @@ Use `turnDecision` this way:
 | `objective`          | Durable statement of what this thread owns.                                                                                |
 | `status`             | Captures handler-attention state for the delegated objective.                                                              |
 | `wait`               | Captures blocked-state details for the thread itself, including whether the wait is handler-owned or workflow-owned.       |
+| `loadedContextKeys`  | Records typed optional context packs loaded into this handler thread, such as `ci`.                                        |
 | `worktree`           | Records the bound worktree when relevant.                                                                                  |
 | `startedAt`          | Orders thread creation.                                                                                                    |
 | `updatedAt`          | Enables recency-based selectors.                                                                                           |
@@ -647,7 +686,7 @@ Use them this way:
 
 - low-level repo or web reads inside `execute_typescript` are usually `trace`
 - material writes, artifact creation, and failed execs usually roll up as `summary`
-- `thread.start`, `thread.handoff`, `wait`, and Smithers-mutating commands such as `smithers.run_workflow`, `smithers.resolve_approval`, `smithers.runs.cancel`, and `smithers.signals.send` are normally `surface`
+- `thread.start`, `request_context`, `thread.handoff`, `wait`, and Smithers-mutating commands such as `smithers.run_workflow`, `smithers.resolve_approval`, `smithers.runs.cancel`, and `smithers.signals.send` are normally `surface`
 - read-only Smithers inspection commands are usually `summary` unless the UI chooses to surface a specific one directly
 - child `api.*` commands remain nested detail by default
 
@@ -722,30 +761,62 @@ Commands, including `execute_typescript`, may produce their own summaries and ar
 
 Those command-level summaries are not episodes.
 
-## Verification Model
+## Project CI Model
 
-### Verification Fields
+### CI Run Fields
 
-| Field           | Why it exists                                                |
-| --------------- | ------------------------------------------------------------ |
-| `id`            | Stable verification handle.                                  |
-| `threadId`      | Links the verification to the handler thread that owns it.   |
-| `workflowRunId` | Links the verification to the workflow run that produced it. |
-| `kind`          | Identifies the verification type.                            |
-| `status`        | Captures pass, fail, or cancelled outcome.                   |
-| `summary`       | Gives the orchestrator and UI a concise outcome summary.     |
-| `startedAt`     | Records start time.                                          |
-| `finishedAt`    | Records finish time.                                         |
+| Field           | Why it exists                                                             |
+| --------------- | ------------------------------------------------------------------------- |
+| `id`            | Stable CI run handle.                                                     |
+| `threadId`      | Links the CI run to the handler thread that launched or supervised it.    |
+| `workflowRunId` | Links the CI run to the local workflow-run record that produced it.       |
+| `smithersRunId` | Links the CI run to the canonical Smithers run.                           |
+| `workflowId`    | Records the runnable CI entry id, usually `project_ci`.                   |
+| `entryPath`     | Records the saved CI entry path used for the run.                         |
+| `status`        | Captures passed, failed, cancelled, or blocked outcome.                   |
+| `summary`       | Gives the orchestrator and UI a concise CI outcome summary.               |
+| `createdAt`     | Records when the projection row was first created.                        |
+| `updatedAt`     | Records the latest idempotent projection update.                          |
+| `startedAt`     | Records CI start time, using workflow timing when the output omits it.    |
+| `finishedAt`    | Records CI finish time, using workflow timing when the output omits it.   |
 
-Verification kind is intentionally open-ended.
+### CI Check Result Fields
 
-Built-in defaults may include:
+| Field           | Why it exists                                                               |
+| --------------- | --------------------------------------------------------------------------- |
+| `id`            | Stable CI check result handle.                                              |
+| `ciRunId`       | Links the check to the CI run.                                              |
+| `workflowRunId` | Links the check back to the workflow run for inspection joins.              |
+| `checkId`       | Stable check id inside the CI entry, used for idempotent upserts.           |
+| `label`         | Human-readable check label.                                                 |
+| `kind`          | Open check category such as typecheck, test, lint, build, docs, or manual. |
+| `status`        | Captures passed, failed, cancelled, skipped, or blocked outcome.            |
+| `required`      | Indicates whether this check contributes to overall CI status.              |
+| `command`       | Command argv when the check maps to a subprocess; `null` for manual checks. |
+| `exitCode`      | Process exit code when applicable.                                          |
+| `summary`       | Concise check outcome.                                                      |
+| `artifactIds`   | Links to logs, reports, screenshots, or other artifacts.                    |
+| `startedAt`     | Optional check start time.                                                  |
+| `finishedAt`    | Optional check finish time.                                                 |
 
-- `build`
+CI check `kind` is intentionally open-ended.
+
+Recommended built-in values include:
+
+- `typecheck`
 - `test`
 - `lint`
+- `build`
 - `integration`
+- `docs`
 - `manual`
+
+The idempotency rule is:
+
+- one `ci_run` per `workflowRunId`
+- one `ci_check_result` per `ciRunId + checkId`
+
+No runtime component may create these records by reading workflow logs, Smithers node outputs, final prose, or command names.
 
 ## Artifact Model
 
@@ -790,12 +861,14 @@ The precise list may grow, but the first adopted set is:
 - `thread.finished`
 - `workflowRun.created`
 - `workflowRun.updated`
+- `context.loaded`
 - `command.requested`
 - `command.started`
 - `command.waiting`
 - `command.finished`
 - `episode.created`
-- `verification.recorded`
+- `ciRun.recorded`
+- `ciCheckResult.recorded`
 - `artifact.created`
 - `session.wait.started`
 - `session.wait.cleared`
@@ -882,7 +955,7 @@ The main session UI should primarily read:
 - latest workflow-run state per thread
 - latest handoff episodes and episode history
 - artifacts
-- verification summaries
+- Project CI summaries
 
 Transcript replay is not an allowed mechanism for these product surfaces once structured writes exist.
 
@@ -894,10 +967,12 @@ The real implementation should store session-scoped rows for:
 
 - `turn`
 - `thread`
+- `thread_context`
 - `workflow_run`
 - `command`
 - `episode`
-- `verification`
+- `ci_run`
+- `ci_check_result`
 - `artifact`
 - `event`
 
@@ -905,6 +980,7 @@ Recommended implementation rules:
 
 - every row should carry `session_id`
 - `thread.surface_pi_session_id` should be unique
+- `thread_context` should be unique by `thread_id + context_key`
 - `workflow_run.smithers_run_id` should be unique
 - `episode.thread_id` should be indexed for ordered lookups; it should not be unique because a thread may hand control back more than once over its lifetime
 - artifact tables should preserve path indexes for file-backed lookups
@@ -914,17 +990,19 @@ Recommended implementation rules:
 Write responsibility is:
 
 - ordinary orchestrator-turn writes, including turn decisions, and root command writes belong to the `svvy` runtime
+- `thread.start` writes any preloaded handler context keys before the handler's first turn runs
 - handler-thread turn writes, including turn decisions, and command writes belong to the `svvy` runtime over pi thread surfaces
+- `request_context` writes loaded handler context keys for the current handler thread and is idempotent per `threadId + contextKey`
 - workflow-run writes belong to the Smithers bridge
-- verification writes belong to the runtime or bridge that interprets verification-shaped workflow outputs
+- Project CI writes belong to the runtime or bridge path that handles terminal Smithers runs from entries declaring `productKind = "project-ci"` and validates their terminal output against the declared CI result schema
 - wait writes belong to the `svvy` runtime
 
-No runtime component may synthesize `turnDecision`, thread, workflow-run, verification, or wait facts from transcript prose after the fact.
+No runtime component may synthesize `turnDecision`, thread, workflow-run, Project CI, or wait facts from transcript prose after the fact.
 
 Read APIs and selectors are projection-only for lifecycle state:
 
 - they may read current durable facts and explicit active-surface state
-- they must not mutate thread, workflow-run, verification, or wait state during reads
+- they must not mutate thread, workflow-run, Project CI, or wait state during reads
 - they must not poll Smithers or parse transcript files to compensate for missing writes
 - they must not refresh pi session metadata as a side effect of summary reads; that metadata belongs on explicit session mutations and prompt-settlement writes
 
@@ -934,6 +1012,8 @@ The implementation must enforce these invariants:
 
 - every tool call creates exactly one command record
 - a handler thread owns exactly one backing `surfacePiSessionId`
+- loaded handler context keys are durable thread state and survive resume
+- `request_context` may only run from handler-thread surfaces
 - a thread may have many workflow runs over time
 - a handler thread may wait and resume many times
 - a handler thread remains message-addressable after handing control back

@@ -304,7 +304,7 @@ The first adopted Smithers-native surface is:
 
 | Agent-visible tool                    | Product class                       | Purpose                                                                                                                                                             | Primary adopted Smithers contract                                                                                                           |
 | ------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `smithers.list_workflows`             | required                            | List runnable workflow entries, support targeted lookup such as `workflowId`, and return each entry's full handler-visible workflow contract for deeper inspection.   | Smithers semantic tool `list_workflows`, backed by the app-owned workflow registry plus Bun-side contract compilation.                      |
+| `smithers.list_workflows`             | required                            | List runnable workflow entries, support targeted lookup such as `workflowId` and `productKind`, and return each entry's full handler-visible workflow contract for deeper inspection. | Smithers semantic tool `list_workflows`, backed by the app-owned workflow registry plus Bun-side contract compilation.                      |
 | `smithers.run_workflow`               | required                            | Launch a discoverable workflow or resume the same run when Smithers still considers that run resumable, using `{ workflowId, input, runId? }`.                     | Smithers semantic tool `run_workflow`, backed by embedded `runWorkflow(...)`, `POST /v1/runs`, and `POST /v1/runs/:runId/resume` semantics. |
 | `smithers.list_runs`                  | required                            | List recent runs and their compact summary state, while enriching each summary with svvy `sessionId` and `threadId` ownership when the run belongs to a recorded handler thread. | Smithers semantic tool `list_runs`, aligned with `GET /v1/runs` and Gateway `runs.list`, with svvy-side ownership projection layered on top. |
 | `smithers.get_run`                    | required                            | Return the main run summary the handler needs to reason.                                                                                                            | Smithers semantic tool `get_run`, aligned with `GET /v1/runs/:runId` and Gateway `runs.get`.                                                |
@@ -329,10 +329,17 @@ Handler-visible workflow launch contracts must come from the actual runnable wor
 The adopted contract pipeline is:
 
 - each discoverable runnable entry publishes one launch Zod schema plus explicit grouped asset refs
+- product-lane entries may also publish `productKind` and `resultSchema`
 - `svvy` compiles that launch schema into the handler-visible `launchInputSchema` when the workflow registry is loaded or refreshed
-- `smithers.list_workflows({ workflowId?, sourceScope? })` returns each runnable entry's `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `launchInputSchema`
+- `smithers.list_workflows({ workflowId?, productKind?, sourceScope? })` returns each runnable entry's `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, `launchInputSchema`, and optional product metadata such as `productKind` and `resultSchema`
 - the Bun bridge exposes one stable `smithers.run_workflow({ workflowId, input, runId? })` tool for launch and resume
 - the same launch Zod schema remains the runtime validation source when the tool is executed
+
+Project CI is the first adopted product-lane entry.
+
+For entries declaring `productKind = "project-ci"`, the bridge must preserve enough result-schema metadata for the runtime to validate terminal output before recording CI run and CI check result state.
+
+No Smithers supervision path may classify a workflow run as Project CI from entry labels, tags, command names, logs, node outputs, or final prose.
 
 The handler-visible launch contract must preserve launch-side semantics:
 

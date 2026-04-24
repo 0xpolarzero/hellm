@@ -3,12 +3,13 @@
 ## Status
 
 - Date: 2026-04-23
-- Status: adopted direction for handler-owned workflow authoring, saved-library discovery, saved-library writes, and runtime validation feedback
+- Status: adopted direction for handler-owned workflow authoring, saved-library discovery, saved-library writes, product entry metadata, and runtime validation feedback
 - Scope of this document:
   - define the workspace-owned workflow library shape under `.svvy/workflows/`
   - define the authored artifact-workflow shape under `.svvy/artifacts/workflows/`
   - define handler-side workflow authoring guidance and discovery
   - define the runnable entry contract consumed by `smithers.list_workflows`
+  - define optional product metadata and result schemas for special product lanes such as Project CI
   - define how saved workflow files are written and validated
 
 ## Purpose
@@ -81,6 +82,20 @@ The folders mean:
 - `prompts/`: reusable prompt assets
 - `components/`: reusable helpers and agent profiles
 - `entries/`: launchable saved workflow entry wrappers
+
+Product-specific saved assets use subdirectories inside the same library rather than a separate workflow system.
+
+Project CI assets use:
+
+```text
+.svvy/workflows/
+  definitions/ci/
+  prompts/ci/
+  components/ci/
+  entries/ci/
+```
+
+This preserves one workflow library while allowing the UI and runtime to recognize declared product lanes through entry metadata.
 
 ### Artifact Workflows
 
@@ -170,11 +185,11 @@ Normative example:
 ```ts
 /**
  * @svvyAssetKind definition
- * @svvyId create_implement_review_verify
- * @svvyTitle Create Implement Review Verify
- * @svvySummary Reusable workflow factory for implement, review, and verification stages.
- * @svvyTags sequential, coding, review, verification
- * @svvyExports implementReviewVerifyLaunchSchema, createImplementReviewVerifyWorkflow
+ * @svvyId create_implement_review
+ * @svvyTitle Create Implement Review
+ * @svvySummary Reusable workflow factory for implement and review stages.
+ * @svvyTags sequential, coding, review
+ * @svvyExports implementReviewLaunchSchema, createImplementReviewWorkflow
  */
 ```
 
@@ -214,6 +229,8 @@ Each runnable entry file should export:
 - `label`
 - `summary`
 - `launchSchema`
+- optional `productKind`
+- optional `resultSchema`
 - `definitionPaths`
 - `promptPaths`
 - `componentPaths`
@@ -234,13 +251,13 @@ The flat `assetPaths` value returned by `smithers.list_workflows` is derived fro
 Normative shape:
 
 ```ts
-export const workflowId = "implement_review_verify";
-export const label = "Implement Review Verify";
-export const summary = "Run sequential implement, review, and verification stages.";
-export const launchSchema = implementReviewVerifyLaunchSchema;
+export const workflowId = "implement_review";
+export const label = "Implement Review";
+export const summary = "Run sequential implement and review stages.";
+export const launchSchema = implementReviewLaunchSchema;
 
 export const definitionPaths = [
-  ".svvy/workflows/definitions/create-implement-review-verify.tsx",
+  ".svvy/workflows/definitions/create-implement-review.tsx",
 ];
 
 export const promptPaths = [".svvy/workflows/prompts/review-base.mdx"];
@@ -252,10 +269,24 @@ export function createRunnableEntry(input: { dbPath: string }) {
     workflowId,
     workflowSource: "saved" as const,
     launchSchema,
-    workflow: createImplementReviewVerifyWorkflow(...),
+    workflow: createImplementReviewWorkflow(...),
   };
 }
 ```
+
+`productKind` is reserved for product lanes that need specialized projection.
+
+The first adopted product kind is:
+
+- `project-ci`
+
+Entries with `productKind = "project-ci"` must also export `resultSchema`.
+
+That result schema is the only source of Project CI run and check result records.
+
+No product lane may be inferred from labels, tags, filenames, logs, node output, or final prose.
+
+Project CI details are defined in [Project CI Lane Spec](./project-ci.spec.md).
 
 ## Handler Workflow-Authoring Flow
 
@@ -334,6 +365,7 @@ It should list all runnable entries:
 It should support optional filters such as:
 
 - `workflowId?`
+- `productKind?`
 - `sourceScope?`
 
 Each returned runnable workflow entry should include the full workflow contract data needed for handler-side selection and launch:
@@ -348,6 +380,8 @@ Each returned runnable workflow entry should include the full workflow contract 
 - `componentPaths`
 - derived `assetPaths`
 - `launchInputSchema`
+- optional `productKind`
+- optional `resultSchema`
 
 This preserves the intended split:
 
@@ -390,6 +424,8 @@ That validation should check:
 - JSDoc metadata headers for saved definitions and components
 - TypeScript typecheck across saved definitions, components, and entries
 - runnable entry contract validation for saved entries
+- product entry metadata validation for entries that declare `productKind`
+- result schema validation for entries that declare `productKind = "project-ci"`
 - grouped asset refs for saved entries
 
 Validation feedback is surfaced automatically in the enclosing `execute_typescript` result through captured console logs.
@@ -430,6 +466,8 @@ Handler-thread instructions should say:
 - call `api.workflow.listModels()` only when no saved profile fits or the user explicitly wants a different provider or model
 - write reusable saved workflow files only on explicit request
 - rely on the returned validation feedback after writes under `.svvy/workflows/...`
+- discover and run configured Project CI entries when CI is needed
+- call `request_context({ keys: ["ci"] })` before configuring or modifying Project CI assets
 
 ## Selection Policy
 
@@ -440,6 +478,12 @@ The adopted decision order is:
 3. otherwise author a short-lived artifact workflow, usually reusing saved definitions, prompts, components, or agent profiles
 4. run the authored artifact entry through `smithers.run_workflow({ workflowId, input, runId? })`
 5. write reusable saved workflow files only on explicit request
+
+Project CI is a special product lane over this same library.
+
+Normal handlers may select a configured Project CI entry through `smithers.list_workflows({ productKind: "project-ci" })`.
+
+CI configuration is owned by whichever handler thread has loaded the typed `ci` context pack, either from `thread.start({ context: ["ci"] })` or from `request_context({ keys: ["ci"] })`.
 
 ## Out Of Scope
 

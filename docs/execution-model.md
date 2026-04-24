@@ -36,7 +36,7 @@ flowchart TD
     end
 
     subgraph Load["Context Load"]
-        LoadState["Load workspace, session, threads, workflow runs, episodes, artifacts, verification, waits, AGENTS.md, and .svvy config"]
+        LoadState["Load workspace, session, threads, workflow runs, episodes, artifacts, Project CI, waits, AGENTS.md, and .svvy config"]
     end
 
     subgraph Surface["Target Surface"]
@@ -47,6 +47,7 @@ flowchart TD
     subgraph Tools["Tool Surface"]
         Generic["execute_typescript"]
         ThreadStart["thread.start"]
+        RequestContext["request_context"]
         ThreadHandoff["thread.handoff"]
         SmithersTools["Smithers-native workflow tools (`smithers.*`)"]
         Wait["wait"]
@@ -65,7 +66,7 @@ flowchart TD
     end
 
     subgraph Runtime["Runtime Handlers"]
-        RuntimeHandler["svvy runtime handles execute_typescript, thread.start, thread.handoff, and wait"]
+        RuntimeHandler["svvy runtime handles execute_typescript, thread.start, request_context, thread.handoff, and wait"]
         SmithersBridge["Bun-owned Smithers bridge handles Smithers-native workflow tools"]
         ResumeHandler["Runtime resumes the supervising handler thread when a workflow run changes state"]
     end
@@ -74,7 +75,7 @@ flowchart TD
         Commands["Record commands and parent-child linkage"]
         Events["Append lifecycle events"]
         Artifacts["Persist file-backed artifacts and SQLite metadata"]
-        State["Update turns, commands, threads, workflow runs, verification records, artifacts, wait state, and any episodes emitted by thread.handoff"]
+        State["Update turns, commands, threads, loaded handler context keys, workflow runs, CI run/check result records, artifacts, wait state, and any episodes emitted by thread.handoff"]
     end
 
     subgraph ReadModels["Read Models"]
@@ -91,6 +92,7 @@ flowchart TD
 
     Decide --> Generic
     Decide --> ThreadStart
+    Decide --> RequestContext
     Decide --> ThreadHandoff
     Decide --> SmithersTools
     Decide --> Wait
@@ -107,6 +109,7 @@ flowchart TD
     Api --> RuntimeHandler
 
     ThreadStart --> RuntimeHandler
+    RequestContext --> RuntimeHandler
     ThreadHandoff --> RuntimeHandler
     SmithersTools --> SmithersBridge
     Wait --> RuntimeHandler
@@ -255,11 +258,35 @@ The difference is where the wait lives:
 - orchestrator wait lives in the main orchestrator surface
 - delegated clarification usually lives in the handler thread surface
 
-### 8. Verification Is Workflow-Shaped Execution
+### 8. Optional Handler Context Uses `request_context`
 
-Verification remains first-class in product behavior and UI, but it is modeled through saved runnable entries and artifact entries rather than a separate native execution engine.
+Optional product knowledge should be loaded as typed handler context packs instead of being injected into every handler prompt.
 
-That means build, test, lint, and related checks can still have structured verification records and specialized UI, while execution stays consistent with the workflow model.
+The first adopted context key is `ci`.
+
+The orchestrator can preload context for a delegated objective:
+
+```ts
+thread.start({ objective: "Configure Project CI", context: ["ci"] })
+```
+
+A handler can load context later:
+
+```ts
+request_context({ keys: ["ci"] })
+```
+
+`request_context` is a top-level handler tool, not part of the `execute_typescript` `api.*` SDK.
+
+### 9. Project CI Is A Dedicated Workflow Lane
+
+Project CI remains first-class in product behavior and UI, but it is modeled through declared Smithers runnable entries rather than a separate native execution engine.
+
+That means build, test, lint, typecheck, integration, docs, manual, and repository-specific checks can still have structured CI run and CI check result records while execution stays consistent with the workflow model.
+
+Project CI state is recorded only from terminal output of entries declaring `productKind = "project-ci"` after that output validates against the declared result schema.
+
+No runtime path infers CI from arbitrary workflow output, command names, logs, or final prose.
 
 ## Key Guarantees
 

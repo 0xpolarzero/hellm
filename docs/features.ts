@@ -59,15 +59,28 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Handler Thread Surfaces",
     status: "in-progress",
     summary:
-      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, stay multi-turn and directly messageable before and after handoff, distinguish handler-active, workflow-active, waiting, troubleshooting, and completed thread states, reject `thread.handoff` while the thread still owns a running or waiting workflow run for the current span, route workflow attention back to the owning handler surface rather than the focused pane, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread.handoff` calls that append ordered handoff episodes over the thread's lifetime and immediately trigger a fresh orchestrator reconciliation turn.",
+      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, optionally preload typed handler context keys such as `ci` through `thread.start`, stay multi-turn and directly messageable before and after handoff, distinguish handler-active, workflow-active, waiting, troubleshooting, and completed thread states, reject `thread.handoff` while the thread still owns a running or waiting workflow run for the current span, route workflow attention back to the owning handler surface rather than the focused pane, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread.handoff` calls that append ordered handoff episodes over the thread's lifetime and immediately trigger a fresh orchestrator reconciliation turn.",
     sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
+  },
+  {
+    id: "typed-handler-context-packs",
+    name: "Typed Handler Context Packs",
+    status: "in-progress",
+    summary:
+      "Separates handler runtime profiles from optional product knowledge by letting the orchestrator preload typed context keys on `thread.start` and letting handler threads call the top-level `request_context({ keys })` tool later, with `ci` as the first adopted key, loaded keys persisted on the handler thread for resume, and no context-pack loading through the `execute_typescript` `api.*` SDK.",
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/handler-context-packs.spec.md",
+      "docs/specs/project-ci.spec.md",
+      "docs/specs/structured-session-state.spec.md",
+    ],
   },
   {
     id: "smithers-tool-surface",
     name: "Smithers-Native Tool Surface",
     status: "in-progress",
     summary:
-      "Exposes Smithers-native semantic workflow control and inspection tools through the Bun bridge for handler-thread surfaces, with a stable `smithers.run_workflow({ workflowId, input, runId? })` launch-or-resume tool validated against each entry's real TypeScript or Zod launch schema, `smithers.list_workflows({ workflowId? })` returning full runnable-entry contract metadata including `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `launchInputSchema`, `smithers.list_runs` returning workspace-global compact run summaries enriched with svvy `sessionId` and `threadId` ownership when known, and the rest of the handler-thread surface preserving official Smithers names such as `get_run`, `watch_run`, `explain_run`, `list_pending_approvals`, `resolve_approval`, `get_node_detail`, `list_artifacts`, `get_chat_transcript`, `get_run_events`, `runs.cancel`, `signals.send`, `frames.list`, `getDevToolsSnapshot`, and `streamDevTools` instead of inventing a parallel svvy `workflow.*` abstraction, while preserving transport and invocation metadata in command facts and avoiding any dependency on the repo authoring workspace under `workflows/`.",
+      "Exposes Smithers-native semantic workflow control and inspection tools through the Bun bridge for handler-thread surfaces, with a stable `smithers.run_workflow({ workflowId, input, runId? })` launch-or-resume tool validated against each entry's real TypeScript or Zod launch schema, `smithers.list_workflows({ workflowId?, productKind? })` returning full runnable-entry contract metadata including `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, `launchInputSchema`, and optional product metadata such as Project CI `productKind` and result schema, `smithers.list_runs` returning workspace-global compact run summaries enriched with svvy `sessionId` and `threadId` ownership when known, and the rest of the handler-thread surface preserving official Smithers names such as `get_run`, `watch_run`, `explain_run`, `list_pending_approvals`, `resolve_approval`, `get_node_detail`, `list_artifacts`, `get_chat_transcript`, `get_run_events`, `runs.cancel`, `signals.send`, `frames.list`, `getDevToolsSnapshot`, and `streamDevTools` instead of inventing a parallel svvy `workflow.*` abstraction, while preserving transport and invocation metadata in command facts and avoiding any dependency on the repo authoring workspace under `workflows/`.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-supervision.spec.md"],
   },
   {
@@ -95,7 +108,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workspace Saved Workflow Library",
     status: "in-progress",
     summary:
-      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, compiles discovery metadata for assets from JSDoc and MDX frontmatter, treats agent profiles as discoverable component assets, lets handlers list and read saved assets through the `execute_typescript` host SDK, and validates writes under `.svvy/workflows/...` automatically through the enclosing `execute_typescript` result logs.",
+      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, compiles discovery metadata for assets from JSDoc and MDX frontmatter, treats agent profiles as discoverable component assets, supports optional product metadata and result schemas on entries such as Project CI, lets handlers list and read saved assets through the `execute_typescript` host SDK, and validates writes under `.svvy/workflows/...` automatically through the enclosing `execute_typescript` result logs.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
   },
   {
@@ -131,7 +144,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Session State Overlay",
     status: "in-progress",
     summary:
-      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, workflow-run, workflow-task-attempt, command, episode, artifact, verification, wait, and lifecycle event records, explicit surface-target identity (`workspaceSessionId`, `surfacePiSessionId`, `threadId`), workflow-task-attempt binding bootstrapped by exact persisted Smithers resume-handle lookup instead of heuristic attempt-table scans or transcript-derived repair, workspace-level metadata projection that survives reload, and live-surface transcript updates kept separate from durable workspace read models.",
+      "Adds a workspace-scoped svvy-owned state layer above pi and Smithers with durable session, turn, thread, workflow-run, workflow-task-attempt, command, episode, artifact, Project CI run/check result, wait, and lifecycle event records, explicit surface-target identity (`workspaceSessionId`, `surfacePiSessionId`, `threadId`), workflow-task-attempt binding bootstrapped by exact persisted Smithers resume-handle lookup instead of heuristic attempt-table scans or transcript-derived repair, workspace-level metadata projection that survives reload, and live-surface transcript updates kept separate from durable workspace read models.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -159,12 +172,18 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {
-    id: "verification-state",
-    name: "Structured Verification Records",
+    id: "project-ci-lane",
+    name: "Project CI Lane",
     status: "in-progress",
     summary:
-      "Captures verification outcomes produced by verification-shaped workflow runs as first-class state with kind, status, summary, and timestamps that influence routing and support specialized UI.",
-    sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
+      "Provides a dedicated Project CI configuration and run lane backed by normal saved Smithers entries under `.svvy/workflows/.../ci/`, records CI run and CI check result state only from entries declaring `productKind = \"project-ci\"` whose terminal output validates against the declared result schema, exposes latest CI status in specialized UI, and delivers CI authoring guidance only through the typed `ci` context pack loaded by `thread.start({ context: [\"ci\"] })` or handler-side `request_context({ keys: [\"ci\"] })`.",
+    sourceSpecs: [
+      "docs/specs/project-ci.spec.md",
+      "docs/specs/handler-context-packs.spec.md",
+      "docs/specs/structured-session-state.spec.md",
+      "docs/specs/workflow-library.spec.md",
+      "docs/specs/workflow-supervision.spec.md",
+    ],
   },
   {
     id: "workflow-run-records",

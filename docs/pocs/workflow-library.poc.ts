@@ -14,7 +14,7 @@
  *
  * Proof boundaries:
  * - this POC proves asset discovery, runnable-entry registry validation, bridge-shaped launch, and saved-library write semantics
- * - it does not attempt to prove live supervision monitors, reconnect, synthetic wake-ups, workflow-task-agent execution, or real verification command execution
+ * - it does not attempt to prove live supervision monitors, reconnect, synthetic wake-ups, workflow-task-agent execution, or Project CI execution
  */
 
 import { randomUUID } from "node:crypto";
@@ -690,7 +690,7 @@ function writeAgentProfileComponent(
   );
 }
 
-function writeSavedImplementReviewVerifyEntry(
+function writeSavedImplementReviewEntry(
   workspaceRoot: string,
   input: {
     entryPath: string;
@@ -709,7 +709,7 @@ function writeSavedImplementReviewVerifyEntry(
     absoluteEntryPath,
     [
       'import { readFileSync } from "node:fs";',
-      `import { createImplementReviewVerifyWorkflow, implementReviewVerifyLaunchSchema } from "${definitionImportPath}";`,
+      `import { createImplementReviewWorkflow, implementReviewLaunchSchema } from "${definitionImportPath}";`,
       `import { cheapImplementer, carefulReviewer } from "${componentImportPath}";`,
       "",
       "function readPromptBody(relativePath: string): string {",
@@ -723,10 +723,10 @@ function writeSavedImplementReviewVerifyEntry(
       "",
       `const reviewPromptPath = ${JSON.stringify(reviewPromptRelativePath)};`,
       "",
-      "export const workflowId = 'implement_review_verify';",
-      "export const label = 'Implement Review Verify';",
+      "export const workflowId = 'implement_review';",
+      "export const label = 'Implement Review';",
       "export const summary = 'Saved runnable entry fixture that proves prompt and profile binding with saved defaults.';",
-      "export const launchSchema = implementReviewVerifyLaunchSchema;",
+      "export const launchSchema = implementReviewLaunchSchema;",
       `export const definitionPaths = ${JSON.stringify([input.definitionPath], null, 2)} as const;`,
       `export const promptPaths = ${JSON.stringify([input.promptPath], null, 2)} as const;`,
       `export const componentPaths = ${JSON.stringify([input.componentPath], null, 2)} as const;`,
@@ -737,16 +737,15 @@ function writeSavedImplementReviewVerifyEntry(
       "    workflowId,",
       "    workflowSource: 'saved' as const,",
       "    launchSchema,",
-      "    workflow: createImplementReviewVerifyWorkflow({",
+      "    workflow: createImplementReviewWorkflow({",
       "      dbPath: input.dbPath,",
-      "      workflowName: 'implement-review-verify',",
+      "      workflowName: 'implement-review',",
       "      workflowId,",
       "      workflowSource: 'saved',",
       "      implementerProfile: cheapImplementer,",
       "      reviewerProfile: carefulReviewer,",
       "      implementPrompt: cheapImplementer.instructions,",
       "      reviewPrompt,",
-      "      defaultVerificationCommands: ['bun test'],",
       "    }),",
       "  };",
       "}",
@@ -785,7 +784,7 @@ function writeOAuthReviewEntry(
     absoluteEntryPath,
     [
       'import { readFileSync } from "node:fs";',
-      `import { createImplementReviewVerifyWorkflow, implementReviewVerifyLaunchSchema } from "${definitionImportPath}";`,
+      `import { createImplementReviewWorkflow, implementReviewLaunchSchema } from "${definitionImportPath}";`,
       `import { cheapImplementer } from "${savedComponentImportPath}";`,
       `import { oauthSecurityReviewer } from "${reviewerComponentImportPath}";`,
       "",
@@ -804,7 +803,7 @@ function writeOAuthReviewEntry(
       `export const workflowId = ${JSON.stringify(input.workflowId)};`,
       `export const label = ${JSON.stringify(input.label)};`,
       `export const summary = ${JSON.stringify(input.summary)};`,
-      "export const launchSchema = implementReviewVerifyLaunchSchema;",
+      "export const launchSchema = implementReviewLaunchSchema;",
       `export const definitionPaths = ${JSON.stringify(input.definitionPaths, null, 2)} as const;`,
       `export const promptPaths = ${JSON.stringify(input.promptPaths, null, 2)} as const;`,
       `export const componentPaths = ${JSON.stringify(input.componentPaths, null, 2)} as const;`,
@@ -816,7 +815,7 @@ function writeOAuthReviewEntry(
       "    workflowId,",
       `    workflowSource: ${JSON.stringify(input.workflowSource)} as const,`,
       "    launchSchema,",
-      "    workflow: createImplementReviewVerifyWorkflow({",
+      "    workflow: createImplementReviewWorkflow({",
       "      dbPath: input.dbPath,",
       `      workflowName: ${JSON.stringify(input.workflowId.replaceAll("_", "-"))},`,
       "      workflowId,",
@@ -825,7 +824,6 @@ function writeOAuthReviewEntry(
       "      reviewerProfile: oauthSecurityReviewer,",
       "      implementPrompt: `${cheapImplementer.instructions}\\n\\n${implementDetails}`,",
       "      reviewPrompt: `${reviewBase}\\n\\n${oauthSecurityReviewer.instructions}`,",
-      "      defaultVerificationCommands: ['bun test src/auth'],",
       "    }),",
       "  };",
       "}",
@@ -836,21 +834,21 @@ function writeOAuthReviewEntry(
 
 function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
   const savedRoot = join(workspaceRoot, ".svvy", "workflows");
-  const definitionPath = join(savedRoot, "definitions", "create-implement-review-verify.tsx");
+  const definitionPath = join(savedRoot, "definitions", "create-implement-review.tsx");
   const promptPath = join(savedRoot, "prompts", "review-base.mdx");
   const componentPath = join(savedRoot, "components", "agent-profiles.tsx");
-  const entryPath = join(savedRoot, "entries", "implement-review-verify.tsx");
+  const entryPath = join(savedRoot, "entries", "implement-review.tsx");
 
   writeText(
     definitionPath,
     [
       "/**",
       " * @svvyAssetKind definition",
-      " * @svvyId create_implement_review_verify",
-      " * @svvyTitle Create Implement Review Verify",
-      " * @svvySummary Reusable workflow fixture for binding prompts, profiles, and verification requests into a launchable entry contract.",
-      " * @svvyTags sequential, coding, review, verification",
-      " * @svvyExports implementReviewVerifyLaunchSchema, createImplementReviewVerifyWorkflow",
+      " * @svvyId create_implement_review",
+      " * @svvyTitle Create Implement Review",
+      " * @svvySummary Reusable workflow fixture for binding prompts and profiles into a launchable entry contract.",
+      " * @svvyTags sequential, coding, review",
+      " * @svvyExports implementReviewLaunchSchema, createImplementReviewWorkflow",
       " */",
       'import React from "react";',
       'import { createSmithers } from "smithers-orchestrator";',
@@ -865,12 +863,11 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
       "  instructions: z.string(),",
       "});",
       "",
-      "export const implementReviewVerifyLaunchSchema = z.object({",
+      "export const implementReviewLaunchSchema = z.object({",
       "  objective: z.string().min(1),",
-      "  verificationCommands: z.array(z.string()).default([]),",
       "});",
       "",
-      "export function createImplementReviewVerifyWorkflow(config: {",
+      "export function createImplementReviewWorkflow(config: {",
       "  dbPath: string;",
       "  workflowName: string;",
       "  workflowId: string;",
@@ -879,29 +876,24 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
       "  reviewerProfile: z.infer<typeof agentProfileSchema>;",
       "  implementPrompt: string;",
       "  reviewPrompt: string;",
-      "  defaultVerificationCommands: string[];",
       "}) {",
       "  const implementRequestSchema = z.object({ prompt: z.string() });",
       "  const reviewRequestSchema = z.object({ prompt: z.string() });",
-      "  const verificationRequestSchema = z.object({ commands: z.array(z.string()) });",
       "  const outputSchema = z.object({",
       "    workflowId: z.string(),",
       "    workflowSource: z.enum(['saved', 'artifact']),",
       "    objective: z.string(),",
       "    implementPrompt: z.string(),",
       "    reviewPrompt: z.string(),",
-      "    verificationCommands: z.array(z.string()),",
       "    implementerProfile: agentProfileSchema,",
       "    reviewerProfile: agentProfileSchema,",
       "  });",
       "  const smithersApi = createSmithers(",
-      "    { implement: implementRequestSchema, review: reviewRequestSchema, verify: verificationRequestSchema, output: outputSchema },",
+      "    { implement: implementRequestSchema, review: reviewRequestSchema, output: outputSchema },",
       "    { dbPath: config.dbPath },",
       "  );",
       "  return smithersApi.smithers((ctx) => {",
-      "    const launch = implementReviewVerifyLaunchSchema.parse(ctx.input);",
-      "    const verificationCommands =",
-      "      launch.verificationCommands.length > 0 ? launch.verificationCommands : config.defaultVerificationCommands;",
+      "    const launch = implementReviewLaunchSchema.parse(ctx.input);",
       "    return React.createElement(",
       "      smithersApi.Workflow,",
       "      { name: config.workflowName },",
@@ -919,11 +911,6 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
       "          children: { prompt: `${config.reviewPrompt}\\n\\nObjective: ${launch.objective}` },",
       "        }),",
       "        React.createElement(smithersApi.Task, {",
-      "          id: 'prepare_verification_request',",
-      "          output: smithersApi.outputs.verify,",
-      "          children: { commands: verificationCommands },",
-      "        }),",
-      "        React.createElement(smithersApi.Task, {",
       "          id: 'result',",
       "          output: smithersApi.outputs.output,",
       "          children: {",
@@ -932,7 +919,6 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
       "            objective: launch.objective,",
       "            implementPrompt: config.implementPrompt,",
       "            reviewPrompt: config.reviewPrompt,",
-      "            verificationCommands,",
       "            implementerProfile: config.implementerProfile,",
       "            reviewerProfile: config.reviewerProfile,",
       "          },",
@@ -974,7 +960,7 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
       "  model: 'claude-sonnet-4',",
       "  reasoning: 'medium',",
       "  toolSurface: ['execute_typescript'],",
-      "  instructions: 'Review for correctness, edge cases, and verification gaps before sign-off.',",
+      "  instructions: 'Review for correctness, edge cases, and testing gaps before sign-off.',",
       "};",
       "",
     ].join("\n"),
@@ -999,7 +985,7 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
     ].join("\n"),
   );
 
-  writeSavedImplementReviewVerifyEntry(workspaceRoot, {
+  writeSavedImplementReviewEntry(workspaceRoot, {
     entryPath: relativeWorkspacePath(workspaceRoot, entryPath),
     definitionPath: relativeWorkspacePath(workspaceRoot, definitionPath),
     promptPath: relativeWorkspacePath(workspaceRoot, promptPath),
@@ -1179,9 +1165,9 @@ async function runSavedEntryScenario(workspaceRoot: string): Promise<ScenarioRes
     },
   });
 
-  const savedEntry = workflows.find((workflow) => workflow.id === "implement_review_verify");
+  const savedEntry = workflows.find((workflow) => workflow.id === "implement_review");
   if (!savedEntry) {
-    throw new Error("Expected implement_review_verify saved entry.");
+    throw new Error("Expected implement_review saved entry.");
   }
 
   trace.push({
@@ -1203,13 +1189,11 @@ async function runSavedEntryScenario(workspaceRoot: string): Promise<ScenarioRes
 
   const execution = await bridge.runWorkflow(savedEntry.id, {
     objective: "Fix the OAuth callback bug",
-    verificationCommands: ["bun test src/auth"],
   });
   trace.push({
     toolName: savedEntry.launchToolName,
     args: {
       objective: "Fix the OAuth callback bug",
-      verificationCommands: ["bun test src/auth"],
     },
     result: execution,
   });
@@ -1237,7 +1221,7 @@ async function runArtifactAuthoringScenario(
   const definitionAssets = listAssets(workspaceRoot, {
     kind: "definition",
     scope: "saved",
-    exports: ["createImplementReviewVerifyWorkflow"],
+    exports: ["createImplementReviewWorkflow"],
   });
   trace.push({
     toolName: "execute_typescript",
@@ -1245,7 +1229,7 @@ async function runArtifactAuthoringScenario(
     childCalls: [
       {
         toolName: "api.workflow.listAssets",
-        args: { kind: "definition", scope: "saved", exports: ["createImplementReviewVerifyWorkflow"] },
+        args: { kind: "definition", scope: "saved", exports: ["createImplementReviewWorkflow"] },
         result: summarizeAssets(definitionAssets),
       },
     ],
@@ -1419,13 +1403,11 @@ async function runArtifactAuthoringScenario(
 
   const execution = await bridge.runWorkflow(artifactEntry.id, {
     objective: "Fix the OAuth callback bug",
-    verificationCommands: ["bun test src/auth"],
   });
   trace.push({
     toolName: artifactEntry.launchToolName,
     args: {
       objective: "Fix the OAuth callback bug",
-      verificationCommands: ["bun test src/auth"],
     },
     result: execution,
   });
@@ -1552,13 +1534,11 @@ async function runExplicitSaveScenario(
 
   const savedExecution = await bridge.runWorkflow(savedEntry.id, {
     objective: "Fix the OAuth callback bug",
-    verificationCommands: ["bun test src/auth"],
   });
   trace.push({
     toolName: savedEntry.launchToolName,
     args: {
       objective: "Fix the OAuth callback bug",
-      verificationCommands: ["bun test src/auth"],
     },
     result: savedExecution,
   });

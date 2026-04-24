@@ -179,7 +179,8 @@ The important guarantees are:
 - nested `api.*` calls are durable trace facts
 - the parent command remains the main semantic unit
 - the tool writes command summaries, trace facts, and artifacts, but does not emit episodes itself
-- delegated verification should be expressed through saved workflow definitions or short-lived artifact workflows
+- Project CI should be expressed through declared Project CI saved workflow entries and recorded only from validated CI result output
+- optional handler context such as Project CI authoring guidance is loaded through the top-level handler-only `request_context` tool, not through the injected `api.*` SDK
 
 ## Why Child Commands Exist
 
@@ -607,8 +608,9 @@ The prompt and type-exposure layer should make these rules explicit:
 1. use `execute_typescript` for bounded generic work
 2. use `api.*` for all observable external work
 3. use pure TypeScript for local data shaping between `api.*` calls
-4. use native control tools for workflow, verification, and waiting
-5. write an artifact when a large payload or durable output matters beyond immediate execution
+4. use Smithers-native tools for workflow runs, configured Project CI entries, and waiting-related workflow supervision
+5. use top-level handler tools such as `request_context` when optional handler context is needed; do not try to load prompt context from inside `execute_typescript`
+6. write an artifact when a large payload or durable output matters beyond immediate execution
 
 The runtime should expose generated TypeScript declarations or equivalent JSDoc for the injected `api` object so the model can discover the real surface instead of guessing.
 

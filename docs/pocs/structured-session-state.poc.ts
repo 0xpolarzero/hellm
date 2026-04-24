@@ -40,6 +40,7 @@ type ThreadRecord = {
   objective: string;
   status: "running" | "waiting" | "completed" | "failed" | "cancelled";
   wait: WaitState | null;
+  loadedContextKeys: string[];
   worktree?: string;
   latestWorkflowRunId: string | null;
   startedAt: string;
@@ -95,15 +96,36 @@ type EpisodeRecord = {
   createdAt: string;
 };
 
-type VerificationRecord = {
+type CiRunRecord = {
   id: string;
   threadId: string;
   workflowRunId: string;
-  kind: string;
-  status: "passed" | "failed" | "cancelled";
+  smithersRunId: string;
+  workflowId: string;
+  entryPath: string;
+  status: "passed" | "failed" | "cancelled" | "blocked";
   summary: string;
+  createdAt: string;
+  updatedAt: string;
   startedAt: string;
   finishedAt: string;
+};
+
+type CiCheckResultRecord = {
+  id: string;
+  ciRunId: string;
+  workflowRunId: string;
+  checkId: string;
+  label: string;
+  kind: string;
+  status: "passed" | "failed" | "cancelled" | "skipped" | "blocked";
+  required: boolean;
+  command: string[] | null;
+  exitCode: number | null;
+  summary: string;
+  artifactIds: string[];
+  startedAt: string | null;
+  finishedAt: string | null;
 };
 
 type ArtifactRecord = {
@@ -129,7 +151,8 @@ type EventRecord = {
       | "workflowRun"
       | "command"
       | "episode"
-      | "verification"
+      | "ciRun"
+      | "ciCheckResult"
       | "artifact";
     id: string;
   };
@@ -159,7 +182,8 @@ type StructuredSessionState = {
   workflowRuns: WorkflowRunRecord[];
   commands: CommandRecord[];
   episodes: EpisodeRecord[];
-  verifications: VerificationRecord[];
+  ciRuns: CiRunRecord[];
+  ciCheckResults: CiCheckResultRecord[];
   artifacts: ArtifactRecord[];
   events: EventRecord[];
 };
@@ -223,6 +247,7 @@ const state: StructuredSessionState = {
         "Own the delegated design task and supervise workflow selection, pause, resume, and final synthesis.",
       status: "completed",
       wait: null,
+      loadedContextKeys: [],
       latestWorkflowRunId: "run-2",
       startedAt: now("09:02"),
       updatedAt: now("09:20"),
@@ -335,7 +360,8 @@ const state: StructuredSessionState = {
       createdAt: now("09:20"),
     },
   ],
-  verifications: [],
+  ciRuns: [],
+  ciCheckResults: [],
   artifacts: [
     {
       id: "artifact-1",

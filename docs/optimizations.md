@@ -23,7 +23,7 @@ The most important optimization constraint already exists in the PRD:
 - product state must not depend on replaying the raw transcript for every decision
 - session summaries and list views must never depend on transcript replay
 
-The current code still pays that cost in several places. The future product surface in `docs/prd.md` expands threads, episodes, artifacts, verification, workflow inspection, pane layouts, worktrees, and headless execution. If those surfaces are implemented by repeatedly re-reading whole transcripts, whole workflow logs, or whole session branches, the app will degrade quickly as real workspace history accumulates.
+The current code still pays that cost in several places. The future product surface in `docs/prd.md` expands threads, episodes, artifacts, Project CI, workflow inspection, pane layouts, worktrees, and headless execution. If those surfaces are implemented by repeatedly re-reading whole transcripts, whole workflow logs, or whole session branches, the app will degrade quickly as real workspace history accumulates.
 
 The optimization direction should therefore be:
 
@@ -147,7 +147,7 @@ What is happening:
 Why it is expensive:
 
 - Artifact cost grows with total transcript length rather than artifact delta.
-- This becomes worse once episodes, verification records, screenshots, logs, and workflow outputs are first-class artifacts.
+- This becomes worse once episodes, CI run/check result records, screenshots, logs, and workflow outputs are first-class artifacts.
 
 What to do instead:
 
@@ -246,14 +246,14 @@ That pattern is already misaligned with the PRD. The PRD explicitly says `svvy` 
 
 The sections below cover optimization requirements implied by the intended product, not just the current shipped code.
 
-### 1. Session, thread, episode, artifact, and verification state
+### 1. Session, thread, episode, artifact, and Project CI state
 
 PRD pressure:
 
 - sessions contain structured product state beyond chat messages
 - threads are bounded workstreams
 - episodes are the main reusable outputs
-- verification records are first-class
+- Project CI run and CI check result records are first-class
 - artifacts are durable and file-addressable
 
 Optimization requirement:
@@ -262,7 +262,7 @@ Optimization requirement:
 
 Do not:
 
-- reconstruct threads, episodes, artifacts, or verification purely by replaying raw transcript
+- reconstruct threads, episodes, artifacts, or Project CI purely by replaying raw transcript
 
 Preferred direction:
 
@@ -274,7 +274,7 @@ Preferred direction:
 
 PRD pressure:
 
-- the main session view must show conversation, threads, workflow activity, episodes, verification, and artifacts together
+- the main session view must show conversation, threads, workflow activity, episodes, Project CI, and artifacts together
 - the shell supports fixed pane layouts up to `3x3`
 - the same surface may be open in multiple panes
 
@@ -401,25 +401,26 @@ Preferred direction:
 - thread-to-worktree and workflow-to-worktree links
 - fast mismatch detection between active session context and filesystem context
 
-### 8. Verification as a first-class feature
+### 8. Project CI as a first-class feature
 
 PRD pressure:
 
-- build, test, lint, integration, and manual checkpoints all become structured verification records
+- build, test, lint, typecheck, integration, docs, manual, and repository-specific checks become structured CI check result records when they are returned by a declared Project CI entry
 
 Optimization requirement:
 
-- verification records need independent persistence and summary indexes
+- CI run and CI check result records need independent persistence and summary indexes
 
 Do not:
 
-- store verification purely as transcript prose and reparse it later
+- store Project CI purely as transcript prose and reparse it later
+- infer CI state from arbitrary workflow logs, command names, node outputs, or final prose
 
 Preferred direction:
 
-- normalized verification records with status, timestamps, summaries, and artifact links
+- normalized CI run and CI check result records with status, timestamps, summaries, and artifact links
 - aggregate status per thread, session, and workflow run
-- incremental rollups for "latest verification" and "blocking failures"
+- incremental rollups for "latest Project CI" and "blocking failures"
 
 ### 9. Workflow setup and validation
 
@@ -515,7 +516,7 @@ Capture durable events for:
 - thread lifecycle changes
 - episode creation and reconciliation
 - artifact creation and updates
-- verification records
+- CI run/check result records
 - workflow run updates
 - worktree associations
 - runtime-profile changes
@@ -529,7 +530,7 @@ Maintain explicit stores for:
 - threads
 - episodes
 - artifacts
-- verification records
+- CI run/check result records
 - workflow runs
 - workflow graph nodes
 - pane layouts
@@ -542,7 +543,7 @@ Build projections incrementally for:
 - session sidebar summaries
 - current session timeline
 - artifact panel
-- verification rollups
+- Project CI rollups
 - workflow graph summaries
 - context-budget indicators
 
@@ -578,7 +579,7 @@ For transcript, graph, artifact, and inspector surfaces:
 
 ### Phase 3: build the PRD-ready data model
 
-- introduce first-class thread, episode, artifact, verification, workflow, and worktree stores
+- introduce first-class thread, episode, artifact, Project CI, workflow, and worktree stores
 - make startup metadata-first and detail-lazy
 - make workflow inspector and multi-pane UI consume shared projections instead of transcript replay
 

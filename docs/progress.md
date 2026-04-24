@@ -118,16 +118,21 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Surface all runnable saved and artifact entries through `smithers.list_workflows` and `smithers.run_workflow({ workflowId, input, runId? })`, with `smithers.list_workflows` returning each entry's explicit launch contract, `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `workflowId` filter support rather than relying on inferred import graphs. Commit(s): `4515233`, `dc1da8c`
 - [x] Persist agent profile components as discoverable saved workflow components with explicit profile-oriented metadata. Commit(s): `4515233`
 
-## 7. Verification As First-Class State
+## 7. Project CI Lane
 
-- [ ] Build a POC verification workflow as a saved definition or short-lived artifact workflow that captures build, test, lint, or manual check outcomes.
-- [ ] Persist verification records produced by verification-shaped workflow runs.
-- [ ] Capture build verification results with status, summary, and artifacts.
-- [ ] Capture test verification results with status, summary, and artifacts.
-- [ ] Capture lint verification results with status, summary, and artifacts.
-- [ ] Capture manual verification checkpoints.
-- [ ] Surface failed or incomplete verification as routing input for later orchestrator decisions.
-- [ ] Show latest verification outcome inline in session and inspector surfaces.
+- [ ] Build a POC typed context-pack registry with `ci` as the first key.
+- [ ] Add the handler-only `request_context({ keys })` tool and persist loaded context keys on handler threads.
+- [ ] Extend `thread.start` so the orchestrator can preload typed handler context with `context: ["ci"]`.
+- [ ] Build a POC Project CI setup flow that opens a normal handler thread with the `ci` context pack loaded.
+- [ ] Define the Project CI saved-workflow layout under `.svvy/workflows/{definitions,prompts,components,entries}/ci/`.
+- [ ] Extend runnable workflow entry discovery with optional `productKind` and `resultSchema` metadata.
+- [ ] Build a POC saved Project CI entry that declares `productKind = "project-ci"` and returns output that validates against its declared CI result schema.
+- [ ] Persist `ci_run` and `ci_check_result` records only from terminal Smithers runs launched from declared Project CI entries.
+- [ ] Record CI check results with stable check ids, kind, status, required flag, command, exit code, summary, timestamps, and linked artifacts.
+- [ ] Treat invalid or missing CI result output as a CI workflow troubleshooting state instead of parsing logs, node outputs, final prose, or command names.
+- [ ] Let normal handler threads discover and run configured Project CI entries without loading the `ci` context pack, while using `request_context({ keys: ["ci"] })` before configuring or modifying CI.
+- [ ] Render `not configured`, `configured`, `running`, `passed`, `failed`, `blocked`, and `cancelled` Project CI states in a dedicated CI surface.
+- [ ] Surface the latest Project CI outcome as routing input for orchestrator and handler decisions without making CI a native control tool.
 
 ## 8. Workspace Navigation, Live Surfaces, And Core Projection
 
@@ -148,12 +153,13 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Show thread objective, status, latest workflow-run summary, and blocked reason in pane-local thread views. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
 - [x] Render the latest handoff episode for an inspected thread while preserving earlier handoff points in thread history. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
 - [ ] Render thread- and workflow-run-linked artifacts before relying on transcript reconstruction.
-- [ ] Render a verification summary block for the focused surface or inspected thread.
+- [ ] Render the latest Project CI summary block for the focused surface or inspected thread.
 - [ ] Restore focused pane, pane-to-surface bindings, and inspector selection after restart.
 
 ## 9. Session Modes And Runtime Profiles
 
 - [ ] Define the runtime profile ids and stored shape for orchestrator, quick, handler, explorer, implementer, reviewer, and workflow-writer.
+- [ ] Keep runtime profiles separate from typed handler context packs so Project CI uses the default handler runtime profile plus `context: ["ci"]`.
 - [ ] Seed initial app-wide default values for those runtime profiles.
 - [ ] Build a POC settings model for editing app-wide runtime profile defaults.
 - [ ] Persist app-wide runtime profile defaults.
@@ -191,6 +197,8 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Define the first richer handler-facing workflow prompt or example shape. Commit(s): `0b2d1ff`
 - [x] Load only minimal workflow summaries into orchestrator routing context. Commit(s): `a02bd48`
 - [x] Build a POC delegated workflow that receives extended workflow knowledge without expanding orchestrator context. Commit(s): `0b2d1ff`, `4515233`
+- [ ] Define typed handler context packs as the optional-knowledge layer between minimal handler prompts and specialized product authoring guidance.
+- [ ] Render loaded handler context keys in thread metadata so users can see when optional context such as `ci` is active.
 
 ## 13. Worktree-Aware Execution
 
@@ -235,7 +243,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 
 - [ ] Define the projected graph shape for a workflow inspector surface.
 - [ ] Build a POC static graph view for one completed workflow run.
-- [ ] Distinguish agent-task, script, verification, wait, retry, and terminal-result nodes in that graph.
+- [ ] Distinguish agent-task, script, Project CI, wait, retry, and terminal-result nodes in that graph, with Project CI shown only for runs backed by declared CI entries.
 - [ ] Render active, completed, failed, and waiting node states clearly.
 - [ ] Add selectable workflow nodes.
 - [ ] Show a detail panel for the selected workflow node.
