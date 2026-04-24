@@ -100,7 +100,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workflow Authoring And Artifact Workflows",
     status: "in-progress",
     summary:
-      "Centers workflow execution around authored artifact workflows stored under `.svvy/artifacts/workflows/`, with every handler thread receiving generated workflow-authoring TypeScript contracts plus curated Smithers guidance and examples, checking saved entries and reusable assets before authoring, authoring through reusable definitions, prompts, components, and agent-profile assets when needed, and launching concrete saved or artifact entries through the Smithers-native runtime surface.",
+      "Centers workflow execution around authored artifact workflows stored under `.svvy/artifacts/workflows/`, with every handler thread receiving generated workflow-authoring TypeScript contracts plus curated Smithers guidance and examples, checking saved entries and reusable assets before authoring, authoring through reusable definitions, prompts, and components when needed, and launching concrete saved or artifact entries through the Smithers-native runtime surface.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
   },
   {
@@ -108,7 +108,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workspace Saved Workflow Library",
     status: "in-progress",
     summary:
-      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, compiles discovery metadata for assets from JSDoc and MDX frontmatter, treats agent profiles as discoverable component assets, supports optional product metadata and result schemas on entries such as Project CI, lets handlers list and read saved assets through the `execute_typescript` host SDK, and validates writes under `.svvy/workflows/...` automatically through the enclosing `execute_typescript` result logs.",
+      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, exposes minimal asset index metadata from required JSDoc and MDX frontmatter, keeps agent profiles as ordinary component files, supports optional product metadata and result schemas on entries such as Project CI, lets handlers list asset paths and read saved asset source through the `execute_typescript` host SDK, and validates writes under `.svvy/workflows/...` automatically through the enclosing `execute_typescript` result logs.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
   },
   {

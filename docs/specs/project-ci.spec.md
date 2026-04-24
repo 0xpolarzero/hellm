@@ -294,7 +294,7 @@ export function createRunnableEntry(input: { dbPath: string }) {
 
 Entries without `productKind = "project-ci"` are ordinary workflow entries.
 
-Ordinary workflow entries never produce Project CI records, even if their labels, tags, logs, or final text mention tests or verification.
+Ordinary workflow entries never produce Project CI records, even if their labels, logs, or final text mention tests or verification.
 
 ## Launch Contract
 

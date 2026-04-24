@@ -384,7 +384,7 @@ In practice that means:
 
 - useful results are compressed into final thread episodes and artifacts instead of dragging full transcripts forward
 - workflow runs can pause and resume inside a handler thread without forcing the orchestrator to absorb every internal event
-- repeatable structure is pushed into saved definitions, prompts, components, agent profiles, saved runnable entries, and `execute_typescript` instead of repeatedly re-derived in prose
+- repeatable structure is pushed into saved definitions, prompts, components, saved runnable entries, and `execute_typescript` instead of repeatedly re-derived in prose
 - raw model reasoning is reserved for ambiguity, synthesis, prioritization, and recovery
 
 ### 12. Full Approvals By Default
@@ -601,7 +601,7 @@ They include:
 - definitions
 - prompts
 - components
-- agent profiles as a specialized component asset kind
+- agent profile files as ordinary component assets
 
 Saved entries are the launchable wrappers in the saved workflow library.
 
@@ -609,7 +609,7 @@ The intended decision order inside a handler thread is:
 
 1. can the task be completed directly in `execute_typescript`?
 2. if not, does a saved runnable entry clearly fit?
-3. if not, author a short-lived artifact workflow, usually by mixing saved definitions, prompts, components, and agent profiles
+3. if not, author a short-lived artifact workflow, usually by mixing saved definitions, prompts, and components
 4. execute the selected or authored workflow
 
 Artifact workflows are persisted by default under `.svvy/artifacts/workflows/`.
@@ -760,7 +760,7 @@ When the target surface is a handler thread:
    - use `execute_typescript`
    - request optional product context through `request_context`
    - reuse a saved runnable entry
-   - author a short-lived artifact workflow, often by importing saved definitions, prompts, components, and agent profiles
+   - author a short-lived artifact workflow, often by importing saved definitions, prompts, and components
    - inspect workflow state through Smithers-native bridge tools such as `smithers.get_run`, `smithers.explain_run`, `smithers.get_node_detail`, and `smithers.get_run_events`
    - resume an existing paused workflow run through the Smithers bridge when Smithers still considers that run resumable
    - start a replacement workflow run

@@ -46,12 +46,6 @@ type AssetMetadata = {
   summary: string;
   path: string;
   scope: AssetScope;
-  subtype?: string;
-  tags: string[];
-  exports: string[];
-  variables: string[];
-  providerModelSummary?: string;
-  toolsetSummary?: string;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -183,15 +177,6 @@ function relativeImportPath(fromDir: string, toPath: string): string {
   return path.startsWith(".") ? path : `./${path}`;
 }
 
-function splitCsv(value: string | undefined): string[] {
-  return value
-    ? value
-        .split(",")
-        .map((entry) => entry.trim())
-        .filter(Boolean)
-    : [];
-}
-
 function readTsJsdocTag(header: string, tag: string): string | undefined {
   const match = header.match(new RegExp(`@${tag}\\s+([^\\n*]+)`));
   return match?.[1]?.trim();
@@ -244,10 +229,6 @@ function parseAssetMetadata(workspaceRoot: string, path: string, scope: AssetSco
       summary: String(frontmatter.summary ?? ""),
       path: relativeWorkspacePath(workspaceRoot, path),
       scope,
-      subtype: typeof frontmatter.svvySubtype === "string" ? frontmatter.svvySubtype : undefined,
-      tags: Array.isArray(frontmatter.tags) ? frontmatter.tags.map(String) : [],
-      exports: [],
-      variables: Array.isArray(frontmatter.variables) ? frontmatter.variables.map(String) : [],
       createdAt: stats.birthtime.toISOString(),
       updatedAt: stats.mtime.toISOString(),
     };
@@ -261,12 +242,6 @@ function parseAssetMetadata(workspaceRoot: string, path: string, scope: AssetSco
     summary: readTsJsdocTag(header, "svvySummary") ?? "",
     path: relativeWorkspacePath(workspaceRoot, path),
     scope,
-    subtype: readTsJsdocTag(header, "svvySubtype"),
-    tags: splitCsv(readTsJsdocTag(header, "svvyTags")),
-    exports: splitCsv(readTsJsdocTag(header, "svvyExports")),
-    variables: [],
-    providerModelSummary: readTsJsdocTag(header, "svvyProviderModelSummary"),
-    toolsetSummary: readTsJsdocTag(header, "svvyToolsetSummary"),
     createdAt: stats.birthtime.toISOString(),
     updatedAt: stats.mtime.toISOString(),
   };
@@ -287,15 +262,16 @@ function listAssets(
   workspaceRoot: string,
   input: {
     kind?: AssetKind;
-    subtype?: string;
-    tags?: string[];
     pathPrefix?: string;
-    exports?: string[];
     scope?: "saved" | "artifact" | "both";
   },
 ): AssetMetadata[] {
   const scopes =
-    input.scope === "artifact" ? ["artifact"] : input.scope === "both" ? ["saved", "artifact"] : ["saved"];
+    input.scope === "artifact"
+      ? ["artifact"]
+      : input.scope === "both"
+        ? ["saved", "artifact"]
+        : ["saved"];
 
   return scopes
     .flatMap((scope) =>
@@ -304,14 +280,7 @@ function listAssets(
         .map((path) => parseAssetMetadata(workspaceRoot, path, scope as AssetScope)),
     )
     .filter((asset) => (input.kind ? asset.kind === input.kind : true))
-    .filter((asset) => (input.subtype ? asset.subtype === input.subtype : true))
-    .filter((asset) => (input.tags && input.tags.length > 0 ? input.tags.every((tag) => asset.tags.includes(tag)) : true))
     .filter((asset) => (input.pathPrefix ? asset.path.startsWith(input.pathPrefix) : true))
-    .filter((asset) =>
-      input.exports && input.exports.length > 0
-        ? input.exports.every((exportName) => asset.exports.includes(exportName))
-        : true,
-    )
     .toSorted((left, right) => left.path.localeCompare(right.path));
 }
 
@@ -351,7 +320,10 @@ function readPromptBody(path: string): string {
 }
 
 async function importFresh(path: string): Promise<Record<string, unknown>> {
-  return (await import(`${pathToFileURL(path).href}?cacheBust=${randomUUID()}`)) as Record<string, unknown>;
+  return (await import(`${pathToFileURL(path).href}?cacheBust=${randomUUID()}`)) as Record<
+    string,
+    unknown
+  >;
 }
 
 function deriveEntryScope(entryPath: string): AssetScope {
@@ -381,7 +353,9 @@ function validateEntryAssetPaths(
   const marker = `/${kind === "definition" ? "definitions" : kind === "prompt" ? "prompts" : "components"}/`;
   for (const path of paths) {
     if (!path.includes(marker)) {
-      throw new Error(`Entry ${entryPath} declared ${path} in ${kind}Paths, but the path does not match that asset kind.`);
+      throw new Error(
+        `Entry ${entryPath} declared ${path} in ${kind}Paths, but the path does not match that asset kind.`,
+      );
     }
     if (!existsSync(join(workspaceRoot, path))) {
       throw new Error(`Entry ${entryPath} declared missing asset path ${path}.`);
@@ -422,10 +396,14 @@ async function loadRunnableEntryModule(
   const label = String(module.label ?? "");
   const summary = String(module.summary ?? "");
   const launchSchema = module.launchSchema as z.ZodTypeAny | undefined;
-  const createRunnableEntry = module.createRunnableEntry as ((input: { dbPath: string }) => RunnableEntryFactoryOutput) | undefined;
+  const createRunnableEntry = module.createRunnableEntry as
+    | ((input: { dbPath: string }) => RunnableEntryFactoryOutput)
+    | undefined;
 
   if (!workflowId || !label || !summary || !launchSchema) {
-    throw new Error(`Runnable entry ${input.entryPath} is missing workflowId, label, summary, or launchSchema.`);
+    throw new Error(
+      `Runnable entry ${input.entryPath} is missing workflowId, label, summary, or launchSchema.`,
+    );
   }
   if (typeof createRunnableEntry !== "function") {
     throw new Error(`Runnable entry ${input.entryPath} is missing createRunnableEntry(...).`);
@@ -465,7 +443,9 @@ async function loadRunnableEntryModule(
     );
   }
   if (schemaFingerprint(runtimeEntry.launchSchema) !== schemaFingerprint(launchSchema)) {
-    throw new Error(`Runnable entry ${input.entryPath} returned a launchSchema that does not match the exported launchSchema.`);
+    throw new Error(
+      `Runnable entry ${input.entryPath} returned a launchSchema that does not match the exported launchSchema.`,
+    );
   }
   if (!runtimeEntry.workflow) {
     throw new Error(`Runnable entry ${input.entryPath} returned an empty workflow graph.`);
@@ -515,7 +495,9 @@ async function listRunnableWorkflows(workspaceRoot: string): Promise<RunnableWor
     }
     seenIds.add(workflowId);
 
-    const assetPaths = Array.from(new Set([...definitionPaths, ...promptPaths, ...componentPaths])).toSorted();
+    const assetPaths = Array.from(
+      new Set([...definitionPaths, ...promptPaths, ...componentPaths]),
+    ).toSorted();
 
     entries.push({
       id: workflowId,
@@ -523,7 +505,10 @@ async function listRunnableWorkflows(workspaceRoot: string): Promise<RunnableWor
       summary,
       sourceScope,
       launchToolName: `smithers.run_workflow.${workflowId}` as const,
-      launchInputSchema: z.toJSONSchema(launchSchema as any, { io: "input" }) as Record<string, unknown>,
+      launchInputSchema: z.toJSONSchema(launchSchema as any, { io: "input" }) as Record<
+        string,
+        unknown
+      >,
       entryPath,
       assetPaths,
       definitionPaths,
@@ -533,7 +518,8 @@ async function listRunnableWorkflows(workspaceRoot: string): Promise<RunnableWor
   }
 
   return entries.toSorted(
-    (left, right) => left.id.localeCompare(right.id) || left.sourceScope.localeCompare(right.sourceScope),
+    (left, right) =>
+      left.id.localeCompare(right.id) || left.sourceScope.localeCompare(right.sourceScope),
   );
 }
 
@@ -550,8 +536,19 @@ function normalizeWorkflowOutput(value: unknown): Record<string, unknown> {
   throw new Error(`Expected structured workflow output, received ${String(value)}.`);
 }
 
-function updateArtifactMetadataExecutionStatus(workspaceRoot: string, artifactWorkflowId: string, runStatus: string): void {
-  const metadataPath = join(workspaceRoot, ".svvy", "artifacts", "workflows", artifactWorkflowId, "metadata.json");
+function updateArtifactMetadataExecutionStatus(
+  workspaceRoot: string,
+  artifactWorkflowId: string,
+  runStatus: string,
+): void {
+  const metadataPath = join(
+    workspaceRoot,
+    ".svvy",
+    "artifacts",
+    "workflows",
+    artifactWorkflowId,
+    "metadata.json",
+  );
   const current = JSON.parse(readText(metadataPath)) as Record<string, unknown>;
   current.lastExecutionStatus = runStatus;
   current.updatedAt = new Date().toISOString();
@@ -585,7 +582,8 @@ function createSmithersBridgePoc(workspaceRoot: string): SmithersBridgePoc {
         }),
       );
 
-      const runStatus = typeof (result as any).status === "string" ? (result as any).status : "unknown";
+      const runStatus =
+        typeof (result as any).status === "string" ? (result as any).status : "unknown";
       if (entry.sourceScope === "artifact") {
         const parts = entry.entryPath.split("/");
         const artifactWorkflowId = parts[3];
@@ -611,9 +609,6 @@ function summarizeAssets(assets: AssetMetadata[]): Array<Record<string, unknown>
     kind: asset.kind,
     scope: asset.scope,
     path: asset.path,
-    subtype: asset.subtype,
-    exports: asset.exports,
-    tags: asset.tags,
   }));
 }
 
@@ -623,7 +618,6 @@ function writePromptAsset(
     id: string;
     title: string;
     summary: string;
-    tags: string[];
     body: string;
   },
 ): void {
@@ -635,8 +629,6 @@ function writePromptAsset(
       `svvyId: ${input.id}`,
       `title: ${input.title}`,
       `summary: ${input.summary}`,
-      "tags:",
-      ...input.tags.map((tag) => `  - ${tag}`),
       "---",
       input.body,
       "",
@@ -650,9 +642,7 @@ function writeAgentProfileComponent(
     assetId: string;
     title: string;
     summary: string;
-    tags: string[];
     exportName: string;
-    providerModelSummary: string;
     profile: {
       name: string;
       provider: string;
@@ -668,14 +658,9 @@ function writeAgentProfileComponent(
     [
       "/**",
       " * @svvyAssetKind component",
-      " * @svvySubtype agent-profile",
       ` * @svvyId ${input.assetId}`,
       ` * @svvyTitle ${input.title}`,
       ` * @svvySummary ${input.summary}`,
-      ` * @svvyTags ${input.tags.join(", ")}`,
-      ` * @svvyExports ${input.exportName}`,
-      ` * @svvyProviderModelSummary ${input.providerModelSummary}`,
-      " * @svvyToolsetSummary execute_typescript",
       " */",
       `export const ${input.exportName} = {`,
       `  name: ${JSON.stringify(input.profile.name)},`,
@@ -701,9 +686,18 @@ function writeSavedImplementReviewEntry(
 ): void {
   const absoluteEntryPath = join(workspaceRoot, input.entryPath);
   const entryDir = dirname(absoluteEntryPath);
-  const definitionImportPath = relativeImportPath(entryDir, join(workspaceRoot, input.definitionPath));
-  const componentImportPath = relativeImportPath(entryDir, join(workspaceRoot, input.componentPath));
-  const reviewPromptRelativePath = relativeImportPath(entryDir, join(workspaceRoot, input.promptPath));
+  const definitionImportPath = relativeImportPath(
+    entryDir,
+    join(workspaceRoot, input.definitionPath),
+  );
+  const componentImportPath = relativeImportPath(
+    entryDir,
+    join(workspaceRoot, input.componentPath),
+  );
+  const reviewPromptRelativePath = relativeImportPath(
+    entryDir,
+    join(workspaceRoot, input.promptPath),
+  );
 
   writeText(
     absoluteEntryPath,
@@ -774,11 +768,26 @@ function writeOAuthReviewEntry(
 ): void {
   const absoluteEntryPath = join(workspaceRoot, input.entryPath);
   const entryDir = dirname(absoluteEntryPath);
-  const definitionImportPath = relativeImportPath(entryDir, join(workspaceRoot, input.definitionPath));
-  const savedComponentImportPath = relativeImportPath(entryDir, join(workspaceRoot, input.savedComponentPath));
-  const reviewerComponentImportPath = relativeImportPath(entryDir, join(workspaceRoot, input.reviewerComponentPath));
-  const reviewPromptRelativePath = relativeImportPath(entryDir, join(workspaceRoot, input.reviewPromptPath));
-  const implementPromptRelativePath = relativeImportPath(entryDir, join(workspaceRoot, input.implementPromptPath));
+  const definitionImportPath = relativeImportPath(
+    entryDir,
+    join(workspaceRoot, input.definitionPath),
+  );
+  const savedComponentImportPath = relativeImportPath(
+    entryDir,
+    join(workspaceRoot, input.savedComponentPath),
+  );
+  const reviewerComponentImportPath = relativeImportPath(
+    entryDir,
+    join(workspaceRoot, input.reviewerComponentPath),
+  );
+  const reviewPromptRelativePath = relativeImportPath(
+    entryDir,
+    join(workspaceRoot, input.reviewPromptPath),
+  );
+  const implementPromptRelativePath = relativeImportPath(
+    entryDir,
+    join(workspaceRoot, input.implementPromptPath),
+  );
 
   writeText(
     absoluteEntryPath,
@@ -847,8 +856,6 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
       " * @svvyId create_implement_review",
       " * @svvyTitle Create Implement Review",
       " * @svvySummary Reusable workflow fixture for binding prompts and profiles into a launchable entry contract.",
-      " * @svvyTags sequential, coding, review",
-      " * @svvyExports implementReviewLaunchSchema, createImplementReviewWorkflow",
       " */",
       'import React from "react";',
       'import { createSmithers } from "smithers-orchestrator";',
@@ -936,14 +943,9 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
     [
       "/**",
       " * @svvyAssetKind component",
-      " * @svvySubtype agent-profile",
       " * @svvyId saved_agent_profiles",
       " * @svvyTitle Saved Agent Profiles",
       " * @svvySummary Reusable implementation and review profiles for workflow authoring.",
-      " * @svvyTags agent-profile, implementer, reviewer",
-      " * @svvyExports cheapImplementer, carefulReviewer",
-      " * @svvyProviderModelSummary openai/gpt-5.4-mini and anthropic/claude-sonnet-4",
-      " * @svvyToolsetSummary execute_typescript",
       " */",
       "export const cheapImplementer = {",
       "  name: 'cheap-implementer',",
@@ -974,11 +976,6 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
       "svvyId: review_base",
       "title: Review Base",
       "summary: Base review instructions reusable across saved and artifact workflow entries.",
-      "tags:",
-      "  - review",
-      "  - reusable",
-      "variables:",
-      "  - objective",
       "---",
       "Review the implementation against the stated objective. Call out mismatches and edge cases.",
       "",
@@ -1011,7 +1008,13 @@ function writeArtifactWorkflow(
     reviewerModel: ModelInfo;
   },
 ): ArtifactDraft {
-  const artifactRoot = join(workspaceRoot, ".svvy", "artifacts", "workflows", input.artifactWorkflowId);
+  const artifactRoot = join(
+    workspaceRoot,
+    ".svvy",
+    "artifacts",
+    "workflows",
+    input.artifactWorkflowId,
+  );
   const promptPath = join(artifactRoot, "prompts", "implement-oauth.mdx");
   const componentPath = join(artifactRoot, "components", "oauth-security-reviewer.tsx");
   const entryPath = join(artifactRoot, "entries", "oauth-review.tsx");
@@ -1022,17 +1025,15 @@ function writeArtifactWorkflow(
     id: "oauth_review_draft.implement_prompt",
     title: "OAuth Implement Prompt Draft",
     summary: "Artifact-local implementation details for the OAuth review draft entry.",
-    tags: ["oauth", "implementation"],
     body: "Implement the OAuth callback fix, preserve session semantics, and avoid redirect or state-handling regressions.",
   });
 
   writeAgentProfileComponent(componentPath, {
     assetId: "oauth_security_reviewer_draft",
     title: "OAuth Security Reviewer Draft",
-    summary: "Artifact-local security reviewer profile authored because the generic saved entry was not a clear fit for the OAuth task.",
-    tags: ["agent-profile", "oauth", "security", "review"],
+    summary:
+      "Artifact-local security reviewer profile authored because the generic saved entry was not a clear fit for the OAuth task.",
     exportName: "oauthSecurityReviewer",
-    providerModelSummary: `${input.reviewerModel.providerId}/${input.reviewerModel.modelId}`,
     profile: {
       name: "oauth-security-reviewer",
       provider: input.reviewerModel.providerId,
@@ -1099,15 +1100,27 @@ function saveArtifactAssetsToLibrary(
     savedComponentPath: string;
   },
 ): SaveAssetsResult {
-  const savedPromptPath = join(workspaceRoot, ".svvy", "workflows", "prompts", "oauth", "implement-oauth.mdx");
-  const savedComponentPath = join(workspaceRoot, ".svvy", "workflows", "components", "oauth-security-reviewer.tsx");
+  const savedPromptPath = join(
+    workspaceRoot,
+    ".svvy",
+    "workflows",
+    "prompts",
+    "oauth",
+    "implement-oauth.mdx",
+  );
+  const savedComponentPath = join(
+    workspaceRoot,
+    ".svvy",
+    "workflows",
+    "components",
+    "oauth-security-reviewer.tsx",
+  );
   const savedEntryPath = join(workspaceRoot, ".svvy", "workflows", "entries", "oauth-review.tsx");
 
   writePromptAsset(savedPromptPath, {
     id: "oauth_review.implement_prompt",
     title: "OAuth Implement Prompt",
     summary: "Saved implementation prompt for the reusable OAuth review entry.",
-    tags: ["oauth", "implementation"],
     body: readPromptBody(join(workspaceRoot, input.artifact.promptPath)),
   });
 
@@ -1115,9 +1128,7 @@ function saveArtifactAssetsToLibrary(
     assetId: "oauth_security_reviewer",
     title: "OAuth Security Reviewer",
     summary: "Saved OAuth-focused security reviewer profile for reusable workflow entries.",
-    tags: ["agent-profile", "oauth", "security", "review"],
     exportName: "oauthSecurityReviewer",
-    providerModelSummary: `${input.artifact.reviewerModel.providerId}/${input.artifact.reviewerModel.modelId}`,
     profile: {
       name: "oauth-security-reviewer",
       provider: input.artifact.reviewerModel.providerId,
@@ -1142,7 +1153,10 @@ function saveArtifactAssetsToLibrary(
     implementPromptPath: relativeWorkspacePath(workspaceRoot, savedPromptPath),
     definitionPaths: [input.savedDefinitionPath],
     promptPaths: [input.savedPromptPath, relativeWorkspacePath(workspaceRoot, savedPromptPath)],
-    componentPaths: [input.savedComponentPath, relativeWorkspacePath(workspaceRoot, savedComponentPath)],
+    componentPaths: [
+      input.savedComponentPath,
+      relativeWorkspacePath(workspaceRoot, savedComponentPath),
+    ],
   });
 
   return {
@@ -1205,7 +1219,9 @@ async function runSavedEntryScenario(workspaceRoot: string): Promise<ScenarioRes
       workflowId: execution.workflowId,
       workflowSource: execution.workflowSource,
       entryPath: execution.entryPath,
-      promptWasLoadedFromSavedAsset: execution.output.reviewPrompt === readPromptBody(join(workspaceRoot, ".svvy", "workflows", "prompts", "review-base.mdx")),
+      promptWasLoadedFromSavedAsset:
+        execution.output.reviewPrompt ===
+        readPromptBody(join(workspaceRoot, ".svvy", "workflows", "prompts", "review-base.mdx")),
       assetPaths: savedEntry.assetPaths,
     },
   };
@@ -1221,15 +1237,14 @@ async function runArtifactAuthoringScenario(
   const definitionAssets = listAssets(workspaceRoot, {
     kind: "definition",
     scope: "saved",
-    exports: ["createImplementReviewWorkflow"],
   });
   trace.push({
     toolName: "execute_typescript",
-    args: { purpose: "discover saved definitions by export contract" },
+    args: { purpose: "discover saved definitions before reading promising files" },
     childCalls: [
       {
         toolName: "api.workflow.listAssets",
-        args: { kind: "definition", scope: "saved", exports: ["createImplementReviewWorkflow"] },
+        args: { kind: "definition", scope: "saved" },
         result: summarizeAssets(definitionAssets),
       },
     ],
@@ -1239,37 +1254,35 @@ async function runArtifactAuthoringScenario(
   const promptAssets = listAssets(workspaceRoot, {
     kind: "prompt",
     scope: "saved",
-    tags: ["review"],
   });
   trace.push({
     toolName: "execute_typescript",
-    args: { purpose: "discover saved prompts by tag" },
+    args: { purpose: "discover saved prompts before reading promising files" },
     childCalls: [
       {
         toolName: "api.workflow.listAssets",
-        args: { kind: "prompt", scope: "saved", tags: ["review"] },
+        args: { kind: "prompt", scope: "saved" },
         result: summarizeAssets(promptAssets),
       },
     ],
     result: { discoveredPromptIds: promptAssets.map((asset) => asset.id) },
   });
 
-  const savedProfiles = listAssets(workspaceRoot, {
+  const savedComponents = listAssets(workspaceRoot, {
     kind: "component",
-    subtype: "agent-profile",
     scope: "saved",
   });
   trace.push({
     toolName: "execute_typescript",
-    args: { purpose: "discover saved agent-profile components" },
+    args: { purpose: "discover saved components before reading promising files" },
     childCalls: [
       {
         toolName: "api.workflow.listAssets",
-        args: { kind: "component", subtype: "agent-profile", scope: "saved" },
-        result: summarizeAssets(savedProfiles),
+        args: { kind: "component", scope: "saved" },
+        result: summarizeAssets(savedComponents),
       },
     ],
-    result: { discoveredSavedProfileIds: savedProfiles.map((asset) => asset.id) },
+    result: { discoveredSavedComponentIds: savedComponents.map((asset) => asset.id) },
   });
 
   trace.push({
@@ -1279,15 +1292,21 @@ async function runArtifactAuthoringScenario(
       {
         toolName: "api.repo.readFiles",
         args: { paths: [seed.definitionPath, seed.promptPath, seed.componentPath, seed.entryPath] },
-        result: { files: [seed.definitionPath, seed.promptPath, seed.componentPath, seed.entryPath] },
+        result: {
+          files: [seed.definitionPath, seed.promptPath, seed.componentPath, seed.entryPath],
+        },
       },
     ],
-    result: { inspectedPaths: [seed.definitionPath, seed.promptPath, seed.componentPath, seed.entryPath] },
+    result: {
+      inspectedPaths: [seed.definitionPath, seed.promptPath, seed.componentPath, seed.entryPath],
+    },
   });
 
   trace.push({
     toolName: "execute_typescript",
-    args: { purpose: "decide the generic saved runnable entry is not a clear fit for the OAuth objective" },
+    args: {
+      purpose: "decide the generic saved runnable entry is not a clear fit for the OAuth objective",
+    },
     result: {
       rejectedSavedEntryPath: seed.entryPath,
       reasons: [
@@ -1300,7 +1319,9 @@ async function runArtifactAuthoringScenario(
   const models = listModels();
   trace.push({
     toolName: "execute_typescript",
-    args: { purpose: "find a configured model for a new artifact-local OAuth security reviewer profile" },
+    args: {
+      purpose: "find a configured model for a new artifact-local OAuth security reviewer profile",
+    },
     childCalls: [
       {
         toolName: "api.workflow.listModels",
@@ -1328,7 +1349,10 @@ async function runArtifactAuthoringScenario(
   });
   trace.push({
     toolName: "execute_typescript",
-    args: { purpose: "author an artifact workflow with an artifact prompt, an artifact profile, and an artifact entry" },
+    args: {
+      purpose:
+        "author an artifact workflow with an artifact prompt, an artifact profile, and an artifact entry",
+    },
     childCalls: [
       {
         toolName: "api.repo.writeFile",
@@ -1354,23 +1378,23 @@ async function runArtifactAuthoringScenario(
     result: artifact,
   });
 
-  const allProfiles = listAssets(workspaceRoot, {
+  const allComponents = listAssets(workspaceRoot, {
     kind: "component",
-    subtype: "agent-profile",
     scope: "both",
-    tags: ["oauth"],
   });
   trace.push({
     toolName: "execute_typescript",
-    args: { purpose: "confirm the new artifact profile is discoverable through the authoring API" },
+    args: {
+      purpose: "confirm the new artifact component is discoverable through the authoring API",
+    },
     childCalls: [
       {
         toolName: "api.workflow.listAssets",
-        args: { kind: "component", subtype: "agent-profile", scope: "both", tags: ["oauth"] },
-        result: summarizeAssets(allProfiles),
+        args: { kind: "component", scope: "both" },
+        result: summarizeAssets(allComponents),
       },
     ],
-    result: { discoveredOAuthProfileIds: allProfiles.map((asset) => asset.id) },
+    result: { discoveredComponentIds: allComponents.map((asset) => asset.id) },
   });
 
   const workflows = await bridge.listWorkflows();
@@ -1420,10 +1444,13 @@ async function runArtifactAuthoringScenario(
       workflowId: execution.workflowId,
       workflowSource: execution.workflowSource,
       entryPath: execution.entryPath,
-      preparedImplementRequestUsesArtifactPrompt: String(execution.output.implementPrompt).includes("preserve session semantics"),
+      preparedImplementRequestUsesArtifactPrompt: String(execution.output.implementPrompt).includes(
+        "preserve session semantics",
+      ),
       preparedReviewRequestUsesSavedPromptAndArtifactProfile:
-        String(execution.output.reviewPrompt).includes("Review the implementation against the stated objective.") &&
-        String(execution.output.reviewPrompt).includes("callback validation"),
+        String(execution.output.reviewPrompt).includes(
+          "Review the implementation against the stated objective.",
+        ) && String(execution.output.reviewPrompt).includes("callback validation"),
       reviewerProfileModel: (execution.output.reviewerProfile as Record<string, unknown>).model,
       metadataAfterRun: JSON.parse(readText(join(workspaceRoot, artifact.metadataPath))),
     },
@@ -1449,7 +1476,9 @@ async function runExplicitSaveScenario(
         result: { files: [artifact.promptPath, artifact.componentPath, artifact.entryPath] },
       },
     ],
-    result: { selectedArtifactPaths: [artifact.promptPath, artifact.componentPath, artifact.entryPath] },
+    result: {
+      selectedArtifactPaths: [artifact.promptPath, artifact.componentPath, artifact.entryPath],
+    },
   });
 
   const saved = saveArtifactAssetsToLibrary(workspaceRoot, {
@@ -1460,7 +1489,10 @@ async function runExplicitSaveScenario(
   });
   trace.push({
     toolName: "execute_typescript",
-    args: { purpose: "write the reusable prompt, profile, and entry into the saved workflow library and inspect validation feedback" },
+    args: {
+      purpose:
+        "write the reusable prompt, profile, and entry into the saved workflow library and inspect validation feedback",
+    },
     childCalls: [
       {
         toolName: "api.repo.writeFile",
@@ -1489,15 +1521,17 @@ async function runExplicitSaveScenario(
   const savedAssets = listAssets(workspaceRoot, {
     scope: "saved",
     pathPrefix: ".svvy/workflows/",
-    tags: ["oauth"],
   });
   trace.push({
     toolName: "execute_typescript",
-    args: { purpose: "confirm saved assets are discoverable through the authoring API after explicit save" },
+    args: {
+      purpose:
+        "confirm saved assets are discoverable through the authoring API after explicit save",
+    },
     childCalls: [
       {
         toolName: "api.workflow.listAssets",
-        args: { scope: "saved", pathPrefix: ".svvy/workflows/", tags: ["oauth"] },
+        args: { scope: "saved", pathPrefix: ".svvy/workflows/" },
         result: summarizeAssets(savedAssets),
       },
     ],
@@ -1548,7 +1582,9 @@ async function runExplicitSaveScenario(
     trace,
     proof: {
       savedPaths: saved,
-      savedEntryIds: workflows.filter((workflow) => workflow.sourceScope === "saved").map((workflow) => workflow.id),
+      savedEntryIds: workflows
+        .filter((workflow) => workflow.sourceScope === "saved")
+        .map((workflow) => workflow.id),
       artifactStillExists: existsSync(join(workspaceRoot, artifact.entryPath)),
       savedAssetsDroppedDraftIdentity: !savedAssets.some((asset) => asset.id.includes("draft")),
       savedEntryUsesSavedAssets: (() => {
@@ -1569,7 +1605,11 @@ async function runPoc(): Promise<Record<string, unknown>> {
     const seed = seedSavedWorkflowLibrary(workspaceRoot);
     const savedEntryScenario = await runSavedEntryScenario(workspaceRoot);
     const authoredArtifact = await runArtifactAuthoringScenario(workspaceRoot, seed);
-    const explicitSave = await runExplicitSaveScenario(workspaceRoot, seed, authoredArtifact.artifact);
+    const explicitSave = await runExplicitSaveScenario(
+      workspaceRoot,
+      seed,
+      authoredArtifact.artifact,
+    );
 
     return {
       workspaceRoot: relativeWorkspacePath(REPO_ROOT, workspaceRoot),

@@ -7,7 +7,6 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   symlinkSync,
 } from "node:fs";
 import { basename, dirname, extname, join, relative } from "node:path";
@@ -26,22 +25,11 @@ export type WorkflowAssetMetadata = {
   summary: string;
   path: string;
   scope: WorkflowAssetScope;
-  subtype?: string;
-  tags: string[];
-  exports: string[];
-  variables: string[];
-  providerModelSummary?: string;
-  toolsetSummary?: string;
-  createdAt?: string;
-  updatedAt?: string;
 };
 
 export type WorkflowAssetFilter = {
   kind?: WorkflowAssetKind;
-  subtype?: string;
-  tags?: string[];
   pathPrefix?: string;
-  exports?: string[];
   scope?: WorkflowAssetScope | "both";
 };
 
@@ -117,15 +105,6 @@ function relativeWorkspacePath(workspaceRoot: string, path: string): string {
   return relative(workspaceRoot, path).replace(/\\/g, "/");
 }
 
-function splitCsv(value: string | undefined): string[] {
-  return value
-    ? value
-        .split(",")
-        .map((entry) => entry.trim())
-        .filter(Boolean)
-    : [];
-}
-
 function readTsJsdocTag(header: string, tag: string): string | undefined {
   const match = header.match(new RegExp(`@${tag}\\s+([^\\n*]+)`));
   return match?.[1]?.trim();
@@ -176,7 +155,6 @@ function parseAssetMetadata(
   scope: WorkflowAssetScope,
 ): WorkflowAssetMetadata {
   const text = readFileSync(path, "utf8");
-  const stats = statSync(path);
   if (extname(path) === ".mdx") {
     const frontmatter = parseFrontmatter(text);
     return {
@@ -186,12 +164,6 @@ function parseAssetMetadata(
       summary: String(frontmatter.summary ?? ""),
       path: relativeWorkspacePath(workspaceRoot, path),
       scope,
-      subtype: typeof frontmatter.svvySubtype === "string" ? frontmatter.svvySubtype : undefined,
-      tags: Array.isArray(frontmatter.tags) ? frontmatter.tags.map(String) : [],
-      exports: [],
-      variables: Array.isArray(frontmatter.variables) ? frontmatter.variables.map(String) : [],
-      createdAt: stats.birthtime.toISOString(),
-      updatedAt: stats.mtime.toISOString(),
     };
   }
 
@@ -203,14 +175,6 @@ function parseAssetMetadata(
     summary: readTsJsdocTag(header, "svvySummary") ?? "",
     path: relativeWorkspacePath(workspaceRoot, path),
     scope,
-    subtype: readTsJsdocTag(header, "svvySubtype"),
-    tags: splitCsv(readTsJsdocTag(header, "svvyTags")),
-    exports: splitCsv(readTsJsdocTag(header, "svvyExports")),
-    variables: [],
-    providerModelSummary: readTsJsdocTag(header, "svvyProviderModelSummary"),
-    toolsetSummary: readTsJsdocTag(header, "svvyToolsetSummary"),
-    createdAt: stats.birthtime.toISOString(),
-    updatedAt: stats.mtime.toISOString(),
   };
 }
 
@@ -249,18 +213,7 @@ export function listWorkflowAssets(
         .map((path) => parseAssetMetadata(workspaceRoot, path, scope)),
     )
     .filter((asset) => (input.kind ? asset.kind === input.kind : true))
-    .filter((asset) => (input.subtype ? asset.subtype === input.subtype : true))
-    .filter((asset) =>
-      input.tags && input.tags.length > 0
-        ? input.tags.every((tag) => asset.tags.includes(tag))
-        : true,
-    )
     .filter((asset) => (input.pathPrefix ? asset.path.startsWith(input.pathPrefix) : true))
-    .filter((asset) =>
-      input.exports && input.exports.length > 0
-        ? input.exports.every((exportName) => asset.exports.includes(exportName))
-        : true,
-    )
     .toSorted((left, right) => left.path.localeCompare(right.path));
 }
 

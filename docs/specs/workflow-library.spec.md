@@ -178,7 +178,9 @@ Examples:
 - workflow building blocks
 - agent profile values or factories
 
-Agent profile components export values that conform to the generated `WorkflowTaskAgentProfile` contract. Workflow definitions and entries use Smithers `AgentLike` values for adaptive task execution, with the profile describing the svvy task-agent configuration and task-local tool surface.
+Agent profile files are ordinary component files that export values conforming to the generated `WorkflowTaskAgentProfile` contract. Workflow definitions and entries use Smithers `AgentLike` values for adaptive task execution, with the profile describing the svvy task-agent configuration and task-local tool surface.
+
+A handler lists component assets and reads candidate component files before using their exported values.
 
 ### Entries
 
@@ -192,7 +194,7 @@ They are returned by `smithers.list_workflows`.
 
 ### TS Or TSX Asset Headers
 
-Saved definitions and components should start with JSDoc metadata rich enough for discovery.
+Saved definitions and components must start with the minimal JSDoc metadata required for discovery and validation.
 
 Normative example:
 
@@ -202,18 +204,12 @@ Normative example:
  * @svvyId create_implement_review
  * @svvyTitle Create Implement Review
  * @svvySummary Reusable workflow factory for implement and review stages.
- * @svvyTags sequential, coding, review
- * @svvyExports implementReviewLaunchSchema, createImplementReviewWorkflow
  */
 ```
 
 For component assets, the same pattern applies with `@svvyAssetKind component`.
 
-For agent profiles, the header should additionally declare:
-
-- subtype such as `agent-profile`
-- provider and model summary
-- toolset summary
+The header is a compact index. Handlers read the file through `api.repo.readFile(...)` when they need source context.
 
 ### MDX Prompt Frontmatter
 
@@ -227,13 +223,10 @@ svvyAssetKind: prompt
 svvyId: review_base
 title: Review Base
 summary: Base review instructions reusable across review-oriented workflows.
-tags:
-  - review
-  - reusable
-variables:
-  - objective
 ---
 ```
+
+Prompt frontmatter is also a compact index. Handlers read the prompt file before using its body.
 
 ## Runnable Entry Contract
 
@@ -261,7 +254,7 @@ Entries with `productKind = "project-ci"` must also export `resultSchema`.
 
 That result schema is the only source of Project CI run and check result records.
 
-No product lane may be inferred from labels, tags, filenames, logs, node output, or final prose.
+No product lane may be inferred from labels, filenames, logs, node output, or final prose.
 
 Project CI details are defined in [Project CI Lane Spec](./project-ci.spec.md).
 
@@ -272,7 +265,7 @@ The adopted handler-side workflow-authoring flow is:
 1. A handler thread decides that direct bounded work is not enough and a workflow is justified.
 2. The handler uses its injected generated workflow-authoring contract, guide, and examples first.
 3. The handler calls `api.workflow.listAssets(...)` as needed.
-4. The handler reads promising saved definitions, prompts, components, or agent-profile files through ordinary file reads.
+4. The handler reads promising saved definitions, prompts, or component files through ordinary file reads before relying on implementation details.
 5. The handler optionally calls `api.workflow.listModels()` when it must create or revise an agent profile.
 6. The handler authors a short-lived artifact workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/`.
 7. The handler calls `smithers.list_workflows`, inspects the artifact entry, and launches it through `smithers.run_workflow({ workflowId, input, runId? })`.
@@ -291,7 +284,24 @@ This is the primary discovery surface for saved and artifact authoring assets.
 
 The generated `execute_typescript` declaration is the exact input and output contract for this method.
 
-`listAssets(...)` does not list runnable entries.
+`listAssets(...)` returns the enforced asset identity metadata plus a workspace-relative `path`.
+
+Each returned asset has:
+
+- `id`
+- `kind`: `definition | prompt | component`
+- `title`
+- `summary`
+- `path`
+- `scope`: `saved | artifact`
+
+Supported filters are:
+
+- `kind`
+- `pathPrefix`
+- `scope`: `saved | artifact | both`
+
+Runnable entries are discovered through `smithers.list_workflows`.
 
 ### Provider And Model Discovery
 
@@ -381,8 +391,7 @@ The desktop app should expose:
 
 - a saved workflow library view rooted at `.svvy/workflows/`
 - separate groupings for definitions, prompts, components, and entries
-- explicit indication when a component is an agent profile
-- asset detail views showing path, summary, tags, exported symbols or prompt variables, and last-updated metadata
+- asset detail views showing title, summary, kind, path, and source
 - entry detail views showing entry path, summary, launch schema, and grouped asset refs
 - delete actions for saved definitions, prompts, components, and entries
 - a save shortcut on relevant workflow surfaces that sends a predefined save request prompt to the handler thread
@@ -397,8 +406,8 @@ Handler-thread instructions should say:
 - use generated declarations for exact `api.*`, runnable-entry, and workflow task-agent profile shapes
 - reuse a saved runnable entry when one clearly fits
 - otherwise author a short-lived artifact workflow
-- mix saved definitions, prompts, components, and agent profiles freely when that produces a clearer workflow than reusing one saved entry unchanged
-- use saved agent profiles before creating new ones
+- mix saved definitions, prompts, and components freely when that produces a clearer workflow than reusing one saved entry unchanged
+- read saved component files before creating new agent profiles
 - call `api.workflow.listModels()` only when no saved profile fits or the user explicitly wants a different provider or model
 - write reusable saved workflow files only on explicit request
 - rely on the returned validation feedback after writes under `.svvy/workflows/...`
@@ -411,7 +420,7 @@ The adopted decision order is:
 
 1. if direct bounded work in `execute_typescript` is enough, do that
 2. otherwise, if a saved runnable entry clearly fits, run it
-3. otherwise author a short-lived artifact workflow, usually reusing saved definitions, prompts, components, or agent profiles
+3. otherwise author a short-lived artifact workflow, usually reusing saved definitions, prompts, and components
 4. run the authored artifact entry through `smithers.run_workflow({ workflowId, input, runId? })`
 5. write reusable saved workflow files only on explicit request
 

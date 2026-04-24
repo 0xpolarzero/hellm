@@ -110,13 +110,13 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Persist every authored short-lived workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/` with `definitions/`, `prompts/`, `components/`, `entries/`, and `metadata.json`. Commit(s): `dc1da8c`
 - [x] Define the saved workflow library layout under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and `.svvy/workflows/entries/`. Commit(s): `37afcb3`, `4515233`
 - [x] Define the discovery metadata contract compiled from JSDoc headers in `ts` or `tsx` files and frontmatter in `mdx` prompt files. Commit(s): `37afcb3`, `4515233`
-- [x] Expose `api.workflow.listAssets(...)` inside `execute_typescript` so handlers can discover saved definitions, prompts, components, and agent profiles before reading files directly. Commit(s): `4515233`
+- [x] Expose `api.workflow.listAssets(...)` inside `execute_typescript` so handlers can discover saved definitions, prompts, and components before reading files directly. Commit(s): `4515233`
 - [x] Expose `api.workflow.listModels()` inside `execute_typescript` for the escape hatch where no saved agent profile fits. Commit(s): `4515233`
 - [x] Build a POC saved definition plus saved entry that are reused by a new short-lived artifact entry with different prompts, profiles, or config bound at authoring time. Commit(s): `37afcb3`
 - [x] Keep authored workflows artifact-only by default until the handler explicitly writes reusable files into `.svvy/workflows/`. Commit(s): `0b2d1ff`
 - [x] Run automatic saved-workflow validation after `api.repo.writeFile(...)` and `api.repo.writeJson(...)` writes under `.svvy/workflows/...`, surfacing diagnostics in the enclosing `execute_typescript` result logs. Commit(s): `0b2d1ff`
 - [x] Surface all runnable saved and artifact entries through `smithers.list_workflows` and `smithers.run_workflow({ workflowId, input, runId? })`, with `smithers.list_workflows` returning each entry's explicit launch contract, `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `workflowId` filter support rather than relying on inferred import graphs. Commit(s): `4515233`, `dc1da8c`
-- [x] Persist agent profile components as discoverable saved workflow components with explicit profile-oriented metadata. Commit(s): `4515233`
+- [x] Persist agent profile files as ordinary saved workflow components that handlers discover by path and inspect through file reads. Commit(s): `4515233`
 
 ## 7. Project CI Lane
 
@@ -143,7 +143,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Define the workspace read model for saved workflow assets and artifact workflows.
 - [x] Render a save shortcut in relevant thread or workflow surfaces that sends a predefined save request prompt to the handler. Commit(s): `0b2d1ff`
 - [ ] Render a saved workflow library tab in the workspace shell with separate definitions, prompts, components, and entries groupings.
-- [ ] Show saved asset title, summary, kind, path, tags, and recency metadata in the saved workflow library tab, including explicit indication when a component is an agent profile and grouped asset refs for entries.
+- [ ] Show saved asset title, summary, kind, and path in the saved workflow library tab, with source inspection for component details and grouped asset refs for entries.
 - [ ] Allow deleting a saved workflow definition, prompt, component, or entry from the library without deleting historical artifact workflows that previously used it.
 - [x] Join session summaries, focused pane, and pane-to-surface bindings in one workspace-shell read model without depending on a global active surface. Commit(s): `9a21f87`, `b0ee858`
 - [x] Split workspace-summary updates from live surface transcript updates in the renderer runtime. Commit(s): `9a21f87`, `b0ee858`

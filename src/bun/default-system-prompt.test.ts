@@ -18,6 +18,9 @@ describe("default system prompt", () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain("interface SvvyApi");
     expect(DEFAULT_SYSTEM_PROMPT).toContain("listAssets(input?: WorkflowListAssetsInput)");
     expect(DEFAULT_SYSTEM_PROMPT).toContain("listModels(): Promise<WorkflowModelInfo[]>");
+    expect(DEFAULT_SYSTEM_PROMPT).not.toContain("providerModelSummary");
+    expect(DEFAULT_SYSTEM_PROMPT).not.toContain("toolsetSummary");
+    expect(DEFAULT_SYSTEM_PROMPT).not.toContain("subtype?: string");
   });
 
   it("explicitly steers snippets away from Node built-ins and toward api.exec.run", () => {

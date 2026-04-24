@@ -34,7 +34,7 @@ const CI_CONTEXT_PROMPT = [
   "Project CI recording rules are strict:",
   '- Project CI records are created only from entries declaring `productKind = "project-ci"`.',
   "- The terminal output must directly validate against the entry's declared `resultSchema`.",
-  "- Never infer CI state from logs, command names, labels, tags, filenames, node output, final prose, or arbitrary workflow output.",
+  "- Never infer CI state from logs, command names, labels, filenames, node output, final prose, or arbitrary workflow output.",
   "- Invalid or missing result output is a CI troubleshooting state, not an invitation to parse partial facts.",
 ].join("\n");
 

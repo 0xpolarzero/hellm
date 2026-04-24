@@ -124,7 +124,10 @@ export type WorkflowAssetKind = "definition" | "prompt" | "component";
 export type WorkflowAssetScope = "saved" | "artifact";
 
 /**
- * Compact discovery metadata for one reusable workflow asset.
+ * Minimal discovery metadata for one reusable workflow asset.
+ *
+ * This exposes the enforced identity fields plus the workspace-relative path.
+ * Read the file when you need implementation details.
  */
 export interface WorkflowAssetMetadata {
   id: string;
@@ -133,14 +136,6 @@ export interface WorkflowAssetMetadata {
   summary: string;
   path: string;
   scope: WorkflowAssetScope;
-  subtype?: string;
-  tags: string[];
-  exports: string[];
-  variables: string[];
-  providerModelSummary?: string;
-  toolsetSummary?: string;
-  createdAt?: string;
-  updatedAt?: string;
 }
 
 /**
@@ -148,10 +143,7 @@ export interface WorkflowAssetMetadata {
  */
 export interface WorkflowListAssetsInput {
   kind?: WorkflowAssetKind;
-  subtype?: string;
-  tags?: string[];
   pathPrefix?: string;
-  exports?: string[];
   scope?: WorkflowAssetScope | "both";
 }
 

@@ -339,7 +339,7 @@ Project CI is the first adopted product-lane entry.
 
 For entries declaring `productKind = "project-ci"`, the bridge must preserve enough result-schema metadata for the runtime to validate terminal output before recording CI run and CI check result state.
 
-No Smithers supervision path may classify a workflow run as Project CI from entry labels, tags, command names, logs, node outputs, or final prose.
+No Smithers supervision path may classify a workflow run as Project CI from entry labels, command names, logs, node outputs, or final prose.
 
 The handler-visible launch contract must preserve launch-side semantics:
 

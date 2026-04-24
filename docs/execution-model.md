@@ -176,7 +176,7 @@ The handler thread may:
 
 - reuse a saved runnable entry
 - author a short-lived artifact workflow
-- import saved definitions, prompts, components, and agent profiles while authoring that workflow
+- import saved definitions, prompts, and components while authoring that workflow
 - rerun after repair
 - resume after clarification
 - stay in normal multi-turn chat for ordinary replies

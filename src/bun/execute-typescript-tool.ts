@@ -1726,10 +1726,7 @@ function createExecuteTypescriptApi(input: {
               value,
               facts: {
                 ...(params.kind ? { kind: params.kind } : {}),
-                ...(params.subtype ? { subtype: params.subtype } : {}),
-                ...(params.tags?.length ? { tags: params.tags } : {}),
                 ...(params.pathPrefix ? { pathPrefix: params.pathPrefix } : {}),
-                ...(params.exports?.length ? { exports: params.exports } : {}),
                 ...(params.scope ? { scope: params.scope } : {}),
                 assetCount: value.length,
               },
