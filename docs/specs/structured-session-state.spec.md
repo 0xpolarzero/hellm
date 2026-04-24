@@ -506,7 +506,7 @@ Use `turnDecision` this way:
 
 - `pending` is allowed only between turn creation and the moment the surface chooses how to proceed
 - orchestrator turns persist session-level routing decisions such as `reply`, `execute_typescript`, `clarify`, or `thread.start`
-- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `smithers.run_workflow.<workflow_id>`, `smithers.get_run`, `smithers.resolve_approval`, `thread.handoff`, or `wait`
+- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `smithers.run_workflow`, `smithers.get_run`, `smithers.resolve_approval`, `thread.handoff`, or `wait`
 - this symmetry is intentional even though only orchestrator turns own session-level routing
 - the turn decision is the top-level classification of the turn, not a replacement for command records
 - linkage to spawned threads, workflow runs, artifacts, and episodes still belongs in their own records plus linked commands
@@ -626,7 +626,7 @@ For `smithers.*` commands, `facts` should preserve both the adopted agent-visibl
 
 At minimum that should include:
 
-- concrete generated tool name when the command came from a workflow-specific launch tool
+- selected `workflowId` plus optional requested `runId` when the command is `smithers.run_workflow`
 - semantic Smithers operation name such as `smithers.run_workflow`
 - transport or bridge surface used
 - raw Smithers operation name or endpoint
@@ -647,7 +647,7 @@ Use them this way:
 
 - low-level repo or web reads inside `execute_typescript` are usually `trace`
 - material writes, artifact creation, and failed execs usually roll up as `summary`
-- `thread.start`, `thread.handoff`, `wait`, and Smithers-mutating commands such as generated `smithers.run_workflow.<workflow_id>` launch tools, `smithers.resolve_approval`, `smithers.runs.cancel`, and `smithers.signals.send` are normally `surface`
+- `thread.start`, `thread.handoff`, `wait`, and Smithers-mutating commands such as `smithers.run_workflow`, `smithers.resolve_approval`, `smithers.runs.cancel`, and `smithers.signals.send` are normally `surface`
 - read-only Smithers inspection commands are usually `summary` unless the UI chooses to surface a specific one directly
 - child `api.*` commands remain nested detail by default
 

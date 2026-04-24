@@ -899,7 +899,7 @@ describe("WorkspaceSessionCatalog", () => {
         turnId: handlerA.turnId,
         surfacePiSessionId: handlerA.surfacePiSessionId,
         threadId: handlerA.threadId,
-        toolName: "smithers.run_workflow.workflow_a",
+        toolName: "smithers.run_workflow",
         executor: "smithers",
         visibility: "surface",
         title: "Run workflow A",

@@ -638,7 +638,9 @@ export async function createChatRuntime(
     controller.attachPane(paneId);
     emit();
 
-    await releasePaneSurface(paneId, previousTarget);
+    if (previousTarget) {
+      surfaceControllers.get(previousTarget.surfacePiSessionId)?.detachPane(paneId);
+    }
   };
 
   const refreshSessions = async (): Promise<WorkspaceSessionSummary[]> => {

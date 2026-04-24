@@ -129,7 +129,7 @@ Do not use `execute_typescript` to replace top-level control-flow tools:
 - `thread.start`
 - `thread.handoff`
 - `wait`
-- Smithers-native workflow tools such as generated `smithers.run_workflow.<workflow_id>` launch tools, `smithers.resolve_approval`, or `smithers.runs.cancel`
+- Smithers-native workflow tools such as `smithers.run_workflow`, `smithers.resolve_approval`, or `smithers.runs.cancel`
 
 Those actions change product-owned execution state and stay outside the generic TypeScript runner.
 

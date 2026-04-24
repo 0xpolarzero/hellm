@@ -1096,7 +1096,7 @@
             <Button
               variant="ghost"
               size="sm"
-              disabled={promptBusy || mutatingSession}
+              disabled={mutatingSession}
               onclick={() => void handleResetSurfaceTarget()}
             >
               Return to orchestrator

@@ -267,7 +267,7 @@ The adopted handler-side workflow-authoring flow is:
 4. The handler reads promising saved definitions, prompts, components, or agent-profile files through ordinary file reads.
 5. The handler optionally calls `api.workflow.listModels()` when it must create or revise an agent profile.
 6. The handler authors a short-lived artifact workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/`.
-7. The handler calls `smithers.list_workflows`, inspects the artifact entry, and launches it through `smithers.run_workflow.<workflow_id>`.
+7. The handler calls `smithers.list_workflows`, inspects the artifact entry, and launches it through `smithers.run_workflow({ workflowId, input, runId? })`.
 8. If the user explicitly asks to keep reusable workflow files, the handler writes those files directly into `.svvy/workflows/...` through normal repo write APIs.
 9. The handler reads the returned validation feedback in the enclosing `execute_typescript` result and keeps editing until the final saved workflow state validates cleanly.
 
@@ -331,25 +331,43 @@ It should list all runnable entries:
 - saved entries under `.svvy/workflows/entries/`
 - artifact entries under `.svvy/artifacts/workflows/<artifact_workflow_id>/entries/`
 
-Each returned runnable workflow entry should include:
+It should support optional filters such as:
 
-- `id`
+- `workflowId?`
+- `sourceScope?`
+
+Each returned runnable workflow entry should include the full workflow contract data needed for handler-side selection and launch:
+
+- `workflowId`
 - `label`
 - `summary`
 - `sourceScope`: `saved | artifact`
-- `launchToolName`
-- `launchInputSchema`
 - `entryPath`
 - `definitionPaths`
 - `promptPaths`
 - `componentPaths`
 - derived `assetPaths`
+- `launchInputSchema`
 
 This preserves the intended split:
 
 - `api.workflow.*` for authoring-time asset discovery
 - `api.repo.writeFile(...)` and `api.repo.writeJson(...)` for saved-library writes
 - `smithers.*` for launch and supervision
+
+### Workflow Launch Surface
+
+`smithers.run_workflow` is the stable handler launch surface.
+
+Handlers call:
+
+- `smithers.run_workflow({ workflowId, input, runId? })`
+
+Where:
+
+- `workflowId` selects a runnable entry returned by `smithers.list_workflows`
+- `input` is validated against that entry's `launchInputSchema`
+- `runId` is optional and is used only when the handler intends to resume the same Smithers run and Smithers still considers that run resumable
 
 ## Saved Workflow Writes
 
@@ -420,7 +438,7 @@ The adopted decision order is:
 1. if direct bounded work in `execute_typescript` is enough, do that
 2. otherwise, if a saved runnable entry clearly fits, run it
 3. otherwise author a short-lived artifact workflow, usually reusing saved definitions, prompts, components, or agent profiles
-4. run the authored artifact entry through `smithers.run_workflow.<workflow_id>`
+4. run the authored artifact entry through `smithers.run_workflow({ workflowId, input, runId? })`
 5. write reusable saved workflow files only on explicit request
 
 ## Out Of Scope

@@ -633,7 +633,7 @@ describe("structured session state write API", () => {
     const launchCommand = store.createCommand({
       turnId: handlerTurn.id,
       threadId: thread.id,
-      toolName: "smithers.run_workflow.execute_typescript_task",
+      toolName: "smithers.run_workflow",
       executor: "smithers",
       visibility: "surface",
       title: "Run task workflow",

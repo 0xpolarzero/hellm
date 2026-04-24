@@ -434,7 +434,7 @@ describe("smithers.* tools", () => {
     });
 
     const listWorkflows = getTool(tools, "smithers.list_workflows");
-    const runApprovalWorkflow = getTool(tools, "smithers.run_workflow.approval_gate");
+    const runWorkflow = getTool(tools, "smithers.run_workflow");
     const listRuns = getTool(tools, "smithers.list_runs");
     const getRun = getTool(tools, "smithers.get_run");
     const listPendingApprovals = getTool(tools, "smithers.list_pending_approvals");
@@ -444,21 +444,17 @@ describe("smithers.* tools", () => {
     const getRunEvents = getTool(tools, "smithers.get_run_events");
 
     const workflows = await listWorkflows.execute("tool-list-workflows", {});
-    expect(workflows.details.workflows.map((entry: { id: string }) => entry.id)).toEqual(
-      expect.arrayContaining(["hello_world", "execute_typescript_task", "approval_gate"]),
-    );
-    expect(workflows.details.workflowToolSurfaceVersion).toBe(
-      manager.getWorkflowToolSurfaceVersion(),
-    );
     expect(
-      workflows.details.workflows.find((entry: { id: string }) => entry.id === "approval_gate"),
+      workflows.details.workflows.map((entry: { workflowId: string }) => entry.workflowId),
+    ).toEqual(expect.arrayContaining(["hello_world", "execute_typescript_task", "approval_gate"]));
+    expect(
+      workflows.details.workflows.find(
+        (entry: { workflowId: string }) => entry.workflowId === "approval_gate",
+      ),
     ).toMatchObject({
-      id: "approval_gate",
+      workflowId: "approval_gate",
       sourceScope: "saved",
       entryPath: ".svvy/workflows/entries/approval-gate.tsx",
-      launchToolName: "smithers.run_workflow.approval_gate",
-      semanticToolName: "smithers.run_workflow",
-      contractHash: expect.any(String),
       launchInputSchema: {
         type: "object",
         properties: {
@@ -471,14 +467,15 @@ describe("smithers.* tools", () => {
       },
     });
 
-    const launched = await runApprovalWorkflow.execute("tool-run-workflow", {
-      title: "Approve the release?",
+    const launched = await runWorkflow.execute("tool-run-workflow", {
+      workflowId: "approval_gate",
+      input: {
+        title: "Approve the release?",
+      },
     });
 
     expect(launched.details).toMatchObject({
       workflowId: "approval_gate",
-      launchToolName: "smithers.run_workflow.approval_gate",
-      semanticToolName: "smithers.run_workflow",
       status: "running",
       smithersStatus: "running",
       launchInput: {
@@ -553,8 +550,12 @@ describe("smithers.* tools", () => {
       }
     });
 
-    const resumed = await runApprovalWorkflow.execute("tool-resume-workflow", {
-      title: "Approve the release?",
+    const resumed = await runWorkflow.execute("tool-resume-workflow", {
+      workflowId: "approval_gate",
+      input: {
+        title: "Approve the release?",
+      },
+      runId,
     });
     expect(resumed.details).toMatchObject({
       workflowId: "approval_gate",
@@ -635,7 +636,7 @@ describe("smithers.* tools", () => {
     expect(commandToolNames).toEqual(
       expect.arrayContaining([
         "smithers.list_workflows",
-        "smithers.run_workflow.approval_gate",
+        "smithers.run_workflow",
         "smithers.list_pending_approvals",
         "smithers.get_run",
         "smithers.resolve_approval",
@@ -647,40 +648,34 @@ describe("smithers.* tools", () => {
     );
 
     const runWorkflowCommands = snapshot.commands.filter(
-      (command) => command.toolName === "smithers.run_workflow.approval_gate",
+      (command) => command.toolName === "smithers.run_workflow",
     );
     expect(runWorkflowCommands).toHaveLength(2);
     expect(runWorkflowCommands[0]?.facts).toMatchObject({
-      smithersToolName: "smithers.run_workflow.approval_gate",
-      semanticSmithersToolName: "smithers.run_workflow",
-      rawSmithersOperationName: "run_workflow.approval_gate",
-      launchToolName: "smithers.run_workflow.approval_gate",
+      smithersToolName: "smithers.run_workflow",
+      rawSmithersOperationName: "run_workflow",
       workflowId: "approval_gate",
       sourceScope: "saved",
       entryPath: ".svvy/workflows/entries/approval-gate.tsx",
       launchInput: {
         title: "Approve the release?",
       },
-      transport: "embedded-runtime",
       runId,
       resumedRunId: null,
       postStatus: "running",
     });
     expect(runWorkflowCommands[1]?.facts).toMatchObject({
-      smithersToolName: "smithers.run_workflow.approval_gate",
-      semanticSmithersToolName: "smithers.run_workflow",
-      rawSmithersOperationName: "run_workflow.approval_gate",
-      launchToolName: "smithers.run_workflow.approval_gate",
+      smithersToolName: "smithers.run_workflow",
+      rawSmithersOperationName: "run_workflow",
       workflowId: "approval_gate",
       sourceScope: "saved",
       entryPath: ".svvy/workflows/entries/approval-gate.tsx",
       launchInput: {
         title: "Approve the release?",
       },
-      transport: "embedded-runtime",
       runId,
       resumedRunId: runId,
-      preStatus: null,
+      preStatus: "waiting-event",
       postStatus: "running",
     });
 
@@ -708,10 +703,13 @@ describe("smithers.* tools", () => {
       manager,
     });
     const listRuns = getTool(tools, "smithers.list_runs");
-    const runHelloWorld = getTool(tools, "smithers.run_workflow.hello_world");
+    const runWorkflow = getTool(tools, "smithers.run_workflow");
 
-    const ownLaunch = await runHelloWorld.execute("tool-run-own-hello-world", {
-      message: "own run",
+    const ownLaunch = await runWorkflow.execute("tool-run-own-hello-world", {
+      workflowId: "hello_world",
+      input: {
+        message: "own run",
+      },
     });
 
     const secondarySessionId = "session-smithers-tools-secondary";
@@ -764,9 +762,12 @@ describe("smithers.* tools", () => {
       store,
       manager,
     });
-    const foreignRunHelloWorld = getTool(secondaryTools, "smithers.run_workflow.hello_world");
-    const foreignLaunch = await foreignRunHelloWorld.execute("tool-run-foreign-hello-world", {
-      message: "foreign run",
+    const foreignRunWorkflow = getTool(secondaryTools, "smithers.run_workflow");
+    const foreignLaunch = await foreignRunWorkflow.execute("tool-run-foreign-hello-world", {
+      workflowId: "hello_world",
+      input: {
+        message: "foreign run",
+      },
     });
 
     await waitFor("hello_world runs finish for list_runs ownership test", async () => {
@@ -819,7 +820,7 @@ describe("smithers.* tools", () => {
       manager,
     });
 
-    const runSignalWorkflow = getTool(tools, "smithers.run_workflow.wait_for_signal");
+    const runWorkflow = getTool(tools, "smithers.run_workflow");
     const getRun = getTool(tools, "smithers.get_run");
     const watchRun = getTool(tools, "smithers.watch_run");
     const explainRun = getTool(tools, "smithers.explain_run");
@@ -829,8 +830,11 @@ describe("smithers.* tools", () => {
     const streamDevTools = getTool(tools, "smithers.streamDevTools");
     const getRunEvents = getTool(tools, "smithers.get_run_events");
 
-    const launched = await runSignalWorkflow.execute("tool-run-signal-workflow", {
-      signalName: "deploy.completed",
+    const launched = await runWorkflow.execute("tool-run-signal-workflow", {
+      workflowId: "wait_for_signal",
+      input: {
+        signalName: "deploy.completed",
+      },
     });
     const runId = launched.details.runId as string;
 
@@ -890,8 +894,12 @@ describe("smithers.* tools", () => {
       signalName: "deploy.completed",
     });
 
-    await runSignalWorkflow.execute("tool-resume-signal-workflow", {
-      signalName: "deploy.completed",
+    await runWorkflow.execute("tool-resume-signal-workflow", {
+      workflowId: "wait_for_signal",
+      input: {
+        signalName: "deploy.completed",
+      },
+      runId,
     });
 
     await waitFor("signal tool completion", async () => {
@@ -983,11 +991,14 @@ describe("smithers.* tools", () => {
       manager,
     });
 
-    const runTranscriptWorkflow = getTool(tools, "smithers.run_workflow.chat_transcript_probe");
+    const runWorkflow = getTool(tools, "smithers.run_workflow");
     const getChatTranscript = getTool(tools, "smithers.get_chat_transcript");
 
-    const launched = await runTranscriptWorkflow.execute("tool-run-transcript-workflow", {
-      prompt: "Summarize the transcript probe.",
+    const launched = await runWorkflow.execute("tool-run-transcript-workflow", {
+      workflowId: "chat_transcript_probe",
+      input: {
+        prompt: "Summarize the transcript probe.",
+      },
     });
     const runId = launched.details.runId as string;
 
@@ -1020,7 +1031,7 @@ describe("smithers.* tools", () => {
     ).toBe(true);
   });
 
-  it("generates per-workflow launch tools from the compiled launch contracts and removes the generic launcher", () => {
+  it("exposes one stable smithers.run_workflow launcher and keeps workflow-specific schemas in discovery metadata", () => {
     const { manager, runtime, store } = createHarness();
 
     const tools = createSmithersTools({
@@ -1029,48 +1040,27 @@ describe("smithers.* tools", () => {
       manager,
     });
 
-    expect(tools.find((tool) => tool.name === "smithers.run_workflow")).toBeUndefined();
+    expect(tools.find((tool) => tool.name === "smithers.run_workflow.hello_world")).toBeUndefined();
 
-    const helloWorldTool = getTool(tools, "smithers.run_workflow.hello_world");
-    expect((helloWorldTool.parameters as Record<string, unknown>).type).toBe("object");
+    const runWorkflowTool = getTool(tools, "smithers.run_workflow");
+    expect((runWorkflowTool.parameters as Record<string, unknown>).type).toBe("object");
     expect(
-      (helloWorldTool.parameters as { properties?: Record<string, unknown> }).properties?.message,
-    ).toMatchObject({
-      default: "hello world",
-      type: "string",
-      minLength: 1,
-    });
-    expect(
-      (helloWorldTool.parameters as { properties?: Record<string, unknown> }).properties
-        ?.resumeRunId,
-    ).toBeUndefined();
-
-    const executeTaskTool = getTool(tools, "smithers.run_workflow.execute_typescript_task");
-    expect((executeTaskTool.parameters as Record<string, unknown>).type).toBe("object");
-    expect(
-      (executeTaskTool.parameters as { properties?: Record<string, unknown> }).properties
-        ?.objective,
+      (runWorkflowTool.parameters as { properties?: Record<string, unknown> }).properties
+        ?.workflowId,
     ).toMatchObject({
       type: "string",
       minLength: 1,
     });
     expect(
-      (executeTaskTool.parameters as { properties?: Record<string, unknown> }).properties
-        ?.successCriteria,
+      (runWorkflowTool.parameters as { properties?: Record<string, unknown> }).properties?.input,
     ).toMatchObject({
-      default: [],
-      type: "array",
+      type: "object",
     });
     expect(
-      (executeTaskTool.parameters as { properties?: Record<string, unknown> }).properties
-        ?.validationCommands,
+      (runWorkflowTool.parameters as { properties?: Record<string, unknown> }).properties?.runId,
     ).toMatchObject({
-      default: [],
-      type: "array",
+      type: "string",
+      minLength: 1,
     });
-    expect(
-      (executeTaskTool.parameters as { properties?: Record<string, unknown> }).properties
-        ?.resumeRunId,
-    ).toBeUndefined();
   });
 });

@@ -1,7 +1,17 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { extname, join, relative } from "node:path";
+import { createRequire } from "node:module";
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
+import { dirname, extname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { SmithersWorkflow } from "smithers-orchestrator";
 import { z } from "zod";
 
@@ -27,6 +37,11 @@ export type RunnableWorkflowRegistryEntry = {
   assetPaths: string[];
   createRunnableEntry: (input: { dbPath: string }) => RunnableWorkflowRuntimeEntry;
 };
+
+const runtimeRequire = createRequire(import.meta.url);
+const importSandboxByWorkspaceRoot = new Map<string, string>();
+const RUNTIME_PACKAGES = ["react", "react-dom", "smithers-orchestrator", "zod"] as const;
+const RUNTIME_SCOPES = ["@smithers-orchestrator"] as const;
 
 function walkFiles(root: string): string[] {
   if (!existsSync(root)) {
@@ -58,6 +73,26 @@ function relativeWorkspacePath(workspaceRoot: string, path: string): string {
   return relative(workspaceRoot, path).replace(/\\/g, "/");
 }
 
+function resolvePackageRootFrom(startPath: string, packageName: string): string | null {
+  if (!existsSync(startPath)) {
+    return null;
+  }
+  let current = lstatSync(startPath).isDirectory() ? startPath : dirname(startPath);
+
+  while (true) {
+    const candidate = join(current, "node_modules", packageName, "package.json");
+    if (existsSync(candidate)) {
+      return dirname(candidate);
+    }
+
+    const parent = dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
 function deriveEntryScope(entryPath: string): RunnableWorkflowSourceScope {
   if (entryPath.startsWith(".svvy/workflows/entries/")) {
     return "saved";
@@ -74,6 +109,79 @@ async function importFresh(path: string): Promise<Record<string, unknown>> {
     string,
     unknown
   >;
+}
+
+function resolveRuntimePackageRoot(packageName: (typeof RUNTIME_PACKAGES)[number]): string {
+  const resolutionAnchors = [
+    typeof process.argv[1] === "string" && process.argv[1].length > 0 ? process.argv[1] : null,
+    import.meta.url.startsWith("file:") ? fileURLToPath(import.meta.url) : null,
+    typeof process.execPath === "string" && process.execPath.length > 0 ? process.execPath : null,
+  ];
+
+  for (const anchor of resolutionAnchors) {
+    if (!anchor) {
+      continue;
+    }
+    const packageRoot = resolvePackageRootFrom(anchor, packageName);
+    if (packageRoot) {
+      return packageRoot;
+    }
+  }
+
+  return dirname(runtimeRequire.resolve(`${packageName}/package.json`));
+}
+
+function syncWorkflowTreeIntoSandbox(sourceRoot: string, destinationRoot: string): void {
+  rmSync(destinationRoot, { recursive: true, force: true });
+  if (!existsSync(sourceRoot)) {
+    mkdirSync(destinationRoot, { recursive: true });
+    return;
+  }
+
+  cpSync(sourceRoot, destinationRoot, {
+    recursive: true,
+    dereference: true,
+  });
+}
+
+function ensureWorkspaceImportSandbox(workspaceRoot: string): string {
+  const existing = importSandboxByWorkspaceRoot.get(workspaceRoot);
+  if (existing && existsSync(existing)) {
+    syncWorkflowTreeIntoSandbox(join(workspaceRoot, ".svvy", "workflows"), join(existing, ".svvy", "workflows"));
+    syncWorkflowTreeIntoSandbox(
+      join(workspaceRoot, ".svvy", "artifacts", "workflows"),
+      join(existing, ".svvy", "artifacts", "workflows"),
+    );
+    return existing;
+  }
+
+  const sandboxRoot = mkdtempSync(join(tmpdir(), "svvy-workflow-import-"));
+  mkdirSync(join(sandboxRoot, ".svvy", "artifacts"), { recursive: true });
+  mkdirSync(join(sandboxRoot, "node_modules"), { recursive: true });
+
+  syncWorkflowTreeIntoSandbox(join(workspaceRoot, ".svvy", "workflows"), join(sandboxRoot, ".svvy", "workflows"));
+  syncWorkflowTreeIntoSandbox(
+    join(workspaceRoot, ".svvy", "artifacts", "workflows"),
+    join(sandboxRoot, ".svvy", "artifacts", "workflows"),
+  );
+
+  for (const packageName of RUNTIME_PACKAGES) {
+    symlinkSync(
+      resolveRuntimePackageRoot(packageName),
+      join(sandboxRoot, "node_modules", packageName),
+    );
+  }
+
+  const runtimeNodeModulesRoot = dirname(resolveRuntimePackageRoot("smithers-orchestrator"));
+  for (const scopeName of RUNTIME_SCOPES) {
+    const scopeRoot = join(runtimeNodeModulesRoot, scopeName);
+    if (existsSync(scopeRoot)) {
+      symlinkSync(scopeRoot, join(sandboxRoot, "node_modules", scopeName));
+    }
+  }
+
+  importSandboxByWorkspaceRoot.set(workspaceRoot, sandboxRoot);
+  return sandboxRoot;
 }
 
 function readStringArrayExport(module: Record<string, unknown>, exportName: string): string[] {
@@ -125,7 +233,8 @@ async function loadRunnableWorkflowEntryModule(
   workspaceRoot: string,
   entryPath: string,
 ): Promise<RunnableWorkflowRegistryEntry> {
-  const absoluteEntryPath = join(workspaceRoot, entryPath);
+  const importSandboxRoot = ensureWorkspaceImportSandbox(workspaceRoot);
+  const absoluteEntryPath = join(importSandboxRoot, entryPath);
   const sourceScope = deriveEntryScope(entryPath);
   const module = await importFresh(absoluteEntryPath);
 

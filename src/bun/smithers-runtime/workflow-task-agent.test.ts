@@ -99,7 +99,7 @@ function createFixture(): Fixture {
   const workflowCommand = store.createCommand({
     turnId: handlerTurn.id,
     threadId: thread.id,
-    toolName: "smithers.run_workflow.test_task",
+    toolName: "smithers.run_workflow",
     executor: "smithers",
     visibility: "surface",
     title: "Launch task workflow",

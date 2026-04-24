@@ -7,6 +7,7 @@ type ChatCompletionRequest = {
 type ToolCallRecord = {
   id: string;
   name: string;
+  args: Record<string, unknown>;
 };
 
 type ToolResultRecord = {
@@ -21,6 +22,36 @@ export type WorkflowSupervisionChatStub = {
   requests: ChatCompletionRequest[];
   stop(): void;
 };
+
+const WORKFLOW_AUTHORING_OPEN_THREAD_PROMPT =
+  "Open a handler thread dedicated to the workflow-authoring save proof.";
+const WORKFLOW_AUTHORING_HANDLER_PROMPT = [
+  "Check direct work first.",
+  "Check saved runnable entries and reusable assets.",
+  "If they do not fit cleanly, author a short-lived artifact workflow.",
+].join(" ");
+const WORKFLOW_AUTHORING_RUN_PROMPT =
+  "Run the artifact workflow you just authored, use smithers.get_run as needed until it finishes, and then hand the result back.";
+const WORKFLOW_AUTHORING_SAVE_SHORTCUT_PROMPT = [
+  "Inspect the workflow work owned by this thread.",
+  "If there are reusable saved workflow files worth keeping, write them directly into `.svvy/workflows/...` using the normal repo write APIs.",
+  "Rely on the automatic workflow validation feedback returned in the surrounding `execute_typescript` logs, and keep editing until the final saved workflow state validates cleanly.",
+  "If nothing here is worth saving, say so briefly inside the thread.",
+].join(" ");
+const WORKFLOW_AUTHORING_ARTIFACT_WORKFLOW_ID = "workflow_authoring_proof_draft";
+const WORKFLOW_AUTHORING_ARTIFACT_DIR = "workflow-authoring-proof-draft";
+const WORKFLOW_AUTHORING_ARTIFACT_ROOT = `.svvy/artifacts/workflows/${WORKFLOW_AUTHORING_ARTIFACT_DIR}`;
+const WORKFLOW_AUTHORING_ARTIFACT_DEFINITION_PATH = `${WORKFLOW_AUTHORING_ARTIFACT_ROOT}/definitions/workflow-authoring-proof.ts`;
+const WORKFLOW_AUTHORING_ARTIFACT_PROMPT_PATH = `${WORKFLOW_AUTHORING_ARTIFACT_ROOT}/prompts/workflow-authoring-proof.mdx`;
+const WORKFLOW_AUTHORING_ARTIFACT_COMPONENT_PATH = `${WORKFLOW_AUTHORING_ARTIFACT_ROOT}/components/workflow-authoring-proof-reviewer.ts`;
+const WORKFLOW_AUTHORING_ARTIFACT_ENTRY_PATH = `${WORKFLOW_AUTHORING_ARTIFACT_ROOT}/entries/workflow-authoring-proof.ts`;
+const WORKFLOW_AUTHORING_ARTIFACT_METADATA_PATH = `${WORKFLOW_AUTHORING_ARTIFACT_ROOT}/metadata.json`;
+const WORKFLOW_AUTHORING_SAVED_WORKFLOW_ID = "workflow_authoring_proof";
+const WORKFLOW_AUTHORING_SAVED_ROOT = ".svvy/workflows";
+const WORKFLOW_AUTHORING_SAVED_DEFINITION_PATH = `${WORKFLOW_AUTHORING_SAVED_ROOT}/definitions/workflow-authoring-proof.ts`;
+const WORKFLOW_AUTHORING_SAVED_PROMPT_PATH = `${WORKFLOW_AUTHORING_SAVED_ROOT}/prompts/workflow-authoring-proof.mdx`;
+const WORKFLOW_AUTHORING_SAVED_COMPONENT_PATH = `${WORKFLOW_AUTHORING_SAVED_ROOT}/components/workflow-authoring-proof-reviewer.ts`;
+const WORKFLOW_AUTHORING_SAVED_ENTRY_PATH = `${WORKFLOW_AUTHORING_SAVED_ROOT}/entries/workflow-authoring-proof.ts`;
 
 export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub {
   const requests: ChatCompletionRequest[] = [];
@@ -86,14 +117,17 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
             });
           }
 
-          if (!hasToolCall(toolCalls, "smithers.run_workflow.hello_world")) {
+          if (!hasRunWorkflowCall(toolCalls, "hello_world")) {
             return createToolCallResponse({
               responseId,
               model: payload.model,
               toolCallId: `call-${++toolCallCounter}`,
-              toolName: "smithers.run_workflow.hello_world",
+              toolName: "smithers.run_workflow",
               args: {
-                message: "hello from the real app workflow supervision e2e",
+                workflowId: "hello_world",
+                input: {
+                  message: "hello from the real app workflow supervision e2e",
+                },
               },
             });
           }
@@ -123,27 +157,25 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
             });
           }
 
-          if (!hasToolCall(toolCalls, "smithers.run_workflow.hello_world")) {
+          if (!hasRunWorkflowCall(toolCalls, "hello_world")) {
             return createToolCallResponse({
               responseId,
               model: payload.model,
               toolCallId: `call-${++toolCallCounter}`,
-              toolName: "smithers.run_workflow.hello_world",
+              toolName: "smithers.run_workflow",
               args: {
-                message: "hello from the real app workflow supervision e2e",
+                workflowId: "hello_world",
+                input: {
+                  message: "hello from the real app workflow supervision e2e",
+                },
               },
             });
           }
 
-          const launchedRun = findLatestToolResult(
-            toolResults,
-            "smithers.run_workflow.hello_world",
-          );
+          const launchedRun = findLatestRunWorkflowResult(toolResults, toolCalls, "hello_world");
           const runId = readStringProperty(launchedRun?.parsed, "runId");
           if (!runId) {
-            throw new Error(
-              "Expected smithers.run_workflow.hello_world tool result to include runId.",
-            );
+            throw new Error("Expected smithers.run_workflow hello_world result to include runId.");
           }
 
           const latestRunStatus = readStringProperty(
@@ -193,15 +225,10 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
             "System event: A supervised Smithers workflow now requires handler attention.",
           )
         ) {
-          const launchedRun = findLatestToolResult(
-            toolResults,
-            "smithers.run_workflow.hello_world",
-          );
+          const launchedRun = findLatestRunWorkflowResult(toolResults, toolCalls, "hello_world");
           const runId = readStringProperty(launchedRun?.parsed, "runId");
           if (!runId) {
-            throw new Error(
-              "Expected smithers.run_workflow.hello_world tool result to include runId.",
-            );
+            throw new Error("Expected smithers.run_workflow hello_world result to include runId.");
           }
 
           const latestRunStatus = readStringProperty(
@@ -256,6 +283,309 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
   };
 }
 
+export function startWorkflowAuthoringSavedWritesChatStub(): WorkflowSupervisionChatStub {
+  const requests: ChatCompletionRequest[] = [];
+  let responseCounter = 0;
+  let toolCallCounter = 0;
+  let savePromptSeen = false;
+
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      if (request.method !== "POST" || !url.pathname.endsWith("/chat/completions")) {
+        return new Response("Not found", { status: 404 });
+      }
+
+      const payload = (await request.json()) as ChatCompletionRequest;
+      requests.push(payload);
+
+      const latestUserText = getLatestUserText(payload.messages);
+      const toolCalls = collectToolCalls(payload.messages);
+      const toolResults = collectToolResults(payload.messages, toolCalls);
+      const responseId = `chatcmpl-workflow-authoring-proof-${++responseCounter}`;
+
+      try {
+        if (latestUserText.includes(WORKFLOW_AUTHORING_OPEN_THREAD_PROMPT)) {
+          if (!hasToolCall(toolCalls, "thread.start")) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "thread.start",
+              args: {
+                title: "Workflow Authoring Proof Thread",
+                objective:
+                  "Check direct work, inspect saved runnable entries and reusable assets, author and run an artifact workflow when needed, and only save reusable workflow files if explicitly asked.",
+              },
+            });
+          }
+
+          return createTextResponse({
+            responseId,
+            model: payload.model,
+            text: "Opened the Workflow Authoring Proof Thread for the workflow-authoring save proof.",
+          });
+        }
+
+        if (latestUserText.includes(WORKFLOW_AUTHORING_HANDLER_PROMPT)) {
+          if (countToolCalls(toolCalls, "smithers.list_workflows") === 0) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "smithers.list_workflows",
+              args: {},
+            });
+          }
+
+          if (countToolCalls(toolCalls, "execute_typescript") === 0) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "execute_typescript",
+              args: {
+                typescriptCode: buildWorkflowAuthoringArtifactCode(),
+              },
+            });
+          }
+
+          const artifactAuthoringResult = findLatestToolResult(toolResults, "execute_typescript");
+          const authoringPayload = readObjectProperty(artifactAuthoringResult?.parsed, "result");
+          if (
+            readStringProperty(authoringPayload, "artifactWorkflowId") !==
+            WORKFLOW_AUTHORING_ARTIFACT_DIR
+          ) {
+            throw new Error(
+              "Expected workflow-authoring proof execute_typescript result to return the artifact workflow id.",
+            );
+          }
+
+          return createTextResponse({
+            responseId,
+            model: payload.model,
+            text: "Authored the artifact workflow proof and left it ready to run from this handler thread.",
+          });
+        }
+
+        if (latestUserText.includes(WORKFLOW_AUTHORING_RUN_PROMPT)) {
+          if (!hasRunWorkflowCall(toolCalls, WORKFLOW_AUTHORING_ARTIFACT_WORKFLOW_ID)) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "smithers.run_workflow",
+              args: {
+                workflowId: WORKFLOW_AUTHORING_ARTIFACT_WORKFLOW_ID,
+                input: {
+                  objective: "Prove artifact authoring before any explicit save request.",
+                },
+              },
+            });
+          }
+
+          const launchedRun = findLatestRunWorkflowResult(
+            toolResults,
+            toolCalls,
+            WORKFLOW_AUTHORING_ARTIFACT_WORKFLOW_ID,
+          );
+          const runId = readStringProperty(launchedRun?.parsed, "runId");
+          if (!runId) {
+            throw new Error(
+              "Expected smithers.run_workflow workflow_authoring_proof_draft result to include runId.",
+            );
+          }
+
+          const latestRunStatus = readStringProperty(
+            findLatestToolResult(toolResults, "smithers.get_run")?.parsed,
+            "status",
+          );
+
+          if (latestRunStatus !== "finished") {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "smithers.get_run",
+              args: {
+                runId,
+              },
+            });
+          }
+
+          if (!hasToolCall(toolCalls, "thread.handoff")) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "thread.handoff",
+              args: workflowAuthoringArtifactHandoffArgs(),
+            });
+          }
+
+          return createTextResponse({
+            responseId,
+            model: payload.model,
+            text: "Ran and handed back the artifact workflow proof.",
+          });
+        }
+
+        if (latestUserText.includes(WORKFLOW_AUTHORING_SAVE_SHORTCUT_PROMPT)) {
+          savePromptSeen = true;
+
+          const saveExecuteTypescriptCalls = findExecuteTypescriptCallsContaining(
+            toolCalls,
+            WORKFLOW_AUTHORING_SAVED_ENTRY_PATH,
+          );
+
+          if (saveExecuteTypescriptCalls.length === 0) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "execute_typescript",
+              args: {
+                typescriptCode: buildWorkflowAuthoringSaveCode(),
+              },
+            });
+          }
+
+          const saveResult = findLatestToolResultForCallIds(
+            toolResults,
+            new Set(saveExecuteTypescriptCalls.map((toolCall) => toolCall.id)),
+          );
+          const parsedSaveResult = saveResult?.parsed;
+          if (parsedSaveResult?.success !== true) {
+            throw new Error("Expected workflow-authoring save execute_typescript to succeed.");
+          }
+
+          const saveLogs = readStringArrayProperty(parsedSaveResult, "logs");
+          if (
+            !saveLogs.some((log) =>
+              log.includes(
+                "[error] Workflow validation reported 1 error after writing .svvy/workflows/components/workflow-authoring-proof-reviewer.ts.",
+              ),
+            )
+          ) {
+            throw new Error(
+              "Expected save execute_typescript logs to include the initial workflow validation error.",
+            );
+          }
+          if (
+            !saveLogs.some((log) =>
+              log.includes(
+                "Workflow validation passed after writing .svvy/workflows/entries/workflow-authoring-proof.ts.",
+              ),
+            )
+          ) {
+            throw new Error(
+              "Expected save execute_typescript logs to include the final workflow validation success.",
+            );
+          }
+
+          if (
+            !hasThreadHandoffCallWithSummary(
+              toolCalls,
+              "Saved reusable workflow files through normal repo write APIs and finished with clean workflow validation logs.",
+            )
+          ) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "thread.handoff",
+              args: workflowAuthoringSaveHandoffArgs(),
+            });
+          }
+
+          return createTextResponse({
+            responseId,
+            model: payload.model,
+            text: "Saved reusable workflow files into .svvy/workflows and validated the final state before handing the result back.",
+          });
+        }
+
+        if (
+          latestUserText.includes(
+            "System event: A supervised Smithers workflow now requires handler attention.",
+          )
+        ) {
+          const launchedRun = findLatestRunWorkflowResult(
+            toolResults,
+            toolCalls,
+            WORKFLOW_AUTHORING_ARTIFACT_WORKFLOW_ID,
+          );
+          const runId = readStringProperty(launchedRun?.parsed, "runId");
+          if (!runId) {
+            throw new Error(
+              "Expected smithers.run_workflow workflow_authoring_proof_draft result to include runId.",
+            );
+          }
+
+          const latestRunStatus = readStringProperty(
+            findLatestToolResult(toolResults, "smithers.get_run")?.parsed,
+            "status",
+          );
+
+          if (latestRunStatus !== "finished") {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "smithers.get_run",
+              args: {
+                runId,
+              },
+            });
+          }
+
+          if (!hasToolCall(toolCalls, "thread.handoff")) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "thread.handoff",
+              args: workflowAuthoringArtifactHandoffArgs(),
+            });
+          }
+
+          return createTextResponse({
+            responseId,
+            model: payload.model,
+            text: "Workflow attention returned to the handler thread and the artifact-only result was handed back.",
+          });
+        }
+
+        if (latestUserText.includes("System event: A handler thread emitted a durable handoff.")) {
+          return createTextResponse({
+            responseId,
+            model: payload.model,
+            text: savePromptSeen
+              ? "The workflow-authoring proof thread saved reusable workflow files after clean validation."
+              : "The workflow-authoring proof thread authored and ran an artifact workflow without saving reusable workflow files.",
+          });
+        }
+
+        throw new Error(`Unhandled stub prompt: ${latestUserText}`);
+      } catch (error) {
+        return new Response(String(error instanceof Error ? error.message : error), {
+          status: 500,
+        });
+      }
+    },
+  });
+
+  return {
+    baseUrl: `http://127.0.0.1:${server.port}/api/coding/paas/v4`,
+    requests,
+    stop() {
+      server.stop(true);
+    },
+  };
+}
+
 function helloWorldHandoffArgs(): Record<string, unknown> {
   return {
     kind: "workflow",
@@ -265,6 +595,36 @@ function helloWorldHandoffArgs(): Record<string, unknown> {
       "Launched the bundled hello_world workflow through smithers.run_workflow.",
       "Observed the Smithers run until it reported finished through smithers.get_run.",
       "The workflow completed successfully and is ready for orchestrator follow-up.",
+    ].join("\n\n"),
+  };
+}
+
+function workflowAuthoringArtifactHandoffArgs(): Record<string, unknown> {
+  return {
+    kind: "workflow",
+    title: "artifact workflow proof completed",
+    summary:
+      "Authored and ran a short-lived artifact workflow without creating reusable saved workflow files.",
+    body: [
+      "Checked runnable saved entries through smithers.list_workflows before authoring.",
+      "Inspected reusable saved assets and models inside execute_typescript through api.workflow.listAssets(...) and api.workflow.listModels().",
+      `Authored ${WORKFLOW_AUTHORING_ARTIFACT_WORKFLOW_ID} under ${WORKFLOW_AUTHORING_ARTIFACT_ROOT}/ and launched it through smithers.run_workflow with workflowId ${WORKFLOW_AUTHORING_ARTIFACT_WORKFLOW_ID}.`,
+      "No reusable .svvy/workflows files were written before an explicit save request arrived.",
+    ].join("\n\n"),
+  };
+}
+
+function workflowAuthoringSaveHandoffArgs(): Record<string, unknown> {
+  return {
+    kind: "workflow",
+    title: "saved workflow proof completed",
+    summary:
+      "Saved reusable workflow files through normal repo write APIs and finished with clean workflow validation logs.",
+    body: [
+      "The save shortcut only sent a new prompt into the owning handler thread.",
+      "The handler wrote reusable saved workflow files directly into .svvy/workflows/ with api.repo.writeFile(...).",
+      "An intentional invalid component write surfaced workflow validation errors in the enclosing execute_typescript result logs.",
+      "The handler fixed the saved workflow files and stopped only after the final validation logs were clean.",
     ].join("\n\n"),
   };
 }
@@ -383,14 +743,13 @@ function collectToolCalls(messages: Array<Record<string, unknown>>): ToolCallRec
 
     for (const toolCall of message.tool_calls) {
       const id = readStringProperty(toolCall as Record<string, unknown>, "id");
-      const name = readStringProperty(
-        (toolCall as { function?: Record<string, unknown> }).function ?? null,
-        "name",
-      );
+      const fn = (toolCall as { function?: Record<string, unknown> }).function ?? null;
+      const name = readStringProperty(fn, "name");
+      const args = parseJsonObject(readStringProperty(fn, "arguments") ?? "") ?? {};
       if (!id || !name) {
         continue;
       }
-      toolCalls.push({ id, name });
+      toolCalls.push({ id, name, args });
     }
   }
 
@@ -430,6 +789,64 @@ function hasToolCall(toolCalls: ToolCallRecord[], name: string): boolean {
   return toolCalls.some((toolCall) => toolCall.name === name);
 }
 
+function hasRunWorkflowCall(toolCalls: ToolCallRecord[], workflowId: string): boolean {
+  return countRunWorkflowCalls(toolCalls, workflowId) > 0;
+}
+
+function hasThreadHandoffCallWithSummary(toolCalls: ToolCallRecord[], summary: string): boolean {
+  return toolCalls.some(
+    (toolCall) =>
+      toolCall.name === "thread.handoff" && toolCall.args.summary === summary,
+  );
+}
+
+function countRunWorkflowCalls(toolCalls: ToolCallRecord[], workflowId: string): number {
+  return toolCalls.filter(
+    (toolCall) =>
+      toolCall.name === "smithers.run_workflow" && toolCall.args.workflowId === workflowId,
+  ).length;
+}
+
+function countToolCalls(toolCalls: ToolCallRecord[], name: string): number {
+  return toolCalls.filter((toolCall) => toolCall.name === name).length;
+}
+
+function findExecuteTypescriptCallsContaining(
+  toolCalls: ToolCallRecord[],
+  snippet: string,
+): ToolCallRecord[] {
+  return toolCalls.filter(
+    (toolCall) =>
+      toolCall.name === "execute_typescript" &&
+      typeof toolCall.args.typescriptCode === "string" &&
+      toolCall.args.typescriptCode.includes(snippet),
+  );
+}
+
+function findLatestRunWorkflowResult(
+  toolResults: ToolResultRecord[],
+  toolCalls: ToolCallRecord[],
+  workflowId: string,
+): ToolResultRecord | null {
+  const matchingCallIds = new Set(
+    toolCalls
+      .filter(
+        (toolCall) =>
+          toolCall.name === "smithers.run_workflow" && toolCall.args.workflowId === workflowId,
+      )
+      .map((toolCall) => toolCall.id),
+  );
+
+  for (let index = toolResults.length - 1; index >= 0; index -= 1) {
+    const toolResult = toolResults[index];
+    if (toolResult && matchingCallIds.has(toolResult.toolCallId)) {
+      return toolResult;
+    }
+  }
+
+  return null;
+}
+
 function findLatestToolResult(
   toolResults: ToolResultRecord[],
   toolName: string,
@@ -437,6 +854,20 @@ function findLatestToolResult(
   for (let index = toolResults.length - 1; index >= 0; index -= 1) {
     const toolResult = toolResults[index];
     if (toolResult?.toolName === toolName) {
+      return toolResult;
+    }
+  }
+
+  return null;
+}
+
+function findLatestToolResultForCallIds(
+  toolResults: ToolResultRecord[],
+  toolCallIds: Set<string>,
+): ToolResultRecord | null {
+  for (let index = toolResults.length - 1; index >= 0; index -= 1) {
+    const toolResult = toolResults[index];
+    if (toolResult && toolCallIds.has(toolResult.toolCallId)) {
       return toolResult;
     }
   }
@@ -483,4 +914,408 @@ function readStringProperty(
   key: string,
 ): string | null {
   return typeof value?.[key] === "string" ? (value[key] as string) : null;
+}
+
+function readObjectProperty(
+  value: Record<string, unknown> | null | undefined,
+  key: string,
+): Record<string, unknown> | null {
+  const property = value?.[key];
+  return property && typeof property === "object" && !Array.isArray(property)
+    ? (property as Record<string, unknown>)
+    : null;
+}
+
+function readStringArrayProperty(
+  value: Record<string, unknown> | null | undefined,
+  key: string,
+): string[] {
+  const property = value?.[key];
+  return Array.isArray(property)
+    ? property.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function buildWorkflowAuthoringDefinitionFileText(): string {
+  return [
+    "/**",
+    " * @svvyAssetKind definition",
+    " * @svvyId workflow_authoring_proof_definition",
+    " * @svvyTitle Workflow Authoring Proof Definition",
+    " * @svvySummary Deterministic reusable definition for the workflow authoring proof.",
+    " * @svvyTags proof, workflow, deterministic",
+    " * @svvyExports workflowAuthoringProofLaunchSchema, createWorkflowAuthoringProofWorkflow",
+    " */",
+    'import React from "react";',
+    'import { createSmithers } from "smithers-orchestrator";',
+    'import { z } from "zod";',
+    "",
+    "export const workflowAuthoringProofLaunchSchema = z.object({",
+    "  objective: z.string().min(1),",
+    "});",
+    "",
+    "const bundledWorkflowRuntimeStoredInputSchema = z.object({",
+    "  payload: z.record(z.string(), z.unknown()),",
+    "});",
+    "",
+    "function readBundledWorkflowLaunchInput<Schema extends z.ZodTypeAny>(",
+    "  launchSchema: Schema,",
+    "  input: unknown,",
+    "): z.infer<Schema> {",
+    "  return launchSchema.parse(input);",
+    "}",
+    "",
+    "export function createWorkflowAuthoringProofWorkflow(config: {",
+    "  dbPath: string;",
+    "  workflowId: string;",
+    '  workflowSource: "saved" | "artifact";',
+    "  workflowName: string;",
+    "  promptBody: string;",
+    "  reviewerName: string;",
+    "}) {",
+    "  const greetingSchema = z.object({",
+    "    message: z.string(),",
+    "  });",
+    "  const resultSchema = z.object({",
+    "    summary: z.string(),",
+    "    message: z.string(),",
+    "    reviewerName: z.string(),",
+    "    promptBody: z.string(),",
+    "  });",
+    "  const smithersApi = createSmithers(",
+    "    { input: bundledWorkflowRuntimeStoredInputSchema, greeting: greetingSchema, result: resultSchema },",
+    "    { dbPath: config.dbPath },",
+    "  );",
+    "  return smithersApi.smithers((ctx) => {",
+    "    const launch = readBundledWorkflowLaunchInput(workflowAuthoringProofLaunchSchema, ctx.input);",
+    "    const greeting = ctx.outputs.greeting?.[ctx.outputs.greeting.length - 1] ?? null;",
+    "    return React.createElement(",
+    "      smithersApi.Workflow,",
+    "      { name: config.workflowName },",
+    "      React.createElement(",
+    "        smithersApi.Sequence,",
+    "        null,",
+    "        React.createElement(smithersApi.Task, {",
+    '          id: "greeting",',
+    "          output: smithersApi.outputs.greeting,",
+    "          children: {",
+    "            message: launch.objective,",
+    "          },",
+    "        }),",
+    "        React.createElement(smithersApi.Task, {",
+    '          id: "result",',
+    "          output: smithersApi.outputs.result,",
+    "          children: {",
+    "            summary: `Completed ${config.workflowId} for ${launch.objective}.`,",
+    "            message: greeting?.message ?? launch.objective,",
+    "            reviewerName: config.reviewerName,",
+    "            promptBody: config.promptBody.trim(),",
+    "          },",
+    "        }),",
+    "      ),",
+    "    );",
+    "  });",
+    "}",
+    "",
+  ].join("\n");
+}
+
+function buildWorkflowAuthoringArtifactCode(): string {
+  return [
+    'const savedDefinitions = await api.workflow.listAssets({ kind: "definition", scope: "saved" });',
+    'const savedPrompts = await api.workflow.listAssets({ kind: "prompt", scope: "saved" });',
+    'const savedProfiles = await api.workflow.listAssets({ kind: "component", subtype: "agent-profile", scope: "saved" });',
+    "const models = await api.workflow.listModels();",
+    "const directWorkFits = false;",
+    "const savedRunnableFits = false;",
+    "const chosenModel = models.find((model) => model.authAvailable) ?? models[0] ?? {",
+    '  providerId: "unknown",',
+    '  modelId: "unknown",',
+    "};",
+    `const artifactWorkflowId = ${JSON.stringify(WORKFLOW_AUTHORING_ARTIFACT_DIR)};`,
+    `const artifactRoot = ${JSON.stringify(WORKFLOW_AUTHORING_ARTIFACT_ROOT)};`,
+    "const now = new Date().toISOString();",
+    `const definitionText = ${JSON.stringify(buildWorkflowAuthoringDefinitionFileText())};`,
+    "",
+    "const promptText = [",
+    '  "---",',
+    '  "svvyAssetKind: prompt",',
+    '  "svvyId: workflow_authoring_proof_prompt_draft",',
+    '  "title: Workflow Authoring Proof Draft Prompt",',
+    '  "summary: Artifact-local prompt for the workflow authoring proof draft.",',
+    '  "tags:",',
+    '  "  - proof",',
+    '  "  - artifact",',
+    '  "---",',
+    '  "",',
+    '  "Confirm that artifact workflows stay artifact-only until the handler receives an explicit save request.",',
+    '  "",',
+    '].join("\\n");',
+    "",
+    "const componentText = [",
+    '  "/**",',
+    '  " * @svvyAssetKind component",',
+    '  " * @svvyId workflow_authoring_proof_reviewer_draft",',
+    '  " * @svvyTitle Workflow Authoring Proof Reviewer Draft",',
+    '  " * @svvySummary Artifact-local reviewer profile for the workflow authoring proof.",',
+    '  " * @svvySubtype agent-profile",',
+    '  " * @svvyTags proof, artifact, reviewer",',
+    '  " * @svvyExports workflowAuthoringReviewer",',
+    "  ` * @svvyProviderModelSummary ${chosenModel.providerId}/${chosenModel.modelId}`,",
+    '  " * @svvyToolsetSummary execute_typescript",',
+    '  " */",',
+    '  "export const workflowAuthoringReviewer = {",',
+    "  '  name: \"workflow-authoring-reviewer\",',",
+    '  `  provider: "${chosenModel.providerId}",`,',
+    '  `  model: "${chosenModel.modelId}",`,',
+    "  '  reasoning: \"medium\",',",
+    "  '  toolSurface: [\"execute_typescript\"],',",
+    "  '  instructions: \"Prefer artifact-local workflow files until the user explicitly asks to save reusable versions.\",',",
+    '  "};",',
+    '  "",',
+    '].join("\\n");',
+    "",
+    "const entryText = [",
+    "  'import { readFileSync } from \"node:fs\";',",
+    "  'import { createWorkflowAuthoringProofWorkflow, workflowAuthoringProofLaunchSchema } from \"../definitions/workflow-authoring-proof.ts\";',",
+    "  'import { workflowAuthoringReviewer } from \"../components/workflow-authoring-proof-reviewer.ts\";',",
+    '  "",',
+    '  "function readPromptBody(relativePath: string): string {",',
+    "  '  const text = readFileSync(new URL(relativePath, import.meta.url), \"utf8\");',",
+    "  '  if (!text.startsWith(\"---\\\\n\")) {',",
+    '  "    return text.trim();",',
+    '  "  }",',
+    "  '  const end = text.indexOf(\"\\\\n---\\\\n\", 4);',",
+    '  "  return (end === -1 ? text : text.slice(end + 5)).trim();",',
+    '  "}",',
+    '  "",',
+    "  'const promptPath = \"../prompts/workflow-authoring-proof.mdx\";',",
+    "  'export const workflowId = \"workflow_authoring_proof_draft\";',",
+    "  'export const label = \"Workflow Authoring Proof Draft\";',",
+    "  'export const summary = \"Deterministic artifact-local workflow used by the workflow authoring save proof.\";',",
+    '  "export const launchSchema = workflowAuthoringProofLaunchSchema;",',
+    `  ${JSON.stringify(
+      `export const definitionPaths = [\n  "${WORKFLOW_AUTHORING_ARTIFACT_DEFINITION_PATH}",\n] as const;`,
+    )},`,
+    `  ${JSON.stringify(
+      `export const promptPaths = [\n  "${WORKFLOW_AUTHORING_ARTIFACT_PROMPT_PATH}",\n] as const;`,
+    )},`,
+    `  ${JSON.stringify(
+      `export const componentPaths = [\n  "${WORKFLOW_AUTHORING_ARTIFACT_COMPONENT_PATH}",\n] as const;`,
+    )},`,
+    '  "",',
+    '  "export function createRunnableEntry(input: { dbPath: string }) {",',
+    '  "  return {",',
+    '  "    workflowId,",',
+    "  '    workflowSource: \"artifact\" as const,',",
+    '  "    launchSchema,",',
+    '  "    workflow: createWorkflowAuthoringProofWorkflow({",',
+    '  "      dbPath: input.dbPath,",',
+    '  "      workflowId,",',
+    "  '      workflowSource: \"artifact\",',",
+    "  '      workflowName: \"svvy-workflow-authoring-proof-draft\",',",
+    '  "      promptBody: readPromptBody(promptPath),",',
+    '  "      reviewerName: workflowAuthoringReviewer.name,",',
+    '  "    }),",',
+    '  "  };",',
+    '  "}",',
+    '  "",',
+    '].join("\\n");',
+    "",
+    `await api.repo.writeFile({ path: ${JSON.stringify(
+      WORKFLOW_AUTHORING_ARTIFACT_DEFINITION_PATH,
+    )}, text: definitionText, createDirectories: true });`,
+    `await api.repo.writeFile({ path: ${JSON.stringify(
+      WORKFLOW_AUTHORING_ARTIFACT_PROMPT_PATH,
+    )}, text: promptText, createDirectories: true });`,
+    `await api.repo.writeFile({ path: ${JSON.stringify(
+      WORKFLOW_AUTHORING_ARTIFACT_COMPONENT_PATH,
+    )}, text: componentText, createDirectories: true });`,
+    `await api.repo.writeFile({ path: ${JSON.stringify(
+      WORKFLOW_AUTHORING_ARTIFACT_ENTRY_PATH,
+    )}, text: entryText, createDirectories: true });`,
+    `await api.repo.writeJson({ path: ${JSON.stringify(
+      WORKFLOW_AUTHORING_ARTIFACT_METADATA_PATH,
+    )}, value: {`,
+    "  artifactWorkflowId,",
+    "  schemaVersion: 1,",
+    '  sessionId: "svvy-e2e-session",',
+    '  threadId: "workflow-authoring-proof-thread",',
+    '  objectiveSummary: "Prove artifact-only authoring before an explicit save request.",',
+    "  createdAt: now,",
+    "  updatedAt: now,",
+    `  entryPaths: [${JSON.stringify(WORKFLOW_AUTHORING_ARTIFACT_ENTRY_PATH)}],`,
+    "}, pretty: true, createDirectories: true });",
+    "return {",
+    "  directWorkFits,",
+    "  savedRunnableFits,",
+    "  savedAssetCounts: {",
+    "    definitions: savedDefinitions.length,",
+    "    prompts: savedPrompts.length,",
+    "    profiles: savedProfiles.length,",
+    "  },",
+    "  modelCount: models.length,",
+    "  artifactWorkflowId,",
+    `  entryPath: ${JSON.stringify(WORKFLOW_AUTHORING_ARTIFACT_ENTRY_PATH)},`,
+    "};",
+  ].join("\n");
+}
+
+function buildWorkflowAuthoringSaveCode(): string {
+  return [
+    `const artifactPrompt = await api.repo.readFile({ path: ${JSON.stringify(
+      WORKFLOW_AUTHORING_ARTIFACT_PROMPT_PATH,
+    )} });`,
+    `const artifactComponent = await api.repo.readFile({ path: ${JSON.stringify(
+      WORKFLOW_AUTHORING_ARTIFACT_COMPONENT_PATH,
+    )} });`,
+    `const artifactDefinition = await api.repo.readFile({ path: ${JSON.stringify(
+      WORKFLOW_AUTHORING_ARTIFACT_DEFINITION_PATH,
+    )} });`,
+    "",
+    "function readPromptBody(text: string): string {",
+    '  if (!text.startsWith("---\\n")) {',
+    "    return text.trim();",
+    "  }",
+    '  const end = text.indexOf("\\n---\\n", 4);',
+    "  return (end === -1 ? text : text.slice(end + 5)).trim();",
+    "}",
+    "",
+    "const providerModelSummary =",
+    "  artifactComponent.text.match(/@svvyProviderModelSummary\\s+([^\\n*]+)/)?.[1]?.trim() ??",
+    '  "unknown/unknown";',
+    'const [provider = "unknown", model = "unknown"] = providerModelSummary.split("/", 2);',
+    "",
+    "const invalidComponentText = [",
+    '  "/**",',
+    '  " * @svvyAssetKind component",',
+    '  " * @svvyId workflow_authoring_proof_reviewer",',
+    '  " * @svvyTitle Workflow Authoring Proof Reviewer",',
+    '  " * @svvySummary Broken saved reviewer used to prove workflow validation logs.",',
+    '  " * @svvySubtype agent-profile",',
+    '  " * @svvyTags proof, saved, reviewer",',
+    '  " * @svvyExports workflowAuthoringReviewer",',
+    "  ` * @svvyProviderModelSummary ${provider}/${model}`,",
+    '  " * @svvyToolsetSummary execute_typescript",',
+    '  " */",',
+    "  'const brokenReviewer: number = \"oops\";',",
+    '  "export const workflowAuthoringReviewer = brokenReviewer;",',
+    '  "",',
+    '].join("\\n");',
+    "",
+    `await api.repo.writeFile({ path: ${JSON.stringify(
+      WORKFLOW_AUTHORING_SAVED_COMPONENT_PATH,
+    )}, text: invalidComponentText, createDirectories: true });`,
+    "",
+    "const definitionText = artifactDefinition.text;",
+    "",
+    "const promptText = [",
+    '  "---",',
+    '  "svvyAssetKind: prompt",',
+    '  "svvyId: workflow_authoring_proof_prompt",',
+    '  "title: Workflow Authoring Proof Prompt",',
+    '  "summary: Reusable prompt for the workflow authoring proof.",',
+    '  "tags:",',
+    '  "  - proof",',
+    '  "  - saved",',
+    '  "---",',
+    '  "",',
+    "  readPromptBody(artifactPrompt.text),",
+    '  "",',
+    '].join("\\n");',
+    "",
+    "const componentText = [",
+    '  "/**",',
+    '  " * @svvyAssetKind component",',
+    '  " * @svvyId workflow_authoring_proof_reviewer",',
+    '  " * @svvyTitle Workflow Authoring Proof Reviewer",',
+    '  " * @svvySummary Reusable reviewer profile for the workflow authoring proof.",',
+    '  " * @svvySubtype agent-profile",',
+    '  " * @svvyTags proof, saved, reviewer",',
+    '  " * @svvyExports workflowAuthoringReviewer",',
+    "  ` * @svvyProviderModelSummary ${provider}/${model}`,",
+    '  " * @svvyToolsetSummary execute_typescript",',
+    '  " */",',
+    '  "export const workflowAuthoringReviewer = {",',
+    "  '  name: \"workflow-authoring-reviewer\",',",
+    '  `  provider: "${provider}",`,',
+    '  `  model: "${model}",`,',
+    "  '  reasoning: \"medium\",',",
+    "  '  toolSurface: [\"execute_typescript\"],',",
+    "  '  instructions: \"Prefer clean reusable workflow files only after explicit save requests.\",',",
+    '  "};",',
+    '  "",',
+    '].join("\\n");',
+    "",
+    "const entryText = [",
+    "  'import { readFileSync } from \"node:fs\";',",
+    "  'import { createWorkflowAuthoringProofWorkflow, workflowAuthoringProofLaunchSchema } from \"../definitions/workflow-authoring-proof.ts\";',",
+    "  'import { workflowAuthoringReviewer } from \"../components/workflow-authoring-proof-reviewer.ts\";',",
+    '  "",',
+    '  "function readPromptBody(relativePath: string): string {",',
+    "  '  const text = readFileSync(new URL(relativePath, import.meta.url), \"utf8\");',",
+    "  '  if (!text.startsWith(\"---\\\\n\")) {',",
+    '  "    return text.trim();",',
+    '  "  }",',
+    "  '  const end = text.indexOf(\"\\\\n---\\\\n\", 4);',",
+    '  "  return (end === -1 ? text : text.slice(end + 5)).trim();",',
+    '  "}",',
+    '  "",',
+    "  'const promptPath = \"../prompts/workflow-authoring-proof.mdx\";',",
+    `  'export const workflowId = "${WORKFLOW_AUTHORING_SAVED_WORKFLOW_ID}";',`,
+    "  'export const label = \"Workflow Authoring Proof\";',",
+    "  'export const summary = \"Reusable deterministic workflow used by the workflow authoring save proof.\";',",
+    '  "export const launchSchema = workflowAuthoringProofLaunchSchema;",',
+    `  ${JSON.stringify(
+      `export const definitionPaths = [\n  "${WORKFLOW_AUTHORING_SAVED_DEFINITION_PATH}",\n] as const;`,
+    )},`,
+    `  ${JSON.stringify(
+      `export const promptPaths = [\n  "${WORKFLOW_AUTHORING_SAVED_PROMPT_PATH}",\n] as const;`,
+    )},`,
+    `  ${JSON.stringify(
+      `export const componentPaths = [\n  "${WORKFLOW_AUTHORING_SAVED_COMPONENT_PATH}",\n] as const;`,
+    )},`,
+    '  "",',
+    '  "export function createRunnableEntry(input: { dbPath: string }) {",',
+    '  "  return {",',
+    '  "    workflowId,",',
+    "  '    workflowSource: \"saved\" as const,',",
+    '  "    launchSchema,",',
+    '  "    workflow: createWorkflowAuthoringProofWorkflow({",',
+    '  "      dbPath: input.dbPath,",',
+    '  "      workflowId,",',
+    "  '      workflowSource: \"saved\",',",
+    "  '      workflowName: \"svvy-workflow-authoring-proof\",',",
+    '  "      promptBody: readPromptBody(promptPath),",',
+    '  "      reviewerName: workflowAuthoringReviewer.name,",',
+    '  "    }),",',
+    '  "  };",',
+    '  "}",',
+    '  "",',
+    '].join("\\n");',
+    "",
+    `await api.repo.writeFile({ path: ${JSON.stringify(
+      WORKFLOW_AUTHORING_SAVED_COMPONENT_PATH,
+    )}, text: componentText, createDirectories: true });`,
+    `await api.repo.writeFile({ path: ${JSON.stringify(
+      WORKFLOW_AUTHORING_SAVED_DEFINITION_PATH,
+    )}, text: definitionText, createDirectories: true });`,
+    `await api.repo.writeFile({ path: ${JSON.stringify(
+      WORKFLOW_AUTHORING_SAVED_PROMPT_PATH,
+    )}, text: promptText, createDirectories: true });`,
+    `await api.repo.writeFile({ path: ${JSON.stringify(
+      WORKFLOW_AUTHORING_SAVED_ENTRY_PATH,
+    )}, text: entryText, createDirectories: true });`,
+    "return {",
+    "  reusedArtifactPromptBytes: artifactPrompt.text.length,",
+    "  reusedArtifactComponentBytes: artifactComponent.text.length,",
+    "  reusedArtifactDefinitionBytes: artifactDefinition.text.length,",
+    "  savedPaths: [",
+    `    ${JSON.stringify(WORKFLOW_AUTHORING_SAVED_DEFINITION_PATH)},`,
+    `    ${JSON.stringify(WORKFLOW_AUTHORING_SAVED_PROMPT_PATH)},`,
+    `    ${JSON.stringify(WORKFLOW_AUTHORING_SAVED_COMPONENT_PATH)},`,
+    `    ${JSON.stringify(WORKFLOW_AUTHORING_SAVED_ENTRY_PATH)},`,
+    "  ],",
+    "};",
+  ].join("\n");
 }

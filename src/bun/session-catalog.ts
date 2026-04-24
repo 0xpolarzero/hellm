@@ -71,6 +71,7 @@ import { createThreadHandoffTool } from "./thread-handoff-tool";
 import { buildSystemPrompt, type SvvyActorProfile } from "./default-system-prompt";
 import { createSmithersTools } from "./smithers-tools";
 import { SmithersRuntimeManager } from "./smithers-runtime/manager";
+import { createBundledWorkflowDefinitions } from "./smithers-runtime/bundled-workflows";
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
   input: 0,
@@ -96,7 +97,6 @@ interface ManagedSession {
   model: string;
   thinkingLevel: ThinkingLevel;
   systemPrompt: string;
-  smithersToolSurfaceVersion: string | null;
   promptSyncCursor: PromptSyncCursor;
   session: AgentSession;
   authStorage: AuthStorage;
@@ -183,6 +183,11 @@ export class WorkspaceSessionCatalog {
         return await this.resumeHandlerAfterWorkflowAttention(event, buildSystemPrompt("handler"));
       },
     });
+    for (const definition of createBundledWorkflowDefinitions(
+      join(this.cwd, ".svvy", "smithers-runtime", "smithers.db"),
+    )) {
+      this.smithersRuntimeManager.registerTestWorkflow(definition);
+    }
   }
 
   private get threadSurfaceDir(): string {
@@ -622,20 +627,11 @@ export class WorkspaceSessionCatalog {
   ): Promise<ManagedSession> {
     const actorProfile = getActorProfileForTarget(options.target);
     const resolvedSystemPrompt = buildSystemPrompt(actorProfile);
-    if (actorProfile === "handler") {
-      await this.smithersRuntimeManager.refreshWorkflowRegistry();
-    }
-    const currentSmithersToolSurfaceVersion =
-      actorProfile === "handler"
-        ? this.smithersRuntimeManager.getWorkflowToolSurfaceVersion()
-        : null;
-
     if (
       session.actorProfile !== actorProfile ||
       session.provider !== options.provider ||
       session.model !== options.model ||
-      session.recreateOnNextPrompt ||
-      session.smithersToolSurfaceVersion !== currentSmithersToolSurfaceVersion
+      session.recreateOnNextPrompt
     ) {
       return this.recreateManagedSurface(session, {
         actorProfile,
@@ -1581,10 +1577,6 @@ async function createManagedSession(
 ): Promise<ManagedSession> {
   mkdirSync(options.agentDir, { recursive: true });
 
-  if (options.actorProfile === "handler") {
-    await options.smithersRuntimeManager.refreshWorkflowRegistry();
-  }
-
   const authStorage = AuthStorage.inMemory();
   syncAuthStorage(authStorage);
   const promptExecutionRuntime: PromptExecutionRuntimeHandle = {
@@ -1599,6 +1591,21 @@ async function createManagedSession(
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
   });
+  const threadHandoffTool = createThreadHandoffTool({
+    runtime: promptExecutionRuntime,
+    store: options.structuredSessionStore,
+  });
+  const buildHandlerTools = () =>
+    [
+      executeTypescriptTool,
+      threadHandoffTool,
+      ...createSmithersTools({
+        runtime: promptExecutionRuntime,
+        store: options.structuredSessionStore,
+        manager: options.smithersRuntimeManager,
+      }),
+      waitTool,
+    ] as const;
   const tools =
     options.actorProfile === "orchestrator"
       ? ([
@@ -1612,19 +1619,7 @@ async function createManagedSession(
           }),
           waitTool,
         ] as const)
-      : ([
-          executeTypescriptTool,
-          createThreadHandoffTool({
-            runtime: promptExecutionRuntime,
-            store: options.structuredSessionStore,
-          }),
-          ...createSmithersTools({
-            runtime: promptExecutionRuntime,
-            store: options.structuredSessionStore,
-            manager: options.smithersRuntimeManager,
-          }),
-          waitTool,
-        ] as const);
+      : buildHandlerTools();
   const customTools = createCustomToolDefinitions(tools);
   const modelRegistryFactory = ModelRegistry as unknown as {
     create?: (authStorage: AuthStorage, modelPath: string) => ModelRegistry;
@@ -1671,19 +1666,14 @@ async function createManagedSession(
     resourceLoader,
   });
   const activeModel = session.agent.state.model ?? resolvedModel;
-  const smithersToolSurfaceVersion =
-    options.actorProfile === "handler"
-      ? options.smithersRuntimeManager.getWorkflowToolSurfaceVersion()
-      : null;
 
-  return {
+  const managedSession: ManagedSession = {
     sessionId: session.sessionManager.getSessionId(),
     actorProfile: options.actorProfile,
     provider: activeModel.provider,
     model: activeModel.id,
     thinkingLevel: restoredDefaults.thinkingLevel,
     systemPrompt: options.systemPrompt,
-    smithersToolSurfaceVersion,
     promptSyncCursor: createPromptSyncCursor(convertToLlmMessages(session.agent.state.messages)),
     session,
     authStorage,
@@ -1694,6 +1684,8 @@ async function createManagedSession(
     retainCount: 0,
     promptExecutionRuntime,
   };
+
+  return managedSession;
 }
 
 function createCustomToolDefinitions(tools: readonly AgentTool<any>[]): ToolDefinition[] {

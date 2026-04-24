@@ -4,13 +4,28 @@ import type { Static, TSchema as TypeBoxSchema } from "@sinclair/typebox";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import type { StructuredSessionStateStore } from "./structured-session-state";
 import { SmithersRuntimeManager } from "./smithers-runtime/manager";
-import {
-  SMITHERS_RUN_WORKFLOW_TOOL_NAME,
-  type RunnableWorkflowLaunchContract,
-} from "./smithers-runtime/workflow-launch-contract";
+import { SMITHERS_RUN_WORKFLOW_TOOL_NAME } from "./smithers-runtime/workflow-launch-contract";
 
-const emptyParamsSchema = Type.Object({}, { additionalProperties: false });
+const genericObjectParamsSchema = Type.Object({}, { additionalProperties: true });
 const runIdSchema = Type.String({ minLength: 1 });
+
+const listWorkflowsParamsSchema = Type.Object(
+  {
+    workflowId: Type.Optional(Type.String({ minLength: 1 })),
+    sourceScope: Type.Optional(Type.Union([Type.Literal("saved"), Type.Literal("artifact")])),
+    pathPrefix: Type.Optional(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+
+const runWorkflowParamsSchema = Type.Object(
+  {
+    workflowId: Type.String({ minLength: 1 }),
+    input: genericObjectParamsSchema,
+    runId: Type.Optional(runIdSchema),
+  },
+  { additionalProperties: false },
+);
 
 const listRunsParamsSchema = Type.Object(
   {
@@ -147,30 +162,29 @@ export function createSmithersTools(options: CreateSmithersToolsOptions): AgentT
       label: "Smithers Workflows",
       description:
         "List runnable saved and artifact Smithers workflow entries available to the current handler thread.",
-      parameters: emptyParamsSchema,
+      parameters: listWorkflowsParamsSchema,
       visibility: "summary",
       runtime: options.runtime,
       store: options.store,
-      execute: async () => {
+      execute: async (params) => {
         await options.manager.refreshWorkflowRegistry();
-        const workflows = options.manager.listWorkflows();
+        const workflows = options.manager.listWorkflows({
+          workflowId: params.workflowId?.trim() || undefined,
+          sourceScope: params.sourceScope,
+          pathPrefix: params.pathPrefix?.trim() || undefined,
+        });
         return {
           summary:
             workflows.length > 0
-              ? `Available workflows: ${workflows
-                  .map((workflow) => `${workflow.id} via ${workflow.launchToolName}`)
-                  .join(", ")}.`
+              ? `Available workflows: ${workflows.map((workflow) => workflow.workflowId).join(", ")}.`
               : "No runnable workflow entries are available.",
           details: {
             workflows,
-            workflowToolSurfaceVersion: options.manager.getWorkflowToolSurfaceVersion(),
           },
         };
       },
     }),
-    ...options.manager
-      .listWorkflowLaunchContracts()
-      .map((contract) => createWorkflowLaunchTool(options, contract)),
+    createRunWorkflowTool(options),
     createSmithersTool({
       name: "smithers.list_runs",
       label: "List Runs",
@@ -517,77 +531,134 @@ export function createSmithersTools(options: CreateSmithersToolsOptions): AgentT
   ];
 }
 
-function createWorkflowLaunchTool(
-  options: CreateSmithersToolsOptions,
-  contract: RunnableWorkflowLaunchContract,
-): AgentTool<any> {
-  return createSmithersTool({
-    name: contract.launchToolName,
-    label: contract.label,
-    description: `Launch or resume the ${contract.label} Smithers workflow entry under the current handler thread.`,
-    parameters: contract.launchToolParameters,
-    visibility: "surface",
-    runtime: options.runtime,
-    store: options.store,
-    execute: async (params) => {
-      const runtime = requireActiveRuntime(options.runtime, contract.launchToolName);
+function createRunWorkflowTool(options: CreateSmithersToolsOptions): AgentTool<any> {
+  return {
+    label: "Run Workflow",
+    name: SMITHERS_RUN_WORKFLOW_TOOL_NAME,
+    description:
+      "Launch or resume one runnable Smithers workflow entry under the current handler thread using a workflowId discovered through smithers.list_workflows.",
+    parameters: runWorkflowParamsSchema,
+    execute: async (_toolCallId, params) => {
+      const runtime = requireActiveRuntime(options.runtime, SMITHERS_RUN_WORKFLOW_TOOL_NAME);
+      options.store.setTurnDecision({
+        turnId: runtime.turnId,
+        decision: SMITHERS_RUN_WORKFLOW_TOOL_NAME,
+        onlyIfPending: true,
+      });
+      ensureRunnableHandlerThread(options.store, runtime.sessionId, runtime.surfaceThreadId);
+
+      const workflowId = params.workflowId.trim();
+      const command = options.store.createCommand({
+        turnId: runtime.turnId,
+        surfacePiSessionId: runtime.surfacePiSessionId,
+        threadId: runtime.surfaceThreadId,
+        toolName: SMITHERS_RUN_WORKFLOW_TOOL_NAME,
+        executor: "smithers",
+        visibility: "surface",
+        title: `Run workflow ${workflowId}`,
+        summary: `Launch or resume runnable workflow ${workflowId} in Smithers.`,
+      });
+      options.store.startCommand(command.id);
+
+      const preflight = await options.manager.validateWorkflowLaunchInput({
+        workflowId,
+        launchInput: params.input,
+      });
+
+      if (!preflight.success) {
+        const summary =
+          preflight.diagnostics[0]?.message ??
+          `Workflow launch validation failed for ${workflowId}.`;
+        options.store.finishCommand({
+          commandId: command.id,
+          status: "failed",
+          summary,
+          facts: {
+            smithersToolName: SMITHERS_RUN_WORKFLOW_TOOL_NAME,
+            rawSmithersOperationName: "run_workflow",
+            transport: "embedded-runtime",
+            workflowId,
+            launchInput: params.input,
+            validationFailed: true,
+            diagnostics: preflight.diagnostics,
+            entryPath: preflight.workflow?.entryPath ?? null,
+            sourceScope: preflight.workflow?.sourceScope ?? null,
+          },
+          error: summary,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                workflowId,
+                diagnostics: preflight.diagnostics,
+                workflow: preflight.workflow ?? null,
+              }),
+            },
+          ],
+          details: {
+            success: false,
+            workflowId,
+            diagnostics: preflight.diagnostics,
+            workflow: preflight.workflow ?? null,
+          },
+        };
+      }
+
+      const before = params.runId?.trim()
+        ? await options.manager.getRun(params.runId.trim()).catch(() => null)
+        : null;
       const result = await options.manager.launchWorkflow({
         sessionId: runtime.sessionId,
         threadId: runtime.surfaceThreadId,
-        workflowId: contract.workflowId,
-        launchInput: params,
-        commandId: "__pending__",
+        workflowId,
+        launchInput: preflight.launchInput,
+        commandId: command.id,
+        runId: params.runId?.trim() || undefined,
       });
-      return {
+      options.store.finishCommand({
+        commandId: command.id,
+        status: "succeeded",
         summary: result.summary,
-        details: result,
-      };
-    },
-    customizeCommand(command, params) {
-      const mode =
-        params &&
-        typeof params === "object" &&
-        Object.keys(params as Record<string, unknown>).length > 0
-          ? "Launch or resume"
-          : "Run";
-      command.title = `${mode} ${contract.label} workflow`;
-      command.summary = `Launch or resume runnable workflow ${contract.workflowId} in Smithers.`;
-    },
-    afterExecute(input) {
-      return {
-        semanticSmithersToolName: SMITHERS_RUN_WORKFLOW_TOOL_NAME,
-        workflowId: contract.workflowId,
-        launchToolName: contract.launchToolName,
-        launchContractHash: contract.contractHash,
-        sourceScope: contract.sourceScope,
-        entryPath: contract.entryPath,
-        definitionPaths: contract.definitionPaths,
-        promptPaths: contract.promptPaths,
-        componentPaths: contract.componentPaths,
-        assetPaths: contract.assetPaths,
-        launchInput: input.result.details.launchInput,
-        preStatus: readRunStatus(input.before),
-        postStatus: input.result.details.smithersStatus,
-        runId: input.result.details.runId,
-        workflowRunId: input.result.details.structuredWorkflowRunId,
-        resumedRunId: input.result.details.resumedRunId,
-      };
-    },
-    executeWithCommandId: async (params, commandId) => {
-      const runtime = requireActiveRuntime(options.runtime, contract.launchToolName);
-      const result = await options.manager.launchWorkflow({
-        sessionId: runtime.sessionId,
-        threadId: runtime.surfaceThreadId,
-        workflowId: contract.workflowId,
-        launchInput: params,
-        commandId,
+        facts: {
+          smithersToolName: SMITHERS_RUN_WORKFLOW_TOOL_NAME,
+          rawSmithersOperationName: "run_workflow",
+          transport: "embedded-runtime",
+          workflowId: result.workflowId,
+          sourceScope: result.sourceScope,
+          entryPath: result.entryPath,
+          definitionPaths: result.definitionPaths,
+          promptPaths: result.promptPaths,
+          componentPaths: result.componentPaths,
+          assetPaths: result.assetPaths,
+          launchInput: result.launchInput,
+          preStatus: readRunStatus(before),
+          postStatus: result.smithersStatus,
+          runId: result.runId,
+          workflowRunId: result.structuredWorkflowRunId,
+          resumedRunId: result.resumedRunId,
+        },
       });
+
       return {
-        summary: result.summary,
-        details: result,
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              ...result,
+            }),
+          },
+        ],
+        details: {
+          success: true,
+          ...result,
+        },
       };
     },
-  });
+  };
 }
 
 function createSmithersTool<TSchema extends TypeBoxSchema>(input: {

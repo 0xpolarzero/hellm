@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { cpSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveElectrobunAppCodeDir } from "electrobun-e2e/electrobun-paths";
 
@@ -17,7 +17,14 @@ const nodeModulesDest = join(appCodeDir, "node_modules");
 const projectRoot = join(import.meta.dir, "..");
 const src = (rel: string) => join(projectRoot, "node_modules", rel);
 
-const scopes = ["@rivet-dev", "@secure-exec", "@esbuild", "@mariozechner", "@agentclientprotocol"];
+const scopes = [
+  "@rivet-dev",
+  "@secure-exec",
+  "@esbuild",
+  "@mariozechner",
+  "@agentclientprotocol",
+  "@smithers-orchestrator",
+];
 
 const packages = [
   "secure-exec",
@@ -30,9 +37,50 @@ const packages = [
   "pkg-dir",
   "better-sqlite3",
   "pyodide",
+  "react",
+  "react-dom",
+  "smithers-orchestrator",
+  "zod",
 ];
 
+type PackageManifest = {
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+};
+
+const pendingPackages: string[] = [];
+const seenPackages = new Set<string>();
 let copied = 0;
+
+function enqueuePackage(packageName: string): void {
+  if (seenPackages.has(packageName)) {
+    return;
+  }
+  seenPackages.add(packageName);
+  pendingPackages.push(packageName);
+}
+
+function readPackageManifest(packageName: string): PackageManifest | null {
+  const manifestPath = join(src(packageName), "package.json");
+  if (!existsSync(manifestPath)) {
+    return null;
+  }
+
+  return JSON.parse(readFileSync(manifestPath, "utf8")) as PackageManifest;
+}
+
+function copyPackage(packageName: string): void {
+  const source = src(packageName);
+  if (!existsSync(source)) {
+    console.warn(`postbuild: skipping package ${packageName} (not found)`);
+    return;
+  }
+
+  const destination = join(nodeModulesDest, packageName);
+  mkdirSync(join(destination, ".."), { recursive: true });
+  cpSync(source, destination, { recursive: true, dereference: true });
+  copied += 1;
+}
 
 for (const scope of scopes) {
   const scopeSrc = src(scope);
@@ -40,24 +88,32 @@ for (const scope of scopes) {
     console.warn(`postbuild: skipping scope ${scope}/ (not found)`);
     continue;
   }
+
   for (const entry of readdirSync(scopeSrc)) {
-    const rel = `${scope}/${entry}`;
-    const source = src(rel);
-    const dest = join(nodeModulesDest, rel);
-    if (!existsSync(source)) continue;
-    mkdirSync(join(dest, ".."), { recursive: true });
-    cpSync(source, dest, { recursive: true, dereference: true });
-    copied++;
+    enqueuePackage(`${scope}/${entry}`);
   }
 }
 
-for (const pkg of packages) {
-  const source = src(pkg);
-  const dest = join(nodeModulesDest, pkg);
-  if (!existsSync(source)) continue;
-  mkdirSync(join(dest, ".."), { recursive: true });
-  cpSync(source, dest, { recursive: true, dereference: true });
-  copied++;
+for (const packageName of packages) {
+  enqueuePackage(packageName);
+}
+
+while (pendingPackages.length > 0) {
+  const packageName = pendingPackages.shift();
+  if (!packageName) {
+    continue;
+  }
+
+  copyPackage(packageName);
+
+  const manifest = readPackageManifest(packageName);
+  const dependencyNames = Object.keys({
+    ...(manifest?.dependencies ?? {}),
+    ...(manifest?.optionalDependencies ?? {}),
+  });
+  for (const dependencyName of dependencyNames) {
+    enqueuePackage(dependencyName);
+  }
 }
 
 console.log(`postbuild: copied ${copied} packages to bundle`);

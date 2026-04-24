@@ -36,7 +36,6 @@ import type {
 } from "../structured-session-state";
 import {
   compileRunnableWorkflowLaunchContract,
-  createWorkflowToolSurfaceVersion,
   type RunnableWorkflowLaunchContract,
 } from "./workflow-launch-contract";
 import {
@@ -109,9 +108,13 @@ type LaunchWorkflowInput = {
 
 type LaunchWorkflowResult = {
   workflowId: string;
-  launchToolName: `smithers.run_workflow.${string}`;
-  semanticToolName: "smithers.run_workflow";
-  contractHash: string;
+  label: string;
+  sourceScope: RunnableWorkflowRegistryEntry["sourceScope"];
+  entryPath: string;
+  definitionPaths: string[];
+  promptPaths: string[];
+  componentPaths: string[];
+  assetPaths: string[];
   launchInput: Record<string, unknown>;
   runId: string;
   resumedRunId: string | null;
@@ -120,6 +123,44 @@ type LaunchWorkflowResult = {
   smithersStatus: RunStatus;
   summary: string;
 };
+
+type WorkflowListInput = {
+  workflowId?: string;
+  sourceScope?: RunnableWorkflowRegistryEntry["sourceScope"];
+  pathPrefix?: string;
+};
+
+type WorkflowListEntry = {
+  workflowId: string;
+  label: string;
+  summary: string;
+  sourceScope: RunnableWorkflowRegistryEntry["sourceScope"];
+  entryPath: string;
+  definitionPaths: string[];
+  promptPaths: string[];
+  componentPaths: string[];
+  assetPaths: string[];
+  launchInputSchema: Record<string, unknown>;
+};
+
+export type WorkflowLaunchDiagnostic = {
+  path?: string;
+  message: string;
+  code?: string;
+};
+
+export type WorkflowLaunchPreflightResult =
+  | {
+      success: true;
+      workflow: WorkflowListEntry;
+      launchInput: Record<string, unknown>;
+    }
+  | {
+      success: false;
+      workflowId: string;
+      diagnostics: WorkflowLaunchDiagnostic[];
+      workflow?: WorkflowListEntry;
+    };
 
 type SmithersAttemptRow = {
   runId: string;
@@ -160,7 +201,6 @@ export class SmithersRuntimeManager {
   private readonly workflowEntriesById = new Map<string, RunnableWorkflowRegistryEntry>();
   private readonly launchContractsByWorkflowId = new Map<string, RunnableWorkflowLaunchContract>();
   private workflowLaunchContracts: RunnableWorkflowLaunchContract[] = [];
-  private workflowToolSurfaceVersion = "";
   private readonly ownershipByRunId = new Map<string, WorkflowOwnership>();
   private readonly monitorByRunId = new Map<string, WorkflowMonitor>();
   private readonly flushPromiseByRunId = new Map<string, Promise<void>>();
@@ -175,33 +215,33 @@ export class SmithersRuntimeManager {
     this.db = new SmithersDb(db as any);
   }
 
-  listWorkflows() {
-    return this.workflowLaunchContracts.map((contract) => ({
-      id: contract.workflowId,
-      label: contract.label,
-      summary: contract.summary,
-      sourceScope: contract.sourceScope,
-      launchToolName: contract.launchToolName,
-      launchInputSchema: structuredClone(contract.launchInputJsonSchema),
-      entryPath: contract.entryPath,
-      definitionPaths: contract.definitionPaths.slice(),
-      promptPaths: contract.promptPaths.slice(),
-      componentPaths: contract.componentPaths.slice(),
-      assetPaths: contract.assetPaths.slice(),
-      semanticToolName: contract.semanticToolName,
-      contractHash: contract.contractHash,
-    }));
-  }
-
-  listWorkflowLaunchContracts(): RunnableWorkflowLaunchContract[] {
-    return this.workflowLaunchContracts.map((contract) => ({
-      ...contract,
-      launchInputJsonSchema: structuredClone(contract.launchInputJsonSchema),
-    }));
-  }
-
-  getWorkflowToolSurfaceVersion(): string {
-    return this.workflowToolSurfaceVersion;
+  listWorkflows(input: WorkflowListInput = {}): WorkflowListEntry[] {
+    return this.workflowLaunchContracts
+      .filter((contract) => (input.workflowId ? contract.workflowId === input.workflowId : true))
+      .filter((contract) => (input.sourceScope ? contract.sourceScope === input.sourceScope : true))
+      .filter((contract) =>
+        input.pathPrefix
+          ? [
+              contract.entryPath,
+              ...contract.definitionPaths,
+              ...contract.promptPaths,
+              ...contract.componentPaths,
+              ...contract.assetPaths,
+            ].some((path) => path.startsWith(input.pathPrefix!))
+          : true,
+      )
+      .map((contract) => ({
+        workflowId: contract.workflowId,
+        label: contract.label,
+        summary: contract.summary,
+        sourceScope: contract.sourceScope,
+        entryPath: contract.entryPath,
+        definitionPaths: contract.definitionPaths.slice(),
+        promptPaths: contract.promptPaths.slice(),
+        componentPaths: contract.componentPaths.slice(),
+        assetPaths: contract.assetPaths.slice(),
+        launchInputSchema: structuredClone(contract.launchInputJsonSchema),
+      }));
   }
 
   async refreshWorkflowRegistry(): Promise<void> {
@@ -264,15 +304,54 @@ export class SmithersRuntimeManager {
       }
       return contract;
     });
-    this.workflowToolSurfaceVersion = createWorkflowToolSurfaceVersion(
-      this.workflowLaunchContracts,
-    );
+  }
+
+  async validateWorkflowLaunchInput(input: {
+    workflowId: string;
+    launchInput: unknown;
+  }): Promise<WorkflowLaunchPreflightResult> {
+    await this.refreshWorkflowRegistry();
+
+    const workflowId = input.workflowId.trim();
+    const workflow = this.listWorkflows({ workflowId })[0];
+    if (!workflow) {
+      return {
+        success: false,
+        workflowId,
+        diagnostics: [
+          {
+            message: `Runnable workflow not found: ${workflowId}`,
+            code: "workflow_not_found",
+          },
+        ],
+      };
+    }
+
+    const entry = this.requireWorkflowEntry(workflowId);
+    const parsedInput = entry.launchSchema.safeParse(input.launchInput);
+    if (!parsedInput.success) {
+      return {
+        success: false,
+        workflowId,
+        workflow,
+        diagnostics: parsedInput.error.issues.map((issue) => ({
+          path: issue.path.length > 0 ? issue.path.map(String).join(".") : undefined,
+          message: issue.message,
+          code: issue.code,
+        })),
+      };
+    }
+
+    return {
+      success: true,
+      workflow,
+      launchInput: parsedInput.data as Record<string, unknown>,
+    };
   }
 
   async launchWorkflow(input: LaunchWorkflowInput): Promise<LaunchWorkflowResult> {
     await this.refreshWorkflowRegistry();
     const entry = this.requireWorkflowEntry(input.workflowId);
-    const launchContract = this.requireWorkflowLaunchContract(input.workflowId);
     const parsedInput = entry.launchSchema.safeParse(input.launchInput);
     if (!parsedInput.success) {
       throw new Error(parsedInput.error.issues.map((issue) => issue.message).join("; "));
@@ -371,13 +450,21 @@ export class SmithersRuntimeManager {
       this.activeWorkflowPromises.delete(workflowPromise);
     });
 
+    await this.waitForRunRegistration(runId);
+
     await this.emitStructuredStateChanged(input.sessionId);
 
     return {
       workflowId: entry.workflowId,
-      launchToolName: launchContract.launchToolName,
-      semanticToolName: launchContract.semanticToolName,
-      contractHash: launchContract.contractHash,
+      label: entry.label,
+      sourceScope: entry.sourceScope,
+      entryPath: entry.entryPath,
+      definitionPaths: entry.definitionPaths.slice(),
+      promptPaths: entry.promptPaths.slice(),
+      componentPaths: entry.componentPaths.slice(),
+      assetPaths: Array.from(
+        new Set([...entry.definitionPaths, ...entry.promptPaths, ...entry.componentPaths]),
+      ).toSorted(),
       launchInput: parsedInput.data as Record<string, unknown>,
       runId,
       resumedRunId: existingRunId ?? null,
@@ -386,6 +473,18 @@ export class SmithersRuntimeManager {
       smithersStatus: "running",
       summary: structuredWorkflowRun.summary,
     };
+  }
+
+  private async waitForRunRegistration(runId: string, timeoutMs = 5_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const run = await this.db.getRun(runId);
+      if (run) {
+        return;
+      }
+      await Bun.sleep(25);
+    }
+    throw new Error(`Smithers run ${runId} did not become observable after launch.`);
   }
 
   async listRuns(input?: { limit?: number; status?: string; workflowId?: string }) {
@@ -426,6 +525,10 @@ export class SmithersRuntimeManager {
   }
 
   async getRun(runId: string) {
+    await this.flushRunEvents(runId, {
+      emitAttention: false,
+      source: "query",
+    });
     const run = await this.db.getRun(runId);
     if (!run) {
       throw new Error(`Smithers run not found: ${runId}`);
@@ -1117,10 +1220,12 @@ export class SmithersRuntimeManager {
       source?: ProjectionSource;
     } = {},
   ): Promise<void> {
-    const existing = this.flushPromiseByRunId.get(runId);
-    if (existing) {
+    while (true) {
+      const existing = this.flushPromiseByRunId.get(runId);
+      if (!existing) {
+        break;
+      }
       await existing;
-      return;
     }
 
     const flushPromise = (async () => {
@@ -1705,14 +1810,6 @@ export class SmithersRuntimeManager {
     return workflow;
   }
 
-  private requireWorkflowLaunchContract(workflowId: string): RunnableWorkflowLaunchContract {
-    const contract = this.launchContractsByWorkflowId.get(workflowId);
-    if (!contract) {
-      throw new Error(`Runnable Smithers workflow contract not found: ${workflowId}`);
-    }
-    return contract;
-  }
-
   private findStructuredWorkflowRun(input: {
     sessionId: string;
     threadId: string;
@@ -1837,7 +1934,9 @@ function mapAttemptStateToWorkflowTaskAttemptStatus(
   }
 }
 
-function readWorkflowTaskAttemptKind(meta: Record<string, unknown> | null): "agent" | "compute" | "static" | "unknown" {
+function readWorkflowTaskAttemptKind(
+  meta: Record<string, unknown> | null,
+): "agent" | "compute" | "static" | "unknown" {
   const kind = readMetaString(meta, "kind");
   return kind === "agent" || kind === "compute" || kind === "static" ? kind : "unknown";
 }

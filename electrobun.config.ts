@@ -26,8 +26,13 @@ export default {
         "pkg-dir",
         "@mariozechner/*",
         "@agentclientprotocol/*",
+        "@smithers-orchestrator/*",
         "better-sqlite3",
         "pyodide",
+        "react",
+        "react-dom",
+        "smithers-orchestrator",
+        "zod",
       ],
     },
     copy: {

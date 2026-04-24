@@ -227,7 +227,7 @@ function createWorkflowCommand(input: {
   threadId: string;
   surfacePiSessionId: string;
   requestSummary: string;
-  toolName?: `smithers.run_workflow.${string}`;
+  toolName?: "smithers.run_workflow";
   title: string;
   summary: string;
 }): { turnId: string; commandId: string } {
@@ -241,7 +241,7 @@ function createWorkflowCommand(input: {
     turnId: turn.id,
     surfacePiSessionId: input.surfacePiSessionId,
     threadId: input.threadId,
-    toolName: input.toolName ?? "smithers.run_workflow.hello_world",
+    toolName: input.toolName ?? "smithers.run_workflow",
     executor: "smithers",
     visibility: "surface",
     title: input.title,
@@ -530,23 +530,19 @@ function createTranscriptWorkflowDefinition(dbPath: string): TestWorkflowDefinit
 }
 
 describe("SmithersRuntimeManager", () => {
-  it("publishes compiled launch contracts with input-side defaults and updates the tool-surface version when workflows change", () => {
+  it("publishes workflow discovery metadata with input-side defaults", () => {
     const { cwd, manager } = createWorkspaceFixture();
 
-    const initialVersion = manager.getWorkflowToolSurfaceVersion();
     const helloWorldWorkflow = manager
       .listWorkflows()
-      .find((workflow) => workflow.id === "hello_world");
+      .find((workflow) => workflow.workflowId === "hello_world");
 
     expect(helloWorldWorkflow).toMatchObject({
-      id: "hello_world",
+      workflowId: "hello_world",
       label: "Hello World",
       summary: "Smoke-test workflow used by Smithers runtime tests.",
       sourceScope: "saved",
       entryPath: ".svvy/workflows/entries/hello-world.tsx",
-      launchToolName: "smithers.run_workflow.hello_world",
-      semanticToolName: "smithers.run_workflow",
-      contractHash: expect.any(String),
       launchInputSchema: {
         type: "object",
         properties: {
@@ -560,10 +556,7 @@ describe("SmithersRuntimeManager", () => {
     });
 
     registerWorkflow(manager, createApprovalWorkflowDefinition(smithersDbPath(cwd)));
-    const nextVersion = manager.getWorkflowToolSurfaceVersion();
-
-    expect(nextVersion).not.toBe(initialVersion);
-    expect(manager.listWorkflows().map((workflow) => workflow.id)).toEqual(
+    expect(manager.listWorkflows().map((workflow) => workflow.workflowId)).toEqual(
       expect.arrayContaining(["approval_gate"]),
     );
   });
@@ -580,7 +573,7 @@ describe("SmithersRuntimeManager", () => {
       handlerAttentions,
     } = createWorkspaceFixture();
 
-    expect(manager.listWorkflows().map((workflow) => workflow.id)).toEqual(
+    expect(manager.listWorkflows().map((workflow) => workflow.workflowId)).toEqual(
       expect.arrayContaining(["hello_world", "execute_typescript_task"]),
     );
 
@@ -592,7 +585,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch hello world",
       title: "Run hello_world",
       summary: "Launch the hello_world workflow.",
-      toolName: "smithers.run_workflow.hello_world",
+      toolName: "smithers.run_workflow",
     });
     const launched = await manager.launchWorkflow({
       sessionId,
@@ -713,6 +706,63 @@ describe("SmithersRuntimeManager", () => {
     );
   });
 
+  it("refreshes structured workflow state from Smithers when getRun observes a finished run", async () => {
+    const fixture = createWorkspaceFixture();
+    const { manager, store, cwd, sessionId, threadId } = fixture;
+
+    registerWorkflow(manager, createHelloWorldTestWorkflow(smithersDbPath(cwd)));
+    await manager.refreshWorkflowRegistry();
+
+    const workflowCommand = createWorkflowCommand({
+      store,
+      sessionId,
+      threadId,
+      surfacePiSessionId: fixture.surfacePiSessionId,
+      requestSummary: "Run hello_world and then inspect the finished run.",
+      title: "Run smithers.run_workflow",
+      summary: "Launch hello_world for structured state sync coverage.",
+    });
+
+    const launched = await manager.launchWorkflow({
+      sessionId,
+      threadId,
+      workflowId: "hello_world",
+      launchInput: {
+        message: "sync structured state before handler handoff",
+      },
+      commandId: workflowCommand.commandId,
+    });
+
+    await waitFor("hello_world structured completion", () => {
+      const workflowRun = store
+        .getSessionState(sessionId)
+        .workflowRuns.find((run) => run.smithersRunId === launched.runId);
+      return workflowRun?.status === "completed";
+    });
+
+    const completedWorkflowRun = store
+      .getSessionState(sessionId)
+      .workflowRuns.find((run) => run.smithersRunId === launched.runId);
+    expect(completedWorkflowRun).not.toBeUndefined();
+
+    store.updateWorkflow({
+      workflowId: completedWorkflowRun!.id,
+      commandId: completedWorkflowRun!.commandId,
+      status: "running",
+      smithersStatus: "running",
+      summary: "Stale structured state before getRun sync.",
+    });
+
+    const run = await manager.getRun(launched.runId);
+    expect(run.status).toBe("finished");
+
+    const refreshedWorkflowRun = store
+      .getSessionState(sessionId)
+      .workflowRuns.find((entry) => entry.id === completedWorkflowRun!.id);
+    expect(refreshedWorkflowRun?.status).toBe("completed");
+    expect(refreshedWorkflowRun?.smithersStatus).toBe("finished");
+  });
+
   it("lists workspace-global runs with svvy session and thread ownership metadata", async () => {
     const { manager, store, sessionId, threadId, surfacePiSessionId } = createWorkspaceFixture();
 
@@ -752,7 +802,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch primary hello world",
       title: "Run primary hello_world",
       summary: "Launch the primary hello_world workflow.",
-      toolName: "smithers.run_workflow.hello_world",
+      toolName: "smithers.run_workflow",
     });
     const secondLaunchCommand = createWorkflowCommand({
       store,
@@ -762,7 +812,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch secondary hello world",
       title: "Run secondary hello_world",
       summary: "Launch the secondary hello_world workflow.",
-      toolName: "smithers.run_workflow.hello_world",
+      toolName: "smithers.run_workflow",
     });
 
     const primaryLaunch = await manager.launchWorkflow({
@@ -830,7 +880,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch hello world",
       title: "Run hello_world",
       summary: "Launch the hello_world workflow.",
-      toolName: "smithers.run_workflow.hello_world",
+      toolName: "smithers.run_workflow",
     });
     const launched = await manager.launchWorkflow({
       sessionId,
@@ -887,7 +937,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch hello world",
       title: "Run hello_world",
       summary: "Launch the hello_world workflow.",
-      toolName: "smithers.run_workflow.hello_world",
+      toolName: "smithers.run_workflow",
     });
     const launched = await manager.launchWorkflow({
       sessionId,
@@ -957,7 +1007,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch hello world",
       title: "Run hello_world",
       summary: "Launch the hello_world workflow.",
-      toolName: "smithers.run_workflow.hello_world",
+      toolName: "smithers.run_workflow",
     });
     const launched = await manager.launchWorkflow({
       sessionId,
@@ -1036,7 +1086,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch approval workflow",
       title: "Run approval_gate",
       summary: "Launch the approval_gate workflow.",
-      toolName: "smithers.run_workflow.approval_gate",
+      toolName: "smithers.run_workflow",
     });
     const launched = await manager.launchWorkflow({
       sessionId,
@@ -1111,7 +1161,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Resume approval workflow",
       title: "Resume approval_gate",
       summary: "Resume the approval_gate workflow.",
-      toolName: "smithers.run_workflow.approval_gate",
+      toolName: "smithers.run_workflow",
     });
     const resumed = await manager.launchWorkflow({
       sessionId,
@@ -1197,7 +1247,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch continue-as-new workflow",
       title: "Run continue_once",
       summary: "Launch the continue_once workflow.",
-      toolName: "smithers.run_workflow.continue_once",
+      toolName: "smithers.run_workflow",
     });
     const launched = await manager.launchWorkflow({
       sessionId,
@@ -1287,7 +1337,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch signal workflow",
       title: "Run wait_for_signal",
       summary: "Launch the wait_for_signal workflow.",
-      toolName: "smithers.run_workflow.wait_for_signal",
+      toolName: "smithers.run_workflow",
     });
     const launched = await manager.launchWorkflow({
       sessionId,
@@ -1376,7 +1426,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Resume signal workflow",
       title: "Resume wait_for_signal",
       summary: "Resume the wait_for_signal workflow.",
-      toolName: "smithers.run_workflow.wait_for_signal",
+      toolName: "smithers.run_workflow",
     });
     await manager.launchWorkflow({
       sessionId,
@@ -1463,7 +1513,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch hello world",
       title: "Run hello_world",
       summary: "Launch the hello_world workflow.",
-      toolName: "smithers.run_workflow.hello_world",
+      toolName: "smithers.run_workflow",
     });
     const launched = await manager.launchWorkflow({
       sessionId,
@@ -1527,7 +1577,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch transcript workflow",
       title: "Run chat_transcript_probe",
       summary: "Launch the chat_transcript_probe workflow.",
-      toolName: "smithers.run_workflow.chat_transcript_probe",
+      toolName: "smithers.run_workflow",
     });
     const launched = await manager.launchWorkflow({
       sessionId,
@@ -1767,7 +1817,7 @@ describe("SmithersRuntimeManager", () => {
       requestSummary: "Launch execute_typescript_task",
       title: "Run execute_typescript_task",
       summary: "Launch the execute_typescript_task workflow.",
-      toolName: "smithers.run_workflow.execute_typescript_task",
+      toolName: "smithers.run_workflow",
     });
     try {
       const launched = await manager.launchWorkflow({

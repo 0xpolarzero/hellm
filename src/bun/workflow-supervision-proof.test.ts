@@ -265,11 +265,12 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
     });
 
     expect(handlerTranscript).toContain("smithers.list_workflows");
-    expect(handlerTranscript).toContain("smithers.run_workflow.wait_for_signal");
+    expect(handlerTranscript).toContain("smithers.run_workflow");
     expect(handlerTranscript).toContain("smithers.explain_run");
     expect(handlerTranscript).toContain("smithers.watch_run");
     expect(handlerTranscript).toContain("smithers.signals.send");
-    expect(handlerTranscript).toContain("smithers.run_workflow.chat_transcript_probe");
+    expect(handlerTranscript).toContain("wait_for_signal");
+    expect(handlerTranscript).toContain("chat_transcript_probe");
     expect(handlerTranscript).toContain("smithers.get_chat_transcript");
     expect(handlerTranscript).toContain("smithers.get_node_detail");
     expect(handlerTranscript).toContain("smithers.list_artifacts");
@@ -284,11 +285,10 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
     expect(handlerToolCalls).toEqual(
       expect.arrayContaining([
         "smithers.list_workflows",
-        "smithers.run_workflow.wait_for_signal",
+        "smithers.run_workflow",
         "smithers.explain_run",
         "smithers.watch_run",
         "smithers.signals.send",
-        "smithers.run_workflow.chat_transcript_probe",
         "smithers.get_chat_transcript",
         "smithers.get_node_detail",
         "smithers.list_artifacts",
@@ -297,6 +297,13 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
         "smithers.streamDevTools",
         "thread.handoff",
       ]),
+    );
+    const launchedWorkflowIds = snapshot.commands
+      .filter((command) => command.toolName === "smithers.run_workflow")
+      .map((command) => command.facts?.workflowId)
+      .filter((workflowId): workflowId is string => typeof workflowId === "string");
+    expect(launchedWorkflowIds).toEqual(
+      expect.arrayContaining(["wait_for_signal", "chat_transcript_probe"]),
     );
 
     const explainRunResult = findToolResultMessage(handlerState.messages, "smithers.explain_run");
@@ -374,11 +381,10 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
       expect.arrayContaining([
         "thread.start",
         "smithers.list_workflows",
-        "smithers.run_workflow.wait_for_signal",
+        "smithers.run_workflow",
         "smithers.explain_run",
         "smithers.watch_run",
         "smithers.signals.send",
-        "smithers.run_workflow.chat_transcript_probe",
         "smithers.get_chat_transcript",
         "smithers.get_node_detail",
         "smithers.list_artifacts",
@@ -396,9 +402,7 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
     );
     expect(orchestratorRequest).toBeTruthy();
     expect(availableToolNames(orchestratorRequest)).toContain("thread.start");
-    expect(availableToolNames(orchestratorRequest)).not.toContain(
-      "smithers.run_workflow.wait_for_signal",
-    );
+    expect(availableToolNames(orchestratorRequest)).not.toContain("smithers.run_workflow");
 
     const handlerRequest = stub.requests.find(
       (request) =>
@@ -409,6 +413,7 @@ it("lets an autonomous handler discover smithers supervision tools and turn them
     expect(availableToolNames(handlerRequest)).toEqual(
       expect.arrayContaining([
         "smithers.list_workflows",
+        "smithers.run_workflow",
         "smithers.watch_run",
         "smithers.explain_run",
         "smithers.signals.send",
@@ -500,9 +505,7 @@ function getStructuredSessionState(
   return getStructuredSessionStore(catalog).getSessionState(sessionId);
 }
 
-function getStructuredSessionStore(
-  catalog: WorkspaceSessionCatalog,
-): StructuredSessionStateStore {
+function getStructuredSessionStore(catalog: WorkspaceSessionCatalog): StructuredSessionStateStore {
   return (catalog as unknown as { structuredSessionStore: StructuredSessionStateStore })
     .structuredSessionStore;
 }
@@ -782,14 +785,8 @@ function respondAsAutonomousHandler(input: {
   toolCallCounter: () => string;
 }): Response {
   const toolNames = availableToolNames(input.payload);
-  const runSignalToolName = toolNames.find(
-    (name) => name === "smithers.run_workflow.wait_for_signal",
-  );
-  const runTaskToolName = toolNames.find(
-    (name) => name === "smithers.run_workflow.chat_transcript_probe",
-  );
-  if (!runSignalToolName || !runTaskToolName) {
-    throw new Error("Expected wait_for_signal and chat_transcript_probe launch tools.");
+  if (!toolNames.includes("smithers.run_workflow")) {
+    throw new Error("Expected the stable smithers.run_workflow tool.");
   }
 
   if (!hasToolCall(input.toolCalls, "smithers.list_workflows")) {
@@ -802,7 +799,7 @@ function respondAsAutonomousHandler(input: {
     });
   }
 
-  const signalLaunchCalls = toolCallsByName(input.toolCalls, runSignalToolName);
+  const signalLaunchCalls = runWorkflowCallsByWorkflowId(input.toolCalls, "wait_for_signal");
   const signalRunId = readStringProperty(
     findToolResultByCallId(input.toolResults, signalLaunchCalls[0]?.id)?.parsed,
     "runId",
@@ -813,9 +810,12 @@ function respondAsAutonomousHandler(input: {
       responseId: input.responseId,
       model: input.payload.model,
       toolCallId: input.toolCallCounter(),
-      toolName: runSignalToolName,
+      toolName: "smithers.run_workflow",
       args: {
-        signalName: "deploy.completed",
+        workflowId: "wait_for_signal",
+        input: {
+          signalName: "deploy.completed",
+        },
       },
     });
   }
@@ -882,10 +882,13 @@ function respondAsAutonomousHandler(input: {
       responseId: input.responseId,
       model: input.payload.model,
       toolCallId: input.toolCallCounter(),
-      toolName: runSignalToolName,
+      toolName: "smithers.run_workflow",
       args: {
-        signalName: "deploy.completed",
-        resumeRunId: signalRunId,
+        workflowId: "wait_for_signal",
+        input: {
+          signalName: "deploy.completed",
+        },
+        runId: signalRunId,
       },
     });
   }
@@ -916,7 +919,7 @@ function respondAsAutonomousHandler(input: {
     });
   }
 
-  const taskLaunchCalls = toolCallsByName(input.toolCalls, runTaskToolName);
+  const taskLaunchCalls = runWorkflowCallsByWorkflowId(input.toolCalls, "chat_transcript_probe");
   const taskRunId = readStringProperty(
     findToolResultByCallId(input.toolResults, taskLaunchCalls[0]?.id)?.parsed,
     "runId",
@@ -927,10 +930,13 @@ function respondAsAutonomousHandler(input: {
       responseId: input.responseId,
       model: input.payload.model,
       toolCallId: input.toolCallCounter(),
-      toolName: runTaskToolName,
+      toolName: "smithers.run_workflow",
       args: {
-        prompt:
-          "Summarize the transcript probe for workflow supervision evidence and mention investigation-brief.md context.",
+        workflowId: "chat_transcript_probe",
+        input: {
+          prompt:
+            "Summarize the transcript probe for workflow supervision evidence and mention investigation-brief.md context.",
+        },
       },
     });
   }
@@ -1329,8 +1335,14 @@ function hasToolCall(toolCalls: ToolCallRecord[], name: string): boolean {
   return toolCalls.some((toolCall) => toolCall.name === name);
 }
 
-function toolCallsByName(toolCalls: ToolCallRecord[], name: string): ToolCallRecord[] {
-  return toolCalls.filter((toolCall) => toolCall.name === name);
+function runWorkflowCallsByWorkflowId(
+  toolCalls: ToolCallRecord[],
+  workflowId: string,
+): ToolCallRecord[] {
+  return toolCalls.filter(
+    (toolCall) =>
+      toolCall.name === "smithers.run_workflow" && toolCall.args.workflowId === workflowId,
+  );
 }
 
 function findToolResultByCallId(
