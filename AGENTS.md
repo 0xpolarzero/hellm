@@ -15,6 +15,7 @@
 - When specifying shipped product workflows, treat them as bundled app-owned runtime assets that belong under `src/bun/smithers-runtime/` or an equivalent packaged-app runtime area, not under repo-root `workflows/`.
 - When reasoning about shipped product behavior, require a packaged-app-safe Smithers integration that works without a source checkout and without depending on repo-local authoring assets.
 - For agent-facing workflow control in the shipped product, expose Smithers-native semantic tools through the Bun bridge and mirror Smithers naming as closely as possible; do not invent or preserve a parallel `workflow.*` abstraction when Smithers already names the operation.
+- For agent prompts or instructions that describe any interface the agent uses, prefer generated TypeScript declarations or generated tool/schema blocks from source contracts; do not hand-rewrite interfaces or rely on loose prose explanations when a generated contract can be provided.
 - Prefer these references over memory or vague external summaries when questions involve these tools or libraries.
 - To inspect a running `svvy` app, use the published `electrobun-browser-tools` CLI (`--app <appId>` or `--url <bridgeUrl>`); the bridge is mounted in `src/bun/tool-bridge.ts`, and `src/bun/index.ts` logs the resolved `appId` and `bridgeUrl` when it starts.
 - Keep one main orchestrator responsible for strategy, integration, and final decisions.
