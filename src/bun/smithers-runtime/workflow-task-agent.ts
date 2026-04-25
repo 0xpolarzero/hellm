@@ -61,9 +61,7 @@ type WorkflowTaskAgentGenerateArgs = {
   timeout?: number | { totalMs?: number; idleMs?: number };
   options?: unknown;
   onEvent?: (event: Record<string, unknown>) => void;
-  onStepFinish?: (step: {
-    response: { messages: AgentMessage[] };
-  }) => void;
+  onStepFinish?: (step: { response: { messages: AgentMessage[] } }) => void;
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
   outputSchema?: unknown;
@@ -82,15 +80,15 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
     async generate(rawArgs: unknown) {
       const args = normalizeWorkflowTaskAgentGenerateArgs(rawArgs);
       const taskRoot = resolveWorkflowTaskRoot(args);
-      const profile =
-        options.profile ??
-        createDefaultWorkflowTaskAgentProfile();
+      const profile = options.profile ?? createDefaultWorkflowTaskAgentProfile();
       const model = getModel(
         profile.provider as Parameters<typeof getModel>[0],
         profile.model as Parameters<typeof getModel>[1],
       );
       if (!model) {
-        throw new Error(`Workflow task agent model not found: ${profile.provider}/${profile.model}`);
+        throw new Error(
+          `Workflow task agent model not found: ${profile.provider}/${profile.model}`,
+        );
       }
 
       const sessionDir = resolveTaskAgentSessionDir(options.artifactDir);
@@ -316,10 +314,7 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         if (text && streamedAssistantText.trim().length === 0) {
           args.onStdout?.(text);
         }
-        const usage = normalizeLatestAssistantUsage(
-          responseMessages,
-          session.agent.state.messages,
-        );
+        const usage = normalizeLatestAssistantUsage(responseMessages, session.agent.state.messages);
 
         args.onEvent?.({
           type: "completed",
@@ -447,8 +442,7 @@ function createStructuredWorkflowTaskExecuteTypescriptStore(input: {
         turnId: config.turnId ?? null,
         workflowTaskAttemptId:
           config.workflowTaskAttemptId ?? input.projectionContext.workflowTaskAttemptId,
-        surfacePiSessionId:
-          config.surfacePiSessionId ?? input.projectionContext.surfacePiSessionId,
+        surfacePiSessionId: config.surfacePiSessionId ?? input.projectionContext.surfacePiSessionId,
         threadId: config.threadId ?? input.projectionContext.threadId,
         workflowRunId: config.workflowRunId ?? input.projectionContext.workflowRunId,
         parentCommandId: config.parentCommandId,
@@ -514,7 +508,8 @@ async function waitForWorkflowTaskAttemptProjection(input: {
         iteration: smithersAttempt.iteration,
         attempt: smithersAttempt.attempt,
         surfacePiSessionId: input.surfacePiSessionId,
-        title: readTaskAttemptMetaString(smithersAttempt.metaJson, "label") ?? smithersAttempt.nodeId,
+        title:
+          readTaskAttemptMetaString(smithersAttempt.metaJson, "label") ?? smithersAttempt.nodeId,
         summary: summarizeWorkflowTaskAttempt(smithersAttempt),
         kind: "agent",
         status: mapSmithersAttemptStateToStructuredStatus(smithersAttempt.state),
@@ -737,10 +732,7 @@ function syncAuthStorage(authStorage: AuthStorage): void {
 }
 
 function assertStrictTaskAgentToolSurface(activeToolNames: string[]): void {
-  if (
-    activeToolNames.length !== 1 ||
-    activeToolNames[0] !== EXECUTE_TYPESCRIPT_TOOL_NAME
-  ) {
+  if (activeToolNames.length !== 1 || activeToolNames[0] !== EXECUTE_TYPESCRIPT_TOOL_NAME) {
     throw new Error(
       `Workflow task agent tool surface must be exactly ${EXECUTE_TYPESCRIPT_TOOL_NAME}.`,
     );
@@ -783,9 +775,7 @@ function createUserAgentMessage(text: string): AgentMessage {
 
 function normalizeAgentMessages(messages: AgentMessage[]): AgentMessage[] {
   const timestampBase = Date.now();
-  return messages.map((message, index) =>
-    normalizeAgentMessage(message, timestampBase + index),
-  );
+  return messages.map((message, index) => normalizeAgentMessage(message, timestampBase + index));
 }
 
 function normalizeAgentMessage(message: AgentMessage, timestamp: number): AgentMessage {
@@ -814,7 +804,7 @@ function normalizeAgentMessage(message: AgentMessage, timestamp: number): AgentM
       provider: ((message as { provider?: unknown }).provider ?? "") as never,
       model:
         typeof (message as { model?: unknown }).model === "string"
-          ? ((message as { model: string }).model)
+          ? (message as { model: string }).model
           : "pi",
       usage: normalizePiUsage((message as { usage?: unknown }).usage) as never,
       stopReason:
@@ -823,15 +813,15 @@ function normalizeAgentMessage(message: AgentMessage, timestamp: number): AgentM
           : ("stop" as never),
       timestamp:
         typeof (message as { timestamp?: unknown }).timestamp === "number"
-          ? ((message as { timestamp: number }).timestamp)
+          ? (message as { timestamp: number }).timestamp
           : timestamp,
       errorMessage:
         typeof (message as { errorMessage?: unknown }).errorMessage === "string"
-          ? ((message as { errorMessage: string }).errorMessage)
+          ? (message as { errorMessage: string }).errorMessage
           : undefined,
       responseId:
         typeof (message as { responseId?: unknown }).responseId === "string"
-          ? ((message as { responseId: string }).responseId)
+          ? (message as { responseId: string }).responseId
           : undefined,
     } as AgentMessage;
   }
@@ -841,18 +831,18 @@ function normalizeAgentMessage(message: AgentMessage, timestamp: number): AgentM
       role: "toolResult",
       toolCallId:
         typeof (message as { toolCallId?: unknown }).toolCallId === "string"
-          ? ((message as { toolCallId: string }).toolCallId)
+          ? (message as { toolCallId: string }).toolCallId
           : "tool-result",
       toolName:
         typeof (message as { toolName?: unknown }).toolName === "string"
-          ? ((message as { toolName: string }).toolName)
+          ? (message as { toolName: string }).toolName
           : EXECUTE_TYPESCRIPT_TOOL_NAME,
       content: normalizeToolResultContent((message as { content?: unknown }).content),
       details: (message as { details?: unknown }).details,
       isError: Boolean((message as { isError?: unknown }).isError),
       timestamp:
         typeof (message as { timestamp?: unknown }).timestamp === "number"
-          ? ((message as { timestamp: number }).timestamp)
+          ? (message as { timestamp: number }).timestamp
           : timestamp,
     } as AgentMessage;
   }
@@ -868,7 +858,7 @@ function normalizeUserContent(content: unknown): string | Array<{ type: "text"; 
   const parts = normalizeTextParts(content)
     .map((part) =>
       part.type === "text" && typeof part.text === "string"
-        ? ({ type: "text" as const, text: part.text })
+        ? { type: "text" as const, text: part.text }
         : null,
     )
     .filter((part): part is { type: "text"; text: string } => part !== null);
@@ -880,9 +870,7 @@ function normalizeAssistantContent(content: unknown): Array<{ type: string; text
   return parts.length > 0 ? parts : [{ type: "text", text: "" }];
 }
 
-function normalizeToolResultContent(
-  content: unknown,
-): Array<{ type: "text"; text: string }> {
+function normalizeToolResultContent(content: unknown): Array<{ type: "text"; text: string }> {
   const parts = normalizeTextParts(content)
     .map((part) =>
       part.type === "text" && typeof part.text === "string"
@@ -1007,9 +995,7 @@ function normalizePiUsage(value: unknown): {
     inputTokens: input,
     inputTokenDetails: {
       noCacheTokens:
-        input !== undefined
-          ? Math.max(0, input - (cacheRead ?? 0) - (cacheWrite ?? 0))
-          : undefined,
+        input !== undefined ? Math.max(0, input - (cacheRead ?? 0) - (cacheWrite ?? 0)) : undefined,
       cacheReadTokens: cacheRead,
       cacheWriteTokens: cacheWrite,
     },
@@ -1100,8 +1086,7 @@ function normalizeWorkflowTaskAgentGenerateArgs(value: unknown): WorkflowTaskAge
     rootDir: typeof value.rootDir === "string" ? value.rootDir : undefined,
     abortSignal: isAbortSignal(value.abortSignal) ? value.abortSignal : undefined,
     timeout:
-      typeof value.timeout === "number" ||
-      (value.timeout && typeof value.timeout === "object")
+      typeof value.timeout === "number" || (value.timeout && typeof value.timeout === "object")
         ? (value.timeout as WorkflowTaskAgentGenerateArgs["timeout"])
         : undefined,
     options: value.options,

@@ -115,7 +115,9 @@ async function withLocalLaunchRetries<T>(action: () => Promise<T>): Promise<T> {
 }
 
 function isTransientLaunchMetadataError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("Timed out waiting for svvy bridge metadata");
+  return (
+    error instanceof Error && error.message.includes("Timed out waiting for svvy bridge metadata")
+  );
 }
 
 function getPreparedHomeSnapshotDir(homeDir: string): string {

@@ -187,9 +187,8 @@ function insertSmithersAttemptByResume(input: {
   const db = new Database(join(runtimeRoot, "smithers.db"));
   try {
     ensureSmithersTables(db as any);
-    db
-      .query(
-        `INSERT OR REPLACE INTO _smithers_attempts (
+    db.query(
+      `INSERT OR REPLACE INTO _smithers_attempts (
            run_id,
            node_id,
            iteration,
@@ -206,33 +205,32 @@ function insertSmithersAttemptByResume(input: {
            cached,
            meta_json
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        input.runId,
-        input.nodeId,
-        input.iteration,
-        input.attempt,
-        "in-progress",
-        Date.now(),
-        null,
-        Date.now(),
-        JSON.stringify({
-          agentResume: input.agentResume,
-          agentEngine: "pi",
-        }),
-        null,
-        null,
-        null,
-        input.rootDir,
-        0,
-        JSON.stringify({
-          agentResume: input.agentResume,
-          agentEngine: "pi",
-          agentId: "svvy-workflow-task-agent",
-          agentModel: "gpt-5.4",
-          label: input.nodeId,
-        }),
-      );
+    ).run(
+      input.runId,
+      input.nodeId,
+      input.iteration,
+      input.attempt,
+      "in-progress",
+      Date.now(),
+      null,
+      Date.now(),
+      JSON.stringify({
+        agentResume: input.agentResume,
+        agentEngine: "pi",
+      }),
+      null,
+      null,
+      null,
+      input.rootDir,
+      0,
+      JSON.stringify({
+        agentResume: input.agentResume,
+        agentEngine: "pi",
+        agentId: "svvy-workflow-task-agent",
+        agentModel: "gpt-5.4",
+        label: input.nodeId,
+      }),
+    );
   } finally {
     db.close();
   }
@@ -371,8 +369,12 @@ describe("workflow task agent", () => {
 
     const [createAgentSessionOptions] = createAgentSessionSpy.mock.calls[0] ?? [];
     expect(createAgentSessionOptions?.cwd).toBe(fixture.taskRoot);
-    expect(readFileSync(join(fixture.taskRoot, "task-root-output.txt"), "utf8")).toBe("task-root-ok");
-    expect(() => readFileSync(join(fixture.workspaceRoot, "task-root-output.txt"), "utf8")).toThrow();
+    expect(readFileSync(join(fixture.taskRoot, "task-root-output.txt"), "utf8")).toBe(
+      "task-root-ok",
+    );
+    expect(() =>
+      readFileSync(join(fixture.workspaceRoot, "task-root-output.txt"), "utf8"),
+    ).toThrow();
 
     const snapshot = fixture.store.getSessionState("session-workflow-task-agent");
     expect(snapshot.workflowTaskAttempts).toHaveLength(1);
@@ -479,15 +481,18 @@ describe("workflow task agent", () => {
     const openSpy = spyOn(PiCodingAgent.SessionManager, "open");
     const createSpy = spyOn(PiCodingAgent.SessionManager, "create");
 
-    listSpy.mockImplementation(async () => [
-      {
-        id: "resume-prefix-1234",
-        path: join(fixture.root, "task-session.jsonl"),
-        cwd: fixture.taskRoot,
-        modifiedAt: Date.now(),
-        title: "Task Session",
-      },
-    ] as any);
+    listSpy.mockImplementation(
+      async () =>
+        [
+          {
+            id: "resume-prefix-1234",
+            path: join(fixture.root, "task-session.jsonl"),
+            cwd: fixture.taskRoot,
+            modifiedAt: Date.now(),
+            title: "Task Session",
+          },
+        ] as any,
+    );
     openSpy.mockImplementation(() => PiCodingAgent.SessionManager.inMemory(fixture.taskRoot));
     createSpy.mockImplementation(() => PiCodingAgent.SessionManager.inMemory(fixture.taskRoot));
     createAgentSessionSpy.mockImplementation(async () => {
@@ -637,17 +642,13 @@ describe("workflow task agent", () => {
               content: "Fix the schema",
               timestamp: 3,
             } as any,
-            ],
-          }),
+          ],
+        }),
     )) as any;
 
     expect(openSpy).not.toHaveBeenCalled();
     expect(receivedMessages).toHaveLength(3);
-    expect(receivedMessages.map((message) => message.role)).toEqual([
-      "user",
-      "assistant",
-      "user",
-    ]);
+    expect(receivedMessages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
     expect(result.response.messages.map((message: any) => message.role)).toEqual([
       "toolResult",
       "assistant",
