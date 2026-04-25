@@ -122,7 +122,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
   {
     id: "workspace-navigation-core-projection",
     name: "Workspace Navigation And Core Projection",
-    status: "in-progress",
+    status: "shipped",
     summary:
       "Keeps the workspace shell navigable with pinned active sessions, a single collapsed-by-default Archived group for non-destructive session hiding, compact thread and workflow-run artifact blocks backed by durable artifact records, compact latest Project CI projection near the focused surface or relevant handler thread, and restart restoration for stable pane bindings, focus, and inspector selections while deliberately excluding scroll, transient UI, composer drafts, transcript selections, and stale live stream state.",
     sourceSpecs: [

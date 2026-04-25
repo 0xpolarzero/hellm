@@ -139,12 +139,12 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 Current product decisions for this section are specified in `docs/specs/workspace-navigation-core-projection.spec.md`.
 
 - [x] Drive the session sidebar entirely from durable workspace session summaries. Commit(s): `9a21f87`, `b0ee858`
-- [ ] Define the stored shape for pinned and archived sessions, including the default collapsed state for the single Archived group.
-- [ ] Persist pinned and archived session state.
-- [ ] Render pinned sessions at the top of the active session list.
-- [ ] Render archived sessions inside one Archived group in the session sidebar.
-- [ ] Persist the Archived group collapsed state per workspace.
-- [ ] Add session row actions for pin, unpin, archive, and unarchive.
+- [x] Define the stored shape for pinned and archived sessions, including the default collapsed state for the single Archived group. Commit(s): `3855fe4`
+- [x] Persist pinned and archived session state. Commit(s): `3855fe4`
+- [x] Render pinned sessions at the top of the active session list. Commit(s): `3855fe4`
+- [x] Render archived sessions inside one Archived group in the session sidebar. Commit(s): `3855fe4`
+- [x] Persist the Archived group collapsed state per workspace. Commit(s): `3855fe4`
+- [x] Add session row actions for pin, unpin, archive, and unarchive. Commit(s): `3855fe4`
 - [x] Join session summaries, focused pane, and pane-to-surface bindings in one workspace-shell read model without depending on a global active surface. Commit(s): `9a21f87`, `b0ee858`
 - [x] Split workspace-summary updates from live surface transcript updates in the renderer runtime. Commit(s): `9a21f87`, `b0ee858`
 - [x] Manage open live surfaces in a shared registry keyed by `surfacePiSessionId`. Commit(s): `9a21f87`, `b0ee858`
@@ -152,9 +152,9 @@ Current product decisions for this section are specified in `docs/specs/workspac
 - [x] Render handler-thread lists from structured thread data in the workspace shell and focused pane. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
 - [x] Show thread objective, status, latest workflow-run summary, and blocked reason in pane-local thread views. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
 - [x] Render the latest handoff episode for an inspected thread while preserving earlier handoff points in thread history. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
-- [ ] Render thread- and workflow-run-linked artifacts before relying on transcript reconstruction.
-- [ ] Render the latest Project CI summary block for the focused surface or inspected thread.
-- [ ] Restore focused pane, pane-to-surface bindings, and inspector selection after restart.
+- [x] Render thread- and workflow-run-linked artifacts before relying on transcript reconstruction. Commit(s): `3855fe4`
+- [x] Render the latest Project CI summary block for the focused surface or inspected thread. Commit(s): `3855fe4`
+- [x] Restore focused pane, pane-to-surface bindings, and inspector selection after restart. Commit(s): `3855fe4`
 
 ## 9. Pane Layout, Surface Ownership, And Expanded Surfaces
 
