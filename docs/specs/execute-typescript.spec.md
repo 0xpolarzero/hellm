@@ -142,7 +142,7 @@ That means:
 - workspace reads and writes should go through `api.repo.*`
 - git work should go through `api.git.*`
 - process execution should go through `api.exec.run`
-- artifact creation should go through `api.artifact.*`
+- durable byproduct and evidence artifact creation should go through `api.artifact.*`
 - web access should go through `api.web.*`
 
 Pure TypeScript inside the snippet remains available for local computation.
@@ -232,8 +232,10 @@ const matches = await api.repo.grep({
 
 const status = await api.git.status({});
 
+// Use artifacts only for durable byproducts or evidence that should not be a
+// normal repository file and is too useful to leave only in logs/transcript.
 await api.artifact.writeText({
-  name: "summary.md",
+  name: "repo-inspection-evidence.json",
   text: JSON.stringify({ docs, matches, status }, null, 2),
 });
 
@@ -591,8 +593,8 @@ Compile and typecheck failures must:
 The runtime may retain additional artifacts for:
 
 - large stdout or stderr payloads
-- generated summaries
-- exported reports
+- generated summaries that are evidence of work rather than requested repository files
+- exported reports that are too large or structured for transcript text
 - durable logs
 - retained fetched or derived outputs
 
@@ -600,6 +602,14 @@ The rule is:
 
 - normalized facts stay on the child command
 - durable large payloads go to artifacts
+
+Artifacts are not a second place to write normal workspace files.
+
+Use `api.repo.writeFile(...)` or `api.repo.writeJson(...)` when the user asked to create or edit a file in the repository, including source files, tests, docs, configuration, and product assets.
+
+Use the transcript or command summary when the output is small enough to read inline and does not need a durable file handle.
+
+Use `api.artifact.writeText(...)`, `api.artifact.writeJson(...)`, or `api.artifact.attachFile(...)` only when the content is a durable byproduct or evidence of execution that should remain inspectable later but should not normally be committed as repository state. Examples include retained logs, large command output, screenshots, generated audit or benchmark evidence, workflow exports, and CI check evidence.
 
 ## Agent-Facing Guidance
 
@@ -610,7 +620,8 @@ The prompt and type-exposure layer should make these rules explicit:
 3. use pure TypeScript for local data shaping between `api.*` calls
 4. use Smithers-native tools for workflow runs, configured Project CI entries, and waiting-related workflow supervision
 5. use top-level handler tools such as `request_context` when optional handler context is needed; do not try to load prompt context from inside `execute_typescript`
-6. write an artifact when a large payload or durable output matters beyond immediate execution
+6. write repository files with `api.repo.*` when they are part of the user's requested workspace change
+7. write an artifact only when a durable byproduct, large payload, log, report, screenshot, or execution evidence matters beyond immediate execution and should not normally be placed in the repository
 
 The runtime should expose generated TypeScript declarations or equivalent JSDoc for the injected `api` object so the model can discover the real surface instead of guessing.
 

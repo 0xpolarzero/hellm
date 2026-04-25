@@ -136,15 +136,15 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 
 ## 8. Workspace Navigation, Live Surfaces, And Core Projection
 
+Current product decisions for this section are specified in `docs/specs/workspace-navigation-core-projection.spec.md`.
+
 - [x] Drive the session sidebar entirely from durable workspace session summaries. Commit(s): `9a21f87`, `b0ee858`
-- [ ] Define the stored shape for flat folder labels on sessions.
-- [ ] Persist session folder membership.
-- [ ] Render flat folder groupings in the session sidebar.
-- [ ] Define the workspace read model for saved workflow assets and artifact workflows.
-- [x] Render a save shortcut in relevant thread or workflow surfaces that sends a predefined save request prompt to the handler. Commit(s): `0b2d1ff`
-- [ ] Render a saved workflow library tab in the workspace shell with separate definitions, prompts, components, and entries groupings.
-- [ ] Show saved asset title, summary, kind, and path in the saved workflow library tab, with source inspection for component details and grouped asset refs for entries.
-- [ ] Allow deleting a saved workflow definition, prompt, component, or entry from the library without deleting historical artifact workflows that previously used it.
+- [ ] Define the stored shape for pinned and archived sessions, including the default collapsed state for the single Archived group.
+- [ ] Persist pinned and archived session state.
+- [ ] Render pinned sessions at the top of the active session list.
+- [ ] Render archived sessions inside one Archived group in the session sidebar.
+- [ ] Persist the Archived group collapsed state per workspace.
+- [ ] Add session row actions for pin, unpin, archive, and unarchive.
 - [x] Join session summaries, focused pane, and pane-to-surface bindings in one workspace-shell read model without depending on a global active surface. Commit(s): `9a21f87`, `b0ee858`
 - [x] Split workspace-summary updates from live surface transcript updates in the renderer runtime. Commit(s): `9a21f87`, `b0ee858`
 - [x] Manage open live surfaces in a shared registry keyed by `surfacePiSessionId`. Commit(s): `9a21f87`, `b0ee858`
@@ -272,3 +272,14 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Build a POC compact bottom-edge context indicator for collapsed delegated-work surfaces.
 - [ ] Render bottom-edge context indicators on collapsed handler-thread and workflow surfaces.
 - [ ] Render full-width context bars on expanded handler-thread panes.
+
+## 19. Saved Workflow Library Surface
+
+This UI depends on later file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces. Keep it out of the core workspace navigation section until those primitives are ready.
+
+- [x] Render a save shortcut in relevant thread or workflow surfaces that sends a predefined save request prompt to the handler. Commit(s): `0b2d1ff`
+- [ ] Define the saved workflow library surface after the file tree, editor, syntax highlighting, typecheck, and diagnostics surfaces are designed.
+- [ ] Define the workspace read model for saved workflow assets and artifact workflows.
+- [ ] Render a saved workflow library surface with separate definitions, prompts, components, entries, and artifact workflow groupings.
+- [ ] Show saved asset title, summary, kind, path, source, typecheck status, and diagnostics in the saved workflow library surface.
+- [ ] Allow deleting a saved workflow definition, prompt, component, or entry from the library without deleting historical artifact workflows that previously used it.

@@ -98,6 +98,9 @@ export interface SvvyCommandResult {
 
 /**
  * Metadata for an artifact written through `api.artifact.*`.
+ *
+ * Artifacts are durable byproducts or evidence files stored under svvy's
+ * artifact area. They are not normal repository source files.
  */
 export interface ArtifactWriteResult {
   artifactId: string;
@@ -394,6 +397,19 @@ export interface SvvyApi {
 
   /**
    * Durable artifact creation helpers.
+   *
+   * Use artifacts for byproducts and evidence that should remain inspectable
+   * but should not normally be placed in the repository: retained logs, large
+   * command output, screenshots, generated audit or benchmark evidence,
+   * workflow exports, and CI check evidence.
+   *
+   * Do not use artifacts for normal workspace deliverables. If the user asked
+   * you to create or edit source files, tests, docs, configuration, or product
+   * assets, use `api.repo.writeFile(...)` or `api.repo.writeJson(...)`.
+   *
+   * If the output is small and only needs to be read in the conversation, keep
+   * it in the returned result or assistant response instead of writing an
+   * artifact.
    */
   artifact: {
     /**
@@ -407,7 +423,10 @@ export interface SvvyApi {
     writeJson<T>(input: { name: string; value: T; pretty?: boolean }): Promise<ArtifactWriteResult>;
 
     /**
-     * Attach an existing workspace file as an artifact.
+     * Attach an existing generated workspace file as artifact evidence.
+     *
+     * Use this when a command produced a file that should be retained for
+     * inspection without treating that file as a normal workspace deliverable.
      */
     attachFile(input: { path: string; name?: string }): Promise<ArtifactWriteResult>;
   };

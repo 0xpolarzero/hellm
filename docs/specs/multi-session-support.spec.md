@@ -9,6 +9,7 @@
   - define the separation between workspace state, live surface state, and pane layout state
   - define the runtime contracts needed for multi-surface open, close, targeting, and rehydration
   - define the pane-to-surface model that later split-pane UI builds on
+  - defer detailed session pin/archive, artifact block, compact CI projection, and restore exclusions to `docs/specs/workspace-navigation-core-projection.spec.md`
 
 ## Purpose
 
@@ -37,6 +38,7 @@ This spec defines the adopted steady-state architecture for that behavior.
 - Close a surface by releasing its final owner and disposing its live runtime cleanly.
 - Route workflow attention to the owning handler surface, never to whichever pane is focused.
 - Emit workspace-level updates independently from surface-level transcript and runtime updates.
+- Keep the session sidebar to active sessions, pinned active sessions, and one Archived group; arbitrary user-created session folders are out of scope.
 
 ## State Layers
 
@@ -285,6 +287,14 @@ Rules:
 ## Sidebar And Pane Semantics
 
 The left sidebar is workspace navigation, not runtime identity.
+
+It is also not a general folder manager.
+
+The adopted sidebar grouping is:
+
+- pinned active sessions first
+- remaining active sessions by recency
+- one collapsed-by-default Archived group
 
 Selecting a session from the sidebar should:
 

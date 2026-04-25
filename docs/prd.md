@@ -37,6 +37,7 @@ The intended feel is closer to Slate than to stock pi:
 The shipped product must let a user:
 
 - open a local repository in a native desktop app and work in long-lived coding sessions
+- keep important sessions visible through pinning and move old sessions into a single collapsed archive without deleting their history
 - understand what the system is doing without reconstructing state from raw logs
 - inspect durable outputs from each meaningful unit of work
 - delegate bounded work while keeping top-level strategy and state visible
@@ -487,6 +488,16 @@ The session container is durable workspace state.
 
 It is not the live runtime slot for whichever surface happens to be open in the UI.
 
+Session navigation metadata is part of durable workspace state.
+
+The adopted navigation model is deliberately small:
+
+- pinned active sessions appear at the top of the session list
+- archived sessions move into one Archived group
+- the Archived group is the only folder-like grouping and is collapsed by default
+- arbitrary user-created session folders are not part of the product model
+- archiving hides a session from the active list without deleting pi session data, structured state, artifacts, threads, workflow runs, or episodes
+
 ### Surface Identity
 
 The product carries four different identifiers and they are not interchangeable:
@@ -623,7 +634,7 @@ Writes under `.svvy/workflows/` automatically surface saved-workflow validation 
 The UI should expose:
 
 - a save shortcut that sends a predefined save request prompt to the handler thread
-- a saved workflow library tab where the user can inspect and delete saved definitions, prompts, components, and entries
+- a later saved workflow library surface where the user can inspect and delete saved definitions, prompts, components, and entries after the file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces exist
 
 Handler-thread instructions should treat saving as explicit reuse curation:
 
@@ -662,17 +673,27 @@ They remain inspectable through durable links and thread history.
 
 ### Artifact
 
-Artifacts are durable outputs produced by commands, workflow runs, and related execution.
+Artifacts are durable byproducts or evidence files produced by commands, workflow runs, and related execution.
+
+They live under the `svvy` artifact area rather than as normal project source. They are for outputs that should remain inspectable but should not normally be committed into the user's repository tree as product code, source docs, configuration, tests, or assets.
 
 Examples:
 
 - diffs
 - logs
-- test reports
+- retained test output, JUnit XML, coverage summaries, or other test-run evidence when the output is worth preserving beyond a compact command summary
 - submitted `execute_typescript` source snippets, including failed attempts
 - screenshots
-- generated files
+- generated audit, benchmark, inspection, or workflow reports that are evidence of agent work rather than requested repository files
 - exported workflow details
+
+A normal repository file edited by the agent is not automatically an artifact.
+
+If the user asks for a file to be created in the repository, that file is workspace state, not an artifact. If the information is small enough to answer in prose, it belongs in the transcript or command summary, not in an artifact file.
+
+Agents should create artifacts only for durable byproducts, evidence, previews, logs, reports, screenshots, or large payloads that need later inspection and should not normally be placed in the repository.
+
+Artifact projection should show durable work outputs linked to threads, workflow runs, commands, and CI checks before relying on transcript reconstruction.
 
 Artifacts are thread- and command-addressable first.
 
@@ -691,6 +712,7 @@ In practice that means:
 - the runtime records CI state only from the terminal output of a declared CI entry after that output validates against the entry's `resultSchema`
 - CI run and CI check result records summarize build, test, lint, typecheck, integration, docs, manual, or repository-specific checks when the configured CI entry returns them
 - the UI exposes a dedicated Project CI status surface or panel for not-configured, configured, running, passed, failed, blocked, and cancelled states
+- the workspace shell exposes a compact latest Project CI summary near the focused surface or session status, and inspected handler threads show CI detail only when that thread launched, configured, modified, or otherwise owns the relevant CI run
 
 Project CI deliberately avoids heuristic inference.
 
@@ -824,6 +846,22 @@ If a workflow run dies before its own planned finalization path, the bridge must
 
 ## UI And Surface Model
 
+### Session Navigation
+
+The session sidebar is workspace navigation, not a general folder manager.
+
+It should show:
+
+- pinned active sessions first
+- remaining active sessions by recency
+- one Archived group for archived sessions
+
+The Archived group is collapsed by default, and its collapsed state is persisted per workspace.
+
+Archiving is reversible and non-destructive. It must not delete durable session, thread, workflow-run, episode, artifact, or transcript data.
+
+### Surface Projection
+
 `svvy` uses a multi-pane desktop layout where:
 
 - the main orchestrator surface can be opened in a pane
@@ -861,6 +899,16 @@ Pane and surface semantics are:
 - more than one pane may attach to the same surface
 - duplicated panes share one underlying live surface state but may keep independent scroll position
 - background workflow attention always targets the owning handler surface, not the currently focused pane
+
+On restart, the workspace shell should restore useful stable UI state:
+
+- pinned and archived session state
+- Archived group collapsed state
+- open panes and pane-to-surface bindings
+- focused pane
+- selected inspector target per pane when the target still exists
+
+It should not restore scroll position, transient menus or popovers, unsaved inline edits, composer draft text, selected transcript text, temporary search highlights, or stale live stream and tool-running state.
 
 ## Workflow Inspection
 

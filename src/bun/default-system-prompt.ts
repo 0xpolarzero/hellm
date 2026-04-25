@@ -32,6 +32,7 @@ function buildActorInstructions(actor: SvvyActorProfile): string[] {
     "Everything you do is a tool call inside one shared execution model.",
     "Threads, commands, Project CI, workflows, wait state, and handoff episodes come from real tool execution rather than assistant prose.",
     "Use execute_typescript for ordinary generic work.",
+    "Create artifacts only for durable byproducts or evidence that should remain inspectable but should not normally be placed in the repository; use repo writes for requested workspace files and prose for small answers.",
   ];
 
   switch (actor) {

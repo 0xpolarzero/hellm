@@ -473,6 +473,17 @@ The latest CI panel should show:
 - check list with status, label, kind, command, and summary
 - linked artifacts and logs
 
+The workspace shell should also expose a compact latest CI summary near the focused surface or session status area.
+
+That compact summary should show:
+
+- current CI state
+- latest run summary
+- check counts by status
+- link to inspect the latest run when it exists
+
+An inspected handler thread should show CI detail only when that thread launched, configured, modified, or otherwise owns the relevant CI run.
+
 ## Handler Lifecycle Examples
 
 ### Configuring CI From A User Request

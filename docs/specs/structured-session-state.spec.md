@@ -133,6 +133,8 @@ type StructuredSessionState = {
   session: {
     id: string;
     orchestratorPiSessionId: string;
+    pinnedAt: string | null;
+    archivedAt: string | null;
     wait: null | {
       owner: { kind: "orchestrator" } | { kind: "thread"; threadId: string };
       kind: "user" | "external";
@@ -485,11 +487,32 @@ They are recorded only from terminal output of a runnable entry that declares `p
 
 ### Artifact
 
-Artifacts exist because generated outputs, logs, submitted `execute_typescript` snippets, workflow exports, and related files need stable file-backed durable handles.
+Artifacts exist because execution byproducts, evidence, logs, submitted `execute_typescript` snippets, workflow exports, and related files sometimes need stable file-backed durable handles outside the normal repository tree.
 
 Artifacts are thread- and command-addressable first.
 
 They should not depend on episode attachments to exist.
+
+A normal repository file edited by the agent is workspace state, not automatically an artifact.
+
+If a file is part of the repository state the user asked to change, it should be represented as a normal workspace file write. If the content is small enough to answer directly, it should remain transcript text or command summary text. Artifact records are for durable byproducts and evidence that should remain inspectable but should not normally become repository files.
+
+### Session Navigation Metadata
+
+Session navigation metadata exists so the workspace sidebar can stay useful without turning into a general folder system.
+
+The adopted session navigation fields are:
+
+| Field        | Why it exists                                                                 |
+| ------------ | ----------------------------------------------------------------------------- |
+| `pinnedAt`   | Places an active session at the top of the session sidebar.                   |
+| `archivedAt` | Moves a session into the single Archived group without deleting its history.  |
+
+Archiving a session should clear `pinnedAt`.
+
+Unarchiving a session should clear `archivedAt` and leave the session unpinned.
+
+The Archived group collapsed state is workspace UI state, not per-session state.
 
 ### Event
 
@@ -921,6 +944,10 @@ Selectors should derive workspace-shell and sidebar data from those facts.
 The adopted session summary selector should return:
 
 - `title`
+- `isPinned`
+- `pinnedAt`
+- `isArchived`
+- `archivedAt`
 - `sessionStatus`
 - `wait`
 - `counts`
@@ -943,6 +970,8 @@ No other input participates in session status:
 - not transcript stop reasons
 - not transcript JSONL scans
 - not renderer-side overlays or repair state
+
+Pinned and archived state controls sidebar grouping and ordering. It must not change session lifecycle status.
 
 A currently open surface may still render live transcript streaming locally, but that does not create a second session-summary status source.
 

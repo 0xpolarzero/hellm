@@ -120,6 +120,20 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     sourceSpecs: ["docs/specs/prompt-history.spec.md"],
   },
   {
+    id: "workspace-navigation-core-projection",
+    name: "Workspace Navigation And Core Projection",
+    status: "in-progress",
+    summary:
+      "Keeps the workspace shell navigable with pinned active sessions, a single collapsed-by-default Archived group for non-destructive session hiding, compact thread and workflow-run artifact blocks backed by durable artifact records, compact latest Project CI projection near the focused surface or relevant handler thread, and restart restoration for stable pane bindings, focus, and inspector selections while deliberately excluding scroll, transient UI, composer drafts, transcript selections, and stale live stream state.",
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/workspace-navigation-core-projection.spec.md",
+      "docs/specs/multi-session-support.spec.md",
+      "docs/specs/structured-session-state.spec.md",
+      "docs/specs/project-ci.spec.md",
+    ],
+  },
+  {
     id: "multi-session-support",
     name: "Multi-Session Workspace Navigation",
     status: "shipped",
@@ -137,6 +151,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
       "docs/prd.md",
       "docs/specs/multi-session-support.spec.md",
       "docs/specs/structured-session-state.spec.md",
+      "docs/specs/workspace-navigation-core-projection.spec.md",
     ],
   },
   {
@@ -181,6 +196,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
       "docs/specs/project-ci.spec.md",
       "docs/specs/handler-context-packs.spec.md",
       "docs/specs/structured-session-state.spec.md",
+      "docs/specs/workspace-navigation-core-projection.spec.md",
       "docs/specs/workflow-library.spec.md",
       "docs/specs/workflow-supervision.spec.md",
     ],
@@ -206,8 +222,11 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Metadata-First Session Read Models",
     status: "in-progress",
     summary:
-      "Derives idle, running, waiting, and error session status, counts, ordered thread ids, pending attention, and compact summary data from structured wait, handler-attention state, workflow-run state, and artifact metadata for workspace navigation and restart recovery without transcript replay, transcript-file heuristics, or any global active-surface overlay.",
-    sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
+      "Derives idle, running, waiting, and error session status, pinned and archived navigation fields, counts, ordered thread ids, pending attention, and compact summary data from structured wait, handler-attention state, workflow-run state, and artifact metadata for workspace navigation and restart recovery without transcript replay, transcript-file heuristics, or any global active-surface overlay.",
+    sourceSpecs: [
+      "docs/specs/structured-session-state.spec.md",
+      "docs/specs/workspace-navigation-core-projection.spec.md",
+    ],
   },
   {
     id: "workflow-inspector",
