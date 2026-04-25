@@ -333,6 +333,8 @@ export interface StructuredSessionSnapshot {
   session: {
     id: string;
     orchestratorPiSessionId: string;
+    pinnedAt: string | null;
+    archivedAt: string | null;
     wait: StructuredSessionWaitState | null;
   };
   turns: StructuredTurnRecord[];
@@ -347,6 +349,11 @@ export interface StructuredSessionSnapshot {
   workflowTaskMessages: StructuredWorkflowTaskMessageRecord[];
   artifacts: StructuredArtifactRecord[];
   events: StructuredLifecycleEventRecord[];
+}
+
+export interface StructuredWorkspaceSidebarState {
+  archivedGroupCollapsed: boolean;
+  updatedAt: string;
 }
 
 export interface StructuredThreadDetail {
@@ -417,6 +424,10 @@ export interface StructuredSessionStateStore {
     resumeWhen: string;
   }): StructuredSessionWaitState;
   clearSessionWait(input: { sessionId: string }): void;
+  setSessionPinned(input: { sessionId: string; pinned: boolean }): void;
+  setSessionArchived(input: { sessionId: string; archived: boolean }): void;
+  getWorkspaceSidebarState(): StructuredWorkspaceSidebarState;
+  setArchivedGroupCollapsed(input: { collapsed: boolean }): StructuredWorkspaceSidebarState;
   recordLifecycleEvent(input: {
     sessionId: string;
     kind: string;
@@ -581,12 +592,20 @@ type SessionRow = {
   created_at: string;
   updated_at: string;
   orchestrator_pi_session_id: string;
+  pinned_at: string | null;
+  archived_at: string | null;
   wait_owner_kind: "orchestrator" | "thread" | null;
   wait_thread_id: string | null;
   wait_kind: StructuredWaitKind | null;
   wait_reason: string | null;
   wait_resume_when: string | null;
   wait_since: string | null;
+};
+
+type WorkspaceSidebarStateRow = {
+  id: number;
+  archived_group_collapsed: number;
+  updated_at: string;
 };
 
 type TurnRow = {
@@ -876,13 +895,15 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            created_at,
            updated_at,
            orchestrator_pi_session_id,
+           pinned_at,
+           archived_at,
            wait_owner_kind,
            wait_thread_id,
            wait_kind,
            wait_reason,
            wait_resume_when,
            wait_since
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         pi.sessionId,
@@ -895,6 +916,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         existing?.created_at ?? pi.createdAt,
         pi.updatedAt,
         existing?.orchestrator_pi_session_id ?? pi.sessionId,
+        existing?.pinned_at ?? null,
+        existing?.archived_at ?? null,
         existing?.wait_owner_kind ?? null,
         existing?.wait_thread_id ?? null,
         existing?.wait_kind ?? null,
@@ -1326,6 +1349,88 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       subjectId: input.sessionId,
       at: timestamp,
     });
+  }
+
+  setSessionPinned(input: { sessionId: string; pinned: boolean }): void {
+    this.ensureSessionRow(input.sessionId);
+    const timestamp = this.now();
+    this.db
+      .query(
+        `UPDATE session
+         SET pinned_at = ?,
+             archived_at = NULL,
+             updated_at = ?
+         WHERE session_id = ?`,
+      )
+      .run(input.pinned ? timestamp : null, timestamp, input.sessionId);
+
+    this.recordEvent({
+      sessionId: input.sessionId,
+      kind: "session.navigation.updated",
+      subjectKind: "session",
+      subjectId: input.sessionId,
+      at: timestamp,
+      data: {
+        pinned: input.pinned,
+        archived: false,
+      },
+    });
+  }
+
+  setSessionArchived(input: { sessionId: string; archived: boolean }): void {
+    this.ensureSessionRow(input.sessionId);
+    const timestamp = this.now();
+    this.db
+      .query(
+        `UPDATE session
+         SET archived_at = ?,
+             pinned_at = NULL,
+             updated_at = ?
+         WHERE session_id = ?`,
+      )
+      .run(input.archived ? timestamp : null, timestamp, input.sessionId);
+
+    this.recordEvent({
+      sessionId: input.sessionId,
+      kind: "session.navigation.updated",
+      subjectKind: "session",
+      subjectId: input.sessionId,
+      at: timestamp,
+      data: {
+        pinned: false,
+        archived: input.archived,
+      },
+    });
+  }
+
+  getWorkspaceSidebarState(): StructuredWorkspaceSidebarState {
+    const row = this.getWorkspaceSidebarStateRow();
+    if (!row) {
+      return {
+        archivedGroupCollapsed: true,
+        updatedAt: new Date(0).toISOString(),
+      };
+    }
+
+    return this.mapWorkspaceSidebarState(row);
+  }
+
+  setArchivedGroupCollapsed(input: { collapsed: boolean }): StructuredWorkspaceSidebarState {
+    const timestamp = this.now();
+    this.db
+      .query(
+        `INSERT INTO workspace_sidebar_state (
+           id,
+           archived_group_collapsed,
+           updated_at
+         ) VALUES (1, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           archived_group_collapsed = excluded.archived_group_collapsed,
+           updated_at = excluded.updated_at`,
+      )
+      .run(input.collapsed ? 1 : 0, timestamp);
+
+    return this.getWorkspaceSidebarState();
   }
 
   recordLifecycleEvent(input: {
@@ -2242,6 +2347,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       session: {
         id: session.session_id,
         orchestratorPiSessionId: session.orchestrator_pi_session_id,
+        pinnedAt: session.pinned_at,
+        archivedAt: session.archived_at,
         wait: this.mapSessionWait(session),
       },
       turns: this.queryTurnRecords(sessionId),
@@ -2320,13 +2427,15 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            created_at,
            updated_at,
            orchestrator_pi_session_id,
+           pinned_at,
+           archived_at,
            wait_owner_kind,
            wait_thread_id,
            wait_kind,
            wait_reason,
            wait_resume_when,
            wait_since
-         ) VALUES (?, ?, NULL, NULL, NULL, 0, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)`,
+         ) VALUES (?, ?, NULL, NULL, NULL, 0, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
       )
       .run(sessionId, sessionId, "idle", timestamp, timestamp, sessionId);
     return this.mustFindSessionRow(sessionId);
@@ -2336,6 +2445,14 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.db.query(`SELECT * FROM session WHERE session_id = ?`).get(sessionId) as
       | SessionRow
       | undefined;
+  }
+
+  private getWorkspaceSidebarStateRow(): WorkspaceSidebarStateRow | null {
+    return (
+      (this.db.query(`SELECT * FROM workspace_sidebar_state WHERE id = 1`).get() as
+        | WorkspaceSidebarStateRow
+        | undefined) ?? null
+    );
   }
 
   private mustFindSessionRow(sessionId: string): SessionRow {
@@ -2879,6 +2996,15 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     };
   }
 
+  private mapWorkspaceSidebarState(
+    row: WorkspaceSidebarStateRow,
+  ): StructuredWorkspaceSidebarState {
+    return {
+      archivedGroupCollapsed: Boolean(row.archived_group_collapsed),
+      updatedAt: row.updated_at,
+    };
+  }
+
   private mapTurn(row: TurnRow): StructuredTurnRecord {
     return {
       id: row.id,
@@ -3156,12 +3282,20 @@ function initializeSchema(db: Database): void {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       orchestrator_pi_session_id TEXT NOT NULL,
+      pinned_at TEXT,
+      archived_at TEXT,
       wait_owner_kind TEXT,
       wait_thread_id TEXT,
       wait_kind TEXT,
       wait_reason TEXT,
       wait_resume_when TEXT,
       wait_since TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_sidebar_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      archived_group_collapsed INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS turn (
@@ -3373,6 +3507,16 @@ function initializeSchema(db: Database): void {
       data_json TEXT
     );
   `);
+  ensureColumn(db, "session", "pinned_at", "TEXT");
+  ensureColumn(db, "session", "archived_at", "TEXT");
+}
+
+function ensureColumn(db: Database, tableName: string, columnName: string, definition: string): void {
+  const columns = db.query(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === columnName)) {
+    return;
+  }
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
 }
 
 function createId(prefix: string): string {

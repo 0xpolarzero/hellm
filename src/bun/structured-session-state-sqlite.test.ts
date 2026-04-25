@@ -75,6 +75,31 @@ describe("structured session state SQLite persistence", () => {
     store.close();
   }
 
+  it("persists session navigation metadata and sidebar collapse state across restart", () => {
+    const first = createSqliteStore();
+    seedSession(first.store, {
+      sessionId: "session-navigation",
+      title: "Navigation session",
+    });
+    first.store.setSessionPinned({ sessionId: "session-navigation", pinned: true });
+    first.store.setSessionArchived({ sessionId: "session-navigation", archived: true });
+    first.store.setArchivedGroupCollapsed({ collapsed: false });
+    closeTrackedStore(first.store);
+
+    const second = createSqliteStore({
+      databasePath: first.databasePath,
+      nowStart: "2026-04-18T12:05:00.000Z",
+    });
+    const snapshot = second.store.getSessionState("session-navigation");
+    expect(snapshot.session.pinnedAt).toBeNull();
+    expect(snapshot.session.archivedAt).toBe("2026-04-18T12:00:01.000Z");
+    expect(snapshot.pi.title).toBe("Navigation session");
+    expect(second.store.getWorkspaceSidebarState()).toEqual({
+      archivedGroupCollapsed: false,
+      updatedAt: "2026-04-18T12:00:02.000Z",
+    });
+  });
+
   it("persists handler-thread state with many workflow runs and one terminal episode across restart", () => {
     const first = createSqliteStore();
     seedSession(first.store, {

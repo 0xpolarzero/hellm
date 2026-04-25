@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import type {
   StructuredArtifactRecord,
   StructuredCommandRecord,
@@ -41,6 +42,11 @@ export interface StructuredCommandArtifactLink {
   name: string;
   path?: string;
   createdAt: string;
+  sourceCommandId?: string;
+  workflowRunId?: string;
+  workflowName?: string;
+  producerLabel?: string;
+  missingFile?: boolean;
 }
 
 export interface StructuredCommandInspectorChild extends StructuredCommandRollupChild {
@@ -81,6 +87,7 @@ export interface StructuredHandlerThreadWorkflowSummary {
   status: StructuredWorkflowRunRecord["status"];
   summary: string;
   updatedAt: string;
+  artifacts: StructuredCommandArtifactLink[];
 }
 
 export interface StructuredProjectCiRunSummary {
@@ -128,6 +135,7 @@ export interface StructuredProjectCiCheckSummary {
   exitCode: number | null;
   summary: string;
   artifactIds: string[];
+  artifacts: StructuredCommandArtifactLink[];
   startedAt: string | null;
   finishedAt: string | null;
   updatedAt: string;
@@ -149,6 +157,9 @@ export interface StructuredProjectCiStatusPanel {
   activeWorkflowRun: StructuredProjectCiActiveWorkflowSummary | null;
   latestRun: StructuredProjectCiRunDetail | null;
   checks: StructuredProjectCiCheckSummary[];
+  checkCounts: Record<StructuredSessionSnapshot["ciCheckResults"][number]["status"], number> & {
+    total: number;
+  };
   updatedAt: string | null;
 }
 
@@ -271,6 +282,10 @@ export interface StructuredSessionSummaryProjection {
   status: StructuredSessionStatus;
   preview: string;
   updatedAt: string;
+  isPinned: boolean;
+  pinnedAt: string | null;
+  isArchived: boolean;
+  archivedAt: string | null;
   counts: StructuredSessionView["counts"];
   wait: StructuredSessionSnapshot["session"]["wait"];
   threadIds: StructuredSessionView["threadIds"];
@@ -384,41 +399,114 @@ function buildCommandRollupChild(command: StructuredCommandRecord): StructuredCo
   };
 }
 
+function getArtifactProducer(
+  session: StructuredSessionSnapshot,
+  artifact: StructuredArtifactRecord,
+): {
+  workflowRunId?: string;
+  workflowName?: string;
+  sourceCommandId?: string;
+  producerLabel?: string;
+} {
+  const workflowRun =
+    (artifact.workflowRunId
+      ? session.workflowRuns.find((candidate) => candidate.id === artifact.workflowRunId)
+      : null) ??
+    (artifact.sourceCommandId
+      ? session.commands
+          .map((command) => {
+            if (command.id === artifact.sourceCommandId) {
+              return command.workflowRunId
+                ? session.workflowRuns.find(
+                    (candidate) => candidate.id === command.workflowRunId,
+                  ) ?? null
+                : null;
+            }
+            return null;
+          })
+          .find((candidate) => candidate !== null) ?? null
+      : null);
+  const sourceCommand = artifact.sourceCommandId
+    ? session.commands.find((candidate) => candidate.id === artifact.sourceCommandId)
+    : null;
+  const workflowTaskAttempt = artifact.workflowTaskAttemptId
+    ? session.workflowTaskAttempts.find(
+        (candidate) => candidate.id === artifact.workflowTaskAttemptId,
+      )
+    : null;
+  const producerLabel =
+    workflowRun?.workflowName ??
+    sourceCommand?.title ??
+    sourceCommand?.toolName ??
+    workflowTaskAttempt?.title;
+
+  return {
+    ...(workflowRun ? { workflowRunId: workflowRun.id, workflowName: workflowRun.workflowName } : {}),
+    ...(sourceCommand ? { sourceCommandId: sourceCommand.id } : {}),
+    ...(producerLabel ? { producerLabel } : {}),
+  };
+}
+
+export function buildStructuredArtifactLink(
+  session: StructuredSessionSnapshot,
+  artifact: StructuredArtifactRecord,
+): StructuredCommandArtifactLink {
+  return {
+    artifactId: artifact.id,
+    kind: artifact.kind,
+    name: artifact.name,
+    ...(artifact.path ? { path: artifact.path } : {}),
+    createdAt: artifact.createdAt,
+    ...getArtifactProducer(session, artifact),
+    ...(artifact.path && !existsSync(artifact.path) ? { missingFile: true } : {}),
+  };
+}
+
 function buildCommandArtifactLinks(
-  artifacts: StructuredSessionSnapshot["artifacts"],
+  session: StructuredSessionSnapshot,
   commandId: string,
 ): StructuredCommandArtifactLink[] {
-  return artifacts
+  return session.artifacts
     .filter((artifact) => artifact.sourceCommandId === commandId)
-    .map((artifact) => ({
-      artifactId: artifact.id,
-      kind: artifact.kind,
-      name: artifact.name,
-      path: artifact.path,
-      createdAt: artifact.createdAt,
-    }))
+    .map((artifact) => buildStructuredArtifactLink(session, artifact))
     .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
 function buildThreadArtifactLinks(
-  artifacts: StructuredSessionSnapshot["artifacts"],
+  session: StructuredSessionSnapshot,
   threadId: string,
 ): StructuredCommandArtifactLink[] {
-  return artifacts
-    .filter((artifact) => artifact.threadId === threadId && artifact.workflowTaskAttemptId === null)
-    .map((artifact) => ({
-      artifactId: artifact.id,
-      kind: artifact.kind,
-      name: artifact.name,
-      path: artifact.path,
-      createdAt: artifact.createdAt,
-    }))
-    .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const workflowRunIds = new Set(
+    session.workflowRuns
+      .filter((workflowRun) => workflowRun.threadId === threadId)
+      .map((workflowRun) => workflowRun.id),
+  );
+  const artifactLinksById = new Map<string, StructuredCommandArtifactLink>();
+
+  for (const artifact of session.artifacts) {
+    if (artifact.threadId === threadId || (artifact.workflowRunId && workflowRunIds.has(artifact.workflowRunId))) {
+      artifactLinksById.set(artifact.id, buildStructuredArtifactLink(session, artifact));
+    }
+  }
+
+  return Array.from(artifactLinksById.values()).toSorted((left, right) =>
+    right.createdAt.localeCompare(left.createdAt),
+  );
+}
+
+function buildWorkflowRunArtifactLinks(
+  session: StructuredSessionSnapshot,
+  workflowRunId: string,
+): StructuredCommandArtifactLink[] {
+  return session.artifacts
+    .filter((artifact) => artifact.workflowRunId === workflowRunId)
+    .map((artifact) => buildStructuredArtifactLink(session, artifact))
+    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 function buildCommandInspectorChild(
   command: StructuredCommandRecord,
-  artifacts: StructuredSessionSnapshot["artifacts"],
+  session: StructuredSessionSnapshot,
 ): StructuredCommandInspectorChild {
   return {
     ...buildCommandRollupChild(command),
@@ -427,7 +515,7 @@ function buildCommandInspectorChild(
     startedAt: command.startedAt,
     updatedAt: command.updatedAt,
     finishedAt: command.finishedAt,
-    artifacts: buildCommandArtifactLinks(artifacts, command.id),
+    artifacts: buildCommandArtifactLinks(session, command.id),
   };
 }
 
@@ -479,6 +567,7 @@ function isDelegatedHandlerThread(
 }
 
 function buildThreadWorkflowSummary(
+  session: StructuredSessionSnapshot,
   workflowRun: StructuredWorkflowRunRecord,
 ): StructuredHandlerThreadWorkflowSummary {
   return {
@@ -487,6 +576,7 @@ function buildThreadWorkflowSummary(
     status: workflowRun.status,
     summary: workflowRun.summary,
     updatedAt: workflowRun.updatedAt,
+    artifacts: buildWorkflowRunArtifactLinks(session, workflowRun.id),
   };
 }
 
@@ -549,8 +639,10 @@ function buildProjectCiRunDetail(
 }
 
 function buildProjectCiCheckSummary(
+  session: StructuredSessionSnapshot,
   checkResult: StructuredSessionSnapshot["ciCheckResults"][number],
 ): StructuredProjectCiCheckSummary {
+  const artifactsById = new Map(session.artifacts.map((artifact) => [artifact.id, artifact]));
   return {
     checkResultId: checkResult.id,
     checkId: checkResult.checkId,
@@ -562,10 +654,32 @@ function buildProjectCiCheckSummary(
     exitCode: checkResult.exitCode,
     summary: checkResult.summary,
     artifactIds: checkResult.artifactIds.slice(),
+    artifacts: checkResult.artifactIds
+      .map((artifactId) => artifactsById.get(artifactId) ?? null)
+      .filter((artifact): artifact is StructuredArtifactRecord => artifact !== null)
+      .map((artifact) => buildStructuredArtifactLink(session, artifact))
+      .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt)),
     startedAt: checkResult.startedAt,
     finishedAt: checkResult.finishedAt,
     updatedAt: checkResult.updatedAt,
   };
+}
+
+function createProjectCiCheckCounts(
+  checks: StructuredProjectCiCheckSummary[] = [],
+): StructuredProjectCiStatusPanel["checkCounts"] {
+  const counts = {
+    passed: 0,
+    failed: 0,
+    cancelled: 0,
+    skipped: 0,
+    blocked: 0,
+    total: checks.length,
+  };
+  for (const check of checks) {
+    counts[check.status] += 1;
+  }
+  return counts;
 }
 
 function buildProjectCiActiveWorkflowSummary(
@@ -692,7 +806,7 @@ function buildHandlerThreadSummary(
   );
   const episodes = session.episodes.filter((episode) => episode.threadId === thread.id);
   const artifacts = session.artifacts.filter(
-    (artifact) => artifact.threadId === thread.id && artifact.workflowTaskAttemptId === null,
+    (artifact) => artifact.threadId === thread.id,
   );
   const ciRuns = session.ciRuns.filter((ciRun) => ciRun.threadId === thread.id);
   const latestWorkflowRun = getThreadLatestWorkflowRun(session, thread);
@@ -719,7 +833,7 @@ function buildHandlerThreadSummary(
     artifactCount: artifacts.length,
     ciRunCount: ciRuns.length,
     loadedContextKeys: thread.loadedContextKeys.slice(),
-    latestWorkflowRun: latestWorkflowRun ? buildThreadWorkflowSummary(latestWorkflowRun) : null,
+    latestWorkflowRun: latestWorkflowRun ? buildThreadWorkflowSummary(session, latestWorkflowRun) : null,
     latestCiRun: latestCiRun ? buildProjectCiRunSummary(latestCiRun) : null,
     latestEpisode: latestEpisode ? buildThreadEpisodeSummary(latestEpisode) : null,
   };
@@ -856,15 +970,17 @@ export function deriveStructuredSessionStatus(input: {
   }
 
   if (
+    input.threads.some((thread) => thread.status === "troubleshooting")
+  ) {
+    return "error";
+  }
+
+  if (
     input.threads.some(
       (thread) => thread.status === "running-handler" || thread.status === "running-workflow",
     )
   ) {
     return "running";
-  }
-
-  if (input.threads.some((thread) => thread.status === "troubleshooting")) {
-    return "error";
   }
 
   return "idle";
@@ -922,6 +1038,10 @@ export function buildStructuredSessionSummaryProjection(
     status: view.sessionStatus,
     preview: derivePreview(session),
     updatedAt: deriveUpdatedAt(session),
+    isPinned: session.session.pinnedAt !== null,
+    pinnedAt: session.session.pinnedAt,
+    isArchived: session.session.archivedAt !== null,
+    archivedAt: session.session.archivedAt,
     counts: view.counts,
     wait: view.wait,
     threadIds: view.threadIds,
@@ -998,6 +1118,7 @@ export function buildStructuredProjectCiStatusPanel(input: {
       activeWorkflowRun: null,
       latestRun: null,
       checks: [],
+      checkCounts: createProjectCiCheckCounts(),
       updatedAt: null,
     };
   }
@@ -1011,6 +1132,7 @@ export function buildStructuredProjectCiStatusPanel(input: {
       activeWorkflowRun: null,
       latestRun: null,
       checks: [],
+      checkCounts: createProjectCiCheckCounts(),
       updatedAt: null,
     };
   }
@@ -1046,6 +1168,7 @@ export function buildStructuredProjectCiStatusPanel(input: {
       activeWorkflowRun: activeSummary,
       latestRun: null,
       checks: [],
+      checkCounts: createProjectCiCheckCounts(),
       updatedAt: activeSummary.updatedAt,
     };
   }
@@ -1063,13 +1186,14 @@ export function buildStructuredProjectCiStatusPanel(input: {
       activeWorkflowRun: null,
       latestRun: null,
       checks: [],
+      checkCounts: createProjectCiCheckCounts(),
       updatedAt: null,
     };
   }
 
   const checks = session.ciCheckResults
     .filter((checkResult) => checkResult.ciRunId === latestCiRun.id)
-    .map(buildProjectCiCheckSummary)
+    .map((checkResult) => buildProjectCiCheckSummary(session, checkResult))
     .toSorted((left, right) => left.checkId.localeCompare(right.checkId));
 
   return {
@@ -1079,6 +1203,7 @@ export function buildStructuredProjectCiStatusPanel(input: {
     activeWorkflowRun: null,
     latestRun: buildProjectCiRunDetail(session, latestCiRun),
     checks,
+    checkCounts: createProjectCiCheckCounts(checks),
     updatedAt: latestCiRun.updatedAt,
   };
 }
@@ -1100,10 +1225,10 @@ export function buildStructuredCommandInspector(
   const childCommands = getChildCommands(session.commands, parentCommand.id);
   const summaryChildren = childCommands
     .filter((childCommand) => childCommand.visibility !== "trace")
-    .map((childCommand) => buildCommandInspectorChild(childCommand, session.artifacts));
+    .map((childCommand) => buildCommandInspectorChild(childCommand, session));
   const traceChildren = childCommands
     .filter((childCommand) => childCommand.visibility === "trace")
-    .map((childCommand) => buildCommandInspectorChild(childCommand, session.artifacts));
+    .map((childCommand) => buildCommandInspectorChild(childCommand, session));
 
   return {
     commandId: parentCommand.id,
@@ -1120,7 +1245,7 @@ export function buildStructuredCommandInspector(
     startedAt: parentCommand.startedAt,
     updatedAt: parentCommand.updatedAt,
     finishedAt: parentCommand.finishedAt,
-    artifacts: buildCommandArtifactLinks(session.artifacts, parentCommand.id),
+    artifacts: buildCommandArtifactLinks(session, parentCommand.id),
     childCount: childCommands.length,
     summaryChildCount: summaryChildren.length,
     traceChildCount: traceChildren.length,
@@ -1149,14 +1274,8 @@ export function buildStructuredWorkflowTaskAttemptInspector(
   );
   const artifacts = session.artifacts
     .filter((artifact) => artifact.workflowTaskAttemptId === workflowTaskAttemptId)
-    .map((artifact) => ({
-      artifactId: artifact.id,
-      kind: artifact.kind,
-      name: artifact.name,
-      path: artifact.path,
-      createdAt: artifact.createdAt,
-    }))
-    .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+    .map((artifact) => buildStructuredArtifactLink(session, artifact))
+    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt));
   const transcript = session.workflowTaskMessages
     .filter((message) => message.workflowTaskAttemptId === workflowTaskAttemptId)
     .map((message) => ({
@@ -1212,7 +1331,7 @@ export function buildStructuredHandlerThreadInspector(
 
   const workflowRuns = session.workflowRuns
     .filter((workflowRun) => workflowRun.threadId === threadId)
-    .map((workflowRun) => buildThreadWorkflowSummary(workflowRun))
+    .map((workflowRun) => buildThreadWorkflowSummary(session, workflowRun))
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   const episodes = session.episodes
     .filter((episode) => episode.threadId === threadId)
@@ -1228,7 +1347,7 @@ export function buildStructuredHandlerThreadInspector(
       .map((workflowTaskAttempt) => buildWorkflowTaskAttemptSummary(session, workflowTaskAttempt))
       .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     episodes,
-    artifacts: buildThreadArtifactLinks(session.artifacts, threadId),
+    artifacts: buildThreadArtifactLinks(session, threadId),
   };
 }
 

@@ -337,6 +337,15 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       getProjectCiStatus: async ({ sessionId }: { sessionId: string }) => {
         return await workspaceSessionCatalog.getProjectCiStatus({ sessionId });
       },
+      getArtifactPreview: async ({
+        sessionId,
+        artifactId,
+      }: {
+        sessionId: string;
+        artifactId: string;
+      }) => {
+        return await workspaceSessionCatalog.getArtifactPreview({ sessionId, artifactId });
+      },
       createSession: async ({
         title,
         parentSessionId,
@@ -409,6 +418,31 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       deleteSession: async ({ sessionId }: { sessionId: string }) => {
         const result = await workspaceSessionCatalog.deleteSession(sessionId);
         recordBridgeEvent("session.deleted", { sessionId });
+        return result;
+      },
+      pinSession: async ({ sessionId }: { sessionId: string }) => {
+        const result = await workspaceSessionCatalog.pinSession(sessionId);
+        recordBridgeEvent("session.pinned", { sessionId });
+        return result;
+      },
+      unpinSession: async ({ sessionId }: { sessionId: string }) => {
+        const result = await workspaceSessionCatalog.unpinSession(sessionId);
+        recordBridgeEvent("session.unpinned", { sessionId });
+        return result;
+      },
+      archiveSession: async ({ sessionId }: { sessionId: string }) => {
+        const result = await workspaceSessionCatalog.archiveSession(sessionId);
+        recordBridgeEvent("session.archived", { sessionId });
+        return result;
+      },
+      unarchiveSession: async ({ sessionId }: { sessionId: string }) => {
+        const result = await workspaceSessionCatalog.unarchiveSession(sessionId);
+        recordBridgeEvent("session.unarchived", { sessionId });
+        return result;
+      },
+      setArchivedGroupCollapsed: async ({ collapsed }: { collapsed: boolean }) => {
+        const result = await workspaceSessionCatalog.setArchivedGroupCollapsed({ collapsed });
+        recordBridgeEvent("session.archived-group.toggled", { collapsed });
         return result;
       },
       sendPrompt: async (payload: SendPromptRequest): Promise<{ target: PromptTarget }> => {

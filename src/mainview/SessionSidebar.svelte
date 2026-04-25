@@ -1,13 +1,15 @@
 <script lang="ts">
   import PlusIcon from "@lucide/svelte/icons/plus";
-  import type { WorkspaceSessionSummary } from "./chat-rpc";
+  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+  import type { WorkspaceSessionNavigationReadModel, WorkspaceSessionSummary } from "./chat-rpc";
   import SessionListItem from "./SessionListItem.svelte";
   import Button from "./ui/Button.svelte";
 
   type Props = {
     workspaceLabel: string;
     branch?: string;
-    sessions: WorkspaceSessionSummary[];
+    navigation: WorkspaceSessionNavigationReadModel;
     activeSessionId?: string;
     activeSurface?: "orchestrator" | "thread";
     busy?: boolean;
@@ -17,12 +19,17 @@
     onRenameSession: (session: WorkspaceSessionSummary) => void;
     onForkSession: (session: WorkspaceSessionSummary) => void;
     onDeleteSession: (session: WorkspaceSessionSummary) => void;
+    onPinSession: (session: WorkspaceSessionSummary) => void;
+    onUnpinSession: (session: WorkspaceSessionSummary) => void;
+    onArchiveSession: (session: WorkspaceSessionSummary) => void;
+    onUnarchiveSession: (session: WorkspaceSessionSummary) => void;
+    onToggleArchivedGroup: (collapsed: boolean) => void;
   };
 
   let {
     workspaceLabel,
     branch,
-    sessions,
+    navigation,
     activeSessionId,
     activeSurface,
     busy = false,
@@ -32,7 +39,18 @@
     onRenameSession,
     onForkSession,
     onDeleteSession,
+    onPinSession,
+    onUnpinSession,
+    onArchiveSession,
+    onUnarchiveSession,
+    onToggleArchivedGroup,
   }: Props = $props();
+
+  const sessionCount = $derived(
+    navigation.pinnedSessions.length +
+      navigation.activeSessions.length +
+      navigation.archived.sessions.length,
+  );
 </script>
 
 <div class="session-sidebar">
@@ -45,7 +63,7 @@
           <span>{branch}</span>
           <span aria-hidden="true">•</span>
         {/if}
-        <span>{sessions.length} sessions</span>
+        <span>{sessionCount} sessions</span>
       </p>
     </div>
     <Button
@@ -68,18 +86,87 @@
 
   <div class="sidebar-sections">
     <div class="sidebar-list">
-      {#each sessions as session (session.id)}
-        <SessionListItem
-          active={session.id === activeSessionId}
-          activeSurface={session.id === activeSessionId ? activeSurface : undefined}
-          disabled={busy && session.id !== activeSessionId}
-          {session}
-          onOpen={() => onOpenSession(session.id)}
-          onRename={() => onRenameSession(session)}
-          onFork={() => onForkSession(session)}
-          onDelete={() => onDeleteSession(session)}
-        />
-      {/each}
+      {#if navigation.pinnedSessions.length > 0}
+        <section class="sidebar-section" aria-label="Pinned sessions">
+          <p class="sidebar-section-label">Pinned</p>
+          {#each navigation.pinnedSessions as session (session.id)}
+            <SessionListItem
+              active={session.id === activeSessionId}
+              activeSurface={session.id === activeSessionId ? activeSurface : undefined}
+              disabled={busy && session.id !== activeSessionId}
+              {session}
+              onOpen={() => onOpenSession(session.id)}
+              onRename={() => onRenameSession(session)}
+              onFork={() => onForkSession(session)}
+              onDelete={() => onDeleteSession(session)}
+              onPin={() => onPinSession(session)}
+              onUnpin={() => onUnpinSession(session)}
+              onArchive={() => onArchiveSession(session)}
+              onUnarchive={() => onUnarchiveSession(session)}
+            />
+          {/each}
+        </section>
+      {/if}
+
+      {#if navigation.activeSessions.length > 0}
+        <section class="sidebar-section" aria-label="Active sessions">
+          <p class="sidebar-section-label">Active</p>
+          {#each navigation.activeSessions as session (session.id)}
+            <SessionListItem
+              active={session.id === activeSessionId}
+              activeSurface={session.id === activeSessionId ? activeSurface : undefined}
+              disabled={busy && session.id !== activeSessionId}
+              {session}
+              onOpen={() => onOpenSession(session.id)}
+              onRename={() => onRenameSession(session)}
+              onFork={() => onForkSession(session)}
+              onDelete={() => onDeleteSession(session)}
+              onPin={() => onPinSession(session)}
+              onUnpin={() => onUnpinSession(session)}
+              onArchive={() => onArchiveSession(session)}
+              onUnarchive={() => onUnarchiveSession(session)}
+            />
+          {/each}
+        </section>
+      {/if}
+
+      {#if navigation.archived.sessions.length > 0}
+        <section class="sidebar-section archived-section" aria-label="Archived sessions">
+          <button
+            class="archived-toggle"
+            type="button"
+            aria-expanded={!navigation.archived.collapsed}
+            onclick={() => onToggleArchivedGroup(!navigation.archived.collapsed)}
+          >
+            {#if navigation.archived.collapsed}
+              <ChevronRightIcon aria-hidden="true" size={14} strokeWidth={1.9} />
+            {:else}
+              <ChevronDownIcon aria-hidden="true" size={14} strokeWidth={1.9} />
+            {/if}
+            <span>Archived</span>
+            <span>{navigation.archived.sessions.length}</span>
+          </button>
+
+          {#if !navigation.archived.collapsed}
+            {#each navigation.archived.sessions as session (session.id)}
+              <SessionListItem
+                active={session.id === activeSessionId}
+                activeSurface={session.id === activeSessionId ? activeSurface : undefined}
+                disabled={busy && session.id !== activeSessionId}
+                {session}
+                onOpen={() => onOpenSession(session.id)}
+                onRename={() => onRenameSession(session)}
+                onFork={() => onForkSession(session)}
+                onDelete={() => onDeleteSession(session)}
+                onPin={() => onPinSession(session)}
+                onUnpin={() => onUnpinSession(session)}
+                onArchive={() => onArchiveSession(session)}
+                onUnarchive={() => onUnarchiveSession(session)}
+              />
+            {/each}
+          {/if}
+        </section>
+      {/if}
     </div>
   </div>
 </div>
@@ -159,6 +246,49 @@
 
   .sidebar-list {
     display: grid;
+    gap: 0.5rem;
+  }
+
+  .sidebar-section {
+    display: grid;
     gap: 0.12rem;
+  }
+
+  .sidebar-section-label {
+    margin: 0 0 0.08rem;
+    padding-inline: 0.28rem;
+    font-size: 0.6rem;
+    font-family: var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ui-text-tertiary);
+  }
+
+  .archived-toggle {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.32rem;
+    width: 100%;
+    min-height: 1.72rem;
+    padding: 0.28rem 0.36rem;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    font-size: 0.66rem;
+    font-weight: 650;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .archived-toggle:hover {
+    background: color-mix(in oklab, var(--ui-surface-subtle) 78%, transparent);
+    color: var(--ui-text-secondary);
+  }
+
+  .archived-toggle:focus-visible {
+    outline: none;
+    box-shadow: var(--ui-focus-ring);
   }
 </style>

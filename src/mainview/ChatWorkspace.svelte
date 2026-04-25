@@ -32,8 +32,10 @@
     WorkspaceWorkflowTaskAttemptInspector,
     WorkspaceWorkflowTaskAttemptSummary,
     PromptTarget,
+    WorkspaceSessionNavigationReadModel,
     WorkspaceSessionSummary,
   } from "./chat-rpc";
+  import type { WorkspaceInspectorSelection } from "./chat-storage";
   import type { PromptHistoryEntry } from "./prompt-history";
   import {
     clampSidebarWidth,
@@ -41,7 +43,6 @@
     isSidebarToggleShortcut,
     MIN_SIDEBAR_WIDTH,
   } from "./sidebar-layout";
-  import { sortVisibleSessionsByRecency } from "./session-state";
   import SessionSidebar from "./SessionSidebar.svelte";
   import ChatTranscript from "./ChatTranscript.svelte";
   import {
@@ -86,6 +87,14 @@
   let promptHistory = $state<PromptHistoryEntry[]>([]);
   let windowWidth = $state(0);
   let sessions = $state<WorkspaceSessionSummary[]>([]);
+  let sessionNavigation = $state<WorkspaceSessionNavigationReadModel>({
+    pinnedSessions: [],
+    activeSessions: [],
+    archived: {
+      collapsed: true,
+      sessions: [],
+    },
+  });
   let activeSessionId = $state<string | undefined>(undefined);
   let paneLayout = $state<ChatPaneLayoutState>({
     panes: [{ id: PRIMARY_CHAT_PANE_ID, target: null }],
@@ -139,6 +148,7 @@
   let threadInspectorSessionId: string | null = null;
   let workflowTaskAttemptInspectorSessionId: string | null = null;
   let unsubscribeSurfaceController: (() => void) | null = null;
+  let restoredInspectorKey: string | null = null;
 
   const conversation = $derived(projectConversation(messages));
   const conversationSummary = $derived(projectConversationSummary(conversation, streamMessage));
@@ -151,7 +161,6 @@
     windowWidth < DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts,
   );
   const effectiveSidebarWidth = $derived(clampSidebarWidth(sidebarWidth, windowWidth));
-  const visibleSessions = $derived(sortVisibleSessionsByRecency(sessions));
   const currentSession = $derived(sessions.find((session) => session.id === activeSessionId) ?? null);
   const currentCommandRollups = $derived(getVisibleCommandRollups(currentSession));
   const currentSurface = $derived(focusedSurfaceTarget);
@@ -196,6 +205,17 @@
     currentSurface?.surface === "orchestrator" &&
       (handlerThreadsLoading || !!handlerThreadsError || handlerThreads.length > 0),
   );
+  const showDetailedProjectCiPanel = $derived(
+    currentSurface?.surface === "orchestrator" && currentSession && (projectCiStatus || projectCiError),
+  );
+  const threadLocalProjectCiRun = $derived.by(() => {
+    if (!threadInspector || !projectCiStatus?.latestRun) {
+      return null;
+    }
+    return projectCiStatus.latestRun.threadId === threadInspector.threadId
+      ? projectCiStatus.latestRun
+      : null;
+  });
 
   function clearCopyTranscriptResetTimer() {
     if (!copyTranscriptResetTimer) return;
@@ -355,7 +375,7 @@
   }
 
   async function handleCreateSession() {
-    await runSessionMutation(() => runtime.createSession({}, runtime.primaryPaneId));
+    await runSessionMutation(() => runtime.createSession({}, focusedPaneId));
   }
 
   async function handleOpenSession(sessionId: string) {
@@ -366,7 +386,7 @@
     ) {
       return;
     }
-    await runSessionMutation(() => runtime.openSession(sessionId, runtime.primaryPaneId));
+    await runSessionMutation(() => runtime.openSession(sessionId, focusedPaneId));
   }
 
   function handleRenameSession(session: WorkspaceSessionSummary) {
@@ -391,7 +411,7 @@
   }
 
   async function handleForkSession(session: WorkspaceSessionSummary) {
-    await runSessionMutation(() => runtime.forkSession(session.id, undefined, runtime.primaryPaneId));
+    await runSessionMutation(() => runtime.forkSession(session.id, undefined, focusedPaneId));
   }
 
   async function handleResetSurfaceTarget() {
@@ -399,7 +419,7 @@
     if (!session) {
       return;
     }
-    await runSessionMutation(() => runtime.openSession(session.id, runtime.primaryPaneId));
+    await runSessionMutation(() => runtime.openSession(session.id, focusedPaneId));
   }
 
   function handleDeleteSession(session: WorkspaceSessionSummary) {
@@ -410,9 +430,29 @@
     if (!deleteTarget) return;
     const target = deleteTarget;
     await runSessionMutation(async () => {
-      await runtime.deleteSession(target.id, runtime.primaryPaneId);
+      await runtime.deleteSession(target.id, focusedPaneId);
       deleteTarget = null;
     });
+  }
+
+  async function handlePinSession(session: WorkspaceSessionSummary) {
+    await runSessionMutation(() => runtime.pinSession(session.id));
+  }
+
+  async function handleUnpinSession(session: WorkspaceSessionSummary) {
+    await runSessionMutation(() => runtime.unpinSession(session.id));
+  }
+
+  async function handleArchiveSession(session: WorkspaceSessionSummary) {
+    await runSessionMutation(() => runtime.archiveSession(session.id));
+  }
+
+  async function handleUnarchiveSession(session: WorkspaceSessionSummary) {
+    await runSessionMutation(() => runtime.unarchiveSession(session.id));
+  }
+
+  async function handleToggleArchivedGroup(collapsed: boolean) {
+    await runSessionMutation(() => runtime.setArchivedGroupCollapsed(collapsed));
   }
 
   async function persistPromptHistoryEntry(input: string) {
@@ -512,6 +552,7 @@
     threadInspectorLoading = false;
     threadInspectorThreadId = null;
     threadInspectorSessionId = null;
+    runtime.setPaneInspectorSelection(focusedPaneId, null);
   }
 
   function closeWorkflowTaskAttemptInspector() {
@@ -646,6 +687,28 @@
     return `exit code ${exitCode}`;
   }
 
+  function formatProjectCiCheckCounts(status: WorkspaceProjectCiStatusPanel): string {
+    const counts = status.checkCounts;
+    if (counts.total === 0) {
+      return "No checks";
+    }
+    const failed = counts.failed + counts.blocked + counts.cancelled;
+    if (failed > 0) {
+      return `${counts.passed}/${counts.total} passed, ${failed} attention`;
+    }
+    return `${counts.passed}/${counts.total} passed`;
+  }
+
+  function handleInspectLatestProjectCiRun() {
+    if (!projectCiStatus?.latestRun) {
+      return;
+    }
+    runtime.setPaneInspectorSelection(focusedPaneId, {
+      kind: "ci-run",
+      ciRunId: projectCiStatus.latestRun.ciRunId,
+    });
+  }
+
   function getWorkflowTaskAttemptStatusLabel(
     status: WorkspaceWorkflowTaskAttemptSummary["status"] | WorkspaceWorkflowTaskAttemptInspector["status"],
   ): string {
@@ -711,7 +774,66 @@
   }
 
   function canOpenArtifactLink(artifact: WorkspaceCommandArtifactLink): boolean {
-    return artifactsSnapshot.artifacts.some((record) => record.filename === artifact.name);
+    return (
+      artifactsSnapshot.artifacts.some((record) => record.filename === artifact.name) ||
+      !artifact.missingFile
+    );
+  }
+
+  function getInspectorSelectionKey(selection: WorkspaceInspectorSelection | null | undefined): string | null {
+    if (!selection) {
+      return null;
+    }
+    switch (selection.kind) {
+      case "thread":
+        return `thread:${selection.threadId}`;
+      case "workflow-run":
+        return `workflow-run:${selection.workflowRunId}`;
+      case "artifact":
+        return `artifact:${selection.artifactId}`;
+      case "ci-run":
+        return `ci-run:${selection.ciRunId}`;
+    }
+  }
+
+  async function openStructuredArtifact(
+    artifactId: string,
+    sessionId: string,
+    options: { persistSelection?: boolean } = {},
+  ) {
+    if (!controller) {
+      return;
+    }
+
+    const preview = await runtime.getArtifactPreview(artifactId, sessionId);
+    if (preview.missingFile && !preview.content) {
+      sidebarError = `Artifact file is missing: ${preview.name}`;
+      return;
+    }
+
+    controller.upsertExternalArtifact({
+      filename: preview.name,
+      content: preview.content,
+      createdAt: Date.parse(preview.createdAt),
+      updatedAt: Date.now(),
+    });
+    showArtifactsPanel = true;
+    if (options.persistSelection ?? true) {
+      runtime.setPaneInspectorSelection(focusedPaneId, { kind: "artifact", artifactId });
+    }
+  }
+
+  async function handleOpenStructuredArtifact(artifact: WorkspaceCommandArtifactLink) {
+    const session = currentSession;
+    if (!session) {
+      return;
+    }
+
+    try {
+      await openStructuredArtifact(artifact.artifactId, session.id);
+    } catch (error) {
+      sidebarError = error instanceof Error ? error.message : "Unable to open this artifact.";
+    }
   }
 
   async function handleInspectCommand(commandId: string) {
@@ -765,7 +887,7 @@
           surfacePiSessionId: thread.surfacePiSessionId,
           threadId: thread.threadId,
         },
-        runtime.primaryPaneId,
+        focusedPaneId,
       ),
     );
   }
@@ -776,6 +898,7 @@
       return;
     }
 
+    runtime.setPaneInspectorSelection(focusedPaneId, { kind: "thread", threadId: thread.threadId });
     showThreadInspector = true;
     threadInspector = null;
     threadInspectorError = undefined;
@@ -799,6 +922,31 @@
         error instanceof Error ? error.message : "Unable to inspect this handler thread.";
     } finally {
       if (threadInspectorThreadId === thread.threadId && threadInspectorSessionId === session.id) {
+        threadInspectorLoading = false;
+      }
+    }
+  }
+
+  async function restoreHandlerThreadInspector(threadId: string, sessionId: string) {
+    showThreadInspector = true;
+    threadInspector = null;
+    threadInspectorError = undefined;
+    threadInspectorLoading = true;
+    threadInspectorThreadId = threadId;
+    threadInspectorSessionId = sessionId;
+
+    try {
+      const inspector = await runtime.getHandlerThreadInspector(threadId, sessionId);
+      if (threadInspectorThreadId !== threadId || threadInspectorSessionId !== sessionId) {
+        return;
+      }
+      threadInspector = inspector;
+    } catch {
+      if (threadInspectorThreadId === threadId && threadInspectorSessionId === sessionId) {
+        closeThreadInspector();
+      }
+    } finally {
+      if (threadInspectorThreadId === threadId && threadInspectorSessionId === sessionId) {
         threadInspectorLoading = false;
       }
     }
@@ -832,7 +980,7 @@
     ].join(" ");
 
     await runSessionMutation(async () => {
-      await runtime.openSurface(target, runtime.primaryPaneId);
+      await runtime.openSurface(target, focusedPaneId);
       await runtime.sendPromptToTarget(target, prompt);
     });
   }
@@ -961,6 +1109,46 @@
   });
 
   $effect(() => {
+    const selection = currentPane?.inspectorSelection ?? null;
+    const sessionId = currentPane?.target?.workspaceSessionId ?? null;
+    const key = getInspectorSelectionKey(selection);
+    if (!selection) {
+      restoredInspectorKey = null;
+      return;
+    }
+    if (!sessionId || key === restoredInspectorKey) {
+      return;
+    }
+
+    if (selection.kind === "ci-run") {
+      if (!projectCiStatus && !projectCiError) {
+        return;
+      }
+      restoredInspectorKey = key;
+      if (projectCiStatus?.latestRun?.ciRunId !== selection.ciRunId) {
+        runtime.setPaneInspectorSelection(focusedPaneId, null);
+      }
+      return;
+    }
+
+    restoredInspectorKey = key;
+    if (selection.kind === "thread") {
+      void restoreHandlerThreadInspector(selection.threadId, sessionId);
+      return;
+    }
+
+    if (selection.kind === "workflow-run") {
+      return;
+    }
+
+    if (selection.kind === "artifact") {
+      void openStructuredArtifact(selection.artifactId, sessionId, { persistSelection: false }).catch(() => {
+        runtime.setPaneInspectorSelection(focusedPaneId, null);
+      });
+    }
+  });
+
+  $effect(() => {
     const session = currentSession;
     const surface = currentSurface?.surface;
     if (!session || surface !== "orchestrator") {
@@ -1034,12 +1222,13 @@
 
   function syncRuntimeState() {
     sessions = [...runtime.sessions];
+    sessionNavigation = runtime.sessionNavigation;
     paneLayout = runtime.paneLayout;
     focusedPaneId = paneLayout.focusedPaneId;
-    currentPane = runtime.getPane(runtime.primaryPaneId) ?? null;
+    currentPane = runtime.getPane(focusedPaneId) ?? null;
     focusedSurfaceTarget = currentPane?.target ?? null;
     activeSessionId = currentPane?.target?.workspaceSessionId;
-    currentSurfaceController = runtime.getPaneController(runtime.primaryPaneId);
+    currentSurfaceController = runtime.getPaneController(focusedPaneId);
   }
 
   function resubscribeSurfaceController() {
@@ -1146,7 +1335,7 @@
           <SessionSidebar
             workspaceLabel={runtime.workspaceLabel}
             branch={runtime.branch}
-            sessions={visibleSessions}
+            navigation={sessionNavigation}
             {activeSessionId}
             activeSurface={currentSurface?.surface}
             busy={mutatingSession}
@@ -1156,6 +1345,11 @@
             onRenameSession={handleRenameSession}
             onForkSession={handleForkSession}
             onDeleteSession={handleDeleteSession}
+            onPinSession={handlePinSession}
+            onUnpinSession={handleUnpinSession}
+            onArchiveSession={handleArchiveSession}
+            onUnarchiveSession={handleUnarchiveSession}
+            onToggleArchivedGroup={handleToggleArchivedGroup}
           />
         </div>
       </aside>
@@ -1215,12 +1409,30 @@
           >
             Artifacts {artifactCount}
           </Button>
+          {#if projectCiStatus}
+            <div class="project-ci-compact" aria-label="Project CI summary">
+              <Badge tone={getProjectCiStatusTone(projectCiStatus.status)}>
+                CI {getProjectCiStatusLabel(projectCiStatus.status)}
+              </Badge>
+              <span>{projectCiStatus.summary}</span>
+              <span>{formatProjectCiCheckCounts(projectCiStatus)}</span>
+              {#if projectCiStatus.latestRun}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onclick={handleInspectLatestProjectCiRun}
+                >
+                  Inspect
+                </Button>
+              {/if}
+            </div>
+          {/if}
         </div>
       </header>
 
       <section class="chat-pane" id="conversation">
         <div class="chat-pane-shell">
-          {#if currentSession && (projectCiStatus || projectCiError)}
+          {#if showDetailedProjectCiPanel}
             <section class="project-ci-panel" aria-label="Project CI">
               <header class="project-ci-header">
                 <div>
@@ -1322,6 +1534,33 @@
                               <span>{formatProjectCiExitCode(check.exitCode)}</span>
                             {/if}
                           </div>
+                          {#if check.artifacts.length > 0}
+                            <div class="command-inspector-artifact-list compact">
+                              {#each check.artifacts as artifact (artifact.artifactId)}
+                                <div class="command-inspector-artifact">
+                                  <div class="command-inspector-artifact-copy">
+                                    <strong>{artifact.name}</strong>
+                                    <span>{artifact.kind}</span>
+                                    {#if artifact.producerLabel}
+                                      <span>{artifact.producerLabel}</span>
+                                    {/if}
+                                    {#if artifact.missingFile}
+                                      <span class="artifact-missing">Missing file</span>
+                                    {/if}
+                                  </div>
+                                  {#if canOpenArtifactLink(artifact)}
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onclick={() => void handleOpenStructuredArtifact(artifact)}
+                                    >
+                                      Open
+                                    </Button>
+                                  {/if}
+                                </div>
+                              {/each}
+                            </div>
+                          {/if}
                         </article>
                       {/each}
                     </div>
@@ -1699,6 +1938,16 @@
             </div>
           {/if}
 
+          {#if threadLocalProjectCiRun}
+            <div class="thread-inspector-highlight">
+              <span>Project CI</span>
+              <p>{threadLocalProjectCiRun.summary}</p>
+              {#if projectCiStatus}
+                <p>{formatProjectCiCheckCounts(projectCiStatus)}</p>
+              {/if}
+            </div>
+          {/if}
+
           <div class="thread-inspector-actions">
             <Button
               variant="primary"
@@ -1789,6 +2038,30 @@
                   </div>
                   <p>{workflowRun.summary}</p>
                   <span>{formatTimestamp(workflowRun.updatedAt)}</span>
+                  {#if workflowRun.artifacts.length > 0}
+                    <div class="command-inspector-artifact-list compact">
+                      {#each workflowRun.artifacts as artifact (artifact.artifactId)}
+                        <div class="command-inspector-artifact">
+                          <div class="command-inspector-artifact-copy">
+                            <strong>{artifact.name}</strong>
+                            <span>{artifact.kind}</span>
+                            {#if artifact.missingFile}
+                              <span class="artifact-missing">Missing file</span>
+                            {/if}
+                          </div>
+                          {#if canOpenArtifactLink(artifact)}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onclick={() => void handleOpenStructuredArtifact(artifact)}
+                            >
+                              Open
+                            </Button>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
                 </article>
               {/each}
             </div>
@@ -1897,6 +2170,12 @@
                   <div class="command-inspector-artifact-copy">
                     <strong>{artifact.name}</strong>
                     <span>{artifact.kind}</span>
+                    {#if artifact.producerLabel}
+                      <span>{artifact.producerLabel}</span>
+                    {/if}
+                    {#if artifact.missingFile}
+                      <span class="artifact-missing">Missing file</span>
+                    {/if}
                     {#if artifact.path}
                       <code>{artifact.path}</code>
                     {/if}
@@ -1905,7 +2184,7 @@
                     <Button
                       variant="ghost"
                       size="sm"
-                      onclick={() => handleOpenArtifact(artifact.name)}
+                      onclick={() => void handleOpenStructuredArtifact(artifact)}
                     >
                       Open
                     </Button>
@@ -1994,6 +2273,12 @@
                     <div class="command-inspector-artifact-copy">
                       <strong>{artifact.name}</strong>
                       <span>{artifact.kind}</span>
+                      {#if artifact.producerLabel}
+                        <span>{artifact.producerLabel}</span>
+                      {/if}
+                      {#if artifact.missingFile}
+                        <span class="artifact-missing">Missing file</span>
+                      {/if}
                       {#if artifact.path}
                         <code>{artifact.path}</code>
                       {/if}
@@ -2002,7 +2287,7 @@
                       <Button
                         variant="ghost"
                         size="sm"
-                        onclick={() => handleOpenArtifact(artifact.name)}
+                        onclick={() => void handleOpenStructuredArtifact(artifact)}
                       >
                         Open
                       </Button>
@@ -2072,12 +2357,18 @@
                               <div class="command-inspector-artifact-copy">
                                 <strong>{artifact.name}</strong>
                                 <span>{artifact.kind}</span>
+                                {#if artifact.producerLabel}
+                                  <span>{artifact.producerLabel}</span>
+                                {/if}
+                                {#if artifact.missingFile}
+                                  <span class="artifact-missing">Missing file</span>
+                                {/if}
                               </div>
                               {#if canOpenArtifactLink(artifact)}
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onclick={() => handleOpenArtifact(artifact.name)}
+                                  onclick={() => void handleOpenStructuredArtifact(artifact)}
                                 >
                                   Open
                                 </Button>
@@ -2245,6 +2536,12 @@
                   <div class="command-inspector-artifact-copy">
                     <strong>{artifact.name}</strong>
                     <span>{artifact.kind}</span>
+                    {#if artifact.producerLabel}
+                      <span>{artifact.producerLabel}</span>
+                    {/if}
+                    {#if artifact.missingFile}
+                      <span class="artifact-missing">Missing file</span>
+                    {/if}
                     {#if artifact.path}
                       <code>{artifact.path}</code>
                     {/if}
@@ -2253,7 +2550,7 @@
                     <Button
                       variant="ghost"
                       size="sm"
-                      onclick={() => handleOpenArtifact(artifact.name)}
+                      onclick={() => void handleOpenStructuredArtifact(artifact)}
                     >
                       Open
                     </Button>
@@ -2445,6 +2742,24 @@
     gap: 0.45rem 0.6rem;
     font-size: 0.7rem;
     color: var(--ui-text-tertiary);
+  }
+
+  .project-ci-compact {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.42rem;
+    max-width: min(38rem, 100%);
+    min-height: 1.72rem;
+    padding: 0.18rem 0.28rem;
+    border-radius: var(--ui-radius-md);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 70%, transparent);
+  }
+
+  .project-ci-compact span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .chat-pane {
@@ -3024,6 +3339,10 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;
+  }
+
+  .artifact-missing {
+    color: color-mix(in oklab, var(--ui-warning) 84%, var(--ui-text-primary));
   }
 
   .command-inspector-artifact-list.compact {

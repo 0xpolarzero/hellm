@@ -13,6 +13,10 @@
     onRename: () => void;
     onFork: () => void;
     onDelete: () => void;
+    onPin: () => void;
+    onUnpin: () => void;
+    onArchive: () => void;
+    onUnarchive: () => void;
     onArrowUp?: () => void;
     onArrowDown?: () => void;
   };
@@ -26,6 +30,10 @@
     onRename,
     onFork,
     onDelete,
+    onPin,
+    onUnpin,
+    onArchive,
+    onUnarchive,
     onArrowUp,
     onArrowDown,
   }: Props = $props();
@@ -98,7 +106,7 @@
 </script>
 
 <article
-  class={`session-item ${active ? "active" : ""} ${showingThreadSurface ? "active-thread" : ""} ${menuOpen ? "menu-open" : ""}`.trim()}
+  class={`session-item ${active ? "active" : ""} ${showingThreadSurface ? "active-thread" : ""} ${session.isArchived ? "archived" : ""} ${menuOpen ? "menu-open" : ""}`.trim()}
 >
   <button
     class="session-main"
@@ -140,6 +148,17 @@
         {/if}
       </div>
     {/if}
+
+    {#if session.isPinned || session.isArchived}
+      <div class="session-main-meta session-navigation-meta">
+        {#if session.isPinned}
+          <span class="session-branch">Pinned</span>
+        {/if}
+        {#if session.isArchived}
+          <span class="session-branch">Archived</span>
+        {/if}
+      </div>
+    {/if}
   </button>
 
   <div
@@ -162,6 +181,16 @@
 
     {#if menuOpen}
       <div class="session-menu">
+        {#if session.isArchived}
+          <button type="button" onclick={() => { menuOpen = false; onUnarchive(); }}>Unarchive</button>
+        {:else}
+          {#if session.isPinned}
+            <button type="button" onclick={() => { menuOpen = false; onUnpin(); }}>Unpin</button>
+          {:else}
+            <button type="button" onclick={() => { menuOpen = false; onPin(); }}>Pin</button>
+          {/if}
+          <button type="button" onclick={() => { menuOpen = false; onArchive(); }}>Archive</button>
+        {/if}
         <button type="button" onclick={() => { menuOpen = false; onRename(); }}>Rename</button>
         <button type="button" onclick={() => { menuOpen = false; onFork(); }}>Fork</button>
         <button class="danger" type="button" onclick={() => { menuOpen = false; onDelete(); }}>Delete</button>
@@ -239,6 +268,10 @@
     border-style: dashed;
   }
 
+  .archived .session-main {
+    opacity: 0.74;
+  }
+
   .session-main-top {
     display: flex;
     align-items: baseline;
@@ -307,6 +340,10 @@
     gap: 0.5rem;
     flex-wrap: wrap;
     margin-top: 0.34rem;
+  }
+
+  .session-navigation-meta {
+    margin-top: 0.24rem;
   }
 
   .session-status,

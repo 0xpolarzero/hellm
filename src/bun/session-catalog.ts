@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
@@ -29,6 +29,8 @@ import type {
   PromptTarget,
   SurfaceSyncMessage,
   WorkspaceMutationResponse,
+  WorkspaceArtifactPreview,
+  WorkspaceSessionNavigationReadModel,
   WorkspaceProjectCiStatusPanel,
   WorkspaceSyncMessage,
   WorkspaceCommandInspector,
@@ -47,6 +49,7 @@ import {
   buildStructuredHandlerThreadInspector,
   buildStructuredHandlerThreadSummaries,
   buildStructuredProjectCiStatusPanel,
+  buildStructuredArtifactLink,
   buildStructuredSessionSummaryProjection,
   buildStructuredSessionView,
   buildStructuredWorkflowTaskAttemptInspector,
@@ -216,6 +219,19 @@ export class WorkspaceSessionCatalog {
   }
 
   async listSessions(): Promise<ListSessionsResponse> {
+    const summaries = await this.collectWorkspaceSessionSummaries();
+    const navigation = this.buildWorkspaceSessionNavigation(Array.from(summaries.values()));
+    return {
+      sessions: [
+        ...navigation.pinnedSessions,
+        ...navigation.activeSessions,
+        ...navigation.archived.sessions,
+      ],
+      navigation,
+    };
+  }
+
+  private async collectWorkspaceSessionSummaries(): Promise<Map<string, WorkspaceSessionSummary>> {
     const infos = await SessionManager.list(this.cwd, this.sessionDir);
     const summaries = new Map<string, WorkspaceSessionSummary>();
 
@@ -236,10 +252,31 @@ export class WorkspaceSessionCatalog {
       summaries.set(surface.sessionId, this.buildSummaryFromManagedSession(surface));
     }
 
+    return summaries;
+  }
+
+  private buildWorkspaceSessionNavigation(
+    summaries: WorkspaceSessionSummary[],
+  ): WorkspaceSessionNavigationReadModel {
+    const sidebarState = this.structuredSessionStore.getWorkspaceSidebarState();
+    const byTimestampDesc = (
+      left: string | null | undefined,
+      right: string | null | undefined,
+    ) => new Date(right ?? 0).getTime() - new Date(left ?? 0).getTime();
+
     return {
-      sessions: Array.from(summaries.values()).toSorted(
-        (left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
-      ),
+      pinnedSessions: summaries
+        .filter((summary) => summary.isPinned && !summary.isArchived)
+        .toSorted((left, right) => byTimestampDesc(left.pinnedAt, right.pinnedAt)),
+      activeSessions: summaries
+        .filter((summary) => !summary.isPinned && !summary.isArchived)
+        .toSorted((left, right) => byTimestampDesc(left.updatedAt, right.updatedAt)),
+      archived: {
+        collapsed: sidebarState.archivedGroupCollapsed,
+        sessions: summaries
+          .filter((summary) => summary.isArchived)
+          .toSorted((left, right) => byTimestampDesc(left.archivedAt, right.archivedAt)),
+      },
     };
   }
 
@@ -322,6 +359,80 @@ export class WorkspaceSessionCatalog {
       session: this.getStructuredSnapshot(input.sessionId),
       entries,
     });
+  }
+
+  async getArtifactPreview(input: {
+    sessionId: string;
+    artifactId: string;
+  }): Promise<WorkspaceArtifactPreview> {
+    const snapshot = this.getStructuredSnapshot(input.sessionId);
+    if (!snapshot) {
+      throw new Error(`Structured session not found: ${input.sessionId}`);
+    }
+
+    const artifact = snapshot.artifacts.find((candidate) => candidate.id === input.artifactId);
+    if (!artifact) {
+      throw new Error(`Structured artifact not found: ${input.artifactId}`);
+    }
+
+    const link = buildStructuredArtifactLink(snapshot, artifact);
+    const path = artifact.path;
+    const pathContent =
+      path && existsSync(path)
+        ? readFileSync(path, "utf8")
+        : undefined;
+    const content = artifact.content ?? pathContent ?? "";
+
+    return {
+      artifactId: artifact.id,
+      sessionId: input.sessionId,
+      kind: artifact.kind,
+      name: artifact.name,
+      ...(artifact.path ? { path: artifact.path } : {}),
+      createdAt: artifact.createdAt,
+      ...(link.sourceCommandId ? { sourceCommandId: link.sourceCommandId } : {}),
+      ...(link.workflowRunId ? { workflowRunId: link.workflowRunId } : {}),
+      ...(link.workflowName ? { workflowName: link.workflowName } : {}),
+      ...(link.producerLabel ? { producerLabel: link.producerLabel } : {}),
+      missingFile: Boolean(link.missingFile),
+      content,
+    };
+  }
+
+  async pinSession(sessionId: string): Promise<WorkspaceMutationResponse> {
+    await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
+    this.structuredSessionStore.setSessionPinned({ sessionId, pinned: true });
+    await this.emitWorkspaceSync("workspace.updated");
+    return { ok: true };
+  }
+
+  async unpinSession(sessionId: string): Promise<WorkspaceMutationResponse> {
+    await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
+    this.structuredSessionStore.setSessionPinned({ sessionId, pinned: false });
+    await this.emitWorkspaceSync("workspace.updated");
+    return { ok: true };
+  }
+
+  async archiveSession(sessionId: string): Promise<WorkspaceMutationResponse> {
+    await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
+    this.structuredSessionStore.setSessionArchived({ sessionId, archived: true });
+    await this.emitWorkspaceSync("workspace.updated");
+    return { ok: true };
+  }
+
+  async unarchiveSession(sessionId: string): Promise<WorkspaceMutationResponse> {
+    await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
+    this.structuredSessionStore.setSessionArchived({ sessionId, archived: false });
+    await this.emitWorkspaceSync("workspace.updated");
+    return { ok: true };
+  }
+
+  async setArchivedGroupCollapsed(input: {
+    collapsed: boolean;
+  }): Promise<WorkspaceMutationResponse> {
+    this.structuredSessionStore.setArchivedGroupCollapsed(input);
+    await this.emitWorkspaceSync("workspace.updated");
+    return { ok: true };
   }
 
   async createSession(
@@ -855,9 +966,11 @@ export class WorkspaceSessionCatalog {
     }
 
     try {
+      const payload = await this.listSessions();
       this.workspaceSyncListener({
         reason,
-        sessions: (await this.listSessions()).sessions,
+        sessions: payload.sessions,
+        navigation: payload.navigation,
       });
     } catch (error) {
       console.error("Failed to emit workspace sync payload:", error);
@@ -1030,15 +1143,23 @@ export class WorkspaceSessionCatalog {
       return summary;
     }
 
+    const navSummary: WorkspaceSessionSummary = {
+      ...summary,
+      isPinned: snapshot.session.pinnedAt !== null,
+      pinnedAt: snapshot.session.pinnedAt,
+      isArchived: snapshot.session.archivedAt !== null,
+      archivedAt: snapshot.session.archivedAt,
+    };
+
     if (!hasStructuredSessionFacts(snapshot)) {
-      return summary;
+      return navSummary;
     }
 
     const structuredSummary = buildStructuredSessionSummaryProjection(snapshot);
     const view = buildStructuredSessionView(snapshot);
 
     return {
-      ...summary,
+      ...navSummary,
       preview: structuredSummary.preview || summary.preview,
       status: structuredSummary.status,
       updatedAt:

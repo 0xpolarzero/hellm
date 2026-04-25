@@ -15,6 +15,10 @@ function createSessionSummary(): WorkspaceSessionSummary {
     updatedAt: "2026-04-10T10:05:00.000Z",
     messageCount: 2,
     status: "idle",
+    isPinned: false,
+    pinnedAt: null,
+    isArchived: false,
+    archivedAt: null,
     wait: null,
     commandRollups: [
       {

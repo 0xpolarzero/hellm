@@ -61,6 +61,38 @@ describe("structured session state write API", () => {
     return store;
   }
 
+  it("stores pinned, archived, and sidebar navigation state without deleting session facts", () => {
+    const store = createStore();
+    seedSession(store, "session-navigation");
+
+    expect(store.getWorkspaceSidebarState()).toEqual({
+      archivedGroupCollapsed: true,
+      updatedAt: "1970-01-01T00:00:00.000Z",
+    });
+
+    store.setSessionPinned({ sessionId: "session-navigation", pinned: true });
+    let snapshot = store.getSessionState("session-navigation");
+    expect(snapshot.session.pinnedAt).toBe("2026-04-18T09:00:00.000Z");
+    expect(snapshot.session.archivedAt).toBeNull();
+
+    store.setSessionArchived({ sessionId: "session-navigation", archived: true });
+    snapshot = store.getSessionState("session-navigation");
+    expect(snapshot.session.pinnedAt).toBeNull();
+    expect(snapshot.session.archivedAt).toBe("2026-04-18T09:00:01.000Z");
+    expect(snapshot.pi.title).toBe("Structured session smoke");
+
+    store.setSessionArchived({ sessionId: "session-navigation", archived: false });
+    snapshot = store.getSessionState("session-navigation");
+    expect(snapshot.session.pinnedAt).toBeNull();
+    expect(snapshot.session.archivedAt).toBeNull();
+    expect(snapshot.events.filter((event) => event.kind === "session.navigation.updated")).toHaveLength(3);
+
+    expect(store.setArchivedGroupCollapsed({ collapsed: false })).toEqual({
+      archivedGroupCollapsed: false,
+      updatedAt: "2026-04-18T09:00:03.000Z",
+    });
+  });
+
   it("persists explicit per-turn decisions", () => {
     const store = createStore();
     seedSession(store, "session-turn-decisions");
@@ -242,6 +274,8 @@ describe("structured session state write API", () => {
     expect(snapshot.session).toEqual({
       id: "session-model",
       orchestratorPiSessionId: "session-model",
+      pinnedAt: null,
+      archivedAt: null,
       wait: null,
     });
     expect(snapshot.turns).toEqual([

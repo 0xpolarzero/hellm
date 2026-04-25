@@ -15,14 +15,22 @@ import type {
   WorkspaceCommandInspector,
   WorkspaceHandlerThreadInspector,
   WorkspaceHandlerThreadSummary,
+  WorkspaceArtifactPreview,
   WorkspaceProjectCiStatusPanel,
+  WorkspaceSessionNavigationReadModel,
   WorkspaceSessionSummary,
   WorkspaceSyncMessage,
   WorkspaceWorkflowTaskAttemptInspector,
 } from "./chat-rpc";
-import { createChatStorage, type ChatStorage } from "./chat-storage";
+import {
+  createChatStorage,
+  type ChatStorage,
+  type WorkspaceInspectorSelection,
+  type WorkspaceUiRestoreState,
+} from "./chat-storage";
 import { DEFAULT_CHAT_SETTINGS, type ReasoningEffort } from "./chat-settings";
 import { rpc } from "./rpc";
+import { buildWorkspaceSessionNavigation } from "./session-state";
 
 type UsageStats = {
   input: number;
@@ -62,6 +70,7 @@ export const PRIMARY_CHAT_PANE_ID = "primary";
 export interface ChatPaneState {
   id: string;
   target: PromptTarget | null;
+  inspectorSelection: WorkspaceInspectorSelection | null;
 }
 
 export interface ChatPaneLayoutState {
@@ -97,6 +106,7 @@ export interface ChatRuntimeRpcClient {
     getHandlerThreadInspector: typeof rpc.request.getHandlerThreadInspector;
     getWorkflowTaskAttemptInspector: typeof rpc.request.getWorkflowTaskAttemptInspector;
     getProjectCiStatus: typeof rpc.request.getProjectCiStatus;
+    getArtifactPreview: typeof rpc.request.getArtifactPreview;
     createSession: typeof rpc.request.createSession;
     openSession: typeof rpc.request.openSession;
     openSurface: typeof rpc.request.openSurface;
@@ -104,6 +114,11 @@ export interface ChatRuntimeRpcClient {
     renameSession: typeof rpc.request.renameSession;
     forkSession: typeof rpc.request.forkSession;
     deleteSession: typeof rpc.request.deleteSession;
+    pinSession: typeof rpc.request.pinSession;
+    unpinSession: typeof rpc.request.unpinSession;
+    archiveSession: typeof rpc.request.archiveSession;
+    unarchiveSession: typeof rpc.request.unarchiveSession;
+    setArchivedGroupCollapsed: typeof rpc.request.setArchivedGroupCollapsed;
     sendPrompt: typeof rpc.request.sendPrompt;
     setSurfaceModel: typeof rpc.request.setSurfaceModel;
     setSurfaceThoughtLevel: typeof rpc.request.setSurfaceThoughtLevel;
@@ -129,6 +144,7 @@ export interface ChatRuntime {
   workspaceLabel: string;
   branch?: string;
   sessions: WorkspaceSessionSummary[];
+  sessionNavigation: WorkspaceSessionNavigationReadModel;
   paneLayout: ChatPaneLayoutState;
   primaryPaneId: string;
   dispose: () => void;
@@ -151,6 +167,10 @@ export interface ChatRuntime {
     sessionId?: string,
   ) => Promise<WorkspaceWorkflowTaskAttemptInspector>;
   getProjectCiStatus: (sessionId?: string) => Promise<WorkspaceProjectCiStatusPanel>;
+  getArtifactPreview: (
+    artifactId: string,
+    sessionId?: string,
+  ) => Promise<WorkspaceArtifactPreview>;
   createSession: (request?: CreateSessionRequest, paneId?: string) => Promise<void>;
   openSession: (sessionId: string, paneId?: string) => Promise<void>;
   openSurface: (target: PromptTarget, paneId?: string) => Promise<void>;
@@ -158,6 +178,15 @@ export interface ChatRuntime {
   renameSession: (sessionId: string, title: string) => Promise<void>;
   forkSession: (sessionId: string, title?: string, paneId?: string) => Promise<void>;
   deleteSession: (sessionId: string, paneId?: string) => Promise<void>;
+  pinSession: (sessionId: string) => Promise<void>;
+  unpinSession: (sessionId: string) => Promise<void>;
+  archiveSession: (sessionId: string) => Promise<void>;
+  unarchiveSession: (sessionId: string) => Promise<void>;
+  setArchivedGroupCollapsed: (collapsed: boolean) => Promise<void>;
+  setPaneInspectorSelection: (
+    paneId: string,
+    selection: WorkspaceInspectorSelection | null,
+  ) => void;
   sendPromptToTarget: (target: PromptTarget, input: string) => Promise<void>;
   syncProviderAuth: (providerId: string) => Promise<boolean>;
   requireProviderAccess: (providerId: string) => Promise<boolean>;
@@ -552,8 +581,10 @@ export async function createChatRuntime(
   const storage = storageOverride ?? initializeStorage();
   const listeners = new Set<ChatRuntimeListener>();
   const paneTargets = new Map<string, PromptTarget | null>([[PRIMARY_CHAT_PANE_ID, null]]);
+  const paneInspectorSelections = new Map<string, WorkspaceInspectorSelection>();
   const surfaceControllers = new Map<string, ChatSurfaceControllerInternal>();
   let sessions: WorkspaceSessionSummary[] = [];
+  let sessionNavigation: WorkspaceSessionNavigationReadModel = buildWorkspaceSessionNavigation([]);
   let focusedPaneId = PRIMARY_CHAT_PANE_ID;
   let disposed = false;
 
@@ -571,6 +602,32 @@ export async function createChatRuntime(
     if (!paneTargets.has(paneId)) {
       paneTargets.set(paneId, null);
     }
+  };
+
+  const persistWorkspaceUiRestore = (): void => {
+    if (disposed) {
+      return;
+    }
+
+    const state: WorkspaceUiRestoreState = {
+      version: 1,
+      focusedPaneId,
+      panes: Array.from(paneTargets.entries())
+        .filter((entry): entry is [string, PromptTarget] => entry[1] !== null)
+        .map(([paneId, target]) => ({
+          paneId,
+          workspaceSessionId: target.workspaceSessionId,
+          surfacePiSessionId: target.surfacePiSessionId,
+          surface: target.surface,
+          ...(target.threadId ? { threadId: target.threadId } : {}),
+          inspectorSelection: paneInspectorSelections.get(paneId) ?? null,
+        })),
+      updatedAt: new Date().toISOString(),
+    };
+
+    void storage.workspaceUiRestore
+      .set(workspaceInfo.workspaceId, state)
+      .catch((error) => console.error("Failed to persist workspace UI restore state:", error));
   };
 
   const syncPaneTargetForSurface = (target: PromptTarget): void => {
@@ -605,7 +662,9 @@ export async function createChatRuntime(
     }
 
     paneTargets.set(paneId, null);
+    paneInspectorSelections.delete(paneId);
     surfaceControllers.get(target.surfacePiSessionId)?.detachPane(paneId);
+    persistWorkspaceUiRestore();
   };
 
   const releasePaneSurface = async (paneId: string, target: PromptTarget | null): Promise<void> => {
@@ -624,15 +683,23 @@ export async function createChatRuntime(
   const bindPaneToSnapshot = async (
     paneId: string,
     snapshot: ConversationSurfaceSnapshot,
+    options: { focus?: boolean; persist?: boolean } = {},
   ): Promise<void> => {
+    const focus = options.focus ?? true;
+    const persist = options.persist ?? true;
     ensurePane(paneId);
-    focusedPaneId = paneId;
+    if (focus) {
+      focusedPaneId = paneId;
+    }
     const previousTarget = paneTargets.get(paneId) ?? null;
     const nextTarget = normalizePromptTarget(snapshot.target);
     if (previousTarget?.surfacePiSessionId === nextTarget.surfacePiSessionId) {
       paneTargets.set(paneId, nextTarget);
       upsertSurfaceController({ ...snapshot, target: nextTarget });
       emit();
+      if (persist) {
+        persistWorkspaceUiRestore();
+      }
       return;
     }
 
@@ -644,10 +711,15 @@ export async function createChatRuntime(
     if (previousTarget) {
       surfaceControllers.get(previousTarget.surfacePiSessionId)?.detachPane(paneId);
     }
+    if (persist) {
+      persistWorkspaceUiRestore();
+    }
   };
 
   const refreshSessions = async (): Promise<WorkspaceSessionSummary[]> => {
-    sessions = (await rpcClient.request.listSessions()).sessions;
+    const response = await rpcClient.request.listSessions();
+    sessions = response.sessions;
+    sessionNavigation = response.navigation;
     emit();
     return sessions;
   };
@@ -762,6 +834,17 @@ export async function createChatRuntime(
     return await rpcClient.request.getProjectCiStatus({ sessionId });
   };
 
+  const getArtifactPreview = async (
+    artifactId: string,
+    sessionId = getSelectedSessionId(),
+  ): Promise<WorkspaceArtifactPreview> => {
+    if (!sessionId) {
+      throw new Error("Expected a workspace session before opening an artifact.");
+    }
+
+    return await rpcClient.request.getArtifactPreview({ sessionId, artifactId });
+  };
+
   const resolvePaneId = (paneId?: string): string => {
     const nextPaneId = paneId ?? focusedPaneId ?? PRIMARY_CHAT_PANE_ID;
     ensurePane(nextPaneId);
@@ -774,11 +857,61 @@ export async function createChatRuntime(
     rpcClient.request.listSessions(),
   ]);
   sessions = initialCatalog.sessions;
+  sessionNavigation = initialCatalog.navigation;
 
   const syncProviderAuthPromise = syncProviderAuth(defaults.provider);
   await syncProviderAuthPromise;
 
-  if (initialCatalog.sessions.length > 0) {
+  const restoreState = await storage.workspaceUiRestore
+    .get(workspaceInfo.workspaceId)
+    .catch((error) => {
+      console.error("Failed to load workspace UI restore state:", error);
+      return null;
+    });
+  let restoredPaneIds: string[] = [];
+  if (restoreState?.panes.length) {
+    const sessionIds = new Set(initialCatalog.sessions.map((session) => session.id));
+    paneTargets.clear();
+    for (const paneState of restoreState.panes) {
+      if (!sessionIds.has(paneState.workspaceSessionId)) {
+        continue;
+      }
+
+      const target = normalizePromptTarget({
+        workspaceSessionId: paneState.workspaceSessionId,
+        surface: paneState.surface,
+        surfacePiSessionId: paneState.surfacePiSessionId,
+        ...(paneState.threadId ? { threadId: paneState.threadId } : {}),
+      });
+
+      try {
+        const snapshot =
+          target.surface === "orchestrator"
+            ? await rpcClient.request.openSession({ sessionId: target.workspaceSessionId })
+            : await rpcClient.request.openSurface({ target });
+        if (paneState.inspectorSelection) {
+          paneInspectorSelections.set(paneState.paneId, structuredClone(paneState.inspectorSelection));
+        }
+        await bindPaneToSnapshot(paneState.paneId, snapshot, { focus: false, persist: false });
+        restoredPaneIds.push(paneState.paneId);
+      } catch (error) {
+        console.error("Failed to restore workspace pane:", error);
+        paneInspectorSelections.delete(paneState.paneId);
+      }
+    }
+    if (restoredPaneIds.length === 0) {
+      paneTargets.set(PRIMARY_CHAT_PANE_ID, null);
+    }
+  }
+
+  if (restoredPaneIds.length > 0) {
+    focusedPaneId =
+      restoreState?.focusedPaneId && restoredPaneIds.includes(restoreState.focusedPaneId)
+        ? restoreState.focusedPaneId
+        : restoredPaneIds[0]!;
+    persistWorkspaceUiRestore();
+    emit();
+  } else if (initialCatalog.sessions.length > 0) {
     const [initialSession] = initialCatalog.sessions;
     if (!initialSession) {
       throw new Error("Expected an initial session to open.");
@@ -793,11 +926,13 @@ export async function createChatRuntime(
 
   const workspaceSyncListener = (payload: WorkspaceSyncMessage) => {
     sessions = payload.sessions;
+    sessionNavigation = payload.navigation;
     emit();
   };
 
   const surfaceSyncListener = (payload: SurfaceSyncMessage) => {
     syncPaneTargetForSurface(payload.target);
+    persistWorkspaceUiRestore();
     if (payload.reason === "surface.closed") {
       for (const [paneId, target] of paneTargets.entries()) {
         if (target?.surfacePiSessionId === payload.target.surfacePiSessionId) {
@@ -834,11 +969,15 @@ export async function createChatRuntime(
     get sessions() {
       return sessions;
     },
+    get sessionNavigation() {
+      return sessionNavigation;
+    },
     get paneLayout() {
       return {
         panes: Array.from(paneTargets.entries()).map(([id, target]) => ({
           id,
           target: target ? normalizePromptTarget(target) : null,
+          inspectorSelection: paneInspectorSelections.get(id) ?? null,
         })),
         focusedPaneId,
       };
@@ -868,6 +1007,7 @@ export async function createChatRuntime(
       return {
         id: paneId,
         target: target ? normalizePromptTarget(target) : null,
+        inspectorSelection: paneInspectorSelections.get(paneId) ?? null,
       };
     },
     getPaneController: (paneId) => {
@@ -885,6 +1025,7 @@ export async function createChatRuntime(
     getHandlerThreadInspector,
     getWorkflowTaskAttemptInspector,
     getProjectCiStatus,
+    getArtifactPreview,
     createSession: async (request = {}, paneId) => {
       const nextPaneId = resolvePaneId(paneId);
       const snapshot = await rpcClient.request.createSession(request);
@@ -900,6 +1041,7 @@ export async function createChatRuntime(
         currentTarget.surfacePiSessionId === sessionId
       ) {
         focusedPaneId = nextPaneId;
+        persistWorkspaceUiRestore();
         emit();
         return;
       }
@@ -915,6 +1057,7 @@ export async function createChatRuntime(
         paneTargets.set(nextPaneId, normalizedTarget);
         focusedPaneId = nextPaneId;
         surfaceControllers.get(normalizedTarget.surfacePiSessionId)?.attachPane(nextPaneId);
+        persistWorkspaceUiRestore();
         emit();
         return;
       }
@@ -967,8 +1110,10 @@ export async function createChatRuntime(
       await refreshSessions();
 
       if (affectedPaneIds.has(fallbackPaneId)) {
-        if (sessions.length > 0) {
-          await runtime.openSession(sessions[0]!.id, fallbackPaneId);
+        const nextSession =
+          sessions.find((session) => !session.isArchived) ?? sessions.find((session) => session);
+        if (nextSession) {
+          await runtime.openSession(nextSession.id, fallbackPaneId);
           return;
         }
 
@@ -976,6 +1121,36 @@ export async function createChatRuntime(
         return;
       }
 
+      emit();
+    },
+    pinSession: async (sessionId) => {
+      await rpcClient.request.pinSession({ sessionId });
+      await refreshSessions();
+    },
+    unpinSession: async (sessionId) => {
+      await rpcClient.request.unpinSession({ sessionId });
+      await refreshSessions();
+    },
+    archiveSession: async (sessionId) => {
+      await rpcClient.request.archiveSession({ sessionId });
+      await refreshSessions();
+    },
+    unarchiveSession: async (sessionId) => {
+      await rpcClient.request.unarchiveSession({ sessionId });
+      await refreshSessions();
+    },
+    setArchivedGroupCollapsed: async (collapsed) => {
+      await rpcClient.request.setArchivedGroupCollapsed({ collapsed });
+      await refreshSessions();
+    },
+    setPaneInspectorSelection: (paneId, selection) => {
+      ensurePane(paneId);
+      if (selection) {
+        paneInspectorSelections.set(paneId, structuredClone(selection));
+      } else {
+        paneInspectorSelections.delete(paneId);
+      }
+      persistWorkspaceUiRestore();
       emit();
     },
     sendPromptToTarget: async (target, input) => {

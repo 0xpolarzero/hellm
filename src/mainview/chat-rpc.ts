@@ -57,6 +57,7 @@ export interface StreamEventMessage {
 export interface WorkspaceSyncMessage {
   reason: "workspace.updated" | "structured.updated";
   sessions: WorkspaceSessionSummary[];
+  navigation: WorkspaceSessionNavigationReadModel;
 }
 
 export interface CancelPromptRequest {
@@ -120,6 +121,11 @@ export interface WorkspaceCommandArtifactLink {
   name: string;
   path?: string;
   createdAt: string;
+  sourceCommandId?: string;
+  workflowRunId?: string;
+  workflowName?: string;
+  producerLabel?: string;
+  missingFile?: boolean;
 }
 
 export interface WorkspaceCommandInspectorChild extends WorkspaceCommandRollupChild {
@@ -160,6 +166,7 @@ export interface WorkspaceHandlerThreadWorkflowSummary {
   status: "running" | "waiting" | "continued" | "completed" | "failed" | "cancelled";
   summary: string;
   updatedAt: string;
+  artifacts: WorkspaceCommandArtifactLink[];
 }
 
 export interface WorkspaceHandlerThreadEpisodeSummary {
@@ -269,6 +276,10 @@ export interface WorkspaceSessionSummary {
   updatedAt: string;
   messageCount: number;
   status: SessionStatus;
+  isPinned: boolean;
+  pinnedAt: string | null;
+  isArchived: boolean;
+  archivedAt: string | null;
   sessionFile?: string;
   parentSessionId?: string;
   parentSessionFile?: string;
@@ -303,6 +314,30 @@ export interface WorkspaceSessionSummary {
   commandRollups?: WorkspaceCommandRollup[];
 }
 
+export interface WorkspaceSessionNavigationReadModel {
+  pinnedSessions: WorkspaceSessionSummary[];
+  activeSessions: WorkspaceSessionSummary[];
+  archived: {
+    collapsed: boolean;
+    sessions: WorkspaceSessionSummary[];
+  };
+}
+
+export interface WorkspaceArtifactPreview {
+  artifactId: string;
+  sessionId: string;
+  kind: WorkspaceCommandArtifactLink["kind"];
+  name: string;
+  path?: string;
+  createdAt: string;
+  sourceCommandId?: string;
+  workflowRunId?: string;
+  workflowName?: string;
+  producerLabel?: string;
+  missingFile: boolean;
+  content: string;
+}
+
 export interface ConversationSurfaceSnapshot {
   target: PromptTarget;
   messages: AgentMessage[];
@@ -322,6 +357,7 @@ export interface SurfaceSyncMessage {
 
 export interface ListSessionsResponse {
   sessions: WorkspaceSessionSummary[];
+  navigation: WorkspaceSessionNavigationReadModel;
 }
 
 export interface CreateSessionRequest {
@@ -395,6 +431,10 @@ export interface ChatRPCSchema {
         params: { sessionId: string };
         response: WorkspaceProjectCiStatusPanel;
       };
+      getArtifactPreview: {
+        params: { sessionId: string; artifactId: string };
+        response: WorkspaceArtifactPreview;
+      };
       createSession: {
         params: CreateSessionRequest;
         response: ConversationSurfaceSnapshot;
@@ -421,6 +461,26 @@ export interface ChatRPCSchema {
       };
       deleteSession: {
         params: { sessionId: string };
+        response: WorkspaceMutationResponse;
+      };
+      pinSession: {
+        params: { sessionId: string };
+        response: WorkspaceMutationResponse;
+      };
+      unpinSession: {
+        params: { sessionId: string };
+        response: WorkspaceMutationResponse;
+      };
+      archiveSession: {
+        params: { sessionId: string };
+        response: WorkspaceMutationResponse;
+      };
+      unarchiveSession: {
+        params: { sessionId: string };
+        response: WorkspaceMutationResponse;
+      };
+      setArchivedGroupCollapsed: {
+        params: { collapsed: boolean };
         response: WorkspaceMutationResponse;
       };
       sendPrompt: {

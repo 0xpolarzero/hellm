@@ -17,6 +17,7 @@ import type {
 } from "./chat-rpc";
 import type { PromptHistoryEntry } from "./prompt-history";
 import type { ChatRuntimeRpcClient } from "./chat-runtime";
+import { buildWorkspaceSessionNavigation } from "./session-state";
 
 mock.module("electrobun/view", () => {
   const MockElectroview = Object.assign(
@@ -184,6 +185,10 @@ function createSummary(
     updatedAt: "2026-04-10T10:05:00.000Z",
     messageCount: 2,
     status: "idle",
+    isPinned: false,
+    pinnedAt: null,
+    isArchived: false,
+    archivedAt: null,
     provider: "openai",
     modelId: "gpt-4o",
     thinkingLevel: reasoningEffort,
@@ -301,6 +306,7 @@ function createHandlerThreadSummary(threadId = "thread-1"): WorkspaceHandlerThre
       status: "completed",
       summary: "Project CI workflow completed.",
       updatedAt: "2026-04-10T10:04:30.000Z",
+      artifacts: [],
     },
     latestCiRun: {
       ciRunId: "ci-run-1",
@@ -326,12 +332,13 @@ function createHandlerThreadInspector(threadId = "thread-1"): WorkspaceHandlerTh
     commandRollups: [],
     workflowRuns: [
       {
-        workflowRunId: "workflow-1",
-        workflowName: "project_ci",
-        status: "completed",
-        summary: "Project CI workflow completed.",
-        updatedAt: "2026-04-10T10:04:30.000Z",
-      },
+      workflowRunId: "workflow-1",
+      workflowName: "project_ci",
+      status: "completed",
+      summary: "Project CI workflow completed.",
+      updatedAt: "2026-04-10T10:04:30.000Z",
+      artifacts: [],
+    },
     ],
     workflowTaskAttempts: [
       {
@@ -404,11 +411,20 @@ function createProjectCiStatusPanel(): WorkspaceProjectCiStatusPanel {
         exitCode: 0,
         summary: "Typecheck passed.",
         artifactIds: [],
+        artifacts: [],
         startedAt: "2026-04-10T10:03:30.000Z",
         finishedAt: "2026-04-10T10:04:30.000Z",
         updatedAt: "2026-04-10T10:04:30.000Z",
       },
     ],
+    checkCounts: {
+      passed: 1,
+      failed: 0,
+      cancelled: 0,
+      skipped: 0,
+      blocked: 0,
+      total: 1,
+    },
     updatedAt: "2026-04-10T10:04:30.000Z",
   };
 }
@@ -472,6 +488,7 @@ function createMemoryStorage(): ChatStorage {
   const providerKeys = new Map<string, string>();
   const customProviders = new Map<string, CustomProvider>();
   const promptHistory = new Map<string, PromptHistoryEntry[]>();
+  const workspaceUiRestore = new Map<string, Awaited<ReturnType<ChatStorage["workspaceUiRestore"]["get"]>>>();
 
   return {
     providerKeys: {
@@ -505,6 +522,12 @@ function createMemoryStorage(): ChatStorage {
         return entry;
       },
     },
+    workspaceUiRestore: {
+      get: async (workspaceId: string) => structuredClone(workspaceUiRestore.get(workspaceId) ?? null),
+      set: async (workspaceId, state) => {
+        workspaceUiRestore.set(workspaceId, structuredClone(state));
+      },
+    },
   } as ChatStorage;
 }
 
@@ -534,6 +557,7 @@ function createFakeRpc(input: {
   const promptHandlers = new Map<string, PromptHandler>();
   const pendingPromptIdsBySurface = new Map<string, string>();
   const cancelledPromptIds = new Set<string>();
+  let archivedGroupCollapsed = true;
   const openedTargets: PromptTarget[] = [];
   const closeRequests: PromptTarget[] = [];
   const promptRequests: SendPromptRequest[] = [];
@@ -554,6 +578,8 @@ function createFakeRpc(input: {
 
   const listSessions = (): WorkspaceSessionSummary[] =>
     Array.from(summaries.values()).map((summary) => structuredClone(summary));
+
+  const listNavigation = () => buildWorkspaceSessionNavigation(listSessions(), archivedGroupCollapsed);
 
   const getSurfaceRecord = (surfacePiSessionId: string): SurfaceRecord => {
     const record = surfaces.get(surfacePiSessionId) ?? null;
@@ -580,6 +606,7 @@ function createFakeRpc(input: {
     const payload: WorkspaceSyncMessage = {
       reason,
       sessions: listSessions(),
+      navigation: listNavigation(),
     };
     for (const listener of workspaceSyncListeners) {
       listener(structuredClone(payload));
@@ -661,7 +688,7 @@ function createFakeRpc(input: {
         }),
         listSessions: async () => {
           requestCounts.listSessions += 1;
-          return { sessions: listSessions() };
+          return { sessions: listSessions(), navigation: listNavigation() };
         },
         getCommandInspector: async ({ sessionId, commandId }) => {
           commandInspectorRequests.push({ sessionId, commandId });
@@ -693,6 +720,15 @@ function createFakeRpc(input: {
           projectCiStatusRequests.push(sessionId);
           return structuredClone(input.projectCiStatus ?? createProjectCiStatusPanel());
         },
+        getArtifactPreview: async ({ sessionId, artifactId }) => ({
+          artifactId,
+          sessionId,
+          kind: "text",
+          name: `${artifactId}.txt`,
+          createdAt: "2026-04-10T10:04:30.000Z",
+          missingFile: false,
+          content: `artifact ${artifactId}`,
+        }),
         createSession: async ({ title } = {}) => {
           const sessionId = `session-${summaries.size + 1}`;
           const summary = createSummary(sessionId, title ?? "New Session", "");
@@ -774,6 +810,42 @@ function createFakeRpc(input: {
               surfaces.delete(surfacePiSessionId);
             }
           }
+          return { ok: true };
+        },
+        pinSession: async ({ sessionId }) => {
+          updateSummary(sessionId, (summary) => {
+            summary.isPinned = true;
+            summary.pinnedAt = "2026-04-10T10:10:00.000Z";
+            summary.isArchived = false;
+            summary.archivedAt = null;
+          });
+          return { ok: true };
+        },
+        unpinSession: async ({ sessionId }) => {
+          updateSummary(sessionId, (summary) => {
+            summary.isPinned = false;
+            summary.pinnedAt = null;
+          });
+          return { ok: true };
+        },
+        archiveSession: async ({ sessionId }) => {
+          updateSummary(sessionId, (summary) => {
+            summary.isArchived = true;
+            summary.archivedAt = "2026-04-10T10:10:00.000Z";
+            summary.isPinned = false;
+            summary.pinnedAt = null;
+          });
+          return { ok: true };
+        },
+        unarchiveSession: async ({ sessionId }) => {
+          updateSummary(sessionId, (summary) => {
+            summary.isArchived = false;
+            summary.archivedAt = null;
+          });
+          return { ok: true };
+        },
+        setArchivedGroupCollapsed: async ({ collapsed }) => {
+          archivedGroupCollapsed = collapsed;
           return { ok: true };
         },
         sendPrompt: async (request) => {
@@ -941,9 +1013,9 @@ function createFakeRpc(input: {
   return harness;
 }
 
-async function createRuntime(harness: FakeRpcHarness) {
+async function createRuntime(harness: FakeRpcHarness, storage = createMemoryStorage()) {
   const { createChatRuntime } = await import("./chat-runtime");
-  return await createChatRuntime({}, harness.client as never, createMemoryStorage());
+  return await createChatRuntime({}, harness.client as never, storage);
 }
 
 describe("createChatRuntime", () => {
@@ -1313,5 +1385,114 @@ describe("createChatRuntime", () => {
     expect(harness.projectCiStatusRequests).toEqual(["session-2"]);
 
     runtime.dispose();
+  });
+
+  it("applies pinned, archived, and archived-group navigation mutations from the backend read model", async () => {
+    const harness = createFakeRpc({
+      sessions: [
+        createSummary("session-1", "First", "first reply"),
+        createSummary("session-2", "Second", "second reply"),
+      ],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("first reply")],
+        }),
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-2"),
+          messages: [assistantMessage("second reply")],
+        }),
+      ],
+    });
+
+    const runtime = await createRuntime(harness);
+    await runtime.pinSession("session-2");
+
+    expect(runtime.sessionNavigation.pinnedSessions.map((session) => session.id)).toEqual([
+      "session-2",
+    ]);
+    expect(runtime.sessionNavigation.activeSessions.map((session) => session.id)).toEqual([
+      "session-1",
+    ]);
+
+    await runtime.archiveSession("session-2");
+    await runtime.setArchivedGroupCollapsed(false);
+
+    expect(runtime.sessionNavigation.pinnedSessions).toEqual([]);
+    expect(runtime.sessionNavigation.archived.collapsed).toBe(false);
+    expect(runtime.sessionNavigation.archived.sessions.map((session) => session.id)).toEqual([
+      "session-2",
+    ]);
+
+    await runtime.unarchiveSession("session-2");
+    expect(runtime.sessionNavigation.activeSessions.map((session) => session.id)).toContain(
+      "session-2",
+    );
+    expect(runtime.sessions.find((session) => session.id === "session-2")?.isPinned).toBe(false);
+
+    runtime.dispose();
+  });
+
+  it("restores pane bindings, focused pane, and inspector selection after restart", async () => {
+    const storage = createMemoryStorage();
+    const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
+    const firstHarness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("main reply")],
+        }),
+        createSurfaceSnapshot({
+          target: threadTarget,
+          messages: [assistantMessage("worker ready")],
+        }),
+      ],
+    });
+    const firstRuntime = await createRuntime(firstHarness, storage);
+    await firstRuntime.openSurface(threadTarget, "secondary");
+    firstRuntime.setPaneInspectorSelection("secondary", {
+      kind: "thread",
+      threadId: "thread-123",
+    });
+    await Bun.sleep(0);
+    firstRuntime.dispose();
+
+    const restoreState = await storage.workspaceUiRestore.get("/tmp/svvy");
+    expect(restoreState?.focusedPaneId).toBe("secondary");
+    expect(restoreState?.panes).toContainEqual(
+      expect.objectContaining({
+        paneId: "secondary",
+        workspaceSessionId: "session-1",
+        surfacePiSessionId: "thread-session-1",
+        surface: "thread",
+        threadId: "thread-123",
+        inspectorSelection: { kind: "thread", threadId: "thread-123" },
+      }),
+    );
+
+    const secondHarness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("main reply")],
+        }),
+        createSurfaceSnapshot({
+          target: threadTarget,
+          messages: [assistantMessage("worker ready")],
+        }),
+      ],
+    });
+    const secondRuntime = await createRuntime(secondHarness, storage);
+
+    expect(secondRuntime.paneLayout.focusedPaneId).toBe("secondary");
+    expect(secondRuntime.getPane("secondary")?.target).toEqual(threadTarget);
+    expect(secondRuntime.getPane("secondary")?.inspectorSelection).toEqual({
+      kind: "thread",
+      threadId: "thread-123",
+    });
+
+    secondRuntime.dispose();
   });
 });

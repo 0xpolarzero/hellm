@@ -2,10 +2,11 @@ import type { Model } from "@mariozechner/pi-ai";
 import type { PromptHistoryEntry } from "./prompt-history";
 
 const DB_NAME = "svvy-desktop-chat";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const PROVIDER_KEYS_STORE = "provider-keys";
 const CUSTOM_PROVIDERS_STORE = "custom-providers";
 const PROMPT_HISTORY_STORE = "prompt-history";
+const WORKSPACE_UI_RESTORE_STORE = "workspace-ui-restore";
 
 export type AutoDiscoveryProviderType = "ollama" | "llama.cpp" | "vllm" | "lmstudio";
 
@@ -44,6 +45,9 @@ class IndexedDbKeyValueStore {
           }
           if (!db.objectStoreNames.contains(PROMPT_HISTORY_STORE)) {
             db.createObjectStore(PROMPT_HISTORY_STORE);
+          }
+          if (!db.objectStoreNames.contains(WORKSPACE_UI_RESTORE_STORE)) {
+            db.createObjectStore(WORKSPACE_UI_RESTORE_STORE);
           }
         });
       });
@@ -166,10 +170,52 @@ export class PromptHistoryStore {
   }
 }
 
+export type WorkspaceInspectorSelection =
+  | { kind: "thread"; threadId: string }
+  | { kind: "workflow-run"; workflowRunId: string }
+  | { kind: "artifact"; artifactId: string }
+  | { kind: "ci-run"; ciRunId: string };
+
+export interface WorkspaceUiRestorePaneState {
+  paneId: string;
+  workspaceSessionId: string;
+  surfacePiSessionId: string;
+  surface: "orchestrator" | "thread";
+  threadId?: string;
+  inspectorSelection?: WorkspaceInspectorSelection | null;
+}
+
+export interface WorkspaceUiRestoreState {
+  version: 1;
+  focusedPaneId: string | null;
+  panes: WorkspaceUiRestorePaneState[];
+  updatedAt: string;
+}
+
+export class WorkspaceUiRestoreStore {
+  constructor(private backend: IndexedDbKeyValueStore) {}
+
+  async get(workspaceId: string): Promise<WorkspaceUiRestoreState | null> {
+    const state = await this.backend.get<WorkspaceUiRestoreState>(
+      WORKSPACE_UI_RESTORE_STORE,
+      workspaceId,
+    );
+    if (!state || state.version !== 1 || !Array.isArray(state.panes)) {
+      return null;
+    }
+    return state;
+  }
+
+  async set(workspaceId: string, state: WorkspaceUiRestoreState): Promise<void> {
+    await this.backend.set(WORKSPACE_UI_RESTORE_STORE, workspaceId, state);
+  }
+}
+
 export interface ChatStorage {
   providerKeys: ProviderKeysStore;
   customProviders: CustomProvidersStore;
   promptHistory: PromptHistoryStore;
+  workspaceUiRestore: WorkspaceUiRestoreStore;
 }
 
 export function createChatStorage(): ChatStorage {
@@ -178,5 +224,6 @@ export function createChatStorage(): ChatStorage {
     providerKeys: new ProviderKeysStore(backend),
     customProviders: new CustomProvidersStore(backend),
     promptHistory: new PromptHistoryStore(backend),
+    workspaceUiRestore: new WorkspaceUiRestoreStore(backend),
   };
 }

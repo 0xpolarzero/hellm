@@ -201,6 +201,26 @@ export class ArtifactsController {
     this.emit();
   }
 
+  upsertExternalArtifact(input: {
+    filename: string;
+    content: string;
+    createdAt?: number;
+    updatedAt?: number;
+  }): ArtifactRecord {
+    const existing = this.artifacts.get(input.filename);
+    const record: ArtifactRecord = {
+      filename: input.filename,
+      content: input.content,
+      createdAt: input.createdAt ?? existing?.createdAt ?? Date.now(),
+      updatedAt: input.updatedAt ?? Date.now(),
+    };
+    this.artifacts.set(input.filename, record);
+    this.activeFilename = input.filename;
+    this.emit();
+    this.queueHtmlRefresh();
+    return record;
+  }
+
   get tool(): AgentTool<typeof artifactsParamsSchema, undefined> {
     return {
       label: "Artifacts",

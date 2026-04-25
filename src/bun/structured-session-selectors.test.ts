@@ -30,6 +30,7 @@ import {
 
 type StructuredSessionSnapshotFixture = Omit<
   Partial<StructuredSessionSnapshot>,
+  | "session"
   | "turns"
   | "threads"
   | "threadContexts"
@@ -43,6 +44,7 @@ type StructuredSessionSnapshotFixture = Omit<
   | "artifacts"
   | "events"
 > & {
+  session?: Partial<StructuredSessionSnapshot["session"]>;
   threads?: Partial<StructuredThreadRecord>[];
   threadContexts?: Partial<StructuredThreadContextRecord>[];
   turns?: Partial<StructuredTurnRecord>[];
@@ -73,6 +75,7 @@ function createSessionSnapshot(
     workflowTaskMessages: overrideWorkflowTaskMessages,
     artifacts: overrideArtifacts,
     events: overrideEvents,
+    session: overrideSession,
     ...rest
   } = overrides;
 
@@ -345,7 +348,10 @@ function createSessionSnapshot(
     session: {
       id: "session-selectors",
       orchestratorPiSessionId: "session-selectors",
+      pinnedAt: null,
+      archivedAt: null,
       wait: null,
+      ...overrideSession,
     },
     turns,
     threads,
@@ -622,6 +628,10 @@ describe("structured session selectors", () => {
       status: "waiting",
       preview: "Waiting: Need workflow ownership decision",
       updatedAt: "2026-04-18T10:03:30.000Z",
+      isPinned: false,
+      pinnedAt: null,
+      isArchived: false,
+      archivedAt: null,
       counts: view.counts,
       wait: snapshot.session.wait,
       threadIds: view.threadIds,
@@ -729,6 +739,9 @@ describe("structured session selectors", () => {
           name: "execute-typescript.ts",
           path: "/repo/svvy/.svvy/artifacts/execute-typescript.ts",
           createdAt: "2026-04-18T10:00:11.000Z",
+          sourceCommandId: "command-parent",
+          producerLabel: "Inspect docs",
+          missingFile: true,
         },
       ],
       childCount: 2,
@@ -757,6 +770,9 @@ describe("structured session selectors", () => {
               name: "summary.md",
               path: "/repo/svvy/.svvy/artifacts/summary.md",
               createdAt: "2026-04-18T10:00:39.000Z",
+              sourceCommandId: "command-summary-child",
+              producerLabel: "Create summary.md",
+              missingFile: true,
             },
           ],
         },
@@ -1112,6 +1128,7 @@ describe("structured session selectors", () => {
           status: "completed",
           summary: "Project CI passed after adding regression coverage.",
           updatedAt: "2026-04-18T10:04:10.000Z",
+          artifacts: [],
         },
         latestCiRun: {
           ciRunId: "ci-run-handler-1",
@@ -1154,6 +1171,7 @@ describe("structured session selectors", () => {
         status: "completed",
         summary: "Project CI passed after adding regression coverage.",
         updatedAt: "2026-04-18T10:04:10.000Z",
+        artifacts: [],
       },
       latestCiRun: {
         ciRunId: "ci-run-handler-1",
@@ -1204,6 +1222,7 @@ describe("structured session selectors", () => {
           status: "completed",
           summary: "Project CI passed after adding regression coverage.",
           updatedAt: "2026-04-18T10:04:10.000Z",
+          artifacts: [],
         },
         {
           workflowRunId: "workflow-handler-1",
@@ -1211,6 +1230,7 @@ describe("structured session selectors", () => {
           status: "completed",
           summary: "Patched parser transitions.",
           updatedAt: "2026-04-18T10:03:25.000Z",
+          artifacts: [],
         },
       ],
       workflowTaskAttempts: [],
@@ -1237,6 +1257,9 @@ describe("structured session selectors", () => {
           name: "parser-regression.test.ts",
           path: "/repo/svvy/.svvy/artifacts/parser-regression.test.ts",
           createdAt: "2026-04-18T10:03:12.000Z",
+          sourceCommandId: "command-handler-parent",
+          producerLabel: "Patch parser transitions",
+          missingFile: true,
         },
       ],
     });
@@ -1660,6 +1683,11 @@ describe("structured session selectors", () => {
           name: "workflow-proof.txt",
           path: "/repo/svvy/workflow-proof.txt",
           createdAt: "2026-04-18T10:01:30.000Z",
+          sourceCommandId: "command-task-parent",
+          workflowRunId: "workflow-attempt-1",
+          workflowName: "selector-workflow",
+          producerLabel: "selector-workflow",
+          missingFile: true,
         },
       ],
     });
