@@ -25,7 +25,7 @@ How to use this file:
 
 ## 1. Structured Session State
 
-Workflow-inspector UI work remains explicitly out of scope for this section and stays under section 17.
+Workflow-inspector UI work remains explicitly out of scope for this section and stays under section 16.
 
 - [x] Build a POC session overlay document and validate how it can sit above pi session data. Commit(s): `c432f4e`
 - [x] Persist a minimal structured session overlay root above pi session data. Commit(s): `b510857`, `fff54d7`
@@ -156,71 +156,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Render the latest Project CI summary block for the focused surface or inspected thread.
 - [ ] Restore focused pane, pane-to-surface bindings, and inspector selection after restart.
 
-## 9. Session Modes And Runtime Profiles
-
-- [ ] Define the runtime profile ids and stored shape for orchestrator, quick, handler, explorer, implementer, reviewer, and workflow-writer.
-- [x] Keep runtime profiles separate from typed handler context packs so Project CI uses the default handler runtime profile plus `context: ["ci"]`. Commit(s): `2a5dbbe`
-- [ ] Seed initial app-wide default values for those runtime profiles.
-- [ ] Build a POC settings model for editing app-wide runtime profile defaults.
-- [ ] Persist app-wide runtime profile defaults.
-- [ ] Build a POC session creation flow with separate orchestrator-session and quick-session actions.
-- [ ] Persist session mode and the default orchestrator-surface prompt selection.
-- [ ] Persist per-session overrides for each runtime profile.
-- [ ] Apply the quick-session main profile and quick-session system prompt at session creation.
-- [ ] Show the current focused-surface runtime profile summary in pane chrome.
-- [ ] Expand the session runtime panel to inspect all agent runtime profiles for the focused surface's session.
-
-## 10. Session Titles
-
-- [x] Define the stored title states for top-level sessions and handler threads. Commit(s): `b510857`, `fe53a3b`
-- [ ] Add the hidden `namer` system agent for one-shot top-level session naming.
-- [ ] Seed the `namer` agent to `gpt-5.4-mini` with low reasoning effort.
-- [ ] Build a POC one-shot title generation after the first real user turn for a top-level session.
-- [ ] Persist generated top-level session titles and stop silent auto-retitling after the first real user turn has passed.
-- [ ] Freeze auto-titling after manual rename.
-- [ ] Generate deterministic task-based titles for handler threads and workflow runs without using the `namer`.
-
-## 11. Composer Mention Targets
-
-- [ ] Define the stored shape for symbolic file and folder mention targets in the composer.
-- [ ] Build a POC `@` autocomplete picker over workspace files and folders.
-- [ ] Render selected file and folder mentions as removable composer chips.
-- [ ] Persist the visible mention text and resolved target paths on send.
-- [ ] Resolve file and folder mentions into symbolic context targets for orchestrator and handler-thread prompting.
-- [ ] Keep folder mentions symbolic by default instead of eagerly pasting or expanding contents in the composer.
-
-## 12. Layered Workflow Knowledge
-
-- [x] Inventory the workflow-related prompt, skill, and knowledge assets the product needs. Commit(s): `0b2d1ff`, `4515233`, `a02bd48`
-- [x] Build a POC repo layout for workflow knowledge with separate orchestrator-facing and handler-facing assets. Commit(s): `0b2d1ff`, `4515233`
-- [x] Define the first minimal orchestrator-facing workflow summary shape. Commit(s): `a02bd48`
-- [x] Define the first richer handler-facing workflow prompt or example shape. Commit(s): `0b2d1ff`
-- [x] Load only minimal workflow summaries into orchestrator routing context. Commit(s): `a02bd48`
-- [x] Build a POC delegated workflow that receives extended workflow knowledge without expanding orchestrator context. Commit(s): `0b2d1ff`, `4515233`
-- [x] Define typed handler context packs as the optional-knowledge layer between minimal handler prompts and specialized product authoring guidance. Commit(s): `2a5dbbe`
-- [x] Render loaded handler context keys in thread metadata so users can see when optional context such as `ci` is active. Commit(s): `2a5dbbe`
-
-## 13. Worktree-Aware Execution
-
-- [ ] Build a POC thread-to-worktree binding model and inspect how it should appear in the UI.
-- [x] Persist worktree binding on threads. Commit(s): `f53c9b8`
-- [ ] Persist worktree binding on workflow runs.
-- [ ] Show active worktree on orchestrator and thread surfaces.
-- [ ] Warn when the focused pane surface context and current filesystem context diverge.
-- [ ] Build a POC isolated workflow run in a separate worktree.
-- [ ] Let handler threads declare or acquire an isolated worktree when needed.
-- [ ] Show which thread or workflow run owns each worktree-backed execution.
-
-## 14. Headless Surface
-
-- [ ] Build a POC one-shot headless entrypoint that reuses desktop orchestration code.
-- [ ] Define the headless one-shot input contract.
-- [ ] Return structured output for an ordinary headless turn.
-- [ ] Return structured output for a delegated headless objective and its latest handoff episode.
-- [ ] Emit thread, workflow-run, episode, and artifact references in headless results.
-- [ ] Reuse the same orchestrator and state model as desktop execution.
-
-## 15. Pane Layout, Surface Ownership, And Expanded Surfaces
+## 9. Pane Layout, Surface Ownership, And Expanded Surfaces
 
 - [ ] Define the stored shape for a fixed pane layout up to `3x3`, including multi-cell spans.
 - [ ] Persist pane-to-surface bindings separately from live surface runtime state.
@@ -238,6 +174,70 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Render compact workflow-run cards in the workspace shell timeline.
 - [ ] Open a selected handler-thread surface in a pane slot as a fully interactive surface.
 - [ ] Keep duplicated views of the same surface synchronized while allowing independent scroll position.
+
+## 10. Session Modes And Runtime Profiles
+
+- [ ] Define the runtime profile ids and stored shape for orchestrator, quick, handler, explorer, implementer, reviewer, and workflow-writer.
+- [x] Keep runtime profiles separate from typed handler context packs so Project CI uses the default handler runtime profile plus `context: ["ci"]`. Commit(s): `2a5dbbe`
+- [ ] Seed initial app-wide default values for those runtime profiles.
+- [ ] Build a POC settings model for editing app-wide runtime profile defaults.
+- [ ] Persist app-wide runtime profile defaults.
+- [ ] Build a POC session creation flow with separate orchestrator-session and quick-session actions.
+- [ ] Persist session mode and the default orchestrator-surface prompt selection.
+- [ ] Persist per-session overrides for each runtime profile.
+- [ ] Apply the quick-session main profile and quick-session system prompt at session creation.
+- [ ] Show the current focused-surface runtime profile summary in pane chrome.
+- [ ] Expand the session runtime panel to inspect all agent runtime profiles for the focused surface's session.
+
+## 11. Session Titles
+
+- [x] Define the stored title states for top-level sessions and handler threads. Commit(s): `b510857`, `fe53a3b`
+- [ ] Add the hidden `namer` system agent for one-shot top-level session naming.
+- [ ] Seed the `namer` agent to `gpt-5.4-mini` with low reasoning effort.
+- [ ] Build a POC one-shot title generation after the first real user turn for a top-level session.
+- [ ] Persist generated top-level session titles and stop silent auto-retitling after the first real user turn has passed.
+- [ ] Freeze auto-titling after manual rename.
+- [ ] Generate deterministic task-based titles for handler threads and workflow runs without using the `namer`.
+
+## 12. Composer Mention Targets
+
+- [ ] Define the stored shape for symbolic file and folder mention targets in the composer.
+- [ ] Build a POC `@` autocomplete picker over workspace files and folders.
+- [ ] Render selected file and folder mentions as removable composer chips.
+- [ ] Persist the visible mention text and resolved target paths on send.
+- [ ] Resolve file and folder mentions into symbolic context targets for orchestrator and handler-thread prompting.
+- [ ] Keep folder mentions symbolic by default instead of eagerly pasting or expanding contents in the composer.
+
+## 13. Layered Workflow Knowledge
+
+- [x] Inventory the workflow-related prompt, skill, and knowledge assets the product needs. Commit(s): `0b2d1ff`, `4515233`, `a02bd48`
+- [x] Build a POC repo layout for workflow knowledge with separate orchestrator-facing and handler-facing assets. Commit(s): `0b2d1ff`, `4515233`
+- [x] Define the first minimal orchestrator-facing workflow summary shape. Commit(s): `a02bd48`
+- [x] Define the first richer handler-facing workflow prompt or example shape. Commit(s): `0b2d1ff`
+- [x] Load only minimal workflow summaries into orchestrator routing context. Commit(s): `a02bd48`
+- [x] Build a POC delegated workflow that receives extended workflow knowledge without expanding orchestrator context. Commit(s): `0b2d1ff`, `4515233`
+- [x] Define typed handler context packs as the optional-knowledge layer between minimal handler prompts and specialized product authoring guidance. Commit(s): `2a5dbbe`
+- [x] Render loaded handler context keys in thread metadata so users can see when optional context such as `ci` is active. Commit(s): `2a5dbbe`
+
+## 14. Worktree-Aware Execution
+
+- [ ] Build a POC thread-to-worktree binding model and inspect how it should appear in the UI.
+- [x] Persist worktree binding on threads. Commit(s): `f53c9b8`
+- [ ] Persist worktree binding on workflow runs.
+- [ ] Show active worktree on orchestrator and thread surfaces.
+- [ ] Warn when the focused pane surface context and current filesystem context diverge.
+- [ ] Build a POC isolated workflow run in a separate worktree.
+- [ ] Let handler threads declare or acquire an isolated worktree when needed.
+- [ ] Show which thread or workflow run owns each worktree-backed execution.
+
+## 15. Headless Surface
+
+- [ ] Build a POC one-shot headless entrypoint that reuses desktop orchestration code.
+- [ ] Define the headless one-shot input contract.
+- [ ] Return structured output for an ordinary headless turn.
+- [ ] Return structured output for a delegated headless objective and its latest handoff episode.
+- [ ] Emit thread, workflow-run, episode, and artifact references in headless results.
+- [ ] Reuse the same orchestrator and state model as desktop execution.
 
 ## 16. Dedicated Workflow Inspector
 
