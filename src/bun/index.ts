@@ -375,6 +375,12 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return session;
       },
+      recordSessionOpened: async ({ sessionId }: { sessionId: string }) => {
+        recordBridgeEvent("session.opened", {
+          sessionId,
+        });
+        return { ok: true };
+      },
       openSurface: async ({ target }: { target: PromptTarget }) => {
         const session = await workspaceSessionCatalog.openSurface(target, DEFAULT_SYSTEM_PROMPT);
         recordBridgeEvent("surface.opened", {
@@ -545,8 +551,16 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return { ok: true };
       },
-      setSurfaceModel: async ({ target, model }: { target: PromptTarget; model: string }) => {
-        const result = await workspaceSessionCatalog.setSurfaceModel(target, model);
+      setSurfaceModel: async ({
+        target,
+        provider,
+        model,
+      }: {
+        target: PromptTarget;
+        provider: string;
+        model: string;
+      }) => {
+        const result = await workspaceSessionCatalog.setSurfaceModel(target, provider, model);
         if (result.ok) {
           recordBridgeEvent("surface.model.changed", {
             model,

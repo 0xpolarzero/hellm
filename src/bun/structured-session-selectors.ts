@@ -414,18 +414,18 @@ function getArtifactProducer(
       ? session.workflowRuns.find((candidate) => candidate.id === artifact.workflowRunId)
       : null) ??
     (artifact.sourceCommandId
-      ? session.commands
+      ? (session.commands
           .map((command) => {
             if (command.id === artifact.sourceCommandId) {
               return command.workflowRunId
-                ? session.workflowRuns.find(
+                ? (session.workflowRuns.find(
                     (candidate) => candidate.id === command.workflowRunId,
-                  ) ?? null
+                  ) ?? null)
                 : null;
             }
             return null;
           })
-          .find((candidate) => candidate !== null) ?? null
+          .find((candidate) => candidate !== null) ?? null)
       : null);
   const sourceCommand = artifact.sourceCommandId
     ? session.commands.find((candidate) => candidate.id === artifact.sourceCommandId)
@@ -442,7 +442,9 @@ function getArtifactProducer(
     workflowTaskAttempt?.title;
 
   return {
-    ...(workflowRun ? { workflowRunId: workflowRun.id, workflowName: workflowRun.workflowName } : {}),
+    ...(workflowRun
+      ? { workflowRunId: workflowRun.id, workflowName: workflowRun.workflowName }
+      : {}),
     ...(sourceCommand ? { sourceCommandId: sourceCommand.id } : {}),
     ...(producerLabel ? { producerLabel } : {}),
   };
@@ -485,7 +487,10 @@ function buildThreadArtifactLinks(
   const artifactLinksById = new Map<string, StructuredCommandArtifactLink>();
 
   for (const artifact of session.artifacts) {
-    if (artifact.threadId === threadId || (artifact.workflowRunId && workflowRunIds.has(artifact.workflowRunId))) {
+    if (
+      artifact.threadId === threadId ||
+      (artifact.workflowRunId && workflowRunIds.has(artifact.workflowRunId))
+    ) {
       artifactLinksById.set(artifact.id, buildStructuredArtifactLink(session, artifact));
     }
   }
@@ -806,9 +811,7 @@ function buildHandlerThreadSummary(
     (workflowTaskAttempt) => workflowTaskAttempt.threadId === thread.id,
   );
   const episodes = session.episodes.filter((episode) => episode.threadId === thread.id);
-  const artifacts = session.artifacts.filter(
-    (artifact) => artifact.threadId === thread.id,
-  );
+  const artifacts = session.artifacts.filter((artifact) => artifact.threadId === thread.id);
   const ciRuns = session.ciRuns.filter((ciRun) => ciRun.threadId === thread.id);
   const latestWorkflowRun = getThreadLatestWorkflowRun(session, thread);
   const latestCiRun =
@@ -834,7 +837,9 @@ function buildHandlerThreadSummary(
     artifactCount: artifacts.length,
     ciRunCount: ciRuns.length,
     loadedContextKeys: thread.loadedContextKeys.slice(),
-    latestWorkflowRun: latestWorkflowRun ? buildThreadWorkflowSummary(session, latestWorkflowRun) : null,
+    latestWorkflowRun: latestWorkflowRun
+      ? buildThreadWorkflowSummary(session, latestWorkflowRun)
+      : null,
     latestCiRun: latestCiRun ? buildProjectCiRunSummary(latestCiRun) : null,
     latestEpisode: latestEpisode ? buildThreadEpisodeSummary(latestEpisode) : null,
   };
@@ -976,9 +981,7 @@ export function deriveStructuredSessionStatus(input: {
     return "waiting";
   }
 
-  if (
-    input.threads.some((thread) => thread.status === "troubleshooting")
-  ) {
+  if (input.threads.some((thread) => thread.status === "troubleshooting")) {
     return "error";
   }
 

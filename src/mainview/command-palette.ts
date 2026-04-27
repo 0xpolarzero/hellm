@@ -419,7 +419,7 @@ export function filterCommandActions(actions: CommandAction[], query: string): C
   return getVisibleCommandActions(actions)
     .map((action) => ({ action, score: scoreCommandAction(action, query) }))
     .filter((entry) => entry.score > 0)
-    .sort(
+    .toSorted(
       (left, right) =>
         right.score - left.score || left.action.label.localeCompare(right.action.label),
     )

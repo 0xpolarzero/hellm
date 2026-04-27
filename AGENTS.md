@@ -3,6 +3,7 @@
 - Read `docs/prd.md` before doing any work.
 - Read `docs/features.ts` before doing any work that affects product scope, feature behavior, or test planning.
 - When running e2e tests, use the OrbStack machine lane via `bun run test:e2e`; keep e2e runs off the active desktop session and do not reintroduce a local visible-default or Docker-based path.
+- Do not hack around failing e2e tests with retries, broad waits, selector churn, best-effort fallbacks, or test-only behavior. When an e2e path fails and the app can be driven directly, reproduce the same conditions in a running app with `electrobun-browser-tools`, inspect the page/state/events methodically, identify the product or contract issue, and make the targeted product fix. Change e2e tests only when that inspection proves the test assertion no longer matches the intended product behavior.
 - This repo exists to turn pi coding agent into a Slate-like orchestrated coding agent and pi-owned interactive shell.
 - Do not introduce or preserve a standalone custom shell, readline loop, or alternate TUI stack outside pi; interactive work must go through pi's extension/runtime seam.
 - Treat any proposed demo renderer, stdout snapshot, or non-pi terminal loop as a regression unless the PRD explicitly labels it as a test helper.

@@ -34,34 +34,49 @@ test("splits, resizes, and closes the durable pane grid", async () => {
         );
       },
     },
-      async (app) => {
-        await waitForPaneShell(app.page);
-        expect(await app.page.locator('[data-testid="workspace-pane"]').count()).toBe(1);
+    async (app) => {
+      await waitForPaneShell(app.page);
+      expect(await app.page.locator('[data-testid="workspace-pane"]').count()).toBe(1);
 
-        await app.page.locator('[data-testid="pane-split-right"]').click();
-        await app.page.locator('[data-testid="workspace-pane"]').nth(1).waitFor({ state: "visible" });
-        expect(await app.page.locator('[data-testid="workspace-pane"]').count()).toBe(2);
+      await app.page.locator('[data-testid="pane-split-right"]').click();
+      await app.page.locator('[data-testid="workspace-pane"]').nth(1).waitFor({ state: "visible" });
+      expect(await app.page.locator('[data-testid="workspace-pane"]').count()).toBe(2);
 
-        const firstBox = await app.page.locator('[data-testid="workspace-pane"]').nth(0).boundingBox();
-        const secondBox = await app.page.locator('[data-testid="workspace-pane"]').nth(1).boundingBox();
-        expect(firstBox).not.toBeNull();
-        expect(secondBox).not.toBeNull();
-        expect(firstBox!.x + firstBox!.width).toBeLessThanOrEqual(secondBox!.x + 2);
+      const firstBox = await app.page
+        .locator('[data-testid="workspace-pane"]')
+        .nth(0)
+        .boundingBox();
+      const secondBox = await app.page
+        .locator('[data-testid="workspace-pane"]')
+        .nth(1)
+        .boundingBox();
+      expect(firstBox).not.toBeNull();
+      expect(secondBox).not.toBeNull();
+      expect(firstBox!.x + firstBox!.width).toBeLessThanOrEqual(secondBox!.x + 2);
 
-        await app.page.locator('[data-testid="pane-resize-vertical"]').nth(1).click();
-        const resizedFirstBox = await app.page.locator('[data-testid="workspace-pane"]').nth(0).boundingBox();
-        expect(resizedFirstBox!.width).not.toBe(firstBox!.width);
+      await app.page.locator('[data-testid="pane-resize-vertical"]').nth(1).click();
+      const resizedFirstBox = await app.page
+        .locator('[data-testid="workspace-pane"]')
+        .nth(0)
+        .boundingBox();
+      expect(resizedFirstBox!.width).not.toBe(firstBox!.width);
 
-        await app.page.locator('[data-testid="pane-split-below"]').click();
-        expect(await app.page.locator('[data-testid="workspace-pane"]').count()).toBe(3);
+      await app.page.locator('[data-testid="pane-split-below"]').click();
+      expect(await app.page.locator('[data-testid="workspace-pane"]').count()).toBe(3);
 
-        await app.page.locator('[data-testid="pane-close"]').click();
-        expect(await app.page.locator('[data-testid="workspace-pane"]').count()).toBe(2);
-        const leftAfterClose = await app.page.locator('[data-testid="workspace-pane"]').nth(0).boundingBox();
-        const rightAfterClose = await app.page.locator('[data-testid="workspace-pane"]').nth(1).boundingBox();
-        expect(leftAfterClose).not.toBeNull();
-        expect(rightAfterClose).not.toBeNull();
-        expect(Math.abs(leftAfterClose!.height - rightAfterClose!.height)).toBeLessThanOrEqual(2);
-      },
+      await app.page.locator('[data-testid="pane-close"]').click();
+      expect(await app.page.locator('[data-testid="workspace-pane"]').count()).toBe(2);
+      const leftAfterClose = await app.page
+        .locator('[data-testid="workspace-pane"]')
+        .nth(0)
+        .boundingBox();
+      const rightAfterClose = await app.page
+        .locator('[data-testid="workspace-pane"]')
+        .nth(1)
+        .boundingBox();
+      expect(leftAfterClose).not.toBeNull();
+      expect(rightAfterClose).not.toBeNull();
+      expect(Math.abs(leftAfterClose!.height - rightAfterClose!.height)).toBeLessThanOrEqual(2);
+    },
   );
 });

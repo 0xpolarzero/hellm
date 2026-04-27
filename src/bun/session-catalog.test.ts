@@ -285,6 +285,7 @@ async function setSurfaceModel(
   catalog: WorkspaceSessionCatalog,
   target: PromptTarget,
   model: string,
+  provider = "openai",
 ): Promise<void> {
   const setSurfaceModelFn = (
     catalog as unknown as {
@@ -293,10 +294,10 @@ async function setSurfaceModel(
   ).setSurfaceModel;
   const source = String(setSurfaceModelFn);
   if (source.includes(".target")) {
-    await setSurfaceModelFn.call(catalog, { target, model });
+    await setSurfaceModelFn.call(catalog, { target, provider, model });
     return;
   }
-  await setSurfaceModelFn.call(catalog, target, model);
+  await setSurfaceModelFn.call(catalog, target, provider, model);
 }
 
 async function setSurfaceThoughtLevel(

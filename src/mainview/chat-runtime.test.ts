@@ -751,6 +751,10 @@ function createFakeRpc(input: {
           openedTargets.push(cloneTarget(record.snapshot.target));
           return structuredClone(record.snapshot);
         },
+        recordSessionOpened: async ({ sessionId }) => {
+          openedTargets.push(cloneTarget(createOrchestratorTarget(sessionId)));
+          return { ok: true };
+        },
         openSurface: async ({ target }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
           record.retainCount += 1;
@@ -904,15 +908,17 @@ function createFakeRpc(input: {
 
           return { target: cloneTarget(request.target) };
         },
-        setSurfaceModel: async ({ target, model }) => {
+        setSurfaceModel: async ({ target, provider, model }) => {
           modelUpdates.push({ target: cloneTarget(target), model });
           const record = getSurfaceRecord(target.surfacePiSessionId);
           record.snapshot = {
             ...record.snapshot,
+            provider,
             model,
           };
           if (target.surface === "orchestrator") {
             updateSummary(target.workspaceSessionId, (summary) => {
+              summary.provider = provider;
               summary.modelId = model;
             });
           }
@@ -1559,6 +1565,41 @@ describe("createChatRuntime", () => {
     expect(runtime.paneLayout.focusedPaneId).toBe("primary");
     expect(runtime.getPane("primary")?.target).toBeNull();
     expect(runtime.getPane("secondary")?.target).toEqual(createOrchestratorTarget("session-1"));
+
+    runtime.dispose();
+  });
+
+  it("creates an initial session when a restored empty pane layout has no sessions", async () => {
+    const storage = createMemoryStorage();
+    await storage.workspaceUiRestore.set("/tmp/svvy", {
+      version: 2,
+      columns: [{ id: "col-1", percent: 100 }],
+      rows: [{ id: "row-1", percent: 100 }],
+      compactSurfaces: [],
+      panes: [
+        {
+          paneId: "primary",
+          columnStart: 0,
+          columnEnd: 1,
+          rowStart: 0,
+          rowEnd: 1,
+          binding: null,
+          localState: {
+            inspectorSelection: null,
+            scroll: null,
+            timelineDensity: "comfortable",
+          },
+        },
+      ],
+      focusedPaneId: "primary",
+      updatedAt: "2026-04-27T00:00:00.000Z",
+    });
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+
+    const runtime = await createRuntime(harness, storage);
+
+    expect(runtime.sessions).toHaveLength(1);
+    expect(runtime.getPane("primary")?.target).toEqual(createOrchestratorTarget("session-1"));
 
     runtime.dispose();
   });

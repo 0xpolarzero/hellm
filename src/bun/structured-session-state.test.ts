@@ -85,7 +85,9 @@ describe("structured session state write API", () => {
     snapshot = store.getSessionState("session-navigation");
     expect(snapshot.session.pinnedAt).toBeNull();
     expect(snapshot.session.archivedAt).toBeNull();
-    expect(snapshot.events.filter((event) => event.kind === "session.navigation.updated")).toHaveLength(3);
+    expect(
+      snapshot.events.filter((event) => event.kind === "session.navigation.updated"),
+    ).toHaveLength(3);
 
     expect(store.setArchivedGroupCollapsed({ collapsed: false })).toEqual({
       archivedGroupCollapsed: false,

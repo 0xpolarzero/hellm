@@ -42,6 +42,7 @@ export interface CloseSurfaceRequest {
 export interface SetSurfaceModelRequest {
   target: PromptTarget;
   model: string;
+  provider: string;
 }
 
 export interface SetSurfaceThoughtLevelRequest {
@@ -443,6 +444,10 @@ export interface ChatRPCSchema {
       openSession: {
         params: OpenSessionRequest;
         response: ConversationSurfaceSnapshot;
+      };
+      recordSessionOpened: {
+        params: OpenSessionRequest;
+        response: WorkspaceMutationResponse;
       };
       openSurface: {
         params: OpenSurfaceRequest;

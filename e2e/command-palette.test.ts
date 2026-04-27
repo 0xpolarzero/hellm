@@ -211,8 +211,11 @@ test("Cmd+Shift+P opens all-actions and routes session commands through workspac
     await waitForMainTitle(page, "Beta Palette");
 
     await openActionsPalette(page);
-    await page.locator('[data-cmdk-input]').fill("Open Session: Alpha Palette");
-    const openAlpha = page.locator("[data-cmdk-item]").filter({ hasText: "Open Session: Alpha Palette" }).first();
+    await page.locator("[data-cmdk-input]").fill("Open Session: Alpha Palette");
+    const openAlpha = page
+      .locator("[data-cmdk-item]")
+      .filter({ hasText: "Open Session: Alpha Palette" })
+      .first();
     await openAlpha.waitFor({ state: "visible" });
     expect((await openAlpha.locator(".command-palette-kind-badge").textContent())?.trim()).toBe(
       "Orchestrator",
@@ -224,12 +227,12 @@ test("Cmd+Shift+P opens all-actions and routes session commands through workspac
     expect(await page.locator('[data-testid="workspace-pane"]').count()).toBe(2);
     await page.getByText("Beta response").waitFor({ state: "visible" });
     await page.getByText("Alpha response").waitFor({ state: "visible" });
-    expect((await page.locator('.session-main[aria-current="true"] strong').textContent())?.trim()).toBe(
-      "Alpha Palette",
-    );
+    expect(
+      (await page.locator('.session-main[aria-current="true"] strong').textContent())?.trim(),
+    ).toBe("Alpha Palette");
 
     await openActionsPalette(page);
-    await page.locator('[data-cmdk-input]').fill("Archive Session: Alpha Palette");
+    await page.locator("[data-cmdk-input]").fill("Archive Session: Alpha Palette");
     const archiveAlpha = page
       .locator("[data-cmdk-item]")
       .filter({ hasText: "Archive Session: Alpha Palette" })
@@ -268,8 +271,8 @@ test("unmatched all-actions text creates a normal prompted session", async () =>
       async ({ page }) => {
         await waitForSessionRows(page, 2);
         await openActionsPalette(page);
-        await page.locator('[data-cmdk-input]').fill("zzzzzzzzzz palette fallback prompt");
-        await page.locator('[data-cmdk-input]').press("Enter");
+        await page.locator("[data-cmdk-input]").fill("zzzzzzzzzz palette fallback prompt");
+        await page.locator("[data-cmdk-input]").press("Enter");
 
         await page.getByTestId("command-palette").waitFor({ state: "hidden" });
         await waitForSessionRows(page, 3);
@@ -284,8 +287,7 @@ test("unmatched all-actions text creates a normal prompted session", async () =>
   } finally {
     stub.stop();
     await rm(homeDir, { force: true, recursive: true });
-}
-
+  }
 });
 
 test("Cmd+P opens quick-open placeholder and Enter does not create sessions or prompts", async () => {
@@ -294,11 +296,11 @@ test("Cmd+P opens quick-open placeholder and Enter does not create sessions or p
 
     await openQuickOpen(page);
     await page.getByText("File quick-open is reserved.").waitFor({ state: "visible" });
-    await page.locator('[data-cmdk-input]').press("Enter");
+    await page.locator("[data-cmdk-input]").press("Enter");
     await page.getByTestId("quick-open").waitFor({ state: "visible" });
     await waitForSessionRows(page, 2);
 
-    await page.locator('[data-cmdk-input]').press("Escape");
+    await page.locator("[data-cmdk-input]").press("Escape");
     await page.getByTestId("quick-open").waitFor({ state: "hidden" });
     await waitForSessionRows(page, 2);
   });

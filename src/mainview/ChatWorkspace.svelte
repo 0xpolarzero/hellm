@@ -1065,7 +1065,7 @@
     }
   }
 
-  async function handleOpenHandlerThread(
+  function handleOpenHandlerThread(
     thread: Pick<WorkspaceHandlerThreadSummary, "threadId" | "surfacePiSessionId">,
   ) {
     const session = currentSession;
@@ -1074,20 +1074,44 @@
     }
 
     closeThreadInspector();
-    await runSessionMutation(() =>
-      runtime.openSurface(
-        {
-          workspaceSessionId: session.id,
-          surface: "thread",
-          surfacePiSessionId: thread.surfacePiSessionId,
-          threadId: thread.threadId,
-        },
-        { kind: "new-pane", direction: "right" },
-      ),
-    );
+    setTimeout(() => {
+      void runSessionMutation(() =>
+        runtime.openSurface(
+          {
+            workspaceSessionId: session.id,
+            surface: "thread",
+            surfacePiSessionId: thread.surfacePiSessionId,
+            threadId: thread.threadId,
+          },
+          { kind: "new-pane", direction: "right" },
+        ),
+      );
+    }, 0);
   }
 
-  async function handleInspectHandlerThread(thread: WorkspaceHandlerThreadSummary) {
+  async function loadHandlerThreadInspector(threadId: string, sessionId: string) {
+    try {
+      const inspector = await runtime.getHandlerThreadInspector(threadId, sessionId);
+      if (threadInspectorThreadId !== threadId || threadInspectorSessionId !== sessionId) {
+        return;
+      }
+
+      threadInspector = inspector;
+    } catch (error) {
+      if (threadInspectorThreadId !== threadId || threadInspectorSessionId !== sessionId) {
+        return;
+      }
+
+      threadInspectorError =
+        error instanceof Error ? error.message : "Unable to inspect this handler thread.";
+    } finally {
+      if (threadInspectorThreadId === threadId && threadInspectorSessionId === sessionId) {
+        threadInspectorLoading = false;
+      }
+    }
+  }
+
+  function handleInspectHandlerThread(thread: WorkspaceHandlerThreadSummary) {
     const session = currentSession;
     if (!session) {
       return;
@@ -1101,25 +1125,9 @@
     threadInspectorThreadId = thread.threadId;
     threadInspectorSessionId = session.id;
 
-    try {
-      const inspector = await runtime.getHandlerThreadInspector(thread.threadId, session.id);
-      if (threadInspectorThreadId !== thread.threadId || threadInspectorSessionId !== session.id) {
-        return;
-      }
-
-      threadInspector = inspector;
-    } catch (error) {
-      if (threadInspectorThreadId !== thread.threadId || threadInspectorSessionId !== session.id) {
-        return;
-      }
-
-      threadInspectorError =
-        error instanceof Error ? error.message : "Unable to inspect this handler thread.";
-    } finally {
-      if (threadInspectorThreadId === thread.threadId && threadInspectorSessionId === session.id) {
-        threadInspectorLoading = false;
-      }
-    }
+    setTimeout(() => {
+      void loadHandlerThreadInspector(thread.threadId, session.id);
+    }, 0);
   }
 
   async function restoreHandlerThreadInspector(threadId: string, sessionId: string) {
@@ -1999,7 +2007,13 @@
                         <Button
                           variant="ghost"
                           size="sm"
-                          disabled={promptBusy || mutatingSession}
+                          disabled={promptBusy ||
+                            mutatingSession ||
+                            currentSession?.status === "running" ||
+                            thread.status === "running-handler" ||
+                            thread.status === "running-workflow" ||
+                            thread.latestWorkflowRun?.status === "running" ||
+                            thread.latestWorkflowRun?.status === "waiting"}
                           onclick={() => void handleInspectHandlerThread(thread)}
                         >
                           Inspect

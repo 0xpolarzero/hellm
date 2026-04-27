@@ -2996,9 +2996,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     };
   }
 
-  private mapWorkspaceSidebarState(
-    row: WorkspaceSidebarStateRow,
-  ): StructuredWorkspaceSidebarState {
+  private mapWorkspaceSidebarState(row: WorkspaceSidebarStateRow): StructuredWorkspaceSidebarState {
     return {
       archivedGroupCollapsed: Boolean(row.archived_group_collapsed),
       updatedAt: row.updated_at,
@@ -3511,7 +3509,12 @@ function initializeSchema(db: Database): void {
   ensureColumn(db, "session", "archived_at", "TEXT");
 }
 
-function ensureColumn(db: Database, tableName: string, columnName: string, definition: string): void {
+function ensureColumn(
+  db: Database,
+  tableName: string,
+  columnName: string,
+  definition: string,
+): void {
   const columns = db.query(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
   if (columns.some((column) => column.name === columnName)) {
     return;

@@ -1,6 +1,9 @@
 import type { WorkspaceSessionNavigationReadModel, WorkspaceSessionSummary } from "./chat-rpc";
 
-function descendingTimestamp(left: string | null | undefined, right: string | null | undefined): number {
+function descendingTimestamp(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): number {
   return new Date(right ?? 0).getTime() - new Date(left ?? 0).getTime();
 }
 

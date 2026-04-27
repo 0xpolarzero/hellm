@@ -97,6 +97,11 @@ const ZERO_USAGE: AssistantMessage["usage"] = {
 
 const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v5.sqlite";
 
+const byTimestampDesc = (
+  left: string | null | undefined,
+  right: string | null | undefined,
+): number => new Date(right ?? 0).getTime() - new Date(left ?? 0).getTime();
+
 interface ManagedSession {
   sessionId: string;
   actorProfile: SvvyActorProfile;
@@ -259,10 +264,6 @@ export class WorkspaceSessionCatalog {
     summaries: WorkspaceSessionSummary[],
   ): WorkspaceSessionNavigationReadModel {
     const sidebarState = this.structuredSessionStore.getWorkspaceSidebarState();
-    const byTimestampDesc = (
-      left: string | null | undefined,
-      right: string | null | undefined,
-    ) => new Date(right ?? 0).getTime() - new Date(left ?? 0).getTime();
 
     return {
       pinnedSessions: summaries
@@ -377,10 +378,7 @@ export class WorkspaceSessionCatalog {
 
     const link = buildStructuredArtifactLink(snapshot, artifact);
     const path = artifact.path;
-    const pathContent =
-      path && existsSync(path)
-        ? readFileSync(path, "utf8")
-        : undefined;
+    const pathContent = path && existsSync(path) ? readFileSync(path, "utf8") : undefined;
     const content = artifact.content ?? pathContent ?? "";
 
     return {
@@ -620,6 +618,7 @@ export class WorkspaceSessionCatalog {
 
   async setSurfaceModel(
     target: PromptTarget,
+    provider: string,
     model: string,
   ): Promise<{ ok: boolean; target: PromptTarget }> {
     const session = this.managedSurfaces.get(target.surfacePiSessionId);
@@ -627,6 +626,7 @@ export class WorkspaceSessionCatalog {
       return { ok: false, target: structuredClone(target) };
     }
 
+    session.provider = provider;
     session.model = model;
     session.recreateOnNextPrompt = true;
 
@@ -636,7 +636,7 @@ export class WorkspaceSessionCatalog {
 
     try {
       syncAuthStorage(session.authStorage);
-      const resolvedModel = resolveRegisteredModel(session.modelRegistry, session.provider, model);
+      const resolvedModel = resolveRegisteredModel(session.modelRegistry, provider, model);
       if (resolvedModel) {
         await session.session.setModel(resolvedModel);
         session.recreateOnNextPrompt = false;

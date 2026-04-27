@@ -132,6 +132,7 @@ export interface ChatRuntimeRpcClient {
     getArtifactPreview: typeof rpc.request.getArtifactPreview;
     createSession: typeof rpc.request.createSession;
     openSession: typeof rpc.request.openSession;
+    recordSessionOpened: typeof rpc.request.recordSessionOpened;
     openSurface: typeof rpc.request.openSurface;
     closeSurface: typeof rpc.request.closeSurface;
     renameSession: typeof rpc.request.renameSession;
@@ -347,7 +348,7 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     this.agent.setModel = (nextModel) => {
       originalSetModel(nextModel);
       if (!this.suppressSurfaceMutationSync) {
-        void this.syncSurfaceModel(nextModel.id);
+        void this.syncSurfaceModel(nextModel.provider, nextModel.id);
       }
     };
 
@@ -586,10 +587,11 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     };
   }
 
-  private async syncSurfaceModel(modelId: string): Promise<void> {
+  private async syncSurfaceModel(providerId: string, modelId: string): Promise<void> {
     try {
       const response = await this.rpcClient.request.setSurfaceModel({
         target: this.target,
+        provider: providerId,
         model: modelId,
       });
       if (response.ok) {
@@ -739,10 +741,10 @@ export async function createChatRuntime(
   const bindPaneToSnapshot = async (
     paneId: string,
     snapshot: ConversationSurfaceSnapshot,
-    options: { focus?: boolean; persist?: boolean } = {},
+    bindOptions: { focus?: boolean; persist?: boolean } = {},
   ): Promise<void> => {
-    const focus = options.focus ?? true;
-    const persist = options.persist ?? true;
+    const focus = bindOptions.focus ?? true;
+    const persist = bindOptions.persist ?? true;
     const previousFocusedPaneId = paneLayout.focusedPaneId;
     const previousTarget = paneLayout.panes.find((pane) => pane.paneId === paneId)?.binding ?? null;
     const nextTarget = normalizePromptTarget(snapshot.target);
@@ -1032,6 +1034,10 @@ export async function createChatRuntime(
       const [initialSession] = initialCatalog.sessions;
       const snapshot = await rpcClient.request.openSession({ sessionId: initialSession!.id });
       await bindPaneToSnapshot(focusedPaneId, snapshot, { focus: true, persist: false });
+    } else if (restoredPaneIds.length === 0) {
+      const snapshot = await rpcClient.request.createSession({});
+      await bindPaneToSnapshot(focusedPaneId, snapshot, { focus: true, persist: false });
+      await refreshSessions();
     }
     persistWorkspaceUiRestore();
     emit();
@@ -1158,16 +1164,16 @@ export async function createChatRuntime(
       persistWorkspaceUiRestore();
       emit();
     },
-    splitPane: async (paneId, direction, options = {}) => {
+    splitPane: async (paneId, direction, splitOptions = {}) => {
       const before = new Set(paneLayout.panes.map((pane) => pane.paneId));
       const sourceBinding =
         paneLayout.panes.find((pane) => pane.paneId === paneId)?.binding ?? null;
-      paneLayout = splitPane(paneLayout, paneId, direction, options);
+      paneLayout = splitPane(paneLayout, paneId, direction, splitOptions);
       const newPane = paneLayout.panes.find((pane) => !before.has(pane.paneId)) ?? null;
       if (!newPane) {
         return null;
       }
-      if (options.duplicateBinding && sourceBinding) {
+      if (splitOptions.duplicateBinding && sourceBinding) {
         surfaceControllers.get(sourceBinding.surfacePiSessionId)?.attachPane(newPane.paneId);
       }
       persistWorkspaceUiRestore();
@@ -1179,9 +1185,9 @@ export async function createChatRuntime(
       persistWorkspaceUiRestore();
       emit();
     },
-    placePane: (sourcePaneId, targetPaneId, zone, options = {}) => {
+    placePane: (sourcePaneId, targetPaneId, zone, placementOptions = {}) => {
       const previousLayout = paneLayout;
-      paneLayout = placePane(paneLayout, sourcePaneId, targetPaneId, zone, options);
+      paneLayout = placePane(paneLayout, sourcePaneId, targetPaneId, zone, placementOptions);
       reconcileControllerPaneOwners(previousLayout, paneLayout);
       persistWorkspaceUiRestore();
       emit();
@@ -1230,6 +1236,7 @@ export async function createChatRuntime(
       const existingController = surfaceControllers.get(sessionId);
       if (existingController) {
         bindPaneToExistingController(nextPaneId, existingController);
+        void rpcClient.request.recordSessionOpened({ sessionId });
         return;
       }
 
