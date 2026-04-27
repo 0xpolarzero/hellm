@@ -22,6 +22,7 @@
 		pendingToolCalls: ReadonlySet<string>;
 		isStreaming: boolean;
 		onOpenArtifact: (filename: string) => void;
+		onScrollStateChange?: (scroll: { transcriptAnchorId: string | null; offsetPx: number }) => void;
 	};
 
 	let {
@@ -32,6 +33,7 @@
 		pendingToolCalls,
 		isStreaming,
 		onOpenArtifact,
+		onScrollStateChange,
 	}: Props = $props();
 
 	let scroller = $state<HTMLDivElement | null>(null);
@@ -120,6 +122,10 @@
 		transcriptStickToBottom = scrollState.stickToBottom;
 		autoScroll = scrollState.autoScroll;
 		transcriptAnchorIndex = scrollState.anchorIndex;
+		onScrollStateChange?.({
+			transcriptAnchorId: conversation.visibleMessages[scrollState.anchorIndex]?.timestamp ?? null,
+			offsetPx: scroller.scrollTop,
+		});
 	}
 
 	function syncViewportMetrics() {

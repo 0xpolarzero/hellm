@@ -8,6 +8,7 @@
     session: WorkspaceSessionSummary;
     active: boolean;
     activeSurface?: "orchestrator" | "thread";
+    paneLocations?: { paneId: string; label: string; focused: boolean }[];
     disabled?: boolean;
     onOpen: () => void;
     onRename: () => void;
@@ -25,6 +26,7 @@
     session,
     active,
     activeSurface,
+    paneLocations = [],
     disabled = false,
     onOpen,
     onRename,
@@ -132,10 +134,17 @@
       {/if}
     </div>
 
-    {#if showingThreadSurface || session.status !== "idle" || session.parentSessionId}
+    {#if showingThreadSurface || session.status !== "idle" || session.parentSessionId || paneLocations.length > 0}
       <div class="session-main-meta">
         {#if showingThreadSurface}
           <span class="session-surface">Thread Open</span>
+        {/if}
+        {#if paneLocations.length > 0}
+          <span class="session-surface" title={`Open in ${paneLocations.map((location) => location.label).join(", ")}`}>
+            {paneLocations.length === 1
+              ? `Open ${paneLocations[0]?.label ?? ""}`.trim()
+              : `Open ${paneLocations.length} panes`}
+          </span>
         {/if}
         {#if session.status !== "idle"}
           <span class={`session-status status-${session.status}`.trim()}>

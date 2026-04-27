@@ -94,6 +94,7 @@ function createRuntime(): CommandRuntime & {
       id: paneId,
       target: runtime.paneTarget,
       inspectorSelection: null,
+      scroll: null,
       columnStart: 0,
       columnEnd: 1,
       rowStart: 0,

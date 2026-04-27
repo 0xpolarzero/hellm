@@ -1511,6 +1511,7 @@ describe("createChatRuntime", () => {
         { id: "col-2", percent: 50 },
       ],
       rows: [{ id: "row-1", percent: 100 }],
+      compactSurfaces: [],
       panes: [
         {
           paneId: "primary",

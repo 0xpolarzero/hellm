@@ -59,7 +59,7 @@
     type ChatPaneState,
     type ChatSurfaceController,
   } from "./chat-runtime";
-  import { createEmptyPaneLayout } from "./pane-layout";
+  import { createEmptyPaneLayout, getOpenPaneLocations, type PanePlacementZone } from "./pane-layout";
   import {
     buildCommandRegistry,
     executeCommandAction,
@@ -189,6 +189,17 @@
   const currentSession = $derived(sessions.find((session) => session.id === activeSessionId) ?? null);
   const currentCommandRollups = $derived(getVisibleCommandRollups(currentSession));
   const currentSurface = $derived(focusedSurfaceTarget);
+  const paneLocationsBySessionId = $derived(
+    Object.fromEntries(
+      sessions.map((session) => [
+        session.id,
+        getOpenPaneLocations(
+          paneLayout,
+          (binding) => binding.workspaceSessionId === session.id && binding.surface === "orchestrator",
+        ),
+      ]),
+    ),
+  );
   const currentSurfaceLabel = $derived.by(() => {
     if (currentSurface?.surface === "thread") {
       return `Messaging handler thread ${currentSurface.threadId ?? currentSurface.surfacePiSessionId}`;
@@ -587,6 +598,23 @@
     }
     runtime.movePaneToSpanningRow(paneId, placement);
     syncRuntimeState();
+  }
+
+  function handlePanePlacementDrop(event: DragEvent, targetPaneId: string, zone: PanePlacementZone) {
+    event.preventDefault();
+    const sourcePaneId = getDraggedPaneId(event);
+    draggingPaneId = null;
+    if (!sourcePaneId) {
+      return;
+    }
+    runtime.placePane(sourcePaneId, targetPaneId, zone);
+    syncRuntimeState();
+    resubscribeSurfaceController();
+    syncSurfaceState();
+  }
+
+  function handleTranscriptScrollState(paneId: string, scroll: { transcriptAnchorId: string | null; offsetPx: number }) {
+    runtime.setPaneScroll(paneId, scroll);
   }
 
   function handleDeleteSession(session: WorkspaceSessionSummary) {
@@ -1537,6 +1565,7 @@
             navigation={sessionNavigation}
             {activeSessionId}
             activeSurface={currentSurface?.surface}
+            {paneLocationsBySessionId}
             busy={mutatingSession}
             errorMessage={sidebarError}
             onCreateSession={handleCreateSession}
@@ -1703,8 +1732,17 @@
             draggable="true"
             ondragstart={(event) => handlePaneDragStart(event, pane.paneId)}
             ondragend={() => (draggingPaneId = null)}
+            ondragover={allowPaneDrop}
+            ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "replace")}
             style={`grid-column: ${pane.columnStart + 1} / ${pane.columnEnd + 1}; grid-row: ${pane.rowStart + 1} / ${pane.rowEnd + 1};`}
           >
+            <div class="pane-placement-zones" aria-hidden={!draggingPaneId}>
+              <button type="button" class="pane-placement-zone replace" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "replace")}>Replace</button>
+              <button type="button" class="pane-placement-zone left" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "left")}>Left</button>
+              <button type="button" class="pane-placement-zone right" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "right")}>Right</button>
+              <button type="button" class="pane-placement-zone above" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "above")}>Above</button>
+              <button type="button" class="pane-placement-zone below" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "below")}>Below</button>
+            </div>
             <header class="pane-chrome">
               <button
                 class="pane-focus-button"
@@ -1921,6 +1959,18 @@
 
                       <p class="handler-thread-preview">{getHandlerThreadPreview(thread)}</p>
 
+                      {#if thread.latestWorkflowRun}
+                        <article class="compact-workflow-card" aria-label="Latest workflow run">
+                          <div>
+                            <strong>{thread.latestWorkflowRun.workflowName}</strong>
+                            <span>{thread.latestWorkflowRun.summary}</span>
+                          </div>
+                          <Badge tone={getThreadStatusTone(thread.latestWorkflowRun.status)}>
+                            {getThreadStatusLabel(thread.latestWorkflowRun.status)}
+                          </Badge>
+                        </article>
+                      {/if}
+
                       <div class="handler-thread-pills">
                         <span>
                           {thread.workflowRunCount}
@@ -2046,6 +2096,7 @@
             {pendingToolCalls}
             {isStreaming}
             onOpenArtifact={handleOpenArtifact}
+            onScrollStateChange={(scroll) => handleTranscriptScrollState(pane.paneId, scroll)}
           />
           <ChatComposer
             currentModel={currentModel}
@@ -2075,6 +2126,7 @@
                     pendingToolCalls={new Set(paneController.agent.state.pendingToolCalls)}
                     isStreaming={paneController.agent.state.isStreaming || paneController.promptStatus === "streaming"}
                     onOpenArtifact={handleOpenArtifact}
+                    onScrollStateChange={(scroll) => handleTranscriptScrollState(pane.paneId, scroll)}
                   />
                 </div>
               </section>
@@ -3123,6 +3175,7 @@
   }
 
   .workspace-pane {
+    position: relative;
     container-type: inline-size;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
@@ -3132,6 +3185,61 @@
     border: 1px solid color-mix(in oklab, var(--ui-shell-edge) 70%, transparent);
     border-radius: calc(var(--ui-radius-xl) + 0.12rem);
     background: color-mix(in oklab, var(--ui-shell) 88%, transparent);
+  }
+
+  .pane-placement-zones {
+    position: absolute;
+    inset: 2.4rem 0.55rem 0.55rem;
+    z-index: 7;
+    display: grid;
+    grid-template:
+      ". above ." 1fr
+      "left replace right" 1fr
+      ". below ." 1fr / 1fr 1fr 1fr;
+    gap: 0.28rem;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 140ms cubic-bezier(0.19, 1, 0.22, 1);
+  }
+
+  .pane-grid.dragging-pane .pane-placement-zones {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .pane-placement-zone {
+    border: 1px dashed color-mix(in oklab, var(--ui-accent) 52%, var(--ui-shell-edge));
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-accent) 10%, transparent);
+    color: var(--ui-text-secondary);
+    font-size: 0.64rem;
+    font-weight: 700;
+  }
+
+  .pane-placement-zone:hover,
+  .pane-placement-zone:focus-visible {
+    background: color-mix(in oklab, var(--ui-accent) 20%, var(--ui-shell));
+    color: var(--ui-text);
+  }
+
+  .pane-placement-zone.replace {
+    grid-area: replace;
+  }
+
+  .pane-placement-zone.left {
+    grid-area: left;
+  }
+
+  .pane-placement-zone.right {
+    grid-area: right;
+  }
+
+  .pane-placement-zone.above {
+    grid-area: above;
+  }
+
+  .pane-placement-zone.below {
+    grid-area: below;
   }
 
   .workspace-pane.focused {
@@ -3510,6 +3618,40 @@
     border: 1px solid color-mix(in oklab, var(--ui-border-soft) 84%, transparent);
     border-radius: var(--ui-radius-md);
     background: color-mix(in oklab, var(--ui-surface-raised) 92%, transparent);
+  }
+
+  .compact-workflow-card {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.55rem 0.62rem;
+    border: 1px solid color-mix(in oklab, var(--ui-shell-edge) 58%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 72%, transparent);
+  }
+
+  .compact-workflow-card div {
+    display: grid;
+    gap: 0.16rem;
+    min-width: 0;
+  }
+
+  .compact-workflow-card strong,
+  .compact-workflow-card span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .compact-workflow-card strong {
+    font-size: 0.72rem;
+    color: var(--ui-text-primary);
+  }
+
+  .compact-workflow-card span {
+    font-size: 0.67rem;
+    color: var(--ui-text-secondary);
   }
 
   .structured-command-list {

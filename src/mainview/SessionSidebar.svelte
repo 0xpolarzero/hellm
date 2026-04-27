@@ -12,6 +12,7 @@
     navigation: WorkspaceSessionNavigationReadModel;
     activeSessionId?: string;
     activeSurface?: "orchestrator" | "thread";
+    paneLocationsBySessionId?: Record<string, { paneId: string; label: string; focused: boolean }[]>;
     busy?: boolean;
     errorMessage?: string;
     onCreateSession: () => void;
@@ -32,6 +33,7 @@
     navigation,
     activeSessionId,
     activeSurface,
+    paneLocationsBySessionId = {},
     busy = false,
     errorMessage,
     onCreateSession,
@@ -94,6 +96,7 @@
               active={session.id === activeSessionId}
               activeSurface={session.id === activeSessionId ? activeSurface : undefined}
               disabled={busy && session.id !== activeSessionId}
+              paneLocations={paneLocationsBySessionId[session.id] ?? []}
               {session}
               onOpen={() => onOpenSession(session.id)}
               onRename={() => onRenameSession(session)}
@@ -116,6 +119,7 @@
               active={session.id === activeSessionId}
               activeSurface={session.id === activeSessionId ? activeSurface : undefined}
               disabled={busy && session.id !== activeSessionId}
+              paneLocations={paneLocationsBySessionId[session.id] ?? []}
               {session}
               onOpen={() => onOpenSession(session.id)}
               onRename={() => onRenameSession(session)}
@@ -153,6 +157,7 @@
                 active={session.id === activeSessionId}
                 activeSurface={session.id === activeSessionId ? activeSurface : undefined}
                 disabled={busy && session.id !== activeSessionId}
+                paneLocations={paneLocationsBySessionId[session.id] ?? []}
                 {session}
                 onOpen={() => onOpenSession(session.id)}
                 onRename={() => onRenameSession(session)}

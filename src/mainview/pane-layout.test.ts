@@ -6,7 +6,9 @@ import {
   getOpenPaneLocations,
   movePaneToSpanningRow,
   normalizePaneLayout,
+  placePane,
   resizeTrack,
+  setPaneScroll,
   splitPane,
 } from "./pane-layout";
 import type { PromptTarget } from "./chat-rpc";
@@ -152,5 +154,38 @@ describe("pane layout grid", () => {
       { paneId: "primary", label: "Left", focused: false },
       { paneId: "right", label: "Right", focused: true },
     ]);
+  });
+
+  it("places a dragged pane into a target split zone while preserving local state", () => {
+    let layout = createEmptyPaneLayout("2026-04-27T00:00:00.000Z");
+    layout = bindPane(layout, "primary", target);
+    layout = splitPane(layout, "primary", "right", { nextPaneId: "right" });
+    layout = bindPane(layout, "right", {
+      ...target,
+      workspaceSessionId: "session-2",
+      surfacePiSessionId: "session-2",
+    });
+    layout = setPaneScroll(layout, "right", {
+      transcriptAnchorId: "message-2",
+      offsetPx: 140,
+    });
+
+    layout = placePane(layout, "right", "primary", "below");
+
+    expect(layout.focusedPaneId).toBe("right");
+    expect(layout.panes).toContainEqual(
+      expect.objectContaining({
+        paneId: "right",
+        rowStart: 1,
+        rowEnd: 2,
+        binding: expect.objectContaining({ surfacePiSessionId: "session-2" }),
+        localState: expect.objectContaining({
+          scroll: {
+            transcriptAnchorId: "message-2",
+            offsetPx: 140,
+          },
+        }),
+      }),
+    );
   });
 });

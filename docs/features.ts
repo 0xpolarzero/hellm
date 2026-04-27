@@ -155,7 +155,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Multi-Surface Live Runtime",
     status: "in-progress",
     summary:
-      "Separates durable workspace state from live surface runtimes and user-driven pane-grid layout state with ordered row and column percentages plus deterministic pane coordinates, manages live pi surfaces in a shared registry keyed by `surfacePiSessionId`, gives each surface its own prompt lock and model or reasoning lifecycle, supports explicit open and close semantics, and lets multiple panes attach to the same surface without duplicating the underlying runtime.",
+      "Separates durable workspace state from live surface runtimes and user-driven pane-grid layout state with ordered row and column percentages plus deterministic pane coordinates, manages live pi surfaces in a shared registry keyed by `surfacePiSessionId`, gives each surface its own prompt lock and model or reasoning lifecycle, supports explicit open and close semantics, persisted split, resize, close, drag placement, sidebar pane-location indicators, compact thread and workflow-run projections, and lets multiple panes attach to the same surface without duplicating the underlying runtime while keeping pane-local scroll independent.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/multi-session-support.spec.md",

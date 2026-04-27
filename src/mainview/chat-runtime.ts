@@ -36,11 +36,14 @@ import {
   focusPane,
   movePaneToSpanningRow,
   normalizePaneLayout,
+  placePane,
   PRIMARY_CHAT_PANE_ID,
   resizeTrack,
   setPaneInspectorSelection as setLayoutPaneInspectorSelection,
+  setPaneScroll as setLayoutPaneScroll,
   splitPane,
   type PaneOpenTarget,
+  type PanePlacementZone,
   type PaneResizeAxis,
   type PaneSpanPlacement,
   type PaneSplitDirection,
@@ -88,6 +91,7 @@ export interface ChatPaneState {
   id: string;
   target: PromptTarget | null;
   inspectorSelection: WorkspaceInspectorSelection | null;
+  scroll: ChatPaneLayoutState["panes"][number]["localState"]["scroll"];
   columnStart: number;
   columnEnd: number;
   rowStart: number;
@@ -179,6 +183,12 @@ export interface ChatRuntime {
     options?: { duplicateBinding?: boolean; size?: number },
   ) => Promise<string | null>;
   movePaneToSpanningRow: (paneId: string, placement: PaneSpanPlacement) => void;
+  placePane: (
+    sourcePaneId: string,
+    targetPaneId: string,
+    zone: PanePlacementZone,
+    options?: { duplicateBinding?: boolean; size?: number },
+  ) => void;
   resizePaneTrack: (axis: PaneResizeAxis, trackIndex: number, deltaPercent: number) => void;
   closePane: (paneId: string) => Promise<void>;
   getCommandInspector: (
@@ -218,6 +228,10 @@ export interface ChatRuntime {
   setPaneInspectorSelection: (
     paneId: string,
     selection: WorkspaceInspectorSelection | null,
+  ) => void;
+  setPaneScroll: (
+    paneId: string,
+    scroll: ChatPaneLayoutState["panes"][number]["localState"]["scroll"],
   ) => void;
   sendPromptToTarget: (target: PromptTarget, input: string) => Promise<void>;
   syncProviderAuth: (providerId: string) => Promise<boolean>;
@@ -638,6 +652,7 @@ export async function createChatRuntime(
       columns: paneLayout.columns,
       rows: paneLayout.rows,
       panes: paneLayout.panes,
+      compactSurfaces: paneLayout.compactSurfaces,
       focusedPaneId: paneLayout.focusedPaneId,
       updatedAt: new Date().toISOString(),
     };
@@ -702,6 +717,22 @@ export async function createChatRuntime(
       await rpcClient.request.closeSurface({ target });
     } catch (error) {
       console.error("Failed to close surface:", error);
+    }
+  };
+
+  const reconcileControllerPaneOwners = (
+    previousLayout: ChatPaneLayoutState,
+    nextLayout: ChatPaneLayoutState,
+  ): void => {
+    for (const pane of previousLayout.panes) {
+      if (pane.binding) {
+        surfaceControllers.get(pane.binding.surfacePiSessionId)?.detachPane(pane.paneId);
+      }
+    }
+    for (const pane of nextLayout.panes) {
+      if (pane.binding) {
+        surfaceControllers.get(pane.binding.surfacePiSessionId)?.attachPane(pane.paneId);
+      }
     }
   };
 
@@ -1104,6 +1135,7 @@ export async function createChatRuntime(
         id: pane.paneId,
         target: pane.binding ? normalizePromptTarget(pane.binding) : null,
         inspectorSelection: pane.localState.inspectorSelection,
+        scroll: pane.localState.scroll,
         columnStart: pane.columnStart,
         columnEnd: pane.columnEnd,
         rowStart: pane.rowStart,
@@ -1147,8 +1179,17 @@ export async function createChatRuntime(
       persistWorkspaceUiRestore();
       emit();
     },
+    placePane: (sourcePaneId, targetPaneId, zone, options = {}) => {
+      const previousLayout = paneLayout;
+      paneLayout = placePane(paneLayout, sourcePaneId, targetPaneId, zone, options);
+      reconcileControllerPaneOwners(previousLayout, paneLayout);
+      persistWorkspaceUiRestore();
+      emit();
+    },
     movePaneToSpanningRow: (paneId, placement) => {
+      const previousLayout = paneLayout;
       paneLayout = movePaneToSpanningRow(paneLayout, paneId, placement);
+      reconcileControllerPaneOwners(previousLayout, paneLayout);
       persistWorkspaceUiRestore();
       emit();
     },
@@ -1300,6 +1341,10 @@ export async function createChatRuntime(
       paneLayout = setLayoutPaneInspectorSelection(paneLayout, paneId, selection);
       persistWorkspaceUiRestore();
       emit();
+    },
+    setPaneScroll: (paneId, scroll) => {
+      paneLayout = setLayoutPaneScroll(paneLayout, paneId, scroll);
+      persistWorkspaceUiRestore();
     },
     sendPromptToTarget: async (target, input) => {
       const text = input.trim();

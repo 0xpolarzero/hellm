@@ -178,19 +178,19 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Define the stored shape for a user-driven pane grid, including ordered row and column tracks, track percentages, minimum pane constraints, deterministic pane coordinates, and pane surface bindings. Commit(s): `77681bb`
 - [x] Persist pane-to-surface bindings separately from live surface runtime state. Commit(s): `77681bb`
 - [x] Build a POC workspace pane-grid layout that opens one surface in a targeted pane. Commit(s): `77681bb`
-- [ ] Support persisted user-driven split, resize, close, and drag placement into a chosen pane.
+- [x] Support persisted user-driven split, resize, close, and drag placement into a chosen pane. Commit(s): `39468ed`
 - [x] Manage explicit open and close semantics for live surfaces independently from pane focus. Commit(s): `9a21f87`, `b0ee858`
 - [x] Allow the same interactive surface to be opened in more than one pane at once. Commit(s): `9a21f87`, `b0ee858`
 - [x] Keep one underlying live surface controller per `surfacePiSessionId` regardless of pane count. Commit(s): `9a21f87`, `b0ee858`
 - [x] Persist pane-grid occupancy, track percentages, pane-local state, and pane geometry across app restart. Commit(s): `77681bb`
 - [x] Restore the focused pane on app restart. Commit(s): `77681bb`
-- [ ] Show exact pane-location indicators in the sidebar for open surfaces.
+- [x] Show exact pane-location indicators in the sidebar for open surfaces. Commit(s): `39468ed`
 - [x] Show a clear highlight for the currently focused pane surface. Commit(s): `77681bb`
-- [ ] Define the stored shape for compact thread and workflow-run surfaces inside the workspace shell.
-- [ ] Render compact thread cards in the workspace shell timeline.
-- [ ] Render compact workflow-run cards in the workspace shell timeline.
+- [x] Define the stored shape for compact thread and workflow-run surfaces inside the workspace shell. Commit(s): `39468ed`
+- [x] Render compact thread cards in the workspace shell timeline. Commit(s): `39468ed`
+- [x] Render compact workflow-run cards in the workspace shell timeline. Commit(s): `39468ed`
 - [x] Open a selected handler-thread surface in a chosen pane as a fully interactive surface. Commit(s): `77681bb`
-- [ ] Keep duplicated views of the same surface synchronized while allowing independent scroll position.
+- [x] Keep duplicated views of the same surface synchronized while allowing independent scroll position. Commit(s): `39468ed`
 
 ## 11. Session Modes And Runtime Profiles
 

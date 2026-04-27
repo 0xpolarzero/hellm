@@ -6,6 +6,7 @@ export const MIN_PANE_WIDTH_PX = 320;
 export const MIN_PANE_HEIGHT_PX = 260;
 
 export type PaneSplitDirection = "left" | "right" | "above" | "below";
+export type PanePlacementZone = "replace" | PaneSplitDirection;
 export type PaneSpanPlacement = "top" | "bottom";
 export type PaneResizeAxis = "column" | "row";
 
@@ -33,10 +34,32 @@ export interface PaneGridPane {
   localState: PaneLocalState;
 }
 
+export interface CompactThreadSurfaceState {
+  kind: "compact-thread";
+  workspaceSessionId: string;
+  threadId: string;
+  paneId: string | null;
+  density: PaneLocalState["timelineDensity"];
+}
+
+export interface CompactWorkflowRunSurfaceState {
+  kind: "compact-workflow-run";
+  workspaceSessionId: string;
+  threadId: string;
+  workflowRunId: string;
+  paneId: string | null;
+  density: PaneLocalState["timelineDensity"];
+}
+
+export type CompactWorkspaceSurfaceState =
+  | CompactThreadSurfaceState
+  | CompactWorkflowRunSurfaceState;
+
 export interface WorkspacePaneLayoutState {
   columns: PaneGridTrack[];
   rows: PaneGridTrack[];
   panes: PaneGridPane[];
+  compactSurfaces: CompactWorkspaceSurfaceState[];
   focusedPaneId: string | null;
   updatedAt: string;
 }
@@ -70,6 +93,7 @@ export function createEmptyPaneLayout(now = new Date().toISOString()): Workspace
         localState: createDefaultPaneLocalState(),
       },
     ],
+    compactSurfaces: [],
     focusedPaneId: PRIMARY_CHAT_PANE_ID,
     updatedAt: now,
   };
@@ -118,7 +142,16 @@ export function normalizePaneLayout(
     layout.focusedPaneId && panes.some((pane) => pane.paneId === layout.focusedPaneId)
       ? layout.focusedPaneId
       : (panes[0]?.paneId ?? null);
-  return { columns, rows, panes, focusedPaneId, updatedAt: now };
+  return {
+    columns,
+    rows,
+    panes,
+    compactSurfaces: Array.isArray(layout.compactSurfaces)
+      ? layout.compactSurfaces.map((surface) => ({ ...surface }))
+      : [],
+    focusedPaneId,
+    updatedAt: now,
+  };
 }
 
 export function bindPane(
@@ -159,6 +192,30 @@ export function setPaneInspectorSelection(
             localState: {
               ...pane.localState,
               inspectorSelection: selection ? structuredClone(selection) : null,
+            },
+          }
+        : pane,
+    ),
+  });
+}
+
+export function setPaneScroll(
+  layout: WorkspacePaneLayoutState,
+  paneId: string,
+  scroll: PaneLocalState["scroll"],
+): WorkspacePaneLayoutState {
+  if (!layout.panes.some((pane) => pane.paneId === paneId)) {
+    return layout;
+  }
+  return touch({
+    ...layout,
+    panes: layout.panes.map((pane) =>
+      pane.paneId === paneId
+        ? {
+            ...pane,
+            localState: {
+              ...pane.localState,
+              scroll: scroll ? { ...scroll } : null,
             },
           }
         : pane,
@@ -276,6 +333,74 @@ export function splitPane(
     columns: splitColumn ? nextTracks : layout.columns,
     rows: splitColumn ? layout.rows : nextTracks,
     panes: [...panes, newPane],
+    focusedPaneId: nextPaneId,
+  });
+}
+
+export function placePane(
+  layout: WorkspacePaneLayoutState,
+  sourcePaneId: string,
+  targetPaneId: string,
+  zone: PanePlacementZone,
+  options: { duplicateBinding?: boolean; size?: number } = {},
+): WorkspacePaneLayoutState {
+  const source = layout.panes.find((pane) => pane.paneId === sourcePaneId);
+  const target = layout.panes.find((pane) => pane.paneId === targetPaneId);
+  if (!source || !target) {
+    return layout;
+  }
+  if (sourcePaneId === targetPaneId) {
+    return layout;
+  }
+
+  const movedBinding = source.binding ? { ...source.binding } : null;
+  const movedLocalState = structuredClone(source.localState);
+
+  if (zone === "replace") {
+    return touch({
+      ...layout,
+      panes: layout.panes.map((pane) => {
+        if (pane.paneId === targetPaneId) {
+          return {
+            ...pane,
+            binding: movedBinding,
+            localState: movedLocalState,
+          };
+        }
+        if (!options.duplicateBinding && pane.paneId === sourcePaneId) {
+          return {
+            ...pane,
+            binding: target.binding ? { ...target.binding } : null,
+            localState: structuredClone(target.localState),
+          };
+        }
+        return pane;
+      }),
+      focusedPaneId: targetPaneId,
+    });
+  }
+
+  const baseLayout = options.duplicateBinding ? layout : closePane(layout, sourcePaneId);
+  const targetAfterClose = baseLayout.panes.find((pane) => pane.paneId === targetPaneId);
+  if (!targetAfterClose) {
+    return layout;
+  }
+  const nextPaneId = options.duplicateBinding ? createPaneId() : sourcePaneId;
+  const splitLayout = splitPane(baseLayout, targetPaneId, zone, {
+    nextPaneId,
+    size: options.size,
+  });
+  return normalizePaneLayout({
+    ...splitLayout,
+    panes: splitLayout.panes.map((pane) =>
+      pane.paneId === nextPaneId
+        ? {
+            ...pane,
+            binding: movedBinding,
+            localState: movedLocalState,
+          }
+        : pane,
+    ),
     focusedPaneId: nextPaneId,
   });
 }
