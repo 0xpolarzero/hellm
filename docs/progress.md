@@ -158,21 +158,23 @@ Current product decisions for this section are specified in `docs/specs/workspac
 
 ## 9. Pane Layout, Surface Ownership, And Expanded Surfaces
 
-- [ ] Define the stored shape for a fixed pane layout up to `3x3`, including multi-cell spans.
+Current product decisions for this section are specified in `docs/specs/pane-layout.spec.md`.
+
+- [ ] Define the stored shape for a user-driven pane grid, including ordered row and column tracks, track percentages, minimum pane constraints, deterministic pane coordinates, and pane surface bindings.
 - [ ] Persist pane-to-surface bindings separately from live surface runtime state.
-- [ ] Build a POC workspace pane grid that opens one surface in a targeted slot.
-- [ ] Support click-split or drag placement into a chosen pane slot.
+- [ ] Build a POC workspace pane-grid layout that opens one surface in a targeted pane.
+- [ ] Support persisted user-driven split, resize, close, and drag placement into a chosen pane.
 - [x] Manage explicit open and close semantics for live surfaces independently from pane focus. Commit(s): `9a21f87`, `b0ee858`
-- [x] Allow the same interactive surface to be opened in more than one pane slot at once. Commit(s): `9a21f87`, `b0ee858`
+- [x] Allow the same interactive surface to be opened in more than one pane at once. Commit(s): `9a21f87`, `b0ee858`
 - [x] Keep one underlying live surface controller per `surfacePiSessionId` regardless of pane count. Commit(s): `9a21f87`, `b0ee858`
-- [ ] Persist pane occupancy and pane geometry across app restart.
+- [ ] Persist pane-grid occupancy, track percentages, pane-local state, and pane geometry across app restart.
 - [ ] Restore the focused pane on app restart.
-- [ ] Show exact pane-position indicators in the sidebar for open surfaces.
+- [ ] Show exact pane-location indicators in the sidebar for open surfaces.
 - [ ] Show a clear highlight for the currently focused pane surface.
 - [ ] Define the stored shape for compact thread and workflow-run surfaces inside the workspace shell.
 - [ ] Render compact thread cards in the workspace shell timeline.
 - [ ] Render compact workflow-run cards in the workspace shell timeline.
-- [ ] Open a selected handler-thread surface in a pane slot as a fully interactive surface.
+- [ ] Open a selected handler-thread surface in a chosen pane as a fully interactive surface.
 - [ ] Keep duplicated views of the same surface synchronized while allowing independent scroll position.
 
 ## 10. Session Modes And Runtime Profiles
@@ -250,7 +252,7 @@ Current product decisions for this section are specified in `docs/specs/workspac
 - [ ] Surface node objective, latest output, related artifacts, runtime profile, and worktree in that detail panel.
 - [ ] Stream live workflow status changes into the graph while a workflow is running.
 - [ ] Render retry or loop edges without making the main path hard to read.
-- [ ] Open a selected child workflow node or related thread surface from the workflow inspector into another pane slot.
+- [ ] Open a selected child workflow node or related thread surface from the workflow inspector into another chosen pane.
 - [ ] Keep completed workflow inspectors available as durable historical surfaces after completion.
 
 ## 17. Recovery And Test Coverage

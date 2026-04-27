@@ -536,13 +536,17 @@ Pane and layout state is UI state.
 It owns:
 
 - which pane shows which surface
-- pane geometry and spans
+- a user-driven pane grid with pane geometry
 - pane focus
 - pane-local scroll and inspector state
 
 Panes are not live runtimes.
 
 If two panes show the same surface, they share one underlying live surface runtime.
+
+Users may split, drag, resize, and close panes as their workspace requires, with the renderer responsible for enforcing practical minimum pane sizes and explicit close behavior.
+
+Pane geometry is proportional. The durable layout stores ordered row and column track percentages plus deterministic pane coordinates, and window resize recomputes pixels from those percentages without changing pane placement.
 
 ### Orchestrator Surface
 
@@ -898,6 +902,7 @@ Pane and surface semantics are:
 - closing the last owner of a surface releases that live surface runtime cleanly
 - more than one pane may attach to the same surface
 - duplicated panes share one underlying live surface state but may keep independent scroll position
+- split, resize, close, drag/drop placement, focus, bindings, occupancy, row and column percentages, and pane-local state persist across restart
 - background workflow attention always targets the owning handler surface, not the currently focused pane
 
 On restart, the workspace shell should restore useful stable UI state:
@@ -906,9 +911,10 @@ On restart, the workspace shell should restore useful stable UI state:
 - Archived group collapsed state
 - open panes and pane-to-surface bindings
 - focused pane
+- pane-local scroll and display preferences
 - selected inspector target per pane when the target still exists
 
-It should not restore scroll position, transient menus or popovers, unsaved inline edits, composer draft text, selected transcript text, temporary search highlights, or stale live stream and tool-running state.
+It should not restore transient menus or popovers, unsaved inline edits, composer draft text, selected transcript text, temporary search highlights, or stale live stream and tool-running state.
 
 ## Workflow Inspection
 

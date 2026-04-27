@@ -8,8 +8,9 @@
   - define how one workspace hosts many durable sessions and many live surfaces at once
   - define the separation between workspace state, live surface state, and pane layout state
   - define the runtime contracts needed for multi-surface open, close, targeting, and rehydration
-  - define the pane-to-surface model that later split-pane UI builds on
+  - define the pane-to-surface model that later pane-layout UI builds on
   - defer detailed session pin/archive, artifact block, compact CI projection, and restore exclusions to `docs/specs/workspace-navigation-core-projection.spec.md`
+  - defer detailed pane-grid layout, placement, duplicate-pane behavior, and expanded pane restore rules to `docs/specs/pane-layout.spec.md`
 
 ## Purpose
 
@@ -91,7 +92,7 @@ It owns:
 - pane ids
 - which surface each pane is showing
 - focused pane
-- geometry, spans, and slot occupancy
+- pane-grid geometry and pane occupancy
 - pane-local view state such as scroll position or inspector selection
 
 Pane state must not own transcript state, prompt locks, or model settings.
@@ -137,7 +138,7 @@ Use it for:
 
 ### `paneId`
 
-The UI identity for one pane slot.
+The UI identity for one pane.
 
 Use it for:
 

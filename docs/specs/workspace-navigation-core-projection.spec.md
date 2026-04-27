@@ -31,8 +31,7 @@ This section does not implement:
 - saved workflow library browsing
 - source editor, syntax highlighting, typecheck, or diagnostics surfaces
 - full workflow graph inspection
-- pane grid creation, pane geometry editing, or expanded split-pane workflows beyond the restore rules listed here
-- scroll restoration
+- pane-grid creation, pane geometry editing, or expanded pane-layout workflows beyond the restore rules listed here
 - composer draft recovery
 - transient UI recovery
 
@@ -324,17 +323,20 @@ Pane restoration should be lazy. On app load, the renderer can restore pane bind
 
 ### Persisted Restore Shape
 
-The restore snapshot should be versioned:
-
 ```ts
 type WorkspaceUiRestoreState = {
-  version: 1;
   focusedPaneId: string | null;
   panes: Array<{
     paneId: string;
     surfacePiSessionId: string | null;
     workspaceSessionId: string | null;
     threadId: string | null;
+    scroll:
+      | null
+      | {
+          transcriptAnchorId: string | null;
+          offsetPx: number;
+        };
     inspectorSelection:
       | null
       | { kind: "thread"; threadId: string }
@@ -346,7 +348,7 @@ type WorkspaceUiRestoreState = {
 };
 ```
 
-Pane geometry and multi-cell spans are owned by the pane-layout work. If they are present, they should live beside this shape under the same versioning approach, but Section 8 does not need to solve expanded pane-grid editing.
+Pane-grid geometry is owned by the pane-layout work. Section 8 does not need to solve expanded pane-layout editing.
 
 ### Restore Rules
 
@@ -355,6 +357,7 @@ On restart:
 - restore pane bindings whose target surface still exists
 - restore the focused pane if it still exists
 - otherwise focus the first visible pane
+- restore pane-local scroll if its anchor still exists
 - restore inspector selection if the selected target still exists
 - otherwise clear that pane's inspector selection
 - show a non-destructive unavailable-surface state if a pane binding points at a deleted or missing surface
@@ -364,7 +367,6 @@ On restart:
 
 The app should not restore:
 
-- scroll position
 - hover state
 - open context menus
 - temporary popovers
@@ -380,6 +382,7 @@ Live stream and tool-running state should come only from real durable runtime st
 ## Relationship To Other Specs
 
 - `docs/specs/multi-session-support.spec.md` defines the state-layer split, live surface ownership, and pane indirection.
+- `docs/specs/pane-layout.spec.md` defines the expanded pane-grid layout, pane placement, duplicate-pane behavior, and detailed restart restore rules for Section 9.
 - `docs/specs/structured-session-state.spec.md` defines canonical session, thread, workflow-run, command, CI, artifact, and wait records.
 - `docs/specs/project-ci.spec.md` defines Project CI record creation and result semantics.
 - `docs/specs/workflow-library.spec.md` defines workflow library storage, but saved workflow library browsing is intentionally deferred from this Section 8 scope.

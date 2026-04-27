@@ -124,9 +124,10 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workspace Navigation And Core Projection",
     status: "shipped",
     summary:
-      "Keeps the workspace shell navigable with pinned active sessions, a single collapsed-by-default Archived group for non-destructive session hiding, compact thread and workflow-run artifact blocks backed by durable artifact records, compact latest Project CI projection near the focused surface or relevant handler thread, and restart restoration for stable pane bindings, focus, and inspector selections while deliberately excluding scroll, transient UI, composer drafts, transcript selections, and stale live stream state.",
+      "Keeps the workspace shell navigable with pinned active sessions, a single collapsed-by-default Archived group for non-destructive session hiding, compact thread and workflow-run artifact blocks backed by durable artifact records, compact latest Project CI projection near the focused surface or relevant handler thread, and restart restoration for stable pane bindings, focus, pane-local scroll, display preferences, and inspector selections while deliberately excluding transient UI, composer drafts, transcript selections, and stale live stream state.",
     sourceSpecs: [
       "docs/prd.md",
+      "docs/specs/pane-layout.spec.md",
       "docs/specs/workspace-navigation-core-projection.spec.md",
       "docs/specs/multi-session-support.spec.md",
       "docs/specs/structured-session-state.spec.md",
@@ -146,11 +147,12 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Multi-Surface Live Runtime",
     status: "in-progress",
     summary:
-      "Separates durable workspace state from live surface runtimes and pane layout state, manages live pi surfaces in a shared registry keyed by `surfacePiSessionId`, gives each surface its own prompt lock and model or reasoning lifecycle, supports explicit open and close semantics, and lets multiple panes attach to the same surface without duplicating the underlying runtime.",
+      "Separates durable workspace state from live surface runtimes and user-driven pane-grid layout state with ordered row and column percentages plus deterministic pane coordinates, manages live pi surfaces in a shared registry keyed by `surfacePiSessionId`, gives each surface its own prompt lock and model or reasoning lifecycle, supports explicit open and close semantics, and lets multiple panes attach to the same surface without duplicating the underlying runtime.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/multi-session-support.spec.md",
       "docs/specs/structured-session-state.spec.md",
+      "docs/specs/pane-layout.spec.md",
       "docs/specs/workspace-navigation-core-projection.spec.md",
     ],
   },
