@@ -3,6 +3,7 @@ import type {
   WorkspaceHandlerThreadSummary,
   WorkspaceProjectCiStatusPanel,
   WorkspaceSessionSummary,
+  WorkspaceWorkflowTaskAttemptSummary,
 } from "./chat-rpc";
 import type { ChatRuntime } from "./chat-runtime";
 
@@ -28,6 +29,7 @@ export type CommandPlacement = "new-pane" | "focused-pane";
 export type CommandExecutionTarget =
   | { kind: "create-session"; initialPrompt?: string }
   | { kind: "open-session"; workspaceSessionId: string }
+  | { kind: "open-workflow-task-attempt"; workspaceSessionId: string; workflowTaskAttemptId: string }
   | {
       kind: "update-session-navigation";
       workspaceSessionId: string;
@@ -46,6 +48,7 @@ export type CommandAction = {
   availability: CommandAvailability;
   execute: CommandExecutionTarget;
   targetName?: string;
+  badge?: string;
 };
 
 export type CommandRegistryInput = {
@@ -179,11 +182,12 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
       id: `session.open.${session.id}`,
       label: `Open Session: ${session.title}`,
       category: "session",
-      aliases: ["switch session", "show session", session.preview],
+      aliases: ["switch session", "show session", "orchestrator session", session.preview],
       shortcut: null,
       availability: { kind: "available" },
       execute: { kind: "open-session", workspaceSessionId: session.id },
       targetName: session.title,
+      badge: "Orchestrator",
     });
 
     actions.push({
@@ -219,30 +223,18 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
     });
   }
 
-  if (focusedSession) {
-    actions.push({
-      id: `surface.open-orchestrator.${focusedSession.id}`,
-      label: `Open Orchestrator: ${focusedSession.title}`,
-      category: "surface",
-      aliases: ["main surface", "return to orchestrator"],
-      shortcut: null,
-      availability: { kind: "available" },
-      execute: { kind: "open-session", workspaceSessionId: focusedSession.id },
-      targetName: focusedSession.title,
-    });
-  }
-
   for (const thread of input.handlerThreads ?? []) {
     if (!input.focusedSessionId) {
       continue;
     }
     actions.push({
-      id: `handler-thread.open.${thread.threadId}`,
-      label: `Open Thread: ${thread.title}`,
-      category: "handler-thread",
+      id: `session.open.thread.${thread.threadId}`,
+      label: `Open Session: ${thread.title}`,
+      category: "session",
       aliases: [
         "handler thread",
         "delegated thread",
+        "thread session",
         thread.objective,
         thread.latestEpisode?.summary ?? "",
       ],
@@ -258,10 +250,46 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
         },
       },
       targetName: thread.title,
+      badge: "Thread",
     });
+
+    for (const workflowTaskAttempt of thread.workflowTaskAttempts ?? []) {
+      actions.push(buildWorkflowTaskAttemptAction(input.focusedSessionId, thread, workflowTaskAttempt));
+    }
   }
 
   return actions;
+}
+
+function buildWorkflowTaskAttemptAction(
+  workspaceSessionId: string,
+  thread: WorkspaceHandlerThreadSummary,
+  workflowTaskAttempt: WorkspaceWorkflowTaskAttemptSummary,
+): CommandAction {
+  return {
+    id: `session.open.task-agent.${workflowTaskAttempt.workflowTaskAttemptId}`,
+    label: `Open Session: ${workflowTaskAttempt.title}`,
+    category: "session",
+    aliases: [
+      "task agent",
+      "workflow task agent",
+      "task-agent session",
+      workflowTaskAttempt.nodeId,
+      workflowTaskAttempt.smithersRunId,
+      thread.title,
+      thread.objective,
+      workflowTaskAttempt.summary,
+    ],
+    shortcut: null,
+    availability: { kind: "available" },
+    execute: {
+      kind: "open-workflow-task-attempt",
+      workspaceSessionId,
+      workflowTaskAttemptId: workflowTaskAttempt.workflowTaskAttemptId,
+    },
+    targetName: workflowTaskAttempt.summary || thread.title,
+    badge: "Task Agent",
+  };
 }
 
 export function getVisibleCommandActions(actions: CommandAction[]): CommandAction[] {
@@ -343,6 +371,10 @@ export async function executeCommandAction(input: {
   action: CommandAction;
   paneId: string;
   onOpenSettings?: (target: string) => void;
+  onOpenWorkflowTaskAttempt?: (input: {
+    workspaceSessionId: string;
+    workflowTaskAttemptId: string;
+  }) => Promise<void> | void;
 }): Promise<void> {
   const { runtime, action, paneId } = input;
   if (action.availability.kind !== "available") {
@@ -359,6 +391,12 @@ export async function executeCommandAction(input: {
       return;
     case "open-session":
       await runtime.openSession(target.workspaceSessionId, paneId);
+      return;
+    case "open-workflow-task-attempt":
+      await input.onOpenWorkflowTaskAttempt?.({
+        workspaceSessionId: target.workspaceSessionId,
+        workflowTaskAttemptId: target.workflowTaskAttemptId,
+      });
       return;
     case "update-session-navigation":
       if (target.action === "pin") await runtime.pinSession(target.workspaceSessionId);

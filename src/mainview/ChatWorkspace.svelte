@@ -450,6 +450,8 @@
         action,
         paneId,
         onOpenSettings: () => onOpenSettings?.(),
+        onOpenWorkflowTaskAttempt: ({ workspaceSessionId, workflowTaskAttemptId }) =>
+          handleInspectWorkflowTaskAttempt({ workflowTaskAttemptId }, workspaceSessionId),
       }),
     );
   }
@@ -1116,9 +1118,9 @@
 
   async function handleInspectWorkflowTaskAttempt(
     workflowTaskAttempt: Pick<WorkspaceWorkflowTaskAttemptSummary, "workflowTaskAttemptId">,
+    sessionId = currentSession?.id,
   ) {
-    const session = currentSession;
-    if (!session) {
+    if (!sessionId) {
       return;
     }
 
@@ -1127,16 +1129,16 @@
     workflowTaskAttemptInspectorError = undefined;
     workflowTaskAttemptInspectorLoading = true;
     workflowTaskAttemptInspectorId = workflowTaskAttempt.workflowTaskAttemptId;
-    workflowTaskAttemptInspectorSessionId = session.id;
+    workflowTaskAttemptInspectorSessionId = sessionId;
 
     try {
       const inspector = await runtime.getWorkflowTaskAttemptInspector(
         workflowTaskAttempt.workflowTaskAttemptId,
-        session.id,
+        sessionId,
       );
       if (
         workflowTaskAttemptInspectorId !== workflowTaskAttempt.workflowTaskAttemptId ||
-        workflowTaskAttemptInspectorSessionId !== session.id
+        workflowTaskAttemptInspectorSessionId !== sessionId
       ) {
         return;
       }
@@ -1145,7 +1147,7 @@
     } catch (error) {
       if (
         workflowTaskAttemptInspectorId !== workflowTaskAttempt.workflowTaskAttemptId ||
-        workflowTaskAttemptInspectorSessionId !== session.id
+        workflowTaskAttemptInspectorSessionId !== sessionId
       ) {
         return;
       }
@@ -1155,7 +1157,7 @@
     } finally {
       if (
         workflowTaskAttemptInspectorId === workflowTaskAttempt.workflowTaskAttemptId &&
-        workflowTaskAttemptInspectorSessionId === session.id
+        workflowTaskAttemptInspectorSessionId === sessionId
       ) {
         workflowTaskAttemptInspectorLoading = false;
       }

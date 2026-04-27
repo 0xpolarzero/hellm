@@ -214,6 +214,9 @@ test("Cmd+Shift+P opens all-actions and routes session commands through workspac
     await page.locator('[data-cmdk-input]').fill("Open Session: Alpha Palette");
     const openAlpha = page.locator("[data-cmdk-item]").filter({ hasText: "Open Session: Alpha Palette" }).first();
     await openAlpha.waitFor({ state: "visible" });
+    expect((await openAlpha.locator(".command-palette-kind-badge").textContent())?.trim()).toBe(
+      "Orchestrator",
+    );
     await openAlpha.click({ force: true });
 
     await page.getByTestId("command-palette").waitFor({ state: "hidden" });

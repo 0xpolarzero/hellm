@@ -258,6 +258,7 @@ export interface WorkspaceHandlerThreadSummary {
   latestWorkflowRun: WorkspaceHandlerThreadWorkflowSummary | null;
   latestCiRun: WorkspaceProjectCiRunSummary | null;
   latestEpisode: WorkspaceHandlerThreadEpisodeSummary | null;
+  workflowTaskAttempts?: WorkspaceWorkflowTaskAttemptSummary[];
 }
 
 export interface WorkspaceHandlerThreadInspector extends WorkspaceHandlerThreadSummary {

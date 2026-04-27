@@ -147,7 +147,12 @@
                 >
                   <div class="command-palette-item">
                     <div class="command-palette-item-copy">
-                      <strong>{action.label}</strong>
+                      <div class="command-palette-item-title">
+                        <strong>{action.label}</strong>
+                        {#if action.badge}
+                          <span class="command-palette-kind-badge">{action.badge}</span>
+                        {/if}
+                      </div>
                       <span>{getAvailabilityLabel(action)}</span>
                     </div>
                     <div class="command-palette-item-meta">
@@ -280,11 +285,35 @@
     gap: 0.18rem;
   }
 
+  .command-palette-item-title {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
   .command-palette-item-copy strong,
   .command-palette-item-copy span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .command-palette-item-copy strong {
+    min-width: 0;
+  }
+
+  .command-palette-kind-badge {
+    flex: 0 0 auto;
+    max-width: 8.5rem;
+    padding: 0.12rem 0.42rem;
+    border: 1px solid rgb(37 99 235 / 0.24);
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0;
   }
 
   .command-palette-item-copy span,

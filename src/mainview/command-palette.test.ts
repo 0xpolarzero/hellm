@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import type { PromptTarget, WorkspaceSessionSummary } from "./chat-rpc";
+import type {
+  PromptTarget,
+  WorkspaceHandlerThreadSummary,
+  WorkspaceSessionSummary,
+} from "./chat-rpc";
 import {
   buildCommandRegistry,
   executeCommandAction,
@@ -31,6 +35,35 @@ function session(
     isArchived: options.isArchived ?? false,
     archivedAt: options.isArchived ? "2026-04-27T10:00:00.000Z" : null,
     wait: null,
+  };
+}
+
+function handlerThread(
+  threadId: string,
+  title: string,
+  options: Partial<WorkspaceHandlerThreadSummary> = {},
+): WorkspaceHandlerThreadSummary {
+  return {
+    threadId,
+    surfacePiSessionId: options.surfacePiSessionId ?? `${threadId}-surface`,
+    title,
+    objective: options.objective ?? "Handle delegated work.",
+    status: options.status ?? "completed",
+    wait: options.wait ?? null,
+    startedAt: options.startedAt ?? "2026-04-27T10:00:00.000Z",
+    updatedAt: options.updatedAt ?? "2026-04-27T10:00:00.000Z",
+    finishedAt: options.finishedAt ?? null,
+    commandCount: options.commandCount ?? 0,
+    workflowRunCount: options.workflowRunCount ?? 0,
+    workflowTaskAttemptCount: options.workflowTaskAttemptCount ?? 0,
+    episodeCount: options.episodeCount ?? 0,
+    artifactCount: options.artifactCount ?? 0,
+    ciRunCount: options.ciRunCount ?? 0,
+    loadedContextKeys: options.loadedContextKeys ?? [],
+    latestWorkflowRun: options.latestWorkflowRun ?? null,
+    latestCiRun: options.latestCiRun ?? null,
+    latestEpisode: options.latestEpisode ?? null,
+    workflowTaskAttempts: options.workflowTaskAttempts,
   };
 }
 
@@ -166,26 +199,28 @@ describe("buildCommandRegistry", () => {
       ],
       focusedSessionId: "session-1",
       handlerThreads: [
-        {
-          threadId: "thread-1",
+        handlerThread("thread-1", "Implement parser fix", {
           surfacePiSessionId: "thread-surface-1",
-          title: "Implement parser fix",
           objective: "Patch parser handling.",
-          status: "completed",
-          wait: null,
-          startedAt: "2026-04-27T10:00:00.000Z",
-          updatedAt: "2026-04-27T10:00:00.000Z",
-          finishedAt: null,
-          commandCount: 0,
-          workflowRunCount: 0,
-          episodeCount: 0,
-          artifactCount: 0,
-          ciRunCount: 0,
-          loadedContextKeys: [],
-          latestWorkflowRun: null,
-          latestCiRun: null,
-          latestEpisode: null,
-        },
+          workflowTaskAttempts: [
+            {
+              workflowTaskAttemptId: "task-attempt-1",
+              workflowRunId: "workflow-run-1",
+              smithersRunId: "smithers-run-1",
+              nodeId: "codegen",
+              iteration: 0,
+              attempt: 1,
+              title: "Generate parser patch",
+              kind: "agent",
+              status: "completed",
+              summary: "Generated parser updates.",
+              updatedAt: "2026-04-27T10:00:00.000Z",
+              commandCount: 2,
+              artifactCount: 1,
+              transcriptMessageCount: 3,
+            },
+          ],
+        }),
       ],
     });
 
@@ -194,7 +229,18 @@ describe("buildCommandRegistry", () => {
     expect(actions.map((action) => action.id)).toContain("project-ci.run");
     expect(actions.map((action) => action.id)).toContain("session.open.session-1");
     expect(actions.map((action) => action.id)).toContain("session.unarchive.session-2");
-    expect(actions.map((action) => action.id)).toContain("handler-thread.open.thread-1");
+    expect(actions.map((action) => action.id)).not.toContain("surface.open-orchestrator.session-1");
+    expect(actions.map((action) => action.id)).toContain("session.open.thread.thread-1");
+    expect(actions.map((action) => action.id)).toContain("session.open.task-agent.task-attempt-1");
+    expect(actions.find((action) => action.id === "session.open.session-1")?.badge).toBe(
+      "Orchestrator",
+    );
+    expect(actions.find((action) => action.id === "session.open.thread.thread-1")?.badge).toBe(
+      "Thread",
+    );
+    expect(
+      actions.find((action) => action.id === "session.open.task-agent.task-attempt-1")?.badge,
+    ).toBe("Task Agent");
     expect(actions.find((action) => action.id === "session.pin.session-2")?.availability.kind).toBe(
       "disabled",
     );
@@ -244,6 +290,51 @@ describe("executeCommandAction", () => {
       "open:session-1:pane-b",
       "prompt:session-1:Run Project CI for this workspace.",
     ]);
+  });
+
+  it("opens workflow task-agent sessions through the task-attempt inspector callback", async () => {
+    const runtime = createRuntime();
+    const openedAttempts: Array<{ workspaceSessionId: string; workflowTaskAttemptId: string }> = [];
+    const actions = buildCommandRegistry({
+      sessions: [session("session-1", "Parser Fix")],
+      focusedSessionId: "session-1",
+      handlerThreads: [
+        handlerThread("thread-1", "Implement parser fix", {
+          workflowTaskAttempts: [
+            {
+              workflowTaskAttemptId: "task-attempt-1",
+              workflowRunId: "workflow-run-1",
+              smithersRunId: "smithers-run-1",
+              nodeId: "codegen",
+              iteration: 0,
+              attempt: 1,
+              title: "Generate parser patch",
+              kind: "agent",
+              status: "completed",
+              summary: "Generated parser updates.",
+              updatedAt: "2026-04-27T10:00:00.000Z",
+              commandCount: 2,
+              artifactCount: 1,
+              transcriptMessageCount: 3,
+            },
+          ],
+        }),
+      ],
+    });
+
+    await executeCommandAction({
+      runtime,
+      action: actions.find((action) => action.id === "session.open.task-agent.task-attempt-1")!,
+      paneId: "pane-a",
+      onOpenWorkflowTaskAttempt: (input) => {
+        openedAttempts.push(input);
+      },
+    });
+
+    expect(openedAttempts).toEqual([
+      { workspaceSessionId: "session-1", workflowTaskAttemptId: "task-attempt-1" },
+    ]);
+    expect(runtime.calls).toEqual([]);
   });
 
   it("creates a normal session and sends unmatched text as the initial prompt", async () => {

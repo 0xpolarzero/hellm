@@ -238,6 +238,7 @@ export interface StructuredHandlerThreadSummary {
   latestWorkflowRun: StructuredHandlerThreadWorkflowSummary | null;
   latestCiRun: StructuredProjectCiRunSummary | null;
   latestEpisode: StructuredHandlerThreadEpisodeSummary | null;
+  workflowTaskAttempts?: StructuredWorkflowTaskAttemptSummary[];
 }
 
 export interface StructuredHandlerThreadInspector extends StructuredHandlerThreadSummary {
@@ -814,7 +815,7 @@ function buildHandlerThreadSummary(
     ciRuns.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
   const latestEpisode = getThreadLatestEpisode(session, thread.id);
 
-  return {
+  const summary: StructuredHandlerThreadSummary = {
     threadId: thread.id,
     surfacePiSessionId: thread.surfacePiSessionId,
     title: thread.title,
@@ -837,6 +838,12 @@ function buildHandlerThreadSummary(
     latestCiRun: latestCiRun ? buildProjectCiRunSummary(latestCiRun) : null,
     latestEpisode: latestEpisode ? buildThreadEpisodeSummary(latestEpisode) : null,
   };
+  if (workflowTaskAttempts.length > 0) {
+    summary.workflowTaskAttempts = workflowTaskAttempts
+      .map((workflowTaskAttempt) => buildWorkflowTaskAttemptSummary(session, workflowTaskAttempt))
+      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+  return summary;
 }
 
 function deriveThreadIds(threads: StructuredThreadRecord[]): string[] {

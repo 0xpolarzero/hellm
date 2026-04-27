@@ -54,7 +54,7 @@ The intended use is as a fast, unstyled, composable command menu foundation. `sv
 The all-actions palette discovers and executes product actions, including:
 
 - create a new session
-- open or switch to an existing session
+- open or switch to existing session-like targets, including orchestrator sessions, handler-thread sessions, and workflow task-agent projection sessions
 - pin, unpin, archive, and unarchive sessions
 - open focused session, thread, workflow, artifact, and Project CI surfaces
 - run or configure Project CI through normal orchestrator or handler-thread routing
@@ -98,6 +98,7 @@ type CommandAction = {
   shortcut: string | null;
   availability: CommandAvailability;
   execute: CommandExecutionTarget;
+  badge?: string;
 };
 
 type CommandAvailability =
@@ -108,6 +109,7 @@ type CommandAvailability =
 type CommandExecutionTarget =
   | { kind: "create-session"; initialPrompt?: string }
   | { kind: "open-session"; workspaceSessionId: string }
+  | { kind: "open-workflow-task-attempt"; workspaceSessionId: string; workflowTaskAttemptId: string }
   | { kind: "update-session-navigation"; workspaceSessionId: string; action: "pin" | "unpin" | "archive" | "unarchive" }
   | { kind: "open-surface"; surface: CommandSurfaceTarget }
   | { kind: "start-orchestrator-turn"; workspaceSessionId: string; prompt: string }
@@ -140,7 +142,9 @@ Rules:
 - session creation creates a normal durable workspace session and orchestrator surface
 - session switching uses existing workspace navigation state
 - session pin, unpin, archive, and unarchive use existing durable navigation fields
-- opening a session, thread, workflow inspector, artifact, or Project CI surface uses normal surface open behavior
+- `Open Session` results cover orchestrator, handler-thread, and workflow task-agent projection categories and must show a visible kind badge for the category
+- opening an orchestrator session or handler-thread session uses normal live surface open behavior
+- opening a workflow task-agent projection session opens the existing workflow task-attempt inspector unless a future product decision promotes task agents to live interactive pane surfaces
 - Project CI run and configuration commands route through ordinary orchestrator or handler-thread turns
 - handler-thread actions target existing handler-thread surfaces or create handler work through `thread.start` only when the orchestrator model calls for delegation
 - workflow inspector actions open inspection surfaces over durable workflow-run state and Smithers-native inspection APIs

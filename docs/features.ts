@@ -139,7 +139,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Command Palette And Quick Open",
     status: "in-progress",
     summary:
-      "Defines a VS Code-like shell action surface where `Cmd+Shift+P` discovers and executes product actions through existing session, surface, orchestrator, handler-thread, Project CI, Smithers-native, pane, settings, and runtime-profile routing, `Cmd+P` is reserved as a file quick-open placeholder until file surfaces exist, `cmdk-sv` is the intended Svelte UI primitive, and unmatched non-empty palette text creates a normal new session initial prompt without introducing a parallel runtime, shell, terminal loop, or workflow abstraction.",
+      "Defines a VS Code-like shell action surface where `Cmd+Shift+P` discovers and executes product actions through existing session, surface, orchestrator, handler-thread, workflow task-agent projection, Project CI, Smithers-native, pane, settings, and runtime-profile routing, shows visually distinct kind badges for open-session results across orchestrator, handler-thread, and task-agent categories, `Cmd+P` is reserved as a file quick-open placeholder until file surfaces exist, `cmdk-sv` is the intended Svelte UI primitive, and unmatched non-empty palette text creates a normal new session initial prompt without introducing a parallel runtime, shell, terminal loop, or workflow abstraction.",
     sourceSpecs: ["docs/prd.md", "docs/specs/command-palette.spec.md"],
   },
   {
