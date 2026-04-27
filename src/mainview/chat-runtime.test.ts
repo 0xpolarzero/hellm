@@ -1121,21 +1121,21 @@ describe("createChatRuntime", () => {
 
     expect(secondaryController).toBeTruthy();
     expect(secondaryController).toBe(tertiaryController);
-    expect(harness.getRetainCount(threadTarget.surfacePiSessionId)).toBe(2);
+    expect(harness.getRetainCount(threadTarget.surfacePiSessionId)).toBe(1);
 
     await runtime.closePaneSurface("secondary");
 
     expect(runtime.getPane("secondary")?.target).toBeNull();
     expect(runtime.getPaneController("tertiary")).toBe(tertiaryController);
     expect(runtime.getSurfaceController(threadTarget.surfacePiSessionId)).toBe(tertiaryController);
-    expect(harness.closeRequests).toHaveLength(1);
+    expect(harness.closeRequests).toHaveLength(0);
     expect(harness.getRetainCount(threadTarget.surfacePiSessionId)).toBe(1);
 
     await runtime.closePaneSurface("tertiary");
     await waitFor(() => runtime.getSurfaceController(threadTarget.surfacePiSessionId) === null);
 
     expect(runtime.getPane("tertiary")?.target).toBeNull();
-    expect(harness.closeRequests).toHaveLength(2);
+    expect(harness.closeRequests).toHaveLength(1);
     expect(harness.getRetainCount(threadTarget.surfacePiSessionId)).toBe(0);
 
     runtime.dispose();
@@ -1463,11 +1463,12 @@ describe("createChatRuntime", () => {
     expect(restoreState?.panes).toContainEqual(
       expect.objectContaining({
         paneId: "secondary",
-        workspaceSessionId: "session-1",
-        surfacePiSessionId: "thread-session-1",
-        surface: "thread",
-        threadId: "thread-123",
-        inspectorSelection: { kind: "thread", threadId: "thread-123" },
+        columnStart: 1,
+        columnEnd: 2,
+        binding: threadTarget,
+        localState: expect.objectContaining({
+          inspectorSelection: { kind: "thread", threadId: "thread-123" },
+        }),
       }),
     );
 
@@ -1494,5 +1495,64 @@ describe("createChatRuntime", () => {
     });
 
     secondRuntime.dispose();
+  });
+
+  it("discards restored empty panes and opens the current session cleanly", async () => {
+    const storage = createMemoryStorage();
+    await storage.workspaceUiRestore.set("/tmp/svvy", {
+      version: 2,
+      columns: [
+        { id: "col-1", percent: 50 },
+        { id: "col-2", percent: 50 },
+      ],
+      rows: [{ id: "row-1", percent: 100 }],
+      panes: [
+        {
+          paneId: "primary",
+          columnStart: 0,
+          columnEnd: 1,
+          rowStart: 0,
+          rowEnd: 1,
+          binding: null,
+          localState: {
+            inspectorSelection: null,
+            scroll: null,
+            timelineDensity: "comfortable",
+          },
+        },
+        {
+          paneId: "secondary",
+          columnStart: 1,
+          columnEnd: 2,
+          rowStart: 0,
+          rowEnd: 1,
+          binding: createOrchestratorTarget("session-1"),
+          localState: {
+            inspectorSelection: null,
+            scroll: null,
+            timelineDensity: "comfortable",
+          },
+        },
+      ],
+      focusedPaneId: "primary",
+      updatedAt: "2026-04-27T00:00:00.000Z",
+    });
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("main reply")],
+        }),
+      ],
+    });
+
+    const runtime = await createRuntime(harness, storage);
+
+    expect(runtime.paneLayout.panes).toHaveLength(1);
+    expect(runtime.getPane("primary")?.target).toEqual(createOrchestratorTarget("session-1"));
+    expect(runtime.getPane("secondary")).toBeUndefined();
+
+    runtime.dispose();
   });
 });

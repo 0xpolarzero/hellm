@@ -1,8 +1,9 @@
 import type { Model } from "@mariozechner/pi-ai";
+import type { WorkspacePaneLayoutState } from "./pane-layout";
 import type { PromptHistoryEntry } from "./prompt-history";
 
 const DB_NAME = "svvy-desktop-chat";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const PROVIDER_KEYS_STORE = "provider-keys";
 const CUSTOM_PROVIDERS_STORE = "custom-providers";
 const PROMPT_HISTORY_STORE = "prompt-history";
@@ -176,20 +177,8 @@ export type WorkspaceInspectorSelection =
   | { kind: "artifact"; artifactId: string }
   | { kind: "ci-run"; ciRunId: string };
 
-export interface WorkspaceUiRestorePaneState {
-  paneId: string;
-  workspaceSessionId: string;
-  surfacePiSessionId: string;
-  surface: "orchestrator" | "thread";
-  threadId?: string;
-  inspectorSelection?: WorkspaceInspectorSelection | null;
-}
-
-export interface WorkspaceUiRestoreState {
-  version: 1;
-  focusedPaneId: string | null;
-  panes: WorkspaceUiRestorePaneState[];
-  updatedAt: string;
+export interface WorkspaceUiRestoreState extends WorkspacePaneLayoutState {
+  version: 2;
 }
 
 export class WorkspaceUiRestoreStore {
@@ -200,7 +189,13 @@ export class WorkspaceUiRestoreStore {
       WORKSPACE_UI_RESTORE_STORE,
       workspaceId,
     );
-    if (!state || state.version !== 1 || !Array.isArray(state.panes)) {
+    if (
+      !state ||
+      state.version !== 2 ||
+      !Array.isArray(state.panes) ||
+      !Array.isArray(state.columns) ||
+      !Array.isArray(state.rows)
+    ) {
       return null;
     }
     return state;

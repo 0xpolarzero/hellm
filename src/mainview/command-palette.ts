@@ -322,6 +322,22 @@ export function findSelectedCommandAction(
   return filterCommandActions(actions, query)[0] ?? null;
 }
 
+export function getCommandActionShortcutHints(action: CommandAction): string[] {
+  if (action.availability.kind !== "available") {
+    return action.shortcut ? [action.shortcut] : [];
+  }
+
+  switch (action.execute.kind) {
+    case "create-session":
+    case "open-session":
+    case "open-surface":
+    case "start-orchestrator-turn":
+      return ["Enter", "Cmd+Enter"];
+    default:
+      return action.shortcut ? [action.shortcut] : [];
+  }
+}
+
 export async function executeCommandAction(input: {
   runtime: CommandRuntime;
   action: CommandAction;

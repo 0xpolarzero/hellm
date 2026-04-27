@@ -1,7 +1,12 @@
 <script lang="ts">
   import { Command } from "cmdk-sv";
   import SearchIcon from "@lucide/svelte/icons/search";
-  import { filterCommandActions, type CommandAction, type CommandPaletteMode } from "./command-palette";
+  import {
+    filterCommandActions,
+    getCommandActionShortcutHints,
+    type CommandAction,
+    type CommandPaletteMode,
+  } from "./command-palette";
 
   type Props = {
     open: boolean;
@@ -146,9 +151,9 @@
                       <span>{getAvailabilityLabel(action)}</span>
                     </div>
                     <div class="command-palette-item-meta">
-                      {#if action.shortcut}
-                        <kbd>{action.shortcut}</kbd>
-                      {/if}
+                      {#each getCommandActionShortcutHints(action) as shortcut}
+                        <kbd>{shortcut}</kbd>
+                      {/each}
                       <span>{action.category}</span>
                     </div>
                   </div>

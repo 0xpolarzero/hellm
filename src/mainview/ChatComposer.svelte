@@ -15,7 +15,7 @@
 	import TextArea from "./ui/TextArea.svelte";
 
 	type Props = {
-		currentModel: Model<any>;
+		currentModel: Model<any> | null;
 		thinkingLevel: ThinkingLevel;
 		isStreaming: boolean;
 		promptHistory: PromptHistoryEntry[];
@@ -50,7 +50,7 @@
 	let historyNavigation = $state<PromptHistoryNavigationState>(createPromptHistoryNavigationState());
 
 	const availableThinkingLevels = $derived(
-		supportsXhigh(currentModel) ? [...BASE_LEVELS, "xhigh"] : BASE_LEVELS,
+		currentModel && supportsXhigh(currentModel) ? [...BASE_LEVELS, "xhigh"] : BASE_LEVELS,
 	);
 
 	onMount(() => {
@@ -169,16 +169,21 @@
 			bind:value={draft}
 			bind:element={draftElement}
 			resize="vertical"
-			rows={5}
+			rows={2}
 			placeholder="Ask svvy to inspect the repo, make a change, or run Project CI."
 			onkeydown={handleKeydown}
 		/>
 
 		<div class="composer-foot">
 			<div class="composer-controls">
-				<button class="composer-control model-control" type="button" onclick={() => onOpenModelPicker()}>
+				<button
+					class="composer-control model-control"
+					type="button"
+					disabled={!currentModel}
+					onclick={() => onOpenModelPicker()}
+				>
 					<span class="composer-control-label">Model</span>
-					<strong>{currentModel.name}</strong>
+					<strong>{currentModel?.name ?? "No surface"}</strong>
 				</button>
 				<div bind:this={thinkingMenuRoot} class="thinking-wrap">
 					<button
@@ -226,7 +231,7 @@
 					{#if isStreaming}
 						<Button variant="danger" size="sm" onclick={onAbort}>Stop</Button>
 					{:else}
-						<Button variant="primary" size="sm" onclick={() => void submit()} disabled={!draft.trim() || isSubmitting}>
+						<Button variant="primary" size="sm" onclick={() => void submit()} disabled={!currentModel || !draft.trim() || isSubmitting}>
 							Send
 						</Button>
 					{/if}
@@ -239,7 +244,7 @@
 <style>
 	.composer-shell {
 		container-type: inline-size;
-		padding: 0.95rem;
+		padding: 0.55rem 0.95rem;
 		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
 		background:
 			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-subtle) 78%, transparent), transparent),
@@ -395,7 +400,7 @@
 	}
 
 	:global(.composer-shell .ui-textarea) {
-		min-height: 6.8rem;
+		min-height: 3.4rem;
 	}
 
 	.composer-usage {

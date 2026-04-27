@@ -5,6 +5,7 @@ import {
   executeCommandAction,
   executePaletteFallbackPrompt,
   filterCommandActions,
+  getCommandActionShortcutHints,
   getCommandExecutionPaneId,
   getCommandPalettePlacement,
   isCommandPaletteShortcut,
@@ -60,8 +61,13 @@ function createRuntime(): CommandRuntime & {
       id: paneId,
       target: runtime.paneTarget,
       inspectorSelection: null,
+      columnStart: 0,
+      columnEnd: 1,
+      rowStart: 0,
+      rowEnd: 1,
+      timelineDensity: "comfortable" as const,
     }),
-    createSession: async (_request = {}, paneId = "primary") => {
+    createSession: async (_request = {}, paneId: unknown = "primary") => {
       runtime.calls.push(`create:${paneId}`);
       runtime.paneTarget = {
         workspaceSessionId: "new-session",
@@ -69,7 +75,7 @@ function createRuntime(): CommandRuntime & {
         surfacePiSessionId: "new-session",
       };
     },
-    openSession: async (sessionId: string, paneId = "primary") => {
+    openSession: async (sessionId: string, paneId: unknown = "primary") => {
       runtime.calls.push(`open:${sessionId}:${paneId}`);
       runtime.paneTarget = {
         workspaceSessionId: sessionId,
@@ -77,7 +83,7 @@ function createRuntime(): CommandRuntime & {
         surfacePiSessionId: sessionId,
       };
     },
-    openSurface: async (target: PromptTarget, paneId = "primary") => {
+    openSurface: async (target: PromptTarget, paneId: unknown = "primary") => {
       runtime.calls.push(`surface:${target.surfacePiSessionId}:${paneId}`);
       runtime.paneTarget = target;
     },
@@ -132,6 +138,22 @@ describe("command palette shortcuts", () => {
         focusedPaneId: "primary",
       }),
     ).toBe("primary");
+  });
+
+  it("shows pane execution hints on session-opening actions", () => {
+    const actions = buildCommandRegistry({
+      sessions: [session("session-1", "Parser Fix")],
+      focusedSessionId: "session-1",
+    });
+
+    expect(
+      getCommandActionShortcutHints(actions.find((action) => action.id === "session.new")!),
+    ).toEqual(["Enter", "Cmd+Enter"]);
+    expect(
+      getCommandActionShortcutHints(
+        actions.find((action) => action.id === "session.open.session-1")!,
+      ),
+    ).toEqual(["Enter", "Cmd+Enter"]);
   });
 });
 

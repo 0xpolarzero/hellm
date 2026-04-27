@@ -5,6 +5,10 @@
   import FileSearchIcon from "@lucide/svelte/icons/file-search";
   import SearchIcon from "@lucide/svelte/icons/search";
   import SettingsIcon from "@lucide/svelte/icons/settings";
+  import Columns2Icon from "@lucide/svelte/icons/columns-2";
+  import Rows2Icon from "@lucide/svelte/icons/rows-2";
+  import CopyIcon from "@lucide/svelte/icons/copy";
+  import XIcon from "@lucide/svelte/icons/x";
   import type { AssistantMessage, Model } from "@mariozechner/pi-ai";
   import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
   import ArtifactsPanel from "./ArtifactsPanel.svelte";
@@ -55,6 +59,7 @@
     type ChatPaneState,
     type ChatSurfaceController,
   } from "./chat-runtime";
+  import { createEmptyPaneLayout } from "./pane-layout";
   import {
     buildCommandRegistry,
     executeCommandAction,
@@ -112,7 +117,7 @@
   });
   let activeSessionId = $state<string | undefined>(undefined);
   let paneLayout = $state<ChatPaneLayoutState>({
-    panes: [{ id: PRIMARY_CHAT_PANE_ID, target: null }],
+    ...createEmptyPaneLayout(),
     focusedPaneId: PRIMARY_CHAT_PANE_ID,
   });
   let currentPane = $state<ChatPaneState | null>(null);
@@ -473,7 +478,7 @@
   }
 
   async function handleCreateSession() {
-    await runSessionMutation(() => runtime.createSession({}, focusedPaneId));
+    await runSessionMutation(() => runtime.createSession({}, { kind: "new-pane", direction: "right" }));
   }
 
   async function handleOpenSession(sessionId: string) {
@@ -484,7 +489,7 @@
     ) {
       return;
     }
-    await runSessionMutation(() => runtime.openSession(sessionId, focusedPaneId));
+    await runSessionMutation(() => runtime.openSession(sessionId, { kind: "focused-pane" }));
   }
 
   function handleRenameSession(session: WorkspaceSessionSummary) {
@@ -509,7 +514,7 @@
   }
 
   async function handleForkSession(session: WorkspaceSessionSummary) {
-    await runSessionMutation(() => runtime.forkSession(session.id, undefined, focusedPaneId));
+    await runSessionMutation(() => runtime.forkSession(session.id, undefined, { kind: "new-pane", direction: "right" }));
   }
 
   async function handleResetSurfaceTarget() {
@@ -517,7 +522,33 @@
     if (!session) {
       return;
     }
-    await runSessionMutation(() => runtime.openSession(session.id, focusedPaneId));
+    await runSessionMutation(() => runtime.openSession(session.id, { kind: "focused-pane" }));
+  }
+
+  async function handleFocusPane(paneId: string) {
+    runtime.focusPane(paneId);
+    syncRuntimeState();
+    resubscribeSurfaceController();
+    syncSurfaceState();
+    await syncArtifactsFromRuntime(true);
+  }
+
+  async function handleSplitPane(direction: "right" | "below", duplicateBinding = true) {
+    await runSessionMutation(async () => {
+      const paneId = await runtime.splitPane(focusedPaneId, direction, { duplicateBinding });
+      if (paneId) {
+        runtime.focusPane(paneId);
+      }
+    });
+  }
+
+  async function handleCloseFocusedPane() {
+    await runSessionMutation(() => runtime.closePane(focusedPaneId));
+  }
+
+  function handleResizeTrack(axis: "column" | "row", index: number, deltaPercent: number) {
+    runtime.resizePaneTrack(axis, index, deltaPercent);
+    syncRuntimeState();
   }
 
   function handleDeleteSession(session: WorkspaceSessionSummary) {
@@ -985,7 +1016,7 @@
           surfacePiSessionId: thread.surfacePiSessionId,
           threadId: thread.threadId,
         },
-        focusedPaneId,
+        { kind: "new-pane", direction: "right" },
       ),
     );
   }
@@ -1539,6 +1570,45 @@
           >
             Artifacts {artifactCount}
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="pane-split-right"
+            title="Split pane right"
+            disabled={mutatingSession}
+            onclick={() => void handleSplitPane("right")}
+          >
+            <Columns2Icon aria-hidden="true" size={14} strokeWidth={1.9} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="pane-split-below"
+            title="Split pane below"
+            disabled={mutatingSession}
+            onclick={() => void handleSplitPane("below")}
+          >
+            <Rows2Icon aria-hidden="true" size={14} strokeWidth={1.9} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Duplicate focused pane"
+            disabled={mutatingSession}
+            onclick={() => void handleSplitPane("right", true)}
+          >
+            <CopyIcon aria-hidden="true" size={14} strokeWidth={1.9} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="pane-close"
+            title="Close focused pane"
+            disabled={mutatingSession}
+            onclick={() => void handleCloseFocusedPane()}
+          >
+            <XIcon aria-hidden="true" size={14} strokeWidth={1.9} />
+          </Button>
           {#if projectCiStatus}
             <div class="project-ci-compact" aria-label="Project CI summary">
               <Badge tone={getProjectCiStatusTone(projectCiStatus.status)}>
@@ -1560,8 +1630,62 @@
         </div>
       </header>
 
-      <section class="chat-pane" id="conversation">
-        <div class="chat-pane-shell">
+      <section
+        class="pane-grid"
+        data-testid="pane-grid"
+        style={`grid-template-columns: ${paneLayout.columns.map((column) => `${column.percent}fr`).join(" ")}; grid-template-rows: ${paneLayout.rows.map((row) => `${row.percent}fr`).join(" ")};`}
+      >
+        {#each paneLayout.panes as pane (pane.paneId)}
+          {@const paneController = runtime.getPaneController(pane.paneId)}
+          <article
+            class={`workspace-pane ${pane.paneId === focusedPaneId ? "focused" : ""}`.trim()}
+            data-testid="workspace-pane"
+            data-pane-id={pane.paneId}
+            aria-current={pane.paneId === focusedPaneId ? "true" : "false"}
+            style={`grid-column: ${pane.columnStart + 1} / ${pane.columnEnd + 1}; grid-row: ${pane.rowStart + 1} / ${pane.rowEnd + 1};`}
+          >
+            <header class="pane-chrome">
+              <button
+                class="pane-focus-button"
+                type="button"
+                aria-label={`Focus pane ${pane.paneId}`}
+                onclick={() => void handleFocusPane(pane.paneId)}
+              >
+                <strong>{pane.binding?.surface === "thread" ? "Handler Thread" : "Orchestrator"}</strong>
+                <span>{pane.binding?.surfacePiSessionId ?? "Empty pane"}</span>
+              </button>
+              <div class="pane-chrome-actions">
+                <button
+                  class="pane-resize-button vertical"
+                  type="button"
+                  data-testid="pane-resize-vertical"
+                  aria-label="Widen pane"
+                  title="Widen pane"
+                  onclick={(event) => {
+                    event.stopPropagation();
+                    handleResizeTrack("column", Math.max(0, pane.columnStart - 1), 5);
+                  }}
+                >
+                  <Columns2Icon aria-hidden="true" size={13} strokeWidth={1.9} />
+                </button>
+                <button
+                  class="pane-resize-button horizontal"
+                  type="button"
+                  data-testid="pane-resize-horizontal"
+                  aria-label="Heighten pane"
+                  title="Heighten pane"
+                  onclick={(event) => {
+                    event.stopPropagation();
+                    handleResizeTrack("row", Math.max(0, pane.rowStart - 1), 5);
+                  }}
+                >
+                  <Rows2Icon aria-hidden="true" size={13} strokeWidth={1.9} />
+                </button>
+              </div>
+            </header>
+            {#if pane.paneId === focusedPaneId}
+              <section class="chat-pane" id="conversation">
+                <div class="chat-pane-shell">
           {#if showDetailedProjectCiPanel}
             <section class="project-ci-panel" aria-label="Project CI">
               <header class="project-ci-header">
@@ -1877,7 +2001,32 @@
               currentSurfaceController?.agent.setThinkingLevel(level);
             }}
           />
-        </div>
+                </div>
+              </section>
+            {:else if paneController}
+              <section class="chat-pane pane-readonly" aria-label="Pane transcript preview">
+                <div class="chat-pane-shell">
+                  <ChatTranscript
+                    conversation={projectConversation(paneController.agent.state.messages)}
+                    sessionId={paneController.agent.sessionId ?? pane.binding?.surfacePiSessionId ?? "no-surface"}
+                    systemPrompt={paneController.resolvedSystemPrompt}
+                    streamMessage={paneController.agent.state.streamMessage?.role === "assistant" ? paneController.agent.state.streamMessage : undefined}
+                    pendingToolCalls={new Set(paneController.agent.state.pendingToolCalls)}
+                    isStreaming={paneController.agent.state.isStreaming || paneController.promptStatus === "streaming"}
+                    onOpenArtifact={handleOpenArtifact}
+                  />
+                </div>
+              </section>
+            {:else}
+              <div class="pane-placeholder">
+                <p>{pane.binding ? "Surface unavailable" : "Empty pane"}</p>
+                {#if pane.binding}
+                  <span>{pane.binding.surfacePiSessionId}</span>
+                {/if}
+              </div>
+            {/if}
+          </article>
+        {/each}
       </section>
     </section>
 
@@ -2865,6 +3014,120 @@
     padding: 0.35rem 0 0;
   }
 
+  .pane-grid {
+    display: grid;
+    min-height: 0;
+    gap: 0.65rem;
+    overflow: hidden;
+  }
+
+  .workspace-pane {
+    container-type: inline-size;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0;
+    min-height: 16.25rem;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, var(--ui-shell-edge) 70%, transparent);
+    border-radius: calc(var(--ui-radius-xl) + 0.12rem);
+    background: color-mix(in oklab, var(--ui-shell) 88%, transparent);
+  }
+
+  .workspace-pane.focused {
+    border-color: color-mix(in oklab, var(--ui-accent) 58%, var(--ui-shell-edge));
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--ui-accent) 18%, transparent);
+  }
+
+  .pane-chrome {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+    min-height: 2.25rem;
+    padding: 0.42rem 0.58rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-shell-edge) 58%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 62%, transparent);
+  }
+
+  .pane-focus-button {
+    display: grid;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .pane-focus-button strong,
+  .pane-focus-button span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pane-focus-button strong {
+    font-size: 0.72rem;
+  }
+
+  .pane-focus-button span {
+    font-size: 0.64rem;
+    color: var(--ui-text-tertiary);
+  }
+
+  .pane-chrome-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.24rem;
+    flex-shrink: 0;
+  }
+
+  .pane-chrome-actions button {
+    display: inline-grid;
+    place-items: center;
+    width: 1.55rem;
+    height: 1.55rem;
+    border: 1px solid transparent;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+  }
+
+  .pane-resize-button.vertical {
+    cursor: col-resize;
+  }
+
+  .pane-resize-button.horizontal {
+    cursor: row-resize;
+  }
+
+  .pane-chrome-actions button:hover {
+    border-color: color-mix(in oklab, var(--ui-shell-edge) 78%, transparent);
+    color: var(--ui-text-primary);
+    background: color-mix(in oklab, var(--ui-surface-raised) 72%, transparent);
+  }
+
+  .pane-placeholder {
+    display: grid;
+    place-content: center;
+    gap: 0.3rem;
+    min-height: 0;
+    padding: 1rem;
+    color: var(--ui-text-tertiary);
+    text-align: center;
+  }
+
+  .pane-placeholder p {
+    margin: 0;
+    color: var(--ui-text-secondary);
+    font-weight: 700;
+  }
+
+  .pane-placeholder span {
+    font-size: 0.72rem;
+  }
+
   .workspace-main-header {
     display: flex;
     align-items: center;
@@ -2934,25 +3197,25 @@
   }
 
   .chat-pane-shell {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    display: flex;
+    flex-direction: column;
     height: 100%;
     min-height: 0;
     overflow: hidden;
-    border: 1px solid color-mix(in oklab, var(--ui-shell-edge) 72%, transparent);
-    border-radius: calc(var(--ui-radius-xl) + 0.12rem);
+    border: 0;
+    border-radius: 0;
     background:
       linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-raised) 80%, transparent), transparent),
       color-mix(in oklab, var(--ui-shell) 88%, transparent);
-    box-shadow: var(--ui-shadow-soft);
   }
 
   .project-ci-panel,
   .handler-thread-panel,
   .structured-command-panel {
     display: grid;
+    flex: 0 0 auto;
     gap: 0.72rem;
-    padding: 0.92rem 1rem 0.82rem;
+    padding: 0.72rem 0.9rem 0.66rem;
     border-bottom: 1px solid color-mix(in oklab, var(--ui-shell-edge) 66%, transparent);
     background:
       linear-gradient(
@@ -2970,6 +3233,14 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 1rem;
+    min-width: 0;
+  }
+
+  .project-ci-header > div,
+  .handler-thread-header > div,
+  .structured-command-header > div {
+    min-width: 0;
+    flex: 0 0 auto;
   }
 
   .project-ci-header h3,
@@ -3001,6 +3272,13 @@
     font-weight: 680;
     letter-spacing: -0.02em;
     color: var(--ui-text-primary);
+  }
+
+  .handler-thread-copy,
+  .structured-command-copy {
+    max-width: 42rem;
+    min-width: 0;
+    text-align: right;
   }
 
   .handler-thread-copy,
@@ -3119,7 +3397,7 @@
   .handler-thread-list {
     display: grid;
     gap: 0.55rem;
-    max-height: 18rem;
+    max-height: 9rem;
     overflow: auto;
     padding-right: 0.1rem;
   }
@@ -3136,7 +3414,7 @@
   .structured-command-list {
     display: grid;
     gap: 0.5rem;
-    max-height: 13rem;
+    max-height: 6.5rem;
     overflow: auto;
     padding-right: 0.1rem;
   }
@@ -3397,6 +3675,14 @@
   .thread-inspector-summary-copy p,
   .command-inspector-summary-copy p {
     max-width: 44rem;
+  }
+
+  @container (max-width: 42rem) {
+    .workspace-pane.focused .project-ci-panel,
+    .workspace-pane.focused .handler-thread-panel,
+    .workspace-pane.focused .structured-command-panel {
+      display: none;
+    }
   }
 
   .handler-thread-empty,

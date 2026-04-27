@@ -218,6 +218,9 @@ test("Cmd+Shift+P opens all-actions and routes session commands through workspac
 
     await page.getByTestId("command-palette").waitFor({ state: "hidden" });
     await waitForMainTitle(page, "Alpha Palette");
+    expect(await page.locator('[data-testid="workspace-pane"]').count()).toBe(2);
+    await page.getByText("Beta response").waitFor({ state: "visible" });
+    await page.getByText("Alpha response").waitFor({ state: "visible" });
     expect((await page.locator('.session-main[aria-current="true"] strong').textContent())?.trim()).toBe(
       "Alpha Palette",
     );

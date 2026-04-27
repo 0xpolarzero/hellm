@@ -6,7 +6,7 @@ coverage/
 .svelte-kit/
 .vite/
 test-results/
-tmp/screenshots/
+screenshots/
 .idea/
 .vscode/
 .DS_Store
