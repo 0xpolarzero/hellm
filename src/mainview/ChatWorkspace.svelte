@@ -2,12 +2,15 @@
   import { onMount } from "svelte";
   import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
   import PanelLeftOpenIcon from "@lucide/svelte/icons/panel-left-open";
+  import FileSearchIcon from "@lucide/svelte/icons/file-search";
+  import SearchIcon from "@lucide/svelte/icons/search";
   import SettingsIcon from "@lucide/svelte/icons/settings";
   import type { AssistantMessage, Model } from "@mariozechner/pi-ai";
   import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
   import ArtifactsPanel from "./ArtifactsPanel.svelte";
   import { ArtifactsController, type ArtifactsSnapshot } from "./artifacts";
   import ChatComposer from "./ChatComposer.svelte";
+  import CommandPalette from "./CommandPalette.svelte";
   import { formatTimestamp, formatUsage } from "./chat-format";
   import {
     getCommandInspectorSections,
@@ -52,6 +55,18 @@
     type ChatPaneState,
     type ChatSurfaceController,
   } from "./chat-runtime";
+  import {
+    buildCommandRegistry,
+    executeCommandAction,
+    executePaletteFallbackPrompt,
+    filterCommandActions,
+    getCommandExecutionPaneId,
+    getCommandPalettePlacement,
+    isCommandPaletteShortcut,
+    isQuickOpenShortcut,
+    type CommandAction,
+    type CommandPaletteMode,
+  } from "./command-palette";
   import ModelPickerDialog from "./ModelPickerDialog.svelte";
   import Dialog from "./ui/Dialog.svelte";
   import Badge from "./ui/Badge.svelte";
@@ -137,6 +152,10 @@
   let workflowTaskAttemptInspectorError = $state<string | undefined>(undefined);
   let workflowTaskAttemptInspectorLoading = $state(false);
   let workflowTaskAttemptInspectorId = $state<string | null>(null);
+  let paletteOpen = $state(false);
+  let paletteMode = $state<CommandPaletteMode>("actions");
+  let paletteError = $state<string | undefined>(undefined);
+  let paletteBusy = $state(false);
 
   let sidebarResizePointerId: number | null = null;
   let sidebarResizeOriginX = 0;
@@ -216,6 +235,16 @@
       ? projectCiStatus.latestRun
       : null;
   });
+  const commandRegistry = $derived(
+    buildCommandRegistry({
+      sessions,
+      focusedSessionId: activeSessionId,
+      focusedSurfaceTarget,
+      handlerThreads,
+      projectCiStatus,
+    }),
+  );
+  const visibleCommandActions = $derived(filterCommandActions(commandRegistry, ""));
 
   function clearCopyTranscriptResetTimer() {
     if (!copyTranscriptResetTimer) return;
@@ -372,6 +401,75 @@
     } finally {
       mutatingSession = false;
     }
+  }
+
+  function openPalette(mode: CommandPaletteMode) {
+    paletteMode = mode;
+    paletteError = undefined;
+    paletteOpen = true;
+  }
+
+  function closePalette() {
+    paletteOpen = false;
+    paletteError = undefined;
+    paletteBusy = false;
+  }
+
+  async function runPaletteMutation(action: () => Promise<void>) {
+    if (paletteBusy) return;
+    paletteBusy = true;
+    paletteError = undefined;
+    sidebarError = undefined;
+    try {
+      await action();
+      syncRuntimeState();
+      resubscribeSurfaceController();
+      syncSurfaceState();
+      await syncArtifactsFromRuntime();
+      closePalette();
+    } catch (error) {
+      paletteError = error instanceof Error ? error.message : "Command failed.";
+    } finally {
+      paletteBusy = false;
+    }
+  }
+
+  async function handlePaletteExecute(action: CommandAction, event: KeyboardEvent | MouseEvent) {
+    const paneId = getCommandExecutionPaneId({
+      placement: getCommandPalettePlacement(event),
+      focusedPaneId,
+    });
+    await runPaletteMutation(() =>
+      executeCommandAction({
+        runtime,
+        action,
+        paneId,
+        onOpenSettings: () => onOpenSettings?.(),
+      }),
+    );
+  }
+
+  async function handlePaletteFallbackPrompt(prompt: string, event: KeyboardEvent) {
+    const paneId = getCommandExecutionPaneId({
+      placement: getCommandPalettePlacement(event),
+      focusedPaneId,
+    });
+    await runPaletteMutation(async () => {
+      await executePaletteFallbackPrompt({
+        runtime,
+        prompt,
+        paneId,
+        onCreatedTarget: async (target) => {
+          await runtime.storage.promptHistory.append({
+            text: prompt.trim(),
+            sentAt: Date.now(),
+            workspaceId: runtime.workspaceId,
+            sessionId: target.workspaceSessionId,
+          });
+        },
+      });
+      promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
+    });
   }
 
   async function handleCreateSession() {
@@ -1260,6 +1358,18 @@
       windowWidth = window.innerWidth;
     };
     const handleWindowKeydown = (event: KeyboardEvent) => {
+      if (isCommandPaletteShortcut(event)) {
+        event.preventDefault();
+        openPalette("actions");
+        return;
+      }
+
+      if (isQuickOpenShortcut(event)) {
+        event.preventDefault();
+        openPalette("quick-open");
+        return;
+      }
+
       if (!isSidebarToggleShortcut(event)) return;
 
       event.preventDefault();
@@ -1322,6 +1432,26 @@
         {/if}
       </button>
       <p class="workspace-titlebar-title">svvy</p>
+    </div>
+    <div class="workspace-titlebar-actions electrobun-webkit-app-region-no-drag">
+      <button
+        class="titlebar-icon"
+        type="button"
+        aria-label="Open command palette"
+        title="Command Palette (Cmd+Shift+P)"
+        onclick={() => openPalette("actions")}
+      >
+        <SearchIcon aria-hidden="true" size={15} strokeWidth={1.85} />
+      </button>
+      <button
+        class="titlebar-icon"
+        type="button"
+        aria-label="Open quick open"
+        title="Quick Open (Cmd+P)"
+        onclick={() => openPalette("quick-open")}
+      >
+        <FileSearchIcon aria-hidden="true" size={15} strokeWidth={1.85} />
+      </button>
     </div>
   </header>
 
@@ -1780,6 +1910,24 @@
   <footer class="workspace-footer">
     <div class="workspace-footer-spacer"></div>
     <div class="workspace-footer-right">
+      <button
+        class="statusbar-icon"
+        type="button"
+        aria-label="Open command palette"
+        title="Command Palette (Cmd+Shift+P)"
+        onclick={() => openPalette("actions")}
+      >
+        <SearchIcon aria-hidden="true" size={15} strokeWidth={1.85} />
+      </button>
+      <button
+        class="statusbar-icon"
+        type="button"
+        aria-label="Open quick open"
+        title="Quick Open (Cmd+P)"
+        onclick={() => openPalette("quick-open")}
+      >
+        <FileSearchIcon aria-hidden="true" size={15} strokeWidth={1.85} />
+      </button>
       {#if onOpenSettings}
         <button
           class="statusbar-icon"
@@ -1794,6 +1942,17 @@
     </div>
   </footer>
 </div>
+
+<CommandPalette
+  open={paletteOpen}
+  mode={paletteMode}
+  actions={visibleCommandActions}
+  busy={paletteBusy}
+  errorMessage={paletteError}
+  onClose={closePalette}
+  onExecute={(action, event) => void handlePaletteExecute(action, event)}
+  onFallbackPrompt={(prompt, event) => void handlePaletteFallbackPrompt(prompt, event)}
+/>
 
 {#if showModelPicker}
   <ModelPickerDialog
@@ -2577,6 +2736,8 @@
   .workspace-titlebar {
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
     min-height: 2rem;
     padding: 0 0.72rem 0;
     border-bottom: 1px solid color-mix(in oklab, var(--ui-shell-edge) 58%, transparent);
@@ -2599,6 +2760,12 @@
     letter-spacing: -0.01em;
     color: var(--ui-text-secondary);
     white-space: nowrap;
+  }
+
+  .workspace-titlebar-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.16rem;
   }
 
   .titlebar-icon,

@@ -162,7 +162,7 @@ test("keeps the workspace chrome visible while toggling the sidebar and opening 
     await app.page.getByRole("button", { name: "Hide sidebar" }).click();
     await app.page.locator(".session-sidebar").waitFor({ state: "hidden" });
 
-    await app.page.locator(".statusbar-icon").click({ force: true });
+    await app.page.locator(".workspace-footer .statusbar-icon").nth(2).click({ force: true });
     const settings = app.page.getByRole("dialog", { name: "Settings" });
     await settings.waitFor({ state: "visible" });
 
@@ -198,7 +198,7 @@ test("renders artifact output as a mobile overlay at the app's narrow shell widt
       );
       await app.page.getByText("Seed the shell overlay transcript.").waitFor({ state: "visible" });
       const toolCards = app.page.locator(".tool-card");
-      await toolCards.waitFor({ state: "visible", timeout: 15_000 });
+      await toolCards.first().waitFor({ state: "visible", timeout: 15_000 });
       expect(await toolCards.count()).toBe(4);
       await app.page
         .locator(".artifacts-slot.mobile-slot")

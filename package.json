@@ -32,6 +32,7 @@
     "@mariozechner/pi-ai": "^0.64.0",
     "@mariozechner/pi-coding-agent": "^0.64.0",
     "@smithers-orchestrator/db": "0.16.8",
+    "cmdk-sv": "^0.0.19",
     "electrobun": "1.16.0",
     "electrobun-browser-tools": "1.0.1",
     "react": "^19.2.5",
