@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-04-27
-- Status: adopted direction for Section 9 pane layout, surface ownership, and expanded surfaces
+- Status: adopted direction for Section 10 pane layout, surface ownership, and expanded surfaces
 - Scope of this document:
   - define the durable user-driven pane grid layout
   - define the ownership boundary between pane layout state, durable workspace/session state, and live surface runtime state
@@ -16,7 +16,7 @@
 
 ## Purpose
 
-Section 9 makes the workspace shell a user-controlled working surface.
+Section 10 makes the workspace shell a user-controlled working surface.
 
 Users should be able to split, drag, resize, and close panes as their task demands, place surfaces deliberately, inspect related handler threads and workflow runs side by side, and restart the app without losing the useful workspace arrangement. The model is a flexible rectangular pane grid with independently sized rows and columns, constrained by practical minimum pane sizes and explicit close behavior.
 
@@ -311,6 +311,30 @@ If no pane exists, opening a surface creates one column, one row, a single pane 
 
 Opening a handler-thread surface makes that thread a fully interactive pi-backed surface in the chosen pane. Opening a workflow inspector creates or binds the read-only inspector surface for the selected workflow run in the chosen pane.
 
+## Command Palette Placement
+
+The command palette is defined by `docs/specs/command-palette.spec.md` as a shell/action surface. Once pane layout exists, command palette results that open a session or surface use pane placement semantics from this spec.
+
+Default Enter behavior:
+
+- command palette results that open a session or surface open in a new pane by default
+- default Enter must not silently replace the currently focused pane
+- if no pane exists, opening the result creates the first pane and focuses it
+
+`Cmd+Enter` behavior:
+
+- `Cmd+Enter` from the command palette opens the selected command or result into the currently focused pane
+- opening into the focused pane replaces that pane's binding while preserving the opened surface's runtime ownership semantics
+- if no focused pane exists, `Cmd+Enter` falls back to the default open behavior
+
+Placement must preserve live runtime ownership:
+
+- opening an existing interactive surface binds the chosen pane to that surface's existing `surfacePiSessionId`
+- opening the same surface in multiple panes must not create duplicate live runtime controllers
+- opening a new session creates a normal durable workspace session and orchestrator surface, then binds the chosen pane to that surface
+- opening a handler-thread surface binds to that thread's pi-backed surface
+- opening workflow inspector, artifact, or Project CI projection surfaces must preserve their durable state ownership and only create live runtime state when the surface kind requires it
+
 ## Close Semantics
 
 Closing a pane removes one pane from the grid.
@@ -490,6 +514,7 @@ The orchestrator does not absorb raw workflow history just because a workflow in
 
 - `docs/prd.md` defines the product-level relationship between pane layout state, durable surfaces, and pi-backed runtimes.
 - `docs/specs/workspace-navigation-core-projection.spec.md` defines Section 8 navigation, core projection, and earlier restart restore boundaries that this spec expands for pane-grid layout.
+- `docs/specs/command-palette.spec.md` defines Section 9 command palette and quick-open behavior, including the shell-level action surface whose pane-specific placement is defined here.
 - `docs/specs/structured-session-state.spec.md` defines canonical session, thread, workflow-run, command, CI, artifact, wait, and lifecycle records that panes reference by id.
 - `docs/specs/workflow-supervision.spec.md` defines workflow-run lifecycle and Smithers-native inspection behavior used by workflow inspector panes.
 - `docs/specs/project-ci.spec.md` defines Project CI records that compact CI or workflow-run surfaces may reference.

@@ -25,7 +25,7 @@ How to use this file:
 
 ## 1. Structured Session State
 
-Workflow-inspector UI work remains explicitly out of scope for this section and stays under section 16.
+Workflow-inspector UI work remains explicitly out of scope for this section and stays under section 17.
 
 - [x] Build a POC session overlay document and validate how it can sit above pi session data. Commit(s): `c432f4e`
 - [x] Persist a minimal structured session overlay root above pi session data. Commit(s): `b510857`, `fff54d7`
@@ -156,7 +156,21 @@ Current product decisions for this section are specified in `docs/specs/workspac
 - [x] Render the latest Project CI summary block for the focused surface or inspected thread. Commit(s): `3855fe4`
 - [x] Restore focused pane, pane-to-surface bindings, and inspector selection after restart. Commit(s): `3855fe4`
 
-## 9. Pane Layout, Surface Ownership, And Expanded Surfaces
+## 9. Command Palette And Quick Open
+
+Current product decisions for this section are specified in `docs/specs/command-palette.spec.md`.
+
+- [ ] Define the product-owned command/action registry shape, including stable ids, labels, aliases, categories, availability, shortcuts, and typed execution targets.
+- [ ] Define `Cmd+Shift+P` as the all-actions command palette for session, surface, Project CI, handler-thread, workflow-inspector, pane, settings, runtime-profile, and future product actions.
+- [ ] Define `Cmd+P` as file quick-open with placeholder or no-op behavior until file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces exist.
+- [ ] Adopt `cmdk-sv` as the Svelte command palette UI primitive while keeping product routing and command semantics owned by `svvy`.
+- [ ] Build a POC command palette over static product actions.
+- [ ] Expose session creation, open/switch, pin, unpin, archive, and unarchive actions through the palette.
+- [ ] Route unmatched non-empty `Cmd+Shift+P` text into a new session initial prompt through the normal orchestrator turn model.
+- [ ] Add keyboard shortcut handling for `Cmd+Shift+P`, `Cmd+P`, Enter, and command-palette `Cmd+Enter` placement once pane layout exists.
+- [ ] Add tests for shortcut dispatch, command matching, action routing, disabled or hidden availability, and unmatched prompt-session creation.
+
+## 10. Pane Layout, Surface Ownership, And Expanded Surfaces
 
 Current product decisions for this section are specified in `docs/specs/pane-layout.spec.md`.
 
@@ -177,7 +191,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [ ] Open a selected handler-thread surface in a chosen pane as a fully interactive surface.
 - [ ] Keep duplicated views of the same surface synchronized while allowing independent scroll position.
 
-## 10. Session Modes And Runtime Profiles
+## 11. Session Modes And Runtime Profiles
 
 - [ ] Define the runtime profile ids and stored shape for orchestrator, quick, handler, explorer, implementer, reviewer, and workflow-writer.
 - [x] Keep runtime profiles separate from typed handler context packs so Project CI uses the default handler runtime profile plus `context: ["ci"]`. Commit(s): `2a5dbbe`
@@ -191,7 +205,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [ ] Show the current focused-surface runtime profile summary in pane chrome.
 - [ ] Expand the session runtime panel to inspect all agent runtime profiles for the focused surface's session.
 
-## 11. Session Titles
+## 12. Session Titles
 
 - [x] Define the stored title states for top-level sessions and handler threads. Commit(s): `b510857`, `fe53a3b`
 - [ ] Add the hidden `namer` system agent for one-shot top-level session naming.
@@ -201,7 +215,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [ ] Freeze auto-titling after manual rename.
 - [ ] Generate deterministic task-based titles for handler threads and workflow runs without using the `namer`.
 
-## 12. Composer Mention Targets
+## 13. Composer Mention Targets
 
 - [ ] Define the stored shape for symbolic file and folder mention targets in the composer.
 - [ ] Build a POC `@` autocomplete picker over workspace files and folders.
@@ -210,7 +224,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [ ] Resolve file and folder mentions into symbolic context targets for orchestrator and handler-thread prompting.
 - [ ] Keep folder mentions symbolic by default instead of eagerly pasting or expanding contents in the composer.
 
-## 13. Layered Workflow Knowledge
+## 14. Layered Workflow Knowledge
 
 - [x] Inventory the workflow-related prompt, skill, and knowledge assets the product needs. Commit(s): `0b2d1ff`, `4515233`, `a02bd48`
 - [x] Build a POC repo layout for workflow knowledge with separate orchestrator-facing and handler-facing assets. Commit(s): `0b2d1ff`, `4515233`
@@ -221,7 +235,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Define typed handler context packs as the optional-knowledge layer between minimal handler prompts and specialized product authoring guidance. Commit(s): `2a5dbbe`
 - [x] Render loaded handler context keys in thread metadata so users can see when optional context such as `ci` is active. Commit(s): `2a5dbbe`
 
-## 14. Worktree-Aware Execution
+## 15. Worktree-Aware Execution
 
 - [ ] Build a POC thread-to-worktree binding model and inspect how it should appear in the UI.
 - [x] Persist worktree binding on threads. Commit(s): `f53c9b8`
@@ -232,7 +246,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [ ] Let handler threads declare or acquire an isolated worktree when needed.
 - [ ] Show which thread or workflow run owns each worktree-backed execution.
 
-## 15. Headless Surface
+## 16. Headless Surface
 
 - [ ] Build a POC one-shot headless entrypoint that reuses desktop orchestration code.
 - [ ] Define the headless one-shot input contract.
@@ -241,7 +255,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [ ] Emit thread, workflow-run, episode, and artifact references in headless results.
 - [ ] Reuse the same orchestrator and state model as desktop execution.
 
-## 16. Dedicated Workflow Inspector
+## 17. Dedicated Workflow Inspector
 
 - [ ] Define the projected graph shape for a workflow inspector surface.
 - [ ] Build a POC static graph view for one completed workflow run.
@@ -255,7 +269,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [ ] Open a selected child workflow node or related thread surface from the workflow inspector into another chosen pane.
 - [ ] Keep completed workflow inspectors available as durable historical surfaces after completion.
 
-## 17. Recovery And Test Coverage
+## 18. Recovery And Test Coverage
 
 - [ ] Build a POC restart or resume flow that restores multiple open surfaces and pane bindings from durable state.
 - [ ] Restore pending clarification and waiting state after app restart.
@@ -265,7 +279,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Expand from the current real embedded-runtime supervision coverage in `src/bun/smithers-runtime/manager.test.ts` and `src/bun/smithers-tools.test.ts` to full pi-backed handler-thread delegation and workflow-run supervision. Commit(s): `f8557d9`, `b0ee858`, `55963d9`, `097ae47`
 - [ ] Add integration tests that exercise restart and resume behavior across workspace state, live surface state, and pane bindings.
 
-## 18. Context Budget Observability
+## 19. Context Budget Observability
 
 - [ ] Define the context-budget metric as an explicit percentage of the active model's max context.
 - [ ] Define neutral, orange, and red thresholds for that metric.
@@ -275,7 +289,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [ ] Render bottom-edge context indicators on collapsed handler-thread and workflow surfaces.
 - [ ] Render full-width context bars on expanded handler-thread panes.
 
-## 19. Saved Workflow Library Surface
+## 20. Saved Workflow Library Surface
 
 This UI depends on later file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces. Keep it out of the core workspace navigation section until those primitives are ready.
 
