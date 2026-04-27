@@ -160,15 +160,15 @@ Current product decisions for this section are specified in `docs/specs/workspac
 
 Current product decisions for this section are specified in `docs/specs/command-palette.spec.md`.
 
-- [ ] Define the product-owned command/action registry shape, including stable ids, labels, aliases, categories, availability, shortcuts, and typed execution targets.
-- [ ] Define `Cmd+Shift+P` as the all-actions command palette for session, surface, Project CI, handler-thread, workflow-inspector, pane, settings, runtime-profile, and future product actions.
-- [ ] Define `Cmd+P` as file quick-open with placeholder or no-op behavior until file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces exist.
-- [ ] Adopt `cmdk-sv` as the Svelte command palette UI primitive while keeping product routing and command semantics owned by `svvy`.
-- [ ] Build a POC command palette over static product actions.
-- [ ] Expose session creation, open/switch, pin, unpin, archive, and unarchive actions through the palette.
-- [ ] Route unmatched non-empty `Cmd+Shift+P` text into a new session initial prompt through the normal orchestrator turn model.
-- [ ] Add keyboard shortcut handling for `Cmd+Shift+P`, `Cmd+P`, Enter, and command-palette `Cmd+Enter` placement once pane layout exists.
-- [ ] Add tests for shortcut dispatch, command matching, action routing, disabled or hidden availability, and unmatched prompt-session creation.
+- [x] Define the product-owned command/action registry shape, including stable ids, labels, aliases, categories, availability, shortcuts, and typed execution targets. Commit(s): `cb319ac`
+- [x] Define `Cmd+Shift+P` as the all-actions command palette for session, surface, Project CI, handler-thread, workflow-inspector, pane, settings, runtime-profile, and future product actions. Commit(s): `cb319ac`
+- [x] Define `Cmd+P` as file quick-open with placeholder or no-op behavior until file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces exist. Commit(s): `cb319ac`
+- [x] Adopt `cmdk-sv` as the Svelte command palette UI primitive while keeping product routing and command semantics owned by `svvy`. Commit(s): `cb319ac`
+- [x] Build a POC command palette over static product actions. Commit(s): `cb319ac`
+- [x] Expose session creation, open/switch, pin, unpin, archive, and unarchive actions through the palette. Commit(s): `cb319ac`
+- [x] Route unmatched non-empty `Cmd+Shift+P` text into a new session initial prompt through the normal orchestrator turn model. Commit(s): `cb319ac`
+- [x] Add keyboard shortcut handling for `Cmd+Shift+P`, `Cmd+P`, Enter, and command-palette `Cmd+Enter` placement once pane layout exists. Commit(s): `cb319ac`
+- [x] Add tests for shortcut dispatch, command matching, action routing, disabled or hidden availability, and unmatched prompt-session creation. Commit(s): `cb319ac`
 
 ## 10. Pane Layout, Surface Ownership, And Expanded Surfaces
 
