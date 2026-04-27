@@ -166,7 +166,7 @@ Current product decisions for this section are specified in `docs/specs/command-
 - [x] Adopt `cmdk-sv` as the Svelte command palette UI primitive while keeping product routing and command semantics owned by `svvy`. Commit(s): `cb319ac`
 - [x] Build a POC command palette over static product actions. Commit(s): `cb319ac`
 - [x] Expose session creation, open/switch, pin, unpin, archive, and unarchive actions through the palette. Commit(s): `cb319ac`
-- [x] Show unified `Open Session` results for orchestrator, handler-thread, and workflow task-agent projection categories with visible kind badges. Commit(s): `885905b`
+- [x] Show unified `Open Session` results for orchestrator, handler-thread, and workflow task-agent projection categories with visible kind badges. Commit(s): `12d89d8`
 - [x] Route unmatched non-empty `Cmd+Shift+P` text into a new session initial prompt through the normal orchestrator turn model. Commit(s): `cb319ac`
 - [x] Add keyboard shortcut handling for `Cmd+Shift+P`, `Cmd+P`, Enter, and command-palette `Cmd+Enter` placement once pane layout exists. Commit(s): `cb319ac`
 - [x] Add tests for shortcut dispatch, command matching, action routing, disabled or hidden availability, and unmatched prompt-session creation. Commit(s): `cb319ac`
