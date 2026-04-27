@@ -4,6 +4,7 @@ import {
   closePane,
   createEmptyPaneLayout,
   getOpenPaneLocations,
+  movePaneToSpanningRow,
   normalizePaneLayout,
   resizeTrack,
   splitPane,
@@ -93,6 +94,33 @@ describe("pane layout grid", () => {
     );
   });
 
+  it("moves a pane into a full-width spanning row", () => {
+    let layout = createEmptyPaneLayout();
+    layout = splitPane(layout, "primary", "right", { nextPaneId: "right" });
+    layout = splitPane(layout, "right", "below", { nextPaneId: "bottom-right" });
+    layout = movePaneToSpanningRow(layout, "bottom-right", "bottom");
+
+    expect(layout.columns).toHaveLength(2);
+    expect(layout.panes).toContainEqual(
+      expect.objectContaining({
+        paneId: "bottom-right",
+        columnStart: 0,
+        columnEnd: 2,
+        rowStart: 2,
+        rowEnd: 3,
+      }),
+    );
+    expect(layout.panes).toContainEqual(
+      expect.objectContaining({
+        paneId: "right",
+        columnStart: 1,
+        columnEnd: 2,
+        rowStart: 0,
+        rowEnd: 2,
+      }),
+    );
+  });
+
   it("normalizes restored layouts and reports open pane locations", () => {
     const layout = normalizePaneLayout({
       ...createEmptyPaneLayout(),
@@ -118,7 +146,9 @@ describe("pane layout grid", () => {
     });
 
     expect(layout.columns.map((column) => column.percent)).toEqual([50, 50]);
-    expect(getOpenPaneLocations(layout, (binding) => binding.surfacePiSessionId === "session-1")).toEqual([
+    expect(
+      getOpenPaneLocations(layout, (binding) => binding.surfacePiSessionId === "session-1"),
+    ).toEqual([
       { paneId: "primary", label: "Left", focused: false },
       { paneId: "right", label: "Right", focused: true },
     ]);

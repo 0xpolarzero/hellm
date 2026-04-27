@@ -6,6 +6,7 @@ export const MIN_PANE_WIDTH_PX = 320;
 export const MIN_PANE_HEIGHT_PX = 260;
 
 export type PaneSplitDirection = "left" | "right" | "above" | "below";
+export type PaneSpanPlacement = "top" | "bottom";
 export type PaneResizeAxis = "column" | "row";
 
 export interface PaneGridTrack {
@@ -116,7 +117,7 @@ export function normalizePaneLayout(
   const focusedPaneId =
     layout.focusedPaneId && panes.some((pane) => pane.paneId === layout.focusedPaneId)
       ? layout.focusedPaneId
-      : panes[0]?.paneId ?? null;
+      : (panes[0]?.paneId ?? null);
   return { columns, rows, panes, focusedPaneId, updatedAt: now };
 }
 
@@ -279,7 +280,10 @@ export function splitPane(
   });
 }
 
-export function closePane(layout: WorkspacePaneLayoutState, paneId: string): WorkspacePaneLayoutState {
+export function closePane(
+  layout: WorkspacePaneLayoutState,
+  paneId: string,
+): WorkspacePaneLayoutState {
   const pane = layout.panes.find((candidate) => candidate.paneId === paneId);
   if (!pane) {
     return layout;
@@ -293,8 +297,65 @@ export function closePane(layout: WorkspacePaneLayoutState, paneId: string): Wor
     layout.panes.filter((candidate) => candidate.paneId !== paneId),
   );
   const focusedPaneId =
-    layout.focusedPaneId === paneId ? findNearestPane(pane, panes)?.paneId ?? panes[0]!.paneId : layout.focusedPaneId;
+    layout.focusedPaneId === paneId
+      ? (findNearestPane(pane, panes)?.paneId ?? panes[0]!.paneId)
+      : layout.focusedPaneId;
   return normalizePaneLayout({ ...layout, panes, focusedPaneId });
+}
+
+export function movePaneToSpanningRow(
+  layout: WorkspacePaneLayoutState,
+  paneId: string,
+  placement: PaneSpanPlacement,
+  options: { size?: number } = {},
+): WorkspacePaneLayoutState {
+  const pane = layout.panes.find((candidate) => candidate.paneId === paneId);
+  if (!pane || layout.panes.length === 1) {
+    return layout;
+  }
+
+  const rowIndex = placement === "top" ? 0 : layout.rows.length;
+  const sourceRowIndex = placement === "top" ? 0 : layout.rows.length - 1;
+  const sourceRow = layout.rows[sourceRowIndex];
+  if (!sourceRow) {
+    return layout;
+  }
+
+  const size = clampSize(options.size ?? 0.36);
+  const newTrackPercent = sourceRow.percent * size;
+  const oldTrackPercent = sourceRow.percent - newTrackPercent;
+  const nextRows = [
+    ...layout.rows.slice(0, rowIndex),
+    { id: `row-${createPaneId()}`, percent: newTrackPercent },
+    ...layout.rows.slice(rowIndex),
+  ].map((row, index) =>
+    index === (rowIndex <= sourceRowIndex ? sourceRowIndex + 1 : sourceRowIndex)
+      ? { ...row, percent: oldTrackPercent }
+      : row,
+  );
+
+  const repairedPanes = expandAdjacentPaneIntoVacancy(
+    pane,
+    layout.panes.filter((candidate) => candidate.paneId !== paneId),
+  ).map((candidate) => ({
+    ...candidate,
+    rowStart: candidate.rowStart >= rowIndex ? candidate.rowStart + 1 : candidate.rowStart,
+    rowEnd: candidate.rowEnd > rowIndex ? candidate.rowEnd + 1 : candidate.rowEnd,
+  }));
+  const spanningPane: PaneGridPane = {
+    ...pane,
+    columnStart: 0,
+    columnEnd: layout.columns.length,
+    rowStart: rowIndex,
+    rowEnd: rowIndex + 1,
+  };
+
+  return normalizePaneLayout({
+    ...layout,
+    rows: nextRows,
+    panes: [...repairedPanes, spanningPane],
+    focusedPaneId: paneId,
+  });
 }
 
 export function resizeTrack(
@@ -328,7 +389,10 @@ export function resizeTrack(
   });
 }
 
-export function getPaneLocationLabel(layout: WorkspacePaneLayoutState, paneId: string): string | null {
+export function getPaneLocationLabel(
+  layout: WorkspacePaneLayoutState,
+  paneId: string,
+): string | null {
   const pane = layout.panes.find((candidate) => candidate.paneId === paneId);
   if (!pane) {
     return null;
@@ -350,7 +414,10 @@ export function getOpenPaneLocations(
   predicate: (binding: PromptTarget) => boolean,
 ): { paneId: string; label: string; focused: boolean }[] {
   return layout.panes
-    .filter((pane): pane is PaneGridPane & { binding: PromptTarget } => !!pane.binding && predicate(pane.binding))
+    .filter(
+      (pane): pane is PaneGridPane & { binding: PromptTarget } =>
+        !!pane.binding && predicate(pane.binding),
+    )
     .map((pane) => ({
       paneId: pane.paneId,
       label: getPaneLocationLabel(layout, pane.paneId) ?? pane.paneId,
@@ -391,7 +458,10 @@ function findNearestPane(source: PaneGridPane, panes: PaneGridPane[]): PaneGridP
   return nearest;
 }
 
-function expandAdjacentPaneIntoVacancy(closedPane: PaneGridPane, panes: PaneGridPane[]): PaneGridPane[] {
+function expandAdjacentPaneIntoVacancy(
+  closedPane: PaneGridPane,
+  panes: PaneGridPane[],
+): PaneGridPane[] {
   const verticalCandidate = panes.find(
     (pane) =>
       pane.columnStart === closedPane.columnStart &&

@@ -29,7 +29,11 @@ export type CommandPlacement = "new-pane" | "focused-pane";
 export type CommandExecutionTarget =
   | { kind: "create-session"; initialPrompt?: string }
   | { kind: "open-session"; workspaceSessionId: string }
-  | { kind: "open-workflow-task-attempt"; workspaceSessionId: string; workflowTaskAttemptId: string }
+  | {
+      kind: "open-workflow-task-attempt";
+      workspaceSessionId: string;
+      workflowTaskAttemptId: string;
+    }
   | {
       kind: "update-session-navigation";
       workspaceSessionId: string;
@@ -37,7 +41,18 @@ export type CommandExecutionTarget =
     }
   | { kind: "open-surface"; surface: PromptTarget }
   | { kind: "start-orchestrator-turn"; workspaceSessionId: string; prompt: string }
-  | { kind: "open-settings"; target: string };
+  | { kind: "open-settings"; target: string }
+  | {
+      kind: "pane-action";
+      action:
+        | "split-right"
+        | "split-below"
+        | "duplicate-right"
+        | "duplicate-below"
+        | "close"
+        | "span-top"
+        | "span-bottom";
+    };
 
 export type CommandAction = {
   id: string;
@@ -62,13 +77,16 @@ export type CommandRegistryInput = {
 export type CommandRuntime = Pick<
   ChatRuntime,
   | "createSession"
+  | "closePane"
   | "getPane"
+  | "movePaneToSpanningRow"
   | "openSession"
   | "openSurface"
   | "pinSession"
   | "unpinSession"
   | "archiveSession"
   | "unarchiveSession"
+  | "splitPane"
   | "sendPromptToTarget"
 >;
 
@@ -142,6 +160,69 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
       shortcut: null,
       availability: { kind: "available" },
       execute: { kind: "open-settings", target: "root" },
+    },
+    {
+      id: "pane.split-right",
+      label: "Split Pane Right",
+      category: "pane",
+      aliases: ["pane right", "new pane right", "split column"],
+      shortcut: null,
+      availability: { kind: "available" },
+      execute: { kind: "pane-action", action: "split-right" },
+    },
+    {
+      id: "pane.split-below",
+      label: "Split Pane Below",
+      category: "pane",
+      aliases: ["pane below", "new pane below", "split row"],
+      shortcut: null,
+      availability: { kind: "available" },
+      execute: { kind: "pane-action", action: "split-below" },
+    },
+    {
+      id: "pane.duplicate-right",
+      label: "Duplicate Pane Right",
+      category: "pane",
+      aliases: ["duplicate current pane", "clone pane right"],
+      shortcut: null,
+      availability: { kind: "available" },
+      execute: { kind: "pane-action", action: "duplicate-right" },
+    },
+    {
+      id: "pane.duplicate-below",
+      label: "Duplicate Pane Below",
+      category: "pane",
+      aliases: ["duplicate current pane below", "clone pane below"],
+      shortcut: null,
+      availability: { kind: "available" },
+      execute: { kind: "pane-action", action: "duplicate-below" },
+    },
+    {
+      id: "pane.close",
+      label: "Close Pane",
+      category: "pane",
+      aliases: ["remove pane", "detach pane"],
+      shortcut: null,
+      availability: { kind: "available" },
+      execute: { kind: "pane-action", action: "close" },
+    },
+    {
+      id: "pane.span-top",
+      label: "Move Pane To Full-Width Top Row",
+      category: "pane",
+      aliases: ["span top", "full width top", "move pane top"],
+      shortcut: null,
+      availability: { kind: "available" },
+      execute: { kind: "pane-action", action: "span-top" },
+    },
+    {
+      id: "pane.span-bottom",
+      label: "Move Pane To Full-Width Bottom Row",
+      category: "pane",
+      aliases: ["span bottom", "full width bottom", "move pane bottom"],
+      shortcut: null,
+      availability: { kind: "available" },
+      execute: { kind: "pane-action", action: "span-bottom" },
     },
     {
       id: "project-ci.run",
@@ -254,7 +335,9 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
     });
 
     for (const workflowTaskAttempt of thread.workflowTaskAttempts ?? []) {
-      actions.push(buildWorkflowTaskAttemptAction(input.focusedSessionId, thread, workflowTaskAttempt));
+      actions.push(
+        buildWorkflowTaskAttemptAction(input.focusedSessionId, thread, workflowTaskAttempt),
+      );
     }
   }
 
@@ -413,6 +496,19 @@ export async function executeCommandAction(input: {
       return;
     case "open-settings":
       input.onOpenSettings?.(target.target);
+      return;
+    case "pane-action":
+      if (target.action === "split-right") await runtime.splitPane(paneId, "right");
+      if (target.action === "split-below") await runtime.splitPane(paneId, "below");
+      if (target.action === "duplicate-right") {
+        await runtime.splitPane(paneId, "right", { duplicateBinding: true });
+      }
+      if (target.action === "duplicate-below") {
+        await runtime.splitPane(paneId, "below", { duplicateBinding: true });
+      }
+      if (target.action === "close") await runtime.closePane(paneId);
+      if (target.action === "span-top") runtime.movePaneToSpanningRow(paneId, "top");
+      if (target.action === "span-bottom") runtime.movePaneToSpanningRow(paneId, "bottom");
       return;
   }
 }

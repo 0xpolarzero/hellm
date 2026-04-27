@@ -120,6 +120,22 @@ function createRuntime(): CommandRuntime & {
       runtime.calls.push(`surface:${target.surfacePiSessionId}:${paneId}`);
       runtime.paneTarget = target;
     },
+    splitPane: async (
+      paneId: string,
+      direction: "left" | "right" | "above" | "below",
+      options: { duplicateBinding?: boolean } = {},
+    ) => {
+      runtime.calls.push(
+        `split:${paneId}:${direction}:${options.duplicateBinding ? "duplicate" : "empty"}`,
+      );
+      return "new-pane";
+    },
+    closePane: async (paneId: string) => {
+      runtime.calls.push(`close:${paneId}`);
+    },
+    movePaneToSpanningRow: (paneId: string, placement: "top" | "bottom") => {
+      runtime.calls.push(`span:${paneId}:${placement}`);
+    },
     pinSession: async (sessionId: string) => {
       runtime.calls.push(`pin:${sessionId}`);
     },
@@ -226,6 +242,8 @@ describe("buildCommandRegistry", () => {
 
     expect(actions.map((action) => action.id)).toContain("session.new");
     expect(actions.map((action) => action.id)).toContain("settings.open");
+    expect(actions.map((action) => action.id)).toContain("pane.split-right");
+    expect(actions.map((action) => action.id)).toContain("pane.span-bottom");
     expect(actions.map((action) => action.id)).toContain("project-ci.run");
     expect(actions.map((action) => action.id)).toContain("session.open.session-1");
     expect(actions.map((action) => action.id)).toContain("session.unarchive.session-2");
@@ -289,6 +307,42 @@ describe("executeCommandAction", () => {
       "pin:session-1",
       "open:session-1:pane-b",
       "prompt:session-1:Run Project CI for this workspace.",
+    ]);
+  });
+
+  it("routes pane actions to focused pane layout operations", async () => {
+    const runtime = createRuntime();
+    const actions = buildCommandRegistry({
+      sessions: [session("session-1", "Parser Fix")],
+      focusedSessionId: "session-1",
+    });
+
+    await executeCommandAction({
+      runtime,
+      action: actions.find((action) => action.id === "pane.split-right")!,
+      paneId: "focused-pane",
+    });
+    await executeCommandAction({
+      runtime,
+      action: actions.find((action) => action.id === "pane.duplicate-below")!,
+      paneId: "focused-pane",
+    });
+    await executeCommandAction({
+      runtime,
+      action: actions.find((action) => action.id === "pane.span-bottom")!,
+      paneId: "focused-pane",
+    });
+    await executeCommandAction({
+      runtime,
+      action: actions.find((action) => action.id === "pane.close")!,
+      paneId: "focused-pane",
+    });
+
+    expect(runtime.calls).toEqual([
+      "split:focused-pane:right:empty",
+      "split:focused-pane:below:duplicate",
+      "span:focused-pane:bottom",
+      "close:focused-pane",
     ]);
   });
 

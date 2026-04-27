@@ -128,6 +128,7 @@
   let sidebarHidden = $state(false);
   let sidebarWidth = $state(DEFAULT_SIDEBAR_WIDTH);
   let sidebarResizing = $state(false);
+  let draggingPaneId = $state<string | null>(null);
   let mutatingSession = $state(false);
   let sendingPrompt = $state(false);
   let renameTarget = $state<WorkspaceSessionSummary | null>(null);
@@ -440,10 +441,13 @@
   }
 
   async function handlePaletteExecute(action: CommandAction, event: KeyboardEvent | MouseEvent) {
-    const paneId = getCommandExecutionPaneId({
-      placement: getCommandPalettePlacement(event),
-      focusedPaneId,
-    });
+    const paneId =
+      action.category === "pane"
+        ? focusedPaneId
+        : getCommandExecutionPaneId({
+            placement: getCommandPalettePlacement(event),
+            focusedPaneId,
+          });
     await runPaletteMutation(() =>
       executeCommandAction({
         runtime,
@@ -535,7 +539,7 @@
     await syncArtifactsFromRuntime(true);
   }
 
-  async function handleSplitPane(direction: "right" | "below", duplicateBinding = true) {
+  async function handleSplitPane(direction: "right" | "below", duplicateBinding = false) {
     await runSessionMutation(async () => {
       const paneId = await runtime.splitPane(focusedPaneId, direction, { duplicateBinding });
       if (paneId) {
@@ -550,6 +554,38 @@
 
   function handleResizeTrack(axis: "column" | "row", index: number, deltaPercent: number) {
     runtime.resizePaneTrack(axis, index, deltaPercent);
+    syncRuntimeState();
+  }
+
+  function handlePaneDragStart(event: DragEvent, paneId: string) {
+    draggingPaneId = paneId;
+    event.dataTransfer?.setData("application/x-svvy-pane-id", paneId);
+    event.dataTransfer?.setData("text/plain", paneId);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+    }
+  }
+
+  function getDraggedPaneId(event: DragEvent): string | null {
+    return event.dataTransfer?.getData("application/x-svvy-pane-id") || event.dataTransfer?.getData("text/plain") || null;
+  }
+
+  function allowPaneDrop(event: DragEvent) {
+    if (!event.dataTransfer) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }
+
+  function handleSpanningPaneDrop(event: DragEvent, placement: "top" | "bottom") {
+    event.preventDefault();
+    const paneId = getDraggedPaneId(event);
+    draggingPaneId = null;
+    if (!paneId) {
+      return;
+    }
+    runtime.movePaneToSpanningRow(paneId, placement);
     syncRuntimeState();
   }
 
@@ -1633,10 +1669,30 @@
       </header>
 
       <section
-        class="pane-grid"
+        class={`pane-grid ${draggingPaneId ? "dragging-pane" : ""}`.trim()}
         data-testid="pane-grid"
         style={`grid-template-columns: ${paneLayout.columns.map((column) => `${column.percent}fr`).join(" ")}; grid-template-rows: ${paneLayout.rows.map((row) => `${row.percent}fr`).join(" ")};`}
       >
+        <button
+          class="pane-span-drop-zone top"
+          type="button"
+          data-testid="pane-span-drop-top"
+          aria-label="Move dragged pane to full-width top row"
+          ondragover={allowPaneDrop}
+          ondrop={(event) => handleSpanningPaneDrop(event, "top")}
+        >
+          Span top
+        </button>
+        <button
+          class="pane-span-drop-zone bottom"
+          type="button"
+          data-testid="pane-span-drop-bottom"
+          aria-label="Move dragged pane to full-width bottom row"
+          ondragover={allowPaneDrop}
+          ondrop={(event) => handleSpanningPaneDrop(event, "bottom")}
+        >
+          Span bottom
+        </button>
         {#each paneLayout.panes as pane (pane.paneId)}
           {@const paneController = runtime.getPaneController(pane.paneId)}
           <article
@@ -1644,6 +1700,9 @@
             data-testid="workspace-pane"
             data-pane-id={pane.paneId}
             aria-current={pane.paneId === focusedPaneId ? "true" : "false"}
+            draggable="true"
+            ondragstart={(event) => handlePaneDragStart(event, pane.paneId)}
+            ondragend={() => (draggingPaneId = null)}
             style={`grid-column: ${pane.columnStart + 1} / ${pane.columnEnd + 1}; grid-row: ${pane.rowStart + 1} / ${pane.rowEnd + 1};`}
           >
             <header class="pane-chrome">
@@ -3017,10 +3076,50 @@
   }
 
   .pane-grid {
+    position: relative;
     display: grid;
     min-height: 0;
     gap: 0.65rem;
     overflow: hidden;
+  }
+
+  .pane-span-drop-zone {
+    position: absolute;
+    z-index: 8;
+    left: 0.8rem;
+    right: 0.8rem;
+    height: 1.45rem;
+    border: 1px dashed color-mix(in oklab, var(--ui-accent) 48%, var(--ui-shell-edge));
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-accent) 13%, var(--ui-shell));
+    color: color-mix(in oklab, var(--ui-text) 78%, var(--ui-muted));
+    font-size: 0.68rem;
+    font-weight: 650;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      opacity 140ms cubic-bezier(0.19, 1, 0.22, 1),
+      background-color 140ms cubic-bezier(0.19, 1, 0.22, 1);
+  }
+
+  .pane-span-drop-zone.top {
+    top: 0.55rem;
+  }
+
+  .pane-span-drop-zone.bottom {
+    bottom: 0.55rem;
+  }
+
+  .pane-grid.dragging-pane .pane-span-drop-zone,
+  .pane-span-drop-zone:focus-visible,
+  .pane-span-drop-zone:hover {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .pane-span-drop-zone:hover,
+  .pane-span-drop-zone:focus-visible {
+    background: color-mix(in oklab, var(--ui-accent) 22%, var(--ui-shell));
   }
 
   .workspace-pane {

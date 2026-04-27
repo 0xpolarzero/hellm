@@ -332,13 +332,13 @@ function createHandlerThreadInspector(threadId = "thread-1"): WorkspaceHandlerTh
     commandRollups: [],
     workflowRuns: [
       {
-      workflowRunId: "workflow-1",
-      workflowName: "project_ci",
-      status: "completed",
-      summary: "Project CI workflow completed.",
-      updatedAt: "2026-04-10T10:04:30.000Z",
-      artifacts: [],
-    },
+        workflowRunId: "workflow-1",
+        workflowName: "project_ci",
+        status: "completed",
+        summary: "Project CI workflow completed.",
+        updatedAt: "2026-04-10T10:04:30.000Z",
+        artifacts: [],
+      },
     ],
     workflowTaskAttempts: [
       {
@@ -488,7 +488,10 @@ function createMemoryStorage(): ChatStorage {
   const providerKeys = new Map<string, string>();
   const customProviders = new Map<string, CustomProvider>();
   const promptHistory = new Map<string, PromptHistoryEntry[]>();
-  const workspaceUiRestore = new Map<string, Awaited<ReturnType<ChatStorage["workspaceUiRestore"]["get"]>>>();
+  const workspaceUiRestore = new Map<
+    string,
+    Awaited<ReturnType<ChatStorage["workspaceUiRestore"]["get"]>>
+  >();
 
   return {
     providerKeys: {
@@ -523,7 +526,8 @@ function createMemoryStorage(): ChatStorage {
       },
     },
     workspaceUiRestore: {
-      get: async (workspaceId: string) => structuredClone(workspaceUiRestore.get(workspaceId) ?? null),
+      get: async (workspaceId: string) =>
+        structuredClone(workspaceUiRestore.get(workspaceId) ?? null),
       set: async (workspaceId, state) => {
         workspaceUiRestore.set(workspaceId, structuredClone(state));
       },
@@ -579,7 +583,8 @@ function createFakeRpc(input: {
   const listSessions = (): WorkspaceSessionSummary[] =>
     Array.from(summaries.values()).map((summary) => structuredClone(summary));
 
-  const listNavigation = () => buildWorkspaceSessionNavigation(listSessions(), archivedGroupCollapsed);
+  const listNavigation = () =>
+    buildWorkspaceSessionNavigation(listSessions(), archivedGroupCollapsed);
 
   const getSurfaceRecord = (surfacePiSessionId: string): SurfaceRecord => {
     const record = surfaces.get(surfacePiSessionId) ?? null;
@@ -1497,7 +1502,7 @@ describe("createChatRuntime", () => {
     secondRuntime.dispose();
   });
 
-  it("discards restored empty panes and opens the current session cleanly", async () => {
+  it("preserves restored empty panes and keeps focus on the restored pane", async () => {
     const storage = createMemoryStorage();
     await storage.workspaceUiRestore.set("/tmp/svvy", {
       version: 2,
@@ -1549,9 +1554,10 @@ describe("createChatRuntime", () => {
 
     const runtime = await createRuntime(harness, storage);
 
-    expect(runtime.paneLayout.panes).toHaveLength(1);
-    expect(runtime.getPane("primary")?.target).toEqual(createOrchestratorTarget("session-1"));
-    expect(runtime.getPane("secondary")).toBeUndefined();
+    expect(runtime.paneLayout.panes).toHaveLength(2);
+    expect(runtime.paneLayout.focusedPaneId).toBe("primary");
+    expect(runtime.getPane("primary")?.target).toBeNull();
+    expect(runtime.getPane("secondary")?.target).toEqual(createOrchestratorTarget("session-1"));
 
     runtime.dispose();
   });
