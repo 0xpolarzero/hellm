@@ -16,6 +16,7 @@ export type CommandActionCategory =
   | "project-ci"
   | "handler-thread"
   | "workflow-inspector"
+  | "workflow-library"
   | "pane"
   | "settings"
   | "agent-settings";
@@ -41,6 +42,7 @@ export type CommandExecutionTarget =
       action: "pin" | "unpin" | "archive" | "unarchive";
     }
   | { kind: "open-surface"; surface: PromptTarget }
+  | { kind: "open-saved-workflow-library"; workspaceSessionId: string }
   | { kind: "start-orchestrator-turn"; workspaceSessionId: string; prompt: string }
   | { kind: "open-settings"; target: string }
   | {
@@ -90,7 +92,7 @@ export type CommandRuntime = Pick<
   | "sendPromptToTarget"
 > & {
   openSurface: (
-    target: PromptTarget,
+    target: WorkspacePaneSurfaceTarget,
     openTarget?: Parameters<ChatRuntime["openSurface"]>[1],
   ) => Promise<void>;
 };
@@ -178,6 +180,20 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
       shortcut: null,
       availability: { kind: "available" },
       execute: { kind: "open-settings", target: "root" },
+    },
+    {
+      id: "workflow-library.open",
+      label: "Open Saved Workflow Library",
+      category: "workflow-library",
+      aliases: ["saved workflows", "workflow assets", "workflow entries", "workflow library"],
+      shortcut: null,
+      availability: hasFocusedSession
+        ? { kind: "available" }
+        : { kind: "disabled", reason: "Open a session before browsing saved workflows." },
+      execute: {
+        kind: "open-saved-workflow-library",
+        workspaceSessionId: input.focusedSessionId ?? "",
+      },
     },
     {
       id: "pane.split-right",
@@ -460,6 +476,7 @@ export function getCommandActionShortcutHints(action: CommandAction): string[] {
     case "create-session":
     case "open-session":
     case "open-surface":
+    case "open-saved-workflow-library":
     case "start-orchestrator-turn":
       return ["Enter", "Cmd+Enter"];
     default:
@@ -507,6 +524,12 @@ export async function executeCommandAction(input: {
       return;
     case "open-surface":
       await runtime.openSurface(target.surface, paneId);
+      return;
+    case "open-saved-workflow-library":
+      await runtime.openSurface(
+        { workspaceSessionId: target.workspaceSessionId, surface: "saved-workflow-library" },
+        paneId,
+      );
       return;
     case "start-orchestrator-turn":
       await runtime.openSession(target.workspaceSessionId, paneId);

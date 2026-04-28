@@ -6,7 +6,7 @@ import {
   defineElectrobunRPC,
 } from "electrobun/bun";
 import { getModel, getModels, getProviders } from "@mariozechner/pi-ai";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import type {
@@ -35,6 +35,10 @@ import { refreshIfNeeded, startOAuthLogin, supportsOAuth } from "./oauth-login";
 import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt";
 import { getSvvyAgentDir, WorkspaceSessionCatalog, type SessionDefaults } from "./session-catalog";
 import { createSessionAgentSettingsStore } from "./session-agent-settings";
+import {
+  deleteSavedWorkflowLibraryPath,
+  readSavedWorkflowLibraryReadModel,
+} from "./smithers-runtime/workflow-library";
 import { createSvvyToolBridge } from "./tool-bridge";
 import { resolveWorkspaceCwd } from "./workspace-context";
 import { WorkspacePathIndex } from "./workspace-path-index";
@@ -311,6 +315,28 @@ function getWorkspacePathKind(absolutePath: string): ComposerMentionKind | "miss
   }
 }
 
+function openPathInPreferredEditor(path: string): { opened: boolean; editor: string } {
+  const preferences = agentSettingsStore.getState().appPreferences;
+  const editor = preferences.preferredExternalEditor;
+  if (editor === "system") {
+    return { opened: Utils.openPath(path), editor };
+  }
+
+  const configuredCommand = editor === "custom" ? preferences.customExternalEditorCommand : editor;
+  const [command, ...baseArgs] = configuredCommand.split(/\s+/).filter(Boolean);
+  if (!command) {
+    throw new Error("Configure a custom external editor command before opening source files.");
+  }
+
+  const child = spawn(command, [...baseArgs, path], {
+    cwd: resolveWorkspaceCwd(),
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  return { opened: true, editor };
+}
+
 function listProviderAuthSummaries(): ProviderAuthInfo[] {
   return getProviders().map((provider) => {
     const state = resolveAuthState(provider);
@@ -354,6 +380,9 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       updateWorkflowAgent: async ({ key, settings }) => {
         return agentSettingsStore.setWorkflowAgent(key, settings);
       },
+      updateAppPreferences: async (preferences) => {
+        return agentSettingsStore.setAppPreferences(preferences);
+      },
       ensureWorkflowAgentsComponent: async () => {
         return { path: agentSettingsStore.ensureWorkflowAgentsComponent() };
       },
@@ -388,6 +417,26 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           Utils.showItemInFolder(absolutePath);
         }
         return { opened, kind };
+      },
+      getSavedWorkflowLibrary: async () => {
+        const state = agentSettingsStore.getState();
+        return await readSavedWorkflowLibraryReadModel(resolveWorkspaceCwd(), state.appPreferences);
+      },
+      deleteSavedWorkflowLibraryItem: async ({ path }) => {
+        const state = agentSettingsStore.getState();
+        return await deleteSavedWorkflowLibraryPath(
+          resolveWorkspaceCwd(),
+          path,
+          state.appPreferences,
+        );
+      },
+      openWorkflowSourceInEditor: ({ path }) => {
+        const absolutePath = resolveSafeWorkspacePath(path);
+        if (!absolutePath || getWorkspacePathKind(absolutePath) === "missing") {
+          throw new Error(`Workflow source file does not exist: ${path}`);
+        }
+        const result = openPathInPreferredEditor(absolutePath);
+        return { ...result, path };
       },
       listSessions: async () => {
         return await workspaceSessionCatalog.listSessions();

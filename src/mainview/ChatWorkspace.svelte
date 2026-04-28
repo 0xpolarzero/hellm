@@ -17,6 +17,7 @@
   import CommandPalette from "./CommandPalette.svelte";
   import ContextBudgetBar from "./ContextBudgetBar.svelte";
   import RelatedInspectorPane from "./RelatedInspectorPane.svelte";
+  import SavedWorkflowLibraryPane from "./SavedWorkflowLibraryPane.svelte";
   import WorkflowInspectorPane from "./WorkflowInspectorPane.svelte";
   import { formatTimestamp, formatUsage } from "./chat-format";
   import {
@@ -228,6 +229,21 @@
     if (binding?.surface === "workflow-inspector") {
       return "Workflow Inspector";
     }
+    if (binding?.surface === "saved-workflow-library") {
+      return "Saved Workflow Library";
+    }
+    if (binding?.surface === "command") {
+      return "Command Inspector";
+    }
+    if (binding?.surface === "workflow-task-attempt") {
+      return "Task Attempt";
+    }
+    if (binding?.surface === "artifact") {
+      return "Artifact";
+    }
+    if (binding?.surface === "project-ci-check") {
+      return "Project CI Check";
+    }
     if (controller?.target.surface === "thread") {
       return "Handler Thread";
     }
@@ -239,6 +255,12 @@
   ): string {
     if (binding?.surface === "workflow-inspector") {
       return binding.workflowRunId;
+    }
+    if (binding?.surface === "saved-workflow-library") {
+      return ".svvy/workflows";
+    }
+    if (binding && binding.surface !== "orchestrator" && binding.surface !== "thread") {
+      return binding.workspaceSessionId;
     }
     const model = controller?.agent.state.model;
     const thinking = controller?.agent.state.thinkingLevel;
@@ -1879,6 +1901,8 @@
                 workflowRunId={pane.binding.workflowRunId}
                 paneId={pane.paneId}
               />
+            {:else if pane.binding?.surface === "saved-workflow-library"}
+              <SavedWorkflowLibraryPane {runtime} />
             {:else if pane.binding?.surface === "command" || pane.binding?.surface === "workflow-task-attempt" || pane.binding?.surface === "artifact" || pane.binding?.surface === "project-ci-check"}
               <RelatedInspectorPane {runtime} target={pane.binding} />
             {:else if pane.paneId === focusedPaneId}

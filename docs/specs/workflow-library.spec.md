@@ -390,14 +390,17 @@ The final completion rule is:
 
 The desktop app should expose:
 
-- a saved workflow library view rooted at `.svvy/workflows/`
-- separate groupings for definitions, prompts, components, and entries
-- asset detail views showing title, summary, kind, path, and source
-- entry detail views showing entry path, summary, launch schema, and grouped asset refs
+- a read-only saved workflow library view rooted at `.svvy/workflows/`
+- separate groupings for definitions, prompts, components, entries, and artifact workflows
+- asset detail views showing title, summary, kind, path, source preview, validation status, and diagnostics
+- entry detail views showing entry path, summary, launch schema, grouped asset refs, validation status, and diagnostics
+- an open-in-editor action that opens the selected source file in the user's configured external editor
 - delete actions for saved definitions, prompts, components, and entries
 - a save shortcut on relevant workflow surfaces that sends a predefined save request prompt to the handler thread
 
 The UI save affordance is a shortcut prompt to the handler thread.
+
+The saved workflow library surface must not block on an in-app source editor. In-app editing, syntax highlighting, inline diagnostics, and file-tree integration are later editor-surface capabilities. Until those exist, this surface owns workflow-library discovery and inspection, while source editing happens through the configured external editor.
 
 ## Handler Guidance
 

@@ -282,11 +282,13 @@ Current product decisions for this section are specified in `docs/specs/context-
 
 ## 18. Saved Workflow Library Surface
 
-This UI depends on later file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces. Keep it out of the core workspace navigation section until those primitives are ready.
+This UI should land first as a read-only workflow-library browser with an external-editor handoff. Full in-app source editing, syntax highlighting, inline diagnostics, and file-tree integration remain later editor-surface work.
 
 - [x] Render a save shortcut in relevant thread or workflow surfaces that sends a predefined save request prompt to the handler. Commit(s): `0b2d1ff`
-- [ ] Define the saved workflow library surface after the file tree, editor, syntax highlighting, typecheck, and diagnostics surfaces are designed.
-- [ ] Define the workspace read model for saved workflow assets and artifact workflows.
-- [ ] Render a saved workflow library surface with separate definitions, prompts, components, entries, and artifact workflow groupings.
-- [ ] Show saved asset title, summary, kind, path, source, typecheck status, and diagnostics in the saved workflow library surface.
-- [ ] Allow deleting a saved workflow definition, prompt, component, or entry from the library without deleting historical artifact workflows that previously used it.
+- [x] Persist the user's preferred external editor in settings and use it for open-in-editor actions from source-backed product surfaces. Commit(s): `bc5f727`
+- [x] Define the read-only saved workflow library surface with external-editor handoff instead of requiring in-app editor primitives. Commit(s): `bc5f727`
+- [x] Define the workspace read model for saved workflow assets and artifact workflows. Commit(s): `bc5f727`
+- [x] Render a saved workflow library surface with separate definitions, prompts, components, entries, and artifact workflow groupings. Commit(s): `bc5f727`
+- [x] Show saved asset title, summary, kind, path, source preview, validation status, and diagnostics in the saved workflow library surface. Commit(s): `bc5f727`
+- [x] Add open-in-editor actions for saved workflow source files and artifact workflow source files. Commit(s): `bc5f727`
+- [x] Allow deleting a saved workflow definition, prompt, component, or entry from the library without deleting historical artifact workflows that previously used it. Commit(s): `bc5f727`

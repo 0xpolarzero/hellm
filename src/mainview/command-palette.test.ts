@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type {
   PromptTarget,
   WorkspaceHandlerThreadSummary,
+  WorkspacePaneSurfaceTarget,
   WorkspaceSessionSummary,
 } from "../shared/workspace-contract";
 import {
@@ -85,11 +86,11 @@ function keyEvent(input: {
 
 function createRuntime(): CommandRuntime & {
   calls: string[];
-  paneTarget: PromptTarget | null;
+  paneTarget: WorkspacePaneSurfaceTarget | null;
 } {
   const runtime = {
     calls: [] as string[],
-    paneTarget: null as PromptTarget | null,
+    paneTarget: null as WorkspacePaneSurfaceTarget | null,
     getPane: (paneId: string) => ({
       id: paneId,
       target: runtime.paneTarget,
@@ -117,8 +118,12 @@ function createRuntime(): CommandRuntime & {
         surfacePiSessionId: sessionId,
       };
     },
-    openSurface: async (target: PromptTarget, paneId: unknown = "primary") => {
-      runtime.calls.push(`surface:${target.surfacePiSessionId}:${paneId}`);
+    openSurface: async (target: WorkspacePaneSurfaceTarget, paneId: unknown = "primary") => {
+      const targetId =
+        target.surface === "orchestrator" || target.surface === "thread"
+          ? target.surfacePiSessionId
+          : target.surface;
+      runtime.calls.push(`surface:${targetId}:${paneId}`);
       runtime.paneTarget = target;
     },
     splitPane: async (
@@ -244,6 +249,7 @@ describe("buildCommandRegistry", () => {
 
     expect(actions.map((action) => action.id)).toContain("session.new");
     expect(actions.map((action) => action.id)).toContain("settings.open");
+    expect(actions.map((action) => action.id)).toContain("workflow-library.open");
     expect(actions.map((action) => action.id)).toContain("pane.split-right");
     expect(actions.map((action) => action.id)).toContain("pane.span-bottom");
     expect(actions.map((action) => action.id)).toContain("project-ci.run");
@@ -303,12 +309,18 @@ describe("executeCommandAction", () => {
       action: actions.find((action) => action.id === "project-ci.run")!,
       paneId: "pane-b",
     });
+    await executeCommandAction({
+      runtime,
+      action: actions.find((action) => action.id === "workflow-library.open")!,
+      paneId: "pane-c",
+    });
 
     expect(runtime.calls).toEqual([
       "open:session-1:pane-a",
       "pin:session-1",
       "open:session-1:pane-b",
       "prompt:session-1:Run Project CI for this workspace.",
+      "surface:saved-workflow-library:pane-c",
     ]);
   });
 

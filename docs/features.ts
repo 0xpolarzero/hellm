@@ -20,7 +20,8 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     id: "provider-auth",
     name: "Provider Auth And Settings",
     status: "shipped",
-    summary: "Manages provider keys and OAuth-backed access through the desktop settings surface.",
+    summary:
+      "Manages provider keys, OAuth-backed access, and app-level preferences such as the user's preferred external editor through the desktop settings surface.",
     sourceSpecs: ["docs/prd.md"],
   },
   {
@@ -114,9 +115,9 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
   {
     id: "saved-workflow-library",
     name: "Workspace Saved Workflow Library",
-    status: "in-progress",
+    status: "shipped",
     summary:
-      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, exposes minimal asset index metadata from required JSDoc and MDX frontmatter, keeps conventional workflow agents such as `explorer`, `implementer`, and `reviewer` as ordinary component exports in `.svvy/workflows/components/agents.ts`, supports optional product metadata and result schemas on entries such as Project CI, lets handlers list asset paths and read saved asset source through the `execute_typescript` host SDK, and validates writes under `.svvy/workflows/...` automatically through the enclosing `execute_typescript` result logs.",
+      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, exposes minimal asset index metadata from required JSDoc and MDX frontmatter, keeps conventional workflow agents such as `explorer`, `implementer`, and `reviewer` as ordinary component exports in `.svvy/workflows/components/agents.ts`, supports optional product metadata and result schemas on entries such as Project CI, lets handlers list asset paths and read saved asset source through the `execute_typescript` host SDK, validates writes under `.svvy/workflows/...` automatically through the enclosing `execute_typescript` result logs, and presents a read-only library surface with source previews, diagnostics, deletion controls, and open-in-editor handoff to the user's configured external editor.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
   },
   {

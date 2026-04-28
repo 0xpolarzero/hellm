@@ -742,6 +742,10 @@ function createFakeRpc(input: {
               toolSurface: ["execute_typescript"],
             },
           },
+          appPreferences: {
+            preferredExternalEditor: "system",
+            customExternalEditorCommand: "",
+          },
         }),
         updateSessionAgentDefault: async ({ key, settings }) => {
           return {
@@ -761,6 +765,12 @@ function createFakeRpc(input: {
             },
           };
         },
+        updateAppPreferences: async (preferences) => {
+          return {
+            ...(await harness.client.request.getAgentSettings()),
+            appPreferences: preferences,
+          };
+        },
         ensureWorkflowAgentsComponent: async () => ({
           path: "/tmp/svvy/.svvy/workflows/components/agents.ts",
         }),
@@ -777,6 +787,43 @@ function createFakeRpc(input: {
         openWorkspacePath: async ({ workspaceRelativePath }) => ({
           opened: workspaceRelativePath === "docs/progress.md",
           kind: workspaceRelativePath === "docs/progress.md" ? "file" : "missing",
+        }),
+        getSavedWorkflowLibrary: async () => ({
+          rootPath: ".svvy/workflows",
+          artifactRootPath: ".svvy/artifacts/workflows",
+          items: [],
+          counts: {
+            definition: 0,
+            prompt: 0,
+            component: 0,
+            entry: 0,
+            "artifact-workflow": 0,
+          },
+          diagnostics: [],
+          preferredExternalEditor: "system",
+          customExternalEditorCommand: "",
+          updatedAt: new Date(0).toISOString(),
+        }),
+        deleteSavedWorkflowLibraryItem: async () => ({
+          rootPath: ".svvy/workflows",
+          artifactRootPath: ".svvy/artifacts/workflows",
+          items: [],
+          counts: {
+            definition: 0,
+            prompt: 0,
+            component: 0,
+            entry: 0,
+            "artifact-workflow": 0,
+          },
+          diagnostics: [],
+          preferredExternalEditor: "system",
+          customExternalEditorCommand: "",
+          updatedAt: new Date(0).toISOString(),
+        }),
+        openWorkflowSourceInEditor: async ({ path }) => ({
+          opened: true,
+          editor: "system",
+          path,
         }),
         listSessions: async () => {
           requestCounts.listSessions += 1;

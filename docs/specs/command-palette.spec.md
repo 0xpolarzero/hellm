@@ -9,7 +9,7 @@
   - define keyboard shortcuts and fallback prompt behavior
   - define the command/action registry model
   - define command search, matching, and execution routing semantics
-  - define how the palette relates to sessions, Project CI, handler threads, workflow inspectors, panes, settings, agent settings, and future product actions
+  - define how the palette relates to sessions, Project CI, handler threads, workflow inspectors, saved workflow library browsing, panes, settings, agent settings, and future product actions
 
 ## Purpose
 
@@ -17,7 +17,7 @@ The command palette is the shell-level action surface for `svvy`.
 
 It gives users a VS Code-like way to discover and execute product actions without turning those actions into a second runtime. `Cmd+Shift+P` opens the all-actions command palette. `Cmd+P` opens a file quick-open palette, which is intentionally a placeholder until file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces exist.
 
-The palette invokes existing product behavior. It routes into sessions, panes, surfaces, orchestrator and handler turns, Smithers-native tools, Project CI projection, durable state, settings, and agent settings. It must not become an alternate execution engine, standalone shell, custom terminal loop, readline loop, or parallel workflow abstraction.
+The palette invokes existing product behavior. It routes into sessions, panes, surfaces, orchestrator and handler turns, Smithers-native tools, Project CI projection, saved workflow library browsing, durable state, settings, and agent settings. It must not become an alternate execution engine, standalone shell, custom terminal loop, readline loop, or parallel workflow abstraction.
 
 ## Source Boundaries
 
@@ -60,6 +60,7 @@ The all-actions palette discovers and executes product actions, including:
 - run or configure Project CI through normal orchestrator or handler-thread routing
 - open handler thread surfaces
 - open workflow inspector-related surfaces
+- open the read-only saved workflow library surface
 - pane and layout actions once pane layout exists
 - settings and agent-setting actions when those features exist
 - future product actions as they are added
@@ -71,7 +72,7 @@ For now, file quick-open is intentionally a no-op placeholder:
 - the UI may open an empty quick-open palette or show an unavailable state
 - it must not fabricate file, editor, or diagnostics surfaces
 - it must not browse files through an ad hoc shell or terminal path
-- it becomes actionable only after the file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces are designed
+- it becomes actionable only after dedicated file-navigation primitives are designed
 
 ## Command Registry And Action Model
 
@@ -91,6 +92,7 @@ type CommandAction = {
     | "project-ci"
     | "handler-thread"
     | "workflow-inspector"
+    | "workflow-library"
     | "pane"
     | "settings"
     | "agent-settings";

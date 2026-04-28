@@ -65,4 +65,23 @@ describe("session agent settings", () => {
     expect(agentsSource).toContain('"reasoningEffort": "high"');
     expect(store.getState().workflowAgents.reviewer.systemPrompt).toBe("Review strictly.");
   });
+
+  it("persists preferred external editor preferences", () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-editor-settings-"));
+    const store = createSessionAgentSettingsStore({
+      cwd: root,
+      agentDir: join(root, ".agent"),
+    });
+
+    const updated = store.setAppPreferences({
+      preferredExternalEditor: "custom",
+      customExternalEditorCommand: "code --reuse-window",
+    });
+
+    expect(updated.appPreferences).toEqual({
+      preferredExternalEditor: "custom",
+      customExternalEditorCommand: "code --reuse-window",
+    });
+    expect(store.getState().appPreferences.preferredExternalEditor).toBe("custom");
+  });
 });

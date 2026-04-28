@@ -9,7 +9,7 @@
   - define the core artifact projection shown on thread and workflow-run surfaces
   - define where compact Project CI state appears in the workspace shell
   - define the UI state that should and should not restore after restart
-  - keep saved workflow library browsing out of this section until file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces exist
+  - keep saved workflow library browsing out of this section because it is owned by the dedicated saved workflow library surface
 
 ## Purpose
 
@@ -35,7 +35,7 @@ This section does not implement:
 - composer draft recovery
 - transient UI recovery
 
-Saved workflow library browsing belongs to a later saved workflow library surface after the file-tree and editor primitives exist.
+Saved workflow library browsing belongs to the dedicated saved workflow library surface.
 
 ## Session Navigation
 

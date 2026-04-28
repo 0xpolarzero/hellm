@@ -10,6 +10,8 @@
 		SessionAgentSettings,
 		WorkflowAgentKey,
 		WorkflowAgentSettings,
+		AppPreferences,
+		PreferredExternalEditor,
 	} from "../shared/agent-settings";
 	import { rpc } from "./rpc";
 	import Button from "./ui/Button.svelte";
@@ -21,7 +23,7 @@
 		onProviderAuthChanged?: (providerId: string) => void | Promise<void>;
 	};
 
-	type SettingsSection = "providers" | "agents" | "workflow-agents";
+	type SettingsSection = "providers" | "agents" | "workflow-agents" | "preferences";
 	type EditableAgentSettings = SessionAgentSettings | WorkflowAgentSettings;
 	type ModelOption = {
 		key: string;
@@ -45,6 +47,7 @@
 	let saveMessage = $state<Record<string, string>>({});
 	let agentSaveMessage = $state<Record<string, string>>({});
 	let agentSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	let preferencesSaveMessage = $state("");
 
 	const connectedProviderIds = $derived(
 		new Set(providers.filter((provider) => provider.hasKey).map((provider) => provider.provider)),
@@ -220,6 +223,21 @@
 		}
 	}
 
+	async function saveAppPreferences(preferences: AppPreferences) {
+		try {
+			preferencesSaveMessage = "Saving";
+			agentSettings = await rpc.request.updateAppPreferences(structuredClone(preferences));
+			preferencesSaveMessage = "Saved";
+			setTimeout(() => {
+				if (preferencesSaveMessage === "Saved") {
+					preferencesSaveMessage = "";
+				}
+			}, 1800);
+		} catch (err) {
+			preferencesSaveMessage = err instanceof Error ? err.message : "Save failed";
+		}
+	}
+
 	function scheduleSessionAgentSave(key: SessionAgentKey) {
 		const statusKey = `session:${key}`;
 		clearTimeout(agentSaveTimers.get(statusKey));
@@ -319,6 +337,15 @@
 			>
 				<span>Workflow Agents</span>
 				<span>3</span>
+			</button>
+			<button
+				class={`settings-nav-item ${activeSection === "preferences" ? "active" : ""}`.trim()}
+				type="button"
+				aria-current={activeSection === "preferences" ? "page" : undefined}
+				onclick={() => (activeSection = "preferences")}
+			>
+				<span>Preferences</span>
+				<span>Editor</span>
 			</button>
 		</aside>
 
@@ -546,6 +573,56 @@
 					{/each}
 				</div>
 			{/if}
+			{#if activeSection === "preferences" && agentSettings}
+				<article class="provider-row agent-row">
+					<div class="provider-main">
+						<div class="provider-heading">
+							<span class="provider-name">External Editor</span>
+							<span class="provider-status tone-info">
+								{agentSettings.appPreferences.preferredExternalEditor}
+							</span>
+							{#if preferencesSaveMessage}
+								<span class="provider-status">{preferencesSaveMessage}</span>
+							{/if}
+						</div>
+						<p class="provider-meta">
+							Workflow source opens in this editor from read-only library and artifact surfaces.
+						</p>
+						<div class="agent-grid">
+							<label class="agent-field">
+								<span>Editor</span>
+								<select
+									value={agentSettings.appPreferences.preferredExternalEditor}
+									onchange={(event) => {
+										agentSettings!.appPreferences.preferredExternalEditor = event.currentTarget
+											.value as PreferredExternalEditor;
+										void saveAppPreferences(agentSettings!.appPreferences);
+									}}
+								>
+									<option value="system">System default</option>
+									<option value="code">Visual Studio Code</option>
+									<option value="cursor">Cursor</option>
+									<option value="zed">Zed</option>
+									<option value="sublime">Sublime Text</option>
+									<option value="custom">Custom command</option>
+								</select>
+							</label>
+							<label class="agent-field">
+								<span>Custom command</span>
+								<input
+									value={agentSettings.appPreferences.customExternalEditorCommand}
+									placeholder="editor-command --reuse-window"
+									oninput={(event) => {
+										agentSettings!.appPreferences.customExternalEditorCommand =
+											event.currentTarget.value;
+									}}
+									onchange={() => void saveAppPreferences(agentSettings!.appPreferences)}
+								/>
+							</label>
+						</div>
+					</div>
+				</article>
+			{/if}
 		</section>
 	</div>
 </Dialog>
@@ -706,7 +783,8 @@
 		color: var(--ui-text-secondary);
 	}
 
-	.agent-field select {
+	.agent-field select,
+	.agent-field input {
 		width: 100%;
 		min-width: 0;
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);

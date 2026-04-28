@@ -12,8 +12,15 @@ import {
 import { basename, dirname, extname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import * as ts from "typescript";
+import { z } from "zod";
 import { getProviderEnvVar, resolveAuthState } from "../auth-store";
-import { loadRunnableWorkflowEntryAtPath } from "./workflow-registry";
+import { loadRunnableWorkflowEntryAtPath, loadRunnableWorkflowRegistry } from "./workflow-registry";
+import type {
+  WorkspaceSavedWorkflowLibraryDiagnostic,
+  WorkspaceSavedWorkflowLibraryItem,
+  WorkspaceSavedWorkflowLibraryItemKind,
+  WorkspaceSavedWorkflowLibraryReadModel,
+} from "../../shared/workspace-contract";
 
 export type WorkflowAssetKind = "definition" | "prompt" | "component";
 export type WorkflowAssetScope = "saved" | "artifact";
@@ -60,6 +67,8 @@ export type WorkflowWriteValidationResult = {
 export type WorkflowLibrary = {
   listAssets(input?: WorkflowAssetFilter): WorkflowAssetMetadata[];
   listModels(): WorkflowModelInfo[];
+  readSavedWorkflowLibrary(): Promise<WorkspaceSavedWorkflowLibraryReadModel>;
+  deleteSavedWorkflowLibraryItem(path: string): Promise<WorkspaceSavedWorkflowLibraryReadModel>;
   validateSavedWorkflowWrite(path: string): Promise<WorkflowWriteValidationResult | null>;
 };
 
@@ -193,6 +202,16 @@ function listSavedEntryFiles(workspaceRoot: string): string[] {
     .filter((path) => [".ts", ".tsx"].includes(extname(path)))
     .map((path) => relativeWorkspacePath(workspaceRoot, path))
     .toSorted();
+}
+
+function readSourcePreview(workspaceRoot: string, path: string): string | null {
+  const absolutePath = join(workspaceRoot, path);
+  if (!existsSync(absolutePath)) {
+    return null;
+  }
+  const source = readFileSync(absolutePath, "utf8");
+  const maxLength = 12_000;
+  return source.length > maxLength ? `${source.slice(0, maxLength)}\n...` : source;
 }
 
 export function listWorkflowAssets(
@@ -522,6 +541,182 @@ async function validateSavedWorkflowLibrary(
   };
 }
 
+function mapDiagnostic(
+  diagnostic: WorkflowValidationDiagnostic,
+): WorkspaceSavedWorkflowLibraryDiagnostic {
+  return {
+    severity: diagnostic.severity,
+    message: diagnostic.message,
+    path: diagnostic.path,
+    line: diagnostic.line,
+    column: diagnostic.column,
+    code: diagnostic.code,
+  };
+}
+
+function validationStatus(
+  diagnostics: WorkspaceSavedWorkflowLibraryDiagnostic[],
+): WorkspaceSavedWorkflowLibraryItem["validationStatus"] {
+  if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
+    return "error";
+  }
+  if (diagnostics.some((diagnostic) => diagnostic.severity === "warning")) {
+    return "warning";
+  }
+  return "valid";
+}
+
+function diagnosticsForPath(
+  diagnostics: WorkspaceSavedWorkflowLibraryDiagnostic[],
+  path: string,
+): WorkspaceSavedWorkflowLibraryDiagnostic[] {
+  return diagnostics.filter((diagnostic) => diagnostic.path === path);
+}
+
+function schemaPreview(schema: z.ZodTypeAny | undefined): string | undefined {
+  if (!schema) {
+    return undefined;
+  }
+  return JSON.stringify(z.toJSONSchema(schema as any, { io: "input" }), null, 2);
+}
+
+async function readSavedWorkflowLibrary(
+  workspaceRoot: string,
+  settings: { preferredExternalEditor: string; customExternalEditorCommand: string },
+): Promise<WorkspaceSavedWorkflowLibraryReadModel> {
+  const savedValidation = await validateSavedWorkflowLibrary(workspaceRoot, ".svvy/workflows");
+  const diagnostics = (savedValidation?.diagnostics ?? []).map(mapDiagnostic);
+  const items: WorkspaceSavedWorkflowLibraryItem[] = [];
+
+  for (const asset of listWorkflowAssets(workspaceRoot, { scope: "saved" })) {
+    const itemDiagnostics = diagnosticsForPath(diagnostics, asset.path);
+    items.push({
+      id: `asset:${asset.path}`,
+      kind: asset.kind,
+      scope: "saved",
+      title: asset.title,
+      summary: asset.summary,
+      path: asset.path,
+      sourcePath: asset.path,
+      sourcePreview: readSourcePreview(workspaceRoot, asset.path),
+      validationStatus: validationStatus(itemDiagnostics),
+      diagnostics: itemDiagnostics,
+    });
+  }
+
+  try {
+    const entries = await loadRunnableWorkflowRegistry(workspaceRoot);
+    for (const entry of entries) {
+      const itemDiagnostics = diagnosticsForPath(diagnostics, entry.entryPath);
+      items.push({
+        id: `entry:${entry.entryPath}`,
+        kind: "entry",
+        scope: entry.sourceScope,
+        title: entry.label,
+        label: entry.label,
+        summary: entry.summary,
+        path: entry.entryPath,
+        sourcePath: entry.entryPath,
+        sourcePreview: readSourcePreview(workspaceRoot, entry.entryPath),
+        validationStatus:
+          entry.sourceScope === "saved" ? validationStatus(itemDiagnostics) : "unknown",
+        diagnostics: entry.sourceScope === "saved" ? itemDiagnostics : [],
+        workflowId: entry.workflowId,
+        productKind: entry.productKind,
+        launchSchema: schemaPreview(entry.launchSchema),
+        resultSchema: schemaPreview(entry.resultSchema),
+        groupedAssetRefs: {
+          definitions: entry.definitionPaths,
+          prompts: entry.promptPaths,
+          components: entry.componentPaths,
+        },
+        assetPaths: entry.assetPaths,
+      });
+    }
+  } catch (error) {
+    diagnostics.push({
+      severity: "error",
+      message:
+        error instanceof Error ? error.message : "Unable to load runnable workflow registry.",
+    });
+  }
+
+  const artifactRoot = join(workspaceRoot, ".svvy", "artifacts", "workflows");
+  for (const artifactPath of existsSync(artifactRoot)
+    ? readdirSync(artifactRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => join(artifactRoot, entry.name))
+        .toSorted()
+    : []) {
+    const path = relativeWorkspacePath(workspaceRoot, artifactPath);
+    const artifactWorkflowId = basename(artifactPath);
+    const files = walkFiles(artifactPath).filter((file) =>
+      [".ts", ".tsx", ".mdx", ".json"].includes(extname(file)),
+    );
+    const entryCount = files.filter((file) => file.includes("/entries/")).length;
+    const assetCount = files.filter((file) =>
+      ["/definitions/", "/prompts/", "/components/"].some((segment) => file.includes(segment)),
+    ).length;
+    items.push({
+      id: `artifact-workflow:${artifactWorkflowId}`,
+      kind: "artifact-workflow",
+      scope: "artifact",
+      title: artifactWorkflowId,
+      summary: `${entryCount} entries, ${assetCount} assets`,
+      path,
+      sourcePath: path,
+      sourcePreview: readSourcePreview(workspaceRoot, `${path}/metadata.json`),
+      validationStatus: "unknown",
+      diagnostics: [],
+      artifactWorkflowId,
+      entryCount,
+      assetCount,
+    });
+  }
+
+  const counts = {
+    definition: 0,
+    prompt: 0,
+    component: 0,
+    entry: 0,
+    "artifact-workflow": 0,
+  } satisfies Record<WorkspaceSavedWorkflowLibraryItemKind, number>;
+  for (const item of items) {
+    counts[item.kind] += 1;
+  }
+
+  return {
+    rootPath: ".svvy/workflows",
+    artifactRootPath: ".svvy/artifacts/workflows",
+    items: items.toSorted(
+      (left, right) =>
+        left.kind.localeCompare(right.kind) ||
+        left.scope.localeCompare(right.scope) ||
+        left.path.localeCompare(right.path),
+    ),
+    counts,
+    diagnostics,
+    preferredExternalEditor: settings.preferredExternalEditor as never,
+    customExternalEditorCommand: settings.customExternalEditorCommand,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function assertSavedWorkflowDeletionPath(workspaceRoot: string, path: string): string {
+  const normalizedPath = relativeWorkspacePath(workspaceRoot, join(workspaceRoot, path));
+  if (
+    !normalizedPath.startsWith(".svvy/workflows/definitions/") &&
+    !normalizedPath.startsWith(".svvy/workflows/prompts/") &&
+    !normalizedPath.startsWith(".svvy/workflows/components/") &&
+    !normalizedPath.startsWith(".svvy/workflows/entries/")
+  ) {
+    throw new Error(
+      "Only saved workflow definitions, prompts, components, and entries can be deleted.",
+    );
+  }
+  return normalizedPath;
+}
+
 export function createWorkflowLibrary(
   workspaceRoot: string,
   dependencies: WorkflowLibraryDependencies = {},
@@ -529,7 +724,37 @@ export function createWorkflowLibrary(
   return {
     listAssets: (input) => listWorkflowAssets(workspaceRoot, input),
     listModels: () => listWorkflowModels(dependencies),
+    readSavedWorkflowLibrary: async () =>
+      await readSavedWorkflowLibrary(workspaceRoot, {
+        preferredExternalEditor: "system",
+        customExternalEditorCommand: "",
+      }),
+    deleteSavedWorkflowLibraryItem: async (path) => {
+      const normalizedPath = assertSavedWorkflowDeletionPath(workspaceRoot, path);
+      rmSync(join(workspaceRoot, normalizedPath), { force: true, recursive: true });
+      return await readSavedWorkflowLibrary(workspaceRoot, {
+        preferredExternalEditor: "system",
+        customExternalEditorCommand: "",
+      });
+    },
     validateSavedWorkflowWrite: async (path) =>
       await validateSavedWorkflowLibrary(workspaceRoot, path),
   };
+}
+
+export async function readSavedWorkflowLibraryReadModel(
+  workspaceRoot: string,
+  settings: { preferredExternalEditor: string; customExternalEditorCommand: string },
+): Promise<WorkspaceSavedWorkflowLibraryReadModel> {
+  return await readSavedWorkflowLibrary(workspaceRoot, settings);
+}
+
+export async function deleteSavedWorkflowLibraryPath(
+  workspaceRoot: string,
+  path: string,
+  settings: { preferredExternalEditor: string; customExternalEditorCommand: string },
+): Promise<WorkspaceSavedWorkflowLibraryReadModel> {
+  const normalizedPath = assertSavedWorkflowDeletionPath(workspaceRoot, path);
+  rmSync(join(workspaceRoot, normalizedPath), { force: true, recursive: true });
+  return await readSavedWorkflowLibrary(workspaceRoot, settings);
 }

@@ -4,6 +4,7 @@ export type ReasoningEffort = ThinkingLevel;
 export type SessionMode = "orchestrator" | "quick";
 export type SessionAgentKey = "defaultSession" | "quickSession" | "namer";
 export type WorkflowAgentKey = "explorer" | "implementer" | "reviewer";
+export type PreferredExternalEditor = "system" | "code" | "cursor" | "zed" | "sublime" | "custom";
 
 export interface AgentDefaults {
   provider: string;
@@ -31,6 +32,12 @@ export interface AgentSettingsState {
   version: 1;
   sessionAgents: SessionAgentDefaults;
   workflowAgents: Record<WorkflowAgentKey, WorkflowAgentSettings>;
+  appPreferences: AppPreferences;
+}
+
+export interface AppPreferences {
+  preferredExternalEditor: PreferredExternalEditor;
+  customExternalEditorCommand: string;
 }
 
 export const DEFAULT_AGENT_SETTINGS = {
@@ -45,16 +52,15 @@ export const DEFAULT_ORCHESTRATOR_SESSION_PROMPT =
 export const DEFAULT_QUICK_SESSION_PROMPT =
   "You are svvy quick session. Answer or act directly for short, focused work without starting handler threads unless delegation is explicitly necessary.";
 
-export const DEFAULT_NAMER_SESSION_PROMPT =
-  [
-    "you will generate a short title based on the first message a user begins a conversation with",
-    "- ensure it is not more than 50 characters long",
-    "- the title should be a summary of the user's message",
-    "- it should be one line long",
-    "- do not use quotes or colons",
-    "- the entire text you return will be used as the title",
-    "- never return anything that is more than one sentence (one line) long",
-  ].join("\n");
+export const DEFAULT_NAMER_SESSION_PROMPT = [
+  "you will generate a short title based on the first message a user begins a conversation with",
+  "- ensure it is not more than 50 characters long",
+  "- the title should be a summary of the user's message",
+  "- it should be one line long",
+  "- do not use quotes or colons",
+  "- the entire text you return will be used as the title",
+  "- never return anything that is more than one sentence (one line) long",
+].join("\n");
 
 export const DEFAULT_SESSION_AGENT_SETTINGS = {
   defaultSession: {
@@ -105,4 +111,8 @@ export const DEFAULT_AGENT_SETTINGS_STATE = {
   version: 1,
   sessionAgents: DEFAULT_SESSION_AGENT_SETTINGS,
   workflowAgents: DEFAULT_WORKFLOW_AGENT_SETTINGS,
+  appPreferences: {
+    preferredExternalEditor: "system",
+    customExternalEditorCommand: "",
+  },
 } satisfies AgentSettingsState;

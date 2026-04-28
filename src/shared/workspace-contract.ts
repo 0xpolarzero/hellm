@@ -3,6 +3,7 @@ import type { AssistantMessageEvent, Message } from "@mariozechner/pi-ai";
 import type {
   AgentDefaults,
   AgentSettingsState,
+  AppPreferences,
   ReasoningEffort,
   SessionAgentKey,
   SessionAgentSettings,
@@ -27,6 +28,11 @@ export interface WorkflowInspectorPaneTarget {
   workflowRunId: string;
 }
 
+export interface SavedWorkflowLibraryPaneTarget {
+  workspaceSessionId: string;
+  surface: "saved-workflow-library";
+}
+
 export type StaticInspectorPaneTarget =
   | { workspaceSessionId: string; surface: "command"; commandId: string }
   | {
@@ -40,6 +46,7 @@ export type StaticInspectorPaneTarget =
 export type WorkspacePaneSurfaceTarget =
   | PromptTarget
   | WorkflowInspectorPaneTarget
+  | SavedWorkflowLibraryPaneTarget
   | StaticInspectorPaneTarget;
 
 export interface SendPromptRequest {
@@ -295,6 +302,76 @@ export interface WorkspaceProjectCiStatusPanel {
     total: number;
   };
   updatedAt: string | null;
+}
+
+export type WorkspaceSavedWorkflowLibraryItemKind =
+  | "definition"
+  | "prompt"
+  | "component"
+  | "entry"
+  | "artifact-workflow";
+
+export type WorkspaceSavedWorkflowLibraryItemScope = "saved" | "artifact";
+
+export interface WorkspaceSavedWorkflowLibraryDiagnostic {
+  severity: "error" | "warning";
+  message: string;
+  path?: string;
+  line?: number;
+  column?: number;
+  code?: string;
+}
+
+export interface WorkspaceSavedWorkflowLibraryItem {
+  id: string;
+  kind: WorkspaceSavedWorkflowLibraryItemKind;
+  scope: WorkspaceSavedWorkflowLibraryItemScope;
+  title: string;
+  summary: string;
+  path: string;
+  sourcePath: string | null;
+  sourcePreview: string | null;
+  validationStatus: "valid" | "warning" | "error" | "unknown";
+  diagnostics: WorkspaceSavedWorkflowLibraryDiagnostic[];
+  workflowId?: string;
+  label?: string;
+  productKind?: string;
+  launchSchema?: string;
+  resultSchema?: string;
+  groupedAssetRefs?: {
+    definitions: string[];
+    prompts: string[];
+    components: string[];
+  };
+  assetPaths?: string[];
+  artifactWorkflowId?: string;
+  entryCount?: number;
+  assetCount?: number;
+}
+
+export interface WorkspaceSavedWorkflowLibraryReadModel {
+  rootPath: string;
+  artifactRootPath: string;
+  items: WorkspaceSavedWorkflowLibraryItem[];
+  counts: Record<WorkspaceSavedWorkflowLibraryItemKind, number>;
+  diagnostics: WorkspaceSavedWorkflowLibraryDiagnostic[];
+  preferredExternalEditor: AppPreferences["preferredExternalEditor"];
+  customExternalEditorCommand: string;
+  updatedAt: string;
+}
+
+export interface DeleteSavedWorkflowLibraryItemRequest {
+  path: string;
+}
+
+export interface OpenWorkflowSourceInEditorRequest {
+  path: string;
+}
+
+export interface OpenWorkflowSourceInEditorResponse {
+  opened: boolean;
+  editor: string;
+  path: string;
 }
 
 export interface WorkspaceWorkflowTaskAttemptTranscriptMessage {
@@ -720,6 +797,10 @@ export interface ChatRPCSchema {
         params: UpdateWorkflowAgentRequest;
         response: AgentSettingsState;
       };
+      updateAppPreferences: {
+        params: AppPreferences;
+        response: AgentSettingsState;
+      };
       ensureWorkflowAgentsComponent: {
         params: undefined;
         response: { path: string };
@@ -739,6 +820,18 @@ export interface ChatRPCSchema {
       openWorkspacePath: {
         params: OpenWorkspacePathRequest;
         response: OpenWorkspacePathResponse;
+      };
+      getSavedWorkflowLibrary: {
+        params: undefined;
+        response: WorkspaceSavedWorkflowLibraryReadModel;
+      };
+      deleteSavedWorkflowLibraryItem: {
+        params: DeleteSavedWorkflowLibraryItemRequest;
+        response: WorkspaceSavedWorkflowLibraryReadModel;
+      };
+      openWorkflowSourceInEditor: {
+        params: OpenWorkflowSourceInEditorRequest;
+        response: OpenWorkflowSourceInEditorResponse;
       };
       listSessions: {
         params: undefined;

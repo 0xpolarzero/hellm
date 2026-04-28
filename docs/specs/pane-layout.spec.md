@@ -40,7 +40,7 @@ This section does not implement:
 - composer draft restoration
 - stale live stream restoration
 - workflow run internals, which belong to the workflow inspector surface
-- saved workflow library browsing, file editing, syntax highlighting, or diagnostics surfaces
+- saved workflow library browsing behavior, file editing, syntax highlighting, or diagnostics surfaces
 
 ## Core Model
 

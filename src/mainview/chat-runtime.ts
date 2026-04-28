@@ -18,6 +18,7 @@ import type {
   WorkspaceHandlerThreadSummary,
   WorkspaceArtifactPreview,
   WorkspaceProjectCiStatusPanel,
+  WorkspaceSavedWorkflowLibraryReadModel,
   WorkspaceSessionNavigationReadModel,
   WorkspaceSessionSummary,
   WorkspaceSyncMessage,
@@ -132,11 +133,15 @@ export interface ChatRuntimeRpcClient {
     getAgentSettings: typeof rpc.request.getAgentSettings;
     updateSessionAgentDefault: typeof rpc.request.updateSessionAgentDefault;
     updateWorkflowAgent: typeof rpc.request.updateWorkflowAgent;
+    updateAppPreferences: typeof rpc.request.updateAppPreferences;
     ensureWorkflowAgentsComponent: typeof rpc.request.ensureWorkflowAgentsComponent;
     getProviderAuthState: typeof rpc.request.getProviderAuthState;
     getWorkspaceInfo: typeof rpc.request.getWorkspaceInfo;
     listWorkspacePaths: typeof rpc.request.listWorkspacePaths;
     openWorkspacePath: typeof rpc.request.openWorkspacePath;
+    getSavedWorkflowLibrary: typeof rpc.request.getSavedWorkflowLibrary;
+    deleteSavedWorkflowLibraryItem: typeof rpc.request.deleteSavedWorkflowLibraryItem;
+    openWorkflowSourceInEditor: typeof rpc.request.openWorkflowSourceInEditor;
     listSessions: typeof rpc.request.listSessions;
     getCommandInspector: typeof rpc.request.getCommandInspector;
     listHandlerThreads: typeof rpc.request.listHandlerThreads;
@@ -282,6 +287,9 @@ export interface ChatRuntime {
   listConfiguredProviders: () => Promise<string[]>;
   listWorkspacePaths: (options?: { refresh?: boolean }) => Promise<WorkspacePathIndexEntry[]>;
   openWorkspacePath: (workspaceRelativePath: string) => Promise<boolean>;
+  getSavedWorkflowLibrary: () => Promise<WorkspaceSavedWorkflowLibraryReadModel>;
+  deleteSavedWorkflowLibraryItem: (path: string) => Promise<WorkspaceSavedWorkflowLibraryReadModel>;
+  openWorkflowSourceInEditor: (path: string) => Promise<boolean>;
 }
 
 function createRpcStreamId(): string {
@@ -1392,7 +1400,8 @@ export async function createChatRuntime(
         target.surface === "command" ||
         target.surface === "workflow-task-attempt" ||
         target.surface === "artifact" ||
-        target.surface === "project-ci-check"
+        target.surface === "project-ci-check" ||
+        target.surface === "saved-workflow-library"
       ) {
         const previousTarget =
           paneLayout.panes.find((pane) => pane.paneId === nextPaneId)?.binding ?? null;
@@ -1532,6 +1541,13 @@ export async function createChatRuntime(
     listWorkspacePaths: (options) => rpcClient.request.listWorkspacePaths(options),
     openWorkspacePath: async (workspaceRelativePath) => {
       const result = await rpcClient.request.openWorkspacePath({ workspaceRelativePath });
+      return result.opened;
+    },
+    getSavedWorkflowLibrary: () => rpcClient.request.getSavedWorkflowLibrary(),
+    deleteSavedWorkflowLibraryItem: (path) =>
+      rpcClient.request.deleteSavedWorkflowLibraryItem({ path }),
+    openWorkflowSourceInEditor: async (path) => {
+      const result = await rpcClient.request.openWorkflowSourceInEditor({ path });
       return result.opened;
     },
   };

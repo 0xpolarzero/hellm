@@ -3,6 +3,8 @@ import { dirname, join } from "node:path";
 import {
   DEFAULT_AGENT_SETTINGS_STATE,
   type AgentSettingsState,
+  type AppPreferences,
+  type PreferredExternalEditor,
   type SessionAgentDefaults,
   type SessionAgentKey,
   type SessionAgentSettings,
@@ -14,6 +16,7 @@ export type SessionAgentSettingsStore = {
   getState(): AgentSettingsState;
   setSessionAgentDefault(key: SessionAgentKey, settings: SessionAgentSettings): AgentSettingsState;
   setWorkflowAgent(key: WorkflowAgentKey, settings: WorkflowAgentSettings): AgentSettingsState;
+  setAppPreferences(preferences: AppPreferences): AgentSettingsState;
   ensureWorkflowAgentsComponent(): string;
 };
 
@@ -57,6 +60,11 @@ export function createSessionAgentSettingsStore(input: {
       writeState(state);
       writeWorkflowAgents(state);
       return state;
+    },
+    setAppPreferences: (preferences) => {
+      const state = readState();
+      state.appPreferences = normalizeAppPreferences(preferences);
+      return writeState(state);
     },
     ensureWorkflowAgentsComponent: () => writeWorkflowAgents(readState()),
   };
@@ -110,6 +118,10 @@ export function normalizeAgentSettingsState(
         ...workflowAgents.reviewer,
       }),
     },
+    appPreferences: normalizeAppPreferences({
+      ...defaults.appPreferences,
+      ...input.appPreferences,
+    }),
   };
 }
 
@@ -172,4 +184,26 @@ function requireNonEmpty(value: string, label: string): string {
     throw new Error(`Expected non-empty ${label}.`);
   }
   return trimmed;
+}
+
+function normalizeAppPreferences(input: AppPreferences): AppPreferences {
+  return {
+    preferredExternalEditor: normalizePreferredExternalEditor(input.preferredExternalEditor),
+    customExternalEditorCommand: input.customExternalEditorCommand.trim(),
+  };
+}
+
+function normalizePreferredExternalEditor(input: string): PreferredExternalEditor {
+  if (
+    input === "system" ||
+    input === "code" ||
+    input === "cursor" ||
+    input === "zed" ||
+    input === "sublime" ||
+    input === "custom"
+  ) {
+    return input;
+  }
+
+  return "system";
 }
