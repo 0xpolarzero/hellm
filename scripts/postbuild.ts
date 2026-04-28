@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { resolveElectrobunAppCodeDir } from "electrobun-e2e/electrobun-paths";
 
 const buildDir = process.env.ELECTROBUN_BUILD_DIR;
 const appName = process.env.ELECTROBUN_APP_NAME;
+const buildEnv = process.env.ELECTROBUN_BUILD_ENV;
 
 if (!buildDir || !appName) {
   console.error("postbuild: ELECTROBUN_BUILD_DIR and ELECTROBUN_APP_NAME env vars required");
@@ -15,7 +16,15 @@ if (!buildDir || !appName) {
 const appCodeDir = resolveElectrobunAppCodeDir(buildDir, appName);
 const nodeModulesDest = join(appCodeDir, "node_modules");
 const projectRoot = join(import.meta.dir, "..");
+const nodeModulesSource = join(projectRoot, "node_modules");
 const src = (rel: string) => join(projectRoot, "node_modules", rel);
+
+if (buildEnv === "dev") {
+  mkdirSync(appCodeDir, { recursive: true });
+  symlinkSync(nodeModulesSource, nodeModulesDest, "dir");
+  console.log("postbuild: linked repo node_modules into dev bundle");
+  process.exit(0);
+}
 
 const scopes = [
   "@rivet-dev",
