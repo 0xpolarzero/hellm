@@ -241,27 +241,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Define typed handler context packs as the optional-knowledge layer between minimal handler prompts and specialized product authoring guidance. Commit(s): `2a5dbbe`
 - [x] Render loaded handler context keys in thread metadata so users can see when optional context such as `ci` is active. Commit(s): `2a5dbbe`
 
-## 15. Worktree-Aware Execution
-
-- [ ] Build a POC thread-to-worktree binding model and inspect how it should appear in the UI.
-- [x] Persist worktree binding on threads. Commit(s): `f53c9b8`
-- [ ] Persist worktree binding on workflow runs.
-- [ ] Show active worktree on orchestrator and thread surfaces.
-- [ ] Warn when the focused pane surface context and current filesystem context diverge.
-- [ ] Build a POC isolated workflow run in a separate worktree.
-- [ ] Let handler threads declare or acquire an isolated worktree when needed.
-- [ ] Show which thread or workflow run owns each worktree-backed execution.
-
-## 16. Headless Surface
-
-- [ ] Build a POC one-shot headless entrypoint that reuses desktop orchestration code.
-- [ ] Define the headless one-shot input contract.
-- [ ] Return structured output for an ordinary headless turn.
-- [ ] Return structured output for a delegated headless objective and its latest handoff episode.
-- [ ] Emit thread, workflow-run, episode, and artifact references in headless results.
-- [ ] Reuse the same orchestrator and state model as desktop execution.
-
-## 17. Dedicated Workflow Inspector
+## 15. Dedicated Workflow Inspector
 
 - [ ] Define the projected graph shape for a workflow inspector surface.
 - [ ] Build a POC static graph view for one completed workflow run.
@@ -275,7 +255,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [ ] Open a selected child workflow node or related thread surface from the workflow inspector into another chosen pane.
 - [ ] Keep completed workflow inspectors available as durable historical surfaces after completion.
 
-## 18. Recovery And Test Coverage
+## 16. Recovery And Test Coverage
 
 - [ ] Build a POC restart or resume flow that restores multiple open surfaces and pane bindings from durable state.
 - [ ] Restore pending clarification and waiting state after app restart.
@@ -285,7 +265,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Expand from the current real embedded-runtime supervision coverage in `src/bun/smithers-runtime/manager.test.ts` and `src/bun/smithers-tools.test.ts` to full pi-backed handler-thread delegation and workflow-run supervision. Commit(s): `f8557d9`, `b0ee858`, `55963d9`, `097ae47`
 - [ ] Add integration tests that exercise restart and resume behavior across workspace state, live surface state, and pane bindings.
 
-## 19. Context Budget Observability
+## 17. Context Budget Observability
 
 - [ ] Define the context-budget metric as an explicit percentage of the active model's max context.
 - [ ] Define neutral, orange, and red thresholds for that metric.
@@ -295,7 +275,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [ ] Render bottom-edge context indicators on collapsed handler-thread and workflow surfaces.
 - [ ] Render full-width context bars on expanded handler-thread panes.
 
-## 20. Saved Workflow Library Surface
+## 18. Saved Workflow Library Surface
 
 This UI depends on later file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces. Keep it out of the core workspace navigation section until those primitives are ready.
 
