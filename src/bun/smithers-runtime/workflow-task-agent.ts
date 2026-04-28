@@ -28,16 +28,16 @@ import {
 } from "../execute-typescript-tool";
 import type { StructuredSessionStateStore } from "../structured-session-state";
 import {
-  createDefaultWorkflowTaskAgentProfile,
-  type WorkflowTaskAgentProfile,
-} from "./workflow-task-agent-profile";
+  createDefaultWorkflowTaskAgentConfig,
+  type WorkflowTaskAgentConfig,
+} from "./workflow-task-agent-config";
 
 type WorkflowTaskAgentOptions = {
   workspaceRoot: string;
   agentDir: string;
   artifactDir: string;
   store: StructuredSessionStateStore;
-  profile?: WorkflowTaskAgentProfile;
+  config?: WorkflowTaskAgentConfig;
   runCommand?: (
     input: ExecuteTypescriptRunCommandInput,
   ) => Promise<ExecuteTypescriptRunCommandResult>;
@@ -80,14 +80,14 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
     async generate(rawArgs: unknown) {
       const args = normalizeWorkflowTaskAgentGenerateArgs(rawArgs);
       const taskRoot = resolveWorkflowTaskRoot(args);
-      const profile = options.profile ?? createDefaultWorkflowTaskAgentProfile();
+      const config = options.config ?? createDefaultWorkflowTaskAgentConfig();
       const model = getModel(
-        profile.provider as Parameters<typeof getModel>[0],
-        profile.model as Parameters<typeof getModel>[1],
+        config.provider as Parameters<typeof getModel>[0],
+        config.model as Parameters<typeof getModel>[1],
       );
       if (!model) {
         throw new Error(
-          `Workflow task agent model not found: ${profile.provider}/${profile.model}`,
+          `Workflow task agent model not found: ${config.provider}/${config.model}`,
         );
       }
 
@@ -122,7 +122,7 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         agentDir,
         settingsManager,
         noExtensions: true,
-        systemPromptOverride: () => profile.systemPrompt,
+        systemPromptOverride: () => config.systemPrompt,
       });
       await resourceLoader.reload();
 
@@ -151,7 +151,7 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         sessionManager,
         settingsManager,
         model,
-        thinkingLevel: profile.thinkingLevel,
+        thinkingLevel: config.thinkingLevel,
         tools: [],
         customTools: createCustomToolDefinitions([executeTypescriptTool]),
         resourceLoader,

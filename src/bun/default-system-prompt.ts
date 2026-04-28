@@ -7,7 +7,7 @@ import {
 } from "./handler-context-packs";
 import { HANDLER_WORKFLOW_AUTHORING_APPENDIX } from "./smithers-runtime/workflow-authoring-guide";
 
-export type SvvyActorProfile = "orchestrator" | "handler" | "workflow-task";
+export type SvvyActorKind = "orchestrator" | "handler" | "workflow-task";
 
 const EXECUTE_TYPESCRIPT_PROMPT_SECTION = [
   "When you call execute_typescript, write plain TypeScript against the injected `api` object and `console`.",
@@ -20,13 +20,13 @@ const EXECUTE_TYPESCRIPT_PROMPT_SECTION = [
 ].join("\n");
 
 const WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION = [
-  "The handler workflow-authoring TypeScript contract follows and is the source of truth for runnable entries and task-agent profiles:",
+  "The handler workflow-authoring TypeScript contract follows and is the source of truth for runnable entries and workflow task agents:",
   "```ts",
   WORKFLOW_AUTHORING_CONTRACT_DECLARATION.trim(),
   "```",
 ].join("\n");
 
-function buildActorInstructions(actor: SvvyActorProfile): string[] {
+function buildActorInstructions(actor: SvvyActorKind): string[] {
   const common = [
     "You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.",
     "Everything you do is a tool call inside one shared execution model.",
@@ -54,6 +54,7 @@ function buildActorInstructions(actor: SvvyActorProfile): string[] {
         "Workflow waits, approvals, and resumes stay inside this handler thread. Do not call thread.handoff while a supervised workflow on this thread is still running or waiting; resolve it, wait for the needed input, or cancel it first.",
         "Do not call thread.start from this surface in the adopted supervision model.",
         "When workflow help is justified, use this decision order: direct execute_typescript work, then saved runnable entries, then artifact-workflow authoring, and save reusable pieces only on explicit request through normal repo writes into `.svvy/workflows/...`.",
+        "When authoring Smithers workflow tasks, inspect `.svvy/workflows/components/agents.ts` and reuse its `explorer`, `implementer`, or `reviewer` exports when one matches the task. If none fit, define a task-specific agent in the artifact workflow. Add or revise saved workflow agent components only when the user explicitly wants reusable workspace infrastructure.",
         buildHandlerContextRegistryPrompt(),
       ];
     case "workflow-task":
@@ -68,7 +69,7 @@ function buildActorInstructions(actor: SvvyActorProfile): string[] {
 }
 
 export function buildSystemPrompt(
-  actor: SvvyActorProfile,
+  actor: SvvyActorKind,
   options: { loadedContextKeys?: readonly string[] } = {},
 ): string {
   const sections = [...buildActorInstructions(actor)];

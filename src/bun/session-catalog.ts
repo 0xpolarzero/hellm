@@ -73,7 +73,7 @@ import { createToolExecutionCommandTracker } from "./tool-execution-command-trac
 import { resolveWorkspaceCwd } from "./workspace-context";
 import { createStartThreadTool } from "./thread-start-tool";
 import { createThreadHandoffTool } from "./thread-handoff-tool";
-import { buildSystemPrompt, type SvvyActorProfile } from "./default-system-prompt";
+import { buildSystemPrompt, type SvvyActorKind } from "./default-system-prompt";
 import { createSmithersTools } from "./smithers-tools";
 import { SmithersRuntimeManager } from "./smithers-runtime/manager";
 import { createBundledWorkflowDefinitions } from "./smithers-runtime/bundled-workflows";
@@ -104,7 +104,7 @@ const byTimestampDesc = (
 
 interface ManagedSession {
   sessionId: string;
-  actorProfile: SvvyActorProfile;
+  actorKind: SvvyActorKind;
   provider: string;
   model: string;
   thinkingLevel: ThinkingLevel;
@@ -135,7 +135,7 @@ export interface SendAgentPromptOptions extends SessionDefaults {
 
 interface CreateManagedSessionOptions {
   sessionManager: SessionManager;
-  actorProfile: SvvyActorProfile;
+  actorKind: SvvyActorKind;
   provider?: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;
@@ -251,7 +251,7 @@ export class WorkspaceSessionCatalog {
     }
 
     for (const surface of this.managedSurfaces.values()) {
-      if (surface.actorProfile !== "orchestrator" || summaries.has(surface.sessionId)) {
+      if (surface.actorKind !== "orchestrator" || summaries.has(surface.sessionId)) {
         continue;
       }
       summaries.set(surface.sessionId, this.buildSummaryFromManagedSession(surface));
@@ -448,7 +448,7 @@ export class WorkspaceSessionCatalog {
 
     const session = await this.createManagedSurfaceRecord({
       sessionManager,
-      actorProfile: "orchestrator",
+      actorKind: "orchestrator",
       provider: defaults.provider,
       model: defaults.model,
       thinkingLevel: defaults.thinkingLevel,
@@ -536,7 +536,7 @@ export class WorkspaceSessionCatalog {
 
     const session = await this.createManagedSurfaceRecord({
       sessionManager: forkedSessionManager,
-      actorProfile: "orchestrator",
+      actorKind: "orchestrator",
       systemPrompt: buildSystemPrompt("orchestrator"),
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
@@ -691,10 +691,10 @@ export class WorkspaceSessionCatalog {
   private async ensureManagedSurfaceForPrompt(
     options: SendAgentPromptOptions,
   ): Promise<ManagedSession> {
-    const actorProfile = getActorProfileForTarget(options.target);
+    const actorKind = getActorKindForTarget(options.target);
     const session = await this.loadManagedSurface(
       options.target.surfacePiSessionId,
-      actorProfile,
+      actorKind,
       this.buildSystemPromptForTarget(options.target),
     );
     await this.restoreWorkflowSupervisionIfTracked(options.target.workspaceSessionId);
@@ -704,7 +704,7 @@ export class WorkspaceSessionCatalog {
   private async retainManagedSurface(target: PromptTarget): Promise<ManagedSession> {
     const session = await this.loadManagedSurface(
       target.surfacePiSessionId,
-      getActorProfileForTarget(target),
+      getActorKindForTarget(target),
       this.buildSystemPromptForTarget(target),
     );
     session.retainCount += 1;
@@ -713,16 +713,16 @@ export class WorkspaceSessionCatalog {
 
   private async loadManagedSurface(
     surfacePiSessionId: string,
-    actorProfile: SvvyActorProfile,
-    systemPrompt = buildSystemPrompt(actorProfile),
+    actorKind: SvvyActorKind,
+    systemPrompt = buildSystemPrompt(actorKind),
   ): Promise<ManagedSession> {
     const existing = this.managedSurfaces.get(surfacePiSessionId);
     if (existing) {
-      if (existing.actorProfile === actorProfile && existing.systemPrompt === systemPrompt) {
+      if (existing.actorKind === actorKind && existing.systemPrompt === systemPrompt) {
         return existing;
       }
       return this.recreateManagedSurface(existing, {
-        actorProfile,
+        actorKind,
         systemPrompt,
       });
     }
@@ -730,7 +730,7 @@ export class WorkspaceSessionCatalog {
     const sessionFile = await this.getSessionFileForId(surfacePiSessionId);
     return this.createManagedSurfaceRecord({
       sessionManager: SessionManager.open(sessionFile!, dirname(sessionFile!)),
-      actorProfile,
+      actorKind,
       systemPrompt,
     });
   }
@@ -752,16 +752,16 @@ export class WorkspaceSessionCatalog {
       "provider" | "model" | "thinkingLevel" | "systemPrompt" | "messages" | "target"
     >,
   ): Promise<ManagedSession> {
-    const actorProfile = getActorProfileForTarget(options.target);
+    const actorKind = getActorKindForTarget(options.target);
     const resolvedSystemPrompt = this.buildSystemPromptForTarget(options.target);
     if (
-      session.actorProfile !== actorProfile ||
+      session.actorKind !== actorKind ||
       session.provider !== options.provider ||
       session.model !== options.model ||
       session.recreateOnNextPrompt
     ) {
       return this.recreateManagedSurface(session, {
-        actorProfile,
+        actorKind,
         provider: options.provider,
         model: options.model,
         thinkingLevel: options.thinkingLevel,
@@ -776,7 +776,7 @@ export class WorkspaceSessionCatalog {
 
     if (session.systemPrompt !== resolvedSystemPrompt) {
       return this.recreateManagedSurface(session, {
-        actorProfile,
+        actorKind,
         systemPrompt: resolvedSystemPrompt,
       });
     }
@@ -786,7 +786,7 @@ export class WorkspaceSessionCatalog {
       !canAppendLatestUserTurn(session.promptSyncCursor, options.messages)
     ) {
       return this.recreateManagedSurface(session, {
-        actorProfile,
+        actorKind,
         systemPrompt: resolvedSystemPrompt,
       });
     }
@@ -797,11 +797,11 @@ export class WorkspaceSessionCatalog {
   private async recreateManagedSurface(
     session: ManagedSession,
     overrides: Partial<
-      Pick<ManagedSession, "actorProfile" | "provider" | "model" | "thinkingLevel" | "systemPrompt">
+      Pick<ManagedSession, "actorKind" | "provider" | "model" | "thinkingLevel" | "systemPrompt">
     >,
   ): Promise<ManagedSession> {
     const sessionManager = session.session.sessionManager;
-    const actorProfile = overrides.actorProfile ?? session.actorProfile;
+    const actorKind = overrides.actorKind ?? session.actorKind;
     const provider = overrides.provider ?? session.provider;
     const model = overrides.model ?? session.model;
     const thinkingLevel = overrides.thinkingLevel ?? session.thinkingLevel;
@@ -810,7 +810,7 @@ export class WorkspaceSessionCatalog {
     session.session.dispose();
     const nextSession = await createManagedSession({
       sessionManager,
-      actorProfile,
+      actorKind,
       provider,
       model,
       thinkingLevel,
@@ -1769,7 +1769,7 @@ async function createManagedSession(
       waitTool,
     ] as const;
   const tools =
-    options.actorProfile === "orchestrator"
+    options.actorKind === "orchestrator"
       ? ([
           executeTypescriptTool,
           createStartThreadTool({
@@ -1831,7 +1831,7 @@ async function createManagedSession(
 
   const managedSession: ManagedSession = {
     sessionId: session.sessionManager.getSessionId(),
-    actorProfile: options.actorProfile,
+    actorKind: options.actorKind,
     provider: activeModel.provider,
     model: activeModel.id,
     thinkingLevel: restoredDefaults.thinkingLevel,
@@ -2227,7 +2227,7 @@ function resolveLatestWorkflowRunForThread(
   return current;
 }
 
-function getActorProfileForTarget(target: PromptTarget): SvvyActorProfile {
+function getActorKindForTarget(target: PromptTarget): SvvyActorKind {
   return target.surface === "thread" ? "handler" : "orchestrator";
 }
 

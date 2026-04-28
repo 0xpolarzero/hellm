@@ -636,14 +636,14 @@ function writePromptAsset(
   );
 }
 
-function writeAgentProfileComponent(
+function writeWorkflowAgentComponent(
   path: string,
   input: {
     assetId: string;
     title: string;
     summary: string;
     exportName: string;
-    profile: {
+    agent: {
       name: string;
       provider: string;
       model: string;
@@ -663,12 +663,12 @@ function writeAgentProfileComponent(
       ` * @svvySummary ${input.summary}`,
       " */",
       `export const ${input.exportName} = {`,
-      `  name: ${JSON.stringify(input.profile.name)},`,
-      `  provider: ${JSON.stringify(input.profile.provider)},`,
-      `  model: ${JSON.stringify(input.profile.model)},`,
-      `  reasoning: ${JSON.stringify(input.profile.reasoning)},`,
-      `  toolSurface: ${JSON.stringify(input.profile.toolSurface)},`,
-      `  instructions: ${JSON.stringify(input.profile.instructions)},`,
+      `  name: ${JSON.stringify(input.agent.name)},`,
+      `  provider: ${JSON.stringify(input.agent.provider)},`,
+      `  model: ${JSON.stringify(input.agent.model)},`,
+      `  reasoning: ${JSON.stringify(input.agent.reasoning)},`,
+      `  toolSurface: ${JSON.stringify(input.agent.toolSurface)},`,
+      `  instructions: ${JSON.stringify(input.agent.instructions)},`,
       "};",
       "",
     ].join("\n"),
@@ -719,7 +719,7 @@ function writeSavedImplementReviewEntry(
       "",
       "export const workflowId = 'implement_review';",
       "export const label = 'Implement Review';",
-      "export const summary = 'Saved runnable entry fixture that proves prompt and profile binding with saved defaults.';",
+      "export const summary = 'Saved runnable entry fixture that proves prompt and workflow agent binding with saved defaults.';",
       "export const launchSchema = implementReviewLaunchSchema;",
       `export const definitionPaths = ${JSON.stringify([input.definitionPath], null, 2)} as const;`,
       `export const promptPaths = ${JSON.stringify([input.promptPath], null, 2)} as const;`,
@@ -736,8 +736,8 @@ function writeSavedImplementReviewEntry(
       "      workflowName: 'implement-review',",
       "      workflowId,",
       "      workflowSource: 'saved',",
-      "      implementerProfile: cheapImplementer,",
-      "      reviewerProfile: carefulReviewer,",
+      "      implementerAgent: cheapImplementer,",
+      "      reviewerAgent: carefulReviewer,",
       "      implementPrompt: cheapImplementer.instructions,",
       "      reviewPrompt,",
       "    }),",
@@ -829,8 +829,8 @@ function writeOAuthReviewEntry(
       `      workflowName: ${JSON.stringify(input.workflowId.replaceAll("_", "-"))},`,
       "      workflowId,",
       `      workflowSource: ${JSON.stringify(input.workflowSource)},`,
-      "      implementerProfile: cheapImplementer,",
-      "      reviewerProfile: oauthSecurityReviewer,",
+      "      implementerAgent: cheapImplementer,",
+      "      reviewerAgent: oauthSecurityReviewer,",
       "      implementPrompt: `${cheapImplementer.instructions}\\n\\n${implementDetails}`,",
       "      reviewPrompt: `${reviewBase}\\n\\n${oauthSecurityReviewer.instructions}`,",
       "    }),",
@@ -845,7 +845,7 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
   const savedRoot = join(workspaceRoot, ".svvy", "workflows");
   const definitionPath = join(savedRoot, "definitions", "create-implement-review.tsx");
   const promptPath = join(savedRoot, "prompts", "review-base.mdx");
-  const componentPath = join(savedRoot, "components", "agent-profiles.tsx");
+  const componentPath = join(savedRoot, "components", "agents.tsx");
   const entryPath = join(savedRoot, "entries", "implement-review.tsx");
 
   writeText(
@@ -855,13 +855,13 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
       " * @svvyAssetKind definition",
       " * @svvyId create_implement_review",
       " * @svvyTitle Create Implement Review",
-      " * @svvySummary Reusable workflow fixture for binding prompts and profiles into a launchable entry contract.",
+      " * @svvySummary Reusable workflow fixture for binding prompts and workflow agents into a launchable entry contract.",
       " */",
       'import React from "react";',
       'import { createSmithers } from "smithers-orchestrator";',
       'import { z } from "zod";',
       "",
-      "const agentProfileSchema = z.object({",
+      "const workflowAgentSchema = z.object({",
       "  name: z.string(),",
       "  provider: z.string(),",
       "  model: z.string(),",
@@ -879,8 +879,8 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
       "  workflowName: string;",
       "  workflowId: string;",
       "  workflowSource: 'saved' | 'artifact';",
-      "  implementerProfile: z.infer<typeof agentProfileSchema>;",
-      "  reviewerProfile: z.infer<typeof agentProfileSchema>;",
+      "  implementerAgent: z.infer<typeof workflowAgentSchema>;",
+      "  reviewerAgent: z.infer<typeof workflowAgentSchema>;",
       "  implementPrompt: string;",
       "  reviewPrompt: string;",
       "}) {",
@@ -892,8 +892,8 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
       "    objective: z.string(),",
       "    implementPrompt: z.string(),",
       "    reviewPrompt: z.string(),",
-      "    implementerProfile: agentProfileSchema,",
-      "    reviewerProfile: agentProfileSchema,",
+      "    implementerAgent: workflowAgentSchema,",
+      "    reviewerAgent: workflowAgentSchema,",
       "  });",
       "  const smithersApi = createSmithers(",
       "    { implement: implementRequestSchema, review: reviewRequestSchema, output: outputSchema },",
@@ -926,8 +926,8 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
       "            objective: launch.objective,",
       "            implementPrompt: config.implementPrompt,",
       "            reviewPrompt: config.reviewPrompt,",
-      "            implementerProfile: config.implementerProfile,",
-      "            reviewerProfile: config.reviewerProfile,",
+      "            implementerAgent: config.implementerAgent,",
+      "            reviewerAgent: config.reviewerAgent,",
       "          },",
       "        }),",
       "      ),",
@@ -943,9 +943,9 @@ function seedSavedWorkflowLibrary(workspaceRoot: string): SavedSeed {
     [
       "/**",
       " * @svvyAssetKind component",
-      " * @svvyId saved_agent_profiles",
-      " * @svvyTitle Saved Agent Profiles",
-      " * @svvySummary Reusable implementation and review profiles for workflow authoring.",
+      " * @svvyId saved_workflow_agents",
+      " * @svvyTitle Saved Workflow Agents",
+      " * @svvySummary Reusable implementation and review agents for workflow authoring.",
       " */",
       "export const cheapImplementer = {",
       "  name: 'cheap-implementer',",
@@ -1028,13 +1028,13 @@ function writeArtifactWorkflow(
     body: "Implement the OAuth callback fix, preserve session semantics, and avoid redirect or state-handling regressions.",
   });
 
-  writeAgentProfileComponent(componentPath, {
+  writeWorkflowAgentComponent(componentPath, {
     assetId: "oauth_security_reviewer_draft",
     title: "OAuth Security Reviewer Draft",
     summary:
-      "Artifact-local security reviewer profile authored because the generic saved entry was not a clear fit for the OAuth task.",
+      "Artifact-local security reviewer agent authored because the generic saved entry was not a clear fit for the OAuth task.",
     exportName: "oauthSecurityReviewer",
-    profile: {
+    agent: {
       name: "oauth-security-reviewer",
       provider: input.reviewerModel.providerId,
       model: input.reviewerModel.modelId,
@@ -1050,7 +1050,7 @@ function writeArtifactWorkflow(
     workflowId: "oauth_review_draft",
     label: "OAuth Review Draft",
     summary:
-      "Artifact runnable entry fixture that reuses saved structure but adds an OAuth-specific implement prompt and reviewer profile because the generic saved entry is not a clear fit.",
+      "Artifact runnable entry fixture that reuses saved structure but adds an OAuth-specific implement prompt and reviewer agent because the generic saved entry is not a clear fit.",
     workflowSource: "artifact",
     definitionPath: input.savedDefinitionPath,
     savedComponentPath: input.savedComponentPath,
@@ -1071,7 +1071,7 @@ function writeArtifactWorkflow(
         createdAt: now,
         updatedAt: now,
         objectiveSummary: input.objectiveSummary,
-        authoringActor: "workflow-writer",
+        authoringActor: "handler",
         entryPath: relativeWorkspacePath(workspaceRoot, entryPath),
         lastExecutionStatus: "not-run-yet",
       },
@@ -1124,12 +1124,12 @@ function saveArtifactAssetsToLibrary(
     body: readPromptBody(join(workspaceRoot, input.artifact.promptPath)),
   });
 
-  writeAgentProfileComponent(savedComponentPath, {
+  writeWorkflowAgentComponent(savedComponentPath, {
     assetId: "oauth_security_reviewer",
     title: "OAuth Security Reviewer",
-    summary: "Saved OAuth-focused security reviewer profile for reusable workflow entries.",
+    summary: "Saved OAuth-focused security reviewer agent for reusable workflow entries.",
     exportName: "oauthSecurityReviewer",
-    profile: {
+    agent: {
       name: "oauth-security-reviewer",
       provider: input.artifact.reviewerModel.providerId,
       model: input.artifact.reviewerModel.modelId,
@@ -1144,7 +1144,7 @@ function saveArtifactAssetsToLibrary(
     entryPath: relativeWorkspacePath(workspaceRoot, savedEntryPath),
     workflowId: "oauth_review",
     label: "OAuth Review",
-    summary: "Saved runnable entry fixture for OAuth-specific prompt and profile binding.",
+    summary: "Saved runnable entry fixture for OAuth-specific prompt and workflow agent binding.",
     workflowSource: "saved",
     definitionPath: input.savedDefinitionPath,
     savedComponentPath: input.savedComponentPath,
@@ -1310,8 +1310,8 @@ async function runArtifactAuthoringScenario(
     result: {
       rejectedSavedEntryPath: seed.entryPath,
       reasons: [
-        "The saved entry binds only the generic reviewer profile and generic review prompt.",
-        "The OAuth objective needs an objective-specific implement prompt and a tighter security-focused reviewer profile.",
+        "The saved entry binds only the generic reviewer agent and generic review prompt.",
+        "The OAuth objective needs an objective-specific implement prompt and a tighter security-focused reviewer agent.",
       ],
     },
   });
@@ -1320,7 +1320,7 @@ async function runArtifactAuthoringScenario(
   trace.push({
     toolName: "execute_typescript",
     args: {
-      purpose: "find a configured model for a new artifact-local OAuth security reviewer profile",
+      purpose: "find a configured model for a new artifact-local OAuth security reviewer agent",
     },
     childCalls: [
       {
@@ -1336,7 +1336,7 @@ async function runArtifactAuthoringScenario(
 
   const reviewerModel = models.find((model) => model.modelId === "gpt-5.4");
   if (!reviewerModel) {
-    throw new Error("Expected gpt-5.4 to be available for the artifact reviewer profile.");
+    throw new Error("Expected gpt-5.4 to be available for the artifact reviewer agent.");
   }
 
   const artifact = writeArtifactWorkflow(workspaceRoot, {
@@ -1351,7 +1351,7 @@ async function runArtifactAuthoringScenario(
     toolName: "execute_typescript",
     args: {
       purpose:
-        "author an artifact workflow with an artifact prompt, an artifact profile, and an artifact entry",
+        "author an artifact workflow with an artifact prompt, an artifact workflow agent, and an artifact entry",
     },
     childCalls: [
       {
@@ -1447,11 +1447,11 @@ async function runArtifactAuthoringScenario(
       preparedImplementRequestUsesArtifactPrompt: String(execution.output.implementPrompt).includes(
         "preserve session semantics",
       ),
-      preparedReviewRequestUsesSavedPromptAndArtifactProfile:
+      preparedReviewRequestUsesSavedPromptAndArtifactAgent:
         String(execution.output.reviewPrompt).includes(
           "Review the implementation against the stated objective.",
         ) && String(execution.output.reviewPrompt).includes("callback validation"),
-      reviewerProfileModel: (execution.output.reviewerProfile as Record<string, unknown>).model,
+      reviewerAgentModel: (execution.output.reviewerAgent as Record<string, unknown>).model,
       metadataAfterRun: JSON.parse(readText(join(workspaceRoot, artifact.metadataPath))),
     },
     artifact,
@@ -1491,7 +1491,7 @@ async function runExplicitSaveScenario(
     toolName: "execute_typescript",
     args: {
       purpose:
-        "write the reusable prompt, profile, and entry into the saved workflow library and inspect validation feedback",
+        "write the reusable prompt, workflow agent, and entry into the saved workflow library and inspect validation feedback",
     },
     childCalls: [
       {

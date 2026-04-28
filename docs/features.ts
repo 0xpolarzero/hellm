@@ -67,7 +67,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Typed Handler Context Packs",
     status: "in-progress",
     summary:
-      "Separates handler runtime profiles from optional product knowledge by letting the orchestrator preload typed context keys on `thread.start` and letting handler threads call the top-level `request_context({ keys })` tool later, with `ci` as the first adopted key, loaded keys persisted on the handler thread for resume, and no context-pack loading through the `execute_typescript` `api.*` SDK.",
+      "Separates handler execution settings from optional product knowledge by letting the orchestrator preload typed context keys on `thread.start` and letting handler threads call the top-level `request_context({ keys })` tool later, with `ci` as the first adopted key, loaded keys persisted on the handler thread for resume, and no context-pack loading through the `execute_typescript` `api.*` SDK.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/handler-context-packs.spec.md",
@@ -84,11 +84,11 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-supervision.spec.md"],
   },
   {
-    id: "workflow-task-agent-profile",
-    name: "Workflow Task Agent Profile",
+    id: "workflow-task-agents",
+    name: "Workflow Task Agents",
     status: "in-progress",
     summary:
-      "Defines lower-level Smithers workflow task agents as a separate actor class beneath handler threads, using a PI-backed svvy task profile with a strict `execute_typescript`-only callable surface, no ambient pi built-ins or extension-tool leakage, task-root or worktree execution aligned to the active Smithers attempt, first-class durable workflow-task-attempt records keyed by Smithers attempt identity before task-local tool calls run, message-native retry and hijack continuation, live task-agent activity streaming, and projected nested transcript, command, artifact, and usage traces, while keeping approval and hijack as Smithers runtime controls rather than ordinary task-agent tools.",
+      "Defines lower-level Smithers workflow task agents as a separate actor class beneath handler threads, using a PI-backed svvy task configuration with a strict `execute_typescript`-only callable surface, no ambient pi built-ins or extension-tool leakage, task-root or worktree execution aligned to the active Smithers attempt, first-class durable workflow-task-attempt records keyed by Smithers attempt identity before task-local tool calls run, message-native retry and hijack continuation, live task-agent activity streaming, and projected nested transcript, command, artifact, and usage traces, while keeping approval and hijack as Smithers runtime controls rather than ordinary task-agent tools.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/workflow-supervision.spec.md",
@@ -108,7 +108,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workspace Saved Workflow Library",
     status: "in-progress",
     summary:
-      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, exposes minimal asset index metadata from required JSDoc and MDX frontmatter, keeps agent profiles as ordinary component files, supports optional product metadata and result schemas on entries such as Project CI, lets handlers list asset paths and read saved asset source through the `execute_typescript` host SDK, and validates writes under `.svvy/workflows/...` automatically through the enclosing `execute_typescript` result logs.",
+      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, exposes minimal asset index metadata from required JSDoc and MDX frontmatter, keeps conventional workflow agents such as `explorer`, `implementer`, and `reviewer` as ordinary component exports in `.svvy/workflows/components/agents.ts`, supports optional product metadata and result schemas on entries such as Project CI, lets handlers list asset paths and read saved asset source through the `execute_typescript` host SDK, and validates writes under `.svvy/workflows/...` automatically through the enclosing `execute_typescript` result logs.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
   },
   {
@@ -139,7 +139,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Command Palette And Quick Open",
     status: "in-progress",
     summary:
-      "Defines a VS Code-like shell action surface where `Cmd+Shift+P` discovers and executes product actions through existing session, surface, orchestrator, handler-thread, workflow task-agent projection, Project CI, Smithers-native, pane, settings, and runtime-profile routing, shows visually distinct kind badges for open-session results across orchestrator, handler-thread, and task-agent categories, `Cmd+P` is reserved as a file quick-open placeholder until file surfaces exist, `cmdk-sv` is the intended Svelte UI primitive, and unmatched non-empty palette text creates a normal new session initial prompt without introducing a parallel runtime, shell, terminal loop, or workflow abstraction.",
+      "Defines a VS Code-like shell action surface where `Cmd+Shift+P` discovers and executes product actions through existing session, surface, orchestrator, handler-thread, workflow task-agent projection, Project CI, Smithers-native, pane, settings, and agent-setting routing, shows visually distinct kind badges for open-session results across orchestrator, handler-thread, and task-agent categories, `Cmd+P` is reserved as a file quick-open placeholder until file surfaces exist, `cmdk-sv` is the intended Svelte UI primitive, and unmatched non-empty palette text creates a normal new session initial prompt without introducing a parallel runtime, shell, terminal loop, or workflow abstraction.",
     sourceSpecs: ["docs/prd.md", "docs/specs/command-palette.spec.md"],
   },
   {

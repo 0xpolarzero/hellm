@@ -1,11 +1,11 @@
 import { DEFAULT_CHAT_SETTINGS } from "../../mainview/chat-settings";
 import { WORKFLOW_TASK_SYSTEM_PROMPT } from "../default-system-prompt";
-import type { WorkflowTaskAgentProfile } from "./workflow-authoring-contract";
-export type { WorkflowTaskAgentProfile } from "./workflow-authoring-contract";
+import type { WorkflowTaskAgentConfig } from "./workflow-authoring-contract";
+export type { WorkflowTaskAgentConfig } from "./workflow-authoring-contract";
 
-export function createDefaultWorkflowTaskAgentProfile(
-  input: Partial<Pick<WorkflowTaskAgentProfile, "provider" | "model" | "thinkingLevel">> = {},
-): WorkflowTaskAgentProfile {
+export function createDefaultWorkflowTaskAgentConfig(
+  input: Partial<Pick<WorkflowTaskAgentConfig, "provider" | "model" | "thinkingLevel">> = {},
+): WorkflowTaskAgentConfig {
   return {
     provider: input.provider ?? DEFAULT_CHAT_SETTINGS.provider,
     model: input.model ?? DEFAULT_CHAT_SETTINGS.model,

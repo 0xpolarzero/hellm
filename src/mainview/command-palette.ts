@@ -17,7 +17,7 @@ export type CommandActionCategory =
   | "workflow-inspector"
   | "pane"
   | "settings"
-  | "runtime-profile";
+  | "agent-settings";
 
 export type CommandAvailability =
   | { kind: "available" }

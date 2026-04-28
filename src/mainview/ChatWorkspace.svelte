@@ -2007,6 +2007,7 @@
                         <Button
                           variant="ghost"
                           size="sm"
+                          aria-label={`Inspect ${thread.title}`}
                           disabled={promptBusy ||
                             mutatingSession ||
                             currentSession?.status === "running" ||
@@ -2021,6 +2022,7 @@
                         <Button
                           variant="primary"
                           size="sm"
+                          aria-label={`Open ${thread.title}`}
                           disabled={promptBusy || mutatingSession}
                           onclick={() => void handleOpenHandlerThread(thread)}
                         >

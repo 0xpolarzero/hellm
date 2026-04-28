@@ -16,7 +16,7 @@ export interface HandlerContextPack {
 const CI_CONTEXT_PROMPT = [
   "Loaded handler context pack: Project CI.",
   "",
-  "Project CI is svvy's dedicated product lane for repeatable repository confidence checks. It is not a separate runtime profile, a standalone orchestrator, or a custom CI engine.",
+  "Project CI is svvy's dedicated product lane for repeatable repository confidence checks. It uses normal handler-thread execution with the CI context pack loaded, not a standalone orchestrator or custom CI engine.",
   "",
   "When configuring or modifying Project CI:",
   "- Inspect real repository facts first, including package scripts, lockfiles, task runners, existing CI files, Makefiles, README guidance, and test configuration.",

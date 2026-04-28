@@ -194,8 +194,8 @@ That actor is:
 
 The adopted direction is:
 
-- use a PI-backed task-agent profile by default when a workflow task needs an adaptive agent
-- give that profile a `svvy` workflow-task prompt rather than the orchestrator or handler-thread prompt
+- use a PI-backed workflow task agent by default when a workflow task needs an adaptive agent
+- give that workflow task agent a `svvy` workflow-task prompt rather than the orchestrator or handler-thread prompt
 - expose only task-local tools; the default adopted task-agent surface is `execute_typescript`
 - do not expose `thread.start`, `thread.handoff`, `wait`, or `smithers.*` to workflow task agents
 - do not load ambient pi built-in tools or workspace-discovered extension tools into workflow task agents

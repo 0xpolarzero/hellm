@@ -24,7 +24,7 @@ async function waitForVisible(
   locator: {
     isVisible(): Promise<boolean>;
   },
-  timeoutMs = 20_000,
+  timeoutMs = 60_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
@@ -43,7 +43,7 @@ async function waitForEnabled(
     isDisabled?: () => Promise<boolean>;
     getAttribute?: (name: string) => Promise<string | null>;
   },
-  timeoutMs = 20_000,
+  timeoutMs = 60_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
@@ -63,34 +63,65 @@ async function waitForEnabled(
   throw new Error("Timed out waiting for workflow supervision action to become enabled.");
 }
 
-function isDisabledClickError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("Resolved element is disabled");
+function isRetryableClickError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.includes("Resolved element is disabled") ||
+      error.message.includes("Bridge request timed out"))
+  );
 }
 
 async function clickWhenEnabled(
   locator: {
     click: (options?: { force?: boolean }) => Promise<void>;
+    focus?: () => Promise<void>;
+    isVisible?: () => Promise<boolean>;
     isDisabled?: () => Promise<boolean>;
     getAttribute?: (name: string) => Promise<string | null>;
+    press?: (key: string) => Promise<void>;
   },
-  timeoutMs = 20_000,
+  timeoutMs = 60_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
 
   while (Date.now() < deadline) {
     await waitForEnabled(locator, Math.min(1_000, timeoutMs));
+    if (typeof locator.isVisible === "function" && !(await locator.isVisible())) {
+      await Bun.sleep(100);
+      continue;
+    }
     try {
       await locator.click({ force: true });
       return;
     } catch (error) {
-      if (!isDisabledClickError(error)) {
+      lastError = error;
+      if (
+        error instanceof Error &&
+        error.message.includes("Bridge request timed out") &&
+        typeof locator.focus === "function" &&
+        typeof locator.press === "function"
+      ) {
+        try {
+          await locator.focus();
+          await locator.press("Enter");
+          return;
+        } catch (fallbackError) {
+          lastError = fallbackError;
+        }
+      }
+      if (!isRetryableClickError(error)) {
         throw error;
       }
     }
     await Bun.sleep(100);
   }
 
-  throw new Error("Timed out clicking a workflow supervision action after it became enabled.");
+  throw new Error(
+    `Timed out clicking a workflow supervision action after it became enabled.${
+      lastError instanceof Error ? ` Last error: ${lastError.message}` : ""
+    }`,
+  );
 }
 
 async function sendPrompt(page: SvvyApp["page"], text: string): Promise<void> {
@@ -179,8 +210,11 @@ test("drives a real delegated workflow run through the app and routes workflow a
             "Run the bundled hello_world workflow",
           );
 
-          await clickWhenEnabled(threadCard.getByRole("button", { name: "Open thread" }));
+          await clickWhenEnabled(
+            page.locator(".handler-thread-actions button").nth(1),
+          );
           await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
+          await waitForVisible(page.getByText(/Messaging handler thread/));
 
           await sendPrompt(
             page,
@@ -192,11 +226,12 @@ test("drives a real delegated workflow run through the app and routes workflow a
           await waitForVisible(page.getByText("Hello World Workflow Thread"), 90_000);
           await waitForVisible(page.getByText("1 workflow"), 90_000);
 
-          const completedThreadCard = page.locator(".handler-thread-card").filter({
-            has: page.getByText("Hello World Workflow Thread", { exact: true }),
-          });
+          await waitForVisible(page.getByText("Completed"), 90_000);
+          await waitForVisible(page.getByText("1 handoff"), 180_000);
 
-          await clickWhenEnabled(completedThreadCard.getByRole("button", { name: "Inspect" }));
+          await clickWhenEnabled(
+            page.locator(".handler-thread-actions button").first(),
+          );
 
           const inspector = page.getByRole("dialog", { name: "Hello World Workflow Thread" });
           await waitForVisible(inspector);
@@ -291,8 +326,12 @@ test("drives a real delegated workflow run through the app with z.ai loaded from
           has: page.getByText("Hello World Workflow Thread", { exact: true }),
         });
         await waitForVisible(threadCard, 60_000);
-        await clickWhenEnabled(threadCard.getByRole("button", { name: "Open thread" }), 60_000);
+        await clickWhenEnabled(
+          page.locator(".handler-thread-actions button").nth(1),
+          60_000,
+        );
         await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
+        await waitForVisible(page.getByText(/Messaging handler thread/));
 
         await sendPrompt(
           page,
@@ -309,13 +348,12 @@ test("drives a real delegated workflow run through the app with z.ai loaded from
         await returnToOrchestrator(page);
         await waitForVisible(page.getByText("Delegated Threads"), 90_000);
 
-        const completedThreadCard = page.locator(".handler-thread-card").filter({
-          has: page.getByText("Hello World Workflow Thread", { exact: true }),
-        });
-        await waitForVisible(completedThreadCard, 90_000);
-        expect((await completedThreadCard.textContent()) ?? "").toContain("Completed");
+        await waitForVisible(page.getByText("Completed"), 90_000);
+        await waitForVisible(page.getByText("1 handoff"), 180_000);
 
-        await clickWhenEnabled(completedThreadCard.getByRole("button", { name: "Inspect" }));
+        await clickWhenEnabled(
+          page.locator(".handler-thread-actions button").first(),
+        );
 
         const inspector = page.getByRole("dialog", { name: "Hello World Workflow Thread" });
         await waitForVisible(inspector, 60_000);

@@ -116,8 +116,12 @@ async function waitForEnabled(
   throw new Error("Timed out waiting for a control to become enabled.");
 }
 
-function isDisabledClickError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("Resolved element is disabled");
+function isRetryableClickError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.includes("Resolved element is disabled") ||
+      error.message.includes("Bridge request timed out"))
+  );
 }
 
 async function clickWhenEnabled(
@@ -136,7 +140,7 @@ async function clickWhenEnabled(
       await locator.click({ force: true });
       return;
     } catch (error) {
-      if (!isDisabledClickError(error)) {
+      if (!isRetryableClickError(error)) {
         throw error;
       }
     }

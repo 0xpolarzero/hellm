@@ -11,7 +11,7 @@ import {
   type StructuredSessionStateStore,
 } from "../structured-session-state";
 import { createWorkflowTaskAgent } from "./workflow-task-agent";
-import { createDefaultWorkflowTaskAgentProfile } from "./workflow-task-agent-profile";
+import { createDefaultWorkflowTaskAgentConfig } from "./workflow-task-agent-config";
 
 const tempDirs: string[] = [];
 const stores: StructuredSessionStateStore[] = [];
@@ -325,7 +325,7 @@ describe("workflow task agent", () => {
       agentDir: fixture.agentDir,
       artifactDir: fixture.artifactDir,
       store: fixture.store,
-      profile: createDefaultWorkflowTaskAgentProfile(),
+      config: createDefaultWorkflowTaskAgentConfig(),
     });
 
     const stdoutChunks: string[] = [];
@@ -451,7 +451,7 @@ describe("workflow task agent", () => {
       agentDir: fixture.agentDir,
       artifactDir: fixture.artifactDir,
       store: fixture.store,
-      profile: createDefaultWorkflowTaskAgentProfile(),
+      config: createDefaultWorkflowTaskAgentConfig(),
     });
 
     await runWithToolContext(
@@ -522,7 +522,7 @@ describe("workflow task agent", () => {
       agentDir: fixture.agentDir,
       artifactDir: fixture.artifactDir,
       store: fixture.store,
-      profile: createDefaultWorkflowTaskAgentProfile(),
+      config: createDefaultWorkflowTaskAgentConfig(),
     });
 
     await runWithToolContext(
@@ -607,7 +607,7 @@ describe("workflow task agent", () => {
       agentDir: fixture.agentDir,
       artifactDir: fixture.artifactDir,
       store: fixture.store,
-      profile: createDefaultWorkflowTaskAgentProfile(),
+      config: createDefaultWorkflowTaskAgentConfig(),
     });
 
     const result = (await runWithToolContext(
@@ -697,7 +697,7 @@ describe("workflow task agent", () => {
       agentDir: fixture.agentDir,
       artifactDir: fixture.artifactDir,
       store: fixture.store,
-      profile: createDefaultWorkflowTaskAgentProfile(),
+      config: createDefaultWorkflowTaskAgentConfig(),
     });
 
     await expect(

@@ -27,7 +27,7 @@ The product should optimize for:
 - authoring a short-lived artifact workflow when saved entries do not fit
 - writing reusable saved workflow files only when the user explicitly asks for that
 - surfacing validation feedback automatically when saved workflow files are written
-- keeping exact handler-authored workflow and task-agent profile shapes in generated TypeScript declarations
+- keeping exact handler-authored workflow and workflow task-agent shapes in generated TypeScript declarations
 
 ## Core Model
 
@@ -47,7 +47,7 @@ This split is intentional.
 
 Asset discovery and saved-library writes are not workflow launch.
 
-Exact `api.*` shapes are provided by the generated `execute_typescript` declaration. Exact handler-authored runnable entry and workflow task-agent profile shapes are provided by the generated workflow-authoring declaration.
+Exact `api.*` shapes are provided by the generated `execute_typescript` declaration. Exact handler-authored runnable entry and workflow task-agent shapes are provided by the generated workflow-authoring declaration.
 
 ## Handler-Owned Authoring
 
@@ -71,7 +71,7 @@ The generated workflow-authoring declaration is the prompt source of truth for:
 - runtime entry factory return values
 - source scope and product lane metadata
 - grouped asset refs
-- workflow task-agent profiles
+- workflow task agents
 - `AgentLike` task-agent usage
 
 ## Adopted Layout
@@ -92,7 +92,7 @@ The folders mean:
 
 - `definitions/`: reusable workflow factories and builders
 - `prompts/`: reusable prompt assets
-- `components/`: reusable helpers and agent profiles
+- `components/`: reusable helpers and workflow agents
 - `entries/`: launchable saved workflow entry wrappers
 
 Product-specific saved assets use subdirectories inside the same library rather than a separate workflow system.
@@ -154,7 +154,7 @@ Definitions are reusable workflow structure.
 The normal pattern is:
 
 - export a workflow factory or builder
-- accept prompt, profile, or config inputs where variation is expected
+- accept prompt, workflow agent, or config inputs where variation is expected
 - avoid closing over objective-specific state when the definition is meant to be reused
 
 ### Prompts
@@ -176,9 +176,9 @@ Examples:
 - helpers
 - schema utilities
 - workflow building blocks
-- agent profile values or factories
+- workflow agent values or factories
 
-Agent profile files are ordinary component files that export values conforming to the generated `WorkflowTaskAgentProfile` contract. Workflow definitions and entries use Smithers `AgentLike` values for adaptive task execution, with the profile describing the svvy task-agent configuration and task-local tool surface.
+Workflow agent files are ordinary component files that export values conforming to the generated `WorkflowTaskAgentConfig` contract. The conventional saved workflow agents live in `.svvy/workflows/components/agents.ts` and export `explorer`, `implementer`, and `reviewer`. Workflow definitions and entries use Smithers `AgentLike` values for adaptive task execution, with the workflow agent configuration describing the svvy task-agent model, prompt, reasoning, and task-local tool surface.
 
 A handler lists component assets and reads candidate component files before using their exported values.
 
@@ -266,11 +266,12 @@ The adopted handler-side workflow-authoring flow is:
 2. The handler uses its injected generated workflow-authoring contract, guide, and examples first.
 3. The handler calls `api.workflow.listAssets(...)` as needed.
 4. The handler reads promising saved definitions, prompts, or component files through ordinary file reads before relying on implementation details.
-5. The handler optionally calls `api.workflow.listModels()` when it must create or revise an agent profile.
-6. The handler authors a short-lived artifact workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/`.
-7. The handler calls `smithers.list_workflows`, inspects the artifact entry, and launches it through `smithers.run_workflow({ workflowId, input, runId? })`.
-8. If the user explicitly asks to keep reusable workflow files, the handler writes those files directly into `.svvy/workflows/...` through normal repo write APIs.
-9. The handler reads the returned validation feedback in the enclosing `execute_typescript` result and keeps editing until the final saved workflow state validates cleanly.
+5. The handler reads `.svvy/workflows/components/agents.ts` when a Smithers task needs a reusable explorer, implementer, or reviewer.
+6. The handler optionally calls `api.workflow.listModels()` when it must create or revise a workflow agent.
+7. The handler authors a short-lived artifact workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/`, including artifact-local workflow agents when the conventional saved agents are not a good fit.
+8. The handler calls `smithers.list_workflows`, inspects the artifact entry, and launches it through `smithers.run_workflow({ workflowId, input, runId? })`.
+9. If the user explicitly asks to keep reusable workflow files, the handler writes those files directly into `.svvy/workflows/...` through normal repo write APIs.
+10. The handler reads the returned validation feedback in the enclosing `execute_typescript` result and keeps editing until the final saved workflow state validates cleanly.
 
 ## Discovery Surface
 
@@ -403,12 +404,13 @@ The UI save affordance is a shortcut prompt to the handler thread.
 Handler-thread instructions should say:
 
 - prefer direct `execute_typescript` for small one-off work that does not benefit from workflow supervision
-- use generated declarations for exact `api.*`, runnable-entry, and workflow task-agent profile shapes
+- use generated declarations for exact `api.*`, runnable-entry, and workflow task-agent shapes
 - reuse a saved runnable entry when one clearly fits
 - otherwise author a short-lived artifact workflow
 - mix saved definitions, prompts, and components freely when that produces a clearer workflow than reusing one saved entry unchanged
-- read saved component files before creating new agent profiles
-- call `api.workflow.listModels()` only when no saved profile fits or the user explicitly wants a different provider or model
+- read `.svvy/workflows/components/agents.ts` before creating new workflow agents and reuse `explorer`, `implementer`, or `reviewer` when one clearly fits
+- define task-specific workflow agents inside the current artifact workflow when the conventional saved agents do not fit
+- call `api.workflow.listModels()` only when no saved workflow agent fits or the user explicitly wants a different provider or model
 - write reusable saved workflow files only on explicit request
 - rely on the returned validation feedback after writes under `.svvy/workflows/...`
 - discover and run configured Project CI entries when CI is needed

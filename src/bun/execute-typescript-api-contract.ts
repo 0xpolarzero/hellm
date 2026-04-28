@@ -458,7 +458,7 @@ export interface SvvyApi {
     listAssets(input?: WorkflowListAssetsInput): Promise<WorkflowAssetMetadata[]>;
 
     /**
-     * List provider/model options for authoring or revising agent profiles.
+     * List provider/model options for authoring or revising workflow task agents.
      */
     listModels(): Promise<WorkflowModelInfo[]>;
   };

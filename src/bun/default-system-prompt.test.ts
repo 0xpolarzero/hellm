@@ -48,6 +48,11 @@ describe("default system prompt", () => {
     expect(HANDLER_SYSTEM_PROMPT).toContain(
       "Do not call thread.start from this surface in the adopted supervision model.",
     );
+    expect(HANDLER_SYSTEM_PROMPT).toContain(".svvy/workflows/components/agents.ts");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("explorer");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("implementer");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("reviewer");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("define a task-specific agent in the artifact workflow");
     expect(HANDLER_SYSTEM_PROMPT).toContain("Workflow authoring guide for handler threads:");
     expect(HANDLER_SYSTEM_PROMPT).toContain(
       "The handler workflow-authoring TypeScript contract follows",
@@ -60,7 +65,7 @@ describe("default system prompt", () => {
 
   it("injects generated workflow authoring contracts only into handler prompts", () => {
     expect(HANDLER_SYSTEM_PROMPT).toContain("interface RunnableWorkflowEntryModule");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("interface WorkflowTaskAgentProfile");
+    expect(HANDLER_SYSTEM_PROMPT).toContain("interface WorkflowTaskAgentConfig");
     expect(HANDLER_SYSTEM_PROMPT).toContain("type SvvyWorkflowTaskAgent = AgentLike");
     expect(HANDLER_SYSTEM_PROMPT).toContain("createSmithers");
     expect(HANDLER_SYSTEM_PROMPT).toContain("launchSchema");
@@ -73,7 +78,7 @@ describe("default system prompt", () => {
     expect(WORKFLOW_TASK_SYSTEM_PROMPT).not.toContain(
       WORKFLOW_AUTHORING_CONTRACT_DECLARATION.trim(),
     );
-    expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).not.toContain("interface WorkflowTaskAgentProfile");
+    expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).not.toContain("interface WorkflowTaskAgentConfig");
     expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).not.toContain("interface SvvyApi");
     expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).not.toContain(
       "listAssets(input?: WorkflowListAssetsInput)",

@@ -8,7 +8,7 @@ import {
   readBundledWorkflowLaunchInput,
 } from "./runtime-input";
 import { createWorkflowTaskAgent } from "./workflow-task-agent";
-import { createDefaultWorkflowTaskAgentProfile } from "./workflow-task-agent-profile";
+import { createDefaultWorkflowTaskAgentConfig } from "./workflow-task-agent-config";
 import type {
   ExecuteTypescriptRunCommandInput,
   ExecuteTypescriptRunCommandResult,
@@ -134,7 +134,7 @@ export function createExecuteTypescriptTaskTestWorkflow(input: {
     agentDir: input.agentDir,
     artifactDir: input.artifactDir,
     store: input.store,
-    profile: createDefaultWorkflowTaskAgentProfile({
+    config: createDefaultWorkflowTaskAgentConfig({
       provider: input.provider,
       model: input.model,
       thinkingLevel: input.thinkingLevel,

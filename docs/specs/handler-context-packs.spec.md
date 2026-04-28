@@ -8,7 +8,7 @@
   - define typed handler context packs
   - define `thread.start({ context })`
   - define the handler-only `request_context` tool
-  - define how context packs differ from runtime profiles
+  - define how context packs attach optional product knowledge to handler threads
   - define the first adopted context key, `ci`
 
 ## Purpose
@@ -27,19 +27,9 @@ The first adopted context key is:
 
 ## Core Concepts
 
-### Runtime Profile
+### Handler Execution
 
-A runtime profile describes execution shape.
-
-Examples:
-
-- actor class
-- model
-- reasoning level
-- callable tool surface
-- provider settings
-
-The default handler runtime profile remains the normal profile for delegated handler threads.
+A handler thread runs through the normal delegated handler surface.
 
 ### Context Pack
 
@@ -56,10 +46,10 @@ Context packs do not define model, reasoning, provider, or base tool surface.
 
 Project CI uses:
 
-- the default handler runtime profile
+- normal handler-thread execution
 - plus the `ci` context pack
 
-It does not need a Project CI-specific runtime profile in the adopted model.
+It does not need a Project CI-specific surface, launcher, or control tool.
 
 ## Context Registry
 
@@ -107,7 +97,7 @@ Rules:
 - context keys are validated against the registry.
 - the context pack is loaded before the handler's first turn.
 - loaded context keys are persisted on the handler thread.
-- preloaded context keys do not change the handler runtime profile.
+- preloaded context keys do not change the handler surface's execution settings.
 
 There is no separate `thread.start_ci` tool.
 
@@ -195,6 +185,6 @@ The event payload should include the loaded key and version.
 - The orchestrator may pass context keys to `thread.start`, but does not receive full context-pack content.
 - `request_context` is top-level and handler-only.
 - `request_context` is not available through `execute_typescript`.
-- Runtime profiles and context packs are separate concepts.
+- Handler context packs add optional product knowledge to an existing handler thread.
 - Loading a context pack never changes historical transcript content.
 - Loaded context keys are durable and idempotent.

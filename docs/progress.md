@@ -91,9 +91,9 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Let handler threads call the generated per-workflow Smithers run-launch surface through the Bun bridge for both new and resumed runs. Commit(s): `4674e67`
 - [x] Extend the Smithers-native supervision surface beyond the shipped Step 5 handler-thread/runtime coverage for blocker diagnosis, approvals, signals, cancellation, node detail, artifacts, transcripts, event history, frames, and DevTools inspection, focusing on the remaining operator-only and richer troubleshooting controls. Commit(s): `f8557d9`
 - [x] Define workflow task agents as a lower-level Smithers actor class distinct from orchestrator and handler-thread surfaces. Commit(s): `a02bd48`
-- [x] Adopt a PI-backed svvy workflow-task agent profile with a dedicated task prompt and `execute_typescript` as the default task-local tool surface. Commit(s): `a02bd48`
+- [x] Adopt PI-backed svvy workflow task agents with a dedicated task prompt and `execute_typescript` as the default task-local tool surface. Commit(s): `a02bd48`
 - [x] Keep approval gates and hijack as Smithers runtime or operator controls around workflow task agents rather than exposing them as ordinary task-agent tools. Commit(s): `a02bd48`
-- [x] Build a POC bundled workflow task that runs the svvy workflow-task PI profile with `execute_typescript` only. Commit(s): `a02bd48`
+- [x] Build a POC bundled workflow task that runs the svvy workflow-task PI configuration with `execute_typescript` only. Commit(s): `a02bd48`
 - [x] Wake the supervising handler thread in a background turn only when a workflow run reaches a terminal outcome, an actionable wait, a continuation boundary, or a supervision fault that requires handler judgment, while keeping duplicate terminal reconciliation idempotent after a valid handoff. Commit(s): `a02bd48`
 - [x] Support multiple workflow runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
 - [x] Derive active and latest workflow summaries from workflow-run state without a persisted thread-level latest pointer. Commit(s): `a02bd48`
@@ -111,12 +111,12 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Define the saved workflow library layout under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and `.svvy/workflows/entries/`. Commit(s): `37afcb3`, `4515233`
 - [x] Define the discovery metadata contract compiled from JSDoc headers in `ts` or `tsx` files and frontmatter in `mdx` prompt files. Commit(s): `37afcb3`, `4515233`
 - [x] Expose `api.workflow.listAssets(...)` inside `execute_typescript` so handlers can discover saved definitions, prompts, and components before reading files directly. Commit(s): `4515233`
-- [x] Expose `api.workflow.listModels()` inside `execute_typescript` for the escape hatch where no saved agent profile fits. Commit(s): `4515233`
-- [x] Build a POC saved definition plus saved entry that are reused by a new short-lived artifact entry with different prompts, profiles, or config bound at authoring time. Commit(s): `37afcb3`
+- [x] Expose `api.workflow.listModels()` inside `execute_typescript` for the escape hatch where no saved workflow agent fits. Commit(s): `4515233`
+- [x] Build a POC saved definition plus saved entry that are reused by a new short-lived artifact entry with different prompts, workflow agents, or config bound at authoring time. Commit(s): `37afcb3`
 - [x] Keep authored workflows artifact-only by default until the handler explicitly writes reusable files into `.svvy/workflows/`. Commit(s): `0b2d1ff`
 - [x] Run automatic saved-workflow validation after `api.repo.writeFile(...)` and `api.repo.writeJson(...)` writes under `.svvy/workflows/...`, surfacing diagnostics in the enclosing `execute_typescript` result logs. Commit(s): `0b2d1ff`
 - [x] Surface all runnable saved and artifact entries through `smithers.list_workflows` and `smithers.run_workflow({ workflowId, input, runId? })`, with `smithers.list_workflows` returning each entry's explicit launch contract, `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `workflowId` filter support rather than relying on inferred import graphs. Commit(s): `4515233`, `dc1da8c`
-- [x] Persist agent profile files as ordinary saved workflow components that handlers discover by path and inspect through file reads. Commit(s): `4515233`
+- [x] Persist workflow agent files as ordinary saved workflow components that handlers discover by path and inspect through file reads. Commit(s): `4515233`
 
 ## 7. Project CI Lane
 
@@ -161,7 +161,7 @@ Current product decisions for this section are specified in `docs/specs/workspac
 Current product decisions for this section are specified in `docs/specs/command-palette.spec.md`.
 
 - [x] Define the product-owned command/action registry shape, including stable ids, labels, aliases, categories, availability, shortcuts, and typed execution targets. Commit(s): `cb319ac`
-- [x] Define `Cmd+Shift+P` as the all-actions command palette for session, surface, Project CI, handler-thread, workflow-inspector, pane, settings, runtime-profile, and future product actions. Commit(s): `cb319ac`
+- [x] Define `Cmd+Shift+P` as the all-actions command palette for session, surface, Project CI, handler-thread, workflow-inspector, pane, settings, agent settings, and future product actions. Commit(s): `cb319ac`
 - [x] Define `Cmd+P` as file quick-open with placeholder or no-op behavior until file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces exist. Commit(s): `cb319ac`
 - [x] Adopt `cmdk-sv` as the Svelte command palette UI primitive while keeping product routing and command semantics owned by `svvy`. Commit(s): `cb319ac`
 - [x] Build a POC command palette over static product actions. Commit(s): `cb319ac`
@@ -192,19 +192,23 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Open a selected handler-thread surface in a chosen pane as a fully interactive surface. Commit(s): `77681bb`
 - [x] Keep duplicated views of the same surface synchronized while allowing independent scroll position. Commit(s): `902f79c`
 
-## 11. Session Modes And Runtime Profiles
+## 11. Session Agents And Workflow Agents
 
-- [ ] Define the runtime profile ids and stored shape for orchestrator, quick, handler, explorer, implementer, reviewer, and workflow-writer.
-- [x] Keep runtime profiles separate from typed handler context packs so Project CI uses the default handler runtime profile plus `context: ["ci"]`. Commit(s): `2a5dbbe`
-- [ ] Seed initial app-wide default values for those runtime profiles.
-- [ ] Build a POC settings model for editing app-wide runtime profile defaults.
-- [ ] Persist app-wide runtime profile defaults.
+- [ ] Define the stored shape for session agent settings used by orchestrator/handler surfaces and quick sessions.
+- [x] Keep session agent settings separate from typed handler context packs so Project CI uses normal handler-thread execution plus `context: ["ci"]`. Commit(s): `2a5dbbe`
+- [ ] Seed initial app-wide default values for the default session agent and quick session agent.
+- [ ] Build a POC settings model for editing app-wide session agent defaults.
+- [ ] Persist app-wide session agent defaults.
 - [ ] Build a POC session creation flow with separate orchestrator-session and quick-session actions.
 - [ ] Persist session mode and the default orchestrator-surface prompt selection.
-- [ ] Persist per-session overrides for each runtime profile.
-- [ ] Apply the quick-session main profile and quick-session system prompt at session creation.
-- [ ] Show the current focused-surface runtime profile summary in pane chrome.
-- [ ] Expand the session runtime panel to inspect all agent runtime profiles for the focused surface's session.
+- [ ] Persist per-session overrides for the default session agent and quick session agent.
+- [ ] Persist per-thread overrides for handler-thread session agent settings when a delegated thread needs a specific model or reasoning level.
+- [ ] Apply the quick-session agent settings and quick-session system prompt at session creation.
+- [ ] Show the current focused-surface session agent summary in pane chrome.
+- [ ] Expand the session agent panel to inspect the session agent settings for the focused surface's session and thread.
+- [ ] Seed `.svvy/workflows/components/agents.ts` with conventional `explorer`, `implementer`, and `reviewer` workflow agent exports.
+- [ ] Build settings support for editing conventional workflow agents by synchronizing model, reasoning, and prompt fields with `.svvy/workflows/components/agents.ts`.
+- [ ] Teach handler prompts to inspect and reuse `.svvy/workflows/components/agents.ts` exports when they fit, author artifact-local workflow agents for one-off needs, and write saved workflow agent components only on explicit request.
 
 ## 12. Session Titles
 
@@ -264,7 +268,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [ ] Render active, completed, failed, and waiting node states clearly.
 - [ ] Add selectable workflow nodes.
 - [ ] Show a detail panel for the selected workflow node.
-- [ ] Surface node objective, latest output, related artifacts, runtime profile, and worktree in that detail panel.
+- [ ] Surface node objective, latest output, related artifacts, workflow agent, and worktree in that detail panel.
 - [ ] Stream live workflow status changes into the graph while a workflow is running.
 - [ ] Render retry or loop edges without making the main path hard to read.
 - [ ] Open a selected child workflow node or related thread surface from the workflow inspector into another chosen pane.

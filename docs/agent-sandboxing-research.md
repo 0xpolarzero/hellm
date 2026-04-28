@@ -30,7 +30,7 @@ For `svvy`, the strongest direction is:
 
 - keep one strategic orchestrator outside the high-power task runtime
 - give handler threads policy authority and supervision responsibility
-- run workflow task agents inside explicit sandbox profiles
+- run workflow task agents inside explicit sandbox configurations
 - distinguish local low-latency trusted work from remote autonomous untrusted work
 - treat repo config, workflow assets, hooks, MCP servers, and workspace settings as part of the execution layer, not as passive metadata
 - combine a code-first tool surface such as `execute_typescript` with a real sandbox runtime and a host-side policy gate, rather than treating any one layer as the whole solution
@@ -790,11 +790,11 @@ This split gives the best combined security and developer experience:
    - should decide policy and delegation
    - should not inherit direct workflow-runtime powers it does not need
 2. Handler thread
-   - should choose sandbox profile and supervise long-running work
+   - should choose sandbox configuration and supervise long-running work
    - should hold approvals and attention routing
    - should be able to inspect artifacts and logs without collapsing back into host shell ownership
 3. Workflow task agent
-   - should execute inside the strictest task-local sandbox profile that still completes the task
+   - should execute inside the strictest task-local sandbox configuration that still completes the task
    - should not inherit orchestrator or handler powers
    - should receive only task-local tools and scoped credentials
 
@@ -847,7 +847,7 @@ The ideal product flow looks like this:
    - planning/read-only work
    - trusted local work
    - autonomous or higher-risk execution
-3. if execution is needed, `svvy` creates a fresh sandbox with a known runtime profile
+3. if execution is needed, `svvy` creates a fresh sandbox with known session-agent settings
 4. the repo enters that sandbox through an explicit mode:
    - direct local mount for trusted low-latency cases
    - copy-in / diff-out or worktree sync for autonomous cases

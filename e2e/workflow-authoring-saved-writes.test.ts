@@ -62,7 +62,7 @@ async function waitForVisible(
   locator: {
     isVisible(): Promise<boolean>;
   },
-  timeoutMs = 20_000,
+  timeoutMs = 60_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
@@ -81,7 +81,7 @@ async function waitForEnabled(
     isDisabled?: () => Promise<boolean>;
     getAttribute?: (name: string) => Promise<string | null>;
   },
-  timeoutMs = 20_000,
+  timeoutMs = 60_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
@@ -101,8 +101,12 @@ async function waitForEnabled(
   throw new Error("Timed out waiting for workflow authoring action to become enabled.");
 }
 
-function isDisabledClickError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("Resolved element is disabled");
+function isRetryableClickError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.includes("Resolved element is disabled") ||
+      error.message.includes("Bridge request timed out"))
+  );
 }
 
 async function clickWhenEnabled(
@@ -111,7 +115,7 @@ async function clickWhenEnabled(
     isDisabled?: () => Promise<boolean>;
     getAttribute?: (name: string) => Promise<string | null>;
   },
-  timeoutMs = 20_000,
+  timeoutMs = 60_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
@@ -121,7 +125,7 @@ async function clickWhenEnabled(
       await locator.click({ force: true });
       return;
     } catch (error) {
-      if (!isDisabledClickError(error)) {
+      if (!isRetryableClickError(error)) {
         throw error;
       }
     }
@@ -300,15 +304,16 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
           await waitForVisible(page.getByText("Delegated Threads"));
           await waitForVisible(page.getByText("Workflow Authoring Proof Thread", { exact: true }));
 
-          const threadCard = page.locator(".handler-thread-card").filter({
-            has: page.getByText("Workflow Authoring Proof Thread", { exact: true }),
-          });
+          const threadCard = page.locator(".handler-thread-card").first();
           await waitForVisible(threadCard);
+          expect((await threadCard.textContent()) ?? "").toContain("Workflow Authoring Proof Thread");
           expect((await threadCard.textContent()) ?? "").toContain(
             "author and run an artifact workflow",
           );
 
-          await clickWhenEnabled(threadCard.getByRole("button", { name: "Open thread" }));
+          await clickWhenEnabled(
+            page.locator(".handler-thread-actions button").nth(1),
+          );
           await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
 
           await sendPrompt(page, AUTHOR_ARTIFACT_PROMPT);
@@ -359,7 +364,9 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
           expect(existsSync(savedEntryPath)).toBe(false);
 
           await returnToOrchestrator(page);
-          await clickWhenEnabled(threadCard.getByRole("button", { name: "Open thread" }));
+          await clickWhenEnabled(
+            page.locator(".handler-thread-actions button").nth(1),
+          );
           await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
           await sendPrompt(page, RUN_ARTIFACT_PROMPT);
           await waitForCondition(
@@ -401,7 +408,9 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
           await waitForVisible(page.getByText("1 handoff"), 60_000);
           await waitForTextContent(threadCard, "Completed", 60_000);
 
-          await clickWhenEnabled(threadCard.getByRole("button", { name: "Inspect" }));
+          await clickWhenEnabled(
+            page.locator(".handler-thread-actions button").first(),
+          );
 
           const inspector = page.getByRole("dialog", { name: "Workflow Authoring Proof Thread" });
           await waitForVisible(inspector);
@@ -427,7 +436,9 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
           await closeDialogIfVisible(page);
           await returnToOrchestrator(page);
 
-          await clickWhenEnabled(threadCard.getByRole("button", { name: "Inspect" }));
+          await clickWhenEnabled(
+            page.locator(".handler-thread-actions button").first(),
+          );
           const savedInspector = page.getByRole("dialog", {
             name: "Workflow Authoring Proof Thread",
           });

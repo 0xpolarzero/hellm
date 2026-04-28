@@ -237,7 +237,7 @@ Product-runtime workflows may contain lower-level workflow task agents inside th
 
 The adopted direction is:
 
-- when a product workflow needs an adaptive coding agent, use a PI-backed task-agent profile by default
+- when a product workflow needs an adaptive coding agent, use a PI-backed workflow task agent by default
 - configure that task agent with a `svvy` workflow-task system prompt rather than the orchestrator or handler-thread prompt
 - expose only task-local tool declarations to that actor
 - the default adopted task-agent tool surface is `execute_typescript`
@@ -297,7 +297,7 @@ Actor-specific exposure is part of that contract:
 - the orchestrator prompt should know that handler threads can supervise workflows through `smithers.*`, but it should not receive the `smithers.*` generated tool schema in its own prompt
 - handler-thread prompts should receive the `smithers.*` schema because they are the delegated surfaces that actually supervise workflow execution
 - handler-thread prompts should not receive orchestrator-only tools such as `thread.start` in the default adopted model
-- workflow task agents should receive only their task-local tool schema, which in the default adopted profile is `execute_typescript`, with no ambient pi built-ins or extension-provided callable tools beyond that task-local set
+- workflow task agents should receive only their task-local tool schema, which in the default adopted configuration is `execute_typescript`, with no ambient pi built-ins or extension-provided callable tools beyond that task-local set
 - awareness of another actor's capabilities belongs in compact instructional prose, not in leaked callable declarations for tools that actor cannot invoke
 
 The first adopted Smithers-native surface is:

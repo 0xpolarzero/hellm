@@ -9,7 +9,7 @@
   - define keyboard shortcuts and fallback prompt behavior
   - define the command/action registry model
   - define command search, matching, and execution routing semantics
-  - define how the palette relates to sessions, Project CI, handler threads, workflow inspectors, panes, settings, runtime profiles, and future product actions
+  - define how the palette relates to sessions, Project CI, handler threads, workflow inspectors, panes, settings, agent settings, and future product actions
 
 ## Purpose
 
@@ -17,7 +17,7 @@ The command palette is the shell-level action surface for `svvy`.
 
 It gives users a VS Code-like way to discover and execute product actions without turning those actions into a second runtime. `Cmd+Shift+P` opens the all-actions command palette. `Cmd+P` opens a file quick-open palette, which is intentionally a placeholder until file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces exist.
 
-The palette invokes existing product behavior. It routes into sessions, panes, surfaces, orchestrator and handler turns, Smithers-native tools, Project CI projection, durable state, settings, and runtime profiles. It must not become an alternate execution engine, standalone shell, custom terminal loop, readline loop, or parallel workflow abstraction.
+The palette invokes existing product behavior. It routes into sessions, panes, surfaces, orchestrator and handler turns, Smithers-native tools, Project CI projection, durable state, settings, and agent settings. It must not become an alternate execution engine, standalone shell, custom terminal loop, readline loop, or parallel workflow abstraction.
 
 ## Source Boundaries
 
@@ -61,7 +61,7 @@ The all-actions palette discovers and executes product actions, including:
 - open handler thread surfaces
 - open workflow inspector-related surfaces
 - pane and layout actions once pane layout exists
-- settings, runtime, and profile actions when those features exist
+- settings and agent-setting actions when those features exist
 - future product actions as they are added
 
 `Cmd+P` opens file quick-open.
@@ -93,7 +93,7 @@ type CommandAction = {
     | "workflow-inspector"
     | "pane"
     | "settings"
-    | "runtime-profile";
+    | "agent-settings";
   aliases: string[];
   shortcut: string | null;
   availability: CommandAvailability;
@@ -149,7 +149,7 @@ Rules:
 - handler-thread actions target existing handler-thread surfaces or create handler work through `thread.start` only when the orchestrator model calls for delegation
 - workflow inspector actions open inspection surfaces over durable workflow-run state and Smithers-native inspection APIs
 - Smithers operations remain handler-thread tools exposed under the `smithers.*` surface; the palette must not introduce a parallel `workflow.*` command system
-- settings and runtime profile commands open or update the product-owned settings/profile surfaces when those features exist
+- settings and agent-setting commands open or update the product-owned settings surfaces when those features exist
 
 The command palette does not execute repository commands directly. Repository work still flows through pi-backed surfaces, normal turns, `execute_typescript`, handler threads, and Smithers-backed workflows.
 
@@ -211,10 +211,10 @@ Panes:
 - the palette can expose pane and layout actions once pane layout exists
 - pane placement and focused-pane replacement behavior are defined by the pane-layout spec
 
-Settings and runtime profiles:
+Settings and agent settings:
 
-- the palette can expose settings, provider, runtime, and profile actions when those features exist
-- these actions open or update product-owned settings/profile surfaces
+- the palette can expose settings, provider, session-agent, and workflow-agent actions when those features exist
+- these actions open or update product-owned settings surfaces
 
 Future product actions:
 

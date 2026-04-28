@@ -117,7 +117,7 @@ const PARALLEL_WORKFLOW_EXAMPLE = [
   "```",
 ].join("\n");
 
-const ASSET_AND_PROFILE_EXAMPLE = [
+const ASSET_AND_AGENT_EXAMPLE = [
   "Example: discover assets and read component source before deciding",
   "```ts",
   "const definitions = await api.workflow.listAssets({ kind: 'definition', scope: 'saved' });",
@@ -127,18 +127,18 @@ const ASSET_AND_PROFILE_EXAMPLE = [
   "return { definitions, components, componentSources, models };",
   "```",
   "",
-  "Example: write a component file with a workflow task-agent profile",
+  "Example: write the conventional reusable workflow agents component only when the user wants reusable workspace agents",
   "```ts",
   "await api.repo.writeFile({",
-  "  path: '.svvy/workflows/components/reviewer-profile.ts',",
+  "  path: '.svvy/workflows/components/agents.ts',",
   "  createDirectories: true,",
   "  text: `/**",
   " * @svvyAssetKind component",
-  " * @svvyId reviewer_profile",
-  " * @svvyTitle Reviewer Profile",
-  " * @svvySummary Reusable reviewer profile for workflow tasks.",
+  " * @svvyId workflow_agents",
+  " * @svvyTitle Workflow Agents",
+  " * @svvySummary Conventional explorer, implementer, and reviewer agents for Smithers workflows.",
   " */",
-  "export const reviewerProfile = {",
+  "export const reviewer = {",
   "  provider: 'openai',",
   "  model: 'gpt-5.4',",
   "  thinkingLevel: 'medium',",
@@ -182,7 +182,7 @@ export const HANDLER_WORKFLOW_AUTHORING_APPENDIX = [
   "",
   PARALLEL_WORKFLOW_EXAMPLE,
   "",
-  ASSET_AND_PROFILE_EXAMPLE,
+  ASSET_AND_AGENT_EXAMPLE,
   "",
   AGENTLIKE_TASK_EXAMPLE,
 ].join("\n");

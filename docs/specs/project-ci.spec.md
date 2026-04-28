@@ -55,7 +55,7 @@ That means:
 - no custom `svvy` CI component that agents must import into every workflow
 - no fake default CI that claims the project passed without running real checks
 - no CI authoring prompt injected into normal handler threads
-- no Project CI-specific runtime profile in the adopted model
+- normal handler-thread execution with the `ci` context pack loaded when CI authoring knowledge is needed
 
 ## Non-Goals
 
@@ -83,7 +83,7 @@ The UI should expose at least:
 - a way for user requests to configure or run Project CI to land in a normal handler thread
 - a clear `CI not configured` state instead of fake green status
 
-The UI must not require or imply a separate Project CI setup wizard, setup launcher, CI-specific orchestrator, or CI-specific runtime profile.
+The UI must not require or imply a separate Project CI setup wizard, setup launcher, CI-specific orchestrator, or custom CI execution surface.
 
 When the user asks to configure Project CI from chat or from the CI status surface, that request is handled as ordinary handler-thread work.
 
@@ -91,19 +91,15 @@ The orchestrator may start a normal handler thread with `context: ["ci"]` when t
 
 An existing handler may load the same context later with `request_context({ keys: ["ci"] })`.
 
-Mechanically, this is the same handler-thread actor class and default handler runtime shape used for other delegated work.
+Mechanically, this is the same handler-thread actor class used for other delegated work.
 
 The difference is only the loaded context keys.
 
 Ordinary orchestrator and handler sessions do not receive the `ci` context pack by default.
 
-Runtime profiles and context packs are different concepts.
+The `ci` context pack describes optional product knowledge and instructions.
 
-A runtime profile describes execution shape, such as model, reasoning, and tool surface.
-
-A context pack describes optional product knowledge and instructions.
-
-Project CI uses the default handler runtime profile plus the `ci` context pack.
+Project CI uses normal handler-thread execution plus that context pack when configuration or modification is needed.
 
 ## Actor Responsibilities
 

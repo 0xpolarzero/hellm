@@ -228,7 +228,7 @@ Why it is expensive:
 
 What to do instead:
 
-- persist runtime-profile metadata separately from transcript materialization
+- persist session-agent and workflow-agent metadata separately from transcript materialization
 - treat full session context as a detail load, not a metadata prerequisite
 
 ## Why These Costs Exist
@@ -299,7 +299,7 @@ PRD pressure:
 
 - workflow runs get a dedicated read-only graph inspector
 - graph nodes update live
-- node drill-down exposes outputs, artifacts, runtime profile, worktree, and model details
+- node drill-down exposes outputs, artifacts, workflow agent, worktree, and model details
 
 Optimization requirement:
 
@@ -325,7 +325,7 @@ PRD pressure:
 
 Optimization requirement:
 
-- maintain incremental token-accounting state per surface and runtime profile
+- maintain incremental token-accounting state per surface and session agent
 
 Do not:
 
@@ -335,7 +335,7 @@ Preferred direction:
 
 - running token counters
 - cached context budgets keyed by surface and model
-- invalidation only on transcript mutation or profile change
+- invalidation only on transcript mutation or agent setting change
 
 ### 5. Composer file mentions and workspace-aware autocomplete
 
@@ -358,27 +358,28 @@ Preferred direction:
 - fuzzy-search cache
 - symbolic mention storage keyed by workspace-relative path or durable file identity
 
-### 6. Runtime profiles and per-session overrides
+### 6. Session agents and per-session overrides
 
 PRD pressure:
 
-- app-wide runtime profiles exist for orchestrator, quick, explorer, implementer, reviewer, workflow-writer, and namer
-- sessions can override those profiles
+- app-wide session agent settings exist for the default session agent, quick session agent, and namer
+- conventional workflow agents exist as `.svvy/workflows/components/agents.ts` exports for explorer, implementer, and reviewer
+- sessions can override those agent settings
 - handler threads and workflow tasks inherit bounded task defaults
 
 Optimization requirement:
 
-- runtime-profile resolution should be metadata-driven and cheap
+- session-agent resolution should be metadata-driven and cheap
 
 Do not:
 
-- derive runtime-profile state by replaying sessions or rebuilding large config objects on every routing step
+- derive session-agent state by replaying sessions or rebuilding large config objects on every routing step
 
 Preferred direction:
 
-- versioned profile registry
+- versioned agent settings registry
 - session-level override records
-- pre-resolved effective profile objects cached by session and worker type
+- pre-resolved effective agent setting objects cached by session and worker type
 
 ### 7. Worktree awareness
 
@@ -519,7 +520,7 @@ Capture durable events for:
 - CI run/check result records
 - workflow run updates
 - worktree associations
-- runtime-profile changes
+- session-agent and workflow-agent setting changes
 
 ### 2. Normalized product-state store
 

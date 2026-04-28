@@ -55,7 +55,7 @@ type PromptableSession = {
 
 type ManagedSurfaceRecord = {
   sessionId: string;
-  actorProfile: "orchestrator" | "handler" | "workflow-task";
+  actorKind: "orchestrator" | "handler" | "workflow-task";
   provider: string;
   model: string;
   thinkingLevel: ThinkingLevel;

@@ -1,6 +1,6 @@
 /**
- * Source of truth for handler-authored workflow modules and workflow task-agent
- * profiles.
+ * Source of truth for handler-authored workflow modules and workflow task
+ * agents.
  *
  * The build regenerates a prompt declaration from this module. Keep runtime
  * loading, validation, and handler guidance aligned with these exported types.
@@ -66,10 +66,11 @@ export interface RunnableWorkflowRegistryEntry extends RunnableWorkflowEntryModu
 }
 
 /**
- * svvy workflow task-agent profile. Workflow task agents are AgentLike values
- * configured through this profile and receive only the task-local tool surface.
+ * svvy workflow task-agent configuration. Workflow task agents are AgentLike
+ * values configured through this shape and receive only the task-local tool
+ * surface.
  */
-export interface WorkflowTaskAgentProfile {
+export interface WorkflowTaskAgentConfig {
   provider: string;
   model: string;
   thinkingLevel: ThinkingLevel;

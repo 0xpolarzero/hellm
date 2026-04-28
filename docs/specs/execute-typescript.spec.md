@@ -637,7 +637,7 @@ That means:
 - snippet artifacts, child command facts, and parent rollups stay the same
 - when a workflow task agent calls `execute_typescript`, the execution root is the current Smithers task root or worktree, not the workspace runtime DB root
 
-The default adopted workflow-task-agent profile should expose `execute_typescript` as its task-local tool surface and should not expose `thread.start`, `thread.handoff`, `wait`, or `smithers.*`.
+The default adopted workflow task agent should expose `execute_typescript` as its task-local tool surface and should not expose `thread.start`, `thread.handoff`, `wait`, or `smithers.*`.
 
 ## First Implementation Focus
 

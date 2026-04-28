@@ -71,7 +71,7 @@ Live surface state is the currently hydrated pi runtime for one interactive surf
 It owns:
 
 - `surfacePiSessionId`
-- actor profile
+- actor kind
 - current transcript messages
 - streaming state
 - prompt lock

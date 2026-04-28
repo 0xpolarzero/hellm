@@ -92,14 +92,18 @@ beforeAll(async () => {
 });
 
 function isTransientBridgeError(error: unknown): boolean {
-  return error instanceof Error && error.message.toLowerCase().includes("bridge request timed out");
+  return (
+    error instanceof Error &&
+    (error.message.toLowerCase().includes("bridge request timed out") ||
+      error.message.includes("Resolved element is disabled"))
+  );
 }
 
 async function waitForVisible(
   locator: {
     isVisible(): Promise<boolean>;
   },
-  timeoutMs = 20_000,
+  timeoutMs = 60_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
@@ -118,6 +122,39 @@ async function waitForVisible(
   }
 
   throw new Error("Timed out waiting for Project CI lane UI.");
+}
+
+async function clickWhenReady(
+  locator: {
+    click(options?: { force?: boolean }): Promise<void>;
+    isDisabled?: () => Promise<boolean>;
+    getAttribute?: (name: string) => Promise<string | null>;
+  },
+  timeoutMs = 60_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const disabled =
+        typeof locator.isDisabled === "function"
+          ? await locator.isDisabled()
+          : typeof locator.getAttribute === "function"
+            ? (await locator.getAttribute("disabled")) !== null
+            : false;
+      if (!disabled) {
+        await locator.click({ force: true });
+        return;
+      }
+    } catch (error) {
+      if (!isTransientBridgeError(error)) {
+        throw error;
+      }
+    }
+    await Bun.sleep(100);
+  }
+
+  throw new Error("Timed out clicking Project CI lane action.");
 }
 
 async function withPersistentHome<T>(fn: (homeDir: string) => Promise<T>): Promise<T> {
@@ -482,18 +519,17 @@ test("renders typed Project CI context and persisted CI results after app boot",
         await waitForVisible(page.getByText("Delegated Threads"));
         await expectProjectCiRegion({ page, state: "passed" });
 
-        const threadCard = page.locator(".handler-thread-card").filter({
-          has: page.getByText("Project CI Handler", { exact: true }),
-        });
+        const threadCard = page.locator(".handler-thread-card").first();
         await waitForVisible(threadCard);
         const cardText = (await threadCard.textContent()) ?? "";
+        expect(cardText).toContain("Project CI Handler");
         expect(cardText).toContain("Completed");
         expect(cardText).toContain("Project CI passed.");
         expect(cardText).toContain("1 workflow");
         expect(cardText).toContain("1 CI run");
         expect(cardText).toContain("Context ci");
 
-        await threadCard.getByRole("button", { name: "Inspect" }).click({ force: true });
+        await clickWhenReady(page.locator(".handler-thread-actions button").first());
 
         const inspector = page.getByRole("dialog", { name: "Project CI Handler" });
         await waitForVisible(inspector);

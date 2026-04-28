@@ -193,7 +193,7 @@ A workflow task agent is:
 
 The adopted direction for task agents is:
 
-- use a PI-backed task-agent profile by default when a workflow task needs an adaptive coding agent
+- use a PI-backed workflow task agent by default when a workflow task needs an adaptive coding agent
 - give that task agent a `svvy` workflow-task system prompt rather than the orchestrator or handler-thread prompt
 - expose only a task-local tool surface; the default adopted task-agent tool surface is `execute_typescript`
 - keep `thread.start`, `thread.handoff`, `wait`, and `smithers.*` out of the task-agent prompt and tool schema
@@ -309,7 +309,7 @@ Project CI is not a separate native control tool in the adopted model.
 
 Project CI is a dedicated product status and result lane over normal Smithers runnable entries that declare `productKind = "project-ci"` and a CI result schema. CI state is recorded only from terminal output that validates against that declared result schema.
 
-The lane is a projection and UI concept, not a setup launcher, CI-specific orchestrator, or separate runtime profile.
+The lane is a projection and UI concept, not a setup launcher, CI-specific orchestrator, or custom CI execution surface.
 
 CI authoring knowledge is delivered through the typed `ci` context pack.
 
@@ -584,11 +584,9 @@ Each handler thread should have:
 - zero or more workflow runs
 - zero or more handoff episodes
 
-Typed context keys are not runtime profiles.
+Typed context keys describe optional product knowledge loaded into a handler prompt, such as `ci`.
 
-A runtime profile describes execution shape such as model, reasoning, and tool surface.
-
-A context key describes optional product knowledge loaded into a handler prompt, such as `ci`.
+Session agent settings describe the model, reasoning level, prompt selection, and callable surface used by real pi-backed interactive surfaces.
 
 ### Workflow Run
 
@@ -611,7 +609,7 @@ The delegated workflow library has three layers:
 2. workspace-saved reusable workflow assets under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and launchable saved entries under `.svvy/workflows/entries/`
 3. short-lived authored artifact workflows under `.svvy/artifacts/workflows/`
 
-The generated workflow-authoring contract is the handler-visible source of truth for runnable entry modules, product lane metadata, grouped asset refs, `createRunnableEntry(...)`, and workflow task-agent profiles. The curated guide teaches the Smithers render/task/output model, artifact layout, saved library layout, validation loop, and `AgentLike` task usage without restating generated `api.*` or workflow contract shapes in prose.
+The generated workflow-authoring contract is the handler-visible source of truth for runnable entry modules, product lane metadata, grouped asset refs, `createRunnableEntry(...)`, and workflow task agents. The curated guide teaches the Smithers render/task/output model, artifact layout, saved library layout, validation loop, and `AgentLike` task usage without restating generated `api.*` or workflow contract shapes in prose.
 
 Saved workflow assets are reusable source assets.
 
@@ -620,7 +618,7 @@ They include:
 - definitions
 - prompts
 - components
-- agent profile files as ordinary component assets
+- conventional workflow agents as ordinary component assets, including `.svvy/workflows/components/agents.ts` exports for `explorer`, `implementer`, and `reviewer`
 
 Saved entries are the launchable wrappers in the saved workflow library.
 
@@ -628,7 +626,7 @@ The intended decision order inside a handler thread is:
 
 1. can the task be completed directly in `execute_typescript`?
 2. if not, does a saved runnable entry clearly fit?
-3. if not, author a short-lived artifact workflow, usually by mixing saved definitions, prompts, and components
+3. if not, author a short-lived artifact workflow, usually by mixing saved definitions, prompts, and components; when task agents are needed, reuse `.svvy/workflows/components/agents.ts` exports when they fit and define artifact-local agents for one-off needs
 4. execute the selected or authored workflow
 
 Artifact workflows are persisted by default under `.svvy/artifacts/workflows/`.
@@ -870,13 +868,13 @@ Archiving is reversible and non-destructive. It must not delete durable session,
 
 `svvy` should expose a VS Code-like command palette model as a first-class shell capability.
 
-`Cmd+Shift+P` opens the all-actions command palette. It should discover and execute product actions, including session creation and switching, session pin/archive actions, opening focused session/thread/workflow/artifact/Project CI surfaces, Project CI run or configuration actions, handler-thread surfaces, workflow-inspector-related surfaces, pane and layout actions when panes exist, settings/runtime/profile actions when those features exist, and future product actions as they are added.
+`Cmd+Shift+P` opens the all-actions command palette. It should discover and execute product actions, including session creation and switching, session pin/archive actions, opening focused session/thread/workflow/artifact/Project CI surfaces, Project CI run or configuration actions, handler-thread surfaces, workflow-inspector-related surfaces, pane and layout actions when panes exist, settings and agent-setting actions when those features exist, and future product actions as they are added.
 
 `Cmd+P` opens file quick-open. For now, file quick-open is intentionally a no-op or placeholder because file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces are not yet implemented. It must not fabricate file surfaces or introduce an ad hoc file browsing path.
 
 When implemented, the command palette UI should use `cmdk-sv` from `https://www.cmdk-sv.com/` as the Svelte command menu primitive. Its docs describe it as a "fast, composable, unstyled command menu for Svelte." `cmdk-sv` is the renderer menu primitive, not the source of product routing, runtime behavior, or command semantics.
 
-The command palette is a shell/action surface. It is not an alternate execution engine, standalone shell, custom terminal loop, readline loop, alternate TUI stack, or parallel workflow abstraction. Palette actions route into the existing product model: sessions, panes, surfaces, orchestrator and handler turns, Smithers-native tools, Project CI projection, durable state, settings, and runtime profiles.
+The command palette is a shell/action surface. It is not an alternate execution engine, standalone shell, custom terminal loop, readline loop, alternate TUI stack, or parallel workflow abstraction. Palette actions route into the existing product model: sessions, panes, surfaces, orchestrator and handler turns, Smithers-native tools, Project CI projection, durable state, settings, and agent settings.
 
 When the user types text into `Cmd+Shift+P` and it does not match an existing command or action, pressing Enter creates a new session and uses that typed text as the initial prompt. That prompt enters the normal orchestrator turn model; it does not bypass system prompt loading, prompt history, structured turn state, or live surface runtime ownership.
 
@@ -944,7 +942,7 @@ The workflow inspector should let the user inspect:
 - completed workflow runs
 - workflow node progress
 - related artifacts
-- worktree and runtime profile context
+- worktree and workflow agent context
 
 Some workflow categories may justify specialized UI instead of a generic workflow card.
 

@@ -917,15 +917,15 @@ describe("execute_typescript tool", () => {
     );
     writeWorkspaceFile(
       workspaceCwd,
-      ".svvy/workflows/components/reviewer-profile.ts",
+      ".svvy/workflows/components/reviewer-agent.ts",
       [
         "/**",
         " * @svvyAssetKind component",
-        " * @svvyId saved_reviewer_profile",
-        " * @svvyTitle Saved Reviewer Profile",
-        " * @svvySummary Reusable reviewer profile for generic code review.",
+        " * @svvyId saved_reviewer_agent",
+        " * @svvyTitle Saved Reviewer Agent",
+        " * @svvySummary Reusable reviewer agent for generic code review.",
         " */",
-        "export const reviewerProfile = {};",
+        "export const reviewerAgent = {};",
       ].join("\n"),
     );
     writeWorkspaceFile(
@@ -938,13 +938,13 @@ describe("execute_typescript tool", () => {
     );
     writeWorkspaceFile(
       workspaceCwd,
-      ".svvy/artifacts/workflows/wf-oauth-review/components/oauth-security-profile.ts",
+      ".svvy/artifacts/workflows/wf-oauth-review/components/oauth-security-agent.ts",
       [
         "/**",
         " * @svvyAssetKind component",
         " * @svvyId oauth_security_reviewer",
         " * @svvyTitle OAuth Security Reviewer",
-        " * @svvySummary Focused reviewer profile for OAuth-sensitive changes.",
+        " * @svvySummary Focused reviewer agent for OAuth-sensitive changes.",
         " */",
         "export const oauthSecurityReviewer = {};",
       ].join("\n"),
@@ -1008,11 +1008,11 @@ describe("execute_typescript tool", () => {
         definitionIds: ["create_implement_review_verify"],
         promptPaths: [".svvy/workflows/prompts/review-base.mdx"],
         componentPaths: [
-          ".svvy/artifacts/workflows/wf-oauth-review/components/oauth-security-profile.ts",
-          ".svvy/workflows/components/reviewer-profile.ts",
+          ".svvy/artifacts/workflows/wf-oauth-review/components/oauth-security-agent.ts",
+          ".svvy/workflows/components/reviewer-agent.ts",
         ],
         savedLibraryPaths: [
-          ".svvy/workflows/components/reviewer-profile.ts",
+          ".svvy/workflows/components/reviewer-agent.ts",
           ".svvy/workflows/definitions/create-implement-review-verify.ts",
           ".svvy/workflows/prompts/review-base.mdx",
         ],
@@ -1072,7 +1072,7 @@ describe("execute_typescript tool", () => {
     const runtime = createRuntime(
       store,
       "session-workflow-models",
-      "Inspect workflow model options before creating a new agent profile",
+      "Inspect workflow model options before creating a new workflow agent",
     );
     const workflowLibrary = createWorkflowLibrary(workspaceCwd, {
       getProviders: (() => ["openai", "anthropic"]) as any,
@@ -1166,7 +1166,7 @@ describe("execute_typescript tool", () => {
       typescriptCode: [
         "await api.repo.writeFile({",
         '  path: ".svvy/workflows/components/oauth-security-reviewer.ts",',
-        "  text: `/**\\n * @svvyAssetKind component\\n * @svvyId oauth_security_reviewer\\n * @svvyTitle OAuth Security Reviewer\\n * @svvySummary Reusable OAuth security reviewer profile.\\n */\\nexport const oauthSecurityReviewer = {};`,",
+        "  text: `/**\\n * @svvyAssetKind component\\n * @svvyId oauth_security_reviewer\\n * @svvyTitle OAuth Security Reviewer\\n * @svvySummary Reusable OAuth security reviewer agent.\\n */\\nexport const oauthSecurityReviewer = {};`,",
         "  createDirectories: true,",
         "});",
         "return { ok: true };",
@@ -1217,7 +1217,7 @@ describe("execute_typescript tool", () => {
       typescriptCode: [
         "await api.repo.writeFile({",
         '  path: ".svvy/workflows/components/broken-reviewer.ts",',
-        '  text: `/**\\n * @svvyAssetKind component\\n * @svvyId broken_reviewer\\n * @svvyTitle Broken Reviewer\\n * @svvySummary Broken reusable reviewer profile.\\n */\\nconst broken: number = \\\"oops\\\";\\nexport const brokenReviewer = broken;`,',
+        '  text: `/**\\n * @svvyAssetKind component\\n * @svvyId broken_reviewer\\n * @svvyTitle Broken Reviewer\\n * @svvySummary Broken reusable reviewer agent.\\n */\\nconst broken: number = \\\"oops\\\";\\nexport const brokenReviewer = broken;`,',
         "  createDirectories: true,",
         "});",
         "return { ok: true };",
