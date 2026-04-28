@@ -213,6 +213,7 @@ Panes:
 
 Settings and agent settings:
 
+- the palette exposes ordinary session creation and quick-session creation as distinct actions
 - the palette can expose settings, provider, session-agent, and workflow-agent actions when those features exist
 - these actions open or update product-owned settings surfaces
 

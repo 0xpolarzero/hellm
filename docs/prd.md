@@ -588,6 +588,17 @@ Typed context keys describe optional product knowledge loaded into a handler pro
 
 Session agent settings describe the model, reasoning level, prompt selection, and callable surface used by real pi-backed interactive surfaces.
 
+The app owns two app-wide session-agent defaults:
+
+- `defaultSession` for ordinary orchestrator sessions
+- `quickSession` for short focused sessions created through quick-session actions
+
+Session records persist their mode, the app-wide defaults that were active at creation time, and the default orchestrator prompt selection. A quick session is still a normal pi-backed orchestrator surface with the normal svvy callable surface and durable state; it only starts from the quick-session agent default and quick-session system prompt.
+
+Handler threads may persist a per-thread session-agent override when `thread.start` declares a specific provider, model, reasoning level, or handler prompt suffix for the delegated objective. Typed handler context packs remain separate product knowledge and do not carry model, reasoning, or prompt-selection settings.
+
+The settings surface edits app-wide session-agent defaults and conventional workflow-agent settings. Workflow-agent settings synchronize to `.svvy/workflows/components/agents.ts`, which remains an ordinary saved workflow component that exports `explorer`, `implementer`, and `reviewer`.
+
 ### Workflow Run
 
 A workflow run is one Smithers execution launched from a handler thread.

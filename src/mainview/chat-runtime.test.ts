@@ -230,6 +230,8 @@ function createSurfaceSnapshot(input: {
     provider: input.provider ?? "openai",
     model: input.model ?? "gpt-4o",
     reasoningEffort: input.reasoningEffort ?? "medium",
+    sessionMode: "orchestrator",
+    sessionAgentKey: "defaultSession",
     systemPrompt,
     resolvedSystemPrompt: input.resolvedSystemPrompt ?? systemPrompt,
     promptStatus: "idle",
@@ -684,6 +686,73 @@ function createFakeRpc(input: {
           provider: "openai",
           model: "gpt-4o",
           reasoningEffort: "medium",
+        }),
+        getAgentSettings: async () => ({
+          version: 1,
+          sessionAgents: {
+            defaultSession: {
+              provider: "openai",
+              model: "gpt-4o",
+              reasoningEffort: "medium",
+              systemPrompt: "Default",
+            },
+            quickSession: {
+              provider: "openai",
+              model: "gpt-4o-mini",
+              reasoningEffort: "low",
+              systemPrompt: "Quick",
+            },
+          },
+          workflowAgents: {
+            explorer: {
+              id: "explorer",
+              label: "Explorer",
+              provider: "openai",
+              model: "gpt-4o",
+              reasoningEffort: "medium",
+              systemPrompt: "Explore",
+              toolSurface: ["execute_typescript"],
+            },
+            implementer: {
+              id: "implementer",
+              label: "Implementer",
+              provider: "openai",
+              model: "gpt-4o",
+              reasoningEffort: "medium",
+              systemPrompt: "Implement",
+              toolSurface: ["execute_typescript"],
+            },
+            reviewer: {
+              id: "reviewer",
+              label: "Reviewer",
+              provider: "openai",
+              model: "gpt-4o",
+              reasoningEffort: "medium",
+              systemPrompt: "Review",
+              toolSurface: ["execute_typescript"],
+            },
+          },
+        }),
+        updateSessionAgentDefault: async ({ key, settings }) => {
+          return {
+            ...(await harness.client.request.getAgentSettings()),
+            sessionAgents: {
+              ...(await harness.client.request.getAgentSettings()).sessionAgents,
+              [key]: settings,
+            },
+          };
+        },
+        updateWorkflowAgent: async ({ key, settings }) => {
+          return {
+            ...(await harness.client.request.getAgentSettings()),
+            workflowAgents: {
+              ...(await harness.client.request.getAgentSettings()).workflowAgents,
+              [key]: settings,
+            },
+          };
+        },
+        ensureWorkflowAgentsComponent: async () => ({
+          path: "/tmp/svvy/.svvy/workflows/components/agents.ts",
         }),
         getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
         getWorkspaceInfo: async () => ({

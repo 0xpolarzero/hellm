@@ -205,8 +205,24 @@
       return `Messaging handler thread ${currentSurface.threadId ?? currentSurface.surfacePiSessionId}`;
     }
 
+    if (currentSurfaceController?.sessionMode === "quick") {
+      return "Messaging quick session";
+    }
+
     return "Messaging orchestrator";
   });
+  function formatPaneSurfaceLabel(controller: ChatSurfaceController | null): string {
+    if (controller?.target.surface === "thread") {
+      return "Handler Thread";
+    }
+    return controller?.sessionMode === "quick" ? "Quick Session" : "Orchestrator";
+  }
+  function formatPaneAgentSummary(controller: ChatSurfaceController | null): string {
+    const model = controller?.agent.state.model;
+    const thinking = controller?.agent.state.thinkingLevel;
+    if (!model) return "No agent";
+    return `${model.provider}/${model.id} · ${thinking}`;
+  }
   const usageText = $derived(formatUsage(conversation.usage));
   const summaryMessageCount = $derived(conversationSummary.messageCount);
   const toolCallCount = $derived(conversationSummary.toolCallCount);
@@ -1758,8 +1774,8 @@
                 aria-label={`Focus pane ${pane.paneId}`}
                 onclick={() => void handleFocusPane(pane.paneId)}
               >
-                <strong>{pane.binding?.surface === "thread" ? "Handler Thread" : "Orchestrator"}</strong>
-                <span>{pane.binding?.surfacePiSessionId ?? "Empty pane"}</span>
+                <strong>{formatPaneSurfaceLabel(paneController)}</strong>
+                <span>{formatPaneAgentSummary(paneController)}</span>
               </button>
               <div class="pane-chrome-actions">
                 <button
@@ -2010,7 +2026,6 @@
                           aria-label={`Inspect ${thread.title}`}
                           disabled={promptBusy ||
                             mutatingSession ||
-                            currentSession?.status === "running" ||
                             thread.status === "running-handler" ||
                             thread.status === "running-workflow" ||
                             thread.latestWorkflowRun?.status === "running" ||

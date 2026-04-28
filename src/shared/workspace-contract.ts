@@ -1,6 +1,15 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessageEvent, Message } from "@mariozechner/pi-ai";
-import type { AgentDefaults, ReasoningEffort } from "./agent-settings";
+import type {
+  AgentDefaults,
+  AgentSettingsState,
+  ReasoningEffort,
+  SessionAgentKey,
+  SessionAgentSettings,
+  SessionMode,
+  WorkflowAgentKey,
+  WorkflowAgentSettings,
+} from "./agent-settings";
 
 export type AuthKeyType = "apikey" | "oauth" | "env" | "none";
 export type PromptSurfaceKind = "orchestrator" | "thread";
@@ -404,6 +413,8 @@ export interface ConversationSurfaceSnapshot {
   provider: string;
   model: string;
   reasoningEffort: ReasoningEffort;
+  sessionMode: SessionMode;
+  sessionAgentKey: SessionAgentKey;
   systemPrompt: string;
   resolvedSystemPrompt: string;
   promptStatus: "idle" | "streaming";
@@ -423,6 +434,17 @@ export interface ListSessionsResponse {
 export interface CreateSessionRequest {
   title?: string;
   parentSessionId?: string;
+  mode?: SessionMode;
+}
+
+export interface UpdateSessionAgentDefaultRequest {
+  key: SessionAgentKey;
+  settings: SessionAgentSettings;
+}
+
+export interface UpdateWorkflowAgentRequest {
+  key: WorkflowAgentKey;
+  settings: WorkflowAgentSettings;
 }
 
 export interface OpenSessionRequest {
@@ -458,6 +480,22 @@ export interface ChatRPCSchema {
       getDefaults: {
         params: undefined;
         response: AgentDefaults;
+      };
+      getAgentSettings: {
+        params: undefined;
+        response: AgentSettingsState;
+      };
+      updateSessionAgentDefault: {
+        params: UpdateSessionAgentDefaultRequest;
+        response: AgentSettingsState;
+      };
+      updateWorkflowAgent: {
+        params: UpdateWorkflowAgentRequest;
+        response: AgentSettingsState;
+      };
+      ensureWorkflowAgentsComponent: {
+        params: undefined;
+        response: { path: string };
       };
       getProviderAuthState: {
         params: ProviderAuthStateRequest;

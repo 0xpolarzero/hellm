@@ -2,6 +2,7 @@
 	import { onMount } from "svelte";
 	import { searchScore } from "./chat-format";
 	import type { ProviderAuthInfo } from "../shared/workspace-contract";
+	import type { AgentSettingsState, SessionAgentKey, WorkflowAgentKey } from "../shared/agent-settings";
 	import { rpc } from "./rpc";
 	import Button from "./ui/Button.svelte";
 	import Dialog from "./ui/Dialog.svelte";
@@ -12,12 +13,13 @@
 		onProviderAuthChanged?: (providerId: string) => void | Promise<void>;
 	};
 
-	type SettingsSection = "providers";
+	type SettingsSection = "providers" | "agents" | "workflow-agents";
 
 	let { onClose, onProviderAuthChanged }: Props = $props();
 
 	let activeSection = $state<SettingsSection>("providers");
 	let providers = $state<ProviderAuthInfo[]>([]);
+	let agentSettings = $state<AgentSettingsState | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let searchQuery = $state("");
@@ -33,6 +35,10 @@
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Failed to load providers";
 		}
+	}
+
+	async function refreshAgentSettings() {
+		agentSettings = await rpc.request.getAgentSettings();
 	}
 
 	async function notifyAuthChanged(providerId: string) {
@@ -88,9 +94,30 @@
 	});
 
 	onMount(async () => {
-		await refreshProviders();
+		await Promise.all([refreshProviders(), refreshAgentSettings()]);
 		loading = false;
 	});
+
+	async function saveSessionAgent(key: SessionAgentKey) {
+		if (!agentSettings) return;
+		agentSettings = await rpc.request.updateSessionAgentDefault({
+			key,
+			settings: agentSettings.sessionAgents[key],
+		});
+	}
+
+	async function saveWorkflowAgent(key: WorkflowAgentKey) {
+		if (!agentSettings) return;
+		agentSettings = await rpc.request.updateWorkflowAgent({
+			key,
+			settings: agentSettings.workflowAgents[key],
+		});
+	}
+
+	async function seedWorkflowAgents() {
+		await rpc.request.ensureWorkflowAgentsComponent();
+		await refreshAgentSettings();
+	}
 
 	async function handleSaveApiKey(providerId: string) {
 		const key = apiKeyInput[providerId]?.trim();
@@ -156,6 +183,24 @@
 			>
 				<span>Providers</span>
 				<span>{providers.length}</span>
+			</button>
+			<button
+				class={`settings-nav-item ${activeSection === "agents" ? "active" : ""}`.trim()}
+				type="button"
+				aria-current={activeSection === "agents" ? "page" : undefined}
+				onclick={() => (activeSection = "agents")}
+			>
+				<span>Session Agents</span>
+				<span>2</span>
+			</button>
+			<button
+				class={`settings-nav-item ${activeSection === "workflow-agents" ? "active" : ""}`.trim()}
+				type="button"
+				aria-current={activeSection === "workflow-agents" ? "page" : undefined}
+				onclick={() => (activeSection = "workflow-agents")}
+			>
+				<span>Workflow Agents</span>
+				<span>3</span>
 			</button>
 		</aside>
 
@@ -252,6 +297,62 @@
 						{/each}
 					</div>
 				{/if}
+			{/if}
+			{#if activeSection === "agents" && agentSettings}
+				<div class="agent-list">
+					{#each ["defaultSession", "quickSession"] as key (key)}
+						{@const settings = agentSettings.sessionAgents[key as SessionAgentKey]}
+						<article class="provider-row agent-row">
+							<div class="provider-main">
+								<div class="provider-heading">
+									<span class="provider-name">{key === "defaultSession" ? "Default Session" : "Quick Session"}</span>
+									<span class="provider-status tone-info">{settings.reasoningEffort}</span>
+								</div>
+								<div class="agent-grid">
+									<Input bind:value={settings.provider} placeholder="Provider" />
+									<Input bind:value={settings.model} placeholder="Model" />
+									<Input bind:value={settings.reasoningEffort} placeholder="Reasoning" />
+								</div>
+                <textarea bind:value={settings.systemPrompt} class="agent-prompt" rows="5"></textarea>
+							</div>
+							<div class="provider-actions">
+								<Button variant="primary" size="sm" onclick={() => saveSessionAgent(key as SessionAgentKey)}>
+									Save
+								</Button>
+							</div>
+						</article>
+					{/each}
+				</div>
+			{/if}
+			{#if activeSection === "workflow-agents" && agentSettings}
+				<div class="settings-search">
+					<Button variant="primary" size="sm" onclick={seedWorkflowAgents}>Seed agents.ts</Button>
+					<p class="settings-search-summary">Syncs conventional workflow agents to .svvy/workflows/components/agents.ts</p>
+				</div>
+				<div class="agent-list">
+					{#each ["explorer", "implementer", "reviewer"] as key (key)}
+						{@const settings = agentSettings.workflowAgents[key as WorkflowAgentKey]}
+						<article class="provider-row agent-row">
+							<div class="provider-main">
+								<div class="provider-heading">
+									<span class="provider-name">{settings.label}</span>
+									<span class="provider-status tone-info">{settings.reasoningEffort}</span>
+								</div>
+								<div class="agent-grid">
+									<Input bind:value={settings.provider} placeholder="Provider" />
+									<Input bind:value={settings.model} placeholder="Model" />
+									<Input bind:value={settings.reasoningEffort} placeholder="Reasoning" />
+								</div>
+                <textarea bind:value={settings.systemPrompt} class="agent-prompt" rows="5"></textarea>
+							</div>
+							<div class="provider-actions">
+								<Button variant="primary" size="sm" onclick={() => saveWorkflowAgent(key as WorkflowAgentKey)}>
+									Save
+								</Button>
+							</div>
+						</article>
+					{/each}
+				</div>
 			{/if}
 		</section>
 	</div>
@@ -385,6 +486,36 @@
 		min-width: 0;
 	}
 
+	.agent-list {
+		display: grid;
+		gap: 0.75rem;
+	}
+
+	.agent-row {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
+
+	.agent-grid {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0.5rem;
+		margin-top: 0.35rem;
+	}
+
+	.agent-prompt {
+		width: 100%;
+		min-width: 0;
+		margin-top: 0.4rem;
+		resize: vertical;
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+		border-radius: var(--ui-radius-md);
+		padding: 0.7rem;
+		background: color-mix(in oklab, var(--ui-surface-subtle) 82%, transparent);
+		color: var(--ui-text-primary);
+		font: inherit;
+		line-height: 1.5;
+	}
+
 	.provider-heading {
 		display: flex;
 		align-items: center;
@@ -465,6 +596,10 @@
 		}
 
 		.provider-row {
+			grid-template-columns: 1fr;
+		}
+
+		.agent-grid {
 			grid-template-columns: 1fr;
 		}
 

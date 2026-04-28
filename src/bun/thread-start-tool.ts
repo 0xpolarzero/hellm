@@ -1,6 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import type { Static } from "@sinclair/typebox";
+import type { SessionAgentSettings } from "../shared/agent-settings";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import type {
   StructuredSessionStateStore,
@@ -19,6 +20,21 @@ export const startThreadParamsSchema = Type.Object(
     objective: Type.String({ minLength: 1 }),
     title: Type.Optional(Type.String({ minLength: 1 })),
     context: Type.Optional(Type.Array(Type.Literal("ci"))),
+    agent: Type.Optional(
+      Type.Object(
+        {
+          provider: Type.String({ minLength: 1 }),
+          model: Type.String({ minLength: 1 }),
+          reasoningEffort: Type.Union([
+            Type.Literal("low"),
+            Type.Literal("medium"),
+            Type.Literal("high"),
+          ]),
+          systemPrompt: Type.Optional(Type.String({ minLength: 1 })),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -39,6 +55,7 @@ export interface ThreadStartBridge {
     title: string;
     objective: string;
     contextKeys: HandlerContextKey[];
+    sessionAgentSettings: SessionAgentSettings | null;
     loadedByCommandId: string;
   }): Promise<StructuredThreadRecord>;
 }
@@ -89,6 +106,14 @@ export function createStartThreadTool(options: {
           title,
           objective,
           contextKeys,
+          sessionAgentSettings: params.agent
+            ? {
+                provider: params.agent.provider,
+                model: params.agent.model,
+                reasoningEffort: params.agent.reasoningEffort,
+                systemPrompt: params.agent.systemPrompt ?? "",
+              }
+            : null,
           loadedByCommandId: command.id,
         });
 

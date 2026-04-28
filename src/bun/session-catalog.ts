@@ -39,7 +39,12 @@ import type {
   WorkspaceSessionSummary,
   WorkspaceWorkflowTaskAttemptInspector,
 } from "../shared/workspace-contract";
-import { DEFAULT_AGENT_SETTINGS } from "../shared/agent-settings";
+import {
+  DEFAULT_AGENT_SETTINGS,
+  type SessionAgentKey,
+  type SessionAgentSettings,
+  type SessionMode,
+} from "../shared/agent-settings";
 import {
   projectWorkspaceSessionSummary,
   projectWorkspaceSessionSummaryFromInfo,
@@ -79,6 +84,7 @@ import { SmithersRuntimeManager } from "./smithers-runtime/manager";
 import { createBundledWorkflowDefinitions } from "./smithers-runtime/bundled-workflows";
 import { createRequestContextTool } from "./request-context-tool";
 import { getHandlerContextPack, type HandlerContextKey } from "./handler-context-packs";
+import { createSessionAgentSettingsStore } from "./session-agent-settings";
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
   input: 0,
@@ -108,6 +114,8 @@ interface ManagedSession {
   provider: string;
   model: string;
   thinkingLevel: ThinkingLevel;
+  sessionMode: SessionMode;
+  sessionAgentKey: SessionAgentKey;
   systemPrompt: string;
   promptSyncCursor: PromptSyncCursor;
   session: AgentSession;
@@ -125,6 +133,9 @@ export interface SessionDefaults {
   model: string;
   thinkingLevel: ThinkingLevel;
   systemPrompt: string;
+  sessionMode?: SessionMode;
+  sessionAgentKey?: SessionAgentKey;
+  sessionAgentSettings?: SessionAgentSettings;
 }
 
 export interface SendAgentPromptOptions extends SessionDefaults {
@@ -140,6 +151,8 @@ interface CreateManagedSessionOptions {
   model?: string;
   thinkingLevel?: ThinkingLevel;
   systemPrompt: string;
+  sessionMode?: SessionMode;
+  sessionAgentKey?: SessionAgentKey;
 }
 
 interface VisibleStreamState {
@@ -159,6 +172,7 @@ export class WorkspaceSessionCatalog {
   private readonly managedSurfaces = new Map<string, ManagedSession>();
   private readonly structuredSessionStore: StructuredSessionStateStore;
   private readonly smithersRuntimeManager: SmithersRuntimeManager;
+  private readonly agentSettingsStore: ReturnType<typeof createSessionAgentSettingsStore>;
   private workspaceSyncListener: ((payload: WorkspaceSyncMessage) => void) | null = null;
   private surfaceSyncListener: ((payload: SurfaceSyncMessage) => void) | null = null;
 
@@ -179,6 +193,11 @@ export class WorkspaceSessionCatalog {
       },
       databasePath: join(this.sessionDir, STRUCTURED_SESSION_DB_FILENAME),
     });
+    this.agentSettingsStore = createSessionAgentSettingsStore({
+      cwd: this.cwd,
+      agentDir: this.agentDir,
+    });
+    this.agentSettingsStore.ensureWorkflowAgentsComponent();
     this.smithersRuntimeManager = new SmithersRuntimeManager({
       cwd: this.cwd,
       agentDir: this.agentDir,
@@ -452,7 +471,13 @@ export class WorkspaceSessionCatalog {
       provider: defaults.provider,
       model: defaults.model,
       thinkingLevel: defaults.thinkingLevel,
-      systemPrompt: buildSystemPrompt("orchestrator"),
+      systemPrompt:
+        defaults.sessionAgentKey || request.mode === "quick"
+          ? defaults.systemPrompt
+          : buildSystemPrompt("orchestrator"),
+      sessionMode: request.mode ?? "orchestrator",
+      sessionAgentKey:
+        defaults.sessionAgentKey ?? (request.mode === "quick" ? "quickSession" : "defaultSession"),
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
     session.retainCount += 1;
@@ -728,10 +753,16 @@ export class WorkspaceSessionCatalog {
     }
 
     const sessionFile = await this.getSessionFileForId(surfacePiSessionId);
+    const threadAgentSettings = this.resolveThreadAgentSettings(surfacePiSessionId);
     return this.createManagedSurfaceRecord({
       sessionManager: SessionManager.open(sessionFile!, dirname(sessionFile!)),
       actorKind,
+      provider: threadAgentSettings?.provider,
+      model: threadAgentSettings?.model,
+      thinkingLevel: threadAgentSettings?.reasoningEffort,
       systemPrompt,
+      sessionMode: "orchestrator",
+      sessionAgentKey: "defaultSession",
     });
   }
 
@@ -815,6 +846,8 @@ export class WorkspaceSessionCatalog {
       model,
       thinkingLevel,
       systemPrompt,
+      sessionMode: session.sessionMode,
+      sessionAgentKey: session.sessionAgentKey,
       agentDir: this.agentDir,
       structuredSessionStore: this.structuredSessionStore,
       createHandlerThread: this.createHandlerThread.bind(this),
@@ -916,6 +949,8 @@ export class WorkspaceSessionCatalog {
       provider: session.provider,
       model: session.model,
       reasoningEffort: session.thinkingLevel,
+      sessionMode: session.sessionMode,
+      sessionAgentKey: session.sessionAgentKey,
       systemPrompt: session.systemPrompt,
       resolvedSystemPrompt: getResolvedSystemPrompt(session),
       messages: structuredClone(session.session.agent.state.messages),
@@ -1013,9 +1048,30 @@ export class WorkspaceSessionCatalog {
       this.getStructuredSnapshot(target.workspaceSessionId)?.threads.find(
         (candidate) => candidate.id === target.threadId,
       ) ?? null;
-    return buildSystemPrompt("handler", {
+    const basePrompt = buildSystemPrompt("handler", {
       loadedContextKeys: thread?.loadedContextKeys ?? [],
     });
+    const agentSettings = this.resolveThreadAgentSettings(target.surfacePiSessionId);
+    const suffix = agentSettings?.systemPrompt.trim();
+    return suffix ? `${basePrompt}\n\n## Handler Agent Override\n${suffix}` : basePrompt;
+  }
+
+  private resolveThreadAgentSettings(surfacePiSessionId: string): SessionAgentSettings | null {
+    for (const session of this.structuredSessionStore.listSessionStates()) {
+      const thread = session.threads.find(
+        (candidate) => candidate.surfacePiSessionId === surfacePiSessionId,
+      );
+      if (!thread?.sessionAgentJson) continue;
+      try {
+        const parsed = JSON.parse(thread.sessionAgentJson) as SessionAgentSettings;
+        if (parsed.provider && parsed.model && parsed.reasoningEffort) {
+          return parsed;
+        }
+      } catch {
+        return null;
+      }
+    }
+    return null;
   }
 
   private resolvePromptTargetForSurfacePiSessionId(surfacePiSessionId: string): PromptTarget {
@@ -1091,6 +1147,14 @@ export class WorkspaceSessionCatalog {
         provider: summary.provider ?? snapshot?.pi.provider,
         model: summary.modelId ?? snapshot?.pi.model,
         reasoningEffort: summary.thinkingLevel ?? snapshot?.pi.reasoningEffort,
+        sessionMode: snapshot?.pi.sessionMode ?? "orchestrator",
+        defaultSessionAgentJson:
+          snapshot?.pi.defaultSessionAgentJson ??
+          JSON.stringify(this.agentSettingsStore.getState().sessionAgents.defaultSession),
+        quickSessionAgentJson:
+          snapshot?.pi.quickSessionAgentJson ??
+          JSON.stringify(this.agentSettingsStore.getState().sessionAgents.quickSession),
+        defaultOrchestratorPromptKey: snapshot?.pi.defaultOrchestratorPromptKey ?? "defaultSession",
         messageCount: summary.messageCount,
         status: summary.status,
         createdAt: summary.createdAt,
@@ -1103,6 +1167,23 @@ export class WorkspaceSessionCatalog {
 
   private syncStructuredPiSessionFromOrchestratorSession(session: ManagedSession): void {
     this.syncStructuredPiSessionFromSummary(this.buildLiveSummaryFromManagedSession(session));
+    const summary = this.buildLiveSummaryFromManagedSession(session);
+    const state = this.agentSettingsStore.getState();
+    this.structuredSessionStore.upsertPiSession({
+      sessionId: summary.id,
+      title: summary.title,
+      provider: session.provider,
+      model: session.model,
+      reasoningEffort: session.thinkingLevel,
+      sessionMode: session.sessionMode,
+      defaultSessionAgentJson: JSON.stringify(state.sessionAgents.defaultSession),
+      quickSessionAgentJson: JSON.stringify(state.sessionAgents.quickSession),
+      defaultOrchestratorPromptKey: session.sessionAgentKey,
+      messageCount: summary.messageCount,
+      status: summary.status,
+      createdAt: summary.createdAt,
+      updatedAt: summary.updatedAt,
+    });
   }
 
   private async syncStructuredPiSessionFromWorkspaceSession(
@@ -1276,6 +1357,7 @@ export class WorkspaceSessionCatalog {
     title: string;
     objective: string;
     contextKeys: HandlerContextKey[];
+    sessionAgentSettings: SessionAgentSettings | null;
     loadedByCommandId: string;
   }) {
     const parentSessionFile = await this.getSessionFileForId(input.parentSurfacePiSessionId);
@@ -1294,6 +1376,9 @@ export class WorkspaceSessionCatalog {
       surfacePiSessionId: threadSessionManager.getSessionId(),
       title: input.title,
       objective: input.objective,
+      sessionAgentJson: input.sessionAgentSettings
+        ? JSON.stringify(input.sessionAgentSettings)
+        : null,
     });
     for (const key of input.contextKeys) {
       const pack = getHandlerContextPack(key);
@@ -1835,6 +1920,8 @@ async function createManagedSession(
     provider: activeModel.provider,
     model: activeModel.id,
     thinkingLevel: restoredDefaults.thinkingLevel,
+    sessionMode: options.sessionMode ?? "orchestrator",
+    sessionAgentKey: options.sessionAgentKey ?? "defaultSession",
     systemPrompt: options.systemPrompt,
     promptSyncCursor: createPromptSyncCursor(convertToLlmMessages(session.agent.state.messages)),
     session,
@@ -2310,7 +2397,7 @@ function resolveRegisteredModel(modelRegistry: ModelRegistry, provider: string, 
   );
 }
 
-function getSvvyAgentDir(): string {
+export function getSvvyAgentDir(): string {
   return process.platform === "win32"
     ? join(process.env.APPDATA ?? homedir(), "svvy", "pi-agent")
     : join(homedir(), ".config", "svvy", "pi-agent");

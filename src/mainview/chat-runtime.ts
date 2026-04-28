@@ -29,6 +29,7 @@ import {
   type WorkspaceUiRestoreState,
 } from "./chat-storage";
 import { DEFAULT_AGENT_SETTINGS, type ReasoningEffort } from "../shared/agent-settings";
+import type { SessionAgentKey, SessionMode } from "../shared/agent-settings";
 import {
   bindPane,
   closePane,
@@ -105,6 +106,8 @@ export interface ChatSurfaceController {
   agent: Agent;
   target: PromptTarget;
   resolvedSystemPrompt: string;
+  sessionMode: SessionMode;
+  sessionAgentKey: SessionAgentKey;
   promptStatus: PromptStatus;
   ownerPaneIds: string[];
   abort: () => Promise<void>;
@@ -121,6 +124,10 @@ interface ChatSurfaceControllerInternal extends ChatSurfaceController {
 export interface ChatRuntimeRpcClient {
   request: {
     getDefaults: typeof rpc.request.getDefaults;
+    getAgentSettings: typeof rpc.request.getAgentSettings;
+    updateSessionAgentDefault: typeof rpc.request.updateSessionAgentDefault;
+    updateWorkflowAgent: typeof rpc.request.updateWorkflowAgent;
+    ensureWorkflowAgentsComponent: typeof rpc.request.ensureWorkflowAgentsComponent;
     getProviderAuthState: typeof rpc.request.getProviderAuthState;
     getWorkspaceInfo: typeof rpc.request.getWorkspaceInfo;
     listSessions: typeof rpc.request.listSessions;
@@ -325,6 +332,8 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
   agent: Agent;
   target: PromptTarget;
   resolvedSystemPrompt: string;
+  sessionMode: SessionMode;
+  sessionAgentKey: SessionAgentKey;
   promptStatus: PromptStatus;
 
   private listeners = new Set<ChatRuntimeListener>();
@@ -341,6 +350,8 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
   ) {
     this.target = normalizePromptTarget(snapshot.target);
     this.resolvedSystemPrompt = snapshot.resolvedSystemPrompt;
+    this.sessionMode = snapshot.sessionMode;
+    this.sessionAgentKey = snapshot.sessionAgentKey;
     this.promptStatus = snapshot.promptStatus;
     this.agent = createInitialAgent(snapshot, this.createStreamFn());
 
@@ -411,6 +422,8 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
       this.pendingSnapshot = structuredClone(snapshot);
       this.resolvedSystemPrompt = snapshot.resolvedSystemPrompt;
       this.target = normalizePromptTarget(snapshot.target);
+      this.sessionMode = snapshot.sessionMode;
+      this.sessionAgentKey = snapshot.sessionAgentKey;
       this.emit();
       return;
     }
@@ -418,6 +431,8 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
     this.pendingSnapshot = null;
     this.target = normalizePromptTarget(snapshot.target);
     this.resolvedSystemPrompt = snapshot.resolvedSystemPrompt;
+    this.sessionMode = snapshot.sessionMode;
+    this.sessionAgentKey = snapshot.sessionAgentKey;
     this.promptStatus = snapshot.promptStatus;
 
     this.suppressSurfaceMutationSync = true;

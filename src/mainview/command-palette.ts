@@ -27,7 +27,7 @@ export type CommandAvailability =
 export type CommandPlacement = "new-pane" | "focused-pane";
 
 export type CommandExecutionTarget =
-  | { kind: "create-session"; initialPrompt?: string }
+  | { kind: "create-session"; mode?: "orchestrator" | "quick"; initialPrompt?: string }
   | { kind: "open-session"; workspaceSessionId: string }
   | {
       kind: "open-workflow-task-attempt";
@@ -151,6 +151,15 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
       shortcut: null,
       availability: { kind: "available" },
       execute: { kind: "create-session" },
+    },
+    {
+      id: "session.quick",
+      label: "New Quick Session",
+      category: "agent-settings",
+      aliases: ["quick session", "scratch session", "fast session"],
+      shortcut: null,
+      availability: { kind: "available" },
+      execute: { kind: "create-session", mode: "quick" },
     },
     {
       id: "settings.open",
@@ -467,7 +476,7 @@ export async function executeCommandAction(input: {
   const target = action.execute;
   switch (target.kind) {
     case "create-session":
-      await runtime.createSession({}, paneId);
+      await runtime.createSession({ mode: target.mode }, paneId);
       if (target.initialPrompt) {
         await executeInitialPrompt({ runtime, paneId, prompt: target.initialPrompt });
       }
@@ -524,7 +533,7 @@ export async function executePaletteFallbackPrompt(input: {
     return false;
   }
 
-  await input.runtime.createSession({}, input.paneId);
+  await input.runtime.createSession({ mode: "quick" }, input.paneId);
   const pane = input.runtime.getPane(input.paneId);
   if (pane?.target) {
     await input.onCreatedTarget?.(pane.target);

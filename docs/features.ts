@@ -143,6 +143,19 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     sourceSpecs: ["docs/prd.md", "docs/specs/command-palette.spec.md"],
   },
   {
+    id: "session-agent-settings",
+    name: "Session Agent And Workflow Agent Settings",
+    status: "shipped",
+    summary:
+      "Persists app-wide default-session and quick-session agent defaults with provider, model, reasoning, and system prompt; records session mode and prompt selection on created sessions; allows handler threads to carry per-thread model, reasoning, and prompt overrides through `thread.start`; exposes focused-surface agent summaries in pane chrome and settings inspection/editing for session and conventional workflow agents; and synchronizes `explorer`, `implementer`, and `reviewer` workflow-agent settings to `.svvy/workflows/components/agents.ts` as a normal saved component asset.",
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/structured-session-state.spec.md",
+      "docs/specs/workflow-library.spec.md",
+      "docs/specs/command-palette.spec.md",
+    ],
+  },
+  {
     id: "multi-session-support",
     name: "Multi-Session Workspace Navigation",
     status: "shipped",

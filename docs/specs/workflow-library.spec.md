@@ -178,7 +178,7 @@ Examples:
 - workflow building blocks
 - workflow agent values or factories
 
-Workflow agent files are ordinary component files that export values conforming to the generated `WorkflowTaskAgentConfig` contract. The conventional saved workflow agents live in `.svvy/workflows/components/agents.ts` and export `explorer`, `implementer`, and `reviewer`. Workflow definitions and entries use Smithers `AgentLike` values for adaptive task execution, with the workflow agent configuration describing the svvy task-agent model, prompt, reasoning, and task-local tool surface.
+Workflow agent files are ordinary component files that export values conforming to the generated `WorkflowTaskAgentConfig` contract. The conventional saved workflow agents live in `.svvy/workflows/components/agents.ts` and export `explorer`, `implementer`, and `reviewer`. App settings seed and synchronize those three conventional exports by writing the component file directly; workflow discovery and validation still treat it as a normal saved component asset. Workflow definitions and entries use Smithers `AgentLike` values for adaptive task execution, with the workflow agent configuration describing the svvy task-agent model, prompt, reasoning, and task-local tool surface.
 
 A handler lists component assets and reads candidate component files before using their exported values.
 

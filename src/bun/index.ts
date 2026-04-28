@@ -12,8 +12,10 @@ import type {
 } from "../shared/workspace-contract";
 import {
   DEFAULT_AGENT_SETTINGS,
+  DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
   type AgentDefaults,
   type ReasoningEffort,
+  type SessionMode,
 } from "../shared/agent-settings";
 import {
   getProviderEnvVar,
@@ -23,8 +25,9 @@ import {
   setApiKey as storeApiKey,
 } from "./auth-store";
 import { refreshIfNeeded, startOAuthLogin, supportsOAuth } from "./oauth-login";
-import { DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt";
-import { WorkspaceSessionCatalog, type SessionDefaults } from "./session-catalog";
+import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt";
+import { getSvvyAgentDir, WorkspaceSessionCatalog, type SessionDefaults } from "./session-catalog";
+import { createSessionAgentSettingsStore } from "./session-agent-settings";
 import { createSvvyToolBridge } from "./tool-bridge";
 import { resolveWorkspaceCwd } from "./workspace-context";
 
@@ -51,6 +54,10 @@ const PREFERRED_MODEL_FRAGMENTS = [
 let resolvedDefaults: AgentDefaults | null = null;
 let mainWindow: BrowserWindow | null = null;
 const workspaceSessionCatalog = new WorkspaceSessionCatalog(resolveWorkspaceCwd());
+const agentSettingsStore = createSessionAgentSettingsStore({
+  cwd: resolveWorkspaceCwd(),
+  agentDir: getSvvyAgentDir(),
+});
 
 function loadEnvFile(filePath: string): void {
   if (!existsSync(filePath)) return;
@@ -168,6 +175,14 @@ function resolveSendDefaults(request: SendPromptRequest): AgentDefaults {
 }
 
 function getDefaultAgentSettings(): AgentDefaults {
+  const savedDefault = agentSettingsStore.getState().sessionAgents.defaultSession;
+  if (savedDefault.provider && savedDefault.model) {
+    return {
+      provider: savedDefault.provider,
+      model: savedDefault.model,
+      reasoningEffort: savedDefault.reasoningEffort,
+    };
+  }
   if (resolvedDefaults) {
     return resolvedDefaults;
   }
@@ -204,14 +219,31 @@ function getDefaultAgentSettings(): AgentDefaults {
   return resolvedDefaults;
 }
 
-function getSessionDefaults(systemPrompt = DEFAULT_SYSTEM_PROMPT): SessionDefaults {
-  const defaults = getDefaultAgentSettings();
+function getSessionDefaults(mode: SessionMode = "orchestrator"): SessionDefaults {
+  const agentSettings =
+    agentSettingsStore.getState().sessionAgents[
+      mode === "quick" ? "quickSession" : "defaultSession"
+    ];
+  const defaults =
+    agentSettings.provider && agentSettings.model ? agentSettings : getDefaultAgentSettings();
   return {
     model: defaults.model,
     provider: defaults.provider,
-    systemPrompt,
+    systemPrompt: buildRuntimeSystemPrompt(agentSettings),
     thinkingLevel: defaults.reasoningEffort,
+    sessionMode: mode,
+    sessionAgentKey: mode === "quick" ? "quickSession" : "defaultSession",
   };
+}
+
+function buildRuntimeSystemPrompt(settings: { systemPrompt: string }): string {
+  const suffix = settings.systemPrompt.trim();
+  if (!suffix || suffix === DEFAULT_ORCHESTRATOR_SESSION_PROMPT) {
+    return buildSystemPrompt("orchestrator");
+  }
+  return suffix
+    ? `${buildSystemPrompt("orchestrator")}\n\n## Session Agent\n${suffix}`
+    : DEFAULT_SYSTEM_PROMPT;
 }
 
 function createAuthState(provider: string): AuthStateResponse {
@@ -275,6 +307,19 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
     requests: {
       getDefaults: async () => {
         return getDefaultAgentSettings();
+      },
+      getAgentSettings: async () => {
+        return agentSettingsStore.getState();
+      },
+      updateSessionAgentDefault: async ({ key, settings }) => {
+        resolvedDefaults = null;
+        return agentSettingsStore.setSessionAgentDefault(key, settings);
+      },
+      updateWorkflowAgent: async ({ key, settings }) => {
+        return agentSettingsStore.setWorkflowAgent(key, settings);
+      },
+      ensureWorkflowAgentsComponent: async () => {
+        return { path: agentSettingsStore.ensureWorkflowAgentsComponent() };
       },
       getProviderAuthState: async ({
         providerId,
@@ -349,13 +394,15 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       createSession: async ({
         title,
         parentSessionId,
+        mode,
       }: {
         parentSessionId?: string;
         title?: string;
+        mode?: SessionMode;
       }) => {
         const session = await workspaceSessionCatalog.createSession(
-          { title, parentSessionId },
-          getSessionDefaults(),
+          { title, parentSessionId, mode },
+          getSessionDefaults(mode ?? "orchestrator"),
         );
         recordBridgeEvent("session.created", {
           parentSessionId: parentSessionId ?? null,

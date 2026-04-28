@@ -194,21 +194,21 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 
 ## 11. Session Agents And Workflow Agents
 
-- [ ] Define the stored shape for session agent settings used by orchestrator/handler surfaces and quick sessions.
+- [x] Define the stored shape for session agent settings used by orchestrator/handler surfaces and quick sessions.
 - [x] Keep session agent settings separate from typed handler context packs so Project CI uses normal handler-thread execution plus `context: ["ci"]`. Commit(s): `2a5dbbe`
-- [ ] Seed initial app-wide default values for the default session agent and quick session agent.
-- [ ] Build a POC settings model for editing app-wide session agent defaults.
-- [ ] Persist app-wide session agent defaults.
-- [ ] Build a POC session creation flow with separate orchestrator-session and quick-session actions.
-- [ ] Persist session mode and the default orchestrator-surface prompt selection.
-- [ ] Persist per-session overrides for the default session agent and quick session agent.
-- [ ] Persist per-thread overrides for handler-thread session agent settings when a delegated thread needs a specific model or reasoning level.
-- [ ] Apply the quick-session agent settings and quick-session system prompt at session creation.
-- [ ] Show the current focused-surface session agent summary in pane chrome.
-- [ ] Expand the session agent panel to inspect the session agent settings for the focused surface's session and thread.
-- [ ] Seed `.svvy/workflows/components/agents.ts` with conventional `explorer`, `implementer`, and `reviewer` workflow agent exports.
-- [ ] Build settings support for editing conventional workflow agents by synchronizing model, reasoning, and prompt fields with `.svvy/workflows/components/agents.ts`.
-- [ ] Teach handler prompts to inspect and reuse `.svvy/workflows/components/agents.ts` exports when they fit, author artifact-local workflow agents for one-off needs, and write saved workflow agent components only on explicit request.
+- [x] Seed initial app-wide default values for the default session agent and quick session agent.
+- [x] Build a POC settings model for editing app-wide session agent defaults.
+- [x] Persist app-wide session agent defaults.
+- [x] Build a POC session creation flow with separate orchestrator-session and quick-session actions.
+- [x] Persist session mode and the default orchestrator-surface prompt selection.
+- [x] Persist per-session overrides for the default session agent and quick session agent.
+- [x] Persist per-thread overrides for handler-thread session agent settings when a delegated thread needs a specific model or reasoning level.
+- [x] Apply the quick-session agent settings and quick-session system prompt at session creation.
+- [x] Show the current focused-surface session agent summary in pane chrome.
+- [x] Expand the session agent panel to inspect the session agent settings for the focused surface's session and thread.
+- [x] Seed `.svvy/workflows/components/agents.ts` with conventional `explorer`, `implementer`, and `reviewer` workflow agent exports.
+- [x] Build settings support for editing conventional workflow agents by synchronizing model, reasoning, and prompt fields with `.svvy/workflows/components/agents.ts`.
+- [x] Teach handler prompts to inspect and reuse `.svvy/workflows/components/agents.ts` exports when they fit, author artifact-local workflow agents for one-off needs, and write saved workflow agent components only on explicit request. Commit(s): `92c5397`
 
 ## 12. Session Titles
 
@@ -222,7 +222,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 
 ## 13. Composer Mention Targets
 
-- [ ] Define the stored shape for symbolic file and folder mention targets in the composer.
+- [x] Define the stored shape for symbolic file and folder mention targets in the composer.
 - [ ] Build a POC `@` autocomplete picker over workspace files and folders.
 - [ ] Render selected file and folder mentions as removable composer chips.
 - [ ] Persist the visible mention text and resolved target paths on send.

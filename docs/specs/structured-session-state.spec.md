@@ -46,6 +46,7 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Keep Smithers as the canonical workflow execution substrate.
 - Add `svvy`-owned structured product state above those substrates.
 - Model turns, handler threads, workflow runs, workflow task attempts, commands, episodes, artifacts, Project CI, and waits explicitly.
+- Persist session-agent choices separately from typed handler context packs: app-wide defaults, per-session mode and prompt selection, and optional per-thread model, reasoning, and prompt overrides are structured settings facts, not transcript text.
 - Persist one top-level per-turn decision for every surface, with orchestrator routing decisions and handler supervision decisions sharing one field.
 - Treat every tool call as a `CommandRecord`.
 - Make `execute_typescript` the default generic work surface.
