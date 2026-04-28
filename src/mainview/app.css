@@ -149,12 +149,7 @@
         color-mix(in oklab, var(--ui-accent) 7%, transparent),
         transparent 34%
       ),
-      linear-gradient(
-        180deg,
-        hsl(220 14% 8%),
-        hsl(220 14% 6%) 48%,
-        hsl(220 15% 5%)
-      );
+      linear-gradient(180deg, hsl(220 14% 8%), hsl(220 14% 6%) 48%, hsl(220 15% 5%));
   }
 }
 
@@ -294,8 +289,90 @@ summary {
 
 .status-dot[data-status="failed"],
 .status-dot[data-status="invalid"],
-.status-dot[data-status="missing"] {
+.status-dot[data-status="missing"],
+.status-dot[data-status="cancelled"] {
   background: var(--ui-status-danger);
+}
+
+.ui-interactive {
+  transition:
+    background-color 160ms cubic-bezier(0.19, 1, 0.22, 1),
+    border-color 160ms cubic-bezier(0.19, 1, 0.22, 1),
+    color 160ms cubic-bezier(0.19, 1, 0.22, 1),
+    box-shadow 160ms cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+.ui-interactive:hover {
+  border-color: color-mix(in oklab, var(--ui-border-strong) 78%, transparent);
+  background-color: color-mix(in oklab, var(--ui-surface-subtle) 82%, transparent);
+}
+
+.ui-focusable:focus-visible,
+.ui-pane-focus:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-focus-ring);
+}
+
+.ui-active {
+  border-color: color-mix(in oklab, var(--ui-accent) 36%, var(--ui-border-soft));
+  background-color: color-mix(in oklab, var(--ui-accent-soft) 58%, var(--ui-surface-subtle) 42%);
+}
+
+.ui-disabled,
+[aria-disabled="true"] {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
+.ui-resize-handle {
+  position: relative;
+  flex-shrink: 0;
+  inline-size: 0.25rem;
+  min-block-size: 1rem;
+  cursor: col-resize;
+}
+
+.ui-resize-handle::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
+  transition: background-color 160ms cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+.ui-resize-handle:hover::before,
+.ui-resize-handle[data-active="true"]::before {
+  background: var(--ui-accent);
+}
+
+.ui-loading-skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--ui-radius-sm);
+  background: color-mix(in oklab, var(--ui-surface-muted) 82%, transparent);
+}
+
+.ui-loading-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--ui-bg-elevated) 36%, transparent),
+    transparent
+  );
+  animation: ui-skeleton-sweep 1.4s cubic-bezier(0.19, 1, 0.22, 1) infinite;
+}
+
+@keyframes ui-skeleton-sweep {
+  to {
+    transform: translateX(100%);
+  }
 }
 
 .workflow-inspector {

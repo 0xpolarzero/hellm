@@ -2,6 +2,14 @@
 	import ContextBudgetBar from "./ContextBudgetBar.svelte";
 	import Badge from "./ui/Badge.svelte";
 	import Button from "./ui/Button.svelte";
+	import DenseRow from "./ui/DenseRow.svelte";
+	import Divider from "./ui/Divider.svelte";
+	import KeyboardHint from "./ui/KeyboardHint.svelte";
+	import MetadataChip from "./ui/MetadataChip.svelte";
+	import PaneHeader from "./ui/PaneHeader.svelte";
+	import SectionHeader from "./ui/SectionHeader.svelte";
+	import StateMessage from "./ui/StateMessage.svelte";
+	import StatusBadge from "./ui/StatusBadge.svelte";
 
 	const sessions = [
 		{
@@ -76,56 +84,78 @@
 	</aside>
 
 	<section class="fixture-workbench">
-		<header class="fixture-pane-header">
-			<div>
-				<p>Orchestrator</p>
-				<h1>OAuth provider hardening</h1>
-			</div>
-			<div class="fixture-toolbar">
-				<Badge tone="warning">running</Badge>
-				<Badge>gpt-5.2</Badge>
+		<PaneHeader eyebrow="Orchestrator" title="OAuth provider hardening">
+			{#snippet meta()}
+				<StatusBadge status="running">running</StatusBadge>
+				<MetadataChip label="model" value="gpt-5.2" />
+				<MetadataChip label="worktree" value="feature/auth" tone="info" />
+			{/snippet}
+			{#snippet actions()}
 				<Button size="sm" variant="ghost">Inspector</Button>
-			</div>
-		</header>
+			{/snippet}
+		</PaneHeader>
 
 		<div class="fixture-content">
 			<section class="fixture-card">
-				<div class="fixture-section-header">
-					<h2>Handler Threads</h2>
-					<Badge tone="info">3 surfaces</Badge>
-				</div>
+				<SectionHeader title="Handler Threads" description="Dense rows share selected, hover, focus, disabled, and metadata behavior.">
+					{#snippet actions()}
+						<Badge tone="info">3 surfaces</Badge>
+					{/snippet}
+				</SectionHeader>
 				{#each sessions as session}
-					<article class="fixture-thread" data-status={session.status}>
-						<div class="fixture-thread-main">
+					<DenseRow as="button" active={session.status === "running"} tone={session.status === "waiting" ? "warning" : session.status === "verified" ? "success" : "accent"}>
+						{#snippet leading()}
 							<span
 								class="status-dot"
 								class:pulse-dot={session.status === "running"}
 								data-status={session.status}
 							></span>
-							<div>
-								<h3>{session.title}</h3>
-								<p>{session.preview}</p>
-							</div>
+						{/snippet}
+						<div class="fixture-thread-copy">
+							<h3>{session.title}</h3>
+							<p>{session.preview}</p>
 						</div>
+						{#snippet meta()}
+							<MetadataChip
+								value={session.budget.label}
+								tone={session.budget.tone === "red" ? "danger" : session.budget.tone === "orange" ? "warning" : "neutral"}
+							/>
+						{/snippet}
+						{#snippet actions()}
+							<Button size="xs" variant="ghost">Open</Button>
+						{/snippet}
 						<ContextBudgetBar budget={session.budget} variant="compact" />
-					</article>
+					</DenseRow>
 				{/each}
 			</section>
 
 			<section class="fixture-card">
-				<div class="fixture-section-header">
-					<h2>Command Rollup</h2>
-					<span class="fixture-kbd">Cmd Shift P</span>
-				</div>
+				<SectionHeader title="Command Rollup">
+					{#snippet actions()}
+						<KeyboardHint keys={["Cmd", "Shift", "P"]} />
+					{/snippet}
+				</SectionHeader>
 				{#each commands as command}
 					<div class="fixture-command">
 						<Badge tone={command.tone}>{command.label}</Badge>
 						<span>{command.detail}</span>
 					</div>
 				{/each}
+				<Divider />
+				<StateMessage
+					tone="loading"
+					title="Workflow run streaming"
+					description="Loading states use a compact row-safe treatment instead of a page-level spinner."
+				/>
+				<StateMessage
+					tone="error"
+					title="Provider missing"
+					description="Error states share semantic danger tokens across panels and dialogs."
+				/>
 				<p class="fixture-stream">
 					Streaming progress from the active surface<span class="stream-cursor"></span>
 				</p>
+				<div class="ui-loading-skeleton fixture-skeleton" aria-hidden="true"></div>
 			</section>
 		</div>
 	</section>
@@ -152,10 +182,6 @@
 	}
 
 	.fixture-brand,
-	.fixture-pane-header,
-	.fixture-toolbar,
-	.fixture-section-header,
-	.fixture-thread-main,
 	.fixture-command {
 		display: flex;
 		align-items: center;
@@ -236,32 +262,6 @@
 		min-height: 0;
 	}
 
-	.fixture-pane-header {
-		justify-content: space-between;
-		gap: var(--space-sm);
-		min-height: 3rem;
-		padding: 0.55rem 0.75rem;
-		border-bottom: 1px solid var(--ui-border-soft);
-		background: var(--ui-surface);
-	}
-
-	.fixture-pane-header p {
-		margin: 0 0 0.1rem;
-		color: var(--ui-text-tertiary);
-		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		text-transform: uppercase;
-	}
-
-	.fixture-pane-header h1 {
-		margin: 0;
-		font-size: 0.95rem;
-		font-weight: 650;
-		letter-spacing: 0;
-	}
-
-	.fixture-toolbar,
-	.fixture-section-header,
 	.fixture-command {
 		gap: 0.45rem;
 	}
@@ -276,6 +276,9 @@
 	}
 
 	.fixture-card {
+		display: grid;
+		align-content: start;
+		gap: 0.6rem;
 		min-width: 0;
 		min-height: 0;
 		padding: var(--space-xs);
@@ -285,63 +288,19 @@
 		box-shadow: var(--ui-shadow-soft);
 	}
 
-	.fixture-section-header {
-		justify-content: space-between;
-		margin-bottom: var(--space-xs);
-	}
-
-	.fixture-section-header h2 {
-		margin: 0;
-		font-size: 0.8rem;
-	}
-
-	.fixture-thread {
-		position: relative;
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) 7rem;
-		gap: var(--space-xs);
-		align-items: center;
-		min-height: 3.25rem;
-		padding: 0.55rem 0.6rem;
-		border: 1px solid var(--ui-border-soft);
-		border-left: 2px solid var(--ui-status-idle);
-		border-radius: var(--ui-radius-md);
-		background: var(--ui-surface-raised);
-	}
-
-	.fixture-thread + .fixture-thread {
-		margin-top: 0.45rem;
-	}
-
-	.fixture-thread[data-status="running"] {
-		border-left-color: var(--ui-status-running);
-	}
-
-	.fixture-thread[data-status="verified"] {
-		border-left-color: var(--ui-status-success);
-	}
-
-	.fixture-thread[data-status="waiting"] {
-		border-left-color: var(--ui-status-waiting);
-	}
-
-	.fixture-thread-main {
-		gap: 0.5rem;
-	}
-
-	.fixture-thread h3,
-	.fixture-thread p {
+	.fixture-thread-copy h3,
+	.fixture-thread-copy p {
 		margin: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.fixture-thread h3 {
+	.fixture-thread-copy h3 {
 		font-size: 0.78rem;
 	}
 
-	.fixture-thread p,
+	.fixture-thread-copy p,
 	.fixture-command,
 	.fixture-stream {
 		color: var(--ui-text-secondary);
@@ -354,18 +313,14 @@
 		border-top: 1px solid var(--ui-border-soft);
 	}
 
-	.fixture-kbd {
-		border: 1px solid var(--ui-border-soft);
-		border-radius: var(--ui-radius-sm);
-		padding: 0.12rem 0.32rem;
-		color: var(--ui-text-tertiary);
+	.fixture-stream {
+		margin: 0.2rem 0 0;
 		font-family: var(--font-mono);
-		font-size: 0.62rem;
 	}
 
-	.fixture-stream {
-		margin: var(--space-sm) 0 0;
-		font-family: var(--font-mono);
+	.fixture-skeleton {
+		width: min(18rem, 100%);
+		height: 0.52rem;
 	}
 
 	@media (max-width: 760px) {
@@ -374,8 +329,7 @@
 		}
 
 		.fixture-brand strong,
-		.fixture-session span:last-child,
-		.fixture-toolbar :global(.ui-button) {
+		.fixture-session span:last-child {
 			display: none;
 		}
 

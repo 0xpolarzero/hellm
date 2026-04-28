@@ -28,7 +28,7 @@
 		border-radius: var(--ui-radius-sm);
 		font-size: 0.65rem;
 		font-weight: 620;
-		letter-spacing: 0.02em;
+		letter-spacing: 0;
 		white-space: nowrap;
 		border: 1px solid transparent;
 		font-variant-numeric: tabular-nums;

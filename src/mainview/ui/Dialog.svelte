@@ -138,7 +138,7 @@
 		margin: 0;
 		font-size: 1.02rem;
 		font-weight: 660;
-		letter-spacing: -0.03em;
+		letter-spacing: 0;
 		color: var(--ui-text-primary);
 	}
 
