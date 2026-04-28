@@ -19,6 +19,7 @@
 - For agent prompts or instructions that describe any interface the agent uses, prefer generated TypeScript declarations or generated tool/schema blocks from source contracts; do not hand-rewrite interfaces or rely on loose prose explanations when a generated contract can be provided.
 - Prefer these references over memory or vague external summaries when questions involve these tools or libraries.
 - To inspect a running `svvy` app, use the published `electrobun-browser-tools` CLI (`--app <appId>` or `--url <bridgeUrl>`); the bridge is mounted in `src/bun/tool-bridge.ts`, and `src/bun/index.ts` logs the resolved `appId` and `bridgeUrl` when it starts.
+- Put manually captured verification screenshots in the repo-root `screenshots/` folder.
 - Keep one main orchestrator responsible for strategy, integration, and final decisions.
 - Prefer inline code over thin pass-through helpers; if a wrapper only forwards one call without adding policy, reuse, or a meaningful seam, inline it instead of abstracting it.
 - Use subagents heavily for bounded, independent work; default to delegating concrete side tasks when they can run in parallel or reduce main-thread load.

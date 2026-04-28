@@ -194,20 +194,20 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 
 ## 11. Session Agents And Workflow Agents
 
-- [x] Define the stored shape for session agent settings used by orchestrator/handler surfaces and quick sessions.
+- [x] Define the stored shape for session agent settings used by orchestrator/handler surfaces and quick sessions. Commit(s): `8e19462`
 - [x] Keep session agent settings separate from typed handler context packs so Project CI uses normal handler-thread execution plus `context: ["ci"]`. Commit(s): `2a5dbbe`
-- [x] Seed initial app-wide default values for the default session agent and quick session agent.
-- [x] Build a POC settings model for editing app-wide session agent defaults.
-- [x] Persist app-wide session agent defaults.
-- [x] Build a POC session creation flow with separate orchestrator-session and quick-session actions.
-- [x] Persist session mode and the default orchestrator-surface prompt selection.
-- [x] Persist per-session overrides for the default session agent and quick session agent.
-- [x] Persist per-thread overrides for handler-thread session agent settings when a delegated thread needs a specific model or reasoning level.
-- [x] Apply the quick-session agent settings and quick-session system prompt at session creation.
-- [x] Show the current focused-surface session agent summary in pane chrome.
-- [x] Expand the session agent panel to inspect the session agent settings for the focused surface's session and thread.
-- [x] Seed `.svvy/workflows/components/agents.ts` with conventional `explorer`, `implementer`, and `reviewer` workflow agent exports.
-- [x] Build settings support for editing conventional workflow agents by synchronizing model, reasoning, and prompt fields with `.svvy/workflows/components/agents.ts`.
+- [x] Seed initial app-wide default values for the default session agent and quick session agent. Commit(s): `8e19462`
+- [x] Build a POC settings model for editing app-wide session agent defaults. Commit(s): `8e19462`
+- [x] Persist app-wide session agent defaults. Commit(s): `8e19462`
+- [x] Build a POC session creation flow with separate orchestrator-session and quick-session actions. Commit(s): `8e19462`
+- [x] Persist session mode and the default orchestrator-surface prompt selection. Commit(s): `8e19462`
+- [x] Persist per-session overrides for the default session agent and quick session agent. Commit(s): `8e19462`
+- [x] Persist per-thread overrides for handler-thread session agent settings when a delegated thread needs a specific model or reasoning level. Commit(s): `8e19462`
+- [x] Apply the quick-session agent settings and quick-session system prompt at session creation. Commit(s): `8e19462`
+- [x] Show the current focused-surface session agent summary in pane chrome. Commit(s): `8e19462`
+- [x] Expand the session agent panel to inspect the session agent settings for the focused surface's session and thread. Commit(s): `8e19462`
+- [x] Seed `.svvy/workflows/components/agents.ts` with conventional `explorer`, `implementer`, and `reviewer` workflow agent exports. Commit(s): `8e19462`
+- [x] Build settings support for editing conventional workflow agents by synchronizing model, reasoning, and prompt fields with `.svvy/workflows/components/agents.ts`. Commit(s): `8e19462`
 - [x] Teach handler prompts to inspect and reuse `.svvy/workflows/components/agents.ts` exports when they fit, author artifact-local workflow agents for one-off needs, and write saved workflow agent components only on explicit request. Commit(s): `92c5397`
 
 ## 12. Session Titles
