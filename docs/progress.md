@@ -260,13 +260,13 @@ Current product decisions for this section are specified in `docs/specs/workflow
 
 ## 16. Recovery And Test Coverage
 
-- [ ] Build a POC restart or resume flow that restores multiple open surfaces and pane bindings from durable state.
-- [ ] Restore pending clarification and waiting state after app restart.
-- [ ] Restore active workflow-run state after app restart.
-- [ ] Restore pending handler attention queues and per-surface prompt-lock state after app restart.
+- [x] Build a POC restart or resume flow that restores multiple open surfaces and pane bindings from durable state. Commit(s): `7f84f06`
+- [x] Restore pending clarification and waiting state after app restart. Commit(s): `7f84f06`
+- [x] Restore active workflow-run state after app restart. Commit(s): `7f84f06`
+- [x] Restore pending handler attention queues and per-surface prompt-lock state after app restart. Commit(s): `7f84f06`
 - [x] Add integration tests that exercise the real pi-backed runtime seam for direct work. Commit(s): `b0ee858`
 - [x] Expand from the current real embedded-runtime supervision coverage in `src/bun/smithers-runtime/manager.test.ts` and `src/bun/smithers-tools.test.ts` to full pi-backed handler-thread delegation and workflow-run supervision. Commit(s): `f8557d9`, `b0ee858`, `55963d9`, `097ae47`
-- [ ] Add integration tests that exercise restart and resume behavior across workspace state, live surface state, and pane bindings.
+- [x] Add integration tests that exercise restart and resume behavior across workspace state, live surface state, and pane bindings. Commit(s): `7f84f06`
 
 ## 17. Context Budget Observability
 
