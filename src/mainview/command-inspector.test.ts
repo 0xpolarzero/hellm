@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import type { WorkspaceCommandInspector, WorkspaceSessionSummary } from "../shared/workspace-contract";
+import type {
+  WorkspaceCommandInspector,
+  WorkspaceSessionSummary,
+} from "../shared/workspace-contract";
 import {
   getCommandInspectorSections,
   getVisibleCommandRollups,

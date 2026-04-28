@@ -306,14 +306,14 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
 
           const threadCard = page.locator(".handler-thread-card").first();
           await waitForVisible(threadCard);
-          expect((await threadCard.textContent()) ?? "").toContain("Workflow Authoring Proof Thread");
+          expect((await threadCard.textContent()) ?? "").toContain(
+            "Workflow Authoring Proof Thread",
+          );
           expect((await threadCard.textContent()) ?? "").toContain(
             "author and run an artifact workflow",
           );
 
-          await clickWhenEnabled(
-            page.locator(".handler-thread-actions button").nth(1),
-          );
+          await clickWhenEnabled(page.locator(".handler-thread-actions button").nth(1));
           await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
 
           await sendPrompt(page, AUTHOR_ARTIFACT_PROMPT);
@@ -364,9 +364,7 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
           expect(existsSync(savedEntryPath)).toBe(false);
 
           await returnToOrchestrator(page);
-          await clickWhenEnabled(
-            page.locator(".handler-thread-actions button").nth(1),
-          );
+          await clickWhenEnabled(page.locator(".handler-thread-actions button").nth(1));
           await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
           await sendPrompt(page, RUN_ARTIFACT_PROMPT);
           await waitForCondition(
@@ -408,9 +406,7 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
           await waitForVisible(page.getByText("1 handoff"), 60_000);
           await waitForTextContent(threadCard, "Completed", 60_000);
 
-          await clickWhenEnabled(
-            page.locator(".handler-thread-actions button").first(),
-          );
+          await clickWhenEnabled(page.locator(".handler-thread-actions button").first());
 
           const inspector = page.getByRole("dialog", { name: "Workflow Authoring Proof Thread" });
           await waitForVisible(inspector);
@@ -436,9 +432,7 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
           await closeDialogIfVisible(page);
           await returnToOrchestrator(page);
 
-          await clickWhenEnabled(
-            page.locator(".handler-thread-actions button").first(),
-          );
+          await clickWhenEnabled(page.locator(".handler-thread-actions button").first());
           const savedInspector = page.getByRole("dialog", {
             name: "Workflow Authoring Proof Thread",
           });

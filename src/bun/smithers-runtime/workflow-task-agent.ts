@@ -86,9 +86,7 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         config.model as Parameters<typeof getModel>[1],
       );
       if (!model) {
-        throw new Error(
-          `Workflow task agent model not found: ${config.provider}/${config.model}`,
-        );
+        throw new Error(`Workflow task agent model not found: ${config.provider}/${config.model}`);
       }
 
       const sessionDir = resolveTaskAgentSessionDir(options.artifactDir);

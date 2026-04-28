@@ -210,9 +210,7 @@ test("drives a real delegated workflow run through the app and routes workflow a
             "Run the bundled hello_world workflow",
           );
 
-          await clickWhenEnabled(
-            page.locator(".handler-thread-actions button").nth(1),
-          );
+          await clickWhenEnabled(page.locator(".handler-thread-actions button").nth(1));
           await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
           await waitForVisible(page.getByText(/Messaging handler thread/));
 
@@ -229,9 +227,7 @@ test("drives a real delegated workflow run through the app and routes workflow a
           await waitForVisible(page.getByText("Completed"), 90_000);
           await waitForVisible(page.getByText("1 handoff"), 180_000);
 
-          await clickWhenEnabled(
-            page.locator(".handler-thread-actions button").first(),
-          );
+          await clickWhenEnabled(page.locator(".handler-thread-actions button").first());
 
           const inspector = page.getByRole("dialog", { name: "Hello World Workflow Thread" });
           await waitForVisible(inspector);
@@ -326,10 +322,7 @@ test("drives a real delegated workflow run through the app with z.ai loaded from
           has: page.getByText("Hello World Workflow Thread", { exact: true }),
         });
         await waitForVisible(threadCard, 60_000);
-        await clickWhenEnabled(
-          page.locator(".handler-thread-actions button").nth(1),
-          60_000,
-        );
+        await clickWhenEnabled(page.locator(".handler-thread-actions button").nth(1), 60_000);
         await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
         await waitForVisible(page.getByText(/Messaging handler thread/));
 
@@ -351,9 +344,7 @@ test("drives a real delegated workflow run through the app with z.ai loaded from
         await waitForVisible(page.getByText("Completed"), 90_000);
         await waitForVisible(page.getByText("1 handoff"), 180_000);
 
-        await clickWhenEnabled(
-          page.locator(".handler-thread-actions button").first(),
-        );
+        await clickWhenEnabled(page.locator(".handler-thread-actions button").first());
 
         const inspector = page.getByRole("dialog", { name: "Hello World Workflow Thread" });
         await waitForVisible(inspector, 60_000);

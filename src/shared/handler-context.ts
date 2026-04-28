@@ -12,18 +12,16 @@ export interface HandlerContextPackMetadata {
   allowedActors: HandlerContextActor[];
 }
 
-export const HANDLER_CONTEXT_PACK_METADATA: Record<
-  HandlerContextKey,
-  HandlerContextPackMetadata
-> = {
-  ci: {
-    key: "ci",
-    title: "Project CI",
-    summary: "Guidance for configuring and modifying Project CI saved workflow entries.",
-    version: "2026-04-24",
-    allowedActors: ["handler"],
-  },
-};
+export const HANDLER_CONTEXT_PACK_METADATA: Record<HandlerContextKey, HandlerContextPackMetadata> =
+  {
+    ci: {
+      key: "ci",
+      title: "Project CI",
+      summary: "Guidance for configuring and modifying Project CI saved workflow entries.",
+      version: "2026-04-24",
+      allowedActors: ["handler"],
+    },
+  };
 
 export function isHandlerContextKey(value: string): value is HandlerContextKey {
   return (HANDLER_CONTEXT_KEYS as readonly string[]).includes(value);

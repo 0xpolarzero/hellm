@@ -1,4 +1,7 @@
-import type { WorkspaceSessionNavigationReadModel, WorkspaceSessionSummary } from "../shared/workspace-contract";
+import type {
+  WorkspaceSessionNavigationReadModel,
+  WorkspaceSessionSummary,
+} from "../shared/workspace-contract";
 
 function descendingTimestamp(
   left: string | null | undefined,

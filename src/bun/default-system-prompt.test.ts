@@ -52,7 +52,9 @@ describe("default system prompt", () => {
     expect(HANDLER_SYSTEM_PROMPT).toContain("explorer");
     expect(HANDLER_SYSTEM_PROMPT).toContain("implementer");
     expect(HANDLER_SYSTEM_PROMPT).toContain("reviewer");
-    expect(HANDLER_SYSTEM_PROMPT).toContain("define a task-specific agent in the artifact workflow");
+    expect(HANDLER_SYSTEM_PROMPT).toContain(
+      "define a task-specific agent in the artifact workflow",
+    );
     expect(HANDLER_SYSTEM_PROMPT).toContain("Workflow authoring guide for handler threads:");
     expect(HANDLER_SYSTEM_PROMPT).toContain(
       "The handler workflow-authoring TypeScript contract follows",
