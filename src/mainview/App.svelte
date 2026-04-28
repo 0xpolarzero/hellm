@@ -3,11 +3,13 @@
 	import ChatWorkspace from "./ChatWorkspace.svelte";
 	import { createChatRuntime, type ChatRuntime } from "./chat-runtime";
 	import Settings from "./Settings.svelte";
+	import UiFixturePreview from "./UiFixturePreview.svelte";
 	import StatusCard from "./ui/StatusCard.svelte";
 
 	let runtime = $state<ChatRuntime | null>(null);
 	let bootstrapError = $state<string | null>(null);
 	let showSettings = $state(false);
+	const fixturePreview = new URLSearchParams(window.location.search).has("ui-fixture");
 	let disposed = false;
 
 	async function bootstrap() {
@@ -36,6 +38,10 @@
 	}
 
 	onMount(() => {
+		if (fixturePreview) {
+			return;
+		}
+
 		void bootstrap();
 
 		return () => {
@@ -50,7 +56,9 @@
 	<div class="app-frame">
 		<main class="workspace">
 			<div class="workspace-body">
-				{#if bootstrapError}
+				{#if fixturePreview}
+					<UiFixturePreview />
+				{:else if bootstrapError}
 					<StatusCard
 						tone="error"
 						eyebrow="Runtime Error"

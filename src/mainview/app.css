@@ -1,4 +1,4 @@
-@import "@fontsource-variable/familjen-grotesk";
+@import "@fontsource-variable/inter";
 @import "@fontsource/ibm-plex-mono";
 
 * {
@@ -14,69 +14,81 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  --font-sans:
-    "Familjen Grotesk Variable", "Familjen Grotesk", "Avenir Next", "Segoe UI Variable Text",
-    "Segoe UI", sans-serif;
-  --font-mono: "IBM Plex Mono", "SF Mono", "Menlo", monospace;
+  --font-sans: "Inter", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", "SF Mono", "Menlo", "Consolas", monospace;
 
   --space-3xs: 0.25rem;
-  --space-2xs: 0.45rem;
-  --space-xs: 0.65rem;
-  --space-sm: 0.9rem;
-  --space-md: 1.15rem;
-  --space-lg: 1.55rem;
-  --space-xl: clamp(1.95rem, 1.4vw + 1.55rem, 2.7rem);
-  --space-2xl: clamp(2.5rem, 3vw + 1.8rem, 4.1rem);
+  --space-2xs: 0.4375rem;
+  --space-xs: 0.625rem;
+  --space-sm: 0.875rem;
+  --space-md: 1.125rem;
+  --space-lg: 1.5rem;
+  --space-xl: clamp(1.75rem, 1.2vw + 1.45rem, 2.5rem);
+  --space-2xl: clamp(2.25rem, 2.6vw + 1.6rem, 3.75rem);
 
-  --ui-radius-sm: 0.22rem;
-  --ui-radius-md: 0.38rem;
-  --ui-radius-lg: 0.56rem;
-  --ui-radius-xl: 0.84rem;
+  --ui-radius-xs: 0.125rem;
+  --ui-radius-sm: 0.1875rem;
+  --ui-radius-md: 0.25rem;
+  --ui-radius-lg: 0.375rem;
+  --ui-radius-xl: 0.5rem;
 
   --ui-z-sticky: 20;
   --ui-z-overlay: 40;
   --ui-z-dialog: 1000;
 
-  --ui-bg: oklch(0.978 0.004 85);
-  --ui-bg-elevated: oklch(0.992 0.002 85);
-  --ui-shell: oklch(0.955 0.004 85 / 0.84);
-  --ui-shell-edge: oklch(0.83 0.008 85 / 0.58);
-  --ui-surface: oklch(0.992 0.002 85 / 0.94);
-  --ui-surface-subtle: oklch(0.972 0.004 85 / 0.96);
-  --ui-surface-muted: oklch(0.956 0.006 85 / 0.98);
-  --ui-surface-raised: oklch(0.998 0.001 85 / 0.98);
-  --ui-surface-strong: oklch(0.23 0.01 78 / 0.94);
-  --ui-panel: oklch(0.942 0.006 85 / 0.78);
-  --ui-panel-strong: oklch(0.922 0.007 85 / 0.94);
-  --ui-code: oklch(0.965 0.006 84 / 0.98);
+  --ui-bg: hsl(0 0% 97%);
+  --ui-bg-elevated: hsl(0 0% 100%);
+  --ui-shell: hsl(220 14% 94% / 0.92);
+  --ui-shell-edge: hsl(220 13% 86% / 0.82);
+  --ui-surface: hsl(0 0% 100% / 0.96);
+  --ui-surface-subtle: hsl(220 13% 94% / 0.96);
+  --ui-surface-muted: hsl(220 13% 92% / 0.98);
+  --ui-surface-raised: hsl(0 0% 100% / 0.98);
+  --ui-surface-strong: hsl(220 22% 12% / 0.96);
+  --ui-panel: hsl(220 14% 94% / 0.88);
+  --ui-panel-strong: hsl(220 13% 90% / 0.96);
+  --ui-code: hsl(220 13% 95% / 0.98);
 
-  --ui-text-primary: oklch(0.24 0.01 82);
-  --ui-text-secondary: oklch(0.45 0.012 82);
-  --ui-text-tertiary: oklch(0.6 0.01 82);
-  --ui-text-inverse: oklch(0.97 0.004 85);
+  --ui-text-primary: hsl(220 22% 12%);
+  --ui-text-secondary: hsl(220 14% 38%);
+  --ui-text-tertiary: hsl(220 10% 48%);
+  --ui-text-inverse: hsl(0 0% 100%);
 
-  --ui-border-soft: oklch(0.85 0.008 84 / 0.66);
-  --ui-border-strong: oklch(0.7 0.012 84 / 0.82);
-  --ui-border-accent: oklch(0.73 0.11 50 / 0.34);
+  --ui-border-soft: hsl(220 13% 89% / 0.78);
+  --ui-border-strong: hsl(220 13% 76% / 0.88);
+  --ui-border-accent: hsl(24 95% 53% / 0.34);
 
-  --ui-accent: oklch(0.74 0.18 50);
-  --ui-accent-strong: oklch(0.67 0.18 46);
-  --ui-accent-soft: oklch(0.95 0.02 70);
-  --ui-accent-ink: oklch(0.28 0.03 48);
+  --ui-accent: hsl(24 95% 53%);
+  --ui-accent-strong: hsl(24 90% 47%);
+  --ui-accent-soft: hsl(24 95% 53% / 0.1);
+  --ui-accent-ink: hsl(0 0% 100%);
 
-  --ui-success: oklch(0.66 0.15 154);
-  --ui-success-soft: oklch(0.94 0.035 154);
-  --ui-warning: oklch(0.8 0.14 78);
-  --ui-warning-soft: oklch(0.95 0.04 83);
-  --ui-danger: oklch(0.63 0.2 28);
-  --ui-danger-soft: oklch(0.95 0.035 28);
-  --ui-info: oklch(0.58 0.06 245);
-  --ui-info-soft: oklch(0.95 0.018 245);
+  --ui-success: hsl(142 71% 45%);
+  --ui-success-soft: hsl(142 71% 45% / 0.1);
+  --ui-warning: hsl(38 92% 50%);
+  --ui-warning-soft: hsl(38 92% 50% / 0.1);
+  --ui-danger: hsl(0 84% 60%);
+  --ui-danger-soft: hsl(0 84% 60% / 0.1);
+  --ui-info: hsl(217 91% 60%);
+  --ui-info-soft: hsl(217 91% 60% / 0.1);
 
-  --ui-shadow-soft: 0 1px 2px hsl(32 30% 14% / 0.04), 0 8px 24px -18px hsl(32 30% 14% / 0.16);
+  --ui-status-running: var(--ui-accent);
+  --ui-status-running-soft: var(--ui-accent-soft);
+  --ui-status-active: var(--ui-accent);
+  --ui-status-active-soft: var(--ui-accent-soft);
+  --ui-status-success: var(--ui-success);
+  --ui-status-success-soft: var(--ui-success-soft);
+  --ui-status-waiting: var(--ui-warning);
+  --ui-status-waiting-soft: var(--ui-warning-soft);
+  --ui-status-danger: var(--ui-danger);
+  --ui-status-danger-soft: var(--ui-danger-soft);
+  --ui-status-idle: hsl(220 10% 54%);
+  --ui-status-idle-soft: hsl(220 10% 54% / 0.1);
+
+  --ui-shadow-soft: 0 1px 2px hsl(0 0% 0% / 0.04), 0 8px 24px -18px hsl(0 0% 0% / 0.16);
   --ui-shadow-strong:
     0 0 0 1px color-mix(in oklab, var(--ui-shell-edge) 52%, transparent),
-    0 24px 80px -40px hsl(26 35% 12% / 0.34), 0 12px 34px -18px hsl(26 35% 12% / 0.18);
+    0 24px 64px -38px hsl(0 0% 0% / 0.26), 0 12px 30px -18px hsl(0 0% 0% / 0.14);
   --ui-focus-ring:
     0 0 0 1px color-mix(in oklab, var(--ui-accent) 72%, white 28%),
     0 0 0 4px color-mix(in oklab, var(--ui-accent) 16%, transparent);
@@ -84,50 +96,47 @@
   --ui-backdrop:
     radial-gradient(
       circle at top left,
-      color-mix(in oklab, var(--ui-accent) 10%, transparent),
+      color-mix(in oklab, var(--ui-accent) 8%, transparent),
       transparent 34%
     ),
-    radial-gradient(
-      circle at top right,
-      color-mix(in oklab, var(--ui-text-secondary) 4%, transparent),
-      transparent 32%
-    ),
-    linear-gradient(180deg, oklch(0.991 0.002 85), oklch(0.972 0.004 85) 50%, oklch(0.958 0.005 85));
+    linear-gradient(180deg, hsl(0 0% 99%), hsl(220 13% 96%) 50%, hsl(220 14% 94%));
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --ui-bg: oklch(0.17 0.006 82);
-    --ui-bg-elevated: oklch(0.2 0.007 82);
-    --ui-shell: oklch(0.215 0.007 82 / 0.86);
-    --ui-shell-edge: oklch(0.34 0.012 82 / 0.84);
-    --ui-surface: oklch(0.224 0.007 82 / 0.92);
-    --ui-surface-subtle: oklch(0.208 0.007 82 / 0.98);
-    --ui-surface-muted: oklch(0.245 0.009 82 / 0.98);
-    --ui-surface-raised: oklch(0.25 0.008 82 / 0.98);
-    --ui-surface-strong: oklch(0.88 0.004 85 / 0.96);
-    --ui-panel: oklch(0.262 0.008 82 / 0.84);
-    --ui-panel-strong: oklch(0.286 0.01 82 / 0.92);
-    --ui-code: oklch(0.205 0.008 82 / 0.98);
+    --ui-bg: hsl(220 14% 6%);
+    --ui-bg-elevated: hsl(220 14% 8%);
+    --ui-shell: hsl(220 14% 7% / 0.92);
+    --ui-shell-edge: hsl(220 10% 13% / 0.88);
+    --ui-surface: hsl(220 13% 9% / 0.94);
+    --ui-surface-subtle: hsl(220 12% 12% / 0.96);
+    --ui-surface-muted: hsl(220 12% 14% / 0.98);
+    --ui-surface-raised: hsl(220 14% 8% / 0.98);
+    --ui-surface-strong: hsl(210 30% 90% / 0.96);
+    --ui-panel: hsl(220 12% 12% / 0.9);
+    --ui-panel-strong: hsl(220 12% 14% / 0.96);
+    --ui-code: hsl(220 14% 8% / 0.98);
 
-    --ui-text-primary: oklch(0.94 0.004 85);
-    --ui-text-secondary: oklch(0.77 0.008 85);
-    --ui-text-tertiary: oklch(0.61 0.008 85);
-    --ui-text-inverse: oklch(0.19 0.007 82);
+    --ui-text-primary: hsl(210 30% 90%);
+    --ui-text-secondary: hsl(210 25% 72%);
+    --ui-text-tertiary: hsl(215 14% 52%);
+    --ui-text-inverse: hsl(220 22% 12%);
 
-    --ui-border-soft: oklch(0.36 0.012 82 / 0.72);
-    --ui-border-strong: oklch(0.51 0.014 82 / 0.82);
-    --ui-border-accent: oklch(0.78 0.12 52 / 0.46);
+    --ui-border-soft: hsl(220 10% 14% / 0.82);
+    --ui-border-strong: hsl(220 10% 22% / 0.9);
+    --ui-border-accent: hsl(24 95% 53% / 0.46);
 
-    --ui-accent: oklch(0.79 0.16 53);
-    --ui-accent-strong: oklch(0.72 0.16 49);
-    --ui-accent-soft: oklch(0.31 0.03 53);
-    --ui-accent-ink: oklch(0.97 0.01 78);
+    --ui-accent: hsl(24 95% 53%);
+    --ui-accent-strong: hsl(24 92% 58%);
+    --ui-accent-soft: hsl(24 95% 53% / 0.1);
+    --ui-accent-ink: hsl(0 0% 100%);
 
-    --ui-success-soft: oklch(0.3 0.05 154);
-    --ui-warning-soft: oklch(0.31 0.05 82);
-    --ui-danger-soft: oklch(0.3 0.05 28);
-    --ui-info-soft: oklch(0.3 0.02 245);
+    --ui-success-soft: hsl(142 71% 45% / 0.1);
+    --ui-warning-soft: hsl(38 92% 50% / 0.1);
+    --ui-danger-soft: hsl(0 84% 60% / 0.1);
+    --ui-info-soft: hsl(217 91% 60% / 0.1);
+    --ui-status-idle: hsl(215 14% 52%);
+    --ui-status-idle-soft: hsl(215 14% 52% / 0.1);
 
     --ui-shadow-soft: 0 1px 2px hsl(0 0% 0% / 0.12), 0 14px 30px -20px hsl(0 0% 0% / 0.46);
     --ui-shadow-strong:
@@ -137,19 +146,14 @@
     --ui-backdrop:
       radial-gradient(
         circle at top left,
-        color-mix(in oklab, var(--ui-accent) 12%, transparent),
+        color-mix(in oklab, var(--ui-accent) 7%, transparent),
         transparent 34%
-      ),
-      radial-gradient(
-        circle at top right,
-        color-mix(in oklab, white 4%, transparent),
-        transparent 28%
       ),
       linear-gradient(
         180deg,
-        oklch(0.205 0.007 82),
-        oklch(0.178 0.006 82) 48%,
-        oklch(0.162 0.006 82)
+        hsl(220 14% 8%),
+        hsl(220 14% 6%) 48%,
+        hsl(220 15% 5%)
       );
   }
 }
@@ -198,6 +202,11 @@ summary {
   background: color-mix(in oklab, var(--ui-accent) 26%, transparent);
 }
 
+:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 1px;
+}
+
 ::-webkit-scrollbar {
   width: 0.72rem;
   height: 0.72rem;
@@ -223,6 +232,70 @@ summary {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.85);
+  }
+}
+
+.stream-cursor::after {
+  content: "▋";
+  animation: stream-cursor-blink 1s step-start infinite;
+  color: var(--ui-accent);
+}
+
+@keyframes stream-cursor-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.status-dot {
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 999px;
+  background: var(--ui-status-idle);
+}
+
+.status-dot[data-status="running"],
+.status-dot[data-status="active"] {
+  background: var(--ui-status-running);
+}
+
+.status-dot[data-status="done"],
+.status-dot[data-status="verified"],
+.status-dot[data-status="passed"],
+.status-dot[data-status="connected"] {
+  background: var(--ui-status-success);
+}
+
+.status-dot[data-status="waiting"],
+.status-dot[data-status="blocked"],
+.status-dot[data-status="approval"] {
+  background: var(--ui-status-waiting);
+}
+
+.status-dot[data-status="failed"],
+.status-dot[data-status="invalid"],
+.status-dot[data-status="missing"] {
+  background: var(--ui-status-danger);
 }
 
 .workflow-inspector {

@@ -28,20 +28,20 @@ Always read [ui.prd.md](ui.prd.md) before implementing any item in this roadmap,
 ## 1. Migration Contract
 
 - [x] Inventory Replit artifact screens, components, interactions, and mock-only assumptions in [docs/ui/ui.artifact-inventory.md](ui.artifact-inventory.md). `7b45ec0`
-- [ ] Map each Replit artifact screen to the svvy product surface or fixture-only source state it represents.
-- [ ] Classify Replit artifact routes and mock states as production svvy surfaces or fixture states for visual parity.
-- [ ] Document the production Svelte ownership boundary: `src/mainview` owns presentation, existing runtime controllers own behavior, and shared workspace contracts own data shape.
-- [ ] Maintain a no-runtime-regression checklist for every UI slice, including prompt targeting, pane bindings, live surface reuse, handler-thread messaging, artifact opening, and settings persistence.
+- [x] Map each Replit artifact screen to the svvy product surface or fixture-only source state it represents. `aca42bd`
+- [x] Classify Replit artifact routes and mock states as production svvy surfaces or fixture states for visual parity. `aca42bd`
+- [x] Document the production Svelte ownership boundary: `src/mainview` owns presentation, existing runtime controllers own behavior, and shared workspace contracts own data shape. `aca42bd`
+- [x] Maintain a no-runtime-regression checklist for every UI slice, including prompt targeting, pane bindings, live surface reuse, handler-thread messaging, artifact opening, and settings persistence. `aca42bd`
 
 ## 2. Source UI Foundation
 
-- [ ] Document the Replit artifact visual system in `DESIGN.md`, including density, typography, color tokens, spacing, borders, elevation, focus rings, motion, and dark/light theme behavior.
-- [ ] Reconcile Replit artifact context-budget colors with the product policy: neutral below 40%, orange from 40%, and red from 60%.
-- [ ] Port Replit artifact theme tokens into `src/mainview/app.css` as Svelte-compatible CSS variables.
-- [ ] Extract Replit artifact status color semantics for sessions, surfaces, handler threads, workflow runs, commands, waits, Project CI, provider auth, and context budget pressure.
-- [ ] Extract Replit artifact typography rules for transcript text, monospace metadata, dense rows, pane headers, cards, command entries, and settings forms.
-- [ ] Extract Replit artifact motion rules for pane focus, resize affordances, hover states, blinking or pulsing status points, streaming indicators, command palette entry, and reduced-motion behavior.
-- [ ] Add a UI fixture or preview harness for rendering migrated Svelte components against stable mock read models without touching production runtime behavior.
+- [x] Document the Replit artifact visual system in `DESIGN.md`, including density, typography, color tokens, spacing, borders, elevation, focus rings, motion, and dark/light theme behavior.
+- [x] Reconcile Replit artifact context-budget colors with the product policy: neutral below 40%, orange from 40%, and red from 60%.
+- [x] Port Replit artifact theme tokens into `src/mainview/app.css` as Svelte-compatible CSS variables.
+- [x] Extract Replit artifact status color semantics for sessions, surfaces, handler threads, workflow runs, commands, waits, Project CI, provider auth, and context budget pressure.
+- [x] Extract Replit artifact typography rules for transcript text, monospace metadata, dense rows, pane headers, cards, command entries, and settings forms.
+- [x] Extract Replit artifact motion rules for pane focus, resize affordances, hover states, blinking or pulsing status points, streaming indicators, command palette entry, and reduced-motion behavior.
+- [x] Add a UI fixture or preview harness for rendering migrated Svelte components against stable mock read models without touching production runtime behavior.
 
 ## 3. Svelte UI Primitives
 
