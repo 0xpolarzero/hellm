@@ -89,6 +89,13 @@ export interface ProviderAuthInfo {
 }
 
 export type SessionStatus = "idle" | "running" | "waiting" | "error";
+export type SessionTitleGenerationStatus =
+  | "not-started"
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface WorkspaceCommandRollupChild {
   commandId: string;
@@ -381,6 +388,15 @@ export interface WorkspaceSessionSummary {
   };
   threadIds?: string[];
   commandRollups?: WorkspaceCommandRollup[];
+  titleGeneration?: {
+    status: SessionTitleGenerationStatus;
+    renameLocked: boolean;
+    autoFrozen: boolean;
+    manualOverride: boolean;
+    triggeredAt: string | null;
+    finishedAt: string | null;
+    error: string | null;
+  };
 }
 
 export interface WorkspaceSessionNavigationReadModel {

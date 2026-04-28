@@ -105,6 +105,7 @@
   }
 
   const showingThreadSurface = $derived(active && activeSurface === "thread");
+  const renameLocked = $derived(session.titleGeneration?.renameLocked ?? false);
 </script>
 
 <article
@@ -200,7 +201,14 @@
           {/if}
           <button type="button" onclick={() => { menuOpen = false; onArchive(); }}>Archive</button>
         {/if}
-        <button type="button" onclick={() => { menuOpen = false; onRename(); }}>Rename</button>
+        <button
+          type="button"
+          disabled={renameLocked}
+          title={renameLocked ? "Title generation is running" : "Rename"}
+          onclick={() => { menuOpen = false; onRename(); }}
+        >
+          Rename
+        </button>
         <button type="button" onclick={() => { menuOpen = false; onFork(); }}>Fork</button>
         <button class="danger" type="button" onclick={() => { menuOpen = false; onDelete(); }}>Delete</button>
       </div>

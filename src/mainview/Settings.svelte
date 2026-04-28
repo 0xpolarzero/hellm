@@ -191,7 +191,7 @@
 				onclick={() => (activeSection = "agents")}
 			>
 				<span>Session Agents</span>
-				<span>2</span>
+				<span>3</span>
 			</button>
 			<button
 				class={`settings-nav-item ${activeSection === "workflow-agents" ? "active" : ""}`.trim()}
@@ -300,12 +300,18 @@
 			{/if}
 			{#if activeSection === "agents" && agentSettings}
 				<div class="agent-list">
-					{#each ["defaultSession", "quickSession"] as key (key)}
+					{#each ["defaultSession", "quickSession", "namer"] as key (key)}
 						{@const settings = agentSettings.sessionAgents[key as SessionAgentKey]}
 						<article class="provider-row agent-row">
 							<div class="provider-main">
 								<div class="provider-heading">
-									<span class="provider-name">{key === "defaultSession" ? "Default Session" : "Quick Session"}</span>
+									<span class="provider-name"
+										>{key === "defaultSession"
+											? "Default Session"
+											: key === "quickSession"
+												? "Quick Session"
+												: "Namer"}</span
+									>
 									<span class="provider-status tone-info">{settings.reasoningEffort}</span>
 								</div>
 								<div class="agent-grid">

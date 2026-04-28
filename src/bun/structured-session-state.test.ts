@@ -95,6 +95,51 @@ describe("structured session state write API", () => {
     });
   });
 
+  it("tracks durable title generation lifecycle and rename locking state", () => {
+    const store = createStore();
+    seedSession(store, "session-title");
+
+    expect(store.queueTitleGeneration("session-title")?.titleGenerationStatus).toBe("pending");
+    let snapshot = store.getSessionState("session-title");
+    expect(snapshot.pi.titleGenerationStatus).toBe("pending");
+    expect(snapshot.pi.titleGenerationTriggeredAt).toBe("2026-04-18T09:00:00.000Z");
+    expect(store.queueTitleGeneration("session-title")).toBeNull();
+
+    store.markTitleGenerationRunning("session-title");
+    snapshot = store.getSessionState("session-title");
+    expect(snapshot.pi.titleGenerationStatus).toBe("running");
+
+    store.completeTitleGeneration({
+      sessionId: "session-title",
+      title: "Parser Error Repair",
+    });
+    snapshot = store.getSessionState("session-title");
+    expect(snapshot.pi.title).toBe("Parser Error Repair");
+    expect(snapshot.pi.titleGenerationStatus).toBe("completed");
+    expect(snapshot.pi.titleAutoFrozen).toBe(true);
+    expect(snapshot.pi.titleManualOverride).toBe(false);
+    expect(store.queueTitleGeneration("session-title")).toBeNull();
+  });
+
+  it("freezes auto titles after manual rename and cancels active title generation", () => {
+    const store = createStore();
+    seedSession(store, "session-manual-title");
+    store.queueTitleGeneration("session-manual-title");
+    store.markTitleGenerationRunning("session-manual-title");
+
+    store.markManualTitleOverride({
+      sessionId: "session-manual-title",
+      title: "Manual Title",
+    });
+
+    const snapshot = store.getSessionState("session-manual-title");
+    expect(snapshot.pi.title).toBe("Manual Title");
+    expect(snapshot.pi.titleGenerationStatus).toBe("cancelled");
+    expect(snapshot.pi.titleAutoFrozen).toBe(true);
+    expect(snapshot.pi.titleManualOverride).toBe(true);
+    expect(store.queueTitleGeneration("session-manual-title")).toBeNull();
+  });
+
   it("persists explicit per-turn decisions", () => {
     const store = createStore();
     seedSession(store, "session-turn-decisions");

@@ -147,7 +147,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Session Agent And Workflow Agent Settings",
     status: "shipped",
     summary:
-      "Persists app-wide default-session and quick-session agent defaults with provider, model, reasoning, and system prompt; records session mode and prompt selection on created sessions; allows handler threads to carry per-thread model, reasoning, and prompt overrides through `thread.start`; exposes focused-surface agent summaries in pane chrome and settings inspection/editing for session and conventional workflow agents; and synchronizes `explorer`, `implementer`, and `reviewer` workflow-agent settings to `.svvy/workflows/components/agents.ts` as a normal saved component asset.",
+      "Persists app-wide default-session, quick-session, and namer session-agent defaults with provider, model, reasoning, and system prompt; records session mode and prompt selection on created sessions; allows handler threads to carry per-thread model, reasoning, and prompt overrides through `thread.start`; exposes focused-surface agent summaries in pane chrome and settings inspection/editing for session agents and conventional workflow agents; and synchronizes `explorer`, `implementer`, and `reviewer` workflow-agent settings to `.svvy/workflows/components/agents.ts` as a normal saved component asset.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/structured-session-state.spec.md",
@@ -160,7 +160,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Multi-Session Workspace Navigation",
     status: "shipped",
     summary:
-      "Supports creating, listing, switching, renaming, forking, and deleting multiple pi-backed session containers from one workspace window.",
+      "Supports creating, listing, switching, renaming, forking, and deleting multiple pi-backed session containers from one workspace window, with top-level session auto-titling owned by a durable one-shot namer flow that starts concurrently with the first orchestrator turn, uses the namer settings prompt as the sole naming instruction, blocks manual rename while title generation is pending or running, and freezes after manual rename or the first successful generated title.",
     sourceSpecs: ["docs/specs/multi-session-support.spec.md"],
   },
   {

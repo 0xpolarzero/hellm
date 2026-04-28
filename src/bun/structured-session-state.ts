@@ -64,6 +64,13 @@ export type StructuredWorkflowTaskAttemptStatus =
   | "cancelled";
 export type StructuredWorkflowTaskMessageRole = "user" | "assistant" | "stderr";
 export type StructuredWorkflowTaskMessageSource = "prompt" | "event" | "responseText";
+export type StructuredTitleGenerationStatus =
+  | "not-started"
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface StructuredWorkspaceRecord {
   id: string;
@@ -88,7 +95,14 @@ export interface StructuredPiSessionRecord {
   sessionMode?: SessionMode;
   defaultSessionAgentJson?: string | null;
   quickSessionAgentJson?: string | null;
+  namerSessionAgentJson?: string | null;
   defaultOrchestratorPromptKey?: SessionAgentKey;
+  titleGenerationStatus?: StructuredTitleGenerationStatus;
+  titleGenerationTriggeredAt?: string | null;
+  titleGenerationFinishedAt?: string | null;
+  titleGenerationError?: string | null;
+  titleAutoFrozen?: boolean;
+  titleManualOverride?: boolean;
   messageCount: number;
   status: StructuredSessionStatus;
   createdAt: string;
@@ -587,6 +601,11 @@ export interface StructuredSessionStateStore {
   listSessionStates(): StructuredSessionSnapshot[];
   getThreadDetail(threadId: string): StructuredThreadDetail;
   close(): void;
+  queueTitleGeneration(sessionId: string): StructuredPiSessionRecord | null;
+  markTitleGenerationRunning(sessionId: string): StructuredPiSessionRecord;
+  completeTitleGeneration(input: { sessionId: string; title: string }): StructuredPiSessionRecord;
+  failTitleGeneration(input: { sessionId: string; error: string }): StructuredPiSessionRecord;
+  markManualTitleOverride(input: { sessionId: string; title: string }): StructuredPiSessionRecord;
 }
 
 type SessionRow = {
@@ -598,7 +617,14 @@ type SessionRow = {
   session_mode: SessionMode | null;
   default_session_agent_json: string | null;
   quick_session_agent_json: string | null;
+  namer_session_agent_json: string | null;
   default_orchestrator_prompt_key: SessionAgentKey | null;
+  title_generation_status: StructuredTitleGenerationStatus | null;
+  title_generation_triggered_at: string | null;
+  title_generation_finished_at: string | null;
+  title_generation_error: string | null;
+  title_auto_frozen: number | null;
+  title_manual_override: number | null;
   message_count: number;
   pi_status: StructuredSessionStatus;
   created_at: string;
@@ -906,7 +932,14 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            session_mode,
            default_session_agent_json,
            quick_session_agent_json,
+           namer_session_agent_json,
            default_orchestrator_prompt_key,
+           title_generation_status,
+           title_generation_triggered_at,
+           title_generation_finished_at,
+           title_generation_error,
+           title_auto_frozen,
+           title_manual_override,
            message_count,
            pi_status,
            created_at,
@@ -920,7 +953,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            wait_reason,
            wait_resume_when,
            wait_since
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         pi.sessionId,
@@ -931,9 +964,26 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         pi.sessionMode ?? existing?.session_mode ?? "orchestrator",
         pi.defaultSessionAgentJson ?? existing?.default_session_agent_json ?? null,
         pi.quickSessionAgentJson ?? existing?.quick_session_agent_json ?? null,
+        pi.namerSessionAgentJson ?? existing?.namer_session_agent_json ?? null,
         pi.defaultOrchestratorPromptKey ??
           existing?.default_orchestrator_prompt_key ??
           "defaultSession",
+        pi.titleGenerationStatus ??
+          existing?.title_generation_status ??
+          "not-started",
+        pi.titleGenerationTriggeredAt ?? existing?.title_generation_triggered_at ?? null,
+        pi.titleGenerationFinishedAt ?? existing?.title_generation_finished_at ?? null,
+        pi.titleGenerationError ?? existing?.title_generation_error ?? null,
+        pi.titleAutoFrozen === undefined
+          ? (existing?.title_auto_frozen ?? 0)
+          : pi.titleAutoFrozen
+            ? 1
+            : 0,
+        pi.titleManualOverride === undefined
+          ? (existing?.title_manual_override ?? 0)
+          : pi.titleManualOverride
+            ? 1
+            : 0,
         pi.messageCount,
         pi.status,
         existing?.created_at ?? pi.createdAt,
@@ -948,6 +998,149 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         existing?.wait_resume_when ?? null,
         existing?.wait_since ?? null,
       );
+  }
+
+  queueTitleGeneration(sessionId: string): StructuredPiSessionRecord | null {
+    const row = this.ensureSessionRow(sessionId);
+    const status = row.title_generation_status ?? "not-started";
+    if (
+      row.title_auto_frozen ||
+      row.title_manual_override ||
+      status === "pending" ||
+      status === "running" ||
+      status === "completed"
+    ) {
+      return null;
+    }
+    const timestamp = this.now();
+    this.db
+      .query(
+        `UPDATE session
+         SET title_generation_status = 'pending',
+             title_generation_triggered_at = ?,
+             title_generation_finished_at = NULL,
+             title_generation_error = NULL,
+             updated_at = ?
+         WHERE session_id = ?`,
+      )
+      .run(timestamp, timestamp, sessionId);
+    this.recordEvent({
+      sessionId,
+      kind: "session.title_generation.queued",
+      subjectKind: "session",
+      subjectId: sessionId,
+      data: { status: "pending" },
+    });
+    return this.mapPiSession(this.mustFindSessionRow(sessionId));
+  }
+
+  markTitleGenerationRunning(sessionId: string): StructuredPiSessionRecord {
+    const timestamp = this.now();
+    this.ensureSessionRow(sessionId);
+    this.db
+      .query(
+        `UPDATE session
+         SET title_generation_status = 'running',
+             title_generation_error = NULL,
+             updated_at = ?
+         WHERE session_id = ?`,
+      )
+      .run(timestamp, sessionId);
+    this.recordEvent({
+      sessionId,
+      kind: "session.title_generation.started",
+      subjectKind: "session",
+      subjectId: sessionId,
+      data: { status: "running" },
+    });
+    return this.mapPiSession(this.mustFindSessionRow(sessionId));
+  }
+
+  completeTitleGeneration(input: { sessionId: string; title: string }): StructuredPiSessionRecord {
+    const title = input.title.trim();
+    if (!title) {
+      throw new Error("Generated session title cannot be empty.");
+    }
+    const timestamp = this.now();
+    this.ensureSessionRow(input.sessionId);
+    this.db
+      .query(
+        `UPDATE session
+         SET title = ?,
+             title_generation_status = 'completed',
+             title_generation_finished_at = ?,
+             title_generation_error = NULL,
+             title_auto_frozen = 1,
+             updated_at = ?
+         WHERE session_id = ?`,
+      )
+      .run(title, timestamp, timestamp, input.sessionId);
+    this.recordEvent({
+      sessionId: input.sessionId,
+      kind: "session.title_generation.completed",
+      subjectKind: "session",
+      subjectId: input.sessionId,
+      data: { title },
+    });
+    return this.mapPiSession(this.mustFindSessionRow(input.sessionId));
+  }
+
+  failTitleGeneration(input: { sessionId: string; error: string }): StructuredPiSessionRecord {
+    const timestamp = this.now();
+    this.ensureSessionRow(input.sessionId);
+    this.db
+      .query(
+        `UPDATE session
+         SET title_generation_status = 'failed',
+             title_generation_finished_at = ?,
+             title_generation_error = ?,
+             updated_at = ?
+         WHERE session_id = ?`,
+      )
+      .run(timestamp, input.error, timestamp, input.sessionId);
+    this.recordEvent({
+      sessionId: input.sessionId,
+      kind: "session.title_generation.failed",
+      subjectKind: "session",
+      subjectId: input.sessionId,
+      data: { error: input.error },
+    });
+    return this.mapPiSession(this.mustFindSessionRow(input.sessionId));
+  }
+
+  markManualTitleOverride(input: { sessionId: string; title: string }): StructuredPiSessionRecord {
+    const title = input.title.trim();
+    if (!title) {
+      throw new Error("Session title cannot be empty.");
+    }
+    const timestamp = this.now();
+    this.ensureSessionRow(input.sessionId);
+    this.db
+      .query(
+        `UPDATE session
+         SET title = ?,
+             title_auto_frozen = 1,
+             title_manual_override = 1,
+             title_generation_status = CASE
+               WHEN title_generation_status IN ('pending', 'running') THEN 'cancelled'
+               ELSE title_generation_status
+             END,
+             title_generation_finished_at = CASE
+               WHEN title_generation_status IN ('pending', 'running') THEN ?
+               ELSE title_generation_finished_at
+             END,
+             updated_at = ?
+         WHERE session_id = ?`,
+      )
+      .run(title, timestamp, timestamp, input.sessionId);
+    this.recordEvent({
+      sessionId: input.sessionId,
+      kind: "session.title.manual_override",
+      subjectKind: "session",
+      subjectId: input.sessionId,
+      data: { title },
+    });
+    return this.mapPiSession(this.mustFindSessionRow(input.sessionId));
   }
 
   startTurn(input: {
@@ -2458,7 +2651,14 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            session_mode,
            default_session_agent_json,
            quick_session_agent_json,
+           namer_session_agent_json,
            default_orchestrator_prompt_key,
+           title_generation_status,
+           title_generation_triggered_at,
+           title_generation_finished_at,
+           title_generation_error,
+           title_auto_frozen,
+           title_manual_override,
            message_count,
            pi_status,
            created_at,
@@ -2472,7 +2672,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            wait_reason,
            wait_resume_when,
            wait_since
-         ) VALUES (?, ?, NULL, NULL, NULL, 'orchestrator', NULL, NULL, 'defaultSession', 0, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
+         ) VALUES (?, ?, NULL, NULL, NULL, 'orchestrator', NULL, NULL, NULL, 'defaultSession', 'not-started', NULL, NULL, NULL, 0, 0, 0, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
       )
       .run(sessionId, sessionId, "idle", timestamp, timestamp, sessionId);
     return this.mustFindSessionRow(sessionId);
@@ -3010,7 +3210,14 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       sessionMode: row.session_mode ?? undefined,
       defaultSessionAgentJson: row.default_session_agent_json,
       quickSessionAgentJson: row.quick_session_agent_json,
+      namerSessionAgentJson: row.namer_session_agent_json,
       defaultOrchestratorPromptKey: row.default_orchestrator_prompt_key ?? undefined,
+      titleGenerationStatus: row.title_generation_status ?? "not-started",
+      titleGenerationTriggeredAt: row.title_generation_triggered_at,
+      titleGenerationFinishedAt: row.title_generation_finished_at,
+      titleGenerationError: row.title_generation_error,
+      titleAutoFrozen: Boolean(row.title_auto_frozen),
+      titleManualOverride: Boolean(row.title_manual_override),
       messageCount: row.message_count,
       status: row.pi_status,
       createdAt: row.created_at,
@@ -3320,7 +3527,14 @@ function initializeSchema(db: Database): void {
       session_mode TEXT,
       default_session_agent_json TEXT,
       quick_session_agent_json TEXT,
+      namer_session_agent_json TEXT,
       default_orchestrator_prompt_key TEXT,
+      title_generation_status TEXT NOT NULL DEFAULT 'not-started',
+      title_generation_triggered_at TEXT,
+      title_generation_finished_at TEXT,
+      title_generation_error TEXT,
+      title_auto_frozen INTEGER NOT NULL DEFAULT 0,
+      title_manual_override INTEGER NOT NULL DEFAULT 0,
       message_count INTEGER NOT NULL,
       pi_status TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -3557,7 +3771,14 @@ function initializeSchema(db: Database): void {
   ensureColumn(db, "session", "session_mode", "TEXT");
   ensureColumn(db, "session", "default_session_agent_json", "TEXT");
   ensureColumn(db, "session", "quick_session_agent_json", "TEXT");
+  ensureColumn(db, "session", "namer_session_agent_json", "TEXT");
   ensureColumn(db, "session", "default_orchestrator_prompt_key", "TEXT");
+  ensureColumn(db, "session", "title_generation_status", "TEXT NOT NULL DEFAULT 'not-started'");
+  ensureColumn(db, "session", "title_generation_triggered_at", "TEXT");
+  ensureColumn(db, "session", "title_generation_finished_at", "TEXT");
+  ensureColumn(db, "session", "title_generation_error", "TEXT");
+  ensureColumn(db, "session", "title_auto_frozen", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "session", "title_manual_override", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "thread", "session_agent_json", "TEXT");
 }
 

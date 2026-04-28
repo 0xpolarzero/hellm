@@ -25,6 +25,9 @@ describe("session agent settings", () => {
       reasoningEffort: "low",
       systemPrompt: "Handle short direct work.",
     });
+    expect(updated.sessionAgents.namer.provider).toBe("openai-codex");
+    expect(updated.sessionAgents.namer.model).toBe("gpt-5.4-mini");
+    expect(updated.sessionAgents.namer.reasoningEffort).toBe("low");
 
     const agentsPath = store.ensureWorkflowAgentsComponent();
     const agentsSource = readFileSync(agentsPath, "utf8");

@@ -46,6 +46,7 @@ type PromptHandlerResult = {
   assistantText: string;
   extraMessages?: AgentMessage[];
   reason?: Extract<SurfaceSyncMessage["reason"], "prompt.settled" | "surface.updated">;
+  emitSurfaceSyncBeforeStreamDone?: boolean;
 };
 
 type PromptHandler = (
@@ -702,6 +703,12 @@ function createFakeRpc(input: {
               reasoningEffort: "low",
               systemPrompt: "Quick",
             },
+            namer: {
+              provider: "openai-codex",
+              model: "gpt-5.4-mini",
+              reasoningEffort: "low",
+              systemPrompt: "Name the session",
+            },
           },
           workflowAgents: {
             explorer: {
@@ -966,12 +973,18 @@ function createFakeRpc(input: {
           });
 
           queueMicrotask(() => {
-            emitAssistantStream(request.streamId, result.assistantText, provider, model);
-            emitSurfaceSync({
+            const surfaceSyncPayload: SurfaceSyncMessage = {
               reason: result.reason ?? "prompt.settled",
               target: cloneTarget(request.target),
               snapshot: structuredClone(record.snapshot),
-            });
+            };
+            if (result.emitSurfaceSyncBeforeStreamDone) {
+              emitSurfaceSync(surfaceSyncPayload);
+              emitAssistantStream(request.streamId, result.assistantText, provider, model);
+            } else {
+              emitAssistantStream(request.streamId, result.assistantText, provider, model);
+              emitSurfaceSync(surfaceSyncPayload);
+            }
             emitWorkspaceSync("workspace.updated");
           });
 
@@ -1296,6 +1309,41 @@ describe("createChatRuntime", () => {
           message.content[0].text === "Orchestrator settled.",
       ),
     ).toBe(true);
+
+    runtime.dispose();
+  });
+
+  it("does not duplicate the assistant reply when a settled surface snapshot arrives before stream completion", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "ready")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [],
+        }),
+      ],
+    });
+    harness.setPromptHandler("session-1", async () => ({
+      assistantText: "Single settled reply.",
+      emitSurfaceSyncBeforeStreamDone: true,
+    }));
+
+    const runtime = await createRuntime(harness);
+    const controller = runtime.getPaneController(runtime.primaryPaneId);
+    if (!controller) {
+      throw new Error("Expected an orchestrator controller.");
+    }
+
+    await controller.agent.prompt("Greet me");
+    await controller.agent.waitForIdle();
+
+    const replies = controller.agent.state.messages.filter(
+      (message) =>
+        message.role === "assistant" &&
+        message.content[0]?.type === "text" &&
+        message.content[0].text === "Single settled reply.",
+    );
+    expect(replies).toHaveLength(1);
 
     runtime.dispose();
   });

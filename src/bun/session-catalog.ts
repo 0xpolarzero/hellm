@@ -108,9 +108,11 @@ const byTimestampDesc = (
   right: string | null | undefined,
 ): number => new Date(right ?? 0).getTime() - new Date(left ?? 0).getTime();
 
+type ManagedActorKind = SvvyActorKind | "namer";
+
 interface ManagedSession {
   sessionId: string;
-  actorKind: SvvyActorKind;
+  actorKind: ManagedActorKind;
   provider: string;
   model: string;
   thinkingLevel: ThinkingLevel;
@@ -146,7 +148,7 @@ export interface SendAgentPromptOptions extends SessionDefaults {
 
 interface CreateManagedSessionOptions {
   sessionManager: SessionManager;
-  actorKind: SvvyActorKind;
+  actorKind: ManagedActorKind;
   provider?: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;
@@ -173,6 +175,8 @@ export class WorkspaceSessionCatalog {
   private readonly structuredSessionStore: StructuredSessionStateStore;
   private readonly smithersRuntimeManager: SmithersRuntimeManager;
   private readonly agentSettingsStore: ReturnType<typeof createSessionAgentSettingsStore>;
+  private readonly titleGenerationJobs = new Set<string>();
+  private closed = false;
   private workspaceSyncListener: ((payload: WorkspaceSyncMessage) => void) | null = null;
   private surfaceSyncListener: ((payload: SurfaceSyncMessage) => void) | null = null;
 
@@ -183,6 +187,7 @@ export class WorkspaceSessionCatalog {
       resolveWorkspaceCwd(),
       getSvvyAgentDir(),
     ),
+    private readonly namerSessionDir: string = join(sessionDir, "namer"),
   ) {
     const workspaceLabel = basename(this.cwd) || "workspace";
     this.structuredSessionStore = createStructuredSessionStateStore({
@@ -219,13 +224,29 @@ export class WorkspaceSessionCatalog {
     )) {
       this.smithersRuntimeManager.registerTestWorkflow(definition);
     }
+    setTimeout(() => this.resumeDurableTitleGenerationJobs(), 0);
   }
 
   private get threadSurfaceDir(): string {
     return join(this.sessionDir, "threads");
   }
 
+  private resumeDurableTitleGenerationJobs(): void {
+    if (this.closed) {
+      return;
+    }
+    for (const snapshot of this.structuredSessionStore.listSessionStates()) {
+      const status = snapshot.pi.titleGenerationStatus;
+      if (status === "pending" || status === "running" || status === "failed") {
+        void this.runQueuedTitleGeneration(snapshot.pi.sessionId).catch((error) => {
+          console.error("Failed to resume session title generation:", error);
+        });
+      }
+    }
+  }
+
   async dispose(): Promise<void> {
+    this.closed = true;
     for (const session of this.managedSurfaces.values()) {
       session.session.dispose();
     }
@@ -517,6 +538,11 @@ export class WorkspaceSessionCatalog {
     if (!trimmedTitle) {
       throw new Error("Session title cannot be empty.");
     }
+    const snapshot = this.getStructuredSnapshot(sessionId);
+    const titleStatus = snapshot?.pi.titleGenerationStatus;
+    if (titleStatus === "pending" || titleStatus === "running") {
+      throw new Error("Session title is being generated. Rename is temporarily locked.");
+    }
 
     const activeOrchestrator = this.managedSurfaces.get(sessionId) ?? null;
 
@@ -527,6 +553,7 @@ export class WorkspaceSessionCatalog {
       SessionManager.open(sessionFile!, this.sessionDir).appendSessionInfo(trimmedTitle);
     }
     await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
+    this.structuredSessionStore.markManualTitleOverride({ sessionId, title: trimmedTitle });
     await this.emitWorkspaceSync("workspace.updated");
 
     return { ok: true };
@@ -616,6 +643,9 @@ export class WorkspaceSessionCatalog {
     session.abortRequested = false;
     session.activePrompt = true;
     const promptExecution = this.createPromptExecutionContext(session, options);
+    if (options.target.surface === "orchestrator") {
+      this.startTopLevelTitleGeneration(session, promptExecution);
+    }
 
     setTimeout(() => {
       void (async () => {
@@ -996,18 +1026,24 @@ export class WorkspaceSessionCatalog {
   }
 
   private async emitWorkspaceSync(reason: WorkspaceSyncMessage["reason"]): Promise<void> {
-    if (!this.workspaceSyncListener) {
+    if (this.closed || !this.workspaceSyncListener) {
       return;
     }
 
     try {
       const payload = await this.listSessions();
+      if (this.closed) {
+        return;
+      }
       this.workspaceSyncListener({
         reason,
         sessions: payload.sessions,
         navigation: payload.navigation,
       });
     } catch (error) {
+      if (this.closed) {
+        return;
+      }
       console.error("Failed to emit workspace sync payload:", error);
     }
   }
@@ -1154,6 +1190,9 @@ export class WorkspaceSessionCatalog {
         quickSessionAgentJson:
           snapshot?.pi.quickSessionAgentJson ??
           JSON.stringify(this.agentSettingsStore.getState().sessionAgents.quickSession),
+        namerSessionAgentJson:
+          snapshot?.pi.namerSessionAgentJson ??
+          JSON.stringify(this.agentSettingsStore.getState().sessionAgents.namer),
         defaultOrchestratorPromptKey: snapshot?.pi.defaultOrchestratorPromptKey ?? "defaultSession",
         messageCount: summary.messageCount,
         status: summary.status,
@@ -1178,6 +1217,7 @@ export class WorkspaceSessionCatalog {
       sessionMode: session.sessionMode,
       defaultSessionAgentJson: JSON.stringify(state.sessionAgents.defaultSession),
       quickSessionAgentJson: JSON.stringify(state.sessionAgents.quickSession),
+      namerSessionAgentJson: JSON.stringify(state.sessionAgents.namer),
       defaultOrchestratorPromptKey: session.sessionAgentKey,
       messageCount: summary.messageCount,
       status: summary.status,
@@ -1230,6 +1270,17 @@ export class WorkspaceSessionCatalog {
       pinnedAt: snapshot.session.pinnedAt,
       isArchived: snapshot.session.archivedAt !== null,
       archivedAt: snapshot.session.archivedAt,
+      titleGeneration: {
+        status: snapshot.pi.titleGenerationStatus ?? "not-started",
+        renameLocked:
+          snapshot.pi.titleGenerationStatus === "pending" ||
+          snapshot.pi.titleGenerationStatus === "running",
+        autoFrozen: snapshot.pi.titleAutoFrozen ?? false,
+        manualOverride: snapshot.pi.titleManualOverride ?? false,
+        triggeredAt: snapshot.pi.titleGenerationTriggeredAt ?? null,
+        finishedAt: snapshot.pi.titleGenerationFinishedAt ?? null,
+        error: snapshot.pi.titleGenerationError ?? null,
+      },
     };
 
     if (!hasStructuredSessionFacts(snapshot)) {
@@ -1390,6 +1441,130 @@ export class WorkspaceSessionCatalog {
       });
     }
     return this.structuredSessionStore.getThreadDetail(thread.id).thread;
+  }
+
+  private startTopLevelTitleGeneration(
+    session: ManagedSession,
+    promptContext: PromptExecutionContext | null,
+  ): void {
+    if (!promptContext || promptContext.surfaceKind !== "orchestrator") {
+      return;
+    }
+    const snapshot = this.getStructuredSnapshot(promptContext.sessionId);
+    if (!snapshot || snapshot.pi.sessionMode === "quick" || snapshot.turns.length !== 1) {
+      return;
+    }
+    const queued = this.structuredSessionStore.queueTitleGeneration(promptContext.sessionId);
+    if (!queued) {
+      return;
+    }
+    this.syncPiSessionTitle(session, queued.title);
+    void this.emitWorkspaceSync("structured.updated");
+    setTimeout(() => {
+      void this.runTitleGenerationJob(promptContext.sessionId).catch((error) => {
+        console.error("Failed to generate session title:", error);
+      });
+    }, 0);
+  }
+
+  private async runQueuedTitleGeneration(sessionId: string): Promise<void> {
+    return this.runTitleGenerationJob(sessionId);
+  }
+
+  private async runTitleGenerationJob(sessionId: string): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    if (this.titleGenerationJobs.has(sessionId)) {
+      return;
+    }
+    this.titleGenerationJobs.add(sessionId);
+    try {
+      const snapshot = this.getStructuredSnapshot(sessionId);
+      if (
+        !snapshot ||
+        (snapshot.pi.titleGenerationStatus !== "pending" &&
+          snapshot.pi.titleGenerationStatus !== "running" &&
+          snapshot.pi.titleGenerationStatus !== "failed")
+      ) {
+        return;
+      }
+      this.structuredSessionStore.markTitleGenerationRunning(sessionId);
+      if (!this.closed) {
+        await this.emitWorkspaceSync("structured.updated");
+      }
+
+      const title = await this.generateSessionTitle(snapshot);
+      if (this.closed) {
+        return;
+      }
+      const completed = this.structuredSessionStore.completeTitleGeneration({ sessionId, title });
+      const activeOrchestrator = this.managedSurfaces.get(sessionId);
+      if (activeOrchestrator) {
+        this.syncPiSessionTitle(activeOrchestrator, completed.title);
+      } else {
+        const sessionFile = await this.getSessionFileForId(sessionId, false);
+        if (sessionFile) {
+          SessionManager.open(sessionFile, this.sessionDir).appendSessionInfo(completed.title);
+        }
+      }
+      if (!this.closed) {
+        await this.emitWorkspaceSync("structured.updated");
+      }
+    } catch (error) {
+      if (this.closed) {
+        return;
+      }
+      this.structuredSessionStore.failTitleGeneration({
+        sessionId,
+        error: error instanceof Error ? error.message : "Title generation failed.",
+      });
+      if (!this.closed) {
+        await this.emitWorkspaceSync("structured.updated");
+      }
+    } finally {
+      this.titleGenerationJobs.delete(sessionId);
+    }
+  }
+
+  private async generateSessionTitle(snapshot: StructuredSessionSnapshot): Promise<string> {
+    const state = this.agentSettingsStore.getState();
+    const settings = state.sessionAgents.namer;
+    const sessionManager = SessionManager.create(this.cwd, this.namerSessionDir);
+    sessionManager.appendSessionInfo(`Name ${snapshot.pi.sessionId}`);
+    const namer = await createManagedSession({
+      sessionManager,
+      actorKind: "namer",
+      provider: settings.provider,
+      model: settings.model,
+      thinkingLevel: settings.reasoningEffort,
+      systemPrompt: settings.systemPrompt.trim(),
+      sessionMode: "orchestrator",
+      sessionAgentKey: "namer",
+      agentDir: this.agentDir,
+      structuredSessionStore: this.structuredSessionStore,
+      createHandlerThread: this.createHandlerThread.bind(this),
+      smithersRuntimeManager: this.smithersRuntimeManager,
+    });
+    try {
+      syncAuthStorage(namer.authStorage);
+      const prompt = [
+        "First user message:",
+        snapshot.turns[0]?.requestSummary?.trim() || "New session",
+      ].join("\n");
+      await namer.session.prompt(prompt, { expandPromptTemplates: false });
+      const response = getLatestAssistantMessage(namer.session.agent.state.messages);
+      const text = extractAssistantText(response).trim();
+      return normalizeGeneratedTitle(text);
+    } finally {
+      namer.session.dispose();
+      this.managedSurfaces.delete(namer.sessionId);
+    }
+  }
+
+  private syncPiSessionTitle(session: ManagedSession, title: string): void {
+    session.session.sessionManager.appendSessionInfo(title);
+    this.persistManagedSessionSnapshot(session);
   }
 
   private async runAgentPrompt(
@@ -1854,7 +2029,9 @@ async function createManagedSession(
       waitTool,
     ] as const;
   const tools =
-    options.actorKind === "orchestrator"
+    options.actorKind === "namer"
+      ? ([] as const)
+      : options.actorKind === "orchestrator"
       ? ([
           executeTypescriptTool,
           createStartThreadTool({
@@ -2613,6 +2790,60 @@ function getLatestAssistantMessage(messages: AgentMessage[]): AssistantMessage |
     (message): message is AssistantMessage => message.role === "assistant",
   );
   return assistantMessages.at(-1);
+}
+
+function extractAssistantText(message: AssistantMessage | undefined): string {
+  if (!message) {
+    return "";
+  }
+  return message.content
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .join(" ")
+    .trim();
+}
+
+export function normalizeGeneratedTitle(input: string): string {
+  const firstLine = input
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  const title = (firstLine ?? "New Session")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/[.。]+$/g, "")
+    .replace(/\s+(Session|Chat|Conversation|Thread|Request|Task)$/i, "")
+    .trim()
+    .slice(0, 80)
+    .trim();
+  return normalizeTitleCasing(title) || "New Session";
+}
+
+function normalizeTitleCasing(title: string): string {
+  const words = title.split(/\s+/);
+  if (words.length <= 1) {
+    return title;
+  }
+
+  const isPlainTitleCaseWord = (word: string) => /^[A-Z][a-z]+$/.test(word);
+  const isPreservedWord = (word: string) =>
+    /^[A-Z0-9._/-]{2,}$/.test(word) ||
+    /[._/-]/.test(word) ||
+    /[a-z][A-Z]/.test(word) ||
+    /[A-Z].*[A-Z].*[a-z]/.test(word);
+  const isTitleCasePhrase = words.every(
+    (word) => isPlainTitleCaseWord(word) || isPreservedWord(word),
+  );
+  if (!isTitleCasePhrase || !words.some(isPlainTitleCaseWord)) {
+    return title;
+  }
+
+  const preserveFirstTitleCase = words.slice(1).some(isPreservedWord);
+  return words
+    .map((word, index) =>
+      isPlainTitleCaseWord(word) && !(index === 0 && preserveFirstTitleCase)
+        ? word.toLowerCase()
+        : word,
+    )
+    .join(" ");
 }
 
 function buildPromptText(

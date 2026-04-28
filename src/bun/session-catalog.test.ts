@@ -13,6 +13,7 @@ import type {
 import { buildSystemPrompt } from "./default-system-prompt";
 import {
   getSvvySessionDir,
+  normalizeGeneratedTitle,
   WorkspaceSessionCatalog,
   resolveRestoredSessionDefaults,
   type SessionDefaults,
@@ -59,7 +60,7 @@ type PromptableSession = {
 
 type ManagedSurfaceRecord = {
   sessionId: string;
-  actorKind: "orchestrator" | "handler" | "workflow-task";
+  actorKind: "orchestrator" | "handler" | "workflow-task" | "namer";
   provider: string;
   model: string;
   thinkingLevel: ThinkingLevel;
@@ -389,6 +390,13 @@ function hasAssistantReply(messages: readonly AgentMessage[], text: string): boo
 }
 
 describe("WorkspaceSessionCatalog", () => {
+  it("normalizes generated session titles without generic suffixes", () => {
+    expect(normalizeGeneratedTitle('"OAuth Login Session."')).toBe("OAuth login");
+    expect(normalizeGeneratedTitle("Project CI Thread")).toBe("Project CI");
+    expect(normalizeGeneratedTitle("Greeting Exchange")).toBe("greeting exchange");
+    expect(normalizeGeneratedTitle("Session")).toBe("Session");
+  });
+
   it("lists workspace sessions through a sessions array without activeSessionId", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const existing = createPersistedSession(cwd, sessionDir, {
@@ -408,6 +416,77 @@ describe("WorkspaceSessionCatalog", () => {
         result.sessions.some((session) => session.id === created.target.workspaceSessionId),
       ).toBe(true);
       expect("activeSessionId" in (result as unknown as Record<string, unknown>)).toBe(false);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("blocks manual rename while top-level title generation is pending", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "New Session" }, DEFAULTS);
+      const sessionId = created.target.workspaceSessionId;
+      getStructuredSessionStore(catalog).queueTitleGeneration(sessionId);
+
+      await expect(catalog.renameSession(sessionId, "Manual Title")).rejects.toThrow(
+        "Session title is being generated.",
+      );
+
+      expect(
+        getStructuredSessionStore(catalog).getSessionState(sessionId).pi.titleGenerationStatus,
+      ).toBe("pending");
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("starts top-level title generation while the first orchestrator turn is still running", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "New Session" }, DEFAULTS);
+      const prompt = userMessage("Inspect duplicate prompt rendering");
+      const reply = assistantMessage("Still working.");
+      const orchestrator = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const orchestratorGate = Promise.withResolvers<void>();
+      const promptSpy = spyOn(orchestrator.session, "prompt").mockImplementation(
+        async function (this: PromptableSession) {
+          await orchestratorGate.promise;
+          appendMessagesToSession(this, [prompt, reply]);
+        },
+      );
+
+      try {
+        await catalog.sendPrompt({
+          ...DEFAULTS,
+          target: created.target,
+          messages: [prompt],
+          onEvent: () => {},
+        });
+
+        await waitFor(() => orchestrator.activePrompt);
+        await waitFor(() =>
+          getStructuredSessionStore(catalog).getSessionState(created.target.workspaceSessionId).pi
+            .titleGenerationStatus !== "not-started",
+        );
+
+        const titleState = getStructuredSessionStore(catalog).getSessionState(
+          created.target.workspaceSessionId,
+        ).pi;
+        expect(
+          ["pending", "running", "completed"].includes(
+            titleState.titleGenerationStatus ?? "not-started",
+          ),
+        ).toBe(true);
+      } finally {
+        orchestratorGate.resolve();
+        promptSpy.mockRestore();
+      }
+
+      await waitFor(() => !orchestrator.activePrompt);
     } finally {
       await catalog.dispose();
     }

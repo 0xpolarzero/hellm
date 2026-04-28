@@ -418,7 +418,7 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
       return;
     }
 
-    if (this.promptDispatchInFlight && snapshot.promptStatus === "streaming") {
+    if (this.promptDispatchInFlight) {
       this.pendingSnapshot = structuredClone(snapshot);
       this.resolvedSystemPrompt = snapshot.resolvedSystemPrompt;
       this.target = normalizePromptTarget(snapshot.target);

@@ -526,6 +526,10 @@
   }
 
   function handleRenameSession(session: WorkspaceSessionSummary) {
+    if (session.titleGeneration?.renameLocked) {
+      sidebarError = "Session title is being generated. Rename is temporarily locked.";
+      return;
+    }
     renameTarget = session;
     renameValue = session.title;
   }

@@ -2,7 +2,7 @@ import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 
 export type ReasoningEffort = ThinkingLevel;
 export type SessionMode = "orchestrator" | "quick";
-export type SessionAgentKey = "defaultSession" | "quickSession";
+export type SessionAgentKey = "defaultSession" | "quickSession" | "namer";
 export type WorkflowAgentKey = "explorer" | "implementer" | "reviewer";
 
 export interface AgentDefaults {
@@ -18,6 +18,7 @@ export interface SessionAgentSettings extends AgentDefaults {
 export interface SessionAgentDefaults {
   defaultSession: SessionAgentSettings;
   quickSession: SessionAgentSettings;
+  namer: SessionAgentSettings;
 }
 
 export interface WorkflowAgentSettings extends SessionAgentSettings {
@@ -44,6 +45,17 @@ export const DEFAULT_ORCHESTRATOR_SESSION_PROMPT =
 export const DEFAULT_QUICK_SESSION_PROMPT =
   "You are svvy quick session. Answer or act directly for short, focused work without starting handler threads unless delegation is explicitly necessary.";
 
+export const DEFAULT_NAMER_SESSION_PROMPT =
+  [
+    "you will generate a short title based on the first message a user begins a conversation with",
+    "- ensure it is not more than 50 characters long",
+    "- the title should be a summary of the user's message",
+    "- it should be one line long",
+    "- do not use quotes or colons",
+    "- the entire text you return will be used as the title",
+    "- never return anything that is more than one sentence (one line) long",
+  ].join("\n");
+
 export const DEFAULT_SESSION_AGENT_SETTINGS = {
   defaultSession: {
     ...DEFAULT_AGENT_SETTINGS,
@@ -52,6 +64,13 @@ export const DEFAULT_SESSION_AGENT_SETTINGS = {
   quickSession: {
     ...DEFAULT_AGENT_SETTINGS,
     systemPrompt: DEFAULT_QUICK_SESSION_PROMPT,
+  },
+  namer: {
+    ...DEFAULT_AGENT_SETTINGS,
+    provider: "openai-codex",
+    model: "gpt-5.4-mini",
+    reasoningEffort: "low",
+    systemPrompt: DEFAULT_NAMER_SESSION_PROMPT,
   },
 } satisfies SessionAgentDefaults;
 

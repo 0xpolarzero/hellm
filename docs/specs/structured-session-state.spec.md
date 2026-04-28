@@ -46,7 +46,8 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Keep Smithers as the canonical workflow execution substrate.
 - Add `svvy`-owned structured product state above those substrates.
 - Model turns, handler threads, workflow runs, workflow task attempts, commands, episodes, artifacts, Project CI, and waits explicitly.
-- Persist session-agent choices separately from typed handler context packs: app-wide defaults, per-session mode and prompt selection, and optional per-thread model, reasoning, and prompt overrides are structured settings facts, not transcript text.
+- Persist session-agent choices separately from typed handler context packs: app-wide defaults for `defaultSession`, `quickSession`, and `namer`, per-session mode and prompt selection, and optional per-thread model, reasoning, and prompt overrides are structured settings facts, not transcript text.
+- Model top-level session auto-title generation as explicit durable state driven by the first real user turn start, with pending/running/completed/failed title-generation status, manual-rename freeze state, and a rename lock while generation is pending or running. The configured `namer` session-agent prompt owns the title-generation instruction; the one-shot prompt body carries only the first user message context being titled, without a second naming instruction or extracted keyword list. The namer runs concurrently with the orchestrator's first turn: neither surface waits for the other to finish.
 - Persist one top-level per-turn decision for every surface, with orchestrator routing decisions and handler supervision decisions sharing one field.
 - Treat every tool call as a `CommandRecord`.
 - Make `execute_typescript` the default generic work surface.

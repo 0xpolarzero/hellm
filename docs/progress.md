@@ -213,11 +213,12 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 ## 12. Session Titles
 
 - [x] Define the stored title states for top-level sessions and handler threads. Commit(s): `b510857`, `fe53a3b`
-- [ ] Add the hidden `namer` system agent for one-shot top-level session naming.
-- [ ] Seed the `namer` agent to `gpt-5.4-mini` with low reasoning effort.
-- [ ] Build a POC one-shot title generation after the first real user turn for a top-level session.
-- [ ] Persist generated top-level session titles and stop silent auto-retitling after the first real user turn has passed.
-- [ ] Freeze auto-titling after manual rename.
+- [ ] Add `namer` as a pi-backed session-agent default, alongside `defaultSession` and `quickSession`, for one-shot top-level session naming rather than as a Smithers workflow agent.
+- [ ] Seed the `namer` session agent to `openai-codex`/`gpt-5.4-mini` with low reasoning effort, expose it in session-agent settings for customization, and treat its settings prompt as the only naming instruction.
+- [ ] Build a POC event-driven title-generation flow that starts a durable one-shot naming job concurrently with the first real top-level user turn without waiting for the orchestrator response.
+- [ ] Persist generated top-level session titles, title-generation lifecycle state, and the first-turn trigger so app restart cannot duplicate or lose title generation.
+- [ ] Block manual session rename while a title-generation job is pending or running, then release the lock after success, failure, or cancellation.
+- [ ] Freeze auto-titling after manual rename or after the first successful generated title.
 - [ ] Generate deterministic task-based titles for handler threads and workflow runs without using the `namer`.
 
 ## 13. Composer Mention Targets

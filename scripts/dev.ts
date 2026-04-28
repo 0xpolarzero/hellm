@@ -1,3 +1,7 @@
+import { mkdtemp } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
 const DEV_SERVER_URL = process.env.SVVY_VITE_DEV_SERVER_URL ?? "http://localhost:5173";
 const DEV_SERVER_WAIT_TIMEOUT_MS = 15_000;
 const DEV_SERVER_POLL_INTERVAL_MS = 250;
@@ -5,6 +9,7 @@ const DEV_SERVER_POLL_INTERVAL_MS = 250;
 const VITE_DEV_COMMAND = [process.execPath, "x", "vite", "--port", "5173"];
 const VITE_BUILD_COMMAND = [process.execPath, "x", "vite", "build"];
 const ELECTROBUN_DEV_COMMAND = [process.execPath, "x", "electrobun", "dev", "--watch"];
+const DEV_WORKSPACE_PREFIX = "svvy-dev-workspace-";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -71,10 +76,12 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
 }
 
 try {
-  const workspaceCwd = process.cwd();
+  const projectCwd = process.cwd();
+  const workspaceCwd =
+    process.env.SVVY_DEV_WORKSPACE_CWD ?? (await mkdtemp(join(tmpdir(), DEV_WORKSPACE_PREFIX)));
 
   viteProcess = Bun.spawn(VITE_DEV_COMMAND, {
-    cwd: workspaceCwd,
+    cwd: projectCwd,
     env: process.env,
     stdio: ["inherit", "inherit", "inherit"],
   });
@@ -83,11 +90,14 @@ try {
   await waitForDevServer(DEV_SERVER_URL, DEV_SERVER_WAIT_TIMEOUT_MS);
 
   await runChecked(VITE_BUILD_COMMAND);
+  console.log(`Launching svvy dev app with workspace cwd ${workspaceCwd}`);
 
   appProcess = Bun.spawn(ELECTROBUN_DEV_COMMAND, {
-    cwd: workspaceCwd,
+    cwd: projectCwd,
     env: {
       ...process.env,
+      INIT_CWD: workspaceCwd,
+      PWD: workspaceCwd,
       SVVY_VITE_DEV_SERVER: "wait",
       SVVY_WORKSPACE_CWD: workspaceCwd,
     },

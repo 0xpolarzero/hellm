@@ -70,6 +70,19 @@ export function normalizeAgentSettingsState(
   const workflowAgents = (input.workflowAgents ?? {}) as Partial<
     AgentSettingsState["workflowAgents"]
   >;
+  const namerInput = {
+    ...defaults.sessionAgents.namer,
+    ...sessionAgents.namer,
+  };
+  if (
+    namerInput.model === defaults.sessionAgents.namer.model &&
+    namerInput.systemPrompt === defaults.sessionAgents.namer.systemPrompt &&
+    (namerInput.provider === defaults.sessionAgents.defaultSession.provider ||
+      namerInput.provider === "openai")
+  ) {
+    namerInput.provider = defaults.sessionAgents.namer.provider;
+  }
+
   return {
     version: 1,
     sessionAgents: {
@@ -81,6 +94,7 @@ export function normalizeAgentSettingsState(
         ...defaults.sessionAgents.quickSession,
         ...sessionAgents.quickSession,
       }),
+      namer: normalizeSessionAgentSettings(namerInput),
     } satisfies SessionAgentDefaults,
     workflowAgents: {
       explorer: normalizeWorkflowAgentSettings("explorer", {

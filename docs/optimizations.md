@@ -363,6 +363,7 @@ Preferred direction:
 PRD pressure:
 
 - app-wide session agent settings exist for the default session agent, quick session agent, and namer
+- the namer starts from first-turn metadata concurrently with the orchestrator and uses its settings prompt as the only naming instruction
 - conventional workflow agents exist as `.svvy/workflows/components/agents.ts` exports for explorer, implementer, and reviewer
 - sessions can override those agent settings
 - handler threads and workflow tasks inherit bounded task defaults

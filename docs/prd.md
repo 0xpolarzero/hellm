@@ -586,18 +586,21 @@ Each handler thread should have:
 
 Typed context keys describe optional product knowledge loaded into a handler prompt, such as `ci`.
 
-Session agent settings describe the model, reasoning level, prompt selection, and callable surface used by real pi-backed interactive surfaces.
+Session agent settings describe the model, reasoning level, prompt selection, and callable surface used by pi-backed product agents. The `defaultSession` and `quickSession` agents back interactive orchestrator surfaces. The `namer` agent is the same product-agent family as the orchestrator, not a Smithers workflow agent, but it runs as a one-shot non-interactive title-generation surface whose settings prompt is the only title-generation instruction.
 
-The app owns two app-wide session-agent defaults:
+The app owns three app-wide session-agent defaults:
 
 - `defaultSession` for ordinary orchestrator sessions
 - `quickSession` for short focused sessions created through quick-session actions
+- `namer` for one-shot top-level session title generation, seeded to `openai-codex`/`gpt-5.4-mini` with low reasoning effort
 
 Session records persist their mode, the app-wide defaults that were active at creation time, and the default orchestrator prompt selection. A quick session is still a normal pi-backed orchestrator surface with the normal svvy callable surface and durable state; it only starts from the quick-session agent default and quick-session system prompt.
 
 Handler threads may persist a per-thread session-agent override when `thread.start` declares a specific provider, model, reasoning level, or handler prompt suffix for the delegated objective. Typed handler context packs remain separate product knowledge and do not carry model, reasoning, or prompt-selection settings.
 
-The settings surface edits app-wide session-agent defaults and conventional workflow-agent settings. Workflow-agent settings synchronize to `.svvy/workflows/components/agents.ts`, which remains an ordinary saved workflow component that exports `explorer`, `implementer`, and `reviewer`.
+The settings surface edits app-wide session-agent defaults, including `namer`, and conventional workflow-agent settings. Workflow-agent settings synchronize to `.svvy/workflows/components/agents.ts`, which remains an ordinary saved workflow component that exports `explorer`, `implementer`, and `reviewer`.
+
+Top-level session titles are generated through an explicit durable title-generation flow. When the first real user turn starts in a top-level session, the app records a pending title-generation job and runs the configured `namer` agent concurrently with the orchestrator turn. The orchestrator must not wait for the namer, and the namer must not wait for the orchestrator response. The namer settings prompt is the title-generation instruction; the one-shot user prompt sent to that agent contains only the first user message context to title, not another naming instruction or extracted keyword list. While that job is pending or running, manual session rename is blocked for that session so the generated title and a user rename cannot race. The generated title is persisted once, auto-title generation stops after that first successful generation, and a manual rename permanently freezes future auto-titling for the session. Handler-thread titles and workflow-run titles are deterministic task or run labels and do not use the `namer`.
 
 ### Workflow Run
 
