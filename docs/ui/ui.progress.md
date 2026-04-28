@@ -54,13 +54,13 @@ Always read [ui.prd.md](ui.prd.md) before implementing any item in this roadmap,
 
 ## 4. Shell Chrome
 
-- [ ] Build a POC Svelte shell chrome that matches the Replit artifact shell over static fixture data.
-- [ ] Render the production app frame with the ported Replit sidebar, top bar, pane chrome, inspector chrome, and composer dock while preserving current runtime behavior.
-- [ ] Render session title, status, worktree, active surface target, model summary, context budget, and pane layout controls in dense pane chrome.
-- [ ] Render sidebar session groups, pinned sessions, active sessions, archived sessions, and pane-location indicators using the ported Replit row language.
-- [ ] Preserve current session actions for create, switch, rename, fork, delete, pin, unpin, archive, and unarchive.
-- [ ] Preserve pane actions for split, resize, close, drag placement, focus, and opening the same surface in multiple panes.
-- [ ] Verify restored pane layout, sidebar state, focused pane, and inspector selection after app restart.
+- [x] Build a POC Svelte shell chrome that matches the Replit artifact shell over static fixture data. `1a8da19`
+- [x] Render the production app frame with the ported Replit sidebar, top bar, pane chrome, inspector chrome, and composer dock while preserving current runtime behavior. `1a8da19`
+- [x] Render session title, status, worktree, active surface target, model summary, context budget, and pane layout controls in dense pane chrome. `1a8da19`
+- [x] Render sidebar session groups, pinned sessions, active sessions, archived sessions, and pane-location indicators using the ported Replit row language. `1a8da19`
+- [x] Preserve current session actions for create, switch, rename, fork, delete, pin, unpin, archive, and unarchive. `1a8da19`
+- [x] Preserve pane actions for split, resize, close, drag placement, focus, and opening the same surface in multiple panes. `1a8da19`
+- [x] Verify restored pane layout, sidebar state, focused pane, and inspector selection after app restart. `1a8da19`
 
 ## 5. Composer And Prompt Entry
 

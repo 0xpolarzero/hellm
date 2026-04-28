@@ -13,6 +13,9 @@ export const rpc = Electroview.defineRPC<ChatRPCSchema>({
   maxRequestTime: rpcRequestTimeoutMs,
 });
 
-const electroview = typeof window === "undefined" ? null : new Electroview({ rpc });
+const isFixturePreview =
+  typeof window !== "undefined" && new URLSearchParams(window.location.search).has("ui-fixture");
+const electroview =
+  typeof window === "undefined" || isFixturePreview ? null : new Electroview({ rpc });
 
 void electroview;

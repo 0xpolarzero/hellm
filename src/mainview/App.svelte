@@ -68,7 +68,7 @@
 					{:else if runtime}
 						<ChatWorkspace {runtime} onOpenSettings={() => (showSettings = true)} />
 				{/if}
-				{#if !runtime && !bootstrapError}
+				{#if !fixturePreview && !runtime && !bootstrapError}
 					<StatusCard
 						eyebrow="Boot Sequence"
 						title="Starting svvy"

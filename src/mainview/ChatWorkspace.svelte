@@ -87,6 +87,7 @@
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
   import Input from "./ui/Input.svelte";
+  import MetadataChip from "./ui/MetadataChip.svelte";
 
   const DESKTOP_SPLIT_BREAKPOINT = 1220;
   const DEFAULT_SIDEBAR_WIDTH = 292;
@@ -206,7 +207,7 @@
         session.id,
         getOpenPaneLocations(
           paneLayout,
-          (binding) => binding.workspaceSessionId === session.id && binding.surface === "orchestrator",
+          (binding) => binding.workspaceSessionId === session.id,
         ),
       ]),
     ),
@@ -222,6 +223,22 @@
 
     return "Messaging orchestrator";
   });
+  const currentModelSummary = $derived.by(() => {
+    if (currentModel) {
+      return `${currentModel.provider}/${currentModel.id}`;
+    }
+    if (currentSession?.provider && currentSession.modelId) {
+      return `${currentSession.provider}/${currentSession.modelId}`;
+    }
+    if (currentSession?.modelId) {
+      return currentSession.modelId;
+    }
+    return "No model";
+  });
+  const currentReasoningSummary = $derived(
+    currentThinkingLevel || currentSession?.thinkingLevel || "off",
+  );
+  const currentWorktreeSummary = $derived(runtime.branch ? runtime.branch : "workspace");
   function formatPaneSurfaceLabel(
     controller: ChatSurfaceController | null,
     binding?: WorkspacePaneSurfaceTarget | null,
@@ -266,6 +283,30 @@
     const thinking = controller?.agent.state.thinkingLevel;
     if (!model) return "No agent";
     return `${model.provider}/${model.id} · ${thinking}`;
+  }
+  function formatPaneWorktreeLabel(binding?: WorkspacePaneSurfaceTarget | null): string {
+    if (binding?.surface === "workflow-inspector") return "workflow";
+    if (binding?.surface === "saved-workflow-library") return "library";
+    if (binding?.surface === "command") return "command";
+    if (binding?.surface === "workflow-task-attempt") return "task";
+    if (binding?.surface === "artifact") return "artifact";
+    if (binding?.surface === "project-ci-check") return "project-ci";
+    return runtime.branch ? runtime.branch : "workspace";
+  }
+  function getPaneSurfaceStatus(
+    controller: ChatSurfaceController | null,
+    binding?: WorkspacePaneSurfaceTarget | null,
+  ): string {
+    if (controller?.agent.state.isStreaming || controller?.promptStatus === "streaming") {
+      return "running";
+    }
+    if (controller?.agent.state.error) {
+      return "failed";
+    }
+    if (binding?.surface && binding.surface !== "orchestrator" && binding.surface !== "thread") {
+      return "active";
+    }
+    return "idle";
   }
   function getPaneContextBudget(controller: ChatSurfaceController | null): ContextBudget | null {
     if (!controller) return null;
@@ -1709,7 +1750,15 @@
     <section class="workspace-main">
       <header class="workspace-main-header">
         <div class="workspace-main-copy">
-          <h2 class="workspace-main-title">{currentSession?.title ?? "New Session"}</h2>
+          <div class="workspace-main-title-row">
+            <span
+              class="status-dot"
+              class:pulse-dot={workspaceStatusText === "Streaming"}
+              data-status={workspaceStatusText === "Attention" ? "failed" : workspaceStatusText === "Streaming" ? "running" : "idle"}
+              aria-hidden="true"
+            ></span>
+            <h2 class="workspace-main-title">{currentSession?.title ?? "New Session"}</h2>
+          </div>
           <p class="workspace-main-subtitle">{currentSurfaceLabel}</p>
         </div>
 
@@ -1725,8 +1774,13 @@
             </Button>
           {/if}
           <Badge tone={workspaceStatusTone}>{workspaceStatusText}</Badge>
+          <MetadataChip label="target" value={currentSurface?.surface ?? "orchestrator"} />
+          <MetadataChip label="worktree" value={currentWorktreeSummary} tone="info" />
+          <MetadataChip label="model" value={currentModelSummary} />
+          <MetadataChip label="reasoning" value={currentReasoningSummary} />
+          <ContextBudgetBar budget={contextBudget} variant="compact" label="Focused context" />
           <span>{summaryMessageCount} turns</span>
-          <span>{toolCallCount} tool runs</span>
+          <span>{toolCallCount} tools</span>
           <span>{lastActivityLabel}</span>
           <Button
             variant="ghost"
@@ -1859,9 +1913,24 @@
                 aria-label={`Focus pane ${pane.paneId}`}
                 onclick={() => void handleFocusPane(pane.paneId)}
               >
-                <strong>{formatPaneSurfaceLabel(paneController, pane.binding)}</strong>
+                <span class="pane-title-line">
+                  <span
+                    class="status-dot"
+                    class:pulse-dot={getPaneSurfaceStatus(paneController, pane.binding) === "running"}
+                    data-status={getPaneSurfaceStatus(paneController, pane.binding)}
+                    aria-hidden="true"
+                  ></span>
+                  <strong>{formatPaneSurfaceLabel(paneController, pane.binding)}</strong>
+                </span>
                 <span>{formatPaneAgentSummary(paneController, pane.binding)}</span>
               </button>
+              <div class="pane-chrome-meta" aria-label="Pane metadata">
+                <MetadataChip label="target" value={pane.binding?.surface ?? "empty"} />
+                <MetadataChip label="worktree" value={formatPaneWorktreeLabel(pane.binding)} tone="info" />
+                {#if paneContextBudget}
+                  <MetadataChip label="context" value={paneContextBudget.label} tone={paneContextBudget.tone === "red" ? "danger" : paneContextBudget.tone === "orange" ? "warning" : "neutral"} />
+                {/if}
+              </div>
               <div class="pane-chrome-actions">
                 <button
                   class="pane-resize-button vertical"
@@ -3408,6 +3477,7 @@
 
   .pane-focus-button {
     display: grid;
+    gap: 0.1rem;
     min-width: 0;
     padding: 0;
     border: 0;
@@ -3418,7 +3488,8 @@
   }
 
   .pane-focus-button strong,
-  .pane-focus-button span {
+  .pane-focus-button > span:not(.pane-title-line),
+  .pane-title-line strong {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -3431,6 +3502,19 @@
   .pane-focus-button span {
     font-size: 0.64rem;
     color: var(--ui-text-tertiary);
+  }
+
+  .pane-chrome-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+  }
+
+  .pane-chrome-meta :global(.ui-metadata-chip) {
+    max-width: 9.6rem;
   }
 
   .pane-chrome-actions {
@@ -3500,6 +3584,19 @@
     min-width: 0;
   }
 
+  .workspace-main-title-row,
+  .pane-title-line {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 0.42rem;
+  }
+
+  .workspace-main-title-row .status-dot,
+  .pane-title-line .status-dot {
+    flex: 0 0 auto;
+  }
+
   .workspace-main-title {
     margin: 0;
     min-width: 0;
@@ -3526,9 +3623,19 @@
     align-items: center;
     justify-content: flex-end;
     flex-wrap: wrap;
-    gap: 0.45rem 0.6rem;
-    font-size: 0.7rem;
+    gap: 0.36rem;
+    font-size: 0.66rem;
     color: var(--ui-text-tertiary);
+  }
+
+  .workspace-main-meta :global(.ui-metadata-chip) {
+    max-width: 13rem;
+  }
+
+  .workspace-main-meta :global(.context-budget-compact) {
+    position: static;
+    width: 8.4rem;
+    flex: 0 1 8.4rem;
   }
 
   .project-ci-compact {
