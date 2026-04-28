@@ -272,13 +272,13 @@ Current product decisions for this section are specified in `docs/specs/workflow
 
 Current product decisions for this section are specified in `docs/specs/context-budget-observability.spec.md`.
 
-- [ ] Define the context-budget metric as an explicit percentage of the active model's max context for orchestrator surfaces, handler-thread surfaces, and workflow task-agent attempts.
-- [ ] Define neutral, orange, and red thresholds for that metric: neutral below 40%, orange from 40% through 59%, and red from 60%, with orange marking the conservative context-degradation warning band and red marking the zone where summarization, handoff, or a fresh surface should be considered.
-- [ ] Build a POC full-width focused-surface context bar below the composer for orchestrator and handler-thread panes.
-- [ ] Render the focused-surface context bar beneath the text input for orchestrator and handler-thread panes.
-- [ ] Build a POC compact bottom-edge context indicator for open unfocused orchestrator and handler-thread panes.
-- [ ] Render bottom-edge context indicators on open unfocused orchestrator and handler-thread panes.
-- [ ] Render context bars on focused handler-thread panes and workflow task-agent attempt summaries.
+- [x] Define the context-budget metric as an explicit percentage of the active model's max context for orchestrator surfaces, handler-thread surfaces, and workflow task-agent attempts. Landed in `8d3e362`.
+- [x] Define neutral, orange, and red thresholds for that metric: neutral below 40%, orange from 40% through 59%, and red from 60%, with orange marking the conservative context-degradation warning band and red marking the zone where summarization, handoff, or a fresh surface should be considered. Landed in `8d3e362`.
+- [x] Build a POC full-width focused-surface context bar below the composer for orchestrator and handler-thread panes. Landed in `8d3e362`.
+- [x] Render the focused-surface context bar beneath the text input for orchestrator and handler-thread panes. Landed in `8d3e362`.
+- [x] Build a POC compact bottom-edge context indicator for open unfocused orchestrator and handler-thread panes. Landed in `8d3e362`.
+- [x] Render bottom-edge context indicators on open unfocused orchestrator and handler-thread panes. Landed in `8d3e362`.
+- [x] Render context bars on focused handler-thread panes and workflow task-agent attempt summaries. Landed in `8d3e362`.
 
 ## 18. Saved Workflow Library Surface
 
