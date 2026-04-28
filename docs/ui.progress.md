@@ -2,6 +2,18 @@
 
 Incremental roadmap for porting the UI from `frontend-replit/artifacts/svvy` into svvy's Svelte renderer, while preserving svvy's existing runtime, pi-owned surfaces, durable state contracts, and product behavior.
 
+## EXTREMELY IMPORTANT FOR AGENTS
+
+Every agent implementing any section, subsection, or individual item in this file must follow these rules. They are not optional.
+
+- Always keep docs, code, and tests in sync when behavior, architecture, product surface, or UI contracts change.
+- Keep or extend thorough testing for the affected surface. Do not weaken coverage to make a port easier.
+- After a UI change lands locally, verify it by driving the app itself, capturing screenshots, and inspecting those screenshots for correctness before marking work complete.
+- Never leave a legacy path, backwards-compatibility path, migration path, compatibility alias, dual implementation, fallback renderer, or obsolete fixture in place.
+- Refactor aggressively and delete obsolete code, styles, components, tests, fixtures, and docs once the new Svelte UI path owns the behavior.
+- Treat docs and specs as source-of-truth product documents, not a changelog or journal. When editing docs, describe the current resolved design and product surface, not what changed, what was replaced, or why an older approach existed.
+- Report clearly when the source UI appears bad, incomplete, unintuitive, missing expected states, poorly adapted to svvy's product model, or weaker than the way svvy needs to show the underlying runtime state.
+
 How to use this file:
 
 - Keep items small enough to land in a focused PR.
@@ -14,7 +26,8 @@ How to use this file:
 - If an item starts reading like a subsystem instead of a step, split it before implementation.
 - For any big lift or unclear porting seam, add a POC step immediately before the production implementation step.
 - Use POC steps to validate shape, constraints, and UX without prematurely locking the final architecture.
-- Treat Replit artifact visuals, layout, component behavior, and interaction states as the UI source. Treat its routes, mock data, and React component boundaries as porting inputs only; production UI must consume svvy's existing Svelte runtime and workspace read models.
+- Treat Replit artifact visuals, layout, component behavior, and interaction states as the UI source. Use `docs/ui-reference-screenshots/` as the desktop visual reference set for every ported surface so spacing, hierarchy, state styling, and fixture coverage are not forgotten or guessed. Treat Replit routes, mock data, and React component boundaries as porting inputs only; production UI must consume svvy's existing Svelte runtime and workspace read models.
+- Static screenshots do not capture everything. Always inspect the running Replit artifact for animated and live-state details such as blinking status dots, pulse indicators, streaming cursors, progress motion, hover states, focus states, resize affordances, and active-running emphasis before implementing the matching Svelte behavior.
 
 ## Current Baseline
 
@@ -38,7 +51,7 @@ How to use this file:
 - [ ] Port Replit artifact theme tokens into `src/mainview/app.css` as Svelte-compatible CSS variables.
 - [ ] Extract Replit artifact status color semantics for sessions, surfaces, handler threads, workflow runs, commands, waits, Project CI, provider auth, and context budget pressure.
 - [ ] Extract Replit artifact typography rules for transcript text, monospace metadata, dense rows, pane headers, cards, command entries, and settings forms.
-- [ ] Extract Replit artifact motion rules for pane focus, resize affordances, hover states, streaming indicators, command palette entry, and reduced-motion behavior.
+- [ ] Extract Replit artifact motion rules for pane focus, resize affordances, hover states, blinking or pulsing status points, streaming indicators, command palette entry, and reduced-motion behavior.
 - [ ] Add a UI fixture or preview harness for rendering migrated Svelte components against stable mock read models without touching production runtime behavior.
 
 ## 3. Svelte UI Primitives
