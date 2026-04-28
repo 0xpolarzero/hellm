@@ -1271,6 +1271,53 @@ describe("SmithersRuntimeManager", () => {
     });
   });
 
+  it("lets a handler attention turn inspect the same terminal run without deadlocking delivery", async () => {
+    let managerDuringAttention: SmithersRuntimeManager | null = null;
+    const inspectedStatuses: string[] = [];
+    const { store, manager, sessionId, threadId, surfacePiSessionId, handlerAttentions } =
+      createWorkspaceFixture({
+        onHandlerAttention: async (event) => {
+          const run = await managerDuringAttention?.getRun(event.smithersRunId);
+          if (run) {
+            inspectedStatuses.push(run.status);
+          }
+          return true;
+        },
+      });
+    managerDuringAttention = manager;
+
+    const launchCommand = createWorkflowCommand({
+      store,
+      sessionId,
+      threadId,
+      surfacePiSessionId,
+      requestSummary: "Launch hello world",
+      title: "Run hello_world",
+      summary: "Launch the hello_world workflow.",
+      toolName: "smithers.run_workflow",
+    });
+    const launched = await manager.launchWorkflow({
+      sessionId,
+      threadId,
+      workflowId: "hello_world",
+      launchInput: { message: "inspect during attention" },
+      commandId: launchCommand.commandId,
+    });
+
+    await waitFor("handler attention inspection", () => inspectedStatuses.includes("finished"));
+
+    const snapshot = store.getSessionState(sessionId);
+    const workflowRun = snapshot.workflowRuns.find(
+      (entry) => entry.smithersRunId === launched.runId,
+    );
+    expect(handlerAttentions).toHaveLength(1);
+    expect(workflowRun).toMatchObject({
+      status: "completed",
+      pendingAttentionSeq: null,
+      lastAttentionSeq: expect.any(Number),
+    });
+  });
+
   it("restores pending workflow supervision from durable state after recreating the manager", async () => {
     let shouldDeliverAttention = false;
     const {

@@ -3936,14 +3936,6 @@
     max-width: 44rem;
   }
 
-  @container (max-width: 42rem) {
-    .workspace-pane.focused .project-ci-panel,
-    .workspace-pane.focused .handler-thread-panel,
-    .workspace-pane.focused .structured-command-panel {
-      display: none;
-    }
-  }
-
   .handler-thread-empty,
   .project-ci-empty,
   .thread-inspector-empty,

@@ -249,6 +249,7 @@ export class SmithersRuntimeManager {
   private readonly ownershipByRunId = new Map<string, WorkflowOwnership>();
   private readonly monitorByRunId = new Map<string, WorkflowMonitor>();
   private readonly flushPromiseByRunId = new Map<string, Promise<void>>();
+  private readonly deliveringAttentionRunIds = new Set<string>();
   private readonly activeWorkflowPromises = new Set<Promise<void>>();
   private readonly terminalOutputByRunId = new Map<string, unknown>();
 
@@ -1281,6 +1282,12 @@ export class SmithersRuntimeManager {
       if (!existing) {
         break;
       }
+      if (this.deliveringAttentionRunIds.has(runId)) {
+        // The handler attention turn may inspect the same run that is currently
+        // delivering that attention. Reusing the durable projection avoids
+        // waiting on the flush that is waiting on this handler turn.
+        return;
+      }
       await existing;
     }
 
@@ -1876,19 +1883,25 @@ export class SmithersRuntimeManager {
       return false;
     }
 
-    const delivered =
-      (await this.options.onHandlerAttention?.({
-        sessionId: ownership.sessionId,
-        threadId: ownership.threadId,
-        workflowRunId: workflowRun.id,
-        smithersRunId: runId,
-        workflowId: ownership.workflowId,
-        summary: input.summary ?? workflowRun.summary,
-        reason:
-          input.reason ??
-          (await this.readPendingAttentionReason(runId, workflowRun.pendingAttentionSeq)) ??
-          "The supervised workflow needs handler attention.",
-      })) ?? false;
+    let delivered = false;
+    this.deliveringAttentionRunIds.add(runId);
+    try {
+      delivered =
+        (await this.options.onHandlerAttention?.({
+          sessionId: ownership.sessionId,
+          threadId: ownership.threadId,
+          workflowRunId: workflowRun.id,
+          smithersRunId: runId,
+          workflowId: ownership.workflowId,
+          summary: input.summary ?? workflowRun.summary,
+          reason:
+            input.reason ??
+            (await this.readPendingAttentionReason(runId, workflowRun.pendingAttentionSeq)) ??
+            "The supervised workflow needs handler attention.",
+        })) ?? false;
+    } finally {
+      this.deliveringAttentionRunIds.delete(runId);
+    }
     if (!delivered) {
       return false;
     }
