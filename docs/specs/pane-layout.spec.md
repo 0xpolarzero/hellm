@@ -50,6 +50,8 @@ Rows and columns define deterministic layout tracks. Each track stores the perce
 
 The same surface may be shown by more than one pane. Those panes share one live runtime and keep independent pane-local UI state.
 
+On restart, restoring a pane binding uses the same product open path used by an explicit user open. Interactive orchestrator and handler-thread bindings open through the pi-backed surface catalog; static inspector bindings remain durable pane projections and do not create pi runtimes. If two restored panes point at the same `surfacePiSessionId`, the renderer attaches both panes to one shared controller.
+
 ## Stored Shape
 
 The pane layout snapshot is durable workspace UI state:
@@ -429,6 +431,8 @@ On restart, do not restore:
 - stale running-tool state
 
 Restore should be lazy. The renderer may restore pane bindings first and hydrate the shared live runtime for a `surfacePiSessionId` only when a bound pane is visible, focused, or otherwise needs live data.
+
+Restored interactive bindings receive fresh surface snapshots from the Bun catalog. Those snapshots carry the current prompt lock, model, reasoning, messages, and resolved system prompt for that surface. The renderer treats the snapshot as authoritative and does not infer busy or waiting state from transcript text.
 
 If a binding target no longer exists, the pane should show a non-destructive unavailable-surface state. The restore process must not delete the pane, delete durable records, or silently retarget the pane.
 

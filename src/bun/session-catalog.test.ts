@@ -224,6 +224,24 @@ function getStructuredSessionStore(catalog: WorkspaceSessionCatalog): Structured
     .structuredSessionStore;
 }
 
+function getSmithersRuntimeManager(catalog: WorkspaceSessionCatalog): {
+  restoreSessionSupervision(
+    sessionId: string,
+    options?: { emitAttention?: boolean },
+  ): Promise<void>;
+} {
+  return (
+    catalog as unknown as {
+      smithersRuntimeManager: {
+        restoreSessionSupervision(
+          sessionId: string,
+          options?: { emitAttention?: boolean },
+        ): Promise<void>;
+      };
+    }
+  ).smithersRuntimeManager;
+}
+
 function getManagedSurfaces(catalog: WorkspaceSessionCatalog): Map<string, ManagedSurfaceRecord> {
   return (
     catalog as unknown as {
@@ -419,6 +437,33 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("restores workflow supervision with pending handler attention delivery when a tracked session opens", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Tracked Session" }, DEFAULTS);
+      const sessionId = created.target.workspaceSessionId;
+      const restoreCalls: Array<{ sessionId: string; options?: { emitAttention?: boolean } }> = [];
+      const manager = getSmithersRuntimeManager(catalog);
+      const restoreSpy = spyOn(manager, "restoreSessionSupervision").mockImplementation(
+        async (nextSessionId, options) => {
+          restoreCalls.push({ sessionId: nextSessionId, options });
+        },
+      );
+
+      try {
+        await catalog.openSession(sessionId, DEFAULTS.systemPrompt);
+      } finally {
+        restoreSpy.mockRestore();
+      }
+
+      expect(restoreCalls).toEqual([{ sessionId, options: undefined }]);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
   it("blocks manual rename while top-level title generation is pending", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
@@ -466,9 +511,10 @@ describe("WorkspaceSessionCatalog", () => {
         });
 
         await waitFor(() => orchestrator.activePrompt);
-        await waitFor(() =>
-          getStructuredSessionStore(catalog).getSessionState(created.target.workspaceSessionId).pi
-            .titleGenerationStatus !== "not-started",
+        await waitFor(
+          () =>
+            getStructuredSessionStore(catalog).getSessionState(created.target.workspaceSessionId).pi
+              .titleGenerationStatus !== "not-started",
         );
 
         const titleState = getStructuredSessionStore(catalog).getSessionState(
@@ -505,14 +551,15 @@ describe("WorkspaceSessionCatalog", () => {
           },
         ): Promise<void>;
       };
-      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(
-        async function (this: PromptableSession, promptText: string) {
-          appendMessagesToSession(this, [
-            userMessage(promptText),
-            assistantMessage("Project CI setup"),
-          ]);
-        },
-      );
+      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(async function (
+        this: PromptableSession,
+        promptText: string,
+      ) {
+        appendMessagesToSession(this, [
+          userMessage(promptText),
+          assistantMessage("Project CI setup"),
+        ]);
+      });
       const store = getStructuredSessionStore(catalog);
       const turn = store.startTurn({
         sessionId: created.target.workspaceSessionId,
@@ -552,7 +599,9 @@ describe("WorkspaceSessionCatalog", () => {
         });
 
         expect(handlerThread.title).toBe("Configure Project CI checks for this repository.");
-        await waitFor(() => store.getThreadDetail(handlerThread.id).thread.title === "Project CI setup");
+        await waitFor(
+          () => store.getThreadDetail(handlerThread.id).thread.title === "Project CI setup",
+        );
       } finally {
         promptSpy.mockRestore();
       }

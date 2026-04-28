@@ -306,6 +306,8 @@ It must not infer Project CI status from arbitrary command names, logs, transcri
 
 The product should restore as much workspace UI state as is useful and stable.
 
+Restart restore is a product contract, not a best-effort UI convenience. On startup the workspace shell rebuilds restorable pane bindings from durable workspace UI state, opens referenced live surfaces through the Bun catalog, and lets the catalog bootstrap Smithers supervision for tracked workflow runs owned by each restored workspace session. Pending handler attention remains Smithers-owned and is delivered through the same durable attention cursor used during live execution.
+
 ### Restore Targets
 
 The app should restore:
@@ -378,6 +380,8 @@ The app should not restore:
 - stale tool-running state
 
 Live stream and tool-running state should come only from real durable runtime state after reconnect or bootstrap. The restore snapshot must not pretend an old stream is still alive.
+
+The app does restore durable prompt-lock projection from opened surface snapshots. It does not recreate an interrupted token stream after process exit. A surface that is actively running because recovery started a background handler or orchestrator turn is projected as busy by the live surface snapshot.
 
 ## Relationship To Other Specs
 
