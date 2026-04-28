@@ -39,7 +39,7 @@ How to use this file:
 
 ## 1. Migration Contract
 
-- [ ] Inventory Replit artifact screens, components, interactions, and mock-only assumptions.
+- [x] Inventory Replit artifact screens, components, interactions, and mock-only assumptions in [docs/ui-artifact-inventory.md](ui-artifact-inventory.md). `7b45ec0`
 - [ ] Map each Replit artifact screen to the svvy product surface or fixture-only source state it represents.
 - [ ] Classify Replit artifact routes and mock states as production svvy surfaces or fixture states for visual parity.
 - [ ] Document the production Svelte ownership boundary: `src/mainview` owns presentation, existing runtime controllers own behavior, and shared workspace contracts own data shape.
@@ -48,6 +48,7 @@ How to use this file:
 ## 2. Source UI Foundation
 
 - [ ] Document the Replit artifact visual system in `DESIGN.md`, including density, typography, color tokens, spacing, borders, elevation, focus rings, motion, and dark/light theme behavior.
+- [ ] Reconcile Replit artifact context-budget colors with the product policy: neutral below 40%, orange from 40%, and red from 60%.
 - [ ] Port Replit artifact theme tokens into `src/mainview/app.css` as Svelte-compatible CSS variables.
 - [ ] Extract Replit artifact status color semantics for sessions, surfaces, handler threads, workflow runs, commands, waits, Project CI, provider auth, and context budget pressure.
 - [ ] Extract Replit artifact typography rules for transcript text, monospace metadata, dense rows, pane headers, cards, command entries, and settings forms.
@@ -97,6 +98,7 @@ How to use this file:
 - [ ] Render handler-thread summaries with objective, title, lifecycle state, wait state, loaded context keys, latest handoff, latest workflow-run summary, and related artifacts.
 - [ ] Render handler-active, workflow-active, waiting, troubleshooting, and completed states with distinct but restrained visual semantics.
 - [ ] Render direct handler-thread surfaces with the same transcript and composer quality as orchestrator surfaces.
+- [ ] Normalize Replit artifact "subagent" visual vocabulary into handler-thread and workflow task-agent labels before porting delegation surfaces.
 - [ ] Render thread metadata so users can inspect active system prompt, model, reasoning, worktree, context packs, and workflow ownership.
 - [ ] Preserve direct user messaging into handler threads before and after handoff.
 - [ ] Verify workflow attention routes back to the owning handler surface rather than the currently focused pane.
@@ -105,6 +107,7 @@ How to use this file:
 
 The workflow inspector remains tree-first. Replit artifact graph-oriented workflow pieces are not ported; the Svelte UI should build a consistent tree-based visual layout that fits the Replit workbench treatment.
 
+- [ ] Document how Replit graph-only workflow visuals adapt to the tree-first Svelte workflow inspector before styling tree rows and detail panes.
 - [ ] Restyle workflow inspector tree, selected-node details, tabs, frame scrubber, search, keyboard navigation, and row states around the tree-first inspector model.
 - [ ] Restyle artifact panel and artifact browser to match the Replit artifact treatment for source, scope, type, preview, logs, open-in-editor, and related-command affordances.
 - [ ] Restyle command inspector to match the Replit artifact treatment for parent command facts, nested child command facts, logs, artifacts, errors, and raw detail without losing hierarchy.
@@ -115,6 +118,7 @@ The workflow inspector remains tree-first. Replit artifact graph-oriented workfl
 ## 9. Command Palette And Quick Open
 
 - [ ] Restyle the command palette to match the Replit artifact compact action-list treatment while preserving `cmdk-sv` and svvy-owned command semantics.
+- [ ] Treat Replit artifact command-palette source as primitive-only; preserve production `cmdk-sv` command semantics and derive compact action-list styling from Svelte fixtures or production screenshots.
 - [ ] Render action categories, kind badges, shortcuts, disabled states, placement hints, and unmatched prompt-session fallback clearly.
 - [ ] Render `Cmd+P` quick-open placeholder or no-op state without implying a file editor surface exists before it does.
 - [ ] Preserve command routing for sessions, surfaces, handler threads, workflow inspectors, Project CI, panes, settings, and agent settings.
