@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { formatSessionStatusLabel } from "./session-format";
-import type { WorkspaceSessionSummary } from "./chat-rpc";
+import type { WorkspaceSessionSummary } from "../shared/workspace-contract";
 
 function session(
   overrides: Partial<WorkspaceSessionSummary> & Pick<WorkspaceSessionSummary, "id" | "title">,

@@ -1,4 +1,4 @@
-import type { SessionStatus, WorkspaceSessionSummary } from "./chat-rpc";
+import type { SessionStatus, WorkspaceSessionSummary } from "../shared/workspace-contract";
 
 const RELATIVE_TIME_FORMATTER = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 

@@ -14,7 +14,7 @@ import type {
   WorkspaceSessionSummary,
   WorkspaceSyncMessage,
   WorkspaceWorkflowTaskAttemptInspector,
-} from "./chat-rpc";
+} from "../shared/workspace-contract";
 import type { PromptHistoryEntry } from "./prompt-history";
 import type { ChatRuntimeRpcClient } from "./chat-runtime";
 import { buildWorkspaceSessionNavigation } from "./session-state";

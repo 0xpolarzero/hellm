@@ -1,4 +1,4 @@
-import type { PromptTarget } from "./chat-rpc";
+import type { PromptTarget } from "../shared/workspace-contract";
 import type { WorkspaceInspectorSelection } from "./chat-storage";
 
 export const PRIMARY_CHAT_PANE_ID = "primary";

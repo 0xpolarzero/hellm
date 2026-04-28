@@ -4,7 +4,7 @@ import type {
   WorkspaceProjectCiStatusPanel,
   WorkspaceSessionSummary,
   WorkspaceWorkflowTaskAttemptSummary,
-} from "./chat-rpc";
+} from "../shared/workspace-contract";
 import type { ChatRuntime } from "./chat-runtime";
 
 export type CommandPaletteMode = "actions" | "quick-open";

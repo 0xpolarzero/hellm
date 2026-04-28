@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { SessionStatus, WorkspaceSessionSummary } from "../mainview/chat-rpc";
+import type { SessionStatus, WorkspaceSessionSummary } from "../shared/workspace-contract";
 
 const PREVIEW_LIMIT = 140;
 const TITLE_LIMIT = 72;

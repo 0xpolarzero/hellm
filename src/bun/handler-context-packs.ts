@@ -1,15 +1,13 @@
-export const HANDLER_CONTEXT_KEYS = ["ci"] as const;
+import {
+  HANDLER_CONTEXT_PACK_METADATA,
+  isHandlerContextKey,
+  type HandlerContextKey,
+  type HandlerContextPackMetadata,
+} from "../shared/handler-context";
 
-export type HandlerContextKey = (typeof HANDLER_CONTEXT_KEYS)[number];
+export type { HandlerContextKey } from "../shared/handler-context";
 
-export type HandlerContextActor = "handler";
-
-export interface HandlerContextPack {
-  key: HandlerContextKey;
-  title: string;
-  summary: string;
-  version: string;
-  allowedActors: HandlerContextActor[];
+export interface HandlerContextPack extends HandlerContextPackMetadata {
   prompt: string;
 }
 
@@ -40,18 +38,10 @@ const CI_CONTEXT_PROMPT = [
 
 export const HANDLER_CONTEXT_PACKS: Record<HandlerContextKey, HandlerContextPack> = {
   ci: {
-    key: "ci",
-    title: "Project CI",
-    summary: "Guidance for configuring and modifying Project CI saved workflow entries.",
-    version: "2026-04-24",
-    allowedActors: ["handler"],
+    ...HANDLER_CONTEXT_PACK_METADATA.ci,
     prompt: CI_CONTEXT_PROMPT,
   },
 };
-
-export function isHandlerContextKey(value: string): value is HandlerContextKey {
-  return (HANDLER_CONTEXT_KEYS as readonly string[]).includes(value);
-}
 
 export function validateHandlerContextKeys(keys: readonly string[]): HandlerContextKey[] {
   const validKeys: HandlerContextKey[] = [];

@@ -41,7 +41,7 @@
     PromptTarget,
     WorkspaceSessionNavigationReadModel,
     WorkspaceSessionSummary,
-  } from "./chat-rpc";
+  } from "../shared/workspace-contract";
   import type { WorkspaceInspectorSelection } from "./chat-storage";
   import type { PromptHistoryEntry } from "./prompt-history";
   import {

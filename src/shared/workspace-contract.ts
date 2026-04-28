@@ -1,15 +1,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessageEvent, Message } from "@mariozechner/pi-ai";
-import type {
-  StructuredProjectCiActiveWorkflowSummary,
-  StructuredProjectCiCheckSummary,
-  StructuredProjectCiEntrySummary,
-  StructuredProjectCiPanelStatus,
-  StructuredProjectCiRunDetail,
-  StructuredProjectCiRunSummary,
-  StructuredProjectCiStatusPanel,
-} from "../bun/structured-session-selectors";
-import type { ChatDefaults, ReasoningEffort } from "./chat-settings";
+import type { AgentDefaults, ReasoningEffort } from "./agent-settings";
 
 export type AuthKeyType = "apikey" | "oauth" | "env" | "none";
 export type PromptSurfaceKind = "orchestrator" | "thread";
@@ -178,13 +169,80 @@ export interface WorkspaceHandlerThreadEpisodeSummary {
   createdAt: string;
 }
 
-export type WorkspaceProjectCiRunSummary = StructuredProjectCiRunSummary;
-export type WorkspaceProjectCiPanelStatus = StructuredProjectCiPanelStatus;
-export type WorkspaceProjectCiEntrySummary = StructuredProjectCiEntrySummary;
-export type WorkspaceProjectCiActiveWorkflowSummary = StructuredProjectCiActiveWorkflowSummary;
-export type WorkspaceProjectCiCheckSummary = StructuredProjectCiCheckSummary;
-export type WorkspaceProjectCiRunDetail = StructuredProjectCiRunDetail;
-export type WorkspaceProjectCiStatusPanel = StructuredProjectCiStatusPanel;
+export interface WorkspaceProjectCiRunSummary {
+  ciRunId: string;
+  workflowRunId: string;
+  workflowId: string;
+  status: "passed" | "failed" | "blocked" | "cancelled";
+  summary: string;
+  updatedAt: string;
+}
+
+export type WorkspaceProjectCiPanelStatus =
+  | "not-configured"
+  | "configured"
+  | "running"
+  | WorkspaceProjectCiRunSummary["status"];
+
+export type WorkspaceProjectCiCheckStatus = WorkspaceProjectCiRunSummary["status"] | "skipped";
+
+export interface WorkspaceProjectCiEntrySummary {
+  workflowId: string;
+  label: string;
+  summary: string;
+  sourceScope: "saved" | "artifact";
+  entryPath: string;
+}
+
+export interface WorkspaceProjectCiActiveWorkflowSummary {
+  workflowRunId: string;
+  workflowId: string;
+  entryPath: string | null;
+  threadId: string;
+  threadTitle: string;
+  status: "running" | "waiting";
+  summary: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceProjectCiCheckSummary {
+  checkResultId: string;
+  checkId: string;
+  label: string;
+  kind: string;
+  status: WorkspaceProjectCiCheckStatus;
+  required: boolean;
+  command: string[] | null;
+  exitCode: number | null;
+  summary: string;
+  artifactIds: string[];
+  artifacts: WorkspaceCommandArtifactLink[];
+  startedAt: string | null;
+  finishedAt: string | null;
+  updatedAt: string;
+}
+
+export interface WorkspaceProjectCiRunDetail extends WorkspaceProjectCiRunSummary {
+  threadId: string;
+  threadTitle: string;
+  smithersRunId: string;
+  entryPath: string;
+  startedAt: string;
+  finishedAt: string;
+}
+
+export interface WorkspaceProjectCiStatusPanel {
+  status: WorkspaceProjectCiPanelStatus;
+  summary: string;
+  entries: WorkspaceProjectCiEntrySummary[];
+  activeWorkflowRun: WorkspaceProjectCiActiveWorkflowSummary | null;
+  latestRun: WorkspaceProjectCiRunDetail | null;
+  checks: WorkspaceProjectCiCheckSummary[];
+  checkCounts: Record<WorkspaceProjectCiCheckStatus, number> & {
+    total: number;
+  };
+  updatedAt: string | null;
+}
 
 export interface WorkspaceWorkflowTaskAttemptTranscriptMessage {
   messageId: string;
@@ -399,7 +457,7 @@ export interface ChatRPCSchema {
     requests: {
       getDefaults: {
         params: undefined;
-        response: ChatDefaults;
+        response: AgentDefaults;
       };
       getProviderAuthState: {
         params: ProviderAuthStateRequest;

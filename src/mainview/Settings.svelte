@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { searchScore } from "./chat-format";
-	import type { ProviderAuthInfo } from "./chat-rpc";
+	import type { ProviderAuthInfo } from "../shared/workspace-contract";
 	import { rpc } from "./rpc";
 	import Button from "./ui/Button.svelte";
 	import Dialog from "./ui/Dialog.svelte";

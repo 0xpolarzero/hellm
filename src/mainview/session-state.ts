@@ -1,4 +1,4 @@
-import type { WorkspaceSessionNavigationReadModel, WorkspaceSessionSummary } from "./chat-rpc";
+import type { WorkspaceSessionNavigationReadModel, WorkspaceSessionSummary } from "../shared/workspace-contract";
 
 function descendingTimestamp(
   left: string | null | undefined,

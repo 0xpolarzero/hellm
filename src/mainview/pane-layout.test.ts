@@ -11,7 +11,7 @@ import {
   setPaneScroll,
   splitPane,
 } from "./pane-layout";
-import type { PromptTarget } from "./chat-rpc";
+import type { PromptTarget } from "../shared/workspace-contract";
 
 const target: PromptTarget = {
   workspaceSessionId: "session-1",

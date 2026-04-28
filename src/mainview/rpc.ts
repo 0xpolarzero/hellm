@@ -1,5 +1,5 @@
 import { Electroview } from "electrobun/view";
-import type { ChatRPCSchema } from "./chat-rpc";
+import type { ChatRPCSchema } from "../shared/workspace-contract";
 
 const DEFAULT_RPC_TIMEOUT_MS = 120000;
 const envTimeout = Number(

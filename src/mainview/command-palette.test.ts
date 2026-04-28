@@ -3,7 +3,7 @@ import type {
   PromptTarget,
   WorkspaceHandlerThreadSummary,
   WorkspaceSessionSummary,
-} from "./chat-rpc";
+} from "../shared/workspace-contract";
 import {
   buildCommandRegistry,
   executeCommandAction,

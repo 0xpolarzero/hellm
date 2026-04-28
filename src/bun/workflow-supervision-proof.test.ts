@@ -8,7 +8,7 @@ import type { ToolCall } from "@mariozechner/pi-ai";
 import { WaitForEvent, createSmithers } from "smithers-orchestrator";
 import { z } from "zod";
 import { buildSessionTranscriptExport } from "../mainview/session-transcript";
-import type { PromptTarget } from "../mainview/chat-rpc";
+import type { PromptTarget } from "../shared/workspace-contract";
 import {
   WorkspaceSessionCatalog,
   getSvvySessionDir,

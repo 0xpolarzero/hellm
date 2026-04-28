@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Message, StopReason, ToolCall } from "@mariozechner/pi-ai";
-import type { PromptTarget, SurfaceSyncMessage, WorkspaceSyncMessage } from "../mainview/chat-rpc";
+import type { PromptTarget, SurfaceSyncMessage, WorkspaceSyncMessage } from "../shared/workspace-contract";
 import { buildSystemPrompt } from "./default-system-prompt";
 import {
   getSvvySessionDir,

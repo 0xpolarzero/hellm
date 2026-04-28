@@ -7,7 +7,7 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@mariozechner/pi-ai";
-import type { WorkspaceSessionSummary } from "./chat-rpc";
+import type { WorkspaceSessionSummary } from "../shared/workspace-contract";
 import { projectConversation, type ProjectedToolCall } from "./conversation-projection";
 
 export interface SessionTranscriptExportInput {

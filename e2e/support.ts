@@ -14,7 +14,7 @@ import type {
 } from "@mariozechner/pi-ai";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
-import { DEFAULT_CHAT_SETTINGS } from "../src/mainview/chat-settings";
+import { DEFAULT_AGENT_SETTINGS } from "../src/shared/agent-settings";
 
 export function resolveAppWorkspaceDir(rootDir = process.cwd()): string {
   return resolveElectrobunWorkspaceDir(rootDir);
@@ -179,11 +179,11 @@ export async function seedSessions(
       manager.appendSessionInfo(session.title.trim());
     }
     manager.appendModelChange(
-      session.provider ?? DEFAULT_CHAT_SETTINGS.provider,
-      session.model ?? DEFAULT_CHAT_SETTINGS.model,
+      session.provider ?? DEFAULT_AGENT_SETTINGS.provider,
+      session.model ?? DEFAULT_AGENT_SETTINGS.model,
     );
     manager.appendThinkingLevelChange(
-      session.thinkingLevel ?? DEFAULT_CHAT_SETTINGS.reasoningEffort,
+      session.thinkingLevel ?? DEFAULT_AGENT_SETTINGS.reasoningEffort,
     );
     for (const message of session.messages) {
       manager.appendMessage(message);
@@ -233,8 +233,8 @@ export function assistantTextMessage(
     role: "assistant",
     timestamp: options.timestamp ?? Date.now(),
     api: "openai-responses",
-    provider: options.provider ?? DEFAULT_CHAT_SETTINGS.provider,
-    model: options.model ?? DEFAULT_CHAT_SETTINGS.model,
+    provider: options.provider ?? DEFAULT_AGENT_SETTINGS.provider,
+    model: options.model ?? DEFAULT_AGENT_SETTINGS.model,
     usage: ZERO_USAGE,
     stopReason: options.stopReason ?? "stop",
     content,

@@ -9,12 +9,12 @@ import type {
   PromptTarget,
   ProviderAuthInfo,
   SendPromptRequest,
-} from "../mainview/chat-rpc";
+} from "../shared/workspace-contract";
 import {
-  DEFAULT_CHAT_SETTINGS,
-  type ChatDefaults,
+  DEFAULT_AGENT_SETTINGS,
+  type AgentDefaults,
   type ReasoningEffort,
-} from "../mainview/chat-settings";
+} from "../shared/agent-settings";
 import {
   getProviderEnvVar,
   removeCredential,
@@ -48,7 +48,7 @@ const PREFERRED_MODEL_FRAGMENTS = [
   "glm-4.7",
   "glm-4.5",
 ];
-let resolvedDefaults: ChatDefaults | null = null;
+let resolvedDefaults: AgentDefaults | null = null;
 let mainWindow: BrowserWindow | null = null;
 const workspaceSessionCatalog = new WorkspaceSessionCatalog(resolveWorkspaceCwd());
 
@@ -158,8 +158,8 @@ async function getMainViewUrl(channelPromise: Promise<string>): Promise<string> 
   return "views://mainview/index.html";
 }
 
-function resolveSendDefaults(request: SendPromptRequest): ChatDefaults {
-  const defaults = getDefaultChatSettings();
+function resolveSendDefaults(request: SendPromptRequest): AgentDefaults {
+  const defaults = getDefaultAgentSettings();
   return {
     provider: request.provider || defaults.provider,
     model: request.model || defaults.model,
@@ -167,7 +167,7 @@ function resolveSendDefaults(request: SendPromptRequest): ChatDefaults {
   };
 }
 
-function getDefaultChatSettings(): ChatDefaults {
+function getDefaultAgentSettings(): AgentDefaults {
   if (resolvedDefaults) {
     return resolvedDefaults;
   }
@@ -195,17 +195,17 @@ function getDefaultChatSettings(): ChatDefaults {
     resolvedDefaults = {
       provider,
       model: preferredModel.id,
-      reasoningEffort: DEFAULT_CHAT_SETTINGS.reasoningEffort,
+      reasoningEffort: DEFAULT_AGENT_SETTINGS.reasoningEffort,
     };
     return resolvedDefaults;
   }
 
-  resolvedDefaults = DEFAULT_CHAT_SETTINGS;
+  resolvedDefaults = DEFAULT_AGENT_SETTINGS;
   return resolvedDefaults;
 }
 
 function getSessionDefaults(systemPrompt = DEFAULT_SYSTEM_PROMPT): SessionDefaults {
-  const defaults = getDefaultChatSettings();
+  const defaults = getDefaultAgentSettings();
   return {
     model: defaults.model,
     provider: defaults.provider,
@@ -257,7 +257,7 @@ function listProviderAuthSummaries(): ProviderAuthInfo[] {
 
 const svvyToolBridge = createSvvyToolBridge({
   defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
-  getDefaultChatSettings,
+  getDefaultAgentSettings,
   getMainWindow: () => mainWindow,
   getWorkspaceCwd: resolveWorkspaceCwd,
   getWorkspaceBranch,
@@ -274,14 +274,14 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
   handlers: {
     requests: {
       getDefaults: async () => {
-        return getDefaultChatSettings();
+        return getDefaultAgentSettings();
       },
       getProviderAuthState: async ({
         providerId,
       }: {
         providerId?: string;
       }): Promise<AuthStateResponse> => {
-        const defaults = getDefaultChatSettings();
+        const defaults = getDefaultAgentSettings();
         return createAuthState(providerId || defaults.provider);
       },
       getWorkspaceInfo: () => {

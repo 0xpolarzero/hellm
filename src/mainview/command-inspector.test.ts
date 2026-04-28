@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { WorkspaceCommandInspector, WorkspaceSessionSummary } from "./chat-rpc";
+import type { WorkspaceCommandInspector, WorkspaceSessionSummary } from "../shared/workspace-contract";
 import {
   getCommandInspectorSections,
   getVisibleCommandRollups,

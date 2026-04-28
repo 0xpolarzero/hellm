@@ -2,7 +2,7 @@ import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_CHAT_SETTINGS } from "../src/mainview/chat-settings";
+import { DEFAULT_AGENT_SETTINGS } from "../src/shared/agent-settings";
 import { ensureBuilt, launchSvvyApp, type SvvyApp } from "./harness";
 
 setDefaultTimeout(60_000);
@@ -59,7 +59,7 @@ test("default provider and model bootstrap from Bun-side defaults", async () => 
 
       expect(await currentText(app.page, ".model-control strong")).toBe("GLM-5-Turbo");
       expect(await currentText(app.page, ".thinking-field strong")).toBe(
-        DEFAULT_CHAT_SETTINGS.reasoningEffort,
+        DEFAULT_AGENT_SETTINGS.reasoningEffort,
       );
       expect(await currentText(app.page, ".workspace-main-title")).toBe("New Session");
       expect(await currentText(app.page, ".workspace-main-meta")).toContain("Ready");

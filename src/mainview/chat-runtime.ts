@@ -21,14 +21,14 @@ import type {
   WorkspaceSessionSummary,
   WorkspaceSyncMessage,
   WorkspaceWorkflowTaskAttemptInspector,
-} from "./chat-rpc";
+} from "../shared/workspace-contract";
 import {
   createChatStorage,
   type ChatStorage,
   type WorkspaceInspectorSelection,
   type WorkspaceUiRestoreState,
 } from "./chat-storage";
-import { DEFAULT_CHAT_SETTINGS, type ReasoningEffort } from "./chat-settings";
+import { DEFAULT_AGENT_SETTINGS, type ReasoningEffort } from "../shared/agent-settings";
 import {
   bindPane,
   closePane,
@@ -461,7 +461,7 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
       const stream = createAssistantMessageEventStream();
       const reasoningEffort =
         (streamOptions?.reasoning as ReasoningEffort | undefined) ??
-        DEFAULT_CHAT_SETTINGS.reasoningEffort;
+        DEFAULT_AGENT_SETTINGS.reasoningEffort;
       const request: SendPromptRequest = {
         streamId: createRpcStreamId(),
         messages: context.messages as Message[],
@@ -471,8 +471,8 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
         target: this.target,
         systemPrompt: context.systemPrompt,
       };
-      const provider = request.provider ?? DEFAULT_CHAT_SETTINGS.provider;
-      const modelId = request.model ?? DEFAULT_CHAT_SETTINGS.model;
+      const provider = request.provider ?? DEFAULT_AGENT_SETTINGS.provider;
+      const modelId = request.model ?? DEFAULT_AGENT_SETTINGS.model;
       if (this.promptDispatchInFlight) {
         queueMicrotask(() => {
           const failure = createFailureMessage(

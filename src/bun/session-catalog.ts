@@ -38,8 +38,8 @@ import type {
   WorkspaceHandlerThreadSummary,
   WorkspaceSessionSummary,
   WorkspaceWorkflowTaskAttemptInspector,
-} from "../mainview/chat-rpc";
-import { DEFAULT_CHAT_SETTINGS } from "../mainview/chat-settings";
+} from "../shared/workspace-contract";
+import { DEFAULT_AGENT_SETTINGS } from "../shared/agent-settings";
 import {
   projectWorkspaceSessionSummary,
   projectWorkspaceSessionSummaryFromInfo,
@@ -184,9 +184,9 @@ export class WorkspaceSessionCatalog {
       agentDir: this.agentDir,
       store: this.structuredSessionStore,
       getTaskAgentDefaults: () => ({
-        provider: DEFAULT_CHAT_SETTINGS.provider,
-        model: DEFAULT_CHAT_SETTINGS.model,
-        thinkingLevel: DEFAULT_CHAT_SETTINGS.reasoningEffort,
+        provider: DEFAULT_AGENT_SETTINGS.provider,
+        model: DEFAULT_AGENT_SETTINGS.model,
+        thinkingLevel: DEFAULT_AGENT_SETTINGS.reasoningEffort,
       }),
       onStructuredStateChanged: async (sessionId) => {
         await this.emitStructuredStateSync(sessionId);
@@ -2266,10 +2266,10 @@ export function resolveRestoredSessionDefaults(
   const metadata = readRestoredSessionMetadata(sessionManager);
 
   return {
-    provider: overrides.provider ?? metadata.provider ?? DEFAULT_CHAT_SETTINGS.provider,
-    model: overrides.model ?? metadata.model ?? DEFAULT_CHAT_SETTINGS.model,
+    provider: overrides.provider ?? metadata.provider ?? DEFAULT_AGENT_SETTINGS.provider,
+    model: overrides.model ?? metadata.model ?? DEFAULT_AGENT_SETTINGS.model,
     thinkingLevel:
-      overrides.thinkingLevel ?? metadata.thinkingLevel ?? DEFAULT_CHAT_SETTINGS.reasoningEffort,
+      overrides.thinkingLevel ?? metadata.thinkingLevel ?? DEFAULT_AGENT_SETTINGS.reasoningEffort,
   };
 }
 

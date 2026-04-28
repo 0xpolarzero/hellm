@@ -2,7 +2,7 @@
   import PlusIcon from "@lucide/svelte/icons/plus";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
-  import type { WorkspaceSessionNavigationReadModel, WorkspaceSessionSummary } from "./chat-rpc";
+  import type { WorkspaceSessionNavigationReadModel, WorkspaceSessionSummary } from "../shared/workspace-contract";
   import SessionListItem from "./SessionListItem.svelte";
   import Button from "./ui/Button.svelte";
 

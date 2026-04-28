@@ -1,8 +1,8 @@
 import type { BrowserWindow } from "electrobun/bun";
 import { mountElectrobunToolBridge } from "electrobun-browser-tools/bridge";
 import { basename } from "node:path";
-import type { ProviderAuthInfo } from "../mainview/chat-rpc";
-import type { ChatDefaults } from "../mainview/chat-settings";
+import type { ProviderAuthInfo } from "../shared/workspace-contract";
+import type { AgentDefaults } from "../shared/agent-settings";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 type ErrorKind = "app" | "rpc";
@@ -52,7 +52,7 @@ type ToolBridgeState = Record<string, Record<string, unknown>>;
 
 type CreateSvvyToolBridgeOptions = {
   defaultSystemPrompt: string;
-  getDefaultChatSettings: () => ChatDefaults;
+  getDefaultAgentSettings: () => AgentDefaults;
   getMainWindow: () => BrowserWindow | null;
   getWorkspaceCwd: () => string;
   getWorkspaceBranch: (cwd: string) => string | undefined;
@@ -81,7 +81,7 @@ export function createSvvyToolBridge(options: CreateSvvyToolBridgeOptions) {
 
   async function buildState(): Promise<ToolBridgeState> {
     const cwd = options.getWorkspaceCwd();
-    const defaults = options.getDefaultChatSettings();
+    const defaults = options.getDefaultAgentSettings();
     const sessions = await options.listWorkspaceSessions();
     const openSurfaces = await options.listOpenSurfaceSnapshots();
     const providerAuths = options.listProviderAuthSummaries();

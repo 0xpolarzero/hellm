@@ -3,7 +3,7 @@ import type {
   WorkspaceCommandInspectorChild,
   WorkspaceCommandRollup,
   WorkspaceSessionSummary,
-} from "./chat-rpc";
+} from "../shared/workspace-contract";
 
 export interface WorkspaceCommandStatusPresentation {
   label: string;

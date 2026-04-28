@@ -1,6 +1,6 @@
 <script lang="ts">
   import EllipsisVerticalIcon from "@lucide/svelte/icons/ellipsis-vertical";
-  import type { WorkspaceSessionSummary } from "./chat-rpc";
+  import type { WorkspaceSessionSummary } from "../shared/workspace-contract";
   import { formatRelativeSessionTime, formatSessionStatusLabel } from "./session-format";
   import Button from "./ui/Button.svelte";
 
