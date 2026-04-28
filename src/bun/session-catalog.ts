@@ -1208,9 +1208,7 @@ export class WorkspaceSessionCatalog {
     if (!this.getStructuredSnapshot(sessionId)) {
       return;
     }
-    await this.smithersRuntimeManager.restoreSessionSupervision(sessionId, {
-      emitAttention: false,
-    });
+    await this.smithersRuntimeManager.restoreSessionSupervision(sessionId);
   }
 
   private buildOrchestratorPromptTarget(workspaceSessionId: string): PromptTarget {

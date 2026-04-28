@@ -818,7 +818,7 @@ export async function createChatRuntime(
       if (!focus) {
         paneLayout = { ...paneLayout, focusedPaneId: previousFocusedPaneId };
       }
-      upsertSurfaceController({ ...snapshot, target: nextTarget });
+      upsertSurfaceController({ ...snapshot, target: nextTarget }).attachPane(paneId);
       emit();
       if (persist) {
         persistWorkspaceUiRestore();

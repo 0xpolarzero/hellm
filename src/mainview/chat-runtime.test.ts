@@ -223,6 +223,7 @@ function createSurfaceSnapshot(input: {
   reasoningEffort?: ReasoningEffort;
   systemPrompt?: string;
   resolvedSystemPrompt?: string;
+  promptStatus?: ConversationSurfaceSnapshot["promptStatus"];
 }): ConversationSurfaceSnapshot {
   const systemPrompt = input.systemPrompt ?? "You are svvy.";
   return {
@@ -235,7 +236,7 @@ function createSurfaceSnapshot(input: {
     sessionAgentKey: "defaultSession",
     systemPrompt,
     resolvedSystemPrompt: input.resolvedSystemPrompt ?? systemPrompt,
-    promptStatus: "idle",
+    promptStatus: input.promptStatus ?? "idle",
   };
 }
 
@@ -1723,6 +1724,168 @@ describe("createChatRuntime", () => {
     });
 
     secondRuntime.dispose();
+  });
+
+  it("restores multiple pane-bound surfaces with one controller per interactive surface", async () => {
+    const storage = createMemoryStorage();
+    const orchestratorTarget = createOrchestratorTarget("session-1");
+    const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
+    const workflowInspectorTarget = {
+      workspaceSessionId: "session-1",
+      surface: "workflow-inspector" as const,
+      workflowRunId: "workflow-1",
+    };
+    await storage.workspaceUiRestore.set("/tmp/svvy", {
+      version: 2,
+      columns: [
+        { id: "col-1", percent: 34 },
+        { id: "col-2", percent: 33 },
+        { id: "col-3", percent: 33 },
+      ],
+      rows: [{ id: "row-1", percent: 100 }],
+      compactSurfaces: [],
+      panes: [
+        {
+          paneId: "primary",
+          columnStart: 0,
+          columnEnd: 1,
+          rowStart: 0,
+          rowEnd: 1,
+          binding: orchestratorTarget,
+          localState: {
+            inspectorSelection: null,
+            scroll: { transcriptAnchorId: "assistant-1", offsetPx: 12 },
+            timelineDensity: "comfortable",
+          },
+        },
+        {
+          paneId: "thread-left",
+          columnStart: 1,
+          columnEnd: 2,
+          rowStart: 0,
+          rowEnd: 1,
+          binding: threadTarget,
+          localState: {
+            inspectorSelection: { kind: "thread", threadId: "thread-123" },
+            scroll: null,
+            timelineDensity: "compact",
+          },
+        },
+        {
+          paneId: "thread-right",
+          columnStart: 2,
+          columnEnd: 3,
+          rowStart: 0,
+          rowEnd: 1,
+          binding: threadTarget,
+          localState: {
+            inspectorSelection: { kind: "workflow-run", workflowRunId: "workflow-1" },
+            scroll: null,
+            timelineDensity: "comfortable",
+          },
+        },
+        {
+          paneId: "inspector",
+          columnStart: 0,
+          columnEnd: 3,
+          rowStart: 0,
+          rowEnd: 1,
+          binding: workflowInspectorTarget,
+          localState: {
+            inspectorSelection: { kind: "workflow-run", workflowRunId: "workflow-1" },
+            scroll: null,
+            timelineDensity: "comfortable",
+          },
+        },
+      ],
+      focusedPaneId: "thread-right",
+      updatedAt: "2026-04-27T00:00:00.000Z",
+    });
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: orchestratorTarget,
+          messages: [assistantMessage("main reply")],
+        }),
+        createSurfaceSnapshot({
+          target: threadTarget,
+          messages: [assistantMessage("worker ready")],
+        }),
+      ],
+    });
+
+    const runtime = await createRuntime(harness, storage);
+
+    expect(runtime.paneLayout.focusedPaneId).toBe("thread-right");
+    expect(runtime.getPane("primary")?.target).toEqual(orchestratorTarget);
+    expect(runtime.getPane("thread-left")?.target).toEqual(threadTarget);
+    expect(runtime.getPane("thread-right")?.target).toEqual(threadTarget);
+    expect(runtime.getPane("inspector")?.target).toEqual(workflowInspectorTarget);
+    expect(runtime.getPane("thread-left")?.inspectorSelection).toEqual({
+      kind: "thread",
+      threadId: "thread-123",
+    });
+    expect(runtime.getPane("thread-right")?.inspectorSelection).toEqual({
+      kind: "workflow-run",
+      workflowRunId: "workflow-1",
+    });
+
+    const threadController = runtime.getSurfaceController(threadTarget.surfacePiSessionId);
+    expect(threadController?.ownerPaneIds.sort()).toEqual(["thread-left", "thread-right"]);
+    expect(runtime.getPaneController("thread-left")).toBe(threadController);
+    expect(runtime.getPaneController("thread-right")).toBe(threadController);
+    expect(runtime.getPaneController("inspector")).toBeNull();
+    expect(harness.getRetainCount(threadTarget.surfacePiSessionId)).toBe(2);
+
+    runtime.dispose();
+  });
+
+  it("restores prompt lock state from opened surface snapshots", async () => {
+    const storage = createMemoryStorage();
+    const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
+    await storage.workspaceUiRestore.set("/tmp/svvy", {
+      version: 2,
+      columns: [{ id: "col-1", percent: 100 }],
+      rows: [{ id: "row-1", percent: 100 }],
+      compactSurfaces: [],
+      panes: [
+        {
+          paneId: "primary",
+          columnStart: 0,
+          columnEnd: 1,
+          rowStart: 0,
+          rowEnd: 1,
+          binding: threadTarget,
+          localState: {
+            inspectorSelection: null,
+            scroll: null,
+            timelineDensity: "comfortable",
+          },
+        },
+      ],
+      focusedPaneId: "primary",
+      updatedAt: "2026-04-27T00:00:00.000Z",
+    });
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Waiting Session", "worker waiting")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: threadTarget,
+          messages: [assistantMessage("still running")],
+          promptStatus: "streaming",
+        }),
+      ],
+    });
+
+    const runtime = await createRuntime(harness, storage);
+
+    expect(runtime.getPaneController("primary")?.promptStatus).toBe("streaming");
+    expect(runtime.getSurfaceController(threadTarget.surfacePiSessionId)?.promptStatus).toBe(
+      "streaming",
+    );
+
+    runtime.dispose();
   });
 
   it("preserves restored empty panes and keeps focus on the restored pane", async () => {
