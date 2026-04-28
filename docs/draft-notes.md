@@ -75,3 +75,5 @@
 - a benefit of our api inside execute_typescript is that we can add hooks and programatically enforce rules, which will automatically run and return back diagnostics/output to the agent, without expanding conceptual surface for the agent to remember to use special tools or whatever
   - e.g. typecheck on editing workflows (writeFile/writeJson inside .svvy/workflows/)
   - e.g. run CI on git commit/push
+
+- "qa" step similar to ci; have an agent look at changes, figure out if there is any new/changed UI surface, test the flow itself by driving the app, take screenshots, examine the screenshots to make sure everything works and displays as expected, and return a structured output
