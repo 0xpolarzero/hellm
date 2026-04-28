@@ -90,7 +90,9 @@ How to use this file:
 
 ## 8. Workflow, Artifact, And Command Inspectors
 
-- [ ] Restyle workflow inspector tree, selected-node details, tabs, frame scrubber, search, keyboard navigation, and row states to match the Replit artifact workbench treatment.
+The workflow inspector remains tree-first. Replit artifact graph-oriented workflow pieces are not ported; the Svelte UI should build a consistent tree-based visual layout that fits the Replit workbench treatment.
+
+- [ ] Restyle workflow inspector tree, selected-node details, tabs, frame scrubber, search, keyboard navigation, and row states around the tree-first inspector model.
 - [ ] Restyle artifact panel and artifact browser to match the Replit artifact treatment for source, scope, type, preview, logs, open-in-editor, and related-command affordances.
 - [ ] Restyle command inspector to match the Replit artifact treatment for parent command facts, nested child command facts, logs, artifacts, errors, and raw detail without losing hierarchy.
 - [ ] Restyle saved workflow library to match the Replit artifact treatment for asset groups, runnable entries, diagnostics, source previews, deletion controls, and open-in-editor handoff.
