@@ -34,8 +34,8 @@ How to use this file:
 - [x] Ship a functional Svelte renderer around the Electrobun desktop shell and Bun-side pi runtime.
 - [x] Render multi-session workspace navigation, pane bindings, transcript surfaces, composer, artifacts, workflow inspector, command palette, provider settings, and session-agent settings from svvy-owned runtime and read-model state.
 - [x] Keep product runtime behavior inside pi-backed surfaces, handler threads, Smithers-backed workflow supervision, and durable workspace state rather than a standalone terminal loop or alternate UI runtime.
-- [ ] Capture the current renderer baseline with screenshots for desktop and narrow viewport comparison under `screenshots/`.
-- [ ] Capture the Replit artifact source states that the Svelte UI must match under `screenshots/`.
+- [x] Capture the desktop UI reference screenshots under `docs/ui-reference-screenshots/`. `c8f047f`
+- [x] Capture the Replit artifact source states that the Svelte UI must match under `docs/ui-reference-screenshots/`. `c8f047f`
 
 ## 1. Migration Contract
 
