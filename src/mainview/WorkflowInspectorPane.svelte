@@ -27,8 +27,10 @@
   let error = $state<string | null>(null);
   let selectedNodeKey = $state<string | null>(null);
   let expandedNodeKeys = $state<string[]>([]);
+  let userCollapsedNodeKeys = $state<string[]>([]);
   let searchQuery = $state("");
   let mode = $state<WorkspaceWorkflowInspectorMode>({ kind: "live" });
+  let liveSeq = $state<number | null>(null);
   let activeTab = $state<WorkspaceWorkflowInspectorReadModel["detailTabs"][number]["id"]>("output");
   let searchInput = $state<HTMLInputElement | null>(null);
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -57,6 +59,7 @@
         sessionId,
         selectedNodeKey,
         expandedNodeKeys,
+        userCollapsedNodeKeys,
         searchQuery,
         mode,
       });
@@ -78,7 +81,29 @@
     if (pollTimer) clearTimeout(pollTimer);
     if (next.mode.kind !== "live") return;
     if (["completed", "failed", "cancelled", "continued"].includes(next.runHeader.svvyStatus)) return;
-    pollTimer = setTimeout(() => void loadInspector(), 1500);
+    pollTimer = setTimeout(() => void streamInspector(), 100);
+  }
+
+  async function streamInspector(): Promise<void> {
+    if (mode.kind !== "live") return;
+    try {
+      const update = await runtime.streamWorkflowInspector(workflowRunId, {
+        sessionId,
+        selectedNodeKey,
+        expandedNodeKeys,
+        userCollapsedNodeKeys,
+        searchQuery,
+        mode,
+        fromSeq: liveSeq,
+      });
+      inspector = update.inspector;
+      liveSeq = update.lastSeq ?? update.inspector.runHeader.lastSeq ?? liveSeq;
+      selectedNodeKey = update.inspector.selectedNodeKey;
+      expandedNodeKeys = update.inspector.expandedNodeKeys;
+      scheduleLivePoll(update.inspector);
+    } catch {
+      pollTimer = setTimeout(() => void loadInspector(), 1500);
+    }
   }
 
   function selectNode(key: string): void {
@@ -88,9 +113,16 @@
 
   function toggleNode(node: WorkspaceWorkflowInspectorNode): void {
     const expanded = new Set(expandedNodeKeys);
-    if (expanded.has(node.key)) expanded.delete(node.key);
-    else expanded.add(node.key);
+    const collapsed = new Set(userCollapsedNodeKeys);
+    if (expanded.has(node.key)) {
+      expanded.delete(node.key);
+      collapsed.add(node.key);
+    } else {
+      expanded.add(node.key);
+      collapsed.delete(node.key);
+    }
     expandedNodeKeys = [...expanded];
+    userCollapsedNodeKeys = [...collapsed];
     void loadInspector();
   }
 
@@ -127,6 +159,7 @@
       event.preventDefault();
       if (expandedNodeKeys.includes(selectedNode.key)) {
         expandedNodeKeys = expandedNodeKeys.filter((key) => key !== selectedNode.key);
+        userCollapsedNodeKeys = [...new Set([...userCollapsedNodeKeys, selectedNode.key])];
       } else {
         selectedNodeKey = selectedNode.parentKey;
       }
@@ -136,6 +169,7 @@
       const hasChildren = inspector?.tree.nodes.some((node) => node.parentKey === selectedNode.key);
       if (hasChildren && !expandedNodeKeys.includes(selectedNode.key)) {
         expandedNodeKeys = [...expandedNodeKeys, selectedNode.key];
+        userCollapsedNodeKeys = userCollapsedNodeKeys.filter((key) => key !== selectedNode.key);
         void loadInspector();
       }
     } else if (event.key === "Enter" && selectedNode) {
@@ -190,9 +224,33 @@
           );
         });
     } else if (target.kind === "task-agent") {
-      void runtime.getWorkflowTaskAttemptInspector(target.workflowTaskAttemptId, sessionId);
+      void runtime.openSurface(
+        {
+          workspaceSessionId: sessionId,
+          surface: "workflow-task-attempt",
+          workflowTaskAttemptId: target.workflowTaskAttemptId,
+        },
+        { kind: "split", paneId, direction: "right" },
+      );
     } else if (target.kind === "command") {
-      void runtime.getCommandInspector(target.commandId, sessionId);
+      void runtime.openSurface(
+        { workspaceSessionId: sessionId, surface: "command", commandId: target.commandId },
+        { kind: "split", paneId, direction: "right" },
+      );
+    } else if (target.kind === "artifact") {
+      void runtime.openSurface(
+        { workspaceSessionId: sessionId, surface: "artifact", artifactId: target.artifactId },
+        { kind: "split", paneId, direction: "right" },
+      );
+    } else if (target.kind === "project-ci-check") {
+      void runtime.openSurface(
+        {
+          workspaceSessionId: sessionId,
+          surface: "project-ci-check",
+          checkResultId: target.checkResultId,
+        },
+        { kind: "split", paneId, direction: "right" },
+      );
     }
   }
 </script>
@@ -311,7 +369,7 @@
             {/each}
           </div>
           <div class="workflow-node-props">
-            <pre>{formatContent({ props: selectedNode.props, launchArguments: selectedNode.launchArguments, task: selectedNode.task, projectCi: selectedNode.projectCi })}</pre>
+            <pre>{formatContent({ detail: selectedNode.detail, props: selectedNode.props, launchArguments: selectedNode.launchArguments, task: selectedNode.task, projectCi: selectedNode.projectCi })}</pre>
           </div>
           <div class="workflow-node-tabs">
             {#each activeTabs as tab (tab.id)}

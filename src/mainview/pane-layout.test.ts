@@ -152,7 +152,8 @@ describe("pane layout grid", () => {
       getOpenPaneLocations(
         layout,
         (binding) =>
-          binding.surface !== "workflow-inspector" && binding.surfacePiSessionId === "session-1",
+          (binding.surface === "orchestrator" || binding.surface === "thread") &&
+          binding.surfacePiSessionId === "session-1",
       ),
     ).toEqual([
       { paneId: "primary", label: "Left", focused: false },

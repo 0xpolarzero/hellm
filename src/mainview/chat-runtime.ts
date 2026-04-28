@@ -23,6 +23,7 @@ import type {
   WorkspaceSyncMessage,
   WorkspaceWorkflowTaskAttemptInspector,
   WorkspaceWorkflowInspectorMode,
+  WorkspaceWorkflowInspectorLiveUpdate,
   WorkspaceWorkflowInspectorReadModel,
   WorkspacePaneSurfaceTarget,
 } from "../shared/workspace-contract";
@@ -142,6 +143,7 @@ export interface ChatRuntimeRpcClient {
     getHandlerThreadInspector: typeof rpc.request.getHandlerThreadInspector;
     getWorkflowTaskAttemptInspector: typeof rpc.request.getWorkflowTaskAttemptInspector;
     getWorkflowInspector: typeof rpc.request.getWorkflowInspector;
+    streamWorkflowInspector: typeof rpc.request.streamWorkflowInspector;
     getProjectCiStatus: typeof rpc.request.getProjectCiStatus;
     getArtifactPreview: typeof rpc.request.getArtifactPreview;
     createSession: typeof rpc.request.createSession;
@@ -225,10 +227,23 @@ export interface ChatRuntime {
       sessionId?: string;
       selectedNodeKey?: string | null;
       expandedNodeKeys?: string[];
+      userCollapsedNodeKeys?: string[];
       searchQuery?: string;
       mode?: WorkspaceWorkflowInspectorMode;
     },
   ) => Promise<WorkspaceWorkflowInspectorReadModel>;
+  streamWorkflowInspector: (
+    workflowRunId: string,
+    options?: {
+      sessionId?: string;
+      selectedNodeKey?: string | null;
+      expandedNodeKeys?: string[];
+      userCollapsedNodeKeys?: string[];
+      searchQuery?: string;
+      mode?: WorkspaceWorkflowInspectorMode;
+      fromSeq?: number | null;
+    },
+  ) => Promise<WorkspaceWorkflowInspectorLiveUpdate>;
   getProjectCiStatus: (sessionId?: string) => Promise<WorkspaceProjectCiStatusPanel>;
   getArtifactPreview: (artifactId: string, sessionId?: string) => Promise<WorkspaceArtifactPreview>;
   createSession: (
@@ -961,6 +976,7 @@ export async function createChatRuntime(
       sessionId?: string;
       selectedNodeKey?: string | null;
       expandedNodeKeys?: string[];
+      userCollapsedNodeKeys?: string[];
       searchQuery?: string;
       mode?: WorkspaceWorkflowInspectorMode;
     } = {},
@@ -975,6 +991,7 @@ export async function createChatRuntime(
       workflowRunId,
       selectedNodeKey: request.selectedNodeKey,
       expandedNodeKeys: request.expandedNodeKeys,
+      userCollapsedNodeKeys: request.userCollapsedNodeKeys,
       searchQuery: request.searchQuery,
       mode: request.mode,
     });
@@ -983,6 +1000,38 @@ export async function createChatRuntime(
     }
 
     return inspector;
+  };
+
+  const streamWorkflowInspector = async (
+    workflowRunId: string,
+    request: {
+      sessionId?: string;
+      selectedNodeKey?: string | null;
+      expandedNodeKeys?: string[];
+      userCollapsedNodeKeys?: string[];
+      searchQuery?: string;
+      mode?: WorkspaceWorkflowInspectorMode;
+      fromSeq?: number | null;
+    } = {},
+  ): Promise<WorkspaceWorkflowInspectorLiveUpdate> => {
+    const sessionId = request.sessionId ?? getSelectedSessionId();
+    if (!sessionId) {
+      throw new Error("Expected a workspace session before streaming a workflow inspector.");
+    }
+    const update = await rpcClient.request.streamWorkflowInspector({
+      sessionId,
+      workflowRunId,
+      selectedNodeKey: request.selectedNodeKey,
+      expandedNodeKeys: request.expandedNodeKeys,
+      userCollapsedNodeKeys: request.userCollapsedNodeKeys,
+      searchQuery: request.searchQuery,
+      mode: request.mode,
+      fromSeq: request.fromSeq,
+    });
+    if (!update) {
+      throw new Error(`Workflow inspector stream not found: ${workflowRunId}`);
+    }
+    return update;
   };
 
   const getProjectCiStatus = async (
@@ -1087,7 +1136,7 @@ export async function createChatRuntime(
         continue;
       }
 
-      if (paneState.binding.surface === "workflow-inspector") {
+      if (!isPromptTarget(paneState.binding)) {
         restoredPaneIds.push(paneState.paneId);
         continue;
       }
@@ -1302,6 +1351,7 @@ export async function createChatRuntime(
     getHandlerThreadInspector,
     getWorkflowTaskAttemptInspector,
     getWorkflowInspector,
+    streamWorkflowInspector,
     getProjectCiStatus,
     getArtifactPreview,
     createSession: async (request = {}, openTarget) => {
@@ -1337,7 +1387,13 @@ export async function createChatRuntime(
     },
     openSurface: async (target, openTarget) => {
       const nextPaneId = resolveOpenTarget(openTarget);
-      if (target.surface === "workflow-inspector") {
+      if (
+        target.surface === "workflow-inspector" ||
+        target.surface === "command" ||
+        target.surface === "workflow-task-attempt" ||
+        target.surface === "artifact" ||
+        target.surface === "project-ci-check"
+      ) {
         const previousTarget =
           paneLayout.panes.find((pane) => pane.paneId === nextPaneId)?.binding ?? null;
         if (isPromptTarget(previousTarget)) {

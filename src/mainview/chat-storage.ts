@@ -174,8 +174,11 @@ export class PromptHistoryStore {
 export type WorkspaceInspectorSelection =
   | { kind: "thread"; threadId: string }
   | { kind: "workflow-run"; workflowRunId: string }
+  | { kind: "workflow-task-attempt"; workflowTaskAttemptId: string }
+  | { kind: "command"; commandId: string }
   | { kind: "artifact"; artifactId: string }
-  | { kind: "ci-run"; ciRunId: string };
+  | { kind: "ci-run"; ciRunId: string }
+  | { kind: "project-ci-check"; checkResultId: string };
 
 export interface WorkspaceUiRestoreState extends WorkspacePaneLayoutState {
   version: 2;

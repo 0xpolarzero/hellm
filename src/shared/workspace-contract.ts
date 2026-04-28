@@ -27,7 +27,20 @@ export interface WorkflowInspectorPaneTarget {
   workflowRunId: string;
 }
 
-export type WorkspacePaneSurfaceTarget = PromptTarget | WorkflowInspectorPaneTarget;
+export type StaticInspectorPaneTarget =
+  | { workspaceSessionId: string; surface: "command"; commandId: string }
+  | {
+      workspaceSessionId: string;
+      surface: "workflow-task-attempt";
+      workflowTaskAttemptId: string;
+    }
+  | { workspaceSessionId: string; surface: "artifact"; artifactId: string }
+  | { workspaceSessionId: string; surface: "project-ci-check"; checkResultId: string };
+
+export type WorkspacePaneSurfaceTarget =
+  | PromptTarget
+  | WorkflowInspectorPaneTarget
+  | StaticInspectorPaneTarget;
 
 export interface SendPromptRequest {
   streamId: string;
@@ -367,6 +380,37 @@ export type WorkspaceWorkflowInspectorRelatedSurfaceTarget =
   | { kind: "artifact"; artifactId: string }
   | { kind: "project-ci-check"; checkResultId: string };
 
+export interface WorkspaceWorkflowInspectorNodeDetail {
+  status: WorkspaceWorkflowInspectorNodeStatus;
+  objectiveOrLabel: string;
+  latestOutput: string | null;
+  partialOutput: string | null;
+  relatedArtifacts: WorkspaceCommandArtifactLink[];
+  workflowAgent: string | null;
+  taskAttempt: {
+    workflowTaskAttemptId: string;
+    iteration: number;
+    attempt: number;
+    status: string;
+    responseText: string | null;
+    error: string | null;
+  } | null;
+  command: {
+    commandId: string;
+    toolName: string;
+    status: string;
+    summary: string;
+  } | null;
+  worktree: string | null;
+  timing: {
+    startedAt: string | null;
+    finishedAt: string | null;
+    updatedAt: string | null;
+    elapsedMs: number | null;
+  };
+  waitReason: string | null;
+}
+
 export interface WorkspaceWorkflowInspectorNode {
   key: string;
   smithersNodeId: string | null;
@@ -399,10 +443,20 @@ export interface WorkspaceWorkflowInspectorNode {
   waitReason: string | null;
   latestActivity: string | null;
   outputPreview: string | null;
+  detail: WorkspaceWorkflowInspectorNodeDetail;
   hasFailedDescendant: boolean;
   hasWaitingDescendant: boolean;
   relatedSurfaceTargets: WorkspaceWorkflowInspectorRelatedSurfaceTarget[];
   raw: unknown;
+}
+
+export interface WorkspaceWorkflowInspectorLiveUpdate {
+  workflowRunId: string;
+  smithersRunId: string;
+  fromSeq: number | null;
+  lastSeq: number | null;
+  events: unknown[];
+  inspector: WorkspaceWorkflowInspectorReadModel;
 }
 
 export interface WorkspaceWorkflowInspectorFrame {
@@ -704,10 +758,24 @@ export interface ChatRPCSchema {
           workflowRunId: string;
           selectedNodeKey?: string | null;
           expandedNodeKeys?: string[];
+          userCollapsedNodeKeys?: string[];
           searchQuery?: string;
           mode?: WorkspaceWorkflowInspectorMode;
         };
         response: WorkspaceWorkflowInspectorReadModel | null;
+      };
+      streamWorkflowInspector: {
+        params: {
+          sessionId: string;
+          workflowRunId: string;
+          selectedNodeKey?: string | null;
+          expandedNodeKeys?: string[];
+          userCollapsedNodeKeys?: string[];
+          searchQuery?: string;
+          mode?: WorkspaceWorkflowInspectorMode;
+          fromSeq?: number | null;
+        };
+        response: WorkspaceWorkflowInspectorLiveUpdate | null;
       };
       getProjectCiStatus: {
         params: { sessionId: string };

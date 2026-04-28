@@ -392,6 +392,7 @@ export class WorkspaceSessionCatalog {
     workflowRunId: string;
     selectedNodeKey?: string | null;
     expandedNodeKeys?: string[];
+    userCollapsedNodeKeys?: string[];
     searchQuery?: string;
     mode?: WorkspaceWorkflowInspectorMode;
   }): Promise<WorkspaceWorkflowInspectorReadModel> {
@@ -450,6 +451,11 @@ export class WorkspaceSessionCatalog {
           attempt: attempt.attempt,
           title: attempt.title,
           summary: attempt.summary,
+          responseText: attempt.responseText,
+          error: attempt.error,
+          jjCwd: attempt.jjCwd,
+          agentId: attempt.agentId,
+          agentModel: attempt.agentModel,
         })),
       commands: snapshot.commands
         .filter((entry) => entry.workflowRunId === workflowRun.id)
@@ -460,6 +466,7 @@ export class WorkspaceSessionCatalog {
           title: entry.title,
           summary: entry.summary,
           toolName: entry.toolName,
+          status: entry.status,
         })),
       ciChecks: snapshot.ciCheckResults
         .filter((entry) => entry.workflowRunId === workflowRun.id)
@@ -473,9 +480,54 @@ export class WorkspaceSessionCatalog {
         })),
       selectedNodeKey: input.selectedNodeKey,
       expandedNodeKeys: input.expandedNodeKeys,
+      userCollapsedNodeKeys: input.userCollapsedNodeKeys,
       searchQuery: input.searchQuery,
       mode: input.mode,
     });
+  }
+
+  async streamWorkflowInspector(input: {
+    sessionId: string;
+    workflowRunId: string;
+    selectedNodeKey?: string | null;
+    expandedNodeKeys?: string[];
+    userCollapsedNodeKeys?: string[];
+    searchQuery?: string;
+    mode?: WorkspaceWorkflowInspectorMode;
+    fromSeq?: number | null;
+  }) {
+    const snapshot = this.getStructuredSnapshot(input.sessionId);
+    if (!snapshot) {
+      throw new Error(`Structured session not found: ${input.sessionId}`);
+    }
+    const workflowRun = snapshot.workflowRuns.find((entry) => entry.id === input.workflowRunId);
+    if (!workflowRun) {
+      throw new Error(`Workflow run not found: ${input.workflowRunId}`);
+    }
+    const stream =
+      input.mode?.kind === "live"
+        ? await this.smithersRuntimeManager.streamDevTools({
+            runId: workflowRun.smithersRunId,
+            fromSeq: input.fromSeq ?? workflowRun.lastEventSeq ?? undefined,
+            timeoutMs: 1500,
+            maxEvents: 100,
+            pollIntervalMs: 100,
+          })
+        : {
+            runId: workflowRun.smithersRunId,
+            fromSeq: input.fromSeq ?? null,
+            lastSeq: input.fromSeq ?? null,
+            events: [],
+          };
+    const inspector = await this.getWorkflowInspector(input);
+    return {
+      workflowRunId: input.workflowRunId,
+      smithersRunId: workflowRun.smithersRunId,
+      fromSeq: stream.fromSeq,
+      lastSeq: stream.lastSeq,
+      events: stream.events,
+      inspector,
+    };
   }
 
   async getProjectCiStatus(input: { sessionId: string }): Promise<WorkspaceProjectCiStatusPanel> {

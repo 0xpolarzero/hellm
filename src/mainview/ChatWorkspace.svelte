@@ -15,6 +15,7 @@
   import { ArtifactsController, type ArtifactsSnapshot } from "./artifacts";
   import ChatComposer from "./ChatComposer.svelte";
   import CommandPalette from "./CommandPalette.svelte";
+  import RelatedInspectorPane from "./RelatedInspectorPane.svelte";
   import WorkflowInspectorPane from "./WorkflowInspectorPane.svelte";
   import { formatTimestamp, formatUsage } from "./chat-format";
   import {
@@ -1861,6 +1862,8 @@
                 workflowRunId={pane.binding.workflowRunId}
                 paneId={pane.paneId}
               />
+            {:else if pane.binding?.surface === "command" || pane.binding?.surface === "workflow-task-attempt" || pane.binding?.surface === "artifact" || pane.binding?.surface === "project-ci-check"}
+              <RelatedInspectorPane {runtime} target={pane.binding} />
             {:else if pane.paneId === focusedPaneId}
               <section class="chat-pane" id="conversation">
                 <div class="chat-pane-shell">

@@ -956,9 +956,12 @@ The workflow inspector lets the user inspect:
 - completed workflow runs
 - workflow node progress through a searchable expandable tree
 - workflow launch arguments and node props
-- live command, task-agent transcript, output, diff, log, event, and raw node detail when those sources exist
+- live Smithers DevTools snapshot and event-cursor updates
+- selected-node status, objective or label, output, partial output, related artifacts, workflow agent, task attempt, command linkage, worktree, timing, and wait reason
+- command, task-agent transcript, output, diff, log, event, and raw node detail tabs when those sources exist
 - related artifacts
 - worktree and workflow agent context
+- related handler-thread, task-agent attempt, command, artifact, and Project CI check surfaces opened into chosen panes
 - historical frames without requiring the handler thread or orchestrator to summarize raw workflow history
 
 The inspector is a durable pane binding keyed by the local workflow-run record. Its run header shows normalized `svvy` status beside raw Smithers status, the Smithers run id, workflow label, owning handler thread, timing, heartbeat or latest event, and current frame state. The tree is the primary navigation model: search, expansion state, selected node, live-versus-historical frame mode, and pane placement belong to the inspector surface instead of the orchestrator transcript.

@@ -77,6 +77,17 @@ const baseInput = {
       workflowTaskAttemptId: "attempt-1",
       summary: "execute_typescript failed",
       toolName: "execute_typescript",
+      status: "failed",
+    },
+  ],
+  artifacts: [
+    {
+      artifactId: "artifact-1",
+      kind: "log" as const,
+      name: "fix.log",
+      createdAt: "2026-04-28T00:00:02.000Z",
+      sourceCommandId: "command-1",
+      workflowRunId: "workflow-run-1",
     },
   ],
   ciChecks: [
@@ -132,6 +143,78 @@ describe("workflow inspector projection", () => {
     expect(model.tree.nodes.find((node) => node.key === "root")?.hasWaitingDescendant).toBe(true);
     expect(model.tree.matchedNodeKeys).toEqual(["root/fix"]);
     expect(model.detailTabs.map((tab) => tab.id)).toContain("raw");
+  });
+
+  it("projects selected-node details for output, artifacts, agent, command, worktree, timing, and wait reason", () => {
+    const model = buildWorkflowInspectorReadModel({
+      ...baseInput,
+      selectedNodeKey: "root/fix",
+      snapshot: {
+        root: {
+          id: "root",
+          type: "workflow",
+          name: "Project CI",
+          children: [
+            {
+              id: "fix",
+              type: "task",
+              name: "Fix implementation",
+              props: { state: "running" },
+              task: { kind: "agent", agent: "implementer" },
+              outputPreview: "latest structured output",
+              partialOutput: "assistant is editing src/app.ts",
+              waitReason: "waiting for approval",
+              startedAtMs: 1777334400000,
+              updatedAtMs: 1777334402000,
+              durationMs: 2000,
+            },
+          ],
+        },
+      },
+      taskAttempts: [
+        {
+          ...baseInput.taskAttempts[0]!,
+          responseText: "attempt final response",
+          error: "patch failed",
+          jjCwd: "/repo/worktrees/fix",
+          agentId: "implementer",
+          agentModel: "gpt-5.4",
+        },
+      ],
+    });
+
+    expect(model.selectedNode?.detail).toMatchObject({
+      objectiveOrLabel: "Fix implementation",
+      latestOutput: "attempt final response",
+      partialOutput: "assistant is editing src/app.ts",
+      workflowAgent: "implementer",
+      worktree: "/repo/worktrees/fix",
+      waitReason: "waiting for approval",
+      taskAttempt: {
+        workflowTaskAttemptId: "attempt-1",
+        responseText: "attempt final response",
+        error: "patch failed",
+      },
+      command: {
+        commandId: "command-1",
+        toolName: "execute_typescript",
+        status: "failed",
+      },
+    });
+    expect(model.selectedNode?.detail.relatedArtifacts).toHaveLength(1);
+    expect(model.selectedNode?.detail.timing.elapsedMs).toBe(2000);
+  });
+
+  it("preserves user-collapsed active ancestors during live expansion", () => {
+    const model = buildWorkflowInspectorReadModel({
+      ...baseInput,
+      selectedNodeKey: "root/fix",
+      expandedNodeKeys: [],
+      userCollapsedNodeKeys: ["root"],
+    });
+
+    expect(model.expandedNodeKeys).not.toContain("root");
+    expect(model.tree.visibleNodeKeys).toEqual(["root"]);
   });
 
   it("keeps expansion visibility deterministic in live and search modes", () => {

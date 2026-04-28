@@ -262,9 +262,9 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
   {
     id: "workflow-inspector",
     name: "Workflow Inspector Surface",
-    status: "in-progress",
+    status: "shipped",
     summary:
-      "Provides a durable tree-first pane surface for Smithers runs, modeled after React DevTools and the Smithers GUI live-run tree, with searchable expandable rows, selected and expanded node state, normalized svvy status beside raw Smithers status, launch arguments and props, live refresh, historical frame inspection, selected-node output/diff/log/transcript/command/event/raw detail tabs, Project CI check rows only for declared CI entries, and related handler-thread, task-agent, command, CI check, and artifact targets without forcing the orchestrator to absorb raw workflow history.",
+      "Provides a durable tree-first pane surface for Smithers runs, modeled after React DevTools and the Smithers GUI live-run tree, with searchable expandable rows, selected and expanded node state, normalized svvy status beside raw Smithers status, launch arguments and props, Smithers DevTools snapshot and event-cursor streaming, historical frame inspection, selected-node status, output, partial output, artifact, workflow-agent, task-attempt, command, worktree, timing, wait-reason, output/diff/log/transcript/command/event/raw detail, Project CI check rows only for declared CI entries, and related handler-thread, task-agent, command, CI check, and artifact pane targets without forcing the orchestrator to absorb raw workflow history.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/workflow-supervision.spec.md",

@@ -46,6 +46,11 @@ export interface WorkflowInspectorProjectionInput {
     attempt: number;
     title?: string;
     summary?: string;
+    responseText?: string | null;
+    error?: string | null;
+    jjCwd?: string | null;
+    agentId?: string | null;
+    agentModel?: string | null;
   }>;
   commands?: Array<{
     commandId: string;
@@ -54,6 +59,7 @@ export interface WorkflowInspectorProjectionInput {
     title?: string;
     summary?: string;
     toolName?: string;
+    status?: string;
   }>;
   ciChecks?: Array<{
     checkResultId: string;
@@ -65,6 +71,7 @@ export interface WorkflowInspectorProjectionInput {
   }>;
   selectedNodeKey?: string | null;
   expandedNodeKeys?: string[];
+  userCollapsedNodeKeys?: string[];
   searchQuery?: string;
   mode?: WorkspaceWorkflowInspectorMode;
 }
@@ -95,6 +102,7 @@ export function buildWorkflowInspectorReadModel(
     nodes,
     selectedNodeKey,
     input.expandedNodeKeys ?? [],
+    input.userCollapsedNodeKeys ?? [],
   );
   const visibleNodeKeys = buildVisibleNodeKeys(
     nodes,
@@ -215,6 +223,26 @@ function projectSnapshotNode(args: {
           (entry) => entry.title?.includes(nodeId) || entry.summary?.includes(nodeId),
         )
       : undefined;
+  const artifacts = (args.input.artifacts ?? []).filter(
+    (artifact) =>
+      artifact.sourceCommandId === command?.commandId ||
+      artifact.workflowRunId === args.input.workflowRun.id,
+  );
+  const latestOutput =
+    taskAttempt?.responseText ??
+    stringify(readValue(args.rawNode, ["latestOutput", "output", "result", "summary"])) ??
+    null;
+  const partialOutput =
+    stringify(readValue(args.rawNode, ["partialOutput", "streamingOutput", "stdout", "stderr"])) ??
+    stringify(readValue(args.rawNode, ["latestLog", "preview"])) ??
+    command?.summary ??
+    null;
+  const workflowAgent =
+    taskAttempt?.agentId ??
+    taskAttempt?.agentModel ??
+    stringify(readValue(args.rawNode, ["agent", "agentName"])) ??
+    stringify(readValue(rawTask, ["agent", "agentName"])) ??
+    null;
   const node: WorkspaceWorkflowInspectorNode = {
     key,
     smithersNodeId: nodeId,
@@ -243,8 +271,7 @@ function projectSnapshotNode(args: {
                 "unknown",
             ),
           agent:
-            stringify(readValue(args.rawNode, ["agent", "agentName"])) ??
-            stringify(readValue(rawTask, ["agent", "agentName"])) ??
+            workflowAgent ??
             undefined,
           iteration:
             readNumber(args.rawNode, ["iteration"]) ??
@@ -279,13 +306,64 @@ function projectSnapshotNode(args: {
     },
     waitReason: stringify(readValue(args.rawNode, ["waitReason", "reason", "blockedReason"])),
     latestActivity:
+      stringify(readValue(args.rawNode, ["latestActivity", "activityPreview", "latestLogLine"])) ??
       stringify(readValue(args.rawNode, ["latestActivity", "latestLog", "preview"])) ??
       command?.summary ??
       taskAttempt?.summary ??
       null,
-    outputPreview: stringify(
-      readValue(args.rawNode, ["outputPreview", "output", "result", "summary"]),
-    ),
+    outputPreview: stringify(readValue(args.rawNode, ["outputPreview"])) ?? latestOutput,
+    detail: {
+      status: ciCheck
+        ? normalizeWorkflowInspectorStatus({ status: ciCheck.status })
+        : normalizeWorkflowInspectorStatus(args.rawNode),
+      objectiveOrLabel:
+        ciCheck?.label ??
+        stringify(readValue(args.rawNode, ["objective", "label", "name", "title"])) ??
+        nodeId ??
+        "Workflow",
+      latestOutput,
+      partialOutput,
+      relatedArtifacts: artifacts,
+      workflowAgent,
+      taskAttempt: taskAttempt
+        ? {
+            workflowTaskAttemptId: taskAttempt.workflowTaskAttemptId,
+            iteration: taskAttempt.iteration,
+            attempt: taskAttempt.attempt,
+            status: taskAttempt.status,
+            responseText: taskAttempt.responseText ?? null,
+            error: taskAttempt.error ?? null,
+          }
+        : null,
+      command: command
+        ? {
+            commandId: command.commandId,
+            toolName: command.toolName ?? "command",
+            status: command.status ?? "unknown",
+            summary: command.summary ?? command.title ?? "",
+          }
+        : null,
+      worktree:
+        taskAttempt?.jjCwd ??
+        stringify(readValue(args.rawNode, ["worktree", "cwd", "taskRoot"])) ??
+        null,
+      timing: {
+        startedAt:
+          millisToIso(readNumber(args.rawNode, ["startedAtMs", "started_at_ms"])) ??
+          stringify(readValue(args.rawNode, ["startedAt"])) ??
+          null,
+        finishedAt:
+          millisToIso(readNumber(args.rawNode, ["finishedAtMs", "finished_at_ms"])) ??
+          stringify(readValue(args.rawNode, ["finishedAt"])) ??
+          null,
+        updatedAt:
+          millisToIso(readNumber(args.rawNode, ["updatedAtMs", "updated_at_ms"])) ??
+          stringify(readValue(args.rawNode, ["updatedAt"])) ??
+          null,
+        elapsedMs: readNumber(args.rawNode, ["elapsedMs", "durationMs"]),
+      },
+      waitReason: stringify(readValue(args.rawNode, ["waitReason", "reason", "blockedReason"])),
+    },
     hasFailedDescendant: false,
     hasWaitingDescendant: false,
     relatedSurfaceTargets: [
@@ -302,7 +380,7 @@ function projectSnapshotNode(args: {
       ...(ciCheck
         ? [{ kind: "project-ci-check" as const, checkResultId: ciCheck.checkResultId }]
         : []),
-      ...(args.input.artifacts ?? []).map((artifact) => ({
+      ...artifacts.map((artifact) => ({
         kind: "artifact" as const,
         artifactId: artifact.artifactId,
       })),
@@ -341,6 +419,27 @@ function buildSyntheticRoot(
     waitReason: null,
     latestActivity: null,
     outputPreview: null,
+    detail: {
+      status: normalizeWorkflowInspectorStatus({ status: input.workflowRun.status }),
+      objectiveOrLabel:
+        input.workflowRun.workflowName ??
+        input.workflowRun.savedEntryId ??
+        input.workflowRun.smithersRunId,
+      latestOutput: null,
+      partialOutput: null,
+      relatedArtifacts: input.artifacts ?? [],
+      workflowAgent: null,
+      taskAttempt: null,
+      command: null,
+      worktree: null,
+      timing: {
+        startedAt: input.workflowRun.startedAt ?? null,
+        finishedAt: input.workflowRun.finishedAt ?? null,
+        updatedAt: input.workflowRun.updatedAt ?? null,
+        elapsedMs: null,
+      },
+      waitReason: null,
+    },
     hasFailedDescendant: false,
     hasWaitingDescendant: false,
     relatedSurfaceTargets: [{ kind: "handler-thread", threadId: input.workflowRun.threadId }],
@@ -352,8 +451,10 @@ function buildExpandedNodeKeys(
   nodes: WorkspaceWorkflowInspectorNode[],
   selected: string | null,
   existing: string[],
+  userCollapsed: string[] = [],
 ): string[] {
   const expanded = new Set(existing);
+  const collapsed = new Set(userCollapsed);
   const byKey = new Map(nodes.map((node) => [node.key, node]));
   for (const node of nodes) {
     if (
@@ -364,7 +465,7 @@ function buildExpandedNodeKeys(
     ) {
       let cursor: WorkspaceWorkflowInspectorNode | undefined = node;
       while (cursor?.parentKey) {
-        expanded.add(cursor.parentKey);
+        if (!collapsed.has(cursor.parentKey)) expanded.add(cursor.parentKey);
         cursor = byKey.get(cursor.parentKey);
       }
     }
@@ -426,8 +527,8 @@ function buildDetailTabs(
     {
       id: "output",
       label: "Output",
-      content: node?.outputPreview ?? input.nodeDetail ?? null,
-      empty: !node?.outputPreview && !input.nodeDetail,
+      content: node?.detail.latestOutput ?? node?.outputPreview ?? input.nodeDetail ?? null,
+      empty: !node?.detail.latestOutput && !node?.outputPreview && !input.nodeDetail,
     },
     {
       id: "diff",
@@ -443,8 +544,8 @@ function buildDetailTabs(
     {
       id: "logs",
       label: "Logs",
-      content: node?.latestActivity ?? null,
-      empty: !node?.latestActivity,
+      content: node?.detail.partialOutput ?? node?.latestActivity ?? null,
+      empty: !node?.detail.partialOutput && !node?.latestActivity,
     },
     {
       id: "transcript",
@@ -455,8 +556,8 @@ function buildDetailTabs(
     {
       id: "command",
       label: "Command",
-      content: node?.relatedSurfaceTargets.filter((target) => target.kind === "command") ?? [],
-      empty: !node?.relatedSurfaceTargets.some((target) => target.kind === "command"),
+      content: node?.detail.command ?? null,
+      empty: !node?.detail.command,
     },
     { id: "events", label: "Events", content: events, empty: events.length === 0 },
     { id: "raw", label: "Raw JSON", content: node?.raw ?? input.snapshot, empty: false },

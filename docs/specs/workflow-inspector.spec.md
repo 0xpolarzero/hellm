@@ -179,11 +179,42 @@ type WorkflowInspectorNode = {
     required: boolean;
     command: string | null;
   };
+  detail: {
+    status: WorkflowInspectorNode["status"];
+    objectiveOrLabel: string;
+    latestOutput: string | null;
+    partialOutput: string | null;
+    relatedArtifacts: Array<{ artifactId: string; name: string; path?: string }>;
+    workflowAgent: string | null;
+    taskAttempt: {
+      workflowTaskAttemptId: string;
+      iteration: number;
+      attempt: number;
+      status: string;
+      responseText: string | null;
+      error: string | null;
+    } | null;
+    command: {
+      commandId: string;
+      toolName: string;
+      status: string;
+      summary: string;
+    } | null;
+    worktree: string | null;
+    timing: {
+      startedAt: string | null;
+      finishedAt: string | null;
+      updatedAt: string | null;
+      elapsedMs: number | null;
+    };
+    waitReason: string | null;
+  };
   relatedSurfaceTargets: Array<
     | { kind: "handler-thread"; threadId: string }
     | { kind: "task-agent"; workflowTaskAttemptId: string }
     | { kind: "command"; commandId: string }
     | { kind: "artifact"; artifactId: string }
+    | { kind: "project-ci-check"; checkResultId: string }
   >;
 };
 ```
