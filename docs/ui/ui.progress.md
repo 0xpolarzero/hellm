@@ -45,12 +45,12 @@ Always read [ui.prd.md](ui.prd.md) before implementing any item in this roadmap,
 
 ## 3. Svelte UI Primitives
 
-- [ ] Consolidate button, icon button, badge, input, textarea, dialog, and surface primitives around the ported Replit artifact token system.
-- [ ] Add dense row, section header, pane header, toolbar, divider, keyboard hint, empty state, error state, and loading state primitives.
-- [ ] Add reusable status badge primitives for session, thread, workflow-run, command, Project CI, provider auth, and wait states.
-- [ ] Add reusable metadata chip primitives for model, reasoning, worktree, context pack, pane location, artifact type, and command kind.
-- [ ] Add resize-handle, pane-focus, hover, active, disabled, and keyboard-focus styling primitives.
-- [ ] Verify primitive contrast, focus visibility, hit targets, and text overflow across desktop and narrow viewport sizes.
+- [x] Consolidate button, icon button, badge, input, textarea, dialog, and surface primitives around the ported Replit artifact token system. `a868fe6`
+- [x] Add dense row, section header, pane header, toolbar, divider, keyboard hint, empty state, error state, and loading state primitives. `a868fe6`
+- [x] Add reusable status badge primitives for session, thread, workflow-run, command, Project CI, provider auth, and wait states. `a868fe6`
+- [x] Add reusable metadata chip primitives for model, reasoning, worktree, context pack, pane location, artifact type, and command kind. `a868fe6`
+- [x] Add resize-handle, pane-focus, hover, active, disabled, and keyboard-focus styling primitives. `a868fe6`
+- [x] Verify primitive contrast, focus visibility, hit targets, and text overflow across desktop and narrow viewport sizes. `a868fe6`
 
 ## 4. Shell Chrome
 
