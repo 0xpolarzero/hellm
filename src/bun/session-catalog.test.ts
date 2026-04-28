@@ -350,7 +350,6 @@ async function createHandlerThreadHarness(
         turnId: string;
         parentThreadId: string;
         parentSurfacePiSessionId: string;
-        title: string;
         objective: string;
         contextKeys: [];
         loadedByCommandId: string;
@@ -361,7 +360,6 @@ async function createHandlerThreadHarness(
     turnId: turn.id,
     parentThreadId: orchestratorThread.id,
     parentSurfacePiSessionId: workspaceSessionId,
-    title: input.title,
     objective: input.objective,
     contextKeys: [],
     loadedByCommandId: orchestratorThread.id,
@@ -492,6 +490,77 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("uses the namer agent to title handler threads from the delegated objective", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Handler Naming" }, DEFAULTS);
+      const orchestratorManaged = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const promptPrototype = Object.getPrototypeOf(orchestratorManaged.session) as {
+        prompt(
+          promptText: string,
+          options?: {
+            expandPromptTemplates?: boolean;
+          },
+        ): Promise<void>;
+      };
+      const promptSpy = spyOn(promptPrototype, "prompt").mockImplementation(
+        async function (this: PromptableSession, promptText: string) {
+          appendMessagesToSession(this, [
+            userMessage(promptText),
+            assistantMessage("Project CI setup"),
+          ]);
+        },
+      );
+      const store = getStructuredSessionStore(catalog);
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Delegate Project CI context work",
+      });
+      const orchestratorThread = store.createThread({
+        turnId: turn.id,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        title: "Delegate Project CI context work",
+        objective: "Open a handler thread with Project CI context.",
+      });
+
+      try {
+        const handlerThread = await (
+          catalog as unknown as {
+            createHandlerThread(input: {
+              sessionId: string;
+              turnId: string;
+              parentThreadId: string;
+              parentSurfacePiSessionId: string;
+              objective: string;
+              contextKeys: [];
+              sessionAgentSettings: null;
+              loadedByCommandId: string;
+            }): Promise<{ id: string; title: string }>;
+          }
+        ).createHandlerThread({
+          sessionId: created.target.workspaceSessionId,
+          turnId: turn.id,
+          parentThreadId: orchestratorThread.id,
+          parentSurfacePiSessionId: created.target.surfacePiSessionId,
+          objective: "Configure Project CI checks for this repository.",
+          contextKeys: [],
+          sessionAgentSettings: null,
+          loadedByCommandId: orchestratorThread.id,
+        });
+
+        expect(handlerThread.title).toBe("Configure Project CI checks for this repository.");
+        await waitFor(() => store.getThreadDetail(handlerThread.id).thread.title === "Project CI setup");
+      } finally {
+        promptSpy.mockRestore();
+      }
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
   it("restores provider, model, and thinking level from persisted metadata without buildSessionContext", async () => {
     const { cwd, sessionDir } = createWorkspaceFixture();
     const sessionManager = SessionManager.create(cwd, sessionDir);
@@ -585,7 +654,6 @@ describe("WorkspaceSessionCatalog", () => {
             turnId: string;
             parentThreadId: string;
             parentSurfacePiSessionId: string;
-            title: string;
             objective: string;
             contextKeys: ["ci"];
             loadedByCommandId: string;
@@ -596,7 +664,6 @@ describe("WorkspaceSessionCatalog", () => {
         turnId: turn.id,
         parentThreadId: orchestratorThread.id,
         parentSurfacePiSessionId: created.target.surfacePiSessionId,
-        title: "Project CI Handler",
         objective: "Create or update Project CI when requested.",
         contextKeys: ["ci"],
         loadedByCommandId: command.id,

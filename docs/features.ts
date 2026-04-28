@@ -59,7 +59,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Handler Thread Surfaces",
     status: "in-progress",
     summary:
-      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, optionally preload typed handler context keys such as `ci` through `thread.start`, stay multi-turn and directly messageable before and after handoff, distinguish handler-active, workflow-active, waiting, troubleshooting, and completed thread states, reject `thread.handoff` while the thread still owns a running or waiting workflow run for the current span, route workflow attention back to the owning handler surface rather than the focused pane, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread.handoff` calls that append ordered handoff episodes over the thread's lifetime and immediately trigger a fresh orchestrator reconciliation turn.",
+      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, optionally preload typed handler context keys such as `ci` through `thread.start`, derive handler-thread titles through the configured `namer` from the supplied objective instead of exposing a separate title field to the orchestrator, stay multi-turn and directly messageable before and after handoff, distinguish handler-active, workflow-active, waiting, troubleshooting, and completed thread states, reject `thread.handoff` while the thread still owns a running or waiting workflow run for the current span, route workflow attention back to the owning handler surface rather than the focused pane, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread.handoff` calls that append ordered handoff episodes over the thread's lifetime and immediately trigger a fresh orchestrator reconciliation turn.",
     sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
   },
   {
@@ -147,7 +147,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Session Agent And Workflow Agent Settings",
     status: "shipped",
     summary:
-      "Persists app-wide default-session, quick-session, and namer session-agent defaults with provider, model, reasoning, and system prompt; records session mode and prompt selection on created sessions; allows handler threads to carry per-thread model, reasoning, and prompt overrides through `thread.start`; exposes focused-surface agent summaries in pane chrome and direct-saving settings inspection/editing for session agents and conventional workflow agents through connected-provider model dropdowns plus selected-model reasoning dropdowns; and synchronizes `explorer`, `implementer`, and `reviewer` workflow-agent settings to `.svvy/workflows/components/agents.ts` as a normal saved component asset.",
+      "Persists app-wide default-session, quick-session, and namer session-agent defaults with provider, model, reasoning, and system prompt; records session mode and prompt selection on created sessions; uses the same configured `namer` for top-level session titles and handler-thread titles derived from delegated objectives; allows handler threads to carry per-thread model, reasoning, and prompt overrides through `thread.start`; exposes focused-surface agent summaries in pane chrome and direct-saving settings inspection/editing for session agents and conventional workflow agents through connected-provider model dropdowns plus selected-model reasoning dropdowns; and synchronizes `explorer`, `implementer`, and `reviewer` workflow-agent settings to `.svvy/workflows/components/agents.ts` as a normal saved component asset.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/structured-session-state.spec.md",
@@ -160,7 +160,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Multi-Session Workspace Navigation",
     status: "shipped",
     summary:
-      "Supports creating, listing, switching, renaming, forking, and deleting multiple pi-backed session containers from one workspace window, with top-level session auto-titling owned by a durable one-shot namer flow that starts concurrently with the first orchestrator turn, uses the namer settings prompt as the sole naming instruction, blocks manual rename while title generation is pending or running, and freezes after manual rename or the first successful generated title.",
+      "Supports creating, listing, switching, renaming, forking, and deleting multiple pi-backed session containers from one workspace window, with top-level session auto-titling owned by a durable one-shot namer flow that starts concurrently with the first orchestrator turn, uses the namer settings prompt as the sole naming instruction, blocks manual rename while title generation is pending or running, freezes after manual rename or the first successful generated title, and keeps delegated handler titles owned by the same namer flow over the handler objective rather than by an orchestrator-supplied title.",
     sourceSpecs: ["docs/specs/multi-session-support.spec.md"],
   },
   {

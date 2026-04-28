@@ -18,7 +18,6 @@ export const START_THREAD_TOOL_NAME = "thread.start";
 export const startThreadParamsSchema = Type.Object(
   {
     objective: Type.String({ minLength: 1 }),
-    title: Type.Optional(Type.String({ minLength: 1 })),
     context: Type.Optional(Type.Array(Type.Literal("ci"))),
     agent: Type.Optional(
       Type.Object(
@@ -52,7 +51,6 @@ export interface ThreadStartBridge {
     turnId: string;
     parentThreadId: string | null;
     parentSurfacePiSessionId: string;
-    title: string;
     objective: string;
     contextKeys: HandlerContextKey[];
     sessionAgentSettings: SessionAgentSettings | null;
@@ -83,7 +81,6 @@ export function createStartThreadTool(options: {
       });
 
       const objective = params.objective.trim();
-      const title = params.title?.trim() || objective;
       const contextKeys = validateHandlerContextKeys(params.context ?? []);
       const command = options.store.createCommand({
         turnId: runtime.turnId,
@@ -92,7 +89,7 @@ export function createStartThreadTool(options: {
         toolName: START_THREAD_TOOL_NAME,
         executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
         visibility: "surface",
-        title: `Start handler thread: ${title}`,
+        title: `Start handler thread: ${objective}`,
         summary: objective,
       });
       options.store.startCommand(command.id);
@@ -103,7 +100,6 @@ export function createStartThreadTool(options: {
           turnId: runtime.turnId,
           parentThreadId: runtime.rootThreadId ?? null,
           parentSurfacePiSessionId: runtime.surfacePiSessionId,
-          title,
           objective,
           contextKeys,
           sessionAgentSettings: params.agent
@@ -120,7 +116,7 @@ export function createStartThreadTool(options: {
         options.store.finishCommand({
           commandId: command.id,
           status: "succeeded",
-          summary: `Opened handler thread ${thread.id} for ${title}.`,
+          summary: `Opened handler thread ${thread.id} for ${objective}.`,
           facts: {
             threadId: thread.id,
             surfacePiSessionId: thread.surfacePiSessionId ?? null,

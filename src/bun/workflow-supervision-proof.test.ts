@@ -735,7 +735,6 @@ function startAutonomousWorkflowSupervisionProofStub(): AutonomousProofStub {
               toolCallId: `call-${++toolCallCounter}`,
               toolName: "thread.start",
               args: {
-                title: "Workflow Supervision Proof Thread",
                 objective:
                   "Discover the smithers.* supervision surface, run a waiting signal workflow and a transcript-producing workflow, inspect them, and hand back evidence.",
               },

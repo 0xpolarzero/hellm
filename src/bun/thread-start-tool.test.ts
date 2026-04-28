@@ -90,7 +90,7 @@ describe("thread.start tool", () => {
             turnId: input.turnId,
             parentThreadId: input.parentThreadId,
             surfacePiSessionId: "pi-thread-project-ci",
-            title: input.title,
+            title: input.objective,
             objective: input.objective,
           });
           for (const key of input.contextKeys) {
@@ -107,7 +107,6 @@ describe("thread.start tool", () => {
     });
 
     const result = await tool.execute("tool-call-thread-start", {
-      title: "Define Project CI checks",
       objective: "Create or update the Project CI saved workflow when requested.",
       context: ["ci"],
     });

@@ -1405,27 +1405,25 @@ export class WorkspaceSessionCatalog {
     turnId: string;
     parentThreadId: string | null;
     parentSurfacePiSessionId: string;
-    title: string;
     objective: string;
     contextKeys: HandlerContextKey[];
     sessionAgentSettings: SessionAgentSettings | null;
     loadedByCommandId: string;
   }) {
+    const initialTitle = input.objective.trim();
     const parentSessionFile = await this.getSessionFileForId(input.parentSurfacePiSessionId);
     const threadSessionManager = SessionManager.create(this.cwd, this.threadSurfaceDir);
     threadSessionManager.newSession({
       parentSession: parentSessionFile,
     });
-    if (input.title.trim()) {
-      threadSessionManager.appendSessionInfo(input.title.trim());
-    }
+    threadSessionManager.appendSessionInfo(initialTitle);
     persistSessionManagerSnapshot(threadSessionManager);
 
     const thread = this.structuredSessionStore.createThread({
       turnId: input.turnId,
       parentThreadId: input.parentThreadId,
       surfacePiSessionId: threadSessionManager.getSessionId(),
-      title: input.title,
+      title: initialTitle,
       objective: input.objective,
       sessionAgentJson: input.sessionAgentSettings
         ? JSON.stringify(input.sessionAgentSettings)
@@ -1440,6 +1438,11 @@ export class WorkspaceSessionCatalog {
         loadedByCommandId: input.loadedByCommandId,
       });
     }
+    setTimeout(() => {
+      void this.runThreadTitleGenerationJob(thread.id).catch((error) => {
+        console.error("Failed to generate handler thread title:", error);
+      });
+    }, 0);
     return this.structuredSessionStore.getThreadDetail(thread.id).thread;
   }
 
@@ -1494,7 +1497,11 @@ export class WorkspaceSessionCatalog {
         await this.emitWorkspaceSync("structured.updated");
       }
 
-      const title = await this.generateSessionTitle(snapshot);
+      const title = await this.generateTitleFromText({
+        subjectLabel: `Name ${snapshot.pi.sessionId}`,
+        promptLabel: "First user message",
+        text: snapshot.turns[0]?.requestSummary?.trim() || "New session",
+      });
       if (this.closed) {
         return;
       }
@@ -1527,11 +1534,43 @@ export class WorkspaceSessionCatalog {
     }
   }
 
-  private async generateSessionTitle(snapshot: StructuredSessionSnapshot): Promise<string> {
+  private async runThreadTitleGenerationJob(threadId: string): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    const detail = this.structuredSessionStore.getThreadDetail(threadId);
+    const title = await this.generateTitleFromText({
+      subjectLabel: `Name ${threadId}`,
+      promptLabel: "Handler objective",
+      text: detail.thread.objective,
+    });
+    if (this.closed) {
+      return;
+    }
+    const updated = this.structuredSessionStore.updateThread({ threadId, title });
+    const activeThreadSurface = this.managedSurfaces.get(updated.surfacePiSessionId);
+    if (activeThreadSurface) {
+      this.syncPiSessionTitle(activeThreadSurface, updated.title);
+    } else {
+      const sessionFile = await this.getSessionFileForId(updated.surfacePiSessionId, false);
+      if (sessionFile) {
+        SessionManager.open(sessionFile, this.threadSurfaceDir).appendSessionInfo(updated.title);
+      }
+    }
+    if (!this.closed) {
+      await this.emitWorkspaceSync("structured.updated");
+    }
+  }
+
+  private async generateTitleFromText(input: {
+    subjectLabel: string;
+    promptLabel: string;
+    text: string;
+  }): Promise<string> {
     const state = this.agentSettingsStore.getState();
     const settings = state.sessionAgents.namer;
     const sessionManager = SessionManager.create(this.cwd, this.namerSessionDir);
-    sessionManager.appendSessionInfo(`Name ${snapshot.pi.sessionId}`);
+    sessionManager.appendSessionInfo(input.subjectLabel);
     const namer = await createManagedSession({
       sessionManager,
       actorKind: "namer",
@@ -1548,10 +1587,7 @@ export class WorkspaceSessionCatalog {
     });
     try {
       syncAuthStorage(namer.authStorage);
-      const prompt = [
-        "First user message:",
-        snapshot.turns[0]?.requestSummary?.trim() || "New session",
-      ].join("\n");
+      const prompt = [`${input.promptLabel}:`, input.text.trim() || "New session"].join("\n");
       await namer.session.prompt(prompt, { expandPromptTemplates: false });
       const response = getLatestAssistantMessage(namer.session.agent.state.messages);
       const text = extractAssistantText(response).trim();

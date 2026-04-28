@@ -267,7 +267,10 @@ The first adopted context key is `ci`.
 The orchestrator can preload context for a delegated objective:
 
 ```ts
-thread.start({ objective: "Define Project CI checks", context: ["ci"] });
+thread.start({
+  objective: "Define Project CI checks for this repository",
+  context: ["ci"],
+});
 ```
 
 A handler can load context later:
