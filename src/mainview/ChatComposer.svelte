@@ -1,5 +1,8 @@
 <script lang="ts">
 	import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+	import FileIcon from "@lucide/svelte/icons/file";
+	import FolderIcon from "@lucide/svelte/icons/folder";
+	import XIcon from "@lucide/svelte/icons/x";
 	import { onMount, tick } from "svelte";
 	import { supportsXhigh, type Model } from "@mariozechner/pi-ai";
 	import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
@@ -11,6 +14,16 @@
 		type PromptHistoryEntry,
 		type PromptHistoryNavigationState,
 	} from "./prompt-history";
+	import {
+		getActiveMentionQuery,
+		removeMentionFromDraft,
+		searchMentionPaths,
+		selectMentionPath,
+		serializeComposerDraft,
+		type ComposerMentionLink,
+		type MentionPickerResult,
+		type WorkspacePathIndexEntry,
+	} from "./composer-mentions";
 	import Button from "./ui/Button.svelte";
 	import TextArea from "./ui/TextArea.svelte";
 
@@ -25,6 +38,7 @@
 		onOpenModelPicker: () => void;
 		onSend: (input: string) => Promise<boolean> | boolean;
 		onThinkingChange: (level: ThinkingLevel) => void;
+		listWorkspacePaths: () => Promise<WorkspacePathIndexEntry[]>;
 	};
 
 	const BASE_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
@@ -40,6 +54,7 @@
 		onOpenModelPicker,
 		onSend,
 		onThinkingChange,
+		listWorkspacePaths,
 	}: Props = $props();
 
 	let draft = $state("");
@@ -48,9 +63,41 @@
 	let draftElement = $state<HTMLTextAreaElement | null>(null);
 	let thinkingMenuRoot = $state<HTMLDivElement | null>(null);
 	let historyNavigation = $state<PromptHistoryNavigationState>(createPromptHistoryNavigationState());
+	let mentionRoot = $state<HTMLDivElement | null>(null);
+	let workspacePaths = $state<WorkspacePathIndexEntry[]>([]);
+	let workspacePathsLoaded = $state(false);
+	let mentionLoading = $state(false);
+	let mentionError = $state<string | null>(null);
+	let selectedMentions = $state<ComposerMentionLink[]>([]);
+	let activeMentionIndex = $state(0);
+	let caretPosition = $state(0);
+	let dismissedMentionQueryKey = $state<string | null>(null);
 
 	const availableThinkingLevels = $derived(
 		currentModel && supportsXhigh(currentModel) ? [...BASE_LEVELS, "xhigh"] : BASE_LEVELS,
+	);
+	const mentionQuery = $derived(getActiveMentionQuery(draft, caretPosition));
+	const mentionQueryKey = $derived(mentionQuery ? `${mentionQuery.start}:${mentionQuery.query}` : null);
+	const activeMentionIsSelected = $derived(
+		Boolean(
+			mentionQuery &&
+				selectedMentions.some(
+					(mention) =>
+						mention.workspaceRelativePath === mentionQuery.query &&
+						draft.slice(mentionQuery.start, mentionQuery.end) === `@${mention.workspaceRelativePath}`,
+				),
+		),
+	);
+	const mentionResults = $derived<MentionPickerResult[]>(
+		mentionQuery && workspacePathsLoaded ? searchMentionPaths(workspacePaths, mentionQuery.query, 10) : [],
+	);
+	const showMentionPicker = $derived(
+		Boolean(
+			mentionQuery &&
+				!activeMentionIsSelected &&
+				mentionQueryKey !== dismissedMentionQueryKey &&
+				(mentionLoading || mentionError || mentionResults.length > 0),
+		),
 	);
 
 	onMount(() => {
@@ -58,12 +105,15 @@
 			const target = event.target;
 			if (!(target instanceof Node)) return;
 			if (thinkingMenuRoot?.contains(target)) return;
+			if (mentionRoot?.contains(target) || draftElement?.contains(target)) return;
 			showThinkingMenu = false;
+			closeMentionPicker();
 		};
 
 		const handleKeyDown = (event: KeyboardEvent) => {
 			if (event.key === "Escape") {
 				showThinkingMenu = false;
+				closeMentionPicker();
 			}
 		};
 
@@ -90,6 +140,59 @@
 	function moveCaretToDraftEnd(value: string) {
 		draftElement?.focus();
 		draftElement?.setSelectionRange(value.length, value.length);
+		caretPosition = value.length;
+	}
+
+	function syncCaretFromTextarea(target: EventTarget | null) {
+		if (!(target instanceof HTMLTextAreaElement)) return;
+		caretPosition = target.selectionStart;
+		if (getActiveMentionQuery(target.value, target.selectionStart, target.selectionEnd)) {
+			void ensureWorkspacePaths();
+		}
+	}
+
+	async function ensureWorkspacePaths() {
+		if (workspacePathsLoaded || mentionLoading) return;
+		mentionLoading = true;
+		mentionError = null;
+		try {
+			workspacePaths = await listWorkspacePaths();
+			workspacePathsLoaded = true;
+		} catch (error) {
+			mentionError = error instanceof Error ? error.message : "Workspace paths unavailable.";
+		} finally {
+			mentionLoading = false;
+		}
+	}
+
+	function closeMentionPicker() {
+		activeMentionIndex = 0;
+		dismissedMentionQueryKey = mentionQueryKey;
+	}
+
+	async function chooseMention(result: MentionPickerResult) {
+		if (!mentionQuery) return;
+		const selection = selectMentionPath(draft, mentionQuery, result);
+		draft = selection.draft;
+		selectedMentions = [
+			...selectedMentions.filter(
+				(mention) => mention.workspaceRelativePath !== selection.mention.workspaceRelativePath,
+			),
+			selection.mention,
+		];
+		activeMentionIndex = 0;
+		dismissedMentionQueryKey = `${mentionQuery.start}:${selection.mention.workspaceRelativePath}`;
+		await tick();
+		draftElement?.focus();
+		draftElement?.setSelectionRange(selection.caret, selection.caret);
+		caretPosition = selection.caret;
+	}
+
+	async function removeMention(mention: ComposerMentionLink) {
+		draft = removeMentionFromDraft(draft, mention);
+		selectedMentions = selectedMentions.filter((item) => item.id !== mention.id);
+		await tick();
+		moveCaretToDraftEnd(draft);
 	}
 
 	async function applyPromptHistoryNavigation(direction: PromptHistoryDirection) {
@@ -104,8 +207,9 @@
 
 	async function submit() {
 		if (!draft.trim() || isStreaming || isSubmitting) return;
-		const nextDraft = draft;
+		const nextDraft = serializeComposerDraft(draft);
 		draft = "";
+		selectedMentions = [];
 		isSubmitting = true;
 
 		try {
@@ -124,6 +228,26 @@
 
 	function handleKeydown(event: KeyboardEvent) {
 		const target = event.currentTarget;
+		if (showMentionPicker && mentionQuery) {
+			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+				event.preventDefault();
+				const direction = event.key === "ArrowDown" ? 1 : -1;
+				activeMentionIndex =
+					(mentionResults.length + activeMentionIndex + direction) % Math.max(mentionResults.length, 1);
+				return;
+			}
+			if ((event.key === "Enter" || event.key === "Tab") && mentionResults[activeMentionIndex]) {
+				event.preventDefault();
+				void chooseMention(mentionResults[activeMentionIndex]);
+				return;
+			}
+			if (event.key === "Escape") {
+				event.preventDefault();
+				closeMentionPicker();
+				return;
+			}
+		}
+
 		if (
 			target instanceof HTMLTextAreaElement &&
 			!event.shiftKey &&
@@ -138,7 +262,7 @@
 				value: target.value,
 				selectionStart: target.selectionStart,
 				selectionEnd: target.selectionEnd,
-				higherPriorityUiActive: showThinkingMenu,
+				higherPriorityUiActive: showThinkingMenu || showMentionPicker,
 			});
 
 			if (shouldNavigateHistory) {
@@ -172,7 +296,62 @@
 			rows={2}
 			placeholder="Ask svvy to inspect the repo, make a change, or run Project CI."
 			onkeydown={handleKeydown}
+			oninput={(event) => syncCaretFromTextarea(event.currentTarget)}
+			onkeyup={(event) => syncCaretFromTextarea(event.currentTarget)}
+			onclick={(event) => syncCaretFromTextarea(event.currentTarget)}
+			onselect={(event) => syncCaretFromTextarea(event.currentTarget)}
 		/>
+
+		{#if selectedMentions.length > 0}
+			<div class="mention-chip-row" aria-label="Selected workspace mentions">
+				{#each selectedMentions as mention (mention.id)}
+					<button
+						class="mention-chip"
+						type="button"
+						aria-label={`Remove ${mention.workspaceRelativePath}`}
+						onclick={() => void removeMention(mention)}
+					>
+						{#if mention.kind === "folder"}
+							<FolderIcon size={13} aria-hidden="true" />
+						{:else}
+							<FileIcon size={13} aria-hidden="true" />
+						{/if}
+						<span>{mention.label}</span>
+						<small>{mention.workspaceRelativePath}</small>
+						<XIcon size={12} aria-hidden="true" />
+					</button>
+				{/each}
+			</div>
+		{/if}
+
+		{#if showMentionPicker}
+			<div bind:this={mentionRoot} class="mention-picker" role="listbox" aria-label="Workspace paths">
+				{#if mentionLoading}
+					<div class="mention-empty">Indexing workspace paths...</div>
+				{:else if mentionError}
+					<div class="mention-empty">{mentionError}</div>
+				{:else}
+					{#each mentionResults as result, index (result.id)}
+						<button
+							class={`mention-option ${index === activeMentionIndex ? "active" : ""}`.trim()}
+							type="button"
+							role="option"
+							aria-selected={index === activeMentionIndex}
+							onmousedown={(event) => event.preventDefault()}
+							onclick={() => void chooseMention(result)}
+						>
+							{#if result.kind === "folder"}
+								<FolderIcon size={15} aria-hidden="true" />
+							{:else}
+								<FileIcon size={15} aria-hidden="true" />
+							{/if}
+							<span>{result.basename}</span>
+							<small>{result.disambiguation || result.workspaceRelativePath}</small>
+						</button>
+					{/each}
+				{/if}
+			</div>
+		{/if}
 
 		<div class="composer-foot">
 			<div class="composer-controls">
@@ -258,6 +437,116 @@
 
 	.thinking-wrap {
 		position: relative;
+	}
+
+	.mention-chip-row {
+		display: flex;
+		align-items: center;
+		gap: 0.42rem;
+		flex-wrap: wrap;
+		min-width: 0;
+	}
+
+	.mention-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.34rem;
+		max-width: min(100%, 24rem);
+		min-height: 1.8rem;
+		padding: 0.24rem 0.46rem;
+		border: 1px solid color-mix(in oklab, var(--ui-border-accent) 58%, var(--ui-border-soft));
+		border-radius: var(--ui-radius-sm);
+		background: color-mix(in oklab, var(--ui-accent-soft) 54%, var(--ui-surface));
+		color: var(--ui-text-primary);
+		font: inherit;
+		font-size: 0.73rem;
+		cursor: pointer;
+	}
+
+	.mention-chip span,
+	.mention-chip small {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.mention-chip span {
+		font-weight: 650;
+	}
+
+	.mention-chip small {
+		font-family: var(--font-mono);
+		font-size: 0.66rem;
+		color: var(--ui-text-secondary);
+	}
+
+	.mention-chip:hover,
+	.mention-chip:focus-visible {
+		outline: none;
+		border-color: color-mix(in oklab, var(--ui-accent) 62%, var(--ui-border-strong));
+		background: color-mix(in oklab, var(--ui-accent-soft) 76%, var(--ui-surface-raised));
+	}
+
+	.mention-picker {
+		display: grid;
+		gap: 0.18rem;
+		width: min(100%, 34rem);
+		max-height: 18rem;
+		overflow: auto;
+		padding: 0.28rem;
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 92%, transparent);
+		border-radius: var(--ui-radius-md);
+		background: var(--ui-surface-raised);
+		box-shadow: var(--ui-shadow-strong);
+	}
+
+	.mention-option {
+		display: grid;
+		grid-template-columns: 1rem minmax(5rem, max-content) minmax(0, 1fr);
+		align-items: center;
+		gap: 0.55rem;
+		min-height: 2.15rem;
+		padding: 0.42rem 0.52rem;
+		border: 1px solid transparent;
+		border-radius: var(--ui-radius-sm);
+		background: transparent;
+		color: var(--ui-text-primary);
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.mention-option span,
+	.mention-option small {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.mention-option span {
+		font-size: 0.78rem;
+		font-weight: 650;
+	}
+
+	.mention-option small {
+		font-family: var(--font-mono);
+		font-size: 0.68rem;
+		color: var(--ui-text-secondary);
+	}
+
+	.mention-option:hover,
+	.mention-option:focus-visible,
+	.mention-option.active {
+		outline: none;
+		border-color: color-mix(in oklab, var(--ui-border-accent) 70%, var(--ui-border-soft));
+		background: color-mix(in oklab, var(--ui-accent-soft) 62%, var(--ui-surface-raised));
+	}
+
+	.mention-empty {
+		padding: 0.68rem 0.72rem;
+		font-size: 0.76rem;
+		color: var(--ui-text-secondary);
 	}
 
 	.composer-controls,

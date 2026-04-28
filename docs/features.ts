@@ -120,6 +120,14 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     sourceSpecs: ["docs/specs/prompt-history.spec.md"],
   },
   {
+    id: "composer-mention-links",
+    name: "Composer Mention Links",
+    status: "shipped",
+    summary:
+      "Lets the composer autocomplete indexed workspace files and folders after `@`, insert removable mention chips, serialize selected mentions as ordinary `@path` user text, and render sent transcript mentions as actionable workspace links that reveal files, open folders, and visibly mark missing paths without prompt injection, eager file reads, folder expansion, or a special context-target model.",
+    sourceSpecs: ["docs/specs/composer-mention-links.spec.md", "docs/progress.md"],
+  },
+  {
     id: "workspace-navigation-core-projection",
     name: "Workspace Navigation And Core Projection",
     status: "shipped",

@@ -767,6 +767,14 @@ function createFakeRpc(input: {
           workspaceLabel: "svvy",
           branch: "main",
         }),
+        listWorkspacePaths: async () => [
+          { kind: "file", workspaceRelativePath: "docs/progress.md" },
+          { kind: "folder", workspaceRelativePath: "src/mainview/" },
+        ],
+        openWorkspacePath: async ({ workspaceRelativePath }) => ({
+          opened: workspaceRelativePath === "docs/progress.md",
+          kind: workspaceRelativePath === "docs/progress.md" ? "file" : "missing",
+        }),
         listSessions: async () => {
           requestCounts.listSessions += 1;
           return { sessions: listSessions(), navigation: listNavigation() };
@@ -1511,6 +1519,24 @@ describe("createChatRuntime", () => {
       { sessionId: "session-2", workflowTaskAttemptId: "workflow-task-attempt-77" },
     ]);
     expect(harness.projectCiStatusRequests).toEqual(["session-2"]);
+
+    runtime.dispose();
+  });
+
+  it("opens workspace paths through the runtime without adding agent context metadata", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "First", "first reply")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("first reply")],
+        }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+
+    await expect(runtime.openWorkspacePath("docs/progress.md")).resolves.toBe(true);
+    await expect(runtime.openWorkspacePath("missing/file.ts")).resolves.toBe(false);
 
     runtime.dispose();
   });

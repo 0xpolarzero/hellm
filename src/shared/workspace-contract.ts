@@ -81,6 +81,22 @@ export interface WorkspaceInfoResponse {
   branch?: string;
 }
 
+export type ComposerMentionKind = "file" | "folder";
+
+export interface WorkspacePathIndexEntry {
+  kind: ComposerMentionKind;
+  workspaceRelativePath: string;
+}
+
+export interface OpenWorkspacePathRequest {
+  workspaceRelativePath: string;
+}
+
+export interface OpenWorkspacePathResponse {
+  opened: boolean;
+  kind: ComposerMentionKind | "missing";
+}
+
 export interface ProviderAuthInfo {
   provider: string;
   hasKey: boolean;
@@ -520,6 +536,14 @@ export interface ChatRPCSchema {
       getWorkspaceInfo: {
         params: undefined;
         response: WorkspaceInfoResponse;
+      };
+      listWorkspacePaths: {
+        params: { refresh?: boolean } | undefined;
+        response: WorkspacePathIndexEntry[];
+      };
+      openWorkspacePath: {
+        params: OpenWorkspacePathRequest;
+        response: OpenWorkspacePathResponse;
       };
       listSessions: {
         params: undefined;

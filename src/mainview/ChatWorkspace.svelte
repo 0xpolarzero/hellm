@@ -162,6 +162,7 @@
   let paletteMode = $state<CommandPaletteMode>("actions");
   let paletteError = $state<string | undefined>(undefined);
   let paletteBusy = $state(false);
+  let workspaceMentionPaths = $state<ReadonlySet<string>>(new Set());
 
   let sidebarResizePointerId: number | null = null;
   let sidebarResizeOriginX = 0;
@@ -705,6 +706,18 @@
   function handleOpenArtifact(filename: string) {
     controller?.selectArtifact(filename);
     showArtifactsPanel = true;
+  }
+
+  async function handleOpenWorkspacePath(path: string) {
+    try {
+      const opened = await runtime.openWorkspacePath(path);
+      if (!opened) {
+        await copyTextToClipboard(path);
+      }
+    } catch (error) {
+      console.error("Failed to open workspace path:", error);
+      await copyTextToClipboard(path);
+    }
   }
 
   async function handleCopyTranscript() {
@@ -1512,6 +1525,14 @@
       .catch((error) => {
         console.error("Failed to load prompt history:", error);
       });
+    void runtime
+      .listWorkspacePaths()
+      .then((paths) => {
+        workspaceMentionPaths = new Set(paths.map((path) => path.workspaceRelativePath));
+      })
+      .catch((error) => {
+        console.error("Failed to load workspace mention paths:", error);
+      });
 
     const unsubscribeRuntime = runtime.subscribe(() => {
       syncRuntimeState();
@@ -2130,7 +2151,9 @@
             streamMessage={streamMessage ?? undefined}
             {pendingToolCalls}
             {isStreaming}
+            {workspaceMentionPaths}
             onOpenArtifact={handleOpenArtifact}
+            onOpenWorkspacePath={(path) => void handleOpenWorkspacePath(path)}
             onScrollStateChange={(scroll) => handleTranscriptScrollState(pane.paneId, scroll)}
           />
           <ChatComposer
@@ -2147,6 +2170,7 @@
               currentThinkingLevel = level;
               currentSurfaceController?.agent.setThinkingLevel(level);
             }}
+            listWorkspacePaths={() => runtime.listWorkspacePaths()}
           />
                 </div>
               </section>
@@ -2160,7 +2184,9 @@
                     streamMessage={paneController.agent.state.streamMessage?.role === "assistant" ? paneController.agent.state.streamMessage : undefined}
                     pendingToolCalls={new Set(paneController.agent.state.pendingToolCalls)}
                     isStreaming={paneController.agent.state.isStreaming || paneController.promptStatus === "streaming"}
+                    {workspaceMentionPaths}
                     onOpenArtifact={handleOpenArtifact}
+                    onOpenWorkspacePath={(path) => void handleOpenWorkspacePath(path)}
                     onScrollStateChange={(scroll) => handleTranscriptScrollState(pane.paneId, scroll)}
                   />
                 </div>

@@ -1,11 +1,18 @@
-import { ApplicationMenu, BrowserWindow, Updater, defineElectrobunRPC } from "electrobun/bun";
+import {
+  ApplicationMenu,
+  BrowserWindow,
+  Updater,
+  Utils,
+  defineElectrobunRPC,
+} from "electrobun/bun";
 import { getModel, getModels, getProviders } from "@mariozechner/pi-ai";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { basename, join, resolve, sep } from "node:path";
 import type {
   AuthStateResponse,
   ChatRPCSchema,
+  ComposerMentionKind,
   PromptTarget,
   ProviderAuthInfo,
   SendPromptRequest,
@@ -30,6 +37,7 @@ import { getSvvyAgentDir, WorkspaceSessionCatalog, type SessionDefaults } from "
 import { createSessionAgentSettingsStore } from "./session-agent-settings";
 import { createSvvyToolBridge } from "./tool-bridge";
 import { resolveWorkspaceCwd } from "./workspace-context";
+import { WorkspacePathIndex } from "./workspace-path-index";
 
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
@@ -54,6 +62,7 @@ const PREFERRED_MODEL_FRAGMENTS = [
 let resolvedDefaults: AgentDefaults | null = null;
 let mainWindow: BrowserWindow | null = null;
 const workspaceSessionCatalog = new WorkspaceSessionCatalog(resolveWorkspaceCwd());
+const workspacePathIndex = new WorkspacePathIndex(resolveWorkspaceCwd());
 const agentSettingsStore = createSessionAgentSettingsStore({
   cwd: resolveWorkspaceCwd(),
   agentDir: getSvvyAgentDir(),
@@ -275,6 +284,33 @@ function getWorkspaceBranch(cwd: string): string | undefined {
   return branch && branch !== "HEAD" ? branch : undefined;
 }
 
+function resolveSafeWorkspacePath(workspaceRelativePath: string): string | null {
+  const cwd = resolveWorkspaceCwd();
+  const normalizedRelativePath = workspaceRelativePath.trim().replace(/\\/g, "/").replace(/^@/, "");
+  if (
+    !normalizedRelativePath ||
+    normalizedRelativePath.startsWith("/") ||
+    normalizedRelativePath.includes("\0") ||
+    normalizedRelativePath.split("/").includes("..")
+  ) {
+    return null;
+  }
+
+  const absolutePath = resolve(cwd, normalizedRelativePath);
+  const root = resolve(cwd);
+  if (absolutePath !== root && !absolutePath.startsWith(`${root}${sep}`)) return null;
+  return absolutePath;
+}
+
+function getWorkspacePathKind(absolutePath: string): ComposerMentionKind | "missing" {
+  try {
+    const stats = statSync(absolutePath);
+    return stats.isDirectory() ? "folder" : "file";
+  } catch {
+    return "missing";
+  }
+}
+
 function listProviderAuthSummaries(): ProviderAuthInfo[] {
   return getProviders().map((provider) => {
     const state = resolveAuthState(provider);
@@ -336,6 +372,22 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           workspaceLabel: basename(cwd),
           branch: getWorkspaceBranch(cwd),
         };
+      },
+      listWorkspacePaths: ({ refresh } = {}) => {
+        return refresh ? workspacePathIndex.refresh() : workspacePathIndex.list();
+      },
+      openWorkspacePath: ({ workspaceRelativePath }) => {
+        const absolutePath = resolveSafeWorkspacePath(workspaceRelativePath);
+        if (!absolutePath) return { opened: false, kind: "missing" };
+
+        const kind = getWorkspacePathKind(absolutePath);
+        if (kind === "missing") return { opened: false, kind };
+
+        const opened = kind === "folder" ? Utils.openPath(absolutePath) : true;
+        if (kind === "file") {
+          Utils.showItemInFolder(absolutePath);
+        }
+        return { opened, kind };
       },
       listSessions: async () => {
         return await workspaceSessionCatalog.listSessions();

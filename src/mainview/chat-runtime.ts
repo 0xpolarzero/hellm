@@ -13,6 +13,7 @@ import type {
   SendPromptRequest,
   SurfaceSyncMessage,
   WorkspaceCommandInspector,
+  WorkspacePathIndexEntry,
   WorkspaceHandlerThreadInspector,
   WorkspaceHandlerThreadSummary,
   WorkspaceArtifactPreview,
@@ -130,6 +131,8 @@ export interface ChatRuntimeRpcClient {
     ensureWorkflowAgentsComponent: typeof rpc.request.ensureWorkflowAgentsComponent;
     getProviderAuthState: typeof rpc.request.getProviderAuthState;
     getWorkspaceInfo: typeof rpc.request.getWorkspaceInfo;
+    listWorkspacePaths: typeof rpc.request.listWorkspacePaths;
+    openWorkspacePath: typeof rpc.request.openWorkspacePath;
     listSessions: typeof rpc.request.listSessions;
     getCommandInspector: typeof rpc.request.getCommandInspector;
     listHandlerThreads: typeof rpc.request.listHandlerThreads;
@@ -245,6 +248,8 @@ export interface ChatRuntime {
   syncProviderAuth: (providerId: string) => Promise<boolean>;
   requireProviderAccess: (providerId: string) => Promise<boolean>;
   listConfiguredProviders: () => Promise<string[]>;
+  listWorkspacePaths: (options?: { refresh?: boolean }) => Promise<WorkspacePathIndexEntry[]>;
+  openWorkspacePath: (workspaceRelativePath: string) => Promise<boolean>;
 }
 
 function createRpcStreamId(): string {
@@ -1382,6 +1387,11 @@ export async function createChatRuntime(
     syncProviderAuth,
     requireProviderAccess,
     listConfiguredProviders,
+    listWorkspacePaths: (options) => rpcClient.request.listWorkspacePaths(options),
+    openWorkspacePath: async (workspaceRelativePath) => {
+      const result = await rpcClient.request.openWorkspacePath({ workspaceRelativePath });
+      return result.opened;
+    },
   };
 
   return runtime;

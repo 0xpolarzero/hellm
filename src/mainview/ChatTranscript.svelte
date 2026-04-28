@@ -3,6 +3,7 @@
 	import { onMount, tick } from "svelte";
 	import { getArtifactCommandCopy, parseArtifactsParams } from "./artifacts";
 	import { formatTimestamp, formatUsage } from "./chat-format";
+	import { parseTranscriptMentionLinks } from "./composer-mentions";
 	import type { ConversationProjection, ProjectedToolCall } from "./conversation-projection";
 	import {
 		compensateTranscriptScrollForMeasuredRow,
@@ -21,7 +22,9 @@
 		streamMessage?: AssistantMessage;
 		pendingToolCalls: ReadonlySet<string>;
 		isStreaming: boolean;
+		workspaceMentionPaths?: ReadonlySet<string>;
 		onOpenArtifact: (filename: string) => void;
+		onOpenWorkspacePath: (path: string) => void;
 		onScrollStateChange?: (scroll: { transcriptAnchorId: string | null; offsetPx: number }) => void;
 	};
 
@@ -32,7 +35,9 @@
 		streamMessage,
 		pendingToolCalls,
 		isStreaming,
+		workspaceMentionPaths = new Set(),
 		onOpenArtifact,
+		onOpenWorkspacePath,
 		onScrollStateChange,
 	}: Props = $props();
 
@@ -74,6 +79,16 @@
 	function userLines(message: UserMessage): string[] {
 		if (typeof message.content === "string") return [message.content];
 		return message.content.map((block) => (block.type === "text" ? block.text : `[${block.mimeType} image]`));
+	}
+
+	function userLineSegments(line: string) {
+		return parseTranscriptMentionLinks(line, workspaceMentionPaths);
+	}
+
+	function handleWorkspaceMentionClick(event: MouseEvent, path: string, missing?: boolean) {
+		event.preventDefault();
+		if (missing) return;
+		onOpenWorkspacePath(path);
 	}
 
 	function toolResultText(message: ToolResultMessage): string {
@@ -298,7 +313,21 @@
 							<time>{formatTimestamp(message.timestamp)}</time>
 						</header>
 						{#each userLines(message) as line, lineIndex (`${message.timestamp}:line:${lineIndex}`)}
-							<p class="message-text">{line}</p>
+							<p class="message-text">
+								{#each userLineSegments(line) as segment, segmentIndex (`${message.timestamp}:line:${lineIndex}:segment:${segmentIndex}`)}
+									{#if segment.type === "mention"}
+										<a
+											class={`workspace-mention-link ${segment.missing ? "missing" : ""}`.trim()}
+											href={`workspace://${segment.path}`}
+											title={segment.missing ? `Missing workspace path: ${segment.path}` : `Workspace path: ${segment.path}`}
+											aria-disabled={segment.missing}
+											onclick={(event) => handleWorkspaceMentionClick(event, segment.path ?? "", segment.missing)}
+										>{segment.text}</a>
+									{:else}
+										{segment.text}
+									{/if}
+								{/each}
+							</p>
 						{/each}
 					</div>
 				</article>
@@ -638,6 +667,29 @@
 
 	.message-text + .message-text {
 		margin-top: 0.72rem;
+	}
+
+	.workspace-mention-link {
+		display: inline;
+		color: color-mix(in oklab, var(--ui-accent) 82%, var(--ui-text-primary));
+		font-family: var(--font-mono);
+		font-size: 0.86em;
+		text-decoration: underline;
+		text-decoration-thickness: 1px;
+		text-underline-offset: 0.18em;
+	}
+
+	.workspace-mention-link:hover,
+	.workspace-mention-link:focus-visible {
+		outline: none;
+		color: var(--ui-text-primary);
+		background: color-mix(in oklab, var(--ui-accent-soft) 72%, transparent);
+	}
+
+	.workspace-mention-link.missing {
+		color: color-mix(in oklab, var(--ui-warning) 76%, var(--ui-text-primary));
+		cursor: not-allowed;
+		text-decoration-style: dashed;
 	}
 
 	.thinking-block,

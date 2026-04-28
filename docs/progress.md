@@ -221,14 +221,14 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Freeze auto-titling after manual rename or after the first successful generated title. Commit(s): `354db28`
 - [x] Generate handler-thread titles with the same `namer` session agent used for top-level sessions, using the orchestrator-supplied `thread.start` objective as the naming input, while keeping workflow-run labels derived from the workflow's own name or entry metadata instead of adding a separate workflow-run title. Commit(s): `4d74c78`
 
-## 13. Composer Mention Targets
+## 13. Composer Mention Links
 
-- [x] Define the stored shape for symbolic file and folder mention targets in the composer.
-- [ ] Build a POC `@` autocomplete picker over workspace files and folders.
-- [ ] Render selected file and folder mentions as removable composer chips.
-- [ ] Persist the visible mention text and resolved target paths on send.
-- [ ] Resolve file and folder mentions into symbolic context targets for orchestrator and handler-thread prompting.
-- [ ] Keep folder mentions symbolic by default instead of eagerly pasting or expanding contents in the composer.
+- [x] Define the stored shape for composer file and folder mention links.
+- [x] Build a POC `@` autocomplete picker over indexed workspace files and folders.
+- [x] Render selected file and folder mentions as removable composer chips.
+- [x] Serialize mentions into the outgoing user message as normal workspace path links.
+- [x] Render sent mentions in the transcript as actionable workspace links that reveal files, open folders, and visibly mark missing paths.
+- [x] Keep mentions agent-neutral: no prompt injection, no eager file reads, no folder expansion, and no special context-target resolution.
 
 ## 14. Layered Workflow Knowledge
 
