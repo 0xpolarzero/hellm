@@ -251,11 +251,11 @@ Current product decisions for this section are specified in `docs/specs/workflow
 - [x] Show launch arguments and node props in the selected-node inspector for workflow containers, executable tasks, approvals, and Project CI checks. Commit(s): `ba56647`
 - [x] Render pending, running, waiting, retrying, completed, failed, cancelled, and skipped states clearly on rows, including collapsed-parent indicators for failed or waiting descendants. Commit(s): `ba56647`
 - [x] Add search, keyboard navigation, row selection, expand/collapse, auto-expansion of active or failed paths, and preservation of user-collapsed paths during live updates. Commit(s): `ba56647`
-- [ ] Show selected-node details for status, objective or label, latest output, partial output, related artifacts, workflow agent, task attempt, command linkage, worktree, timing, and wait reason.
+- [x] Show selected-node details for status, objective or label, latest output, partial output, related artifacts, workflow agent, task attempt, command linkage, worktree, timing, and wait reason. Commit(s): `625cab4`
 - [x] Add inspector tabs for output, diff, logs, transcript, command, events, and raw JSON when those data sources exist for the selected node. Commit(s): `ba56647`
-- [ ] Stream live Smithers snapshot and delta updates into the tree while a workflow is running, including latest activity previews for active leaf rows.
+- [x] Stream live Smithers snapshot and delta updates into the tree while a workflow is running, including latest activity previews for active leaf rows. Commit(s): `625cab4`
 - [x] Add historical frame inspection with a scrubber and return-to-live behavior without making rewind or replay a default control. Commit(s): `ba56647`
-- [ ] Open a selected task-agent session, command record, artifact, Project CI check, or owning handler thread from the workflow inspector into another chosen pane.
+- [x] Open a selected task-agent session, command record, artifact, Project CI check, or owning handler thread from the workflow inspector into another chosen pane. Commit(s): `625cab4`
 - [x] Keep completed workflow inspectors available as durable historical pane surfaces after completion and app restart. Commit(s): `ba56647`
 
 ## 16. Recovery And Test Coverage
