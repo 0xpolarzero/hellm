@@ -77,3 +77,6 @@
   - e.g. run CI on git commit/push
 
 - "qa" step similar to ci; have an agent look at changes, figure out if there is any new/changed UI surface, test the flow itself by driving the app, take screenshots, examine the screenshots to make sure everything works and displays as expected, and return a structured output
+
+- have agents be able to query other sessions, and discuss with them; probably just a tool that lets the agent, after it retrieved the target session, create a short-lived (or not) fork and ask it stuff
+  - in our context it might just be creating a new thread from a fork of the target session and be the one talking to it
