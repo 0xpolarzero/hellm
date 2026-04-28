@@ -1,20 +1,10 @@
 # UI Progress
 
-Incremental roadmap for porting the UI from `frontend-replit/artifacts/svvy` into svvy's Svelte renderer, while preserving svvy's existing runtime, pi-owned surfaces, durable state contracts, and product behavior.
+Incremental progress tracker for porting the UI from `frontend-replit/artifacts/svvy` into svvy's Svelte renderer.
 
-## EXTREMELY IMPORTANT FOR AGENTS
+Always read [ui.prd.md](ui.prd.md) before implementing any item in this roadmap, then use the relevant documentation it names. For Replit artifact parity, the primary local references are [ui.artifact-inventory.md](ui.artifact-inventory.md) and [ui.reference-screenshots/](ui.reference-screenshots/).
 
-Every agent implementing any section, subsection, or individual item in this file must follow these rules. They are not optional.
-
-- Always keep docs, code, and tests in sync when behavior, architecture, product surface, or UI contracts change.
-- Keep or extend thorough testing for the affected surface. Do not weaken coverage to make a port easier.
-- After a UI change lands locally, verify it by driving the app itself, capturing screenshots, and inspecting those screenshots for correctness before marking work complete.
-- Never leave a legacy path, backwards-compatibility path, migration path, compatibility alias, dual implementation, fallback renderer, or obsolete fixture in place.
-- Refactor aggressively and delete obsolete code, styles, components, tests, fixtures, and docs once the new Svelte UI path owns the behavior.
-- Treat docs and specs as source-of-truth product documents, not a changelog or journal. When editing docs, describe the current resolved design and product surface, not what changed, what was replaced, or why an older approach existed.
-- Report clearly when the source UI appears bad, incomplete, unintuitive, missing expected states, poorly adapted to svvy's product model, or weaker than the way svvy needs to show the underlying runtime state.
-
-How to use this file:
+## Progress Maintenance
 
 - Keep items small enough to land in a focused PR.
 - Treat this file as a UI roadmap and progress tracker, not a changelog.
@@ -26,20 +16,18 @@ How to use this file:
 - If an item starts reading like a subsystem instead of a step, split it before implementation.
 - For any big lift or unclear porting seam, add a POC step immediately before the production implementation step.
 - Use POC steps to validate shape, constraints, and UX without prematurely locking the final architecture.
-- Treat Replit artifact visuals, layout, component behavior, and interaction states as the UI source. Use `docs/ui-reference-screenshots/` as the desktop visual reference set for every ported surface so spacing, hierarchy, state styling, and fixture coverage are not forgotten or guessed. Treat Replit routes, mock data, and React component boundaries as porting inputs only; production UI must consume svvy's existing Svelte runtime and workspace read models.
-- Static screenshots do not capture everything. Always inspect the running Replit artifact for animated and live-state details such as blinking status dots, pulse indicators, streaming cursors, progress motion, hover states, focus states, resize affordances, and active-running emphasis before implementing the matching Svelte behavior.
 
 ## Current Baseline
 
 - [x] Ship a functional Svelte renderer around the Electrobun desktop shell and Bun-side pi runtime.
 - [x] Render multi-session workspace navigation, pane bindings, transcript surfaces, composer, artifacts, workflow inspector, command palette, provider settings, and session-agent settings from svvy-owned runtime and read-model state.
 - [x] Keep product runtime behavior inside pi-backed surfaces, handler threads, Smithers-backed workflow supervision, and durable workspace state rather than a standalone terminal loop or alternate UI runtime.
-- [x] Capture the desktop UI reference screenshots under `docs/ui-reference-screenshots/`. `c8f047f`
-- [x] Capture the Replit artifact source states that the Svelte UI must match under `docs/ui-reference-screenshots/`. `c8f047f`
+- [x] Capture the desktop UI reference screenshots under `docs/ui/ui.reference-screenshots/`. `c8f047f`
+- [x] Capture the Replit artifact source states that the Svelte UI must match under `docs/ui/ui.reference-screenshots/`. `c8f047f`
 
 ## 1. Migration Contract
 
-- [x] Inventory Replit artifact screens, components, interactions, and mock-only assumptions in [docs/ui-artifact-inventory.md](ui-artifact-inventory.md). `7b45ec0`
+- [x] Inventory Replit artifact screens, components, interactions, and mock-only assumptions in [docs/ui/ui.artifact-inventory.md](ui.artifact-inventory.md). `7b45ec0`
 - [ ] Map each Replit artifact screen to the svvy product surface or fixture-only source state it represents.
 - [ ] Classify Replit artifact routes and mock states as production svvy surfaces or fixture states for visual parity.
 - [ ] Document the production Svelte ownership boundary: `src/mainview` owns presentation, existing runtime controllers own behavior, and shared workspace contracts own data shape.
