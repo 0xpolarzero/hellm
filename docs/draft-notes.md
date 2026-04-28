@@ -60,6 +60,13 @@
 
 - context usage per turn: nice UI thing to get a rough idea of how much context was used in each turn both agent and user
 
+- ship windows/tabs:
+  - the app should support multiple tabs, and likely windows as a follow-on or sibling primitive
+  - each tab can open a workspace, including opening the same workspace in multiple tabs
+  - each tab owns its own layout state so a user can keep different pane arrangements for different workspaces or different views of the same workspace
+  - this should make it convenient to move between several repos while also supporting multiple focused layouts over one repo
+  - include useful keyboard shortcuts for tab navigation, tab creation, tab closing, and moving tabs between positions or windows if windows land
+
 - /btw similar to claude code, e.g. select some agent text and quick quote and ask a question on a disposable short session (but maybe it can persist on the ui tho)
 
 - snitch (TBD); this is one of the best features, but it makes sense to wait for the main product to be working before getting attention
