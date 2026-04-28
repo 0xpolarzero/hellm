@@ -194,16 +194,14 @@ test("drives a real delegated workflow run through the app and routes workflow a
           );
 
           await waitForVisible(
-            page.getByText(
-              "Opened the Hello World Workflow Thread for the bundled hello_world workflow.",
-            ),
+            page.getByText("Opened a handler thread for the bundled hello_world workflow."),
           );
           await waitForVisible(page.getByText("Delegated Threads"));
-          await waitForVisible(page.getByText("Hello World Workflow Thread"));
+          await waitForVisible(page.getByText("Run the bundled hello_world workflow"));
           await waitForVisible(page.getByText("1 thread"));
 
           const threadCard = page.locator(".handler-thread-card").filter({
-            has: page.getByText("Hello World Workflow Thread", { exact: true }),
+            has: page.getByText("Run the bundled hello_world workflow"),
           });
           await waitForVisible(threadCard);
           expect((await threadCard.textContent()) ?? "").toContain(
@@ -221,7 +219,7 @@ test("drives a real delegated workflow run through the app and routes workflow a
 
           await returnToOrchestrator(page);
           await waitForVisible(page.getByText("Delegated Threads"), 90_000);
-          await waitForVisible(page.getByText("Hello World Workflow Thread"), 90_000);
+          await waitForVisible(page.getByText("Run the bundled hello_world workflow"), 90_000);
           await waitForVisible(page.getByText("1 workflow"), 90_000);
 
           await waitForVisible(page.getByText("Completed"), 90_000);
@@ -229,7 +227,9 @@ test("drives a real delegated workflow run through the app and routes workflow a
 
           await clickWhenEnabled(page.locator(".handler-thread-actions button").first());
 
-          const inspector = page.getByRole("dialog", { name: "Hello World Workflow Thread" });
+          const inspector = page.getByRole("dialog").filter({
+            has: page.getByText("Run the bundled hello_world workflow"),
+          });
           await waitForVisible(inspector);
           expect((await inspector.textContent()) ?? "").toContain("Workflow Runs");
           expect((await inspector.textContent()) ?? "").toContain("svvy-hello-world");
@@ -306,20 +306,19 @@ test("drives a real delegated workflow run through the app with z.ai loaded from
         await sendPrompt(
           page,
           [
-            "Open a handler thread with the exact title `Hello World Workflow Thread`.",
-            "Use the exact objective `Run the bundled hello_world workflow, wait for it to finish, and hand the result back.`",
+            "Open a handler thread for the objective `Run the bundled hello_world workflow, wait for it to finish, and hand the result back.`",
             "Do not run the workflow from the orchestrator.",
           ].join(" "),
         );
 
         await waitForVisible(page.getByText("Delegated Threads"), 60_000);
         await waitForVisible(
-          page.getByText("Hello World Workflow Thread", { exact: true }),
+          page.getByText("Run the bundled hello_world workflow"),
           60_000,
         );
 
         const threadCard = page.locator(".handler-thread-card").filter({
-          has: page.getByText("Hello World Workflow Thread", { exact: true }),
+          has: page.getByText("Run the bundled hello_world workflow"),
         });
         await waitForVisible(threadCard, 60_000);
         await clickWhenEnabled(page.locator(".handler-thread-actions button").nth(1), 60_000);
@@ -346,7 +345,9 @@ test("drives a real delegated workflow run through the app with z.ai loaded from
 
         await clickWhenEnabled(page.locator(".handler-thread-actions button").first());
 
-        const inspector = page.getByRole("dialog", { name: "Hello World Workflow Thread" });
+        const inspector = page.getByRole("dialog").filter({
+          has: page.getByText("Run the bundled hello_world workflow"),
+        });
         await waitForVisible(inspector, 60_000);
         expect((await inspector.textContent()) ?? "").toContain("Workflow Runs");
         expect((await inspector.textContent()) ?? "").toContain("svvy-hello-world");

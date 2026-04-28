@@ -149,7 +149,11 @@ describe("pane layout grid", () => {
 
     expect(layout.columns.map((column) => column.percent)).toEqual([50, 50]);
     expect(
-      getOpenPaneLocations(layout, (binding) => binding.surfacePiSessionId === "session-1"),
+      getOpenPaneLocations(
+        layout,
+        (binding) =>
+          binding.surface !== "workflow-inspector" && binding.surfacePiSessionId === "session-1",
+      ),
     ).toEqual([
       { paneId: "primary", label: "Left", focused: false },
       { paneId: "right", label: "Right", focused: true },

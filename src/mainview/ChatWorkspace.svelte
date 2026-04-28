@@ -15,6 +15,7 @@
   import { ArtifactsController, type ArtifactsSnapshot } from "./artifacts";
   import ChatComposer from "./ChatComposer.svelte";
   import CommandPalette from "./CommandPalette.svelte";
+  import WorkflowInspectorPane from "./WorkflowInspectorPane.svelte";
   import { formatTimestamp, formatUsage } from "./chat-format";
   import {
     getCommandInspectorSections,
@@ -39,6 +40,7 @@
     WorkspaceWorkflowTaskAttemptInspector,
     WorkspaceWorkflowTaskAttemptSummary,
     PromptTarget,
+    WorkspacePaneSurfaceTarget,
     WorkspaceSessionNavigationReadModel,
     WorkspaceSessionSummary,
   } from "../shared/workspace-contract";
@@ -212,13 +214,25 @@
 
     return "Messaging orchestrator";
   });
-  function formatPaneSurfaceLabel(controller: ChatSurfaceController | null): string {
+  function formatPaneSurfaceLabel(
+    controller: ChatSurfaceController | null,
+    binding?: WorkspacePaneSurfaceTarget | null,
+  ): string {
+    if (binding?.surface === "workflow-inspector") {
+      return "Workflow Inspector";
+    }
     if (controller?.target.surface === "thread") {
       return "Handler Thread";
     }
     return controller?.sessionMode === "quick" ? "Quick Session" : "Orchestrator";
   }
-  function formatPaneAgentSummary(controller: ChatSurfaceController | null): string {
+  function formatPaneAgentSummary(
+    controller: ChatSurfaceController | null,
+    binding?: WorkspacePaneSurfaceTarget | null,
+  ): string {
+    if (binding?.surface === "workflow-inspector") {
+      return binding.workflowRunId;
+    }
     const model = controller?.agent.state.model;
     const thinking = controller?.agent.state.thinkingLevel;
     if (!model) return "No agent";
@@ -931,10 +945,19 @@
     if (!projectCiStatus?.latestRun) {
       return;
     }
-    runtime.setPaneInspectorSelection(focusedPaneId, {
-      kind: "ci-run",
-      ciRunId: projectCiStatus.latestRun.ciRunId,
-    });
+    void openWorkflowInspector(projectCiStatus.latestRun.workflowRunId);
+  }
+
+  function openWorkflowInspector(workflowRunId: string, sessionId = activeSessionId): void {
+    if (!sessionId) return;
+    void runtime.openSurface(
+      {
+        workspaceSessionId: sessionId,
+        surface: "workflow-inspector",
+        workflowRunId,
+      },
+      { kind: "split", paneId: focusedPaneId, direction: "right" },
+    );
   }
 
   function getWorkflowTaskAttemptStatusLabel(
@@ -1799,8 +1822,8 @@
                 aria-label={`Focus pane ${pane.paneId}`}
                 onclick={() => void handleFocusPane(pane.paneId)}
               >
-                <strong>{formatPaneSurfaceLabel(paneController)}</strong>
-                <span>{formatPaneAgentSummary(paneController)}</span>
+                <strong>{formatPaneSurfaceLabel(paneController, pane.binding)}</strong>
+                <span>{formatPaneAgentSummary(paneController, pane.binding)}</span>
               </button>
               <div class="pane-chrome-actions">
                 <button
@@ -1831,7 +1854,14 @@
                 </button>
               </div>
             </header>
-            {#if pane.paneId === focusedPaneId}
+            {#if pane.binding?.surface === "workflow-inspector"}
+              <WorkflowInspectorPane
+                {runtime}
+                sessionId={pane.binding.workspaceSessionId}
+                workflowRunId={pane.binding.workflowRunId}
+                paneId={pane.paneId}
+              />
+            {:else if pane.paneId === focusedPaneId}
               <section class="chat-pane" id="conversation">
                 <div class="chat-pane-shell">
           {#if showDetailedProjectCiPanel}
@@ -2520,6 +2550,15 @@
                   </div>
                   <p>{workflowRun.summary}</p>
                   <span>{formatTimestamp(workflowRun.updatedAt)}</span>
+                  <div class="handler-thread-actions">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onclick={() => openWorkflowInspector(workflowRun.workflowRunId, threadInspectorSessionId ?? activeSessionId)}
+                    >
+                      Open inspector
+                    </Button>
+                  </div>
                   {#if workflowRun.artifacts.length > 0}
                     <div class="command-inspector-artifact-list compact">
                       {#each workflowRun.artifacts as artifact (artifact.artifactId)}

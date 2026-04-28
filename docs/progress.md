@@ -243,17 +243,20 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 
 ## 15. Dedicated Workflow Inspector
 
-- [ ] Define the projected graph shape for a workflow inspector surface.
-- [ ] Build a POC static graph view for one completed workflow run.
-- [ ] Distinguish agent-task, script, Project CI, wait, retry, and terminal-result nodes in that graph, with Project CI shown only for runs backed by declared CI entries.
-- [ ] Render active, completed, failed, and waiting node states clearly.
-- [ ] Add selectable workflow nodes.
-- [ ] Show a detail panel for the selected workflow node.
-- [ ] Surface node objective, latest output, related artifacts, workflow agent, and worktree in that detail panel.
-- [ ] Stream live workflow status changes into the graph while a workflow is running.
-- [ ] Render retry or loop edges without making the main path hard to read.
-- [ ] Open a selected child workflow node or related thread surface from the workflow inspector into another chosen pane.
-- [ ] Keep completed workflow inspectors available as durable historical surfaces after completion.
+Current product decisions for this section are specified in `docs/specs/workflow-inspector.spec.md`.
+
+- [ ] Define the tree-first workflow-inspector surface model, including run header state, selected node, expanded nodes, live-versus-historical mode, and pane binding.
+- [ ] Build a POC static inspector over one completed workflow run using a React-DevTools-like tree instead of a graph layout.
+- [ ] Render workflow root, sequence, parallel, loop, conditional, approval, task-agent, script, Project CI check, wait, retry, and terminal-result rows, with Project CI rows shown only for runs backed by declared Project CI entries.
+- [ ] Show launch arguments and node props in the selected-node inspector for workflow containers, executable tasks, approvals, and Project CI checks.
+- [ ] Render pending, running, waiting, retrying, completed, failed, cancelled, and skipped states clearly on rows, including collapsed-parent indicators for failed or waiting descendants.
+- [ ] Add search, keyboard navigation, row selection, expand/collapse, auto-expansion of active or failed paths, and preservation of user-collapsed paths during live updates.
+- [ ] Show selected-node details for status, objective or label, latest output, partial output, related artifacts, workflow agent, task attempt, command linkage, worktree, timing, and wait reason.
+- [ ] Add inspector tabs for output, diff, logs, transcript, command, events, and raw JSON when those data sources exist for the selected node.
+- [ ] Stream live Smithers snapshot and delta updates into the tree while a workflow is running, including latest activity previews for active leaf rows.
+- [ ] Add historical frame inspection with a scrubber and return-to-live behavior without making rewind or replay a default control.
+- [ ] Open a selected task-agent session, command record, artifact, Project CI check, or owning handler thread from the workflow inspector into another chosen pane.
+- [ ] Keep completed workflow inspectors available as durable historical pane surfaces after completion and app restart.
 
 ## 16. Recovery And Test Coverage
 

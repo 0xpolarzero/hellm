@@ -21,6 +21,14 @@ export interface PromptTarget {
   threadId?: string;
 }
 
+export interface WorkflowInspectorPaneTarget {
+  workspaceSessionId: string;
+  surface: "workflow-inspector";
+  workflowRunId: string;
+}
+
+export type WorkspacePaneSurfaceTarget = PromptTarget | WorkflowInspectorPaneTarget;
+
 export interface SendPromptRequest {
   streamId: string;
   messages: Message[];
@@ -323,6 +331,131 @@ export interface WorkspaceWorkflowTaskAttemptInspector extends WorkspaceWorkflow
   artifacts: WorkspaceCommandArtifactLink[];
 }
 
+export type WorkspaceWorkflowInspectorNodeType =
+  | "workflow"
+  | "sequence"
+  | "parallel"
+  | "loop"
+  | "conditional"
+  | "approval"
+  | "task-agent"
+  | "script"
+  | "project-ci-check"
+  | "wait"
+  | "retry"
+  | "terminal-result"
+  | "unknown";
+
+export type WorkspaceWorkflowInspectorNodeStatus =
+  | "pending"
+  | "running"
+  | "waiting"
+  | "retrying"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "skipped";
+
+export type WorkspaceWorkflowInspectorMode =
+  | { kind: "live" }
+  | { kind: "historical"; frameNo: number };
+
+export type WorkspaceWorkflowInspectorRelatedSurfaceTarget =
+  | { kind: "handler-thread"; threadId: string }
+  | { kind: "task-agent"; workflowTaskAttemptId: string }
+  | { kind: "command"; commandId: string }
+  | { kind: "artifact"; artifactId: string }
+  | { kind: "project-ci-check"; checkResultId: string };
+
+export interface WorkspaceWorkflowInspectorNode {
+  key: string;
+  smithersNodeId: string | null;
+  parentKey: string | null;
+  type: WorkspaceWorkflowInspectorNodeType;
+  label: string;
+  status: WorkspaceWorkflowInspectorNodeStatus;
+  props: Record<string, unknown>;
+  launchArguments?: Record<string, unknown>;
+  task?: {
+    nodeId: string;
+    kind: string;
+    agent?: string;
+    iteration?: number;
+    attempt?: number;
+    workflowTaskAttemptId?: string;
+  };
+  projectCi?: {
+    checkId: string;
+    required: boolean;
+    command: string | null;
+    checkResultId?: string;
+  };
+  timing: {
+    startedAt: string | null;
+    finishedAt: string | null;
+    updatedAt: string | null;
+    elapsedMs: number | null;
+  };
+  waitReason: string | null;
+  latestActivity: string | null;
+  outputPreview: string | null;
+  hasFailedDescendant: boolean;
+  hasWaitingDescendant: boolean;
+  relatedSurfaceTargets: WorkspaceWorkflowInspectorRelatedSurfaceTarget[];
+  raw: unknown;
+}
+
+export interface WorkspaceWorkflowInspectorFrame {
+  frameNo: number;
+  seq: number | null;
+  createdAt: string | null;
+  label: string;
+}
+
+export interface WorkspaceWorkflowInspectorDetailTab {
+  id: "output" | "diff" | "logs" | "transcript" | "command" | "events" | "raw";
+  label: string;
+  content: unknown;
+  empty: boolean;
+}
+
+export interface WorkspaceWorkflowInspectorReadModel {
+  surfaceId: string;
+  workflowRunId: string;
+  smithersRunId: string;
+  owningSessionId: string;
+  owningThreadId: string;
+  selectedNodeKey: string | null;
+  expandedNodeKeys: string[];
+  mode: WorkspaceWorkflowInspectorMode;
+  runHeader: {
+    svvyStatus: WorkspaceHandlerThreadWorkflowSummary["status"];
+    smithersStatus: string;
+    runId: string;
+    workflowId: string | null;
+    workflowLabel: string;
+    owningHandlerThreadTitle: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    updatedAt: string | null;
+    heartbeatAt: string | null;
+    lastEventAt: string | null;
+    frameNo: number | null;
+    frameCount: number;
+    lastSeq: number | null;
+  };
+  tree: {
+    nodes: WorkspaceWorkflowInspectorNode[];
+    visibleNodeKeys: string[];
+    searchQuery: string;
+    matchedNodeKeys: string[];
+  };
+  frames: WorkspaceWorkflowInspectorFrame[];
+  selectedNode: WorkspaceWorkflowInspectorNode | null;
+  detailTabs: WorkspaceWorkflowInspectorDetailTab[];
+  rawSnapshot: unknown;
+}
+
 export interface WorkspaceHandlerThreadSummary {
   threadId: string;
   surfacePiSessionId: string;
@@ -564,6 +697,17 @@ export interface ChatRPCSchema {
       getWorkflowTaskAttemptInspector: {
         params: { sessionId: string; workflowTaskAttemptId: string };
         response: WorkspaceWorkflowTaskAttemptInspector | null;
+      };
+      getWorkflowInspector: {
+        params: {
+          sessionId: string;
+          workflowRunId: string;
+          selectedNodeKey?: string | null;
+          expandedNodeKeys?: string[];
+          searchQuery?: string;
+          mode?: WorkspaceWorkflowInspectorMode;
+        };
+        response: WorkspaceWorkflowInspectorReadModel | null;
       };
       getProjectCiStatus: {
         params: { sessionId: string };

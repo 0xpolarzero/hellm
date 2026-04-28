@@ -297,17 +297,15 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
           await sendPrompt(page, OPEN_THREAD_PROMPT);
 
           await waitForVisible(
-            page.getByText(
-              "Opened the Workflow Authoring Proof Thread for the workflow-authoring save proof.",
-            ),
+            page.getByText("Opened a handler thread for the workflow-authoring save proof."),
           );
           await waitForVisible(page.getByText("Delegated Threads"));
-          await waitForVisible(page.getByText("Workflow Authoring Proof Thread", { exact: true }));
+          await waitForVisible(page.getByText("author and run an artifact workflow"));
 
           const threadCard = page.locator(".handler-thread-card").first();
           await waitForVisible(threadCard);
           expect((await threadCard.textContent()) ?? "").toContain(
-            "Workflow Authoring Proof Thread",
+            "author and run an artifact workflow",
           );
           expect((await threadCard.textContent()) ?? "").toContain(
             "author and run an artifact workflow",
@@ -408,7 +406,9 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
 
           await clickWhenEnabled(page.locator(".handler-thread-actions button").first());
 
-          const inspector = page.getByRole("dialog", { name: "Workflow Authoring Proof Thread" });
+          const inspector = page.getByRole("dialog").filter({
+            has: page.getByText("author and run an artifact workflow"),
+          });
           await waitForVisible(inspector);
           const inspectorText = (await inspector.textContent()) ?? "";
           expect(inspectorText).toContain("Workflow Runs");
@@ -433,8 +433,8 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
           await returnToOrchestrator(page);
 
           await clickWhenEnabled(page.locator(".handler-thread-actions button").first());
-          const savedInspector = page.getByRole("dialog", {
-            name: "Workflow Authoring Proof Thread",
+          const savedInspector = page.getByRole("dialog").filter({
+            has: page.getByText("author and run an artifact workflow"),
           });
           await waitForVisible(savedInspector);
           await waitForTextContent(savedInspector, "2 handoffs", 60_000);

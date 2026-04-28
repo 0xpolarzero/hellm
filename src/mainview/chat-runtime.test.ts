@@ -805,6 +805,42 @@ function createFakeRpc(input: {
               createWorkflowTaskAttemptInspector(workflowTaskAttemptId),
           );
         },
+        getWorkflowInspector: async ({ sessionId, workflowRunId }) => ({
+          surfaceId: `workflow-inspector:${workflowRunId}`,
+          workflowRunId,
+          smithersRunId: "smithers-run-1",
+          owningSessionId: sessionId,
+          owningThreadId: "thread-1",
+          selectedNodeKey: "root",
+          expandedNodeKeys: ["root"],
+          mode: { kind: "live" },
+          runHeader: {
+            svvyStatus: "running",
+            smithersStatus: "running",
+            runId: "smithers-run-1",
+            workflowId: "workflow-1",
+            workflowLabel: "Workflow",
+            owningHandlerThreadTitle: "Thread",
+            startedAt: null,
+            finishedAt: null,
+            updatedAt: null,
+            heartbeatAt: null,
+            lastEventAt: null,
+            frameNo: null,
+            frameCount: 0,
+            lastSeq: null,
+          },
+          tree: {
+            nodes: [],
+            visibleNodeKeys: [],
+            searchQuery: "",
+            matchedNodeKeys: [],
+          },
+          frames: [],
+          selectedNode: null,
+          detailTabs: [],
+          rawSnapshot: null,
+        }),
         getProjectCiStatus: async ({ sessionId }) => {
           projectCiStatusRequests.push(sessionId);
           return structuredClone(input.projectCiStatus ?? createProjectCiStatusPanel());

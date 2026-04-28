@@ -224,3 +224,216 @@ summary {
     transition-duration: 0.01ms !important;
   }
 }
+
+.workflow-inspector {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--ui-surface);
+  color: var(--ui-text-primary);
+}
+
+.workflow-inspector-header,
+.workflow-node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--ui-border-soft);
+}
+
+.workflow-inspector-header p,
+.workflow-node-header p {
+  margin: 0 0 2px;
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.workflow-inspector-header h3,
+.workflow-node-header h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.workflow-inspector-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.workflow-inspector-header-meta code {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workflow-inspector-body {
+  display: grid;
+  grid-template-columns: minmax(280px, 38%) minmax(320px, 1fr);
+  min-height: 0;
+  flex: 1;
+}
+
+.workflow-inspector-tree,
+.workflow-node-inspector {
+  min-height: 0;
+  overflow: auto;
+}
+
+.workflow-inspector-tree {
+  border-right: 1px solid var(--ui-border-soft);
+}
+
+.workflow-inspector-search,
+.workflow-node-meta,
+.workflow-node-related,
+.workflow-node-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workflow-inspector-search {
+  margin: 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--ui-border-soft);
+  border-radius: 6px;
+  background: var(--ui-surface-raised);
+}
+
+.workflow-inspector-search input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.workflow-inspector-frame-strip {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 0 10px 8px;
+}
+
+.workflow-inspector-frame-strip button,
+.workflow-node-tabs button {
+  border: 1px solid var(--ui-border-soft);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.workflow-inspector-frame-strip button.active,
+.workflow-node-tabs button.active {
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-raised);
+}
+
+.workflow-tree-rows {
+  outline: none;
+}
+
+.workflow-tree-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.workflow-tree-row {
+  display: grid;
+  grid-template-columns: 18px 86px minmax(120px, 1fr) minmax(80px, 0.8fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px 4px calc(8px + var(--depth) * 14px);
+  border: 0;
+  border-left: 3px solid transparent;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.workflow-tree-row:hover,
+.workflow-tree-row.selected {
+  background: var(--ui-surface-raised);
+}
+
+.workflow-tree-row.selected {
+  border-left-color: var(--ui-accent);
+}
+
+.workflow-tree-row.status-failed {
+  background: color-mix(in oklab, var(--ui-danger) 10%, transparent);
+}
+
+.workflow-tree-type,
+.workflow-tree-preview,
+.workflow-descendant,
+.workflow-node-meta {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.workflow-tree-label,
+.workflow-tree-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-descendant.failed {
+  color: var(--ui-danger);
+}
+
+.workflow-descendant.waiting {
+  color: var(--ui-warning);
+}
+
+.workflow-node-meta,
+.workflow-node-related,
+.workflow-node-tabs {
+  flex-wrap: wrap;
+  padding: 10px 14px 0;
+}
+
+.workflow-node-props,
+.workflow-node-tab-content {
+  margin: 10px 14px;
+}
+
+.workflow-node-props pre,
+.workflow-node-tab-content {
+  max-height: 280px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--ui-border-soft);
+  border-radius: 6px;
+  background: var(--ui-surface-raised);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.workflow-inspector-empty,
+.workflow-inspector-error {
+  padding: 18px;
+  color: var(--ui-text-secondary);
+}
+
+.workflow-inspector-error {
+  color: var(--ui-danger);
+}

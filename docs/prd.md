@@ -948,15 +948,20 @@ It should not restore transient menus or popovers, unsaved inline edits, compose
 
 ## Workflow Inspection
 
-The product should expose workflow runs as inspectable history without forcing the orchestrator to absorb every internal event.
+The product exposes workflow runs as inspectable pane surfaces without forcing the orchestrator to absorb every internal event.
 
-The workflow inspector should let the user inspect:
+The workflow inspector lets the user inspect:
 
 - active workflow runs
 - completed workflow runs
-- workflow node progress
+- workflow node progress through a searchable expandable tree
+- workflow launch arguments and node props
+- live command, task-agent transcript, output, diff, log, event, and raw node detail when those sources exist
 - related artifacts
 - worktree and workflow agent context
+- historical frames without requiring the handler thread or orchestrator to summarize raw workflow history
+
+The inspector is a durable pane binding keyed by the local workflow-run record. Its run header shows normalized `svvy` status beside raw Smithers status, the Smithers run id, workflow label, owning handler thread, timing, heartbeat or latest event, and current frame state. The tree is the primary navigation model: search, expansion state, selected node, live-versus-historical frame mode, and pane placement belong to the inspector surface instead of the orchestrator transcript.
 
 Some workflow categories may justify specialized UI instead of a generic workflow card.
 

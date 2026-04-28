@@ -38,7 +38,10 @@ import type {
   WorkspaceHandlerThreadSummary,
   WorkspaceSessionSummary,
   WorkspaceWorkflowTaskAttemptInspector,
+  WorkspaceWorkflowInspectorMode,
+  WorkspaceWorkflowInspectorReadModel,
 } from "../shared/workspace-contract";
+import { buildWorkflowInspectorReadModel } from "../shared/workflow-inspector";
 import {
   DEFAULT_AGENT_SETTINGS,
   type SessionAgentKey,
@@ -382,6 +385,97 @@ export class WorkspaceSessionCatalog {
     }
 
     return inspector;
+  }
+
+  async getWorkflowInspector(input: {
+    sessionId: string;
+    workflowRunId: string;
+    selectedNodeKey?: string | null;
+    expandedNodeKeys?: string[];
+    searchQuery?: string;
+    mode?: WorkspaceWorkflowInspectorMode;
+  }): Promise<WorkspaceWorkflowInspectorReadModel> {
+    const snapshot = this.getStructuredSnapshot(input.sessionId);
+    if (!snapshot) {
+      throw new Error(`Structured session not found: ${input.sessionId}`);
+    }
+    const workflowRun = snapshot.workflowRuns.find((entry) => entry.id === input.workflowRunId);
+    if (!workflowRun) {
+      throw new Error(`Workflow run not found: ${input.workflowRunId}`);
+    }
+
+    const smithersSnapshot = await this.smithersRuntimeManager.getDevToolsSnapshot({
+      runId: workflowRun.smithersRunId,
+      frameNo: input.mode?.kind === "historical" ? input.mode.frameNo : undefined,
+    });
+    const frames = await this.smithersRuntimeManager
+      .listFrames({ runId: workflowRun.smithersRunId, limit: 250 })
+      .catch(() => []);
+    const events = await this.smithersRuntimeManager
+      .getRunEvents({ runId: workflowRun.smithersRunId, limit: 500 })
+      .catch(() => []);
+    const selectedNodeId =
+      typeof input.selectedNodeKey === "string" ? input.selectedNodeKey.split("/").at(-1) : null;
+    const nodeDetail = selectedNodeId
+      ? await this.smithersRuntimeManager
+          .getNodeDetail({ runId: workflowRun.smithersRunId, nodeId: selectedNodeId })
+          .catch(() => null)
+      : null;
+    const command = snapshot.commands.find((entry) => entry.id === workflowRun.commandId);
+    const launchInput = command?.facts?.launchInput ?? command?.facts?.input ?? null;
+
+    return buildWorkflowInspectorReadModel({
+      sessionId: input.sessionId,
+      workflowRun: {
+        ...workflowRun,
+        input: launchInput,
+      },
+      thread: snapshot.threads.find((entry) => entry.id === workflowRun.threadId) ?? null,
+      snapshot: smithersSnapshot,
+      frames,
+      events,
+      nodeDetail,
+      artifacts: snapshot.artifacts
+        .filter((artifact) => artifact.workflowRunId === workflowRun.id)
+        .map((artifact) => buildStructuredArtifactLink(snapshot, artifact)),
+      taskAttempts: snapshot.workflowTaskAttempts
+        .filter((attempt) => attempt.workflowRunId === workflowRun.id)
+        .map((attempt) => ({
+          workflowTaskAttemptId: attempt.id,
+          workflowRunId: attempt.workflowRunId,
+          nodeId: attempt.nodeId,
+          kind: attempt.kind,
+          status: attempt.status,
+          iteration: attempt.iteration,
+          attempt: attempt.attempt,
+          title: attempt.title,
+          summary: attempt.summary,
+        })),
+      commands: snapshot.commands
+        .filter((entry) => entry.workflowRunId === workflowRun.id)
+        .map((entry) => ({
+          commandId: entry.id,
+          workflowRunId: entry.workflowRunId,
+          workflowTaskAttemptId: entry.workflowTaskAttemptId,
+          title: entry.title,
+          summary: entry.summary,
+          toolName: entry.toolName,
+        })),
+      ciChecks: snapshot.ciCheckResults
+        .filter((entry) => entry.workflowRunId === workflowRun.id)
+        .map((entry) => ({
+          checkResultId: entry.id,
+          checkId: entry.checkId,
+          label: entry.label,
+          required: entry.required,
+          command: entry.command,
+          status: entry.status,
+        })),
+      selectedNodeKey: input.selectedNodeKey,
+      expandedNodeKeys: input.expandedNodeKeys,
+      searchQuery: input.searchQuery,
+      mode: input.mode,
+    });
   }
 
   async getProjectCiStatus(input: { sessionId: string }): Promise<WorkspaceProjectCiStatusPanel> {
@@ -2068,18 +2162,18 @@ async function createManagedSession(
     options.actorKind === "namer"
       ? ([] as const)
       : options.actorKind === "orchestrator"
-      ? ([
-          executeTypescriptTool,
-          createStartThreadTool({
-            runtime: promptExecutionRuntime,
-            store: options.structuredSessionStore,
-            bridge: {
-              createHandlerThread: options.createHandlerThread,
-            },
-          }),
-          waitTool,
-        ] as const)
-      : buildHandlerTools();
+        ? ([
+            executeTypescriptTool,
+            createStartThreadTool({
+              runtime: promptExecutionRuntime,
+              store: options.structuredSessionStore,
+              bridge: {
+                createHandlerThread: options.createHandlerThread,
+              },
+            }),
+            waitTool,
+          ] as const)
+        : buildHandlerTools();
   const customTools = createCustomToolDefinitions(tools);
   const modelRegistryFactory = ModelRegistry as unknown as {
     create?: (authStorage: AuthStorage, modelPath: string) => ModelRegistry;

@@ -264,7 +264,11 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workflow Inspector Surface",
     status: "in-progress",
     summary:
-      "Provides a read-only live graph inspector for workflow runs, with snapshot-plus-delta graph streaming, blocker diagnosis, node drill-down, transcript and artifact inspection, and pane-based inspection without forcing the orchestrator to absorb raw workflow history.",
-    sourceSpecs: ["docs/prd.md", "docs/specs/workflow-supervision.spec.md"],
+      "Provides a durable tree-first pane surface for Smithers runs, modeled after React DevTools and the Smithers GUI live-run tree, with searchable expandable rows, selected and expanded node state, normalized svvy status beside raw Smithers status, launch arguments and props, live refresh, historical frame inspection, selected-node output/diff/log/transcript/command/event/raw detail tabs, Project CI check rows only for declared CI entries, and related handler-thread, task-agent, command, CI check, and artifact targets without forcing the orchestrator to absorb raw workflow history.",
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/workflow-supervision.spec.md",
+      "docs/specs/workflow-inspector.spec.md",
+    ],
   },
 ];

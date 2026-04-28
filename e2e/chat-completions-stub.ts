@@ -88,7 +88,6 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
               toolCallId: `call-${++toolCallCounter}`,
               toolName: "thread.start",
               args: {
-                title: "Hello World Workflow Thread",
                 objective:
                   "Run the bundled hello_world workflow, monitor it to completion, and hand the result back to the orchestrator.",
               },
@@ -98,7 +97,7 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
           return createTextResponse({
             responseId,
             model: payload.model,
-            text: "Opened the Hello World Workflow Thread for the bundled hello_world workflow.",
+            text: "Opened a handler thread for the bundled hello_world workflow.",
           });
         }
 
@@ -315,7 +314,6 @@ export function startWorkflowAuthoringSavedWritesChatStub(): WorkflowSupervision
               toolCallId: `call-${++toolCallCounter}`,
               toolName: "thread.start",
               args: {
-                title: "Workflow Authoring Proof Thread",
                 objective:
                   "Check direct work, inspect saved runnable entries and reusable assets, author and run an artifact workflow when needed, and only save reusable workflow files if explicitly asked.",
               },
@@ -325,7 +323,7 @@ export function startWorkflowAuthoringSavedWritesChatStub(): WorkflowSupervision
           return createTextResponse({
             responseId,
             model: payload.model,
-            text: "Opened the Workflow Authoring Proof Thread for the workflow-authoring save proof.",
+            text: "Opened a handler thread for the workflow-authoring save proof.",
           });
         }
 

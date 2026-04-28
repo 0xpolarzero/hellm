@@ -1,5 +1,6 @@
 import type {
   PromptTarget,
+  WorkspacePaneSurfaceTarget,
   WorkspaceHandlerThreadSummary,
   WorkspaceProjectCiStatusPanel,
   WorkspaceSessionSummary,
@@ -81,14 +82,22 @@ export type CommandRuntime = Pick<
   | "getPane"
   | "movePaneToSpanningRow"
   | "openSession"
-  | "openSurface"
   | "pinSession"
   | "unpinSession"
   | "archiveSession"
   | "unarchiveSession"
   | "splitPane"
   | "sendPromptToTarget"
->;
+> & {
+  openSurface: (
+    target: PromptTarget,
+    openTarget?: Parameters<ChatRuntime["openSurface"]>[1],
+  ) => Promise<void>;
+};
+
+function isPromptTarget(target: WorkspacePaneSurfaceTarget | null): target is PromptTarget {
+  return target?.surface === "orchestrator" || target?.surface === "thread";
+}
 
 export const COMMAND_PALETTE_NEW_PANE_PREFIX = "command-palette";
 const PRIMARY_COMMAND_PANE_ID = "primary";
@@ -535,8 +544,9 @@ export async function executePaletteFallbackPrompt(input: {
 
   await input.runtime.createSession({ mode: "quick" }, input.paneId);
   const pane = input.runtime.getPane(input.paneId);
-  if (pane?.target) {
-    await input.onCreatedTarget?.(pane.target);
+  const target = pane?.target ?? null;
+  if (isPromptTarget(target)) {
+    await input.onCreatedTarget?.(target);
   }
   await executeInitialPrompt({ runtime: input.runtime, paneId: input.paneId, prompt });
   return true;
@@ -548,9 +558,10 @@ async function executeInitialPrompt(input: {
   prompt: string;
 }): Promise<void> {
   const pane = input.runtime.getPane(input.paneId);
-  if (!pane?.target) {
+  const target = pane?.target ?? null;
+  if (!isPromptTarget(target)) {
     throw new Error("Expected a newly opened command palette target before sending a prompt.");
   }
 
-  await input.runtime.sendPromptToTarget(pane.target, input.prompt);
+  await input.runtime.sendPromptToTarget(target, input.prompt);
 }

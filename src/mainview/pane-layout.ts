@@ -1,4 +1,4 @@
-import type { PromptTarget } from "../shared/workspace-contract";
+import type { WorkspacePaneSurfaceTarget } from "../shared/workspace-contract";
 import type { WorkspaceInspectorSelection } from "./chat-storage";
 
 export const PRIMARY_CHAT_PANE_ID = "primary";
@@ -30,7 +30,7 @@ export interface PaneGridPane {
   columnEnd: number;
   rowStart: number;
   rowEnd: number;
-  binding: PromptTarget | null;
+  binding: WorkspacePaneSurfaceTarget | null;
   localState: PaneLocalState;
 }
 
@@ -157,7 +157,7 @@ export function normalizePaneLayout(
 export function bindPane(
   layout: WorkspacePaneLayoutState,
   paneId: string,
-  binding: PromptTarget | null,
+  binding: WorkspacePaneSurfaceTarget | null,
 ): WorkspacePaneLayoutState {
   return touch({
     ...layout,
@@ -536,11 +536,11 @@ export function getPaneLocationLabel(
 
 export function getOpenPaneLocations(
   layout: WorkspacePaneLayoutState,
-  predicate: (binding: PromptTarget) => boolean,
+  predicate: (binding: WorkspacePaneSurfaceTarget) => boolean,
 ): { paneId: string; label: string; focused: boolean }[] {
   return layout.panes
     .filter(
-      (pane): pane is PaneGridPane & { binding: PromptTarget } =>
+      (pane): pane is PaneGridPane & { binding: WorkspacePaneSurfaceTarget } =>
         !!pane.binding && predicate(pane.binding),
     )
     .map((pane) => ({

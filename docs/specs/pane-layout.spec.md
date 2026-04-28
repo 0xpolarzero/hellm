@@ -39,7 +39,7 @@ This section does not implement:
 - transcript parsing to recover layout, focus, or pane occupancy
 - composer draft restoration
 - stale live stream restoration
-- workflow graph internals, which belong to the workflow inspector surface
+- workflow run internals, which belong to the workflow inspector surface
 - saved workflow library browsing, file editing, syntax highlighting, or diagnostics surfaces
 
 ## Core Model
@@ -517,6 +517,7 @@ The orchestrator does not absorb raw workflow history just because a workflow in
 - `docs/specs/command-palette.spec.md` defines Section 9 command palette and quick-open behavior, including the shell-level action surface whose pane-specific placement is defined here.
 - `docs/specs/structured-session-state.spec.md` defines canonical session, thread, workflow-run, command, CI, artifact, wait, and lifecycle records that panes reference by id.
 - `docs/specs/workflow-supervision.spec.md` defines workflow-run lifecycle and Smithers-native inspection behavior used by workflow inspector panes.
+- `docs/specs/workflow-inspector.spec.md` defines the tree-first workflow inspector surface opened inside panes.
 - `docs/specs/project-ci.spec.md` defines Project CI records that compact CI or workflow-run surfaces may reference.
 
 ## Product Outcomes
