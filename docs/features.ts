@@ -147,7 +147,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Session Agent And Workflow Agent Settings",
     status: "shipped",
     summary:
-      "Persists app-wide default-session, quick-session, and namer session-agent defaults with provider, model, reasoning, and system prompt; records session mode and prompt selection on created sessions; allows handler threads to carry per-thread model, reasoning, and prompt overrides through `thread.start`; exposes focused-surface agent summaries in pane chrome and settings inspection/editing for session agents and conventional workflow agents; and synchronizes `explorer`, `implementer`, and `reviewer` workflow-agent settings to `.svvy/workflows/components/agents.ts` as a normal saved component asset.",
+      "Persists app-wide default-session, quick-session, and namer session-agent defaults with provider, model, reasoning, and system prompt; records session mode and prompt selection on created sessions; allows handler threads to carry per-thread model, reasoning, and prompt overrides through `thread.start`; exposes focused-surface agent summaries in pane chrome and direct-saving settings inspection/editing for session agents and conventional workflow agents through connected-provider model dropdowns plus selected-model reasoning dropdowns; and synchronizes `explorer`, `implementer`, and `reviewer` workflow-agent settings to `.svvy/workflows/components/agents.ts` as a normal saved component asset.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/structured-session-state.spec.md",

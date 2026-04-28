@@ -1,8 +1,16 @@
 <script lang="ts">
+	import { getModels, getProviders, supportsXhigh, type Model } from "@mariozechner/pi-ai";
+	import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 	import { onMount } from "svelte";
 	import { searchScore } from "./chat-format";
 	import type { ProviderAuthInfo } from "../shared/workspace-contract";
-	import type { AgentSettingsState, SessionAgentKey, WorkflowAgentKey } from "../shared/agent-settings";
+	import type {
+		AgentSettingsState,
+		SessionAgentKey,
+		SessionAgentSettings,
+		WorkflowAgentKey,
+		WorkflowAgentSettings,
+	} from "../shared/agent-settings";
 	import { rpc } from "./rpc";
 	import Button from "./ui/Button.svelte";
 	import Dialog from "./ui/Dialog.svelte";
@@ -14,6 +22,14 @@
 	};
 
 	type SettingsSection = "providers" | "agents" | "workflow-agents";
+	type EditableAgentSettings = SessionAgentSettings | WorkflowAgentSettings;
+	type ModelOption = {
+		key: string;
+		provider: string;
+		model: Model<any>;
+	};
+
+	const BASE_REASONING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
 
 	let { onClose, onProviderAuthChanged }: Props = $props();
 
@@ -27,6 +43,34 @@
 	let apiKeyInput = $state<Record<string, string>>({});
 	let oauthLoading = $state<Record<string, boolean>>({});
 	let saveMessage = $state<Record<string, string>>({});
+	let agentSaveMessage = $state<Record<string, string>>({});
+	let agentSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+	const connectedProviderIds = $derived(
+		new Set(providers.filter((provider) => provider.hasKey).map((provider) => provider.provider)),
+	);
+
+	const availableModelOptions = $derived.by(() => {
+		const options: ModelOption[] = [];
+		for (const provider of getProviders()) {
+			if (!connectedProviderIds.has(provider)) continue;
+			for (const model of getModels(provider)) {
+				options.push({
+					key: `${provider}:${model.id}`,
+					provider,
+					model,
+				});
+			}
+		}
+		return options.toSorted((left, right) => {
+			const providerComparison = left.provider.localeCompare(right.provider);
+			return providerComparison === 0 ? left.model.name.localeCompare(right.model.name) : providerComparison;
+		});
+	});
+
+	const availableModelsByKey = $derived(
+		new Map(availableModelOptions.map((option) => [option.key, option.model] as const)),
+	);
 
 	async function refreshProviders() {
 		error = null;
@@ -57,6 +101,43 @@
 		if (info.keyType === "oauth") return { text: "OAuth", tone: "success" as const };
 		if (info.keyType === "env") return { text: "Env var", tone: "warning" as const };
 		return { text: "API key", tone: "info" as const };
+	}
+
+	function selectedModelKey(settings: EditableAgentSettings): string {
+		return `${settings.provider}:${settings.model}`;
+	}
+
+	function selectedModel(settings: EditableAgentSettings): Model<any> | null {
+		return availableModelsByKey.get(selectedModelKey(settings)) ?? null;
+	}
+
+	function modelLabel(provider: string, model: Model<any>): string {
+		return `${provider} / ${model.name}`;
+	}
+
+	function reasoningLevels(settings: EditableAgentSettings): ThinkingLevel[] {
+		const model = selectedModel(settings);
+		return model && supportsXhigh(model) ? [...BASE_REASONING_LEVELS, "xhigh"] : BASE_REASONING_LEVELS;
+	}
+
+	function selectModel(settings: EditableAgentSettings, value: string): boolean {
+		const option = availableModelOptions.find((entry) => entry.key === value);
+		if (!option) return false;
+		if (settings.provider === option.provider && settings.model === option.model.id) return false;
+		settings.provider = option.provider;
+		settings.model = option.model.id;
+		if (!reasoningLevels(settings).includes(settings.reasoningEffort)) {
+			settings.reasoningEffort = "medium";
+		}
+		return true;
+	}
+
+	function selectReasoning(settings: EditableAgentSettings, value: string): boolean {
+		const levels = reasoningLevels(settings);
+		if (!levels.includes(value as ThinkingLevel)) return false;
+		if (settings.reasoningEffort === value) return false;
+		settings.reasoningEffort = value as ThinkingLevel;
+		return true;
 	}
 
 	const filteredProviders = $derived.by(() => {
@@ -98,20 +179,57 @@
 		loading = false;
 	});
 
+	function setAgentSaveMessage(statusKey: string, message: string, timeoutMs = 0) {
+		agentSaveMessage[statusKey] = message;
+		if (timeoutMs > 0) {
+			setTimeout(() => {
+				if (agentSaveMessage[statusKey] === message) {
+					agentSaveMessage[statusKey] = "";
+				}
+			}, timeoutMs);
+		}
+	}
+
 	async function saveSessionAgent(key: SessionAgentKey) {
 		if (!agentSettings) return;
-		agentSettings = await rpc.request.updateSessionAgentDefault({
-			key,
-			settings: agentSettings.sessionAgents[key],
-		});
+		const statusKey = `session:${key}`;
+		try {
+			setAgentSaveMessage(statusKey, "Saving");
+			await rpc.request.updateSessionAgentDefault({
+				key,
+				settings: structuredClone(agentSettings.sessionAgents[key]),
+			});
+			setAgentSaveMessage(statusKey, "Saved", 1800);
+		} catch (err) {
+			setAgentSaveMessage(statusKey, err instanceof Error ? err.message : "Save failed");
+		}
 	}
 
 	async function saveWorkflowAgent(key: WorkflowAgentKey) {
 		if (!agentSettings) return;
-		agentSettings = await rpc.request.updateWorkflowAgent({
-			key,
-			settings: agentSettings.workflowAgents[key],
-		});
+		const statusKey = `workflow:${key}`;
+		try {
+			setAgentSaveMessage(statusKey, "Saving");
+			await rpc.request.updateWorkflowAgent({
+				key,
+				settings: structuredClone(agentSettings.workflowAgents[key]),
+			});
+			setAgentSaveMessage(statusKey, "Saved", 1800);
+		} catch (err) {
+			setAgentSaveMessage(statusKey, err instanceof Error ? err.message : "Save failed");
+		}
+	}
+
+	function scheduleSessionAgentSave(key: SessionAgentKey) {
+		const statusKey = `session:${key}`;
+		clearTimeout(agentSaveTimers.get(statusKey));
+		agentSaveTimers.set(statusKey, setTimeout(() => void saveSessionAgent(key), 450));
+	}
+
+	function scheduleWorkflowAgentSave(key: WorkflowAgentKey) {
+		const statusKey = `workflow:${key}`;
+		clearTimeout(agentSaveTimers.get(statusKey));
+		agentSaveTimers.set(statusKey, setTimeout(() => void saveWorkflowAgent(key), 450));
 	}
 
 	async function seedWorkflowAgents() {
@@ -313,18 +431,52 @@
 												: "Namer"}</span
 									>
 									<span class="provider-status tone-info">{settings.reasoningEffort}</span>
+									{#if agentSaveMessage[`session:${key}`]}
+										<span class="provider-status">{agentSaveMessage[`session:${key}`]}</span>
+									{/if}
 								</div>
 								<div class="agent-grid">
-									<Input bind:value={settings.provider} placeholder="Provider" />
-									<Input bind:value={settings.model} placeholder="Model" />
-									<Input bind:value={settings.reasoningEffort} placeholder="Reasoning" />
+									<label class="agent-field">
+										<span>Model</span>
+										<select
+											value={selectedModelKey(settings)}
+											disabled={availableModelOptions.length === 0}
+											onchange={(event) => {
+												if (selectModel(settings, event.currentTarget.value)) {
+													void saveSessionAgent(key as SessionAgentKey);
+												}
+											}}
+										>
+											{#if !selectedModel(settings)}
+												<option value={selectedModelKey(settings)}>{settings.provider} / {settings.model}</option>
+											{/if}
+											{#each availableModelOptions as option (option.key)}
+												<option value={option.key}>{modelLabel(option.provider, option.model)}</option>
+											{/each}
+										</select>
+									</label>
+									<label class="agent-field">
+										<span>Reasoning</span>
+										<select
+											value={settings.reasoningEffort}
+											onchange={(event) => {
+												if (selectReasoning(settings, event.currentTarget.value)) {
+													void saveSessionAgent(key as SessionAgentKey);
+												}
+											}}
+										>
+											{#each reasoningLevels(settings) as level}
+												<option value={level}>{level}</option>
+											{/each}
+										</select>
+									</label>
 								</div>
-                <textarea bind:value={settings.systemPrompt} class="agent-prompt" rows="5"></textarea>
-							</div>
-							<div class="provider-actions">
-								<Button variant="primary" size="sm" onclick={() => saveSessionAgent(key as SessionAgentKey)}>
-									Save
-								</Button>
+								<textarea
+									bind:value={settings.systemPrompt}
+									class="agent-prompt"
+									rows="5"
+									oninput={() => scheduleSessionAgentSave(key as SessionAgentKey)}
+								></textarea>
 							</div>
 						</article>
 					{/each}
@@ -343,18 +495,52 @@
 								<div class="provider-heading">
 									<span class="provider-name">{settings.label}</span>
 									<span class="provider-status tone-info">{settings.reasoningEffort}</span>
+									{#if agentSaveMessage[`workflow:${key}`]}
+										<span class="provider-status">{agentSaveMessage[`workflow:${key}`]}</span>
+									{/if}
 								</div>
 								<div class="agent-grid">
-									<Input bind:value={settings.provider} placeholder="Provider" />
-									<Input bind:value={settings.model} placeholder="Model" />
-									<Input bind:value={settings.reasoningEffort} placeholder="Reasoning" />
+									<label class="agent-field">
+										<span>Model</span>
+										<select
+											value={selectedModelKey(settings)}
+											disabled={availableModelOptions.length === 0}
+											onchange={(event) => {
+												if (selectModel(settings, event.currentTarget.value)) {
+													void saveWorkflowAgent(key as WorkflowAgentKey);
+												}
+											}}
+										>
+											{#if !selectedModel(settings)}
+												<option value={selectedModelKey(settings)}>{settings.provider} / {settings.model}</option>
+											{/if}
+											{#each availableModelOptions as option (option.key)}
+												<option value={option.key}>{modelLabel(option.provider, option.model)}</option>
+											{/each}
+										</select>
+									</label>
+									<label class="agent-field">
+										<span>Reasoning</span>
+										<select
+											value={settings.reasoningEffort}
+											onchange={(event) => {
+												if (selectReasoning(settings, event.currentTarget.value)) {
+													void saveWorkflowAgent(key as WorkflowAgentKey);
+												}
+											}}
+										>
+											{#each reasoningLevels(settings) as level}
+												<option value={level}>{level}</option>
+											{/each}
+										</select>
+									</label>
 								</div>
-                <textarea bind:value={settings.systemPrompt} class="agent-prompt" rows="5"></textarea>
-							</div>
-							<div class="provider-actions">
-								<Button variant="primary" size="sm" onclick={() => saveWorkflowAgent(key as WorkflowAgentKey)}>
-									Save
-								</Button>
+								<textarea
+									bind:value={settings.systemPrompt}
+									class="agent-prompt"
+									rows="5"
+									oninput={() => scheduleWorkflowAgentSave(key as WorkflowAgentKey)}
+								></textarea>
 							</div>
 						</article>
 					{/each}
@@ -498,14 +684,43 @@
 	}
 
 	.agent-row {
-		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-columns: minmax(0, 1fr);
 	}
 
 	.agent-grid {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		grid-template-columns: minmax(0, 2fr) minmax(9rem, 1fr);
 		gap: 0.5rem;
 		margin-top: 0.35rem;
+	}
+
+	.agent-field {
+		display: grid;
+		gap: 0.28rem;
+		min-width: 0;
+	}
+
+	.agent-field span {
+		font-size: 0.68rem;
+		font-family: var(--font-mono);
+		color: var(--ui-text-secondary);
+	}
+
+	.agent-field select {
+		width: 100%;
+		min-width: 0;
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+		border-radius: var(--ui-radius-md);
+		padding: 0.58rem 0.65rem;
+		background: color-mix(in oklab, var(--ui-surface-subtle) 82%, transparent);
+		color: var(--ui-text-primary);
+		font: inherit;
+		font-size: 0.8rem;
+	}
+
+	.agent-field select:disabled {
+		opacity: 0.58;
+		cursor: not-allowed;
 	}
 
 	.agent-prompt {
