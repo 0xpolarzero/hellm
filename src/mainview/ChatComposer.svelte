@@ -6,6 +6,7 @@
 	import { onMount, tick } from "svelte";
 	import { supportsXhigh, type Model } from "@mariozechner/pi-ai";
 	import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+	import type { ContextBudget } from "../shared/context-budget";
 	import {
 		createPromptHistoryNavigationState,
 		navigatePromptHistory,
@@ -25,6 +26,7 @@
 		type WorkspacePathIndexEntry,
 	} from "./composer-mentions";
 	import Button from "./ui/Button.svelte";
+	import ContextBudgetBar from "./ContextBudgetBar.svelte";
 	import TextArea from "./ui/TextArea.svelte";
 
 	type Props = {
@@ -34,6 +36,7 @@
 		promptHistory: PromptHistoryEntry[];
 		errorMessage?: string;
 		usageText?: string;
+		contextBudget?: ContextBudget | null;
 		onAbort: () => void;
 		onOpenModelPicker: () => void;
 		onSend: (input: string) => Promise<boolean> | boolean;
@@ -50,6 +53,7 @@
 		promptHistory,
 		errorMessage,
 		usageText,
+		contextBudget,
 		onAbort,
 		onOpenModelPicker,
 		onSend,
@@ -301,6 +305,8 @@
 			onclick={(event) => syncCaretFromTextarea(event.currentTarget)}
 			onselect={(event) => syncCaretFromTextarea(event.currentTarget)}
 		/>
+
+		<ContextBudgetBar budget={contextBudget ?? null} label="Context" />
 
 		{#if selectedMentions.length > 0}
 			<div class="mention-chip-row" aria-label="Selected workspace mentions">

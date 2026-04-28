@@ -402,6 +402,11 @@ describe("workflow task agent", () => {
         cacheReadTokens: 5,
       },
     });
+    expect(snapshot.workflowTaskAttempts[0]?.meta).toMatchObject({
+      contextBudget: {
+        usedTokens: 12,
+      },
+    });
     expect(stdoutChunks[0]).toContain('{"status":"completed"');
     expect(stepMessages.length).toBeGreaterThan(0);
 

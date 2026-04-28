@@ -320,6 +320,14 @@ export interface WorkspaceWorkflowTaskAttemptSummary {
   commandCount: number;
   artifactCount: number;
   transcriptMessageCount: number;
+  contextBudget: {
+    usedTokens: number;
+    maxTokens: number;
+    percent: number;
+    tone: "neutral" | "orange" | "red";
+    label: string;
+    detail: string;
+  } | null;
 }
 
 export interface WorkspaceWorkflowTaskAttemptInspector extends WorkspaceWorkflowTaskAttemptSummary {

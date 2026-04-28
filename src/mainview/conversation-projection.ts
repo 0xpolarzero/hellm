@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, ToolCall, ToolResultMessage, Usage } from "@mariozechner/pi-ai";
 import { parseArtifactsParams, type ArtifactsParams } from "./artifacts";
+import { getLatestAssistantUsage } from "./context-budget";
 
 export interface ProjectedToolCall {
   id: string;
@@ -17,6 +18,7 @@ export interface ConversationProjection {
   artifactResultTextById: Map<string, string>;
   toolResultsById: Map<string, ToolResultMessage>;
   usage: Usage;
+  latestContextUsage: Pick<Usage, "input" | "cacheRead" | "cacheWrite"> | null;
   messageCount: number;
   toolCallCount: number;
   lastActivity: number | null;
@@ -24,6 +26,7 @@ export interface ConversationProjection {
 
 export interface ConversationSummary {
   usage: Usage;
+  latestContextUsage: Pick<Usage, "input" | "cacheRead" | "cacheWrite"> | null;
   messageCount: number;
   toolCallCount: number;
   lastActivity: number | null;
@@ -170,6 +173,7 @@ export function projectConversation(messages: AgentMessage[]): ConversationProje
     artifactResultTextById,
     toolResultsById,
     usage,
+    latestContextUsage: getLatestAssistantUsage(messages),
     messageCount,
     toolCallCount,
     lastActivity,
@@ -182,6 +186,7 @@ export function projectConversationSummary(
 ): ConversationSummary {
   return {
     usage: committed.usage,
+    latestContextUsage: committed.latestContextUsage,
     messageCount: committed.messageCount + (streamMessage ? 1 : 0),
     toolCallCount: committed.toolCallCount + countToolCalls(streamMessage),
     lastActivity: committed.lastActivity,

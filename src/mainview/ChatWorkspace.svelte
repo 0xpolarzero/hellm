@@ -15,6 +15,7 @@
   import { ArtifactsController, type ArtifactsSnapshot } from "./artifacts";
   import ChatComposer from "./ChatComposer.svelte";
   import CommandPalette from "./CommandPalette.svelte";
+  import ContextBudgetBar from "./ContextBudgetBar.svelte";
   import RelatedInspectorPane from "./RelatedInspectorPane.svelte";
   import WorkflowInspectorPane from "./WorkflowInspectorPane.svelte";
   import { formatTimestamp, formatUsage } from "./chat-format";
@@ -23,6 +24,11 @@
     getVisibleCommandRollups,
     getWorkspaceCommandStatusPresentation,
   } from "./command-inspector";
+  import {
+    buildContextBudgetFromUsage,
+    buildSurfaceContextBudget,
+    type ContextBudget,
+  } from "./context-budget";
   import {
     projectConversation,
     projectConversationSummary,
@@ -239,7 +245,14 @@
     if (!model) return "No agent";
     return `${model.provider}/${model.id} · ${thinking}`;
   }
+  function getPaneContextBudget(controller: ChatSurfaceController | null): ContextBudget | null {
+    if (!controller) return null;
+    return buildSurfaceContextBudget(controller.agent.state.messages, controller.agent.state.model);
+  }
   const usageText = $derived(formatUsage(conversation.usage));
+  const contextBudget = $derived(
+    buildContextBudgetFromUsage(conversationSummary.latestContextUsage, currentModel?.contextWindow),
+  );
   const summaryMessageCount = $derived(conversationSummary.messageCount);
   const toolCallCount = $derived(conversationSummary.toolCallCount);
   const lastActivity = $derived(conversation.lastActivity);
@@ -1797,6 +1810,7 @@
         </button>
         {#each paneLayout.panes as pane (pane.paneId)}
           {@const paneController = runtime.getPaneController(pane.paneId)}
+          {@const paneContextBudget = getPaneContextBudget(paneController)}
           <article
             class={`workspace-pane ${pane.paneId === focusedPaneId ? "focused" : ""}`.trim()}
             data-testid="workspace-pane"
@@ -1855,6 +1869,9 @@
                 </button>
               </div>
             </header>
+            {#if pane.paneId !== focusedPaneId && paneContextBudget}
+              <ContextBudgetBar budget={paneContextBudget} variant="compact" label="Context" />
+            {/if}
             {#if pane.binding?.surface === "workflow-inspector"}
               <WorkflowInspectorPane
                 {runtime}
@@ -2196,6 +2213,7 @@
             errorMessage={composerErrorMessage}
             {promptHistory}
             usageText={usageText || undefined}
+            {contextBudget}
             onAbort={() => void currentSurfaceController?.abort()}
             onOpenModelPicker={() => void openModelSelector()}
             onSend={handleSend}
@@ -2624,6 +2642,7 @@
                     </div>
                   </div>
                   <p>{workflowTaskAttempt.summary}</p>
+                  <ContextBudgetBar budget={workflowTaskAttempt.contextBudget} label="Context" />
                   <div class="thread-inspector-command-footer">
                     <span>
                       {workflowTaskAttempt.transcriptMessageCount}
@@ -2952,6 +2971,8 @@
             <span>{workflowTaskAttemptInspector.smithersRunId}</span>
             <span>{workflowTaskAttemptInspector.smithersState}</span>
           </div>
+
+          <ContextBudgetBar budget={workflowTaskAttemptInspector.contextBudget} label="Context" />
 
           {#if workflowTaskAttemptInspector.error}
             <p class="command-inspector-error">{workflowTaskAttemptInspector.error}</p>

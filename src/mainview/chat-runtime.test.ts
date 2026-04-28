@@ -360,6 +360,7 @@ function createHandlerThreadInspector(threadId = "thread-1"): WorkspaceHandlerTh
         commandCount: 1,
         artifactCount: 0,
         transcriptMessageCount: 2,
+        contextBudget: null,
       },
     ],
     episodes: [
@@ -451,6 +452,7 @@ function createWorkflowTaskAttemptInspector(
     commandCount: 1,
     artifactCount: 0,
     transcriptMessageCount: 2,
+    contextBudget: null,
     surfacePiSessionId: "pi-task-agent-1",
     smithersState: "finished",
     prompt: "Summarize the transcript probe.",

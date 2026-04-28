@@ -313,6 +313,12 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
           args.onStdout?.(text);
         }
         const usage = normalizeLatestAssistantUsage(responseMessages, session.agent.state.messages);
+        recordWorkflowTaskAgentContextBudget({
+          store: options.store,
+          agentResume: resumeHandle,
+          usage,
+          maxTokens: model.contextWindow,
+        });
 
         args.onEvent?.({
           type: "completed",
@@ -362,6 +368,58 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
       }
     },
   };
+}
+
+function recordWorkflowTaskAgentContextBudget(input: {
+  store: StructuredSessionStateStore;
+  agentResume: string;
+  usage: Record<string, unknown> | undefined;
+  maxTokens: number | undefined;
+}): void {
+  const usedTokens =
+    input.usage && typeof input.usage.inputTokens === "number" ? input.usage.inputTokens : null;
+  if (!usedTokens || !input.maxTokens) {
+    return;
+  }
+
+  const existing = input.store.findWorkflowTaskAttemptByAgentResume(input.agentResume);
+  if (!existing) {
+    return;
+  }
+
+  input.store.upsertWorkflowTaskAttempt({
+    workflowRunId: existing.workflowRunId,
+    smithersRunId: existing.smithersRunId,
+    nodeId: existing.nodeId,
+    iteration: existing.iteration,
+    attempt: existing.attempt,
+    surfacePiSessionId: existing.surfacePiSessionId,
+    title: existing.title,
+    summary: existing.summary,
+    kind: existing.kind,
+    status: existing.status,
+    smithersState: existing.smithersState,
+    prompt: existing.prompt,
+    responseText: existing.responseText,
+    error: existing.error,
+    cached: existing.cached,
+    jjPointer: existing.jjPointer,
+    jjCwd: existing.jjCwd,
+    heartbeatAt: existing.heartbeatAt,
+    agentId: existing.agentId,
+    agentModel: existing.agentModel,
+    agentEngine: existing.agentEngine,
+    agentResume: existing.agentResume,
+    meta: {
+      ...(existing.meta ?? {}),
+      contextBudget: {
+        usedTokens,
+        maxTokens: input.maxTokens,
+      },
+    },
+    startedAt: existing.startedAt,
+    finishedAt: existing.finishedAt,
+  });
 }
 
 function createWorkflowTaskExecuteTypescriptTool(input: {

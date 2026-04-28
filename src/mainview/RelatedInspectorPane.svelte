@@ -1,7 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { StaticInspectorPaneTarget } from "../shared/workspace-contract";
+  import type {
+    StaticInspectorPaneTarget,
+    WorkspaceWorkflowTaskAttemptInspector,
+  } from "../shared/workspace-contract";
   import type { ChatRuntime } from "./chat-runtime";
+  import ContextBudgetBar from "./ContextBudgetBar.svelte";
 
   type Props = {
     runtime: ChatRuntime;
@@ -49,6 +53,17 @@
     if (typeof value === "string") return value;
     return JSON.stringify(value, null, 2);
   }
+
+  function isWorkflowTaskAttemptInspector(
+    value: unknown,
+  ): value is WorkspaceWorkflowTaskAttemptInspector {
+    return (
+      Boolean(value) &&
+      typeof value === "object" &&
+      "workflowTaskAttemptId" in value &&
+      "contextBudget" in value
+    );
+  }
 </script>
 
 <section class="related-inspector-pane" aria-label={title}>
@@ -58,6 +73,19 @@
   </header>
   {#if error}
     <p class="related-inspector-error">{error}</p>
+  {:else if isWorkflowTaskAttemptInspector(content)}
+    <div class="task-agent-summary">
+      <div class="task-agent-summary-row">
+        <span>Status</span>
+        <strong>{content.status}</strong>
+      </div>
+      <div class="task-agent-summary-row">
+        <span>Model</span>
+        <strong>{content.agentModel ?? "Unknown"}</strong>
+      </div>
+      <ContextBudgetBar budget={content.contextBudget} label="Context" />
+    </div>
+    <pre>{formatContent(content)}</pre>
   {:else}
     <pre>{formatContent(content)}</pre>
   {/if}
@@ -98,6 +126,33 @@
     white-space: pre-wrap;
     word-break: break-word;
     font-size: 0.78rem;
+  }
+
+  .task-agent-summary {
+    display: grid;
+    gap: 0.65rem;
+    padding: 0.78rem 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .task-agent-summary-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    min-width: 0;
+    font-size: 0.76rem;
+  }
+
+  .task-agent-summary-row span {
+    color: var(--text-muted);
+  }
+
+  .task-agent-summary-row strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .related-inspector-error {

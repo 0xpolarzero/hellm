@@ -385,6 +385,8 @@ That is an escape hatch, not the default reconciliation path.
 
 The system should preserve strategic context in the orchestrator, spend local context deliberately inside handler threads, and externalize whatever does not need to stay in the active model window.
 
+Every pi-backed agent surface should expose its active context-budget usage as a percentage of that surface's active model maximum. This applies separately to orchestrator surfaces, handler-thread surfaces, and workflow task-agent attempts. The UI should make context pressure visible without implying that every model fails at one exact percentage: neutral is below 40%, orange starts at 40%, and red starts at 60%. These warning bands are an operational policy for when the user or agent should compact, summarize, hand off, or start a fresh surface.
+
 In practice that means:
 
 - useful results are compressed into final thread episodes and artifacts instead of dragging full transcripts forward

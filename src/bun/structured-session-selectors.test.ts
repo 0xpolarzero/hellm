@@ -1617,6 +1617,7 @@ describe("structured session selectors", () => {
       commandCount: 2,
       artifactCount: 1,
       transcriptMessageCount: 2,
+      contextBudget: null,
       surfacePiSessionId: "pi-task-agent-001",
       smithersState: "finished",
       prompt: "Read the brief and write the proof file.",

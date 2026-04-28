@@ -9,6 +9,7 @@ import type {
   StructuredTurnRecord,
   StructuredWorkflowRunRecord,
 } from "./structured-session-state";
+import { readContextBudgetFromMeta, type ContextBudget } from "../shared/context-budget";
 
 export interface StructuredCommandRollupChild {
   commandId: string;
@@ -194,6 +195,7 @@ export interface StructuredWorkflowTaskAttemptSummary {
   commandCount: number;
   artifactCount: number;
   transcriptMessageCount: number;
+  contextBudget: ContextBudget | null;
 }
 
 export interface StructuredWorkflowTaskAttemptInspector extends StructuredWorkflowTaskAttemptSummary {
@@ -797,6 +799,7 @@ function buildWorkflowTaskAttemptSummary(
     transcriptMessageCount: session.workflowTaskMessages.filter(
       (message) => message.workflowTaskAttemptId === workflowTaskAttempt.id,
     ).length,
+    contextBudget: readContextBudgetFromMeta(workflowTaskAttempt.meta),
   };
 }
 

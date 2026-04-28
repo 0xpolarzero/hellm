@@ -96,6 +96,14 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     ],
   },
   {
+    id: "context-budget-observability",
+    name: "Context Budget Observability",
+    status: "shipped",
+    summary:
+      "Shows active context usage as a percentage of the current model's maximum for orchestrator surfaces, handler-thread surfaces, and workflow task-agent attempts, with neutral below 40%, orange from 40%, and red from 60% so context pressure is visible without treating any single percentage as a universal model failure point.",
+    sourceSpecs: ["docs/prd.md", "docs/specs/context-budget-observability.spec.md"],
+  },
+  {
     id: "workflow-library",
     name: "Workflow Authoring And Artifact Workflows",
     status: "in-progress",
