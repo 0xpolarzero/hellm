@@ -213,13 +213,13 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 ## 12. Session Titles
 
 - [x] Define the stored title states for top-level sessions and handler threads. Commit(s): `b510857`, `fe53a3b`
-- [ ] Add `namer` as a pi-backed session-agent default, alongside `defaultSession` and `quickSession`, for one-shot top-level session naming rather than as a Smithers workflow agent.
-- [ ] Seed the `namer` session agent to `openai-codex`/`gpt-5.4-mini` with low reasoning effort, expose it in session-agent settings for customization, and treat its settings prompt as the only naming instruction.
-- [ ] Build a POC event-driven title-generation flow that starts a durable one-shot naming job concurrently with the first real top-level user turn without waiting for the orchestrator response.
-- [ ] Persist generated top-level session titles, title-generation lifecycle state, and the first-turn trigger so app restart cannot duplicate or lose title generation.
-- [ ] Block manual session rename while a title-generation job is pending or running, then release the lock after success, failure, or cancellation.
-- [ ] Freeze auto-titling after manual rename or after the first successful generated title.
-- [ ] Generate deterministic task-based titles for handler threads and workflow runs without using the `namer`.
+- [x] Add `namer` as a pi-backed session-agent default, alongside `defaultSession` and `quickSession`, for one-shot top-level session naming rather than as a Smithers workflow agent. Commit(s): `354db28`
+- [x] Seed the `namer` session agent to `openai-codex`/`gpt-5.4-mini` with low reasoning effort, expose it in session-agent settings for customization, and treat its settings prompt as the only naming instruction. Commit(s): `354db28`
+- [x] Build a POC event-driven title-generation flow that starts a durable one-shot naming job concurrently with the first real top-level user turn without waiting for the orchestrator response. Commit(s): `354db28`
+- [x] Persist generated top-level session titles, title-generation lifecycle state, and the first-turn trigger so app restart cannot duplicate or lose title generation. Commit(s): `354db28`
+- [x] Block manual session rename while a title-generation job is pending or running, then release the lock after success, failure, or cancellation. Commit(s): `354db28`
+- [x] Freeze auto-titling after manual rename or after the first successful generated title. Commit(s): `354db28`
+- [x] Generate handler-thread titles with the same `namer` session agent used for top-level sessions, using the orchestrator-supplied `thread.start` objective as the naming input, while keeping workflow-run labels derived from the workflow's own name or entry metadata instead of adding a separate workflow-run title. Commit(s): `4d74c78`
 
 ## 13. Composer Mention Targets
 
