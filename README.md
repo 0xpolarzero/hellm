@@ -1,8 +1,6 @@
 # svvy
 
-`svvy` is a desktop coding harness built around a small strategic orchestrator and delegated execution.
-
-The top-level orchestrator stays narrow: it owns product intent, routing, and final decisions. When work needs bounded execution, it moves into a delegated handler thread. That thread handles verification, validation, retries, clarification, and workflow supervision without bloating orchestrator context, and then hands a durable result back to the orchestrator. Pi provides the underlying runtime.
+`svvy` organizes coding work around orchestrator sessions that hold product intent, route implementation into bounded threads, and reconcile durable results from structured, inspectable workflows those threads supervise without bloating orchestrator context, while letting you steer at any layer.
 
 ## The Flow
 
