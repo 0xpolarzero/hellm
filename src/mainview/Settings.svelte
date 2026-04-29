@@ -357,7 +357,7 @@
 <Dialog
 	title="Settings"
 	eyebrow="Workbench"
-	description="Configure runtime integrations and account access. Credentials stay local in ~/.config/svvy/auth.json, and environment variables still take precedence."
+	description="Credentials stay local. Environment variables override saved keys."
 	width="lg"
 	class="settings-dialog"
 	onClose={onClose}
@@ -406,7 +406,7 @@
 		<section class="settings-pane">
 			{#if activeSection === "providers"}
 				<div class="settings-search">
-					<Input bind:value={searchQuery} placeholder="Search providers, auth types, or access state" />
+					<Input bind:value={searchQuery} placeholder="Search providers or auth state" />
 					<p class="settings-search-summary">
 						{filteredProviders.length} match{filteredProviders.length === 1 ? "" : "es"}
 					</p>
@@ -431,7 +431,7 @@
 								{#if group.warning}
 									<div class="settings-section-note tone-warning">
 										<ShieldIcon aria-hidden="true" size={15} strokeWidth={1.8} />
-										<p>These credentials are loaded from your shell environment and cannot be edited here.</p>
+										<p>Loaded from the shell environment. Edit them outside svvy.</p>
 									</div>
 								{/if}
 								<div class="settings-row-stack">
@@ -468,16 +468,17 @@
 													<div class="key-input-row">
 														<Input
 															type="password"
-															placeholder="Paste API key..."
+															placeholder="Paste API key"
 															bind:value={apiKeyInput[info.provider]}
 															onkeydown={(event) =>
 																event.key === "Enter" && handleSaveApiKey(info.provider)}
 														/>
-														<Button variant="primary" size="sm" onclick={() => handleSaveApiKey(info.provider)}>
+														<Button variant="primary" size="xs" onclick={() => handleSaveApiKey(info.provider)}>
 															Save
 														</Button>
 														<Button
-															size="sm"
+															variant="ghost"
+															size="xs"
 															onclick={() => {
 																editingProvider = null;
 																apiKeyInput[info.provider] = "";
@@ -489,8 +490,9 @@
 												{:else}
 													{#if info.hasKey && info.keyType !== "env"}
 														<Button
-															variant="danger"
-															size="sm"
+															variant={isConfirmingRemoval ? "danger" : "ghost"}
+															size="xs"
+															class="row-action action-danger"
 															onclick={() => handleRemove(info.provider)}
 															aria-label={isConfirmingRemoval
 																? `Confirm removing ${info.provider} credentials`
@@ -501,25 +503,28 @@
 													{/if}
 													{#if info.keyType !== "env"}
 														<Button
-															size="sm"
+															variant="ghost"
+															size="xs"
+															class="row-action"
 															onclick={() => {
 																editingProvider = info.provider;
 																apiKeyInput[info.provider] = "";
 															}}
 														>
 															<KeyIcon aria-hidden="true" size={12} strokeWidth={1.9} />
-															{info.hasKey ? "API Key" : "Add API key"}
+															{info.hasKey ? "Key" : "Add key"}
 														</Button>
 													{/if}
 													{#if info.supportsOAuth && info.keyType !== "env"}
 														<Button
-															variant="success"
-															size="sm"
+															variant="ghost"
+															size="xs"
+															class="row-action action-success"
 															disabled={oauthLoading[info.provider]}
 															onclick={() => handleOAuth(info.provider)}
 														>
 															<ExternalLinkIcon aria-hidden="true" size={12} strokeWidth={1.9} />
-															{oauthLoading[info.provider] ? "Waiting..." : "Connect OAuth"}
+															{oauthLoading[info.provider] ? "Waiting" : "OAuth"}
 														</Button>
 													{/if}
 												{/if}
@@ -535,7 +540,7 @@
 			{#if activeSection === "agents" && agentSettings}
 				<div class="settings-section-note">
 					<InfoIcon aria-hidden="true" size={15} strokeWidth={1.8} />
-					<p>Session agents use connected provider models and save changes directly to workspace settings.</p>
+					<p>Session agent changes save directly to workspace settings.</p>
 				</div>
 				<div class="agent-list">
 					{#each ["defaultSession", "quickSession", "namer"] as key (key)}
@@ -607,7 +612,7 @@
 			{#if activeSection === "workflow-agents" && agentSettings}
 				<div class="settings-search">
 					<Button variant="primary" size="sm" onclick={seedWorkflowAgents}>Seed agents.ts</Button>
-					<p class="settings-search-summary">Syncs conventional workflow agents to .svvy/workflows/components/agents.ts</p>
+					<p class="settings-search-summary">Sync conventional workflow agents to .svvy/workflows/components/agents.ts</p>
 				</div>
 				<div class="agent-list">
 					{#each ["explorer", "implementer", "reviewer"] as key (key)}
@@ -679,7 +684,7 @@
 			{#if activeSection === "preferences" && agentSettings}
 				<div class="settings-section-note">
 					<InfoIcon aria-hidden="true" size={15} strokeWidth={1.8} />
-					<p>Editor preferences are used when svvy opens saved workflow sources and artifact-local workflow files.</p>
+					<p>Used when opening saved and artifact-local workflow files.</p>
 				</div>
 				<article class="provider-row agent-row">
 					<div class="provider-main">
@@ -737,15 +742,23 @@
 
 <style>
 	:global(.settings-dialog.ui-dialog-panel) {
-		width: min(96vw, 960px);
-		max-width: 960px;
+		width: min(96vw, 980px);
+		max-width: 980px;
 		max-height: min(92vh, 64rem);
+	}
+
+	:global(.settings-dialog .ui-dialog-header) {
+		padding-block: 0.76rem 0.62rem;
+	}
+
+	:global(.settings-dialog .ui-dialog-description) {
+		max-width: 42rem;
 	}
 
 	.settings-shell {
 		display: grid;
 		grid-template-columns: minmax(11rem, 12rem) minmax(0, 42rem);
-		gap: 1.15rem;
+		gap: 0.9rem;
 		min-height: 0;
 		justify-content: start;
 	}
@@ -753,8 +766,8 @@
 	.settings-nav {
 		display: grid;
 		align-content: start;
-		gap: 0.18rem;
-		padding: 0.3rem 0.25rem 0 0;
+		gap: 0.12rem;
+		padding: 0.2rem 0.2rem 0 0;
 		border-right: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 	}
 
@@ -771,8 +784,8 @@
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: center;
-		gap: 0.7rem;
-		padding: 0.52rem 0.65rem;
+		gap: 0.55rem;
+		padding: 0.42rem 0.55rem;
 		border: 1px solid transparent;
 		border-radius: var(--ui-radius-sm);
 		background: transparent;
@@ -787,7 +800,7 @@
 	}
 
 	.settings-nav-item span:first-child {
-		font-size: 0.8rem;
+		font-size: 0.76rem;
 		font-weight: 620;
 	}
 
@@ -812,24 +825,24 @@
 	.settings-pane {
 		display: grid;
 		align-content: start;
-		gap: 0.95rem;
+		gap: 0.72rem;
 		min-width: 0;
 		min-height: 0;
 	}
 
 	.settings-search {
 		display: grid;
-		gap: 0.46rem;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 0.6rem;
 		position: sticky;
 		top: 0;
 		z-index: var(--ui-z-sticky);
-		padding: 0.7rem;
+		padding: 0.46rem 0.55rem;
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 		border-radius: var(--ui-radius-sm);
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-raised) 74%, transparent), transparent),
-			var(--ui-surface-subtle);
-		box-shadow: var(--ui-shadow-soft);
+		background: var(--ui-surface-subtle);
+		box-shadow: none;
 	}
 
 	.loading,
@@ -847,12 +860,12 @@
 	.provider-list {
 		display: flex;
 		flex-direction: column;
-		gap: 1.05rem;
+		gap: 0.78rem;
 	}
 
 	.settings-group {
 		display: grid;
-		gap: 0.45rem;
+		gap: 0.34rem;
 	}
 
 	.settings-group-heading {
@@ -881,16 +894,16 @@
 	.settings-row-stack {
 		display: grid;
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-		border-radius: var(--ui-radius-md);
+		border-radius: var(--ui-radius-sm);
 		overflow: hidden;
 	}
 
 	.provider-row {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(13rem, auto);
-		align-items: start;
-		gap: 0.9rem 1.2rem;
-		padding: 0.72rem 0.85rem;
+		grid-template-columns: minmax(0, 1fr) minmax(11.25rem, 13rem);
+		align-items: center;
+		gap: 0.55rem 0.75rem;
+		padding: 0.46rem 0.62rem;
 		border: 0;
 		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 		border-radius: 0;
@@ -911,35 +924,42 @@
 
 	.provider-main {
 		display: grid;
-		gap: 0.3rem;
+		grid-template-columns: minmax(8.5rem, 1.1fr) minmax(7rem, 0.78fr) minmax(9rem, 1fr);
+		align-items: center;
+		gap: 0.24rem 0.68rem;
 		min-width: 0;
 	}
 
 	.agent-list {
 		display: grid;
-		gap: 0.75rem;
+		gap: 0.62rem;
 	}
 
 	.agent-row {
 		grid-template-columns: minmax(0, 1fr);
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-		border-radius: var(--ui-radius-md);
-		box-shadow: var(--ui-shadow-soft);
+		border-radius: var(--ui-radius-sm);
+		box-shadow: none;
+	}
+
+	.agent-row .provider-main {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.32rem;
 	}
 
 	.agent-grid {
 		display: grid;
 		grid-template-columns: minmax(0, 2fr) minmax(9rem, 1fr);
-		gap: 0.5rem;
-		margin-top: 0.35rem;
+		gap: 0.45rem;
+		margin-top: 0.22rem;
 	}
 
 	.agent-meta-grid {
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));
 		gap: 0.25rem 0.8rem;
-		margin-top: 0.4rem;
-		padding: 0.48rem 0;
+		margin-top: 0.2rem;
+		padding: 0.26rem 0;
 	}
 
 	.agent-meta-grid div {
@@ -983,12 +1003,12 @@
 		width: 100%;
 		min-width: 0;
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-		border-radius: var(--ui-radius-md);
-		padding: 0.58rem 0.65rem;
+		border-radius: var(--ui-radius-sm);
+		padding: 0.44rem 0.54rem;
 		background: color-mix(in oklab, var(--ui-surface-subtle) 82%, transparent);
 		color: var(--ui-text-primary);
 		font: inherit;
-		font-size: 0.8rem;
+		font-size: 0.76rem;
 	}
 
 	.agent-field select:disabled {
@@ -999,11 +1019,11 @@
 	.agent-prompt {
 		width: 100%;
 		min-width: 0;
-		margin-top: 0.4rem;
+		margin-top: 0.26rem;
 		resize: vertical;
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-		border-radius: var(--ui-radius-md);
-		padding: 0.7rem;
+		border-radius: var(--ui-radius-sm);
+		padding: 0.55rem;
 		background: color-mix(in oklab, var(--ui-surface-subtle) 82%, transparent);
 		color: var(--ui-text-primary);
 		font: inherit;
@@ -1013,13 +1033,13 @@
 	.provider-heading {
 		display: flex;
 		align-items: center;
-		gap: 0.45rem 0.6rem;
+		gap: 0.35rem;
 		flex-wrap: wrap;
 		min-width: 0;
 	}
 
 	.provider-name {
-		font-size: 0.82rem;
+		font-size: 0.78rem;
 		font-weight: 660;
 		letter-spacing: 0;
 	}
@@ -1031,13 +1051,13 @@
 	}
 
 	.provider-status {
-		font-size: 0.68rem;
+		font-size: 0.64rem;
 		font-family: var(--font-mono);
 		font-variant-numeric: tabular-nums;
 		color: var(--ui-text-secondary);
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 84%, transparent);
 		border-radius: var(--ui-radius-sm);
-		padding: 0.08rem 0.32rem;
+		padding: 0.04rem 0.26rem;
 	}
 
 	.provider-status.tone-success,
@@ -1062,15 +1082,27 @@
 
 	.provider-meta {
 		margin: 0;
-		display: flex;
-		gap: 0.45rem;
-		flex-wrap: wrap;
-		font-size: 0.8rem;
-		line-height: 1.6;
+		display: contents;
+		font-size: 0.72rem;
+		line-height: 1.35;
 		color: var(--ui-text-secondary);
 	}
 
+	.provider-meta span {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.agent-row .provider-meta {
+		display: block;
+		font-size: 0.75rem;
+		line-height: 1.4;
+	}
+
 	.save-msg {
+		grid-column: 1 / -1;
 		color: var(--ui-accent-strong);
 	}
 
@@ -1082,17 +1114,30 @@
 		display: flex;
 		align-items: center;
 		justify-content: flex-end;
-		gap: 0.45rem;
-		min-width: 13rem;
-		padding-left: 1.05rem;
+		gap: 0.18rem;
+		min-width: 11.25rem;
+		padding-left: 0.62rem;
 		border-left: 1px solid color-mix(in oklab, var(--ui-border-soft) 72%, transparent);
 		flex-wrap: wrap;
+	}
+
+	.provider-actions :global(.row-action.ui-button) {
+		box-shadow: none;
+		font-weight: 560;
+	}
+
+	.provider-actions :global(.action-success.ui-button) {
+		color: color-mix(in oklab, var(--ui-success) 78%, var(--ui-text-primary));
+	}
+
+	.provider-actions :global(.action-danger.ui-button:not(.variant-danger)) {
+		color: color-mix(in oklab, var(--ui-danger) 78%, var(--ui-text-primary));
 	}
 
 	.key-input-row {
 		display: flex;
 		align-items: center;
-		gap: 0.45rem;
+		gap: 0.24rem;
 		flex-wrap: wrap;
 		justify-content: flex-end;
 	}
@@ -1100,8 +1145,8 @@
 	.settings-section-note {
 		display: flex;
 		align-items: flex-start;
-		gap: 0.52rem;
-		padding: 0.55rem 0.65rem;
+		gap: 0.42rem;
+		padding: 0.42rem 0.55rem;
 		border: 1px solid color-mix(in oklab, var(--ui-info) 18%, var(--ui-border-soft));
 		border-radius: var(--ui-radius-sm);
 		background: color-mix(in oklab, var(--ui-info-soft) 58%, transparent);
@@ -1115,17 +1160,21 @@
 
 	.settings-section-note p {
 		margin: 0;
-		font-size: 0.72rem;
-		line-height: 1.45;
+		font-size: 0.7rem;
+		line-height: 1.38;
 	}
 
 	:global(.key-input-row .ui-input) {
-		font-size: 0.8rem;
-		width: min(340px, 70vw);
+		font-size: 0.76rem;
+		width: min(260px, 70vw);
 	}
 
 	@media (max-width: 760px) {
 		.settings-shell {
+			grid-template-columns: minmax(0, 1fr);
+		}
+
+		.settings-search {
 			grid-template-columns: minmax(0, 1fr);
 		}
 
@@ -1137,6 +1186,20 @@
 
 		.provider-row {
 			grid-template-columns: 1fr;
+		}
+
+		.provider-main {
+			grid-template-columns: 1fr;
+		}
+
+		.provider-meta {
+			display: flex;
+			gap: 0.38rem;
+			flex-wrap: wrap;
+		}
+
+		.provider-meta span {
+			white-space: normal;
 		}
 
 		.agent-grid {

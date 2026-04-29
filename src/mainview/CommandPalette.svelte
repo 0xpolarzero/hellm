@@ -3,9 +3,6 @@
   import SearchIcon from "@lucide/svelte/icons/search";
   import {
     filterCommandActions,
-    getCommandActionCategoryLabel,
-    getCommandActionPlacementHints,
-    getCommandActionShortcutHints,
     groupCommandActions,
     type CommandAction,
     type CommandPaletteMode,
@@ -100,12 +97,6 @@
     return action.targetName ?? action.category;
   }
 
-  function getActionMetaLabel(action: CommandAction): string {
-    if (action.availability.kind === "disabled") {
-      return "Unavailable";
-    }
-    return getCommandActionCategoryLabel(action.category);
-  }
 </script>
 
 {#if open}
@@ -164,31 +155,15 @@
                       <div class="command-palette-item-copy">
                         <div class="command-palette-item-title">
                           <strong>{action.label}</strong>
-                          <div class="command-palette-badges">
-                            <span class="command-palette-category-badge">
-                              {getActionMetaLabel(action)}
-                            </span>
-                            {#if action.badge}
+                          {#if action.badge}
+                            <div class="command-palette-badges">
                               <span class="command-palette-kind-badge">{action.badge}</span>
-                            {/if}
-                          </div>
+                            </div>
+                          {/if}
                         </div>
                         <span class:disabled-copy={action.availability.kind === "disabled"}>
                           {getAvailabilityLabel(action)}
                         </span>
-                      </div>
-                      <div class="command-palette-item-meta">
-                        {#each getCommandActionPlacementHints(action) as hint}
-                          <span class="command-palette-placement">
-                            <kbd>{hint.shortcut}</kbd>
-                            <span>{hint.label}</span>
-                          </span>
-                        {/each}
-                        {#if getCommandActionPlacementHints(action).length === 0}
-                          {#each getCommandActionShortcutHints(action) as shortcut}
-                            <kbd>{shortcut}</kbd>
-                          {/each}
-                        {/if}
                       </div>
                     </div>
                   </Command.Item>
@@ -212,8 +187,8 @@
 
       <div class="command-palette-footer">
         {#if mode === "actions"}
-          <span>Enter opens a result in a new pane</span>
-          <span>Cmd+Enter uses the focused pane</span>
+          <span><kbd>Enter</kbd> opens a result in a new pane</span>
+          <span><kbd>Cmd+Enter</kbd> uses the focused pane</span>
         {:else}
           <span>Cmd+P is reserved for future file quick-open</span>
         {/if}
@@ -278,12 +253,12 @@
   :global([data-cmdk-list]) {
     max-height: min(440px, 56vh);
     overflow: auto;
-    padding: 0.38rem;
+    padding: 0.24rem;
     background: var(--ui-surface);
   }
 
   :global([data-cmdk-group-heading]) {
-    padding: 0.5rem 0.5rem 0.26rem;
+    padding: 0.42rem 0.48rem 0.18rem;
     color: var(--ui-text-tertiary);
     font-family: var(--font-mono);
     font-size: 0.64rem;
@@ -295,7 +270,7 @@
   :global([data-cmdk-item]) {
     position: relative;
     border: 1px solid transparent;
-    border-radius: var(--ui-radius-lg);
+    border-radius: var(--ui-radius-md);
     cursor: pointer;
     transition:
       background-color 160ms ease,
@@ -325,12 +300,10 @@
   }
 
   .command-palette-item {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--space-sm);
+    display: block;
     align-items: center;
-    min-height: 2.35rem;
-    padding: 0.5rem 0.62rem 0.5rem 0.72rem;
+    min-height: 2.08rem;
+    padding: 0.38rem 0.56rem 0.38rem 0.68rem;
   }
 
   .command-palette-item-copy {
@@ -344,7 +317,7 @@
     min-width: 0;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-xs);
+    gap: 0.5rem;
   }
 
   .command-palette-item-copy strong,
@@ -369,7 +342,6 @@
     gap: 0.3rem;
   }
 
-  .command-palette-category-badge,
   .command-palette-kind-badge {
     flex: 0 0 auto;
     max-width: 9.5rem;
@@ -393,26 +365,9 @@
     color: color-mix(in oklab, var(--ui-info) 76%, var(--ui-text-primary));
   }
 
-  .command-palette-item-copy span,
-  .command-palette-item-meta {
+  .command-palette-item-copy span {
     color: var(--ui-text-tertiary);
     font-size: 0.74rem;
-  }
-
-  .command-palette-item-meta {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.46rem;
-    min-width: 13rem;
-    font-family: var(--font-mono);
-    white-space: nowrap;
-  }
-
-  .command-palette-placement {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.28rem;
   }
 
   .disabled-copy {
@@ -456,7 +411,7 @@
     display: flex;
     justify-content: space-between;
     gap: 1rem;
-    padding: 0.52rem 0.82rem;
+    padding: 0.46rem 0.82rem;
     border-top: 1px solid var(--ui-border-soft);
     background: var(--ui-panel);
     color: var(--ui-text-tertiary);
@@ -471,20 +426,13 @@
     }
 
     .command-palette-item {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 0.35rem;
+      min-height: 0;
     }
 
     .command-palette-item-title {
       align-items: flex-start;
       flex-direction: column;
-    }
-
-    .command-palette-item-meta {
-      justify-content: flex-start;
-      min-width: 0;
-      overflow: auto;
-      padding-bottom: 0.08rem;
+      gap: 0.18rem;
     }
 
     .command-palette-footer {

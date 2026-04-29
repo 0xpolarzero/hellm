@@ -1,6 +1,16 @@
-import { describe, expect, it } from "bun:test";
-import { formatSessionStatusLabel } from "./session-format";
+import { afterEach, describe, expect, it } from "bun:test";
+import { formatRelativeSessionTime, formatSessionStatusLabel } from "./session-format";
 import type { WorkspaceSessionSummary } from "../shared/workspace-contract";
+
+const realDateNow = Date.now;
+
+afterEach(() => {
+  Date.now = realDateNow;
+});
+
+function freezeNow(value: string): void {
+  Date.now = () => new Date(value).getTime();
+}
 
 function session(
   overrides: Partial<WorkspaceSessionSummary> & Pick<WorkspaceSessionSummary, "id" | "title">,
@@ -30,6 +40,30 @@ function session(
     commandRollups: overrides.commandRollups,
   };
 }
+
+describe("formatRelativeSessionTime", () => {
+  it("formats recent session times with deterministic English labels", () => {
+    freezeNow("2026-04-10T10:00:00.000Z");
+
+    expect(formatRelativeSessionTime("2026-04-10T09:59:31.000Z")).toBe("just now");
+    expect(formatRelativeSessionTime("2026-04-10T09:59:00.000Z")).toBe("1 min ago");
+    expect(formatRelativeSessionTime("2026-04-10T09:45:00.000Z")).toBe("15 min ago");
+    expect(formatRelativeSessionTime("2026-04-10T08:00:00.000Z")).toBe("2 hr ago");
+    expect(formatRelativeSessionTime("2026-04-07T10:00:00.000Z")).toBe("3 days ago");
+  });
+
+  it("keeps clock-skew future times deterministic", () => {
+    freezeNow("2026-04-10T10:00:00.000Z");
+
+    expect(formatRelativeSessionTime("2026-04-10T10:00:29.000Z")).toBe("just now");
+    expect(formatRelativeSessionTime("2026-04-10T10:01:00.000Z")).toBe("in 1 min");
+    expect(formatRelativeSessionTime("2026-04-11T10:00:00.000Z")).toBe("in 1 day");
+  });
+
+  it("returns an empty label for invalid timestamps", () => {
+    expect(formatRelativeSessionTime("not a timestamp")).toBe("");
+  });
+});
 
 describe("formatSessionStatusLabel", () => {
   it("formats delegated running work as threading", () => {

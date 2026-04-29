@@ -1,6 +1,15 @@
 import type { SessionStatus, WorkspaceSessionSummary } from "../shared/workspace-contract";
 
-const RELATIVE_TIME_FORMATTER = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+function formatRelativeUnit(value: number, unit: "min" | "hr" | "day"): string {
+  if (value === 0) {
+    return "just now";
+  }
+
+  const absoluteValue = Math.abs(value);
+  const unitLabel = unit === "day" && absoluteValue !== 1 ? "days" : unit;
+  const label = `${absoluteValue} ${unitLabel}`;
+  return value < 0 ? `${label} ago` : `in ${label}`;
+}
 
 export function formatRelativeSessionTime(value: string | number | Date): string {
   const timestamp = new Date(value).getTime();
@@ -9,17 +18,22 @@ export function formatRelativeSessionTime(value: string | number | Date): string
   }
 
   const diffMs = timestamp - Date.now();
-  const diffMinutes = Math.round(diffMs / 60000);
-  const diffHours = Math.round(diffMs / 3600000);
-  const diffDays = Math.round(diffMs / 86400000);
+  if (Math.abs(diffMs) < 60000) {
+    return "just now";
+  }
 
+  const diffMinutes = Math.round(diffMs / 60000);
   if (Math.abs(diffMinutes) < 60) {
-    return RELATIVE_TIME_FORMATTER.format(diffMinutes, "minute");
+    return formatRelativeUnit(diffMinutes, "min");
   }
+
+  const diffHours = Math.round(diffMs / 3600000);
   if (Math.abs(diffHours) < 24) {
-    return RELATIVE_TIME_FORMATTER.format(diffHours, "hour");
+    return formatRelativeUnit(diffHours, "hr");
   }
-  return RELATIVE_TIME_FORMATTER.format(diffDays, "day");
+
+  const diffDays = Math.round(diffMs / 86400000);
+  return formatRelativeUnit(diffDays, "day");
 }
 
 export function sessionStatusTone(status: SessionStatus): "neutral" | "warning" | "danger" {

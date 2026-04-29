@@ -352,8 +352,18 @@
     currentSurface?.surface === "orchestrator" &&
       (handlerThreadsLoading || !!handlerThreadsError || handlerThreads.length > 0),
   );
+  const hasActionableProjectCiStatus = $derived(
+    !!projectCiError ||
+      !!projectCiStatus?.activeWorkflowRun ||
+      !!projectCiStatus?.latestRun ||
+      (projectCiStatus?.entries.length ?? 0) > 0 ||
+      (projectCiStatus?.checks.length ?? 0) > 0 ||
+      (projectCiStatus !== null &&
+        projectCiStatus.status !== "not-configured" &&
+        projectCiStatus.status !== "unavailable"),
+  );
   const showDetailedProjectCiPanel = $derived(
-    currentSurface?.surface === "orchestrator" && currentSession && (projectCiStatus || projectCiError),
+    currentSurface?.surface === "orchestrator" && currentSession && hasActionableProjectCiStatus,
   );
   const threadLocalProjectCiRun = $derived.by(() => {
     if (!threadInspector || !projectCiStatus?.latestRun) {
@@ -1752,6 +1762,17 @@
       >
         <FileSearchIcon aria-hidden="true" size={15} strokeWidth={1.85} />
       </button>
+      {#if onOpenSettings}
+        <button
+          class="titlebar-icon"
+          type="button"
+          aria-label="Open settings"
+          title="Settings"
+          onclick={onOpenSettings}
+        >
+          <SettingsIcon aria-hidden="true" size={15} strokeWidth={1.85} />
+        </button>
+      {/if}
     </div>
   </header>
 
@@ -1847,14 +1868,15 @@
           >
             {copyTranscriptLabel}
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onclick={() => (showArtifactsPanel = !showArtifactsPanel)}
-            disabled={!hasArtifacts}
-          >
-            Artifacts {artifactCount}
-          </Button>
+          {#if hasArtifacts}
+            <Button
+              variant="ghost"
+              size="sm"
+              onclick={() => (showArtifactsPanel = !showArtifactsPanel)}
+            >
+              Artifacts {artifactCount}
+            </Button>
+          {/if}
           <Button
             variant="ghost"
             size="sm"
@@ -1898,7 +1920,7 @@
           >
             <XIcon aria-hidden="true" size={14} strokeWidth={1.9} />
           </Button>
-          {#if projectCiStatus}
+          {#if projectCiStatus && hasActionableProjectCiStatus}
             <div class="project-ci-compact" aria-label="Project CI summary">
               <Badge tone={getProjectCiStatusTone(projectCiStatus.status)}>
                 CI {getProjectCiStatusLabel(projectCiStatus.status)}
@@ -2400,40 +2422,6 @@
     {/if}
   </div>
 
-  <footer class="workspace-footer">
-    <div class="workspace-footer-spacer"></div>
-    <div class="workspace-footer-right">
-      <button
-        class="statusbar-icon"
-        type="button"
-        aria-label="Open command palette"
-        title="Command Palette (Cmd+Shift+P)"
-        onclick={() => openPalette("actions")}
-      >
-        <SearchIcon aria-hidden="true" size={15} strokeWidth={1.85} />
-      </button>
-      <button
-        class="statusbar-icon"
-        type="button"
-        aria-label="Open quick open"
-        title="Quick Open (Cmd+P)"
-        onclick={() => openPalette("quick-open")}
-      >
-        <FileSearchIcon aria-hidden="true" size={15} strokeWidth={1.85} />
-      </button>
-      {#if onOpenSettings}
-        <button
-          class="statusbar-icon"
-          type="button"
-          aria-label="Open settings"
-          title="Settings"
-          onclick={onOpenSettings}
-        >
-          <SettingsIcon aria-hidden="true" size={15} strokeWidth={1.85} />
-        </button>
-      {/if}
-    </div>
-  </footer>
 </div>
 
 <CommandPalette
@@ -3257,31 +3245,32 @@
 
 <style>
   .workspace-shell {
+    position: relative;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr);
     height: 100%;
     min-height: 0;
     margin-inline: calc(var(--workspace-inset, 0rem) * -1);
   }
 
   .workspace-titlebar {
+    position: absolute;
+    top: 0.32rem;
+    right: 0.42rem;
+    z-index: 12;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 0.75rem;
-    min-height: 2rem;
-    padding: 0 0.72rem 0;
-    border-bottom: 1px solid color-mix(in oklab, var(--ui-shell-edge) 58%, transparent);
-    background:
-      linear-gradient(180deg, color-mix(in oklab, var(--ui-bg-elevated) 78%, transparent), transparent),
-      color-mix(in oklab, var(--ui-shell) 62%, transparent);
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    pointer-events: none;
   }
 
   .workspace-titlebar-start {
-    display: flex;
-    align-items: center;
-    gap: 0.42rem;
-    padding-left: clamp(4.3rem, 8vw, 5.2rem);
+    display: none;
   }
 
   .workspace-titlebar-title {
@@ -3297,10 +3286,15 @@
     display: flex;
     align-items: center;
     gap: 0.16rem;
+    padding: 0.12rem;
+    border: 1px solid color-mix(in oklab, var(--ui-shell-edge) 70%, transparent);
+    border-radius: var(--ui-radius-md);
+    background: color-mix(in oklab, var(--ui-shell) 82%, transparent);
+    box-shadow: var(--ui-shadow-soft);
+    pointer-events: auto;
   }
 
-  .titlebar-icon,
-  .statusbar-icon {
+  .titlebar-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -3322,13 +3316,13 @@
   }
 
   .chat-workspace {
-    --sidebar-width: 292px;
+    --sidebar-width: 240px;
     position: relative;
     display: grid;
-    grid-template-columns: var(--sidebar-width) 0.72rem minmax(0, 1fr);
+    grid-template-columns: var(--sidebar-width) 0.4rem minmax(0, 1fr);
     height: 100%;
     min-height: 0;
-    padding: 0 0.72rem 0.52rem;
+    padding: 0;
   }
 
   .chat-workspace.sidebar-hidden {
@@ -3336,7 +3330,7 @@
   }
 
   .chat-workspace.split {
-    grid-template-columns: var(--sidebar-width) 0.72rem minmax(0, 1fr) minmax(22rem, 28rem);
+    grid-template-columns: var(--sidebar-width) 0.4rem minmax(0, 1fr) minmax(22rem, 28rem);
   }
 
   .chat-workspace.sidebar-hidden.split {
@@ -3356,7 +3350,7 @@
   .sidebar-surface {
     height: 100%;
     min-height: 0;
-    padding: 0.95rem 0.75rem 0.9rem 0.2rem;
+    padding: 2.45rem 0.62rem 0.68rem 0.72rem;
     border-right: 1px solid color-mix(in oklab, var(--ui-shell-edge) 56%, transparent);
     background:
       linear-gradient(180deg, color-mix(in oklab, var(--ui-bg-elevated) 84%, transparent), transparent 20%),
@@ -3373,10 +3367,10 @@
   .sidebar-resize-handle::before {
     content: "";
     position: absolute;
-    top: 0.75rem;
-    bottom: 0.75rem;
+    top: 0;
+    bottom: 0;
     left: 50%;
-    width: 0.14rem;
+    width: 1px;
     transform: translateX(-50%);
     border-radius: 999px;
     background: color-mix(in oklab, var(--ui-shell-edge) 52%, transparent);
@@ -3391,16 +3385,16 @@
   .workspace-main {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    gap: 0.8rem;
+    gap: 0;
     min-height: 0;
-    padding: 0.35rem 0 0;
+    padding: 0;
   }
 
   .pane-grid {
     position: relative;
     display: grid;
     min-height: 0;
-    gap: 0.65rem;
+    gap: 0;
     overflow: hidden;
   }
 
@@ -3451,8 +3445,9 @@
     min-width: 0;
     min-height: 16.25rem;
     overflow: hidden;
-    border: 1px solid color-mix(in oklab, var(--ui-shell-edge) 70%, transparent);
-    border-radius: calc(var(--ui-radius-xl) + 0.12rem);
+    border: 0;
+    border-left: 1px solid color-mix(in oklab, var(--ui-shell-edge) 70%, transparent);
+    border-radius: 0;
     background: color-mix(in oklab, var(--ui-shell) 88%, transparent);
   }
 
@@ -3512,8 +3507,7 @@
   }
 
   .workspace-pane.focused {
-    border-color: color-mix(in oklab, var(--ui-accent) 58%, var(--ui-shell-edge));
-    box-shadow: 0 0 0 2px color-mix(in oklab, var(--ui-accent) 18%, transparent);
+    box-shadow: inset 2px 0 0 color-mix(in oklab, var(--ui-accent) 58%, transparent);
   }
 
   .pane-chrome {
@@ -3634,7 +3628,10 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.9rem;
-    padding: 0.15rem 0 0 0.65rem;
+    min-height: 2.25rem;
+    padding: 0.38rem 5.8rem 0.36rem 0.72rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-shell-edge) 58%, transparent);
+    background: color-mix(in oklab, var(--ui-shell) 70%, transparent);
   }
 
   .workspace-main-copy {
@@ -4549,34 +4546,8 @@
     backdrop-filter: blur(8px);
   }
 
-  .workspace-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: 1.65rem;
-    padding: 0 0.42rem;
-    border-top: 1px solid color-mix(in oklab, var(--ui-shell-edge) 72%, transparent);
-    background:
-      linear-gradient(180deg, color-mix(in oklab, var(--ui-panel-strong) 72%, transparent), transparent 55%),
-      color-mix(in oklab, var(--ui-panel) 96%, transparent);
-    box-shadow: inset 0 1px 0 color-mix(in oklab, white 8%, transparent);
-  }
-
-  .workspace-footer-spacer,
-  .workspace-footer-right {
-    display: flex;
-    align-items: center;
-    gap: 0.2rem;
-  }
-
-  .statusbar-icon {
-    width: 1.8rem;
-    height: 1.2rem;
-  }
-
   .titlebar-icon:hover,
-  .titlebar-icon[aria-pressed="true"],
-  .statusbar-icon:hover {
+  .titlebar-icon[aria-pressed="true"] {
     background: color-mix(in oklab, var(--ui-surface-subtle) 74%, transparent);
     color: var(--ui-text-primary);
   }
@@ -4585,8 +4556,7 @@
     color: color-mix(in oklab, var(--ui-accent) 64%, var(--ui-text-primary));
   }
 
-  .titlebar-icon:focus-visible,
-  .statusbar-icon:focus-visible {
+  .titlebar-icon:focus-visible {
     outline: none;
     box-shadow: var(--ui-focus-ring);
   }
@@ -4767,8 +4737,7 @@
     }
 
     .pane-chrome-actions button,
-    .titlebar-icon,
-    .statusbar-icon {
+    .titlebar-icon {
       width: 2.75rem;
       min-width: 2.75rem;
       height: 2.75rem;
