@@ -370,14 +370,17 @@
     const pane = paneLayout.panes.find((candidate) => candidate.paneId === paneId);
     return formatPaneSurfaceLabel(runtime.getPaneController(paneId), pane?.binding ?? null);
   }
-  function formatPaneWorktreeLabel(binding?: WorkspacePaneSurfaceTarget | null): string {
-    if (binding?.surface === "workflow-inspector") return "workflow";
-    if (binding?.surface === "saved-workflow-library") return "library";
-    if (binding?.surface === "command") return "command";
-    if (binding?.surface === "workflow-task-attempt") return "task";
-    if (binding?.surface === "artifact") return "artifact";
-    if (binding?.surface === "project-ci-check") return "project-ci";
-    return runtime.branch ? runtime.branch : "workspace";
+  function formatPaneLocationMetadata(
+    binding?: WorkspacePaneSurfaceTarget | null,
+  ): { label: string; value: string } {
+    if (binding?.surface === "workflow-inspector") return { label: "surface", value: "workflow" };
+    if (binding?.surface === "saved-workflow-library") return { label: "surface", value: "library" };
+    if (binding?.surface === "command") return { label: "surface", value: "command" };
+    if (binding?.surface === "workflow-task-attempt") return { label: "surface", value: "task" };
+    if (binding?.surface === "artifact") return { label: "surface", value: "artifact" };
+    if (binding?.surface === "project-ci-check") return { label: "surface", value: "project-ci" };
+    if (runtime.branch) return { label: "worktree", value: runtime.branch };
+    return { label: "workspace", value: runtime.workspaceLabel };
   }
   function getPaneSurfaceStatus(
     paneController: ChatSurfaceController | null,
@@ -2548,6 +2551,7 @@
         {#each paneLayout.panes as pane (pane.paneId)}
           {@const paneController = runtime.getPaneController(pane.paneId)}
           {@const paneContextBudget = getPaneContextBudget(paneController)}
+          {@const paneLocationMetadata = formatPaneLocationMetadata(pane.binding)}
           <article
             class={`workspace-pane ${pane.paneId === focusedPaneId ? "focused" : ""} ${draggingPaneId === pane.paneId ? "dragging-source" : ""} ${paneDropPreview?.targetPaneId === pane.paneId ? `drop-preview drop-${paneDropPreview.zone}` : ""}`.trim()}
             data-testid="workspace-pane"
@@ -2589,7 +2593,7 @@
               </button>
               <div class="pane-chrome-meta" aria-label="Pane metadata">
                 <MetadataChip label="target" value={pane.binding?.surface ?? "empty"} />
-                <MetadataChip label="worktree" value={formatPaneWorktreeLabel(pane.binding)} tone="info" />
+                <MetadataChip label={paneLocationMetadata.label} value={paneLocationMetadata.value} tone="info" />
                 {#if paneContextBudget}
                   <MetadataChip label="context" value={paneContextBudget.label} tone={paneContextBudget.tone === "red" ? "danger" : paneContextBudget.tone === "orange" ? "warning" : "neutral"} />
                 {/if}
@@ -3021,7 +3025,7 @@
                     contextBudget={paneContextBudget}
                     sessionName={formatPaneSurfaceLabel(paneController, pane.binding)}
                     targetLabel={formatPaneSurfaceLabel(paneController, pane.binding)}
-                    worktreeLabel={formatPaneWorktreeLabel(pane.binding)}
+                    worktreeLabel={paneLocationMetadata.value}
                     onAbort={() => void paneController.abort()}
                     onOpenModelPicker={() => {
                       void handleFocusPane(pane.paneId).then(() => openModelSelector());
