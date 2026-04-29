@@ -25,6 +25,13 @@ const BLANK_PROVIDER_ENV = {
   KIMI_API_KEY: "",
   ANTHROPIC_API_KEY: "",
   GH_TOKEN: "",
+  AWS_PROFILE: "",
+  AWS_ACCESS_KEY_ID: "",
+  AWS_SECRET_ACCESS_KEY: "",
+  AWS_BEARER_TOKEN_BEDROCK: "",
+  AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: "",
+  AWS_CONTAINER_CREDENTIALS_FULL_URI: "",
+  AWS_WEB_IDENTITY_TOKEN_FILE: "",
 } satisfies Record<string, string>;
 
 const PROMPT_MODEL = "glm-5-turbo";
@@ -626,6 +633,9 @@ test("provider auth.removed is emitted when removing an api key from settings", 
 
       const removedSince = sinceNow();
       await clickWhenEnabled(openaiRow.getByRole("button", { name: "Remove" }));
+      const confirmRemove = openaiRow.locator("button").filter({ hasText: "Confirm remove" });
+      await confirmRemove.waitFor({ state: "visible" });
+      await clickWhenEnabled(confirmRemove);
       const removed = await waitForEvent(driver, "provider.auth.removed", {
         since: removedSince,
         match: { providerId: "openai" },

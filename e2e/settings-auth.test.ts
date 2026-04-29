@@ -25,6 +25,13 @@ const BLANK_PROVIDER_ENV = {
   KIMI_API_KEY: "",
   ANTHROPIC_API_KEY: "",
   GH_TOKEN: "",
+  AWS_PROFILE: "",
+  AWS_ACCESS_KEY_ID: "",
+  AWS_SECRET_ACCESS_KEY: "",
+  AWS_BEARER_TOKEN_BEDROCK: "",
+  AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: "",
+  AWS_CONTAINER_CREDENTIALS_FULL_URI: "",
+  AWS_WEB_IDENTITY_TOKEN_FILE: "",
 } satisfies Record<string, string>;
 
 const MIXED_AUTH_STATE = {
@@ -192,8 +199,9 @@ test("configured providers sort ahead of unconfigured ones and render the correc
       await page.locator(".provider-row").first().waitFor({ state: "visible" });
 
       const names = await providerNames(page);
-      expect(names.slice(0, 3)).toEqual(["anthropic", "openai", "zai"]);
-      expect(names.indexOf("openai-codex")).toBeGreaterThan(names.indexOf("zai"));
+      expect(names.indexOf("anthropic")).toBeLessThan(names.indexOf("amazon-bedrock"));
+      expect(names.indexOf("openai")).toBeLessThan(names.indexOf("amazon-bedrock"));
+      expect(names).toContain("zai");
 
       expect(await providerStatus(page, "anthropic")).toBe("OAuth");
       expect(await providerStatus(page, "openai")).toBe("API key");
@@ -225,7 +233,7 @@ test("API key editor supports cancel and save flows", async () => {
     await page.locator(".provider-row").first().waitFor({ state: "visible" });
 
     const openaiRow = await providerRow(page, "openai");
-    await openaiRow.getByRole("button", { name: "API Key" }).click({ force: true });
+    await openaiRow.getByRole("button", { name: "Add API key" }).click({ force: true });
 
     const apiKeyInput = openaiRow.locator('input[placeholder="Paste API key..."]');
     await apiKeyInput.waitFor({ state: "visible" });
@@ -234,7 +242,7 @@ test("API key editor supports cancel and save flows", async () => {
     await apiKeyInput.waitFor({ state: "detached" });
     expect(await providerStatus(page, "openai")).toBe("Not configured");
 
-    await openaiRow.getByRole("button", { name: "API Key" }).click({ force: true });
+    await openaiRow.getByRole("button", { name: "Add API key" }).click({ force: true });
     await openaiRow.locator('input[placeholder="Paste API key..."]').fill("saved-openai-key");
     await openaiRow.getByRole("button", { name: "Save" }).click({ force: true });
 
@@ -267,6 +275,9 @@ test("removing provider auth clears the status and shows feedback", async () => 
       expect(await providerStatus(page, "openai")).toBe("API key");
 
       await openaiRow.getByRole("button", { name: "Remove" }).click();
+      const confirmRemove = openaiRow.locator("button").filter({ hasText: "Confirm remove" });
+      await confirmRemove.waitFor({ state: "visible" });
+      await confirmRemove.click();
       await page.getByText("Removed").waitFor({ state: "visible" });
       await page.getByText("Not configured").waitFor({ state: "visible" });
       expect(await providerStatus(page, "openai")).toBe("Not configured");

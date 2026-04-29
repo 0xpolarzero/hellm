@@ -23,6 +23,13 @@ const BLANK_PROVIDER_ENV = {
   KIMI_API_KEY: "",
   ANTHROPIC_API_KEY: "",
   GH_TOKEN: "",
+  AWS_PROFILE: "",
+  AWS_ACCESS_KEY_ID: "",
+  AWS_SECRET_ACCESS_KEY: "",
+  AWS_BEARER_TOKEN_BEDROCK: "",
+  AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: "",
+  AWS_CONTAINER_CREDENTIALS_FULL_URI: "",
+  AWS_WEB_IDENTITY_TOKEN_FILE: "",
 } satisfies Record<string, string>;
 
 beforeAll(async () => {
@@ -62,7 +69,7 @@ test("saving an API key writes auth.json", async () => {
     expect(existsSync(authFile)).toBe(false);
 
     const openaiRow = providerRow(page, "openai");
-    await openaiRow.getByRole("button", { name: "API Key" }).first().click();
+    await openaiRow.getByRole("button", { name: "Add API key" }).first().click();
     await openaiRow.locator('input[placeholder="Paste API key..."]').fill("persisted-openai-key");
     await openaiRow.getByRole("button", { name: "Save" }).first().click();
 

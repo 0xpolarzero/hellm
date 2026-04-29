@@ -132,9 +132,9 @@ The workflow inspector remains tree-first. Replit artifact graph-oriented workfl
 
 ## 12. Visual Verification And Rollout
 
-- [ ] Add a repeatable screenshot checklist for key production states: startup, normal session, active stream, waiting thread, failed command, split panes, workflow inspector, artifact panel, command palette, settings, and narrow shell.
-- [ ] Use `electrobun-browser-tools` against a running svvy app for manual UI verification when product behavior or e2e failures need inspection.
-- [ ] Store manually captured verification screenshots in `screenshots/`.
-- [ ] Run focused unit tests for migrated render helpers, selectors, command palette behavior, pane layout behavior, and transcript projection.
-- [ ] Run `bun run test:e2e` for end-to-end UI paths only through the OrbStack machine lane.
-- [ ] Remove obsolete visual paths, duplicate primitives, mock-only production code, and unused styling once their production replacements fully match the ported Replit UI.
+- [x] Add a repeatable screenshot checklist for key production states: startup, normal session, active stream, waiting thread, failed command, split panes, workflow inspector, artifact panel, command palette, settings, and narrow shell.
+- [x] Use `electrobun-browser-tools` against a running svvy app for manual UI verification when product behavior or e2e failures need inspection.
+- [x] Store manually captured verification screenshots in `screenshots/`.
+- [x] Run focused unit tests for migrated render helpers, selectors, command palette behavior, pane layout behavior, and transcript projection.
+- [x] Run `bun run test:e2e` for end-to-end UI paths only through the OrbStack machine lane.
+- [x] Remove obsolete visual paths, duplicate primitives, mock-only production code, and unused styling once their production replacements fully match the ported Replit UI.
