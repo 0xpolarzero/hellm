@@ -3,6 +3,7 @@ import {
   bindPane,
   closePane,
   createEmptyPaneLayout,
+  getPaneGridSplitControls,
   getOpenPaneLocations,
   movePaneToSpanningRow,
   normalizePaneLayout,
@@ -161,6 +162,76 @@ describe("pane layout grid", () => {
         rowEnd: 1,
       }),
     );
+  });
+
+  it("segments divider controls around full-width spanning panes", () => {
+    let layout = createEmptyPaneLayout();
+    layout = splitPane(layout, "primary", "right", { nextPaneId: "right" });
+    layout = splitPane(layout, "right", "below", { nextPaneId: "bottom-right" });
+    layout = movePaneToSpanningRow(layout, "bottom-right", "bottom");
+
+    const controls = getPaneGridSplitControls(layout);
+    const verticalDividers = controls.filter(
+      (control) => control.axis === "column" && control.placement === "divider",
+    );
+    const horizontalDividers = controls.filter(
+      (control) => control.axis === "row" && control.placement === "divider",
+    );
+    const leftEdgeControls = controls.filter(
+      (control) => control.axis === "column" && control.placement === "edge-start",
+    );
+
+    expect(verticalDividers).toEqual([
+      expect.objectContaining({
+        index: 1,
+        rangeStart: 0,
+        rangeEnd: 1,
+        startPercent: 0,
+      }),
+    ]);
+    expect(verticalDividers[0]!.endPercent).toBeGreaterThan(0);
+    expect(verticalDividers[0]!.endPercent).toBeLessThan(100);
+    expect(horizontalDividers).toEqual([
+      expect.objectContaining({ index: 1, rangeStart: 0, rangeEnd: 1 }),
+      expect.objectContaining({ index: 1, rangeStart: 1, rangeEnd: 2 }),
+    ]);
+    expect(horizontalDividers[0]!.startPercent).toBe(0);
+    expect(horizontalDividers[1]!.endPercent).toBe(100);
+    expect(leftEdgeControls).toEqual([
+      expect.objectContaining({ index: 0, rangeStart: 0, rangeEnd: 1 }),
+      expect.objectContaining({ index: 0, rangeStart: 1, rangeEnd: 2 }),
+    ]);
+  });
+
+  it("segments divider controls around full-height spanning panes", () => {
+    let layout = createEmptyPaneLayout();
+    layout = splitPane(layout, "primary", "right", { nextPaneId: "right" });
+    layout = splitPane(layout, "primary", "below", { nextPaneId: "bottom-left" });
+
+    const controls = getPaneGridSplitControls(layout);
+    const verticalDividers = controls.filter(
+      (control) => control.axis === "column" && control.placement === "divider",
+    );
+    const horizontalDividers = controls.filter(
+      (control) => control.axis === "row" && control.placement === "divider",
+    );
+
+    expect(verticalDividers).toEqual([
+      expect.objectContaining({ index: 1, rangeStart: 0, rangeEnd: 1 }),
+      expect.objectContaining({ index: 1, rangeStart: 1, rangeEnd: 2 }),
+    ]);
+    expect(verticalDividers[0]!.startPercent).toBe(0);
+    expect(verticalDividers[1]!.endPercent).toBe(100);
+    expect(horizontalDividers).toEqual([
+      expect.objectContaining({
+        index: 1,
+        rangeStart: 0,
+        rangeEnd: 1,
+        startPercent: 0,
+      }),
+    ]);
+    expect(horizontalDividers[0]!.endPercent).toBeGreaterThan(0);
+    expect(horizontalDividers[0]!.endPercent).toBeLessThan(100);
   });
 
   it("keeps an existing full-height edge pane at the same size when dragged to that edge again", () => {

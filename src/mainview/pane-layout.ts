@@ -9,6 +9,7 @@ export type PaneSplitDirection = "left" | "right" | "above" | "below";
 export type PanePlacementZone = "replace" | PaneSplitDirection;
 export type PaneSpanPlacement = "top" | "bottom" | "left" | "right";
 export type PaneResizeAxis = "column" | "row";
+export type PaneGridSplitControlPlacement = "edge-start" | "divider" | "edge-end";
 
 export interface PaneGridTrack {
   id: string;
@@ -32,6 +33,17 @@ export interface PaneGridPane {
   rowEnd: number;
   binding: WorkspacePaneSurfaceTarget | null;
   localState: PaneLocalState;
+}
+
+export interface PaneGridSplitControl {
+  axis: PaneResizeAxis;
+  endPercent: number;
+  index: number;
+  placement: PaneGridSplitControlPlacement;
+  positionPercent: number;
+  rangeEnd: number;
+  rangeStart: number;
+  startPercent: number;
 }
 
 export interface CompactThreadSurfaceState {
@@ -593,6 +605,10 @@ export function resizeTrack(
   });
 }
 
+export function getPaneGridSplitControls(layout: WorkspacePaneLayoutState): PaneGridSplitControl[] {
+  return [...getAxisSplitControls(layout, "column"), ...getAxisSplitControls(layout, "row")];
+}
+
 export function getPaneLocationLabel(
   layout: WorkspacePaneLayoutState,
   paneId: string,
@@ -646,6 +662,178 @@ function createPaneId(): string {
     return `pane-${crypto.randomUUID()}`;
   }
   return `pane-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getAxisSplitControls(
+  layout: WorkspacePaneLayoutState,
+  axis: PaneResizeAxis,
+): PaneGridSplitControl[] {
+  const tracks = axis === "column" ? layout.columns : layout.rows;
+  const crossTracks = axis === "column" ? layout.rows : layout.columns;
+  if (tracks.length === 0 || crossTracks.length === 0) {
+    return [];
+  }
+
+  const linePercents = getTrackLinePercents(tracks);
+  const crossLinePercents = getTrackLinePercents(crossTracks);
+  const controls: PaneGridSplitControl[] = [];
+
+  for (const range of getPaneEdgeRanges(layout, axis, "start")) {
+    controls.push({
+      axis,
+      endPercent: crossLinePercents[range.end] ?? 100,
+      index: 0,
+      placement: "edge-start",
+      positionPercent: 0,
+      rangeEnd: range.end,
+      rangeStart: range.start,
+      startPercent: crossLinePercents[range.start] ?? 0,
+    });
+  }
+
+  for (let lineIndex = 1; lineIndex < tracks.length; lineIndex += 1) {
+    for (const range of getPaneBoundaryRanges(layout, axis, lineIndex)) {
+      controls.push({
+        axis,
+        endPercent: crossLinePercents[range.end] ?? 100,
+        index: lineIndex,
+        placement: "divider",
+        positionPercent: linePercents[lineIndex] ?? 0,
+        rangeEnd: range.end,
+        rangeStart: range.start,
+        startPercent: crossLinePercents[range.start] ?? 0,
+      });
+    }
+  }
+
+  for (const range of getPaneEdgeRanges(layout, axis, "end")) {
+    controls.push({
+      axis,
+      endPercent: crossLinePercents[range.end] ?? 100,
+      index: tracks.length,
+      placement: "edge-end",
+      positionPercent: 100,
+      rangeEnd: range.end,
+      rangeStart: range.start,
+      startPercent: crossLinePercents[range.start] ?? 0,
+    });
+  }
+  return controls;
+}
+
+function getTrackLinePercents(tracks: PaneGridTrack[]): number[] {
+  const total = tracks.reduce((sum, track) => sum + track.percent, 0);
+  if (total <= 0) {
+    return tracks.map((_, index) => (index / tracks.length) * 100).concat(100);
+  }
+
+  const lines = [0];
+  let position = 0;
+  for (const track of tracks) {
+    position += (track.percent / total) * 100;
+    lines.push(position);
+  }
+  lines[lines.length - 1] = 100;
+  return lines;
+}
+
+function getPaneBoundaryRanges(
+  layout: WorkspacePaneLayoutState,
+  axis: PaneResizeAxis,
+  lineIndex: number,
+): Array<{ start: number; end: number }> {
+  const crossTrackCount = axis === "column" ? layout.rows.length : layout.columns.length;
+  const ranges: Array<{ start: number; end: number }> = [];
+  let rangeStart: number | null = null;
+  let rangeKey: string | null = null;
+
+  for (let crossIndex = 0; crossIndex < crossTrackCount; crossIndex += 1) {
+    const beforePane =
+      axis === "column"
+        ? findPaneCoveringCell(layout, lineIndex - 1, crossIndex)
+        : findPaneCoveringCell(layout, crossIndex, lineIndex - 1);
+    const afterPane =
+      axis === "column"
+        ? findPaneCoveringCell(layout, lineIndex, crossIndex)
+        : findPaneCoveringCell(layout, crossIndex, lineIndex);
+    const nextRangeKey =
+      beforePane && afterPane && beforePane.paneId !== afterPane.paneId
+        ? `${beforePane.paneId}->${afterPane.paneId}`
+        : null;
+
+    if (nextRangeKey && rangeStart === null) {
+      rangeStart = crossIndex;
+      rangeKey = nextRangeKey;
+    } else if (nextRangeKey && rangeKey !== nextRangeKey && rangeStart !== null) {
+      ranges.push({ start: rangeStart, end: crossIndex });
+      rangeStart = crossIndex;
+      rangeKey = nextRangeKey;
+    } else if (!nextRangeKey && rangeStart !== null) {
+      ranges.push({ start: rangeStart, end: crossIndex });
+      rangeStart = null;
+      rangeKey = null;
+    }
+  }
+
+  if (rangeStart !== null) {
+    ranges.push({ start: rangeStart, end: crossTrackCount });
+  }
+  return ranges;
+}
+
+function getPaneEdgeRanges(
+  layout: WorkspacePaneLayoutState,
+  axis: PaneResizeAxis,
+  edge: "start" | "end",
+): Array<{ start: number; end: number }> {
+  const crossTrackCount = axis === "column" ? layout.rows.length : layout.columns.length;
+  const edgeTrackIndex =
+    edge === "start" ? 0 : axis === "column" ? layout.columns.length - 1 : layout.rows.length - 1;
+  const ranges: Array<{ start: number; end: number }> = [];
+  let rangeStart: number | null = null;
+  let rangePaneId: string | null = null;
+
+  for (let crossIndex = 0; crossIndex < crossTrackCount; crossIndex += 1) {
+    const pane =
+      axis === "column"
+        ? findPaneCoveringCell(layout, edgeTrackIndex, crossIndex)
+        : findPaneCoveringCell(layout, crossIndex, edgeTrackIndex);
+    const nextPaneId = pane?.paneId ?? null;
+
+    if (nextPaneId && rangeStart === null) {
+      rangeStart = crossIndex;
+      rangePaneId = nextPaneId;
+    } else if (nextPaneId && rangePaneId !== nextPaneId && rangeStart !== null) {
+      ranges.push({ start: rangeStart, end: crossIndex });
+      rangeStart = crossIndex;
+      rangePaneId = nextPaneId;
+    } else if (!nextPaneId && rangeStart !== null) {
+      ranges.push({ start: rangeStart, end: crossIndex });
+      rangeStart = null;
+      rangePaneId = null;
+    }
+  }
+
+  if (rangeStart !== null) {
+    ranges.push({ start: rangeStart, end: crossTrackCount });
+  }
+  return ranges;
+}
+
+function findPaneCoveringCell(
+  layout: WorkspacePaneLayoutState,
+  column: number,
+  row: number,
+): PaneGridPane | null {
+  return (
+    layout.panes.find(
+      (pane) =>
+        pane.columnStart <= column &&
+        pane.columnEnd > column &&
+        pane.rowStart <= row &&
+        pane.rowEnd > row,
+    ) ?? null
+  );
 }
 
 function hasCompletePaneCoverage(layout: WorkspacePaneLayoutState): boolean {

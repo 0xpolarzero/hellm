@@ -79,7 +79,9 @@
   } from "./chat-runtime";
   import {
     createEmptyPaneLayout,
+    getPaneGridSplitControls,
     getOpenPaneLocations,
+    type PaneGridSplitControl,
     type PanePlacementZone,
     type PaneResizeAxis,
     type PaneSpanPlacement,
@@ -116,12 +118,6 @@
   type Props = {
     runtime: ChatRuntime;
     onOpenSettings?: () => void;
-  };
-
-  type PaneDividerControl = {
-    axis: PaneResizeAxis;
-    index: number;
-    positionPercent: number;
   };
 
   type ActivePaneResize = {
@@ -270,7 +266,7 @@
   const currentSession = $derived(sessions.find((session) => session.id === activeSessionId) ?? null);
   const currentCommandRollups = $derived(getVisibleCommandRollups(currentSession));
   const currentSurface = $derived(focusedSurfaceTarget);
-  const paneDividerControls = $derived.by(() => createPaneDividerControls(paneLayout));
+  const paneSplitControls = $derived.by(() => getPaneGridSplitControls(paneLayout));
   const paneLocationsBySessionId = $derived(
     Object.fromEntries(
       sessions.map((session) => [
@@ -809,43 +805,58 @@
     syncRuntimeState();
   }
 
-  function createPaneDividerControls(layout: ChatPaneLayoutState): PaneDividerControl[] {
-    return [
-      ...createTrackDividerControls("column", layout.columns),
-      ...createTrackDividerControls("row", layout.rows),
-    ];
+  function getPaneSplitControlTestId(control: PaneGridSplitControl): string {
+    if (control.axis === "column") {
+      if (control.placement === "edge-start") return "pane-edge-add-left";
+      if (control.placement === "edge-end") return "pane-edge-add-right";
+      return "pane-divider-add-vertical";
+    }
+    if (control.placement === "edge-start") return "pane-edge-add-top";
+    if (control.placement === "edge-end") return "pane-edge-add-bottom";
+    return "pane-divider-add-horizontal";
   }
 
-  function createTrackDividerControls(
-    axis: PaneResizeAxis,
-    tracks: ChatPaneLayoutState["columns"],
-  ): PaneDividerControl[] {
-    let positionPercent = 0;
-    return tracks.slice(0, -1).map((track, index) => {
-      positionPercent += track.percent;
-      return {
-        axis,
-        index: index + 1,
-        positionPercent,
-      };
-    });
+  function getPaneSplitControlLabel(control: PaneGridSplitControl): string {
+    if (control.axis === "column") {
+      if (control.placement === "edge-start") return "Add pane at left edge";
+      if (control.placement === "edge-end") return "Add pane at right edge";
+      return "Add pane at vertical divider";
+    }
+    if (control.placement === "edge-start") return "Add pane at top edge";
+    if (control.placement === "edge-end") return "Add pane at bottom edge";
+    return "Add pane at horizontal divider";
   }
 
-  function getPaneSplitActionForDivider(
-    axis: PaneResizeAxis,
-    dividerIndex: number,
-  ): PaneSplitAction | null {
+  function formatPaneSplitControlStyle(control: PaneGridSplitControl): string {
+    const crossSize = Math.max(0, control.endPercent - control.startPercent);
+    if (control.axis === "column") {
+      return `left: ${control.positionPercent}%; top: ${control.startPercent}%; bottom: auto; height: ${crossSize}%;`;
+    }
+    return `top: ${control.positionPercent}%; left: ${control.startPercent}%; right: auto; width: ${crossSize}%;`;
+  }
+
+  function getPaneSplitActionForControl(control: PaneGridSplitControl): PaneSplitAction | null {
     const focusedPane = paneLayout.panes.find((pane) => pane.paneId === focusedPaneId);
     const touchingPanes = paneLayout.panes.filter((pane) => {
-      if (axis === "column") {
-        return pane.columnEnd === dividerIndex || pane.columnStart === dividerIndex;
+      if (control.axis === "column") {
+        return (
+          (pane.columnEnd === control.index || pane.columnStart === control.index) &&
+          pane.rowStart < control.rangeEnd &&
+          pane.rowEnd > control.rangeStart
+        );
       }
-      return pane.rowEnd === dividerIndex || pane.rowStart === dividerIndex;
+      return (
+        (pane.rowEnd === control.index || pane.rowStart === control.index) &&
+        pane.columnStart < control.rangeEnd &&
+        pane.columnEnd > control.rangeStart
+      );
     });
     const candidate =
       (focusedPane && touchingPanes.find((pane) => pane.paneId === focusedPane.paneId)) ??
       touchingPanes.find((pane) =>
-        axis === "column" ? pane.columnEnd === dividerIndex : pane.rowEnd === dividerIndex,
+        control.axis === "column"
+          ? pane.columnEnd === control.index
+          : pane.rowEnd === control.index,
       ) ??
       touchingPanes[0] ??
       null;
@@ -853,20 +864,20 @@
       return null;
     }
 
-    if (axis === "column") {
+    if (control.axis === "column") {
       return {
         paneId: candidate.paneId,
-        direction: candidate.columnEnd === dividerIndex ? "right" : "left",
+        direction: candidate.columnEnd === control.index ? "right" : "left",
       };
     }
     return {
       paneId: candidate.paneId,
-      direction: candidate.rowEnd === dividerIndex ? "below" : "above",
+      direction: candidate.rowEnd === control.index ? "below" : "above",
     };
   }
 
-  async function handleSplitAtDivider(axis: PaneResizeAxis, dividerIndex: number) {
-    const action = getPaneSplitActionForDivider(axis, dividerIndex);
+  async function handleSplitAtControl(control: PaneGridSplitControl) {
+    const action = getPaneSplitActionForControl(control);
     if (!action) {
       return;
     }
@@ -3017,34 +3028,36 @@
             <strong>{formatPaneDragSourceLabel(draggingPaneId)}</strong>
           </div>
         {/if}
-        {#each paneDividerControls as divider (`${divider.axis}-${divider.index}`)}
+        {#each paneSplitControls as control (`${control.axis}-${control.index}-${control.placement}-${control.rangeStart}-${control.rangeEnd}`)}
           <div
-            class={`pane-divider-shell ${divider.axis === "column" ? "vertical" : "horizontal"} ${activePaneResize?.axis === divider.axis && activePaneResize?.trackIndex === divider.index - 1 ? "active" : ""}`.trim()}
-            style={divider.axis === "column" ? `left: ${divider.positionPercent}%;` : `top: ${divider.positionPercent}%;`}
+            class={`pane-divider-shell ${control.axis === "column" ? "vertical" : "horizontal"} ${control.placement} ${control.placement === "divider" && activePaneResize?.axis === control.axis && activePaneResize?.trackIndex === control.index - 1 ? "active" : ""}`.trim()}
+            style={formatPaneSplitControlStyle(control)}
           >
-            <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-            <div
-              class="pane-divider-line"
-              data-testid={divider.axis === "column" ? "pane-divider-vertical" : "pane-divider-horizontal"}
-              role="separator"
-              aria-orientation={divider.axis === "column" ? "vertical" : "horizontal"}
-              aria-label={divider.axis === "column" ? "Resize panes horizontally" : "Resize panes vertically"}
-              tabindex="0"
-              title="Drag to resize panes"
-              onpointerdown={(event) => startPaneDividerResize(event, divider.axis, divider.index)}
-              onkeydown={(event) => handlePaneDividerKeydown(event, divider.axis, divider.index)}
-            ></div>
+            {#if control.placement === "divider"}
+              <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+              <div
+                class="pane-divider-line"
+                data-testid={control.axis === "column" ? "pane-divider-vertical" : "pane-divider-horizontal"}
+                role="separator"
+                aria-orientation={control.axis === "column" ? "vertical" : "horizontal"}
+                aria-label={control.axis === "column" ? "Resize panes horizontally" : "Resize panes vertically"}
+                tabindex="0"
+                title="Drag to resize panes"
+                onpointerdown={(event) => startPaneDividerResize(event, control.axis, control.index)}
+                onkeydown={(event) => handlePaneDividerKeydown(event, control.axis, control.index)}
+              ></div>
+            {/if}
             <button
               class="pane-divider-split"
               type="button"
-              data-testid={divider.axis === "column" ? "pane-divider-add-vertical" : "pane-divider-add-horizontal"}
-              aria-label={divider.axis === "column" ? "Add pane at vertical divider" : "Add pane at horizontal divider"}
+              data-testid={getPaneSplitControlTestId(control)}
+              aria-label={getPaneSplitControlLabel(control)}
               title="Add pane here"
               onpointerdown={(event) => event.stopPropagation()}
               onclick={(event) => {
                 event.stopPropagation();
-                void handleSplitAtDivider(divider.axis, divider.index);
+                void handleSplitAtControl(control);
               }}
             >
               <PlusIcon aria-hidden="true" size={13} strokeWidth={2.1} />
@@ -4418,12 +4431,49 @@
     cursor: col-resize;
   }
 
+  .pane-divider-shell.vertical.edge-start {
+    transform: none;
+  }
+
+  .pane-divider-shell.vertical.edge-end {
+    transform: translateX(-100%);
+  }
+
   .pane-divider-shell.horizontal {
     left: 0;
     right: 0;
     height: 0.7rem;
     transform: translateY(-50%);
     cursor: row-resize;
+  }
+
+  .pane-divider-shell.horizontal.edge-start {
+    transform: none;
+  }
+
+  .pane-divider-shell.horizontal.edge-end {
+    transform: translateY(-100%);
+  }
+
+  .pane-divider-shell.edge-start,
+  .pane-divider-shell.edge-end {
+    cursor: default;
+  }
+
+  .pane-divider-shell.vertical.edge-start .pane-divider-split {
+    left: calc(50% + 0.38rem);
+  }
+
+  .pane-divider-shell.vertical.edge-end .pane-divider-split {
+    left: calc(50% - 0.38rem);
+  }
+
+  .pane-divider-shell.horizontal.edge-start .pane-divider-split {
+    top: calc(50% + 0.38rem);
+  }
+
+  .pane-divider-shell.horizontal.edge-end .pane-divider-split {
+    top: calc(50% - 0.38rem);
   }
 
   .pane-divider-line {
@@ -4517,6 +4567,7 @@
   .pane-divider-split:hover,
   .pane-divider-split:focus-visible {
     background: color-mix(in oklab, var(--ui-accent) 18%, var(--ui-shell));
+    cursor: pointer;
   }
 
   .pane-focus-button:focus-visible,
@@ -4701,7 +4752,6 @@
     background: var(--ui-surface-subtle);
     color: var(--ui-text-primary);
   }
-
 
   .inline-titlebar-action {
     color: var(--ui-text-tertiary);
