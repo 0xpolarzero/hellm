@@ -64,12 +64,12 @@ Always read [ui.prd.md](ui.prd.md) before implementing any item in this roadmap,
 
 ## 5. Composer And Prompt Entry
 
-- [ ] Build a POC Svelte composer that matches the Replit bottom composer over static fixture state.
-- [ ] Render production prompt entry with the ported Replit compact composer styling while preserving prompt history, submit locking, cancellation, target selection, and provider-missing behavior.
-- [ ] Render file and folder mention chips with the ported Replit visual treatment while preserving serialization as ordinary `@path` user text.
-- [ ] Render mention autocomplete with dense keyboard navigation, missing-path state, and no eager file reads.
-- [ ] Render target surface, worktree, model, reasoning, context budget, and submit state in composer chrome without crowding prompt text.
-- [ ] Verify long prompt text, long paths, narrow viewport layout, keyboard shortcuts, and reduced-motion behavior.
+- [x] Build a POC Svelte composer that matches the Replit bottom composer over static fixture state.
+- [x] Render production prompt entry with the ported Replit compact composer styling while preserving prompt history, submit locking, cancellation, target selection, and provider-missing behavior.
+- [x] Render file and folder mention chips with the ported Replit visual treatment while preserving serialization as ordinary `@path` user text.
+- [x] Render mention autocomplete with dense keyboard navigation, missing-path state, and no eager file reads.
+- [x] Render target surface, worktree, model, reasoning, context budget, and submit state in composer chrome without crowding prompt text.
+- [x] Verify long prompt text, long paths, narrow viewport layout, keyboard shortcuts, and reduced-motion behavior.
 
 ## 6. Transcript And Turn Projection
 
@@ -83,13 +83,13 @@ Always read [ui.prd.md](ui.prd.md) before implementing any item in this roadmap,
 
 ## 7. Handler Threads And Delegation Projection
 
-- [ ] Render handler-thread summaries with objective, title, lifecycle state, wait state, loaded context keys, latest handoff, latest workflow-run summary, and related artifacts.
-- [ ] Render handler-active, workflow-active, waiting, troubleshooting, and completed states with distinct but restrained visual semantics.
-- [ ] Render direct handler-thread surfaces with the same transcript and composer quality as orchestrator surfaces.
-- [ ] Normalize Replit artifact "subagent" visual vocabulary into handler-thread and workflow task-agent labels before porting delegation surfaces.
-- [ ] Render thread metadata so users can inspect active system prompt, model, reasoning, worktree, context packs, and workflow ownership.
-- [ ] Preserve direct user messaging into handler threads before and after handoff.
-- [ ] Verify workflow attention routes back to the owning handler surface rather than the currently focused pane.
+- [x] Render handler-thread summaries with objective, title, lifecycle state, wait state, loaded context keys, latest handoff, latest workflow-run summary, and related artifacts.
+- [x] Render handler-active, workflow-active, waiting, troubleshooting, and completed states with distinct but restrained visual semantics.
+- [x] Render direct handler-thread surfaces with the same transcript and composer quality as orchestrator surfaces.
+- [x] Normalize Replit artifact "subagent" visual vocabulary into handler-thread and workflow task-agent labels before porting delegation surfaces.
+- [x] Render thread metadata so users can inspect active system prompt, model, reasoning, worktree, context packs, and workflow ownership.
+- [x] Preserve direct user messaging into handler threads before and after handoff.
+- [x] Verify workflow attention routes back to the owning handler surface rather than the currently focused pane.
 
 ## 8. Workflow, Artifact, And Command Inspectors
 

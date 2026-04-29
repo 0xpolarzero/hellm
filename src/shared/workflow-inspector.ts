@@ -270,9 +270,7 @@ function projectSnapshotNode(args: {
                 readValue(args.rawNode, ["taskKind", "mode", "kind"]) ??
                 "unknown",
             ),
-          agent:
-            workflowAgent ??
-            undefined,
+          agent: workflowAgent ?? undefined,
           iteration:
             readNumber(args.rawNode, ["iteration"]) ??
             readNumber(rawTask, ["iteration"]) ??

@@ -948,6 +948,48 @@
     }
   }
 
+  function getThreadStatusClass(
+    status:
+      | WorkspaceHandlerThreadSummary["status"]
+      | WorkspaceHandlerThreadInspector["status"],
+  ): string {
+    switch (status) {
+      case "running-handler":
+        return "handler-active";
+      case "running-workflow":
+        return "workflow-active";
+      case "waiting":
+        return "waiting";
+      case "troubleshooting":
+        return "troubleshooting";
+      case "completed":
+        return "completed";
+      default:
+        return "neutral";
+    }
+  }
+
+  function getThreadStateDetail(
+    thread: WorkspaceHandlerThreadSummary | WorkspaceHandlerThreadInspector,
+  ): string {
+    switch (thread.status) {
+      case "running-handler":
+        return "Handler is actively reasoning or using thread-local tools.";
+      case "running-workflow":
+        return "Smithers workflow work is active under this handler.";
+      case "waiting":
+        return thread.wait
+          ? `Waiting on ${thread.wait.owner} ${thread.wait.kind}: ${thread.wait.resumeWhen}`
+          : "Waiting for an external prerequisite before continuing.";
+      case "troubleshooting":
+        return "Thread needs repair or follow-up before it can hand work back.";
+      case "completed":
+        return "Thread has handed durable output back to the orchestrator.";
+      default:
+        return thread.objective;
+    }
+  }
+
   function getProjectCiStatusLabel(status: WorkspaceProjectCiPanelStatus): string {
     switch (status) {
       case "not-configured":
@@ -1092,6 +1134,15 @@
     }
 
     return thread.objective;
+  }
+
+  function getHandlerThreadArtifactLabel(
+    thread: WorkspaceHandlerThreadSummary | WorkspaceHandlerThreadInspector,
+  ): string | null {
+    if (thread.artifactCount <= 0) {
+      return null;
+    }
+    return `${thread.artifactCount} ${thread.artifactCount === 1 ? "artifact" : "artifacts"}`;
   }
 
   function formatCommandFacts(facts: Record<string, unknown> | null | undefined): string | null {
@@ -1775,13 +1826,15 @@
             </Button>
           {/if}
           <Badge tone={workspaceStatusTone}>{workspaceStatusText}</Badge>
-          <MetadataChip label="target" value={currentSurface?.surface ?? "orchestrator"} />
-          <MetadataChip label="worktree" value={currentWorktreeSummary} tone="info" />
-          <MetadataChip label="model" value={currentModelSummary} />
-          <MetadataChip label="reasoning" value={currentReasoningSummary} />
-          <ContextBudgetBar budget={contextBudget} variant="compact" label="Focused context" />
+          <div class="workspace-main-chips" aria-label="Focused surface metadata">
+            <MetadataChip label="target" value={currentSurface?.surface ?? "orchestrator"} />
+            <MetadataChip label="worktree" value={currentWorktreeSummary} tone="info" />
+            <MetadataChip label="model" value={currentModelSummary} />
+            <MetadataChip label="reasoning" value={currentReasoningSummary} />
+            <ContextBudgetBar budget={contextBudget} variant="compact" label="Focused context" />
+          </div>
           <span>{summaryMessageCount} turns</span>
-          <span>{toolCallCount} tools</span>
+          <span>{toolCallCount} tool runs</span>
           <span>{lastActivityLabel}</span>
           <Button
             variant="ghost"
@@ -2139,7 +2192,7 @@
               {:else}
                 <div class="handler-thread-list">
                   {#each handlerThreads as thread (thread.threadId)}
-                    <article class="handler-thread-card">
+                    <article class={`handler-thread-card state-${getThreadStatusClass(thread.status)}`.trim()}>
                       <div class="handler-thread-card-top">
                         <div class="handler-thread-card-copy">
                           <strong>{thread.title}</strong>
@@ -2151,6 +2204,19 @@
                       </div>
 
                       <p class="handler-thread-preview">{getHandlerThreadPreview(thread)}</p>
+
+                      <div class="handler-thread-state">
+                        <span class="handler-thread-state-dot" aria-hidden="true"></span>
+                        <span>{getThreadStateDetail(thread)}</span>
+                      </div>
+
+                      {#if thread.wait}
+                        <article class="handler-thread-wait" aria-label="Handler thread wait state">
+                          <strong>Waiting on {thread.wait.owner}</strong>
+                          <span>{thread.wait.kind} · since {formatTimestamp(thread.wait.since)}</span>
+                          <p>{thread.wait.reason}</p>
+                        </article>
+                      {/if}
 
                       {#if thread.latestWorkflowRun}
                         <article class="compact-workflow-card" aria-label="Latest workflow run">
@@ -2164,7 +2230,18 @@
                         </article>
                       {/if}
 
+                      {#if thread.latestEpisode}
+                        <article class="compact-handoff-card" aria-label="Latest handoff">
+                          <div>
+                            <strong>{thread.latestEpisode.title}</strong>
+                            <span>{thread.latestEpisode.summary}</span>
+                          </div>
+                          <span>{formatTimestamp(thread.latestEpisode.createdAt)}</span>
+                        </article>
+                      {/if}
+
                       <div class="handler-thread-pills">
+                        <span>{thread.threadId}</span>
                         <span>
                           {thread.workflowRunCount}
                           {thread.workflowRunCount === 1 ? " workflow" : " workflows"}
@@ -2183,6 +2260,9 @@
                             {thread.ciRunCount === 1 ? " CI run" : " CI runs"}
                           </span>
                         {/if}
+                        {#if getHandlerThreadArtifactLabel(thread)}
+                          <span>{getHandlerThreadArtifactLabel(thread)}</span>
+                        {/if}
                         {#if thread.loadedContextKeys.length > 0}
                           <span>Context {thread.loadedContextKeys.join(", ")}</span>
                         {/if}
@@ -2193,12 +2273,7 @@
                           variant="ghost"
                           size="sm"
                           aria-label={`Inspect ${thread.title}`}
-                          disabled={promptBusy ||
-                            mutatingSession ||
-                            thread.status === "running-handler" ||
-                            thread.status === "running-workflow" ||
-                            thread.latestWorkflowRun?.status === "running" ||
-                            thread.latestWorkflowRun?.status === "waiting"}
+                          disabled={mutatingSession}
                           onclick={() => void handleInspectHandlerThread(thread)}
                         >
                           Inspect
@@ -2247,6 +2322,9 @@
             {promptHistory}
             usageText={usageText || undefined}
             {contextBudget}
+            sessionName={currentSession?.title ?? "New Session"}
+            targetLabel={currentSurfaceLabel}
+            worktreeLabel={currentWorktreeSummary}
             onAbort={() => void currentSurfaceController?.abort()}
             onOpenModelPicker={() => void openModelSelector()}
             onSend={handleSend}
@@ -2484,11 +2562,37 @@
             <span>{threadInspector.threadId}</span>
           </div>
 
-          {#if threadInspector.wait}
-            <p class="thread-inspector-wait">
-              Waiting on {threadInspector.wait.owner} {threadInspector.wait.kind}: {threadInspector.wait.reason}
-            </p>
+            {#if threadInspector.wait}
+            <article class="thread-inspector-wait">
+              <strong>Waiting on {threadInspector.wait.owner} {threadInspector.wait.kind}</strong>
+              <span>Since {formatTimestamp(threadInspector.wait.since)}</span>
+              <p>{threadInspector.wait.reason}</p>
+              <p>{threadInspector.wait.resumeWhen}</p>
+            </article>
           {/if}
+
+          <div class="thread-inspector-metadata" aria-label="Thread runtime metadata">
+            <div>
+              <span>Surface</span>
+              <strong>{threadInspector.surfacePiSessionId}</strong>
+            </div>
+            <div>
+              <span>System prompt</span>
+              <strong>Open the thread surface to inspect the active pi system prompt.</strong>
+            </div>
+            <div>
+              <span>Workflow ownership</span>
+              <strong>
+                {threadInspector.workflowRunCount}
+                {threadInspector.workflowRunCount === 1 ? " run" : " runs"}
+                owned by this handler
+              </strong>
+            </div>
+            <div>
+              <span>Context packs</span>
+              <strong>{threadInspector.loadedContextKeys.length > 0 ? threadInspector.loadedContextKeys.join(", ") : "none loaded"}</strong>
+            </div>
+          </div>
 
           {#if threadInspector.latestEpisode}
             <div class="thread-inspector-highlight">
@@ -3572,6 +3676,10 @@
     max-width: 13rem;
   }
 
+  .workspace-main-chips {
+    display: contents;
+  }
+
   .workspace-main-meta :global(.context-budget-compact) {
     position: static;
     width: 8.4rem;
@@ -3807,46 +3915,150 @@
   }
 
   .handler-thread-card {
+    position: relative;
     display: grid;
     gap: 0.62rem;
     padding: 0.8rem 0.85rem;
     border: 1px solid color-mix(in oklab, var(--ui-border-soft) 84%, transparent);
     border-radius: var(--ui-radius-md);
     background: color-mix(in oklab, var(--ui-surface-raised) 92%, transparent);
+    overflow: hidden;
   }
 
-  .compact-workflow-card {
+  .handler-thread-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 2px;
+    background: var(--ui-border-strong);
+  }
+
+  .handler-thread-card.state-handler-active::before,
+  .handler-thread-card.state-workflow-active::before {
+    background: var(--ui-info);
+  }
+
+  .handler-thread-card.state-waiting::before {
+    background: var(--ui-warning);
+  }
+
+  .handler-thread-card.state-troubleshooting::before {
+    background: var(--ui-danger);
+  }
+
+  .handler-thread-card.state-completed::before {
+    background: var(--ui-success);
+  }
+
+  .handler-thread-state,
+  .handler-thread-wait,
+  .compact-workflow-card,
+  .compact-handoff-card {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 0.75rem;
+  }
+
+  .handler-thread-state {
+    justify-content: flex-start;
+    align-items: center;
+    color: var(--ui-text-tertiary);
+    font-size: 0.68rem;
+  }
+
+  .handler-thread-state-dot {
+    width: 0.42rem;
+    height: 0.42rem;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--ui-border-strong);
+  }
+
+  .state-handler-active .handler-thread-state-dot,
+  .state-workflow-active .handler-thread-state-dot {
+    background: var(--ui-info);
+    animation: pulse-dot 1.8s ease-in-out infinite;
+  }
+
+  .state-waiting .handler-thread-state-dot {
+    background: var(--ui-warning);
+    animation: pulse-dot 2.1s ease-in-out infinite;
+  }
+
+  .state-troubleshooting .handler-thread-state-dot {
+    background: var(--ui-danger);
+  }
+
+  .state-completed .handler-thread-state-dot {
+    background: var(--ui-success);
+  }
+
+  .handler-thread-wait,
+  .compact-workflow-card,
+  .compact-handoff-card {
     padding: 0.55rem 0.62rem;
     border: 1px solid color-mix(in oklab, var(--ui-shell-edge) 58%, transparent);
     border-radius: var(--ui-radius-sm);
     background: color-mix(in oklab, var(--ui-surface-subtle) 72%, transparent);
   }
 
-  .compact-workflow-card div {
+  .handler-thread-wait {
+    display: grid;
+    justify-content: stretch;
+    gap: 0.18rem;
+    border-color: color-mix(in oklab, var(--ui-warning) 38%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-warning-soft) 58%, var(--ui-surface));
+  }
+
+  .handler-thread-wait strong,
+  .handler-thread-wait span,
+  .handler-thread-wait p {
+    margin: 0;
+    font-size: 0.68rem;
+    line-height: 1.45;
+  }
+
+  .handler-thread-wait strong {
+    color: var(--ui-text-primary);
+  }
+
+  .handler-thread-wait span,
+  .handler-thread-wait p {
+    color: var(--ui-text-secondary);
+  }
+
+  .compact-workflow-card div,
+  .compact-handoff-card div {
     display: grid;
     gap: 0.16rem;
     min-width: 0;
   }
 
   .compact-workflow-card strong,
-  .compact-workflow-card span {
+  .compact-workflow-card span,
+  .compact-handoff-card strong,
+  .compact-handoff-card span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .compact-workflow-card strong {
+  .compact-workflow-card strong,
+  .compact-handoff-card strong {
     font-size: 0.72rem;
     color: var(--ui-text-primary);
   }
 
-  .compact-workflow-card span {
+  .compact-workflow-card span,
+  .compact-handoff-card span {
     font-size: 0.67rem;
     color: var(--ui-text-secondary);
+  }
+
+  .compact-handoff-card > span {
+    flex: 0 0 auto;
+    color: var(--ui-text-tertiary);
   }
 
   .structured-command-list {
@@ -4020,6 +4232,7 @@
 
   .structured-command-highlights,
   .thread-inspector-highlight,
+  .thread-inspector-metadata,
   .thread-inspector-command-list,
   .thread-inspector-timeline,
   .command-inspector-sections,
@@ -4031,6 +4244,7 @@
 
   .thread-inspector-summary,
   .thread-inspector-section,
+  .thread-inspector-metadata,
   .thread-inspector-command,
   .thread-inspector-timeline-item,
   .structured-command-highlight,
@@ -4044,9 +4258,36 @@
   }
 
   .thread-inspector-highlight,
+  .thread-inspector-metadata,
   .thread-inspector-command,
   .thread-inspector-timeline-item {
     padding: 0.72rem 0.76rem;
+  }
+
+  .thread-inspector-metadata {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .thread-inspector-metadata div {
+    display: grid;
+    gap: 0.18rem;
+    min-width: 0;
+  }
+
+  .thread-inspector-metadata span,
+  .thread-inspector-wait span {
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    color: var(--ui-text-tertiary);
+  }
+
+  .thread-inspector-metadata strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ui-text-primary);
+    font-size: 0.72rem;
+    font-weight: 560;
+    white-space: nowrap;
   }
 
   .thread-inspector-highlight span,
@@ -4125,6 +4366,25 @@
     font-size: 0.74rem;
     line-height: 1.55;
     color: var(--ui-text-secondary);
+  }
+
+  .thread-inspector-wait {
+    display: grid;
+    gap: 0.2rem;
+    padding: 0.64rem 0.7rem;
+    border: 1px solid color-mix(in oklab, var(--ui-warning) 38%, var(--ui-border-soft));
+    border-radius: var(--ui-radius-md);
+    background: color-mix(in oklab, var(--ui-warning-soft) 58%, var(--ui-surface));
+  }
+
+  .thread-inspector-wait strong,
+  .thread-inspector-wait p {
+    margin: 0;
+  }
+
+  .thread-inspector-wait strong {
+    color: var(--ui-text-primary);
+    font-size: 0.74rem;
   }
 
   .command-inspector-error {

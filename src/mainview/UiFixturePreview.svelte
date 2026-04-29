@@ -1,4 +1,11 @@
 <script lang="ts">
+	import ArrowUpIcon from "@lucide/svelte/icons/arrow-up";
+	import AtSignIcon from "@lucide/svelte/icons/at-sign";
+	import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+	import FileIcon from "@lucide/svelte/icons/file";
+	import GitBranchIcon from "@lucide/svelte/icons/git-branch";
+	import LayersIcon from "@lucide/svelte/icons/layers";
+	import XIcon from "@lucide/svelte/icons/x";
 	import ContextBudgetBar from "./ContextBudgetBar.svelte";
 	import Badge from "./ui/Badge.svelte";
 	import Button from "./ui/Button.svelte";
@@ -223,10 +230,31 @@
 						{/each}
 					</section>
 					<div class="fixture-composer">
-						<span>@</span>
-						<p>Ask svvy to inspect provider refresh handling</p>
-						<MetadataChip label="target" value="orchestrator" />
-						<Button size="sm">Send</Button>
+						<div class="fixture-composer-context">
+							<span class="fixture-mention-chip"><FileIcon size={12} /> docs/progress.md <XIcon size={10} /></span>
+							<span class="fixture-mention-chip"><FileIcon size={12} /> src/mainview/ChatComposer.svelte <XIcon size={10} /></span>
+							<button type="button" class="fixture-add-context"><AtSignIcon size={11} /> Add context</button>
+						</div>
+						<div class="fixture-composer-main">
+							<p>Ask svvy to inspect provider refresh handling and update @docs/progress.md</p>
+							<div class="fixture-composer-actions">
+								<button type="button" class="fixture-icon-button" aria-label="Collapse composer"><ChevronDownIcon size={15} /></button>
+								<button type="button" class="fixture-send-button" aria-label="Send"><ArrowUpIcon size={15} /></button>
+							</div>
+						</div>
+						<div class="fixture-composer-status">
+							<div class="fixture-target-row">
+								<span>orchestrator</span>
+								<small>/</small>
+								<span>OAuth provider hardening</span>
+								<span><GitBranchIcon size={10} /> feat/oauth-provider</span>
+							</div>
+							<div class="fixture-runtime-row">
+								<ContextBudgetBar budget={sessions[0].budget} label="Context" />
+								<span><LayersIcon size={12} /> opus</span>
+								<span>reasoning medium</span>
+							</div>
+						</div>
 					</div>
 				</div>
 			</section>
@@ -661,13 +689,14 @@
 	}
 
 	.fixture-composer {
-		justify-content: space-between;
-		gap: 0.45rem;
-		min-height: 2.6rem;
-		padding: 0.44rem 0.5rem;
+		display: grid;
+		gap: 0;
+		min-height: 7.8rem;
+		padding: 0;
 		border: 1px solid var(--ui-border-soft);
 		border-radius: var(--ui-radius-lg);
 		background: var(--ui-surface);
+		overflow: hidden;
 	}
 
 	.fixture-composer p {
@@ -679,6 +708,114 @@
 		white-space: nowrap;
 		color: var(--ui-text-secondary);
 		font-size: 0.72rem;
+	}
+
+	.fixture-composer-context,
+	.fixture-composer-main,
+	.fixture-composer-status,
+	.fixture-target-row,
+	.fixture-runtime-row,
+	.fixture-composer-actions,
+	.fixture-mention-chip,
+	.fixture-add-context,
+	.fixture-icon-button,
+	.fixture-send-button,
+	.fixture-runtime-row span,
+	.fixture-target-row span {
+		display: flex;
+		align-items: center;
+		min-width: 0;
+	}
+
+	.fixture-composer-context,
+	.fixture-composer-main,
+	.fixture-composer-status {
+		padding: 0.45rem 0.55rem;
+	}
+
+	.fixture-composer-context,
+	.fixture-composer-status {
+		gap: 0.38rem;
+		border-bottom: 1px solid var(--ui-border-soft);
+	}
+
+	.fixture-composer-status {
+		justify-content: space-between;
+		border-top: 1px solid var(--ui-border-soft);
+		border-bottom: 0;
+	}
+
+	.fixture-composer-main {
+		justify-content: space-between;
+		gap: 0.55rem;
+		min-height: 2.7rem;
+	}
+
+	.fixture-composer-actions,
+	.fixture-target-row,
+	.fixture-runtime-row {
+		gap: 0.38rem;
+	}
+
+	.fixture-mention-chip,
+	.fixture-add-context,
+	.fixture-runtime-row span,
+	.fixture-target-row span {
+		gap: 0.28rem;
+		max-width: 13rem;
+		min-height: 1.35rem;
+		padding: 0.1rem 0.38rem;
+		border: 1px solid color-mix(in oklab, var(--ui-border-accent) 58%, var(--ui-border-soft));
+		border-radius: var(--ui-radius-sm);
+		background: color-mix(in oklab, var(--ui-accent-soft) 54%, var(--ui-surface));
+		color: color-mix(in oklab, var(--ui-accent) 78%, var(--ui-text-primary));
+		font-family: var(--font-mono);
+		font-size: 0.6rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.fixture-add-context,
+	.fixture-runtime-row span,
+	.fixture-target-row span {
+		border-color: var(--ui-border-soft);
+		background: transparent;
+		color: var(--ui-text-tertiary);
+	}
+
+	.fixture-add-context,
+	.fixture-icon-button,
+	.fixture-send-button {
+		font: inherit;
+		cursor: pointer;
+	}
+
+	.fixture-icon-button,
+	.fixture-send-button {
+		display: grid;
+		place-items: center;
+		width: 1.75rem;
+		height: 1.75rem;
+		border: 1px solid var(--ui-border-soft);
+		border-radius: var(--ui-radius-md);
+		background: transparent;
+		color: var(--ui-text-tertiary);
+	}
+
+	.fixture-send-button {
+		border-color: var(--ui-accent);
+		background: var(--ui-accent);
+		color: var(--ui-accent-ink);
+	}
+
+	.fixture-target-row small {
+		color: var(--ui-border-strong);
+		font-size: 0.66rem;
+	}
+
+	.fixture-runtime-row :global(.context-budget-full) {
+		width: 12rem;
 	}
 
 	.fixture-thread-copy h3,
