@@ -679,15 +679,19 @@
             placement: getCommandPalettePlacement(event),
             focusedPaneId,
           });
-    await runPaletteMutation(() =>
-      executeCommandAction({
-        runtime,
-        action,
-        paneId,
-        onOpenSettings: () => onOpenSettings?.(),
-        onOpenWorkflowTaskAttempt: ({ workspaceSessionId, workflowTaskAttemptId }) =>
-          handleInspectWorkflowTaskAttempt({ workflowTaskAttemptId }, workspaceSessionId),
-      }),
+    window.setTimeout(
+      () =>
+        void runPaletteMutation(() =>
+          executeCommandAction({
+            runtime,
+            action,
+            paneId,
+            onOpenSettings: () => onOpenSettings?.(),
+            onOpenWorkflowTaskAttempt: ({ workspaceSessionId, workflowTaskAttemptId }) =>
+              handleInspectWorkflowTaskAttempt({ workflowTaskAttemptId }, workspaceSessionId),
+          }),
+        ),
+      0,
     );
   }
 
@@ -696,22 +700,26 @@
       placement: getCommandPalettePlacement(event),
       focusedPaneId,
     });
-    await runPaletteMutation(async () => {
-      await executePaletteFallbackPrompt({
-        runtime,
-        prompt,
-        paneId,
-        onCreatedTarget: async (target) => {
-          await runtime.storage.promptHistory.append({
-            text: prompt.trim(),
-            sentAt: Date.now(),
-            workspaceId: runtime.workspaceId,
-            sessionId: target.workspaceSessionId,
+    window.setTimeout(
+      () =>
+        void runPaletteMutation(async () => {
+          await executePaletteFallbackPrompt({
+            runtime,
+            prompt,
+            paneId,
+            onCreatedTarget: async (target) => {
+              await runtime.storage.promptHistory.append({
+                text: prompt.trim(),
+                sentAt: Date.now(),
+                workspaceId: runtime.workspaceId,
+                sessionId: target.workspaceSessionId,
+              });
+            },
           });
-        },
-      });
-      promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
-    });
+          promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
+        }),
+      0,
+    );
   }
 
   async function handleCreateSession() {
@@ -2568,7 +2576,7 @@
                   disabled={mutatingSession || !pane.binding}
                   onclick={(event) => {
                     event.stopPropagation();
-                    void handleDuplicatePane(pane.paneId);
+                    window.setTimeout(() => void handleDuplicatePane(pane.paneId), 0);
                   }}
                 >
                   <CopyPlusIcon aria-hidden="true" size={13} strokeWidth={1.9} />
@@ -2581,7 +2589,7 @@
                     title="Close pane"
                     onclick={(event) => {
                       event.stopPropagation();
-                      void handleClosePane(pane.paneId);
+                      window.setTimeout(() => void handleClosePane(pane.paneId), 0);
                     }}
                   >
                     <XIcon aria-hidden="true" size={13} strokeWidth={1.9} />
@@ -4137,7 +4145,7 @@
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     min-width: 0;
-    min-height: 16.25rem;
+    min-height: 0;
     overflow: hidden;
     border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
     border-radius: 0;

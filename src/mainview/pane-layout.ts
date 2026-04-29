@@ -745,7 +745,6 @@ function getPaneBoundaryRanges(
   const crossTrackCount = axis === "column" ? layout.rows.length : layout.columns.length;
   const ranges: Array<{ start: number; end: number }> = [];
   let rangeStart: number | null = null;
-  let rangeKey: string | null = null;
 
   for (let crossIndex = 0; crossIndex < crossTrackCount; crossIndex += 1) {
     const beforePane =
@@ -756,22 +755,13 @@ function getPaneBoundaryRanges(
       axis === "column"
         ? findPaneCoveringCell(layout, lineIndex, crossIndex)
         : findPaneCoveringCell(layout, crossIndex, lineIndex);
-    const nextRangeKey =
-      beforePane && afterPane && beforePane.paneId !== afterPane.paneId
-        ? `${beforePane.paneId}->${afterPane.paneId}`
-        : null;
+    const isPaneBoundary = beforePane && afterPane && beforePane.paneId !== afterPane.paneId;
 
-    if (nextRangeKey && rangeStart === null) {
+    if (isPaneBoundary && rangeStart === null) {
       rangeStart = crossIndex;
-      rangeKey = nextRangeKey;
-    } else if (nextRangeKey && rangeKey !== nextRangeKey && rangeStart !== null) {
-      ranges.push({ start: rangeStart, end: crossIndex });
-      rangeStart = crossIndex;
-      rangeKey = nextRangeKey;
-    } else if (!nextRangeKey && rangeStart !== null) {
+    } else if (!isPaneBoundary && rangeStart !== null) {
       ranges.push({ start: rangeStart, end: crossIndex });
       rangeStart = null;
-      rangeKey = null;
     }
   }
 
