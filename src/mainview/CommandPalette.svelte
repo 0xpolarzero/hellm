@@ -97,6 +97,10 @@
     return action.targetName ?? action.category;
   }
 
+  function getBadgeClass(action: CommandAction): string {
+    return action.badge ? action.badge.toLowerCase().replace(/\s+/g, "-") : "default";
+  }
+
 </script>
 
 {#if open}
@@ -157,7 +161,9 @@
                           <strong>{action.label}</strong>
                           {#if action.badge}
                             <div class="command-palette-badges">
-                              <span class="command-palette-kind-badge">{action.badge}</span>
+                              <span class={`command-palette-kind-badge badge-${getBadgeClass(action)}`}>
+                                {action.badge}
+                              </span>
                             </div>
                           {/if}
                         </div>
@@ -202,15 +208,15 @@
     position: fixed;
     inset: 0;
     z-index: 80;
-    background: color-mix(in oklab, var(--ui-bg) 18%, hsl(220 22% 8% / 0.56));
+    background: color-mix(in oklab, var(--ui-bg) 22%, hsl(220 18% 6% / 0.66));
   }
 
   :global(.command-palette-content) {
     position: fixed;
-    top: 10vh;
+    top: 8vh;
     left: 50%;
     z-index: 90;
-    width: min(760px, calc(100vw - 32px));
+    width: min(680px, calc(100vw - 28px));
     transform: translateX(-50%);
     outline: none;
   }
@@ -218,8 +224,8 @@
   .command-palette-shell {
     overflow: hidden;
     border: 1px solid var(--ui-border-strong);
-    border-radius: var(--ui-radius-xl);
-    background: var(--ui-surface-raised);
+    border-radius: var(--ui-radius-lg);
+    background: var(--ui-surface);
     color: var(--ui-text-primary);
     box-shadow: var(--ui-shadow-strong);
   }
@@ -228,10 +234,11 @@
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
-    gap: var(--space-xs);
-    padding: 0.68rem 0.82rem;
+    gap: 0.5rem;
+    min-height: 2.45rem;
+    padding: 0.45rem 0.68rem;
     border-bottom: 1px solid var(--ui-border-soft);
-    background: var(--ui-panel);
+    background: color-mix(in oklab, var(--ui-panel) 88%, transparent);
     color: var(--ui-text-secondary);
   }
 
@@ -242,7 +249,7 @@
     background: transparent;
     color: inherit;
     font: inherit;
-    font-size: 0.86rem;
+    font-size: 0.8rem;
     outline: none;
   }
 
@@ -251,18 +258,18 @@
   }
 
   :global([data-cmdk-list]) {
-    max-height: min(440px, 56vh);
+    max-height: min(392px, 54vh);
     overflow: auto;
-    padding: 0.24rem;
+    padding: 0.2rem;
     background: var(--ui-surface);
   }
 
   :global([data-cmdk-group-heading]) {
-    padding: 0.42rem 0.48rem 0.18rem;
+    padding: 0.38rem 0.44rem 0.16rem;
     color: var(--ui-text-tertiary);
     font-family: var(--font-mono);
-    font-size: 0.64rem;
-    font-weight: 700;
+    font-size: 0.61rem;
+    font-weight: 650;
     letter-spacing: 0;
     text-transform: uppercase;
   }
@@ -270,17 +277,17 @@
   :global([data-cmdk-item]) {
     position: relative;
     border: 1px solid transparent;
-    border-radius: var(--ui-radius-md);
+    border-radius: var(--ui-radius-sm);
     cursor: pointer;
     transition:
-      background-color 160ms ease,
-      border-color 160ms ease,
-      color 160ms ease;
+      background-color 160ms cubic-bezier(0.19, 1, 0.22, 1),
+      border-color 160ms cubic-bezier(0.19, 1, 0.22, 1),
+      color 160ms cubic-bezier(0.19, 1, 0.22, 1);
   }
 
   :global([data-cmdk-item][data-selected]) {
     border-color: var(--ui-border-accent);
-    background: var(--ui-accent-soft);
+    background: color-mix(in oklab, var(--ui-accent-soft) 82%, var(--ui-surface));
   }
 
   :global([data-cmdk-item][data-disabled]) {
@@ -290,11 +297,11 @@
 
   :global([data-cmdk-item][data-selected])::before {
     position: absolute;
-    top: 0.44rem;
-    bottom: 0.44rem;
-    left: 0.14rem;
+    top: 0.36rem;
+    bottom: 0.36rem;
+    left: 0.1rem;
     width: 2px;
-    border-radius: 999px;
+    border-radius: var(--ui-radius-xs);
     background: var(--ui-accent);
     content: "";
   }
@@ -302,14 +309,14 @@
   .command-palette-item {
     display: block;
     align-items: center;
-    min-height: 2.08rem;
-    padding: 0.38rem 0.56rem 0.38rem 0.68rem;
+    min-height: 1.88rem;
+    padding: 0.3rem 0.5rem 0.3rem 0.62rem;
   }
 
   .command-palette-item-copy {
     display: grid;
     min-width: 0;
-    gap: 0.16rem;
+    gap: 0.12rem;
   }
 
   .command-palette-item-title {
@@ -317,7 +324,7 @@
     min-width: 0;
     align-items: center;
     justify-content: space-between;
-    gap: 0.5rem;
+    gap: 0.45rem;
   }
 
   .command-palette-item-copy strong,
@@ -330,7 +337,7 @@
   .command-palette-item-copy strong {
     min-width: 0;
     color: var(--ui-text-primary);
-    font-size: 0.82rem;
+    font-size: 0.76rem;
     font-weight: 650;
   }
 
@@ -346,28 +353,43 @@
     flex: 0 0 auto;
     max-width: 9.5rem;
     overflow: hidden;
-    padding: 0.08rem 0.36rem;
+    min-height: 1.06rem;
+    padding: 0.07rem 0.32rem;
     border: 1px solid var(--ui-border-soft);
-    border-radius: var(--ui-radius-md);
+    border-radius: var(--ui-radius-sm);
     background: var(--ui-surface-subtle);
     color: var(--ui-text-secondary);
     font-family: var(--font-mono);
-    font-size: 0.64rem;
-    font-weight: 700;
+    font-size: 0.58rem;
+    font-weight: 650;
     letter-spacing: 0;
+    line-height: 1;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .command-palette-kind-badge {
+  .badge-orchestrator {
     border-color: color-mix(in oklab, var(--ui-info) 32%, var(--ui-border-soft));
     background: var(--ui-info-soft);
     color: color-mix(in oklab, var(--ui-info) 76%, var(--ui-text-primary));
   }
 
+  .badge-thread {
+    border-color: color-mix(in oklab, var(--ui-accent) 34%, var(--ui-border-soft));
+    background: var(--ui-accent-soft);
+    color: color-mix(in oklab, var(--ui-accent) 82%, var(--ui-text-primary));
+  }
+
+  .badge-task-agent,
+  .badge-workflow-task-agent {
+    border-color: color-mix(in oklab, var(--ui-success) 28%, var(--ui-border-soft));
+    background: var(--ui-success-soft);
+    color: color-mix(in oklab, var(--ui-success) 76%, var(--ui-text-primary));
+  }
+
   .command-palette-item-copy span {
     color: var(--ui-text-tertiary);
-    font-size: 0.74rem;
+    font-size: 0.68rem;
   }
 
   .disabled-copy {
@@ -375,23 +397,24 @@
   }
 
   kbd {
-    min-width: 1.45rem;
-    padding: 0.08rem 0.28rem;
+    min-width: 1.28rem;
+    padding: 0.06rem 0.22rem;
     border: 1px solid var(--ui-border-strong);
-    border-radius: var(--ui-radius-md);
+    border-radius: var(--ui-radius-sm);
     background: var(--ui-code);
     color: var(--ui-text-secondary);
     font-family: var(--font-mono);
-    font-size: 0.64rem;
+    font-size: 0.58rem;
     text-align: center;
   }
 
   .command-palette-empty {
     display: grid;
-    gap: 0.3rem;
-    padding: 1.4rem 1rem;
+    gap: 0.24rem;
+    padding: 1.05rem 0.9rem;
     color: var(--ui-text-secondary);
     text-align: center;
+    font-size: 0.76rem;
   }
 
   .command-palette-empty strong {
@@ -400,23 +423,24 @@
 
   .command-palette-error {
     margin: 0;
-    padding: 0.62rem 1rem;
+    padding: 0.5rem 0.72rem;
     border-top: 1px solid color-mix(in oklab, var(--ui-danger) 28%, transparent);
     background: var(--ui-danger-soft);
     color: var(--ui-danger);
-    font-size: 0.86rem;
+    font-size: 0.76rem;
   }
 
   .command-palette-footer {
     display: flex;
     justify-content: space-between;
-    gap: 1rem;
-    padding: 0.46rem 0.82rem;
+    gap: 0.75rem;
+    min-height: 2rem;
+    padding: 0.36rem 0.68rem;
     border-top: 1px solid var(--ui-border-soft);
-    background: var(--ui-panel);
+    background: color-mix(in oklab, var(--ui-panel) 88%, transparent);
     color: var(--ui-text-tertiary);
     font-family: var(--font-mono);
-    font-size: 0.68rem;
+    font-size: 0.61rem;
   }
 
   @media (max-width: 640px) {

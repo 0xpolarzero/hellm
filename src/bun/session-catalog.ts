@@ -43,6 +43,7 @@ import type {
 } from "../shared/workspace-contract";
 import { buildWorkflowInspectorReadModel } from "../shared/workflow-inspector";
 import {
+  DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
   DEFAULT_AGENT_SETTINGS,
   type SessionAgentKey,
   type SessionAgentSettings,
@@ -889,6 +890,59 @@ export class WorkspaceSessionCatalog {
     return { ok: true, target: structuredClone(target) };
   }
 
+  async setSessionMode(
+    target: PromptTarget,
+    mode: SessionMode,
+    defaults: SessionDefaults,
+  ): Promise<{ ok: boolean; snapshot?: ConversationSurfaceSnapshot; error?: string }> {
+    if (target.surface !== "orchestrator") {
+      return { ok: false, error: "Only orchestrator sessions can change session mode." };
+    }
+
+    const session = this.managedSurfaces.get(target.surfacePiSessionId);
+    if (!session) {
+      return { ok: false, error: "Session is not open." };
+    }
+    if (session.activePrompt) {
+      return { ok: false, error: "Session mode cannot change while a prompt is running." };
+    }
+    if (countVisibleMessages(session.session.agent.state.messages) > 0) {
+      return { ok: false, error: "Session mode can only change before the first turn." };
+    }
+
+    const sessionAgentKey =
+      defaults.sessionAgentKey ?? (mode === "quick" ? "quickSession" : "defaultSession");
+    const updated = await this.recreateManagedSurface(session, {
+      actorKind: "orchestrator",
+      provider: defaults.provider,
+      model: defaults.model,
+      thinkingLevel: defaults.thinkingLevel,
+      systemPrompt: defaults.systemPrompt,
+      sessionMode: mode,
+      sessionAgentKey,
+    });
+    updated.sessionMode = mode;
+    updated.sessionAgentKey = sessionAgentKey;
+    updated.systemPrompt = defaults.systemPrompt;
+    updated.recreateOnNextPrompt = false;
+
+    this.syncManagedState(updated);
+    this.syncStructuredPiSessionFromOrchestratorSession(updated);
+    this.persistManagedSessionSnapshot(updated);
+
+    await this.emitSurfaceSync({
+      reason: "surface.updated",
+      session: updated,
+      target,
+    });
+    await this.emitWorkspaceSync("workspace.updated");
+
+    return {
+      ok: true,
+      snapshot: await this.buildSurfaceSnapshot(updated, target),
+    };
+  }
+
   private async ensureManagedSurfaceForPrompt(
     options: SendAgentPromptOptions,
   ): Promise<ManagedSession> {
@@ -1004,7 +1058,16 @@ export class WorkspaceSessionCatalog {
   private async recreateManagedSurface(
     session: ManagedSession,
     overrides: Partial<
-      Pick<ManagedSession, "actorKind" | "provider" | "model" | "thinkingLevel" | "systemPrompt">
+      Pick<
+        ManagedSession,
+        | "actorKind"
+        | "provider"
+        | "model"
+        | "thinkingLevel"
+        | "systemPrompt"
+        | "sessionMode"
+        | "sessionAgentKey"
+      >
     >,
   ): Promise<ManagedSession> {
     const sessionManager = session.session.sessionManager;
@@ -1013,6 +1076,8 @@ export class WorkspaceSessionCatalog {
     const model = overrides.model ?? session.model;
     const thinkingLevel = overrides.thinkingLevel ?? session.thinkingLevel;
     const systemPrompt = overrides.systemPrompt ?? session.systemPrompt;
+    const sessionMode = overrides.sessionMode ?? session.sessionMode;
+    const sessionAgentKey = overrides.sessionAgentKey ?? session.sessionAgentKey;
 
     session.session.dispose();
     const nextSession = await createManagedSession({
@@ -1022,8 +1087,8 @@ export class WorkspaceSessionCatalog {
       model,
       thinkingLevel,
       systemPrompt,
-      sessionMode: session.sessionMode,
-      sessionAgentKey: session.sessionAgentKey,
+      sessionMode,
+      sessionAgentKey,
       agentDir: this.agentDir,
       structuredSessionStore: this.structuredSessionStore,
       createHandlerThread: this.createHandlerThread.bind(this),
@@ -1221,7 +1286,15 @@ export class WorkspaceSessionCatalog {
 
   private buildSystemPromptForTarget(target: PromptTarget): string {
     if (target.surface !== "thread" || !target.threadId) {
-      return buildSystemPrompt("orchestrator");
+      const liveSession = this.managedSurfaces.get(target.surfacePiSessionId);
+      if (liveSession) {
+        return liveSession.systemPrompt;
+      }
+
+      const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
+      const key = snapshot?.pi.defaultOrchestratorPromptKey ?? "defaultSession";
+      const settings = this.resolveSessionAgentSettingsFromSnapshot(snapshot, key);
+      return buildSessionAgentSystemPrompt(settings);
     }
 
     const thread =
@@ -1252,6 +1325,31 @@ export class WorkspaceSessionCatalog {
       }
     }
     return null;
+  }
+
+  private resolveSessionAgentSettingsFromSnapshot(
+    snapshot: StructuredSessionSnapshot | null | undefined,
+    key: SessionAgentKey,
+  ): SessionAgentSettings {
+    const current = this.agentSettingsStore.getState().sessionAgents[key];
+    const json =
+      key === "quickSession"
+        ? snapshot?.pi.quickSessionAgentJson
+        : key === "namer"
+          ? snapshot?.pi.namerSessionAgentJson
+          : snapshot?.pi.defaultSessionAgentJson;
+    if (!json) {
+      return current;
+    }
+    try {
+      const parsed = JSON.parse(json) as SessionAgentSettings;
+      if (parsed.provider && parsed.model && parsed.reasoningEffort) {
+        return parsed;
+      }
+    } catch {
+      return current;
+    }
+    return current;
   }
 
   private resolvePromptTargetForSurfacePiSessionId(surfacePiSessionId: string): PromptTarget {
@@ -2306,6 +2404,14 @@ function createCustomToolDefinitions(tools: readonly AgentTool<any>[]): ToolDefi
   }));
 }
 
+function buildSessionAgentSystemPrompt(settings: { systemPrompt: string }): string {
+  const suffix = settings.systemPrompt.trim();
+  if (!suffix || suffix === DEFAULT_ORCHESTRATOR_SESSION_PROMPT) {
+    return buildSystemPrompt("orchestrator");
+  }
+  return `${buildSystemPrompt("orchestrator")}\n\n## Session Agent\n${suffix}`;
+}
+
 function countVisibleMessages(messages: AgentMessage[]): number {
   return messages.filter(
     (message) =>
@@ -3003,12 +3109,6 @@ function normalizeTitleCasing(title: string): string {
     return title;
   }
 
-  const isPlainTitleCaseWord = (word: string) => /^[A-Z][a-z]+$/.test(word);
-  const isPreservedWord = (word: string) =>
-    /^[A-Z0-9._/-]{2,}$/.test(word) ||
-    /[._/-]/.test(word) ||
-    /[a-z][A-Z]/.test(word) ||
-    /[A-Z].*[A-Z].*[a-z]/.test(word);
   const isTitleCasePhrase = words.every(
     (word) => isPlainTitleCaseWord(word) || isPreservedWord(word),
   );
@@ -3024,6 +3124,19 @@ function normalizeTitleCasing(title: string): string {
         : word,
     )
     .join(" ");
+}
+
+function isPlainTitleCaseWord(word: string): boolean {
+  return /^[A-Z][a-z]+$/.test(word);
+}
+
+function isPreservedWord(word: string): boolean {
+  return (
+    /^[A-Z0-9._/-]{2,}$/.test(word) ||
+    /[._/-]/.test(word) ||
+    /[a-z][A-Z]/.test(word) ||
+    /[A-Z].*[A-Z].*[a-z]/.test(word)
+  );
 }
 
 function buildPromptText(

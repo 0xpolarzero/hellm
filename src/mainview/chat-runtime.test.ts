@@ -221,6 +221,8 @@ function createSurfaceSnapshot(input: {
   provider?: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  sessionMode?: ConversationSurfaceSnapshot["sessionMode"];
+  sessionAgentKey?: ConversationSurfaceSnapshot["sessionAgentKey"];
   systemPrompt?: string;
   resolvedSystemPrompt?: string;
   promptStatus?: ConversationSurfaceSnapshot["promptStatus"];
@@ -232,8 +234,8 @@ function createSurfaceSnapshot(input: {
     provider: input.provider ?? "openai",
     model: input.model ?? "gpt-4o",
     reasoningEffort: input.reasoningEffort ?? "medium",
-    sessionMode: "orchestrator",
-    sessionAgentKey: "defaultSession",
+    sessionMode: input.sessionMode ?? "orchestrator",
+    sessionAgentKey: input.sessionAgentKey ?? "defaultSession",
     systemPrompt,
     resolvedSystemPrompt: input.resolvedSystemPrompt ?? systemPrompt,
     promptStatus: input.promptStatus ?? "idle",
@@ -992,6 +994,18 @@ function createFakeRpc(input: {
             summary.title = title;
           });
           return { ok: true };
+        },
+        setSessionMode: async ({ target, mode }) => {
+          const record = getSurfaceRecord(target.surfacePiSessionId);
+          const snapshot = createSurfaceSnapshot({
+            ...record.snapshot,
+            sessionMode: mode,
+            sessionAgentKey: mode === "quick" ? "quickSession" : "defaultSession",
+            systemPrompt: mode === "quick" ? "Quick" : "Default",
+            resolvedSystemPrompt: mode === "quick" ? "Quick" : "Default",
+          });
+          record.snapshot = snapshot;
+          return { ok: true, snapshot: structuredClone(snapshot) };
         },
         forkSession: async ({ sessionId, title }) => {
           const sourceSummary = summaries.get(sessionId) ?? null;
@@ -1881,7 +1895,7 @@ describe("createChatRuntime", () => {
     });
 
     const threadController = runtime.getSurfaceController(threadTarget.surfacePiSessionId);
-    expect(threadController?.ownerPaneIds.sort()).toEqual(["thread-left", "thread-right"]);
+    expect(threadController?.ownerPaneIds.toSorted()).toEqual(["thread-left", "thread-right"]);
     expect(runtime.getPaneController("thread-left")).toBe(threadController);
     expect(runtime.getPaneController("thread-right")).toBe(threadController);
     expect(runtime.getPaneController("inspector")).toBeNull();
@@ -2029,6 +2043,35 @@ describe("createChatRuntime", () => {
 
     expect(runtime.sessions).toHaveLength(1);
     expect(runtime.getPane("primary")?.target).toEqual(createOrchestratorTarget("session-1"));
+
+    runtime.dispose();
+  });
+
+  it("changes an empty focused session mode without creating a new session or pane", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "New Session", "")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [],
+        }),
+      ],
+    });
+
+    const runtime = await createRuntime(harness);
+    const initialSessionCount = runtime.sessions.length;
+    const initialPaneCount = runtime.paneLayout.panes.length;
+
+    await runtime.setSessionMode(runtime.primaryPaneId, "quick");
+
+    const focusedPane = runtime.getPane(runtime.primaryPaneId);
+    const controller = runtime.getPaneController(runtime.primaryPaneId);
+    expect(runtime.sessions).toHaveLength(initialSessionCount);
+    expect(runtime.paneLayout.panes).toHaveLength(initialPaneCount);
+    expect(focusedPane?.target?.workspaceSessionId).toBe("session-1");
+    expect(controller?.sessionMode).toBe("quick");
+    expect(controller?.sessionAgentKey).toBe("quickSession");
+    expect(harness.getSurfaceSnapshot("session-1").sessionMode).toBe("quick");
 
     runtime.dispose();
   });

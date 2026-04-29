@@ -580,6 +580,27 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
         return result;
       },
+      setSessionMode: async ({ target, mode }: { target: PromptTarget; mode: SessionMode }) => {
+        const result = await workspaceSessionCatalog.setSessionMode(
+          target,
+          mode,
+          getSessionDefaults(mode),
+        );
+        if (result.ok && result.snapshot) {
+          recordBridgeEvent("session.mode.changed", {
+            mode,
+            sessionId: target.workspaceSessionId,
+            surfacePiSessionId: target.surfacePiSessionId,
+          });
+        } else {
+          recordBridgeError("rpc", result.error ?? "Session mode update failed.", "bun.session", {
+            mode,
+            sessionId: target.workspaceSessionId,
+            surfacePiSessionId: target.surfacePiSessionId,
+          });
+        }
+        return result;
+      },
       forkSession: async ({ sessionId, title }: { sessionId: string; title?: string }) => {
         const session = await workspaceSessionCatalog.forkSession(
           { sessionId, title },

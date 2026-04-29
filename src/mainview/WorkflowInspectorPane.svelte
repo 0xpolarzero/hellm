@@ -3,6 +3,8 @@
   import SearchIcon from "@lucide/svelte/icons/search";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+  import ClockIcon from "@lucide/svelte/icons/clock";
+  import GitBranchIcon from "@lucide/svelte/icons/git-branch";
   import type {
     WorkspaceWorkflowInspectorMode,
     WorkspaceWorkflowInspectorNode,
@@ -12,6 +14,7 @@
   import type { ChatRuntime } from "./chat-runtime";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
+  import WorkflowGraph from "./WorkflowGraph.svelte";
 
   type Props = {
     runtime: ChatRuntime;
@@ -43,6 +46,8 @@
       .filter((node): node is WorkspaceWorkflowInspectorNode => Boolean(node)),
   );
   const activeTabs = $derived((inspector?.detailTabs ?? []).filter((tab) => !tab.empty || tab.id === "raw"));
+  const completedNodeCount = $derived((inspector?.tree.nodes ?? []).filter((node) => node.status === "completed").length);
+  const totalNodeCount = $derived(inspector?.tree.nodes.length ?? 0);
 
   onMount(() => {
     void loadInspector();
@@ -166,8 +171,8 @@
       void loadInspector();
     } else if (event.key === "ArrowRight" && selectedNode) {
       event.preventDefault();
-      const hasChildren = inspector?.tree.nodes.some((node) => node.parentKey === selectedNode.key);
-      if (hasChildren && !expandedNodeKeys.includes(selectedNode.key)) {
+      const nodeHasChildren = inspector?.tree.nodes.some((node) => node.parentKey === selectedNode.key);
+      if (nodeHasChildren && !expandedNodeKeys.includes(selectedNode.key)) {
         expandedNodeKeys = [...expandedNodeKeys, selectedNode.key];
         userCollapsedNodeKeys = userCollapsedNodeKeys.filter((key) => key !== selectedNode.key);
         void loadInspector();
@@ -200,6 +205,22 @@
     if (content == null) return "";
     if (typeof content === "string") return content;
     return JSON.stringify(content, null, 2);
+  }
+
+  function formatElapsed(ms: number | null): string | null {
+    if (ms == null) return null;
+    if (ms < 1000) return `${ms}ms`;
+    const seconds = Math.round(ms / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes}m ${seconds % 60}s`;
+  }
+
+  function runElapsed(): string | null {
+    const started = inspector?.runHeader.startedAt ? Date.parse(inspector.runHeader.startedAt) : NaN;
+    const finished = inspector?.runHeader.finishedAt ? Date.parse(inspector.runHeader.finishedAt) : Date.now();
+    if (!Number.isFinite(started) || !Number.isFinite(finished)) return null;
+    return formatElapsed(Math.max(0, finished - started));
   }
 
   function statusTone(status: string): "neutral" | "success" | "warning" | "danger" {
@@ -264,15 +285,20 @@
     <div class="workflow-inspector-error">{error}</div>
   {:else if inspector}
     <header class="workflow-inspector-header">
-      <div>
-        <p>Workflow Inspector</p>
+      <div class="workflow-inspector-title">
         <h3>{inspector.runHeader.workflowLabel}</h3>
+        <code>{inspector.runHeader.runId}</code>
       </div>
       <div class="workflow-inspector-header-meta">
         <Badge tone={statusTone(inspector.runHeader.svvyStatus)}>{inspector.runHeader.svvyStatus}</Badge>
         <span>{inspector.runHeader.smithersStatus}</span>
-        <code>{inspector.runHeader.runId}</code>
-        <span>{inspector.runHeader.owningHandlerThreadTitle}</span>
+        {#if runElapsed()}
+          <span class="workflow-meta-icon"><ClockIcon size={12} aria-hidden="true" />{runElapsed()}</span>
+        {/if}
+        <span>{completedNodeCount}/{totalNodeCount} nodes</span>
+        <span class="workflow-meta-icon">
+          <GitBranchIcon size={12} aria-hidden="true" />{inspector.runHeader.owningHandlerThreadTitle}
+        </span>
         {#if inspector.mode.kind === "historical"}
           <Button variant="ghost" size="sm" onclick={() => { mode = { kind: "live" }; void loadInspector(); }}>
             Return live
@@ -285,81 +311,32 @@
     </header>
 
     <div class="workflow-inspector-body">
-      <aside class="workflow-inspector-tree">
-        <label class="workflow-inspector-search">
-          <SearchIcon aria-hidden="true" size={14} />
-          <input
-            bind:this={searchInput}
-            bind:value={searchQuery}
-            placeholder="Search nodes"
-            oninput={() => void loadInspector()}
-          />
-        </label>
-        <div class="workflow-inspector-frame-strip" aria-label="Workflow frames">
-          {#each inspector.frames.slice(0, 18) as frame (frame.frameNo)}
-            <button
-              type="button"
-              class:active={inspector.mode.kind === "historical" && inspector.mode.frameNo === frame.frameNo}
-              onclick={() => { mode = { kind: "historical", frameNo: frame.frameNo }; void loadInspector(); }}
-            >
-              {frame.frameNo}
-            </button>
-          {/each}
+      <section class="workflow-graph-panel" aria-label="Workflow graph">
+        <div class="workflow-graph-toolbar">
+          <label class="workflow-inspector-search">
+            <SearchIcon aria-hidden="true" size={14} />
+            <input
+              bind:this={searchInput}
+              bind:value={searchQuery}
+              placeholder="Search nodes"
+              oninput={() => void loadInspector()}
+            />
+          </label>
+          <div class="workflow-inspector-frame-strip" aria-label="Workflow frames">
+            {#each inspector.frames.slice(0, 18) as frame (frame.frameNo)}
+              <button
+                type="button"
+                class:active={inspector.mode.kind === "historical" && inspector.mode.frameNo === frame.frameNo}
+                onclick={() => { mode = { kind: "historical", frameNo: frame.frameNo }; void loadInspector(); }}
+                title={frame.label}
+              >
+                {frame.frameNo}
+              </button>
+            {/each}
+          </div>
         </div>
-        <div
-          class="workflow-tree-rows"
-          tabindex="0"
-          role="tree"
-          aria-label="Workflow node tree"
-          aria-activedescendant={selectedNodeKey ? treeItemId(selectedNodeKey) : undefined}
-          onkeydown={handleTreeKeydown}
-        >
-          {#each visibleNodes as node (node.key)}
-            <div
-              id={treeItemId(node.key)}
-              role="treeitem"
-              tabindex="-1"
-              aria-selected={node.key === selectedNodeKey}
-              aria-expanded={hasChildren(node) ? expandedNodeKeys.includes(node.key) : undefined}
-              class={`workflow-tree-row ${node.key === selectedNodeKey ? "selected" : ""} status-${node.status}`.trim()}
-              style={`--depth: ${depthFor(node)}`}
-              onclick={() => selectNode(node.key)}
-              onkeydown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  selectNode(node.key);
-                }
-              }}
-            >
-              <span class="workflow-tree-twist">
-                {#if hasChildren(node)}
-                  <button
-                    type="button"
-                    class="workflow-tree-toggle"
-                    aria-label={expandedNodeKeys.includes(node.key) ? "Collapse node" : "Expand node"}
-                    onclick={(event) => { event.stopPropagation(); toggleNode(node); }}
-                  >
-                    {#if expandedNodeKeys.includes(node.key)}
-                      <ChevronDownIcon size={13} />
-                    {:else}
-                      <ChevronRightIcon size={13} />
-                    {/if}
-                  </button>
-                {/if}
-              </span>
-              <span class="workflow-tree-status-dot" aria-hidden="true"></span>
-              <span class="workflow-tree-type">{node.type}</span>
-              <span class="workflow-tree-label">{node.label}</span>
-              {#if node.latestActivity}
-                <span class="workflow-tree-preview">{node.latestActivity}</span>
-              {/if}
-              {#if node.hasFailedDescendant}<span class="workflow-descendant failed">failed</span>{/if}
-              {#if node.hasWaitingDescendant}<span class="workflow-descendant waiting">waiting</span>{/if}
-              <Badge tone={statusTone(node.status)}>{node.status}</Badge>
-            </div>
-          {/each}
-        </div>
-      </aside>
+        <WorkflowGraph nodes={visibleNodes} {selectedNodeKey} onSelect={selectNode} />
+      </section>
 
       <section class="workflow-node-inspector">
         {#if selectedNode}
@@ -372,6 +349,7 @@
           </header>
           <div class="workflow-node-meta">
             <span>{selectedNode.smithersNodeId ?? "run root"}</span>
+            {#if formatElapsed(selectedNode.timing.elapsedMs)}<span>{formatElapsed(selectedNode.timing.elapsedMs)}</span>{/if}
             {#if selectedNode.detail.worktree}<span>{selectedNode.detail.worktree}</span>{/if}
             {#if selectedNode.task?.workflowTaskAttemptId}<span>{selectedNode.task.workflowTaskAttemptId}</span>{/if}
             {#if selectedNode.projectCi}<span>{selectedNode.projectCi.checkId}</span>{/if}
@@ -413,6 +391,53 @@
         {:else}
           <div class="workflow-inspector-empty">Select a workflow node.</div>
         {/if}
+        <div
+          class="workflow-tree-rows"
+          tabindex="0"
+          role="tree"
+          aria-label="Workflow node list"
+          aria-activedescendant={selectedNodeKey ? treeItemId(selectedNodeKey) : undefined}
+          onkeydown={handleTreeKeydown}
+        >
+          {#each visibleNodes as node (node.key)}
+            <div
+              id={treeItemId(node.key)}
+              role="treeitem"
+              tabindex="-1"
+              aria-selected={node.key === selectedNodeKey}
+              aria-expanded={hasChildren(node) ? expandedNodeKeys.includes(node.key) : undefined}
+              class={`workflow-tree-row ${node.key === selectedNodeKey ? "selected" : ""} status-${node.status}`.trim()}
+              style={`--depth: ${depthFor(node)}`}
+              onclick={() => selectNode(node.key)}
+              onkeydown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  selectNode(node.key);
+                }
+              }}
+            >
+              <span class="workflow-tree-twist">
+                {#if hasChildren(node)}
+                  <button
+                    type="button"
+                    class="workflow-tree-toggle"
+                    aria-label={expandedNodeKeys.includes(node.key) ? "Collapse node" : "Expand node"}
+                    onclick={(event) => { event.stopPropagation(); toggleNode(node); }}
+                  >
+                    {#if expandedNodeKeys.includes(node.key)}
+                      <ChevronDownIcon size={13} />
+                    {:else}
+                      <ChevronRightIcon size={13} />
+                    {/if}
+                  </button>
+                {/if}
+              </span>
+              <span class="workflow-tree-status-dot" aria-hidden="true"></span>
+              <span class="workflow-tree-label">{node.label}</span>
+              <span class="workflow-tree-type">{node.type}</span>
+            </div>
+          {/each}
+        </div>
       </section>
     </div>
   {:else}
@@ -446,13 +471,19 @@
     background: color-mix(in oklab, var(--ui-surface-subtle) 88%, transparent);
   }
 
-  .workflow-inspector-header p,
   .workflow-node-header p {
     margin: 0 0 0.18rem;
     color: var(--ui-text-secondary);
     font-family: var(--font-mono);
     font-size: 0.68rem;
     text-transform: uppercase;
+  }
+
+  .workflow-inspector-title {
+    display: flex;
+    align-items: baseline;
+    gap: 0.58rem;
+    min-width: 0;
   }
 
   .workflow-inspector-header h3,
@@ -463,6 +494,17 @@
     font-size: 0.92rem;
     line-height: 1.22;
     font-weight: 660;
+  }
+
+  .workflow-inspector-title code {
+    min-width: 0;
+    max-width: 12rem;
+    overflow: hidden;
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .workflow-inspector-header-meta,
@@ -478,7 +520,6 @@
   }
 
   .workflow-inspector-header-meta span,
-  .workflow-inspector-header-meta code,
   .workflow-node-meta span {
     min-width: 0;
     max-width: 14rem;
@@ -490,25 +531,39 @@
     font-size: 0.66rem;
   }
 
+  .workflow-meta-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.24rem;
+  }
+
   .workflow-inspector-body {
     display: grid;
-    grid-template-columns: minmax(18rem, 0.82fr) minmax(0, 1.18fr);
+    grid-template-columns: minmax(25rem, 1fr) minmax(18rem, 0.36fr);
     min-height: 0;
   }
 
-  .workflow-inspector-tree,
+  .workflow-graph-panel,
   .workflow-node-inspector {
     min-height: 0;
     overflow: auto;
   }
 
-  .workflow-inspector-tree {
+  .workflow-graph-panel {
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
-    gap: 0.58rem;
-    padding: 0.72rem;
+    grid-template-rows: auto minmax(0, 1fr);
     border-right: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 78%, transparent);
+    overflow: hidden;
+  }
+
+  .workflow-graph-toolbar {
+    display: grid;
+    grid-template-columns: minmax(10rem, 16rem) minmax(0, 1fr);
+    align-items: center;
+    gap: 0.54rem;
+    padding: 0.58rem 0.68rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 70%, transparent);
   }
 
   .workflow-inspector-search {
@@ -541,6 +596,7 @@
 
   .workflow-inspector-frame-strip {
     display: flex;
+    justify-content: flex-end;
     gap: 0.28rem;
     min-width: 0;
     overflow-x: auto;
@@ -575,8 +631,10 @@
     display: grid;
     align-content: start;
     gap: 0.24rem;
+    max-height: 13rem;
     min-height: 0;
     overflow: auto;
+    padding-top: 0.1rem;
   }
 
   .workflow-tree-rows:focus-visible {
@@ -586,12 +644,12 @@
 
   .workflow-tree-row {
     display: grid;
-    grid-template-columns: 1.1rem 0.5rem auto minmax(6rem, 1fr) auto auto auto;
+    grid-template-columns: 1.05rem 0.5rem minmax(4rem, 1fr) auto;
     align-items: center;
     gap: 0.38rem;
     min-width: 0;
-    min-height: 2.2rem;
-    padding: 0.38rem 0.42rem 0.38rem calc(0.42rem + var(--depth) * 0.85rem);
+    min-height: 1.9rem;
+    padding: 0.28rem 0.42rem 0.28rem calc(0.34rem + var(--depth) * 0.62rem);
     border: 1px solid transparent;
     border-radius: var(--ui-radius-sm);
     cursor: pointer;
@@ -609,7 +667,7 @@
 
   .workflow-tree-row.selected {
     border-color: color-mix(in oklab, var(--ui-border-accent) 72%, var(--ui-border-soft));
-    box-shadow: inset 2px 0 0 var(--ui-accent);
+    background: color-mix(in oklab, var(--ui-accent-soft) 54%, var(--ui-surface-raised));
   }
 
   .workflow-tree-toggle {
@@ -675,15 +733,6 @@
     font-weight: 610;
   }
 
-  .workflow-tree-preview {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--ui-text-tertiary);
-    font-size: 0.68rem;
-  }
-
   .workflow-descendant {
     padding: 0.1rem 0.32rem;
     border-radius: 999px;
@@ -701,8 +750,9 @@
   .workflow-node-inspector {
     display: grid;
     align-content: start;
-    gap: 0.74rem;
-    padding: 0.84rem;
+    gap: 0.62rem;
+    padding: 0.72rem;
+    background: color-mix(in oklab, var(--ui-surface-subtle) 64%, transparent);
   }
 
   .workflow-node-header,
@@ -753,7 +803,7 @@
   .workflow-node-props pre,
   .workflow-node-tab-content {
     margin: 0;
-    max-height: 22rem;
+    max-height: 15rem;
     overflow: auto;
     padding: 0.76rem 0.82rem;
     background: color-mix(in oklab, var(--ui-code) 94%, transparent);
@@ -807,17 +857,21 @@
       grid-template-columns: 1fr;
     }
 
-    .workflow-inspector-tree {
-      max-height: 42vh;
+    .workflow-graph-panel {
+      min-height: 45vh;
       border-right: 0;
       border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
     }
 
-    .workflow-tree-row {
-      grid-template-columns: 1.1rem 0.5rem auto minmax(4rem, 1fr) auto;
+    .workflow-graph-toolbar {
+      grid-template-columns: 1fr;
+      align-items: stretch;
     }
 
-    .workflow-tree-preview,
+    .workflow-inspector-frame-strip {
+      justify-content: flex-start;
+    }
+
     .workflow-descendant {
       display: none;
     }

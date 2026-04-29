@@ -26,7 +26,7 @@ test("real app boots and renders the workspace shell", async () => {
 
     const titleInput = page.locator('input[placeholder="Session title"]');
     await titleInput.fill(nextTitle);
-    await page.getByRole("button", { name: "Save" }).click();
+    await dialog.getByRole("button", { name: "Save" }).click();
 
     await page
       .getByRole("button", {

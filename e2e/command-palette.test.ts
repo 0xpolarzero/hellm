@@ -151,12 +151,12 @@ function seededSessions(): SeedSessionInput[] {
 }
 
 async function openActionsPalette(page: SvvyApp["page"]): Promise<void> {
-  await page.locator(".workspace-footer .statusbar-icon").nth(0).click({ force: true });
+  await page.getByRole("button", { name: "Open command palette" }).click({ force: true });
   await page.getByTestId("command-palette").waitFor({ state: "visible" });
 }
 
 async function openQuickOpen(page: SvvyApp["page"]): Promise<void> {
-  await page.locator(".workspace-footer .statusbar-icon").nth(1).click({ force: true });
+  await page.getByRole("button", { name: "Open quick open" }).click({ force: true });
   await page.getByTestId("quick-open").waitFor({ state: "visible" });
 }
 

@@ -38,6 +38,19 @@
 		return null;
 	}
 
+	function isDiffArtifact(filename: string): boolean {
+		const lower = filename.toLowerCase();
+		return lower.endsWith(".diff") || lower.endsWith(".patch");
+	}
+
+	function diffLineClass(line: string): string {
+		if (line.startsWith("+++") || line.startsWith("---")) return "diff-line diff-file";
+		if (line.startsWith("@@")) return "diff-line diff-hunk";
+		if (line.startsWith("+")) return "diff-line diff-add";
+		if (line.startsWith("-")) return "diff-line diff-remove";
+		return "diff-line";
+	}
+
 	const activeKind = $derived(activeArtifact ? getArtifactKind(activeArtifact.filename) : null);
 </script>
 
@@ -109,6 +122,15 @@
 					{:else}
 						<pre class="artifact-code">{activeArtifact.content}</pre>
 					{/if}
+				{:else if isDiffArtifact(activeArtifact.filename)}
+					<div class="diff-viewer" aria-label={`Diff preview for ${activeArtifact.filename}`}>
+						{#each activeArtifact.content.split("\n") as line, index (`${index}:${line}`)}
+							<div class={diffLineClass(line)}>
+								<span class="diff-line-number">{index + 1}</span>
+								<code>{line || " "}</code>
+							</div>
+						{/each}
+					</div>
 				{:else}
 					<pre class="artifact-code">{activeArtifact.content}</pre>
 				{/if}
@@ -123,9 +145,7 @@
 		display: flex;
 		flex-direction: column;
 		height: 100%;
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-raised) 78%, transparent), transparent),
-			var(--ui-surface);
+		background: var(--ui-surface);
 	}
 
 	.overlay {
@@ -140,9 +160,9 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.8rem;
-		padding: 0.82rem 0.9rem;
+		padding: 0.62rem 0.78rem;
 		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
-		background: color-mix(in oklab, var(--ui-surface-subtle) 92%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-subtle) 86%, transparent);
 	}
 
 	.artifacts-heading {
@@ -152,9 +172,9 @@
 
 	h2 {
 		margin: 0;
-		font-size: 0.92rem;
+		font-size: 0.82rem;
 		font-weight: 660;
-		letter-spacing: -0.03em;
+		letter-spacing: 0;
 		color: var(--ui-text-primary);
 	}
 
@@ -167,7 +187,7 @@
 
 	.artifacts-body {
 		display: grid;
-		grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr);
+		grid-template-columns: minmax(13rem, 15.5rem) minmax(0, 1fr);
 		flex: 1;
 		min-height: 0;
 	}
@@ -175,8 +195,8 @@
 	.artifact-list {
 		display: flex;
 		flex-direction: column;
-		gap: 0.4rem;
-		padding: 0.7rem;
+		gap: 0;
+		padding: 0.35rem;
 		border-right: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
 		overflow: auto;
 		background: color-mix(in oklab, var(--ui-surface-subtle) 84%, transparent);
@@ -184,9 +204,9 @@
 
 	.tab {
 		display: grid;
-		gap: 0.22rem;
-		padding: 0.68rem 0.82rem;
-		border-radius: var(--ui-radius-md);
+		gap: 0.16rem;
+		padding: 0.48rem 0.58rem;
+		border-radius: var(--ui-radius-sm);
 		border: 1px solid transparent;
 		background: transparent;
 		text-align: left;
@@ -202,19 +222,20 @@
 	}
 
 	.tab.active {
-		border-color: color-mix(in oklab, var(--ui-border-accent) 76%, var(--ui-border-soft));
-		background: color-mix(in oklab, var(--ui-accent-soft) 72%, var(--ui-surface-raised));
+		border-color: color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-raised) 90%, transparent);
+		box-shadow: inset 2px 0 0 var(--ui-accent);
 	}
 
 	.tab strong {
-		font-size: 0.78rem;
+		font-size: 0.72rem;
 		font-weight: 640;
 		color: var(--ui-text-primary);
 		word-break: break-word;
 	}
 
 	.tab span {
-		font-size: 0.69rem;
+		font-size: 0.64rem;
 		font-family: var(--font-mono);
 		line-height: 1.45;
 		color: var(--ui-text-secondary);
@@ -226,8 +247,8 @@
 		min-height: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 0.85rem;
-		padding: 0.9rem;
+		gap: 0.62rem;
+		padding: 0.72rem;
 	}
 
 	.artifact-meta {
@@ -235,8 +256,8 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.8rem;
-		padding: 0.82rem 0.88rem;
-		border-radius: var(--ui-radius-md);
+		padding: 0.56rem 0.66rem;
+		border-radius: var(--ui-radius-sm);
 		background: color-mix(in oklab, var(--ui-surface-subtle) 88%, transparent);
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 	}
@@ -278,16 +299,16 @@
 	}
 
 	.artifact-name {
-		font-size: 0.94rem;
+		font-size: 0.78rem;
 		font-weight: 660;
-		letter-spacing: -0.02em;
+		letter-spacing: 0;
 		color: var(--ui-text-primary);
 	}
 
 	.artifact-updated,
 	.artifact-logs p {
-		margin-top: 0.2rem;
-		font-size: 0.68rem;
+		margin-top: 0.14rem;
+		font-size: 0.64rem;
 		color: var(--ui-text-secondary);
 		font-family: var(--font-mono);
 	}
@@ -305,34 +326,90 @@
 	.artifact-preview,
 	.artifact-code,
 	.artifact-media-shell,
-	.artifact-logs {
-		border-radius: var(--ui-radius-md);
+	.artifact-logs,
+	.diff-viewer {
+		border-radius: var(--ui-radius-sm);
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 		background: color-mix(in oklab, var(--ui-code) 94%, transparent);
 	}
 
 	.html-preview {
 		flex: 1;
-		min-height: 24rem;
+		min-height: 22rem;
 		width: 100%;
-		background: white;
+		background: var(--ui-bg-elevated);
 	}
 
 	.artifact-code,
 	.artifact-logs pre {
 		margin: 0;
-		padding: 1rem 1.05rem;
+		padding: 0.78rem 0.82rem;
 		overflow: auto;
 		font-family: var(--font-mono);
-		font-size: 0.76rem;
-		line-height: 1.65;
+		font-size: 0.7rem;
+		line-height: 1.58;
 		color: var(--ui-text-primary);
 		white-space: pre-wrap;
 	}
 
+	.diff-viewer {
+		min-height: 0;
+		overflow: auto;
+		font-family: var(--font-mono);
+		font-size: 0.68rem;
+		line-height: 1.55;
+	}
+
+	.diff-line {
+		display: grid;
+		grid-template-columns: 3.2rem minmax(0, 1fr);
+		min-width: max-content;
+		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 38%, transparent);
+		color: var(--ui-text-secondary);
+	}
+
+	.diff-line:last-child {
+		border-bottom: 0;
+	}
+
+	.diff-line-number {
+		padding: 0.08rem 0.58rem;
+		border-right: 1px solid color-mix(in oklab, var(--ui-border-soft) 62%, transparent);
+		color: var(--ui-text-tertiary);
+		text-align: right;
+		user-select: none;
+	}
+
+	.diff-line code {
+		padding: 0.08rem 0.62rem;
+		color: inherit;
+		font-family: inherit;
+		white-space: pre;
+	}
+
+	.diff-hunk {
+		background: color-mix(in oklab, var(--ui-info-soft) 70%, transparent);
+		color: color-mix(in oklab, var(--ui-info) 82%, var(--ui-text-primary));
+	}
+
+	.diff-file {
+		background: color-mix(in oklab, var(--ui-surface-subtle) 84%, transparent);
+		color: var(--ui-text-primary);
+	}
+
+	.diff-add {
+		background: color-mix(in oklab, var(--ui-success-soft) 68%, transparent);
+		color: color-mix(in oklab, var(--ui-success) 82%, var(--ui-text-primary));
+	}
+
+	.diff-remove {
+		background: color-mix(in oklab, var(--ui-danger-soft) 68%, transparent);
+		color: color-mix(in oklab, var(--ui-danger) 82%, var(--ui-text-primary));
+	}
+
 	.artifact-media-shell,
 	.artifact-logs {
-		padding: 1rem 1.05rem;
+		padding: 0.78rem 0.82rem;
 	}
 
 	.artifact-image {

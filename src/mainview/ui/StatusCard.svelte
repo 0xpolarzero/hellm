@@ -35,40 +35,39 @@
 		display: grid;
 		place-items: center;
 		height: 100%;
-		min-height: 18rem;
+		min-height: 13rem;
 		text-align: left;
-		border: none;
-		background:
-			radial-gradient(circle at top left, color-mix(in oklab, var(--ui-accent) 10%, transparent), transparent 30%),
-			transparent;
+		border: 1px solid var(--ui-border-soft);
+		background: color-mix(in oklab, var(--ui-surface-subtle) 72%, transparent);
 	}
 
 	.ui-status-copy {
-		max-width: 34rem;
-		padding: clamp(1rem, 2vw, 1.3rem);
+		max-width: 30rem;
+		padding: 1rem;
 	}
 
 	.ui-status-eyebrow {
-		margin: 0 0 0.32rem;
-		font-size: 0.66rem;
+		margin: 0 0 0.24rem;
+		font-family: var(--font-mono);
+		font-size: 0.6rem;
 		font-weight: 620;
-		letter-spacing: 0.04em;
+		letter-spacing: 0;
 		color: color-mix(in oklab, var(--ui-accent-strong) 86%, var(--ui-text-primary));
 	}
 
 	h2 {
 		margin: 0;
-		font-size: 1.32rem;
+		font-size: 1rem;
 		font-weight: 680;
-		letter-spacing: -0.035em;
+		letter-spacing: 0;
 		color: var(--ui-text-primary);
 	}
 
 	p {
-		margin: 0.55rem 0 0;
-		max-width: 31rem;
-		font-size: 0.9rem;
-		line-height: 1.6;
+		margin: 0.42rem 0 0;
+		max-width: 28rem;
+		font-size: 0.78rem;
+		line-height: 1.48;
 		color: var(--ui-text-secondary);
 	}
 
@@ -79,7 +78,7 @@
 	}
 
 	.ui-status-extra {
-		margin-top: 1rem;
+		margin-top: 0.72rem;
 	}
 
 	@media (max-width: 720px) {

@@ -122,7 +122,7 @@ function workspaceShellArtifactSession(): SeedSessionInput {
 
 async function waitForShellChrome(page: Page): Promise<void> {
   await page.locator(".workspace-titlebar").waitFor({ state: "visible" });
-  await page.locator(".workspace-footer").waitFor({ state: "visible" });
+  await page.locator(".composer-shell").waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Open settings" }).waitFor({ state: "visible" });
 }
 
@@ -140,7 +140,7 @@ test("keeps the workspace chrome visible while toggling the sidebar and opening 
     expect((await app.page.locator(".workspace-titlebar-title").textContent())?.trim()).toBe(
       "svvy",
     );
-    expect((await app.page.locator(".workspace-main-meta").textContent()) ?? "").toContain("Ready");
+    expect((await app.page.locator(".workspace-main-copy").textContent()) ?? "").toContain("Ready");
     expect((await app.page.locator(".workspace-main-meta").textContent()) ?? "").toContain(
       "Waiting for first turn",
     );
@@ -153,7 +153,7 @@ test("keeps the workspace chrome visible while toggling the sidebar and opening 
     await hideButton.click();
     await app.page.locator(".session-sidebar").waitFor({ state: "hidden" });
     expect((await app.page.attrs("css:.titlebar-icon")).attributes["aria-pressed"]).toBe("false");
-    expect(await app.page.locator(".workspace-footer").isVisible()).toBe(true);
+    expect(await app.page.locator(".composer-shell").isVisible()).toBe(true);
 
     await app.page.getByRole("button", { name: "Show sidebar" }).click();
     await app.page.locator(".session-sidebar").waitFor({ state: "visible" });
@@ -162,12 +162,12 @@ test("keeps the workspace chrome visible while toggling the sidebar and opening 
     await app.page.getByRole("button", { name: "Hide sidebar" }).click();
     await app.page.locator(".session-sidebar").waitFor({ state: "hidden" });
 
-    await app.page.locator(".workspace-footer .statusbar-icon").nth(2).click({ force: true });
+    await app.page.getByRole("button", { name: "Open settings" }).click({ force: true });
     const settings = app.page.getByRole("dialog", { name: "Settings" });
     await settings.waitFor({ state: "visible" });
 
     expect(await app.page.locator(".workspace-titlebar").isVisible()).toBe(true);
-    expect(await app.page.locator(".workspace-footer").isVisible()).toBe(true);
+    expect(await app.page.locator(".composer-shell").isVisible()).toBe(true);
     expect(await app.page.locator(".session-sidebar").isVisible()).toBe(false);
     expect(await app.page.getByRole("button", { name: "Show sidebar" }).isVisible()).toBe(true);
 
@@ -208,7 +208,7 @@ test("renders artifact output as a mobile overlay at the app's narrow shell widt
         .waitFor({ state: "visible", timeout: 15_000 });
       expect(await app.page.locator(".artifacts-slot.desktop-open").count()).toBe(0);
       expect(await app.page.locator(".workspace-titlebar").isVisible()).toBe(true);
-      expect(await app.page.locator(".workspace-footer").isVisible()).toBe(true);
+      expect(await app.page.locator(".composer-shell").isVisible()).toBe(true);
     },
   );
 });

@@ -85,7 +85,7 @@ async function expectHeaderMeta(
   },
 ): Promise<void> {
   const title = page.locator(".workspace-main-title");
-  const badge = page.locator(".workspace-main-meta .ui-badge");
+  const badge = page.locator(".workspace-main-copy .ui-badge");
   const metaSpans = page.locator(".workspace-main-meta > span:not(.ui-badge)");
 
   await title.waitFor({ state: "visible" });
@@ -118,7 +118,7 @@ test("projects the main header from the active session and updates when switchin
       title: "Header Alpha",
       status: "Ready",
       turns: "2 turns",
-      toolRuns: "1 tool runs",
+      toolRuns: "1 tool run",
       activity: "Last activity",
     });
     const alphaActivity = await readLastActivityLabel(page);

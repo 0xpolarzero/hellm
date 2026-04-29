@@ -1,8 +1,11 @@
 <script lang="ts">
   import EllipsisVerticalIcon from "@lucide/svelte/icons/ellipsis-vertical";
+  import { onMount } from "svelte";
   import type { WorkspaceSessionSummary } from "../shared/workspace-contract";
   import { formatRelativeSessionTime, formatSessionStatusLabel } from "./session-format";
   import Button from "./ui/Button.svelte";
+
+  const SESSION_MENU_OPEN_EVENT = "svvy-session-menu-open";
 
   type Props = {
     session: WorkspaceSessionSummary;
@@ -42,6 +45,18 @@
 
   let menuOpen = $state(false);
   let menuRoot = $state<HTMLDivElement | null>(null);
+
+  onMount(() => {
+    function closeWhenAnotherMenuOpens(event: Event) {
+      const nextSessionId = event instanceof CustomEvent ? event.detail?.sessionId : undefined;
+      if (nextSessionId !== session.id) {
+        menuOpen = false;
+      }
+    }
+
+    window.addEventListener(SESSION_MENU_OPEN_EVENT, closeWhenAnotherMenuOpens);
+    return () => window.removeEventListener(SESSION_MENU_OPEN_EVENT, closeWhenAnotherMenuOpens);
+  });
 
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === "ArrowUp") {
@@ -183,6 +198,9 @@
       aria-label={`Session actions for ${session.title}`}
       onclick={(event) => {
         event.stopPropagation();
+        if (!menuOpen) {
+          window.dispatchEvent(new CustomEvent(SESSION_MENU_OPEN_EVENT, { detail: { sessionId: session.id } }));
+        }
         menuOpen = !menuOpen;
       }}
     >
@@ -221,17 +239,17 @@
     position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 0.25rem;
+    gap: 0.12rem;
     align-items: center;
-    border-radius: calc(var(--ui-radius-lg) + 0.12rem);
+    border-radius: var(--ui-radius-md);
   }
 
   .session-main {
     position: relative;
     width: 100%;
     min-width: 0;
-    padding: 0.64rem 0.72rem 0.7rem 0.92rem;
-    border-radius: calc(var(--ui-radius-md) + 0.16rem);
+    padding: 0.46rem 0.46rem 0.5rem 0.9rem;
+    border-radius: var(--ui-radius-md);
     border: 1px solid transparent;
     background: transparent;
     color: inherit;
@@ -247,10 +265,10 @@
   .session-main::before {
     content: "";
     position: absolute;
-    top: 0.5rem;
-    bottom: 0.5rem;
-    left: 0.28rem;
-    width: 0.14rem;
+    top: 0.42rem;
+    bottom: 0.42rem;
+    left: 0.36rem;
+    width: 0.16rem;
     border-radius: 999px;
     background: transparent;
     transition: background-color 160ms cubic-bezier(0.19, 1, 0.22, 1);
@@ -271,10 +289,10 @@
   }
 
   .active .session-main {
-    border-color: color-mix(in oklab, var(--ui-border-accent) 72%, transparent);
+    border-color: color-mix(in oklab, var(--ui-accent) 22%, var(--ui-border-soft));
     background:
-      linear-gradient(180deg, color-mix(in oklab, var(--ui-accent-soft) 52%, transparent), transparent),
-      color-mix(in oklab, var(--ui-surface-subtle) 86%, transparent);
+      linear-gradient(90deg, color-mix(in oklab, var(--ui-accent-soft) 62%, transparent), transparent 58%),
+      color-mix(in oklab, var(--ui-surface-subtle) 78%, transparent);
   }
 
   .active .session-main::before {
@@ -301,21 +319,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.76rem;
-    font-weight: 640;
-    letter-spacing: -0.02em;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0;
   }
 
   .session-main-top span {
     flex-shrink: 0;
-    font-size: 0.62rem;
+    font-family: var(--font-mono);
+    font-size: 0.54rem;
     color: var(--ui-text-tertiary);
   }
 
   .session-main-body {
     display: grid;
-    gap: 0.24rem;
-    margin-top: 0.32rem;
+    gap: 0.2rem;
+    margin-top: 0.22rem;
     min-width: 0;
   }
 
@@ -325,8 +344,8 @@
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
-    font-size: 0.68rem;
-    line-height: 1.35;
+    font-size: 0.62rem;
+    line-height: 1.28;
     color: var(--ui-text-secondary);
   }
 
@@ -334,29 +353,30 @@
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 0.28rem;
+    gap: 0.22rem;
   }
 
   .session-progress-pill {
     display: inline-flex;
     align-items: center;
-    min-height: 1rem;
-    padding: 0.14rem 0.38rem;
-    border-radius: 999px;
+    min-height: 0.95rem;
+    padding: 0.1rem 0.32rem;
+    border-radius: var(--ui-radius-sm);
     background: color-mix(in oklab, var(--ui-surface-subtle) 84%, transparent);
     color: var(--ui-text-tertiary);
-    font-size: 0.56rem;
-    font-weight: 620;
-    letter-spacing: 0.02em;
+    font-family: var(--font-mono);
+    font-size: 0.52rem;
+    font-weight: 500;
+    letter-spacing: 0;
     white-space: nowrap;
   }
 
   .session-main-meta {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.36rem;
     flex-wrap: wrap;
-    margin-top: 0.34rem;
+    margin-top: 0.28rem;
   }
 
   .session-navigation-meta {
@@ -370,9 +390,10 @@
     align-items: center;
     gap: 0.26rem;
     min-height: 0.9rem;
-    font-size: 0.61rem;
-    font-weight: 620;
-    letter-spacing: 0.02em;
+    font-family: var(--font-mono);
+    font-size: 0.54rem;
+    font-weight: 500;
+    letter-spacing: 0;
     line-height: 1;
     white-space: nowrap;
     color: var(--ui-text-tertiary);
@@ -403,7 +424,7 @@
 
   .session-surface {
     padding-inline: 0.36rem;
-    border-radius: 999px;
+    border-radius: var(--ui-radius-sm);
     background: color-mix(in oklab, var(--ui-accent-soft) 72%, transparent);
     color: color-mix(in oklab, var(--ui-accent) 80%, var(--ui-text-primary));
     text-transform: uppercase;
@@ -424,8 +445,9 @@
   }
 
   .session-menu-trigger {
-    min-width: 1.85rem;
-    padding-inline: 0.38rem;
+    min-width: 1.35rem;
+    min-height: 1.35rem;
+    padding-inline: 0.18rem;
   }
 
   .session-menu {

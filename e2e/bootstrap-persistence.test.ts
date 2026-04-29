@@ -202,8 +202,8 @@ test("renaming a session persists across relaunch on the same home dir", async (
 
       const dialog = firstLaunch.page.getByRole("dialog", { name: "Rename Session" });
       await dialog.waitFor({ state: "visible" });
-      await firstLaunch.page.locator('input[placeholder="Session title"]').fill(renamedTitle);
-      await firstLaunch.page.getByRole("button", { name: "Save" }).click();
+      await dialog.locator('input[placeholder="Session title"]').fill(renamedTitle);
+      await dialog.getByRole("button", { name: "Save" }).click();
 
       await firstLaunch.page
         .getByRole("button", {

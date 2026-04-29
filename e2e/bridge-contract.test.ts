@@ -218,12 +218,12 @@ async function openActiveSessionMenu(page: SvvyApp["page"]): Promise<void> {
 }
 
 async function openModelPicker(page: SvvyApp["page"]): Promise<void> {
-  await page.locator(".model-control").click();
+  await page.locator(".composer-row-actions .model-control").click({ force: true });
   await page.getByRole("dialog", { name: "Select a model" }).waitFor({ state: "visible" });
 }
 
 async function openReasoningMenu(page: SvvyApp["page"]): Promise<void> {
-  await page.getByRole("button", { name: "Thinking level" }).click();
+  await page.locator(".thinking-field").first().click({ force: true });
   await page.locator(".thinking-menu").waitFor({ state: "visible" });
 }
 
@@ -596,7 +596,7 @@ test("provider auth.updated is emitted when saving an api key from settings", as
       const openaiRow = await providerRowByName(page, "openai");
       const openaiActions = openaiRow.locator(".provider-actions");
 
-      await clickWhenEnabled(openaiActions.getByRole("button", { name: "API Key" }).first());
+      await clickWhenEnabled(openaiActions.getByRole("button", { name: "Change API key" }).first());
       await openaiActions.locator('input[placeholder="Paste API key..."]').fill("fresh-openai-key");
       const updatedSince = sinceNow();
       await clickWhenEnabled(openaiActions.getByRole("button", { name: "Save" }).first());

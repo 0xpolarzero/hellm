@@ -70,9 +70,10 @@ async function renameSession(
 ): Promise<void> {
   await openSessionActions(page, title);
   await page.getByRole("button", { name: "Rename" }).click();
-  await page.getByRole("dialog", { name: "Rename Session" }).waitFor({ state: "visible" });
-  await page.locator('input[placeholder="Session title"]').fill(nextTitle);
-  await page.getByRole("button", { name: "Save" }).click();
+  const dialog = page.getByRole("dialog", { name: "Rename Session" });
+  await dialog.waitFor({ state: "visible" });
+  await dialog.locator('input[placeholder="Session title"]').fill(nextTitle);
+  await dialog.getByRole("button", { name: "Save" }).click();
   await page.getByRole("button", { name: `Session actions for ${nextTitle}` }).waitFor({
     state: "visible",
   });

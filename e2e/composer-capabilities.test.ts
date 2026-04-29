@@ -134,7 +134,7 @@ test("model picker stays scoped to configured providers and updates the composer
       const menu = page.locator(".thinking-menu");
       expect(await menu.getByRole("option", { name: /^xhigh$/i }).count()).toBe(0);
 
-      await page.locator(".workspace-main-title").click();
+      await page.locator(".thinking-field").first().click({ force: true });
       await menu.waitFor({ state: "hidden" });
 
       await openModelPicker(page);

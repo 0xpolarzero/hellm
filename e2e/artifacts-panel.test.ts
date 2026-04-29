@@ -68,7 +68,7 @@ function seededArtifactsSession(): SeedSessionInput {
 
 async function waitForWorkspace(page: SvvyApp["page"]): Promise<void> {
   await page.locator(".workspace-titlebar").waitFor({ state: "visible" });
-  await page.locator(".workspace-footer").waitFor({ state: "visible" });
+  await page.locator(".composer-shell").waitFor({ state: "visible" });
 }
 
 async function selectArtifact(page: SvvyApp["page"], filename: string): Promise<void> {

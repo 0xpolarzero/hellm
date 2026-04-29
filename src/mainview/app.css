@@ -6,7 +6,7 @@
 }
 
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
   font-family: var(--font-sans);
   font-kerning: normal;
   font-optical-sizing: auto;
@@ -15,7 +15,7 @@
   -moz-osx-font-smoothing: grayscale;
 
   --font-sans: "Inter", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", "JetBrains Mono", "SF Mono", "Menlo", "Consolas", monospace;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", "SF Mono", "Menlo", "Consolas", monospace;
 
   --space-3xs: 0.25rem;
   --space-2xs: 0.4375rem;
@@ -36,27 +36,27 @@
   --ui-z-overlay: 40;
   --ui-z-dialog: 1000;
 
-  --ui-bg: hsl(0 0% 97%);
-  --ui-bg-elevated: hsl(0 0% 100%);
-  --ui-shell: hsl(220 14% 94% / 0.92);
-  --ui-shell-edge: hsl(220 13% 86% / 0.82);
-  --ui-surface: hsl(0 0% 100% / 0.96);
-  --ui-surface-subtle: hsl(220 13% 94% / 0.96);
-  --ui-surface-muted: hsl(220 13% 92% / 0.98);
-  --ui-surface-raised: hsl(0 0% 100% / 0.98);
-  --ui-surface-strong: hsl(220 22% 12% / 0.96);
-  --ui-panel: hsl(220 14% 94% / 0.88);
-  --ui-panel-strong: hsl(220 13% 90% / 0.96);
-  --ui-code: hsl(220 13% 95% / 0.98);
+  --ui-bg: hsl(220 14% 6%);
+  --ui-bg-elevated: hsl(220 14% 8%);
+  --ui-shell: hsl(220 14% 7% / 0.92);
+  --ui-shell-edge: hsl(220 10% 13% / 0.88);
+  --ui-surface: hsl(220 13% 9% / 0.94);
+  --ui-surface-subtle: hsl(220 12% 12% / 0.96);
+  --ui-surface-muted: hsl(220 12% 14% / 0.98);
+  --ui-surface-raised: hsl(220 14% 8% / 0.98);
+  --ui-surface-strong: hsl(210 30% 90% / 0.96);
+  --ui-panel: hsl(220 12% 12% / 0.9);
+  --ui-panel-strong: hsl(220 12% 14% / 0.96);
+  --ui-code: hsl(220 14% 8% / 0.98);
 
-  --ui-text-primary: hsl(220 22% 12%);
-  --ui-text-secondary: hsl(220 14% 38%);
-  --ui-text-tertiary: hsl(220 10% 48%);
-  --ui-text-inverse: hsl(0 0% 100%);
+  --ui-text-primary: hsl(210 30% 90%);
+  --ui-text-secondary: hsl(210 25% 72%);
+  --ui-text-tertiary: hsl(215 14% 52%);
+  --ui-text-inverse: hsl(220 22% 12%);
 
-  --ui-border-soft: hsl(220 13% 89% / 0.78);
-  --ui-border-strong: hsl(220 13% 76% / 0.88);
-  --ui-border-accent: hsl(24 95% 53% / 0.34);
+  --ui-border-soft: hsl(220 10% 14% / 0.82);
+  --ui-border-strong: hsl(220 10% 22% / 0.9);
+  --ui-border-accent: hsl(24 95% 53% / 0.46);
 
   --ui-accent: hsl(24 95% 53%);
   --ui-accent-strong: hsl(24 90% 47%);
@@ -82,24 +82,18 @@
   --ui-status-waiting-soft: var(--ui-warning-soft);
   --ui-status-danger: var(--ui-danger);
   --ui-status-danger-soft: var(--ui-danger-soft);
-  --ui-status-idle: hsl(220 10% 54%);
-  --ui-status-idle-soft: hsl(220 10% 54% / 0.1);
+  --ui-status-idle: hsl(215 14% 52%);
+  --ui-status-idle-soft: hsl(215 14% 52% / 0.1);
 
-  --ui-shadow-soft: 0 1px 2px hsl(0 0% 0% / 0.04), 0 8px 24px -18px hsl(0 0% 0% / 0.16);
+  --ui-shadow-soft: 0 1px 2px hsl(0 0% 0% / 0.3);
   --ui-shadow-strong:
-    0 0 0 1px color-mix(in oklab, var(--ui-shell-edge) 52%, transparent),
-    0 24px 64px -38px hsl(0 0% 0% / 0.26), 0 12px 30px -18px hsl(0 0% 0% / 0.14);
+    0 0 0 1px color-mix(in oklab, var(--ui-shell-edge) 64%, transparent),
+    0 32px 80px -36px hsl(0 0% 0% / 0.72), 0 12px 28px -16px hsl(0 0% 0% / 0.56);
   --ui-focus-ring:
     0 0 0 1px color-mix(in oklab, var(--ui-accent) 72%, white 28%),
     0 0 0 4px color-mix(in oklab, var(--ui-accent) 16%, transparent);
 
-  --ui-backdrop:
-    radial-gradient(
-      circle at top left,
-      color-mix(in oklab, var(--ui-accent) 8%, transparent),
-      transparent 34%
-    ),
-    linear-gradient(180deg, hsl(0 0% 99%), hsl(220 13% 96%) 50%, hsl(220 14% 94%));
+  --ui-backdrop: var(--ui-bg);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -138,18 +132,12 @@
     --ui-status-idle: hsl(215 14% 52%);
     --ui-status-idle-soft: hsl(215 14% 52% / 0.1);
 
-    --ui-shadow-soft: 0 1px 2px hsl(0 0% 0% / 0.12), 0 14px 30px -20px hsl(0 0% 0% / 0.46);
+    --ui-shadow-soft: 0 1px 2px hsl(0 0% 0% / 0.3);
     --ui-shadow-strong:
       0 0 0 1px color-mix(in oklab, var(--ui-shell-edge) 64%, transparent),
       0 32px 80px -36px hsl(0 0% 0% / 0.72), 0 12px 28px -16px hsl(0 0% 0% / 0.56);
 
-    --ui-backdrop:
-      radial-gradient(
-        circle at top left,
-        color-mix(in oklab, var(--ui-accent) 7%, transparent),
-        transparent 34%
-      ),
-      linear-gradient(180deg, hsl(220 14% 8%), hsl(220 14% 6%) 48%, hsl(220 15% 5%));
+    --ui-backdrop: var(--ui-bg);
   }
 }
 
@@ -333,14 +321,9 @@ summary {
   flex: 1;
 }
 
-.workflow-inspector-tree,
 .workflow-node-inspector {
   min-height: 0;
   overflow: auto;
-}
-
-.workflow-inspector-tree {
-  border-right: 1px solid var(--ui-border-soft);
 }
 
 .workflow-inspector-search,
@@ -435,15 +418,13 @@ summary {
 }
 
 .workflow-tree-type,
-.workflow-tree-preview,
 .workflow-descendant,
 .workflow-node-meta {
   color: var(--ui-text-secondary);
   font-size: 12px;
 }
 
-.workflow-tree-label,
-.workflow-tree-preview {
+.workflow-tree-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

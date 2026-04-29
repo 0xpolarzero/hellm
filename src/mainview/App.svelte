@@ -10,11 +10,20 @@
 	let showSettings = $state(false);
 	let disposed = false;
 
+	function openSettings() {
+		if (showSettings) return;
+		setTimeout(() => {
+			if (!disposed) {
+				showSettings = true;
+			}
+		}, 0);
+	}
+
 	async function bootstrap() {
 		try {
 			const nextRuntime = await createChatRuntime({
 				onMissingProviderAccess: () => {
-					showSettings = true;
+					openSettings();
 				},
 			});
 			if (disposed) {
@@ -36,6 +45,7 @@
 	}
 
 	onMount(() => {
+		document.documentElement.classList.add("dark");
 		void bootstrap();
 
 		return () => {
@@ -58,7 +68,7 @@
 						message={bootstrapError}
 					/>
 				{:else if runtime}
-					<ChatWorkspace {runtime} onOpenSettings={() => (showSettings = true)} />
+					<ChatWorkspace {runtime} onOpenSettings={openSettings} />
 				{/if}
 				{#if !runtime && !bootstrapError}
 					<StatusCard

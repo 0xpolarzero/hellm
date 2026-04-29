@@ -136,11 +136,12 @@ async function clickWhenEnabled(
 }
 
 async function sendPrompt(page: SvvyApp["page"], text: string): Promise<void> {
-  const composer = page.locator(
+  const focusedPane = page.locator(".workspace-pane.focused");
+  const composer = focusedPane.locator(
     'textarea[placeholder="Ask svvy to inspect the repo, make a change, or run Project CI."]',
   );
   await composer.fill(text);
-  await clickWhenEnabled(page.getByRole("button", { name: "Send" }));
+  await clickWhenEnabled(focusedPane.locator('button[aria-label="Send"]'));
 }
 
 async function returnToOrchestrator(page: SvvyApp["page"]): Promise<void> {
@@ -302,7 +303,7 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
           await waitForVisible(page.getByText("Delegated Threads"));
           await waitForVisible(page.getByText("author and run an artifact workflow"));
 
-          const threadCard = page.locator(".handler-thread-card").first();
+          const threadCard = page.locator(".handler-thread-reference-entry").first();
           await waitForVisible(threadCard);
           expect((await threadCard.textContent()) ?? "").toContain(
             "author and run an artifact workflow",
@@ -402,7 +403,7 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
           await returnToOrchestrator(page);
           await waitForVisible(page.getByText("1 workflow"), 60_000);
           await waitForVisible(page.getByText("1 handoff"), 60_000);
-          await waitForTextContent(threadCard, "Completed", 60_000);
+          await waitForTextContent(threadCard, "Done", 60_000);
 
           await clickWhenEnabled(page.locator(".handler-thread-actions button").first());
 

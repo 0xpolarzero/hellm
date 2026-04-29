@@ -1,12 +1,10 @@
 <script lang="ts">
 	import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-	import ChevronUpIcon from "@lucide/svelte/icons/chevron-up";
 	import FileIcon from "@lucide/svelte/icons/file";
 	import FolderIcon from "@lucide/svelte/icons/folder";
 	import GitBranchIcon from "@lucide/svelte/icons/git-branch";
 	import AtSignIcon from "@lucide/svelte/icons/at-sign";
 	import ArrowUpIcon from "@lucide/svelte/icons/arrow-up";
-	import LayersIcon from "@lucide/svelte/icons/layers";
 	import SquareIcon from "@lucide/svelte/icons/square";
 	import XIcon from "@lucide/svelte/icons/x";
 	import { onMount, tick } from "svelte";
@@ -87,8 +85,6 @@
 	let activeMentionIndex = $state(0);
 	let caretPosition = $state(0);
 	let dismissedMentionQueryKey = $state<string | null>(null);
-	let expanded = $state(false);
-
 	const availableThinkingLevels = $derived(
 		currentModel && supportsXhigh(currentModel) ? [...BASE_LEVELS, "xhigh"] : BASE_LEVELS,
 	);
@@ -161,7 +157,6 @@
 
 	function syncCaretFromTextarea(target: EventTarget | null) {
 		if (!(target instanceof HTMLTextAreaElement)) return;
-		expanded = true;
 		caretPosition = target.selectionStart;
 		if (getActiveMentionQuery(target.value, target.selectionStart, target.selectionEnd)) {
 			void ensureWorkspacePaths();
@@ -300,7 +295,6 @@
 	}
 
 	function focusMentionEntry() {
-		expanded = true;
 		void tick().then(() => {
 			draftElement?.focus();
 			if (!draft.includes("@")) {
@@ -313,12 +307,12 @@
 </script>
 
 <div class="composer-shell">
-	<div class={`composer-frame ${expanded ? "expanded" : "compact"}`.trim()}>
+	<div class="composer-frame expanded">
 		{#if errorMessage}
 			<p class="composer-error">{errorMessage}</p>
 		{/if}
 
-		{#if expanded && selectedMentions.length > 0}
+		{#if selectedMentions.length > 0}
 			<section class="composer-context-row" aria-label="Selected workspace mentions">
 				<div class="mention-chip-row">
 					{#each selectedMentions as mention (mention.id)}
@@ -342,20 +336,13 @@
 		{/if}
 
 		<div class="composer-main-row">
-			{#if !expanded}
-				<button class="composer-icon-button" type="button" title="Add @mention" aria-label="Add @mention" onclick={focusMentionEntry}>
-					<AtSignIcon size={15} aria-hidden="true" />
-				</button>
-			{/if}
-
 			<div class="composer-input-wrap">
 				<TextArea
 					bind:value={draft}
 					bind:element={draftElement}
 					resize="vertical"
-					rows={expanded ? 3 : 1}
+					rows={4}
 					placeholder="Ask svvy to inspect the repo, make a change, or run Project CI."
-					onfocus={() => (expanded = true)}
 					onkeydown={handleKeydown}
 					oninput={(event) => syncCaretFromTextarea(event.currentTarget)}
 					onkeyup={(event) => syncCaretFromTextarea(event.currentTarget)}
@@ -365,62 +352,50 @@
 			</div>
 
 			<div class="composer-row-actions">
-				{#if !expanded}
-					<button class="model-pill model-control" type="button" disabled={!currentModel} onclick={() => onOpenModelPicker()}>
-						<strong>{currentModel?.name ?? "No surface"}</strong>
+				<button class="model-pill model-control" type="button" disabled={!currentModel} onclick={() => onOpenModelPicker()}>
+					<strong>{currentModel?.name ?? "No surface"}</strong>
+				</button>
+				<div bind:this={thinkingMenuRoot} class="thinking-wrap compact-thinking-wrap">
+					<button
+						class="model-pill thinking-field"
+						type="button"
+						aria-haspopup="listbox"
+						aria-expanded={showThinkingMenu}
+						aria-label="Thinking level"
+						onclick={() => (showThinkingMenu = !showThinkingMenu)}
+					>
+						<strong>{thinkingLevel}</strong>
+						<ChevronDownIcon
+							class={`thinking-chevron ${showThinkingMenu ? "open" : ""}`.trim()}
+							aria-hidden="true"
+							size={13}
+							strokeWidth={1.9}
+						/>
 					</button>
-					<div bind:this={thinkingMenuRoot} class="thinking-wrap compact-thinking-wrap">
-						<button
-							class="model-pill thinking-field"
-							type="button"
-							aria-haspopup="listbox"
-							aria-expanded={showThinkingMenu}
-							aria-label="Thinking level"
-							onclick={() => (showThinkingMenu = !showThinkingMenu)}
-						>
-							<strong>{thinkingLevel}</strong>
-							<ChevronDownIcon
-								class={`thinking-chevron ${showThinkingMenu ? "open" : ""}`.trim()}
-								aria-hidden="true"
-								size={13}
-								strokeWidth={1.9}
-							/>
-						</button>
-						{#if showThinkingMenu}
-							<div class="thinking-menu" role="listbox" aria-label="Thinking level options">
-								{#each availableThinkingLevels as level}
-									<button
-										class={`thinking-option ${level === thinkingLevel ? "active" : ""}`.trim()}
-										type="button"
-										role="option"
-										aria-selected={level === thinkingLevel}
-										onclick={() => selectThinkingLevel(level)}
-									>
-										<span>{level}</span>
-										{#if level === thinkingLevel}
-											<span class="thinking-option-state">Current</span>
-										{/if}
-									</button>
-								{/each}
-							</div>
-						{/if}
-					</div>
-					<div class="compact-budget">
-						<ContextBudgetBar budget={contextBudget ?? null} variant="compact" label="Context" />
-					</div>
-				{/if}
-				<button
-					class="composer-icon-button"
-					type="button"
-					aria-label={expanded ? "Collapse composer" : "Expand composer"}
-					title={expanded ? "Collapse composer" : "Expand composer"}
-					onclick={() => (expanded = !expanded)}
-				>
-					{#if expanded}
-						<ChevronDownIcon size={15} aria-hidden="true" />
-					{:else}
-						<ChevronUpIcon size={15} aria-hidden="true" />
+					{#if showThinkingMenu}
+						<div class="thinking-menu" role="listbox" aria-label="Thinking level options">
+							{#each availableThinkingLevels as level}
+								<button
+									class={`thinking-option ${level === thinkingLevel ? "active" : ""}`.trim()}
+									type="button"
+									role="option"
+									aria-selected={level === thinkingLevel}
+									onclick={() => selectThinkingLevel(level)}
+								>
+									<span>{level}</span>
+									{#if level === thinkingLevel}
+										<span class="thinking-option-state">Current</span>
+									{/if}
+								</button>
+							{/each}
+						</div>
 					{/if}
+				</div>
+				<div class="compact-budget">
+					<ContextBudgetBar budget={contextBudget ?? null} variant="compact" label="Context" />
+				</div>
+				<button class="composer-icon-button" type="button" title="Add @mention" aria-label="Add @mention" onclick={focusMentionEntry}>
+					<AtSignIcon size={15} aria-hidden="true" />
 				</button>
 				{#if isStreaming}
 					<button class="composer-submit danger" type="button" aria-label="Stop" title="Stop" onclick={onAbort}>
@@ -472,71 +447,20 @@
 			</div>
 		{/if}
 
-		{#if expanded}
-			<div class="composer-status-row">
-				<div class="composer-targets" aria-label="Composer target context">
-					<span class="status-chip">{targetLabel}</span>
-					<span class="status-separator">/</span>
-					<span class="status-chip session-chip">{sessionName}</span>
-					<span class="status-chip worktree-chip"><GitBranchIcon size={10} aria-hidden="true" /> {worktreeLabel}</span>
-				</div>
-
-				<div class="composer-runtime">
-					<ContextBudgetBar budget={contextBudget ?? null} label="Context" />
-					<button
-						class="composer-control model-control"
-						type="button"
-						disabled={!currentModel}
-						onclick={() => onOpenModelPicker()}
-					>
-						<LayersIcon size={13} aria-hidden="true" />
-						<strong>{currentModel?.name ?? "No surface"}</strong>
-					</button>
-					<div bind:this={thinkingMenuRoot} class="thinking-wrap">
-						<button
-							class="composer-control thinking-field"
-							type="button"
-							aria-haspopup="listbox"
-							aria-expanded={showThinkingMenu}
-							aria-label="Thinking level"
-							onclick={() => (showThinkingMenu = !showThinkingMenu)}
-						>
-							<span class="composer-control-label">Reasoning</span>
-							<strong>{thinkingLevel}</strong>
-							<ChevronDownIcon
-								class={`thinking-chevron ${showThinkingMenu ? "open" : ""}`.trim()}
-								aria-hidden="true"
-								size={14}
-								strokeWidth={1.9}
-							/>
-						</button>
-						{#if showThinkingMenu}
-							<div class="thinking-menu" role="listbox" aria-label="Thinking level options">
-								{#each availableThinkingLevels as level}
-									<button
-										class={`thinking-option ${level === thinkingLevel ? "active" : ""}`.trim()}
-										type="button"
-										role="option"
-										aria-selected={level === thinkingLevel}
-										onclick={() => selectThinkingLevel(level)}
-									>
-										<span>{level}</span>
-										{#if level === thinkingLevel}
-											<span class="thinking-option-state">Current</span>
-										{/if}
-									</button>
-								{/each}
-							</div>
-						{/if}
-					</div>
-					{#if usageText}
-						<p class="composer-usage">usage {usageText}</p>
-					{/if}
-				</div>
+		<div class="composer-status-row">
+			<div class="composer-targets" aria-label="Composer target context">
+				<span class="status-chip">{targetLabel}</span>
+				<span class="status-separator">/</span>
+				<span class="status-chip session-chip">{sessionName}</span>
+				<span class="status-chip worktree-chip"><GitBranchIcon size={10} aria-hidden="true" /> {worktreeLabel}</span>
 			</div>
-		{/if}
 
-		{#if expanded && selectedMentions.length > 0}
+			{#if usageText}
+				<p class="composer-usage">usage {usageText}</p>
+			{/if}
+		</div>
+
+		{#if selectedMentions.length > 0}
 			<div class="mention-resolution-row" aria-label="Mention serialization preview">
 				{#each selectedMentions as mention (mention.id)}
 					<span>@{mention.workspaceRelativePath}</span>
@@ -633,11 +557,11 @@
 
 	.composer-main-row {
 		display: grid;
-		grid-template-columns: auto minmax(0, 1fr) auto;
-		align-items: center;
-		gap: 0.52rem;
-		min-height: 2.8rem;
-		padding: 0.48rem 0.72rem;
+		grid-template-columns: minmax(0, 1fr);
+		align-items: stretch;
+		gap: 0.44rem;
+		min-height: 6.65rem;
+		padding: 0.58rem 0.72rem 0.48rem;
 	}
 
 	.composer-input-wrap {
@@ -645,9 +569,9 @@
 	}
 
 	:global(.composer-shell .ui-textarea) {
-		min-height: 1.9rem;
-		max-height: 9.5rem;
-		padding: 0.18rem 0;
+		min-height: 4.65rem;
+		max-height: 15rem;
+		padding: 0.12rem 0;
 		border: 0;
 		border-radius: 0;
 		background: transparent;
@@ -674,7 +598,9 @@
 	}
 
 	.composer-row-actions {
-		gap: 0.46rem;
+		justify-content: flex-end;
+		gap: 0.36rem;
+		flex-wrap: wrap;
 	}
 
 	.composer-icon-button,
@@ -734,7 +660,7 @@
 		align-items: center;
 		gap: 0.28rem;
 		min-width: 0;
-		max-width: 11rem;
+		max-width: 10rem;
 		min-height: 1.35rem;
 		padding: 0.1rem 0.42rem;
 		border: 1px solid var(--ui-border-soft);
@@ -776,7 +702,7 @@
 
 	.compact-budget {
 		position: relative;
-		width: 7rem;
+		width: 5.8rem;
 		height: 1.25rem;
 	}
 
@@ -856,7 +782,7 @@
 		justify-content: space-between;
 		gap: 0.7rem;
 		min-width: 0;
-		padding: 0.4rem 0.72rem;
+		padding: 0.28rem 0.72rem 0.34rem;
 	}
 
 	.composer-targets,
@@ -913,15 +839,6 @@
 		font-size: 0.62rem;
 		font-family: var(--font-mono);
 		color: var(--ui-text-secondary);
-	}
-
-	.composer-control strong {
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		font-size: 0.62rem;
-		font-weight: 650;
 	}
 
 	:global(.thinking-chevron) {
@@ -1061,10 +978,6 @@
 			padding: 0.5rem;
 		}
 
-		.composer-main-row > .composer-icon-button {
-			display: none;
-		}
-
 		.composer-icon-button,
 		.composer-submit,
 		.model-pill,
@@ -1108,6 +1021,37 @@
 		.composer-runtime :global(.context-budget-full) {
 			width: 100%;
 			min-width: 0;
+		}
+	}
+
+	@container (max-width: 420px) {
+		.composer-main-row {
+			min-height: 6.1rem;
+			padding: 0.48rem 0.56rem 0.42rem;
+		}
+
+		:global(.composer-shell .ui-textarea) {
+			min-height: 4.2rem;
+			font-size: 0.78rem;
+		}
+
+		.composer-row-actions {
+			justify-content: flex-start;
+			gap: 0.3rem;
+		}
+
+		.model-pill,
+		.compact-budget {
+			display: none;
+		}
+
+		.composer-status-row {
+			padding: 0.24rem 0.56rem 0.3rem;
+		}
+
+		.composer-targets {
+			flex-wrap: wrap;
+			gap: 0.28rem;
 		}
 	}
 </style>

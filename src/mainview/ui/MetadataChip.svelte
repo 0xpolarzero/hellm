@@ -40,15 +40,15 @@
 	.ui-metadata-chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.28rem;
+		gap: 0.24rem;
 		max-width: 100%;
-		min-height: 1.32rem;
-		padding: 0.16rem 0.44rem;
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
+		min-height: 1.12rem;
+		padding: 0.1rem 0.34rem;
+		border: 1px solid var(--ui-border-soft);
 		border-radius: var(--ui-radius-sm);
-		background: color-mix(in oklab, var(--ui-surface-muted) 76%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-muted) 68%, transparent);
 		color: var(--ui-text-secondary);
-		font-size: 0.66rem;
+		font-size: 0.6rem;
 		line-height: 1;
 		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
@@ -60,12 +60,14 @@
 
 	.ui-metadata-label {
 		color: var(--ui-text-tertiary);
+		font-weight: 560;
 	}
 
 	.ui-metadata-value {
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
+		font-weight: 620;
 	}
 
 	.tone-info {

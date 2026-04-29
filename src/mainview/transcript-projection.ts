@@ -35,6 +35,7 @@ export type TranscriptSemanticBlock =
       reason: string;
       resumeWhen: string;
       since: string;
+      threadId?: string;
     }
   | {
       kind: "failure";
@@ -78,6 +79,7 @@ export function buildTranscriptSemanticBlocks(
       reason: wait.reason,
       resumeWhen: wait.resumeWhen,
       since: wait.since,
+      threadId: wait.threadId,
     });
   }
 

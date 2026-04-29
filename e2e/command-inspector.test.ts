@@ -234,15 +234,15 @@ async function launchSeededApp<T>(
 }
 
 async function assertCommandInspectorSurface(page: SvvyApp["page"]): Promise<void> {
-  await waitForVisible(page.locator(".semantic-card.command-card"));
+  await waitForVisible(page.locator(".reference-command-block"));
   await waitForVisible(page.getByText("Read 1 file and created 1 artifact."));
   await waitForVisible(page.getByText("Created summary.md."));
 
-  const rollupCard = page.locator(".semantic-card.command-card").first();
+  const rollupCard = page.locator(".reference-command-block").first();
   const rollupText = (await rollupCard.textContent()) ?? "";
   expect(rollupText).not.toContain("Loaded docs/prd.md.");
 
-  await rollupCard.getByRole("button", { name: "Inspect" }).click({ force: true });
+  await rollupCard.locator(".reference-workflow-card").click({ force: true });
   const dialog = page.getByRole("dialog", { name: "Inspect execute_typescript" });
   await waitForVisible(dialog);
   expect((await dialog.textContent()) ?? "").toContain("Loaded docs/prd.md.");

@@ -30,7 +30,7 @@ async function withWorkspaceDir<T>(
 async function waitForWorkspaceChrome(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("button", { name: "Open settings" }).waitFor({ state: "visible" });
   await page.locator(".workspace-titlebar").waitFor({ state: "visible" });
-  await page.locator(".workspace-footer").waitFor({ state: "visible" });
+  await page.locator(".composer-shell").waitFor({ state: "visible" });
 }
 
 async function currentText(page: SvvyApp["page"], selector: string): Promise<string> {
@@ -44,7 +44,7 @@ test("shows the workspace chrome once the shell is ready", async () => {
       await waitForWorkspaceChrome(app.page);
       expect(await app.page.getByRole("button", { name: "Open settings" }).isVisible()).toBe(true);
       expect(await currentText(app.page, ".workspace-main-title")).toBe("New Session");
-      expect(await currentText(app.page, ".workspace-main-meta")).toContain("Ready");
+      expect(await currentText(app.page, ".workspace-main-copy")).toContain("Ready");
     } finally {
       await app.close();
     }
@@ -62,7 +62,7 @@ test("default provider and model bootstrap from Bun-side defaults", async () => 
         DEFAULT_AGENT_SETTINGS.reasoningEffort,
       );
       expect(await currentText(app.page, ".workspace-main-title")).toBe("New Session");
-      expect(await currentText(app.page, ".workspace-main-meta")).toContain("Ready");
+      expect(await currentText(app.page, ".workspace-main-copy")).toContain("Ready");
     } finally {
       await app.close();
     }

@@ -1,7 +1,13 @@
 <script lang="ts">
   import PlusIcon from "@lucide/svelte/icons/plus";
+  import ZapIcon from "@lucide/svelte/icons/zap";
+  import GitBranchIcon from "@lucide/svelte/icons/git-branch";
+  import BookOpenIcon from "@lucide/svelte/icons/book-open";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+  import FolderGit2Icon from "@lucide/svelte/icons/folder-git-2";
+  import SettingsIcon from "@lucide/svelte/icons/settings";
+  import WorkflowIcon from "@lucide/svelte/icons/workflow";
   import type { WorkspaceSessionNavigationReadModel, WorkspaceSessionSummary } from "../shared/workspace-contract";
   import SessionListItem from "./SessionListItem.svelte";
   import Button from "./ui/Button.svelte";
@@ -16,7 +22,9 @@
     busy?: boolean;
     errorMessage?: string;
     onCreateSession: () => void;
+    onCreateQuickSession: () => void;
     onOpenSession: (sessionId: string) => void;
+    onFocusPane: (paneId: string) => void;
     onRenameSession: (session: WorkspaceSessionSummary) => void;
     onForkSession: (session: WorkspaceSessionSummary) => void;
     onDeleteSession: (session: WorkspaceSessionSummary) => void;
@@ -25,6 +33,8 @@
     onArchiveSession: (session: WorkspaceSessionSummary) => void;
     onUnarchiveSession: (session: WorkspaceSessionSummary) => void;
     onToggleArchivedGroup: (collapsed: boolean) => void;
+    onOpenWorkflowLibrary?: () => void;
+    onOpenSettings?: () => void;
   };
 
   let {
@@ -37,7 +47,9 @@
     busy = false,
     errorMessage,
     onCreateSession,
+    onCreateQuickSession,
     onOpenSession,
+    onFocusPane,
     onRenameSession,
     onForkSession,
     onDeleteSession,
@@ -46,6 +58,8 @@
     onArchiveSession,
     onUnarchiveSession,
     onToggleArchivedGroup,
+    onOpenWorkflowLibrary,
+    onOpenSettings,
   }: Props = $props();
 
   const sessionCount = $derived(
@@ -53,23 +67,51 @@
       navigation.activeSessions.length +
       navigation.archived.sessions.length,
   );
+  const allSessions = $derived([
+    ...navigation.pinnedSessions,
+    ...navigation.activeSessions,
+    ...navigation.archived.sessions,
+  ]);
+  const episodeCount = $derived(
+    allSessions.reduce((total, session) => total + (session.counts?.episodes ?? 0), 0),
+  );
+  const openSurfaceEntries = $derived.by(() =>
+    Object.entries(paneLocationsBySessionId)
+      .flatMap(([sessionId, locations]) => {
+        const session = allSessions.find((item) => item.id === sessionId);
+        return locations.map((location) => ({
+          id: `${sessionId}:${location.paneId}`,
+          sessionId,
+          paneId: location.paneId,
+          title: session?.title ?? sessionId,
+          label: location.label,
+          focused: location.focused,
+        }));
+      })
+      .slice(0, 8),
+  );
 </script>
 
 <div class="session-sidebar">
-  <header class="sidebar-header">
+  <header class="sidebar-header electrobun-webkit-app-region-drag">
     <div class="sidebar-header-copy">
-      <p class="sidebar-eyebrow">Sessions</p>
-      <h2>{workspaceLabel}</h2>
+      <div class="sidebar-brand-row">
+        <span class="sidebar-brand">svvy</span>
+        <span class="sidebar-workspace" title={workspaceLabel}>{workspaceLabel}</span>
+      </div>
+      <h2 class="sidebar-workspace-heading">{workspaceLabel}</h2>
       <p class="sidebar-context">
         {#if branch}
-          <span>{branch}</span>
-          <span aria-hidden="true">•</span>
+          <span class="branch-pill"><GitBranchIcon size={9} aria-hidden="true" /> {branch.split("/").at(-1) ?? branch}</span>
         {/if}
         <span>{sessionCount} sessions</span>
       </p>
     </div>
+  </header>
+
+  <div class="sidebar-actions" aria-label="Session actions">
     <Button
-      variant="ghost"
+      variant="primary"
       size="sm"
       class="new-session"
       onclick={onCreateSession}
@@ -77,10 +119,22 @@
       aria-label="Create a new session"
       title="New Session"
     >
-      <PlusIcon aria-hidden="true" size={15} strokeWidth={1.85} />
-      New
+      <PlusIcon aria-hidden="true" size={13} strokeWidth={2} />
+      New session
     </Button>
-  </header>
+    <Button
+      variant="ghost"
+      size="sm"
+      class="quick-session"
+      onclick={onCreateQuickSession}
+      disabled={busy}
+      aria-label="Create a quick session"
+      title="Quick Session"
+    >
+      <ZapIcon aria-hidden="true" size={13} strokeWidth={1.9} />
+      Quick session
+    </Button>
+  </div>
 
   {#if errorMessage}
     <p class="sidebar-error">{errorMessage}</p>
@@ -172,48 +226,131 @@
           {/if}
         </section>
       {/if}
+
+      {#if onOpenWorkflowLibrary}
+        <section class="sidebar-section reference-nav-section" aria-label="Workflow library">
+          <button class="reference-nav-row" type="button" onclick={onOpenWorkflowLibrary}>
+            <WorkflowIcon size={13} aria-hidden="true" />
+            <span>Saved workflows</span>
+            <small>.svvy</small>
+          </button>
+        </section>
+      {/if}
+
+      <section class="sidebar-section reference-nav-section" aria-label="Episodes">
+        <div class="reference-nav-row static">
+          <BookOpenIcon size={13} aria-hidden="true" />
+          <span>Episodes</span>
+          <small>{episodeCount}</small>
+        </div>
+      </section>
+
+      {#if openSurfaceEntries.length > 0}
+        <section class="sidebar-section reference-nav-section" aria-label="Open surfaces">
+          <p class="sidebar-section-label">Open surfaces</p>
+          {#each openSurfaceEntries as surface (surface.id)}
+            <button
+              class={`open-surface-row ${surface.focused ? "focused" : ""}`.trim()}
+              type="button"
+              title={`${surface.title} ${surface.label}`}
+              onclick={() => onFocusPane(surface.paneId)}
+            >
+              <span>{surface.title}</span>
+              <small>{surface.label}</small>
+            </button>
+          {/each}
+        </section>
+      {/if}
     </div>
   </div>
+
+  <footer class="sidebar-footer">
+    <div class="workspace-path" title={workspaceLabel}>
+      <FolderGit2Icon size={12} aria-hidden="true" />
+      <span>{workspaceLabel}</span>
+    </div>
+    {#if onOpenSettings}
+      <button
+        class="sidebar-footer-button"
+        type="button"
+        title="Settings"
+        aria-label="Open settings"
+        onclick={onOpenSettings}
+      >
+        <SettingsIcon size={14} aria-hidden="true" />
+      </button>
+    {/if}
+  </footer>
 </div>
 
 <style>
   .session-sidebar {
     display: flex;
     flex-direction: column;
-    gap: 0.8rem;
+    gap: 0;
     height: 100%;
     min-height: 0;
   }
 
   .sidebar-header {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
-    padding-bottom: 0.8rem;
-    border-bottom: 1px solid color-mix(in oklab, var(--ui-shell-edge) 48%, transparent);
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    padding: 0 0.68rem 0 4.72rem;
+    border-bottom: 1px solid var(--ui-shell-edge);
   }
 
-  .sidebar-header-copy h2,
-  .sidebar-eyebrow,
+  .sidebar-header-copy,
   .sidebar-context,
   .sidebar-error {
     margin: 0;
   }
 
-  .sidebar-eyebrow {
-    font-size: 0.64rem;
-    font-family: var(--font-mono);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--ui-text-tertiary);
+  .sidebar-header-copy {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
   }
 
-  h2 {
-    margin: 0.28rem 0 0;
-    font-size: 0.95rem;
+  .sidebar-brand-row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .sidebar-brand {
+    flex: 0 0 auto;
+    color: var(--ui-accent);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
     font-weight: 700;
-    letter-spacing: -0.03em;
+    letter-spacing: 0;
+  }
+
+  .sidebar-workspace {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ui-text-primary);
+    font-size: 0.68rem;
+    font-weight: 600;
+  }
+
+  .sidebar-workspace-heading {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .sidebar-context {
@@ -221,20 +358,28 @@
     align-items: center;
     gap: 0.35rem;
     flex-wrap: wrap;
-    margin-top: 0.42rem;
-    font-size: 0.67rem;
+    font-family: var(--font-mono);
+    font-size: 0.56rem;
     color: var(--ui-text-tertiary);
   }
 
-  :global(button.new-session) {
-    flex-shrink: 0;
-    min-width: auto;
-    padding-inline: 0.5rem;
-    color: var(--ui-text-secondary);
+  .branch-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.18rem;
+    max-width: 8rem;
+    min-height: 1rem;
+    padding: 0 0.28rem;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .sidebar-error {
-    padding: 0.68rem 0.76rem;
+    margin: 0.5rem 0.68rem 0;
+    padding: 0.55rem 0.62rem;
     border-radius: var(--ui-radius-md);
     background: color-mix(in oklab, var(--ui-danger-soft) 86%, transparent);
     color: color-mix(in oklab, var(--ui-danger) 82%, var(--ui-text-primary));
@@ -242,16 +387,37 @@
     line-height: 1.5;
   }
 
+  .sidebar-actions {
+    display: grid;
+    gap: 0.28rem;
+    padding: 0.62rem 0.68rem;
+    border-bottom: 1px solid var(--ui-shell-edge);
+  }
+
+  :global(button.new-session),
+  :global(button.quick-session) {
+    justify-content: flex-start;
+    width: 100%;
+    min-height: 1.76rem;
+    padding-inline: 0.52rem;
+    border-radius: var(--ui-radius-md);
+    font-size: 0.68rem;
+  }
+
+  :global(button.quick-session) {
+    color: var(--ui-text-secondary);
+  }
+
   .sidebar-sections {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding-right: 0.15rem;
+    padding: 0.42rem 0.24rem 0.68rem 0.42rem;
   }
 
   .sidebar-list {
     display: grid;
-    gap: 0.5rem;
+    gap: 0.42rem;
   }
 
   .sidebar-section {
@@ -260,9 +426,9 @@
   }
 
   .sidebar-section-label {
-    margin: 0 0 0.08rem;
+    margin: 0.3rem 0 0.08rem;
     padding-inline: 0.28rem;
-    font-size: 0.6rem;
+    font-size: 0.56rem;
     font-family: var(--font-mono);
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -275,13 +441,13 @@
     align-items: center;
     gap: 0.32rem;
     width: 100%;
-    min-height: 1.72rem;
+    min-height: 1.5rem;
     padding: 0.28rem 0.36rem;
     border: 0;
     border-radius: var(--ui-radius-sm);
     background: transparent;
     color: var(--ui-text-tertiary);
-    font-size: 0.66rem;
+    font-size: 0.6rem;
     font-weight: 650;
     text-align: left;
     cursor: pointer;
@@ -295,5 +461,113 @@
   .archived-toggle:focus-visible {
     outline: none;
     box-shadow: var(--ui-focus-ring);
+  }
+
+  .reference-nav-section {
+    margin-top: 0.18rem;
+    padding-top: 0.2rem;
+  }
+
+  .reference-nav-row,
+  .open-surface-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.38rem;
+    width: 100%;
+    min-height: 1.52rem;
+    padding: 0.18rem 0.38rem;
+    border: 1px solid transparent;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-secondary);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .reference-nav-row.static {
+    cursor: default;
+  }
+
+  .reference-nav-row:hover:not(.static),
+  .open-surface-row:hover,
+  .open-surface-row.focused {
+    border-color: color-mix(in oklab, var(--ui-border-soft) 72%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 66%, transparent);
+    color: var(--ui-text-primary);
+  }
+
+  .reference-nav-row span,
+  .open-surface-row span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.62rem;
+    font-weight: 500;
+  }
+
+  .reference-nav-row small,
+  .open-surface-row small {
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.52rem;
+  }
+
+  .open-surface-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    min-height: 1.42rem;
+    padding-left: 0.5rem;
+  }
+
+  .open-surface-row.focused {
+    box-shadow: inset 2px 0 0 var(--ui-accent);
+  }
+
+  .sidebar-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.42rem;
+    min-height: 2rem;
+    padding: 0.34rem 0.42rem 0.34rem 0.6rem;
+    border-top: 1px solid var(--ui-shell-edge);
+    color: var(--ui-text-tertiary);
+  }
+
+  .workspace-path {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.32rem;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 0.56rem;
+  }
+
+  .workspace-path span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sidebar-footer-button {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 1.45rem;
+    height: 1.45rem;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .sidebar-footer-button:hover,
+  .sidebar-footer-button:focus-visible {
+    outline: none;
+    background: var(--ui-surface-subtle);
+    color: var(--ui-text-primary);
   }
 </style>

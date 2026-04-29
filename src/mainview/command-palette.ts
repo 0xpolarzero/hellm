@@ -440,7 +440,7 @@ function buildWorkflowTaskAttemptAction(
       workflowTaskAttemptId: workflowTaskAttempt.workflowTaskAttemptId,
     },
     targetName: workflowTaskAttempt.summary || thread.title,
-    badge: "Task Agent",
+    badge: "Workflow Task-Agent",
   };
 }
 
@@ -651,7 +651,7 @@ export async function executePaletteFallbackPrompt(input: {
     return false;
   }
 
-  await input.runtime.createSession({ mode: "quick" }, input.paneId);
+  await input.runtime.createSession({}, input.paneId);
   const pane = input.runtime.getPane(input.paneId);
   const target = pane?.target ?? null;
   if (isPromptTarget(target)) {

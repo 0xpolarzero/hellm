@@ -44,16 +44,16 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		gap: 0.38rem;
+		gap: 0.34rem;
 		border-radius: var(--ui-radius-md);
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 		background: color-mix(in oklab, var(--ui-surface-raised) 82%, transparent);
 		color: var(--ui-text-primary);
-		font-weight: 620;
+		font-weight: 600;
 		letter-spacing: 0;
 		line-height: 1;
 		cursor: pointer;
-		box-shadow: var(--ui-shadow-soft);
+		box-shadow: none;
 		transition:
 			border-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
 			background-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
@@ -73,21 +73,21 @@
 	}
 
 	.size-sm {
-		min-height: 1.95rem;
-		padding: 0.18rem 0.62rem;
-		font-size: 0.74rem;
-	}
-
-	.size-xs {
-		min-height: 1.65rem;
-		padding: 0.12rem 0.44rem;
+		min-height: 1.55rem;
+		padding: 0.14rem 0.5rem;
 		font-size: 0.68rem;
 	}
 
+	.size-xs {
+		min-height: 1.35rem;
+		padding: 0.1rem 0.38rem;
+		font-size: 0.62rem;
+	}
+
 	.size-md {
-		min-height: 2.15rem;
-		padding: 0.28rem 0.78rem;
-		font-size: 0.79rem;
+		min-height: 1.9rem;
+		padding: 0.24rem 0.68rem;
+		font-size: 0.74rem;
 	}
 
 	.icon-only {
@@ -124,19 +124,15 @@
 	}
 
 	.variant-primary {
-		border-color: color-mix(in oklab, var(--ui-accent) 34%, var(--ui-accent-strong));
-		background:
-			linear-gradient(180deg, color-mix(in oklab, white 16%, var(--ui-accent)), var(--ui-accent-strong));
+		border-color: var(--ui-accent);
+		background: var(--ui-accent);
 		color: var(--ui-accent-ink);
-		box-shadow:
-			0 1px 0 color-mix(in oklab, white 16%, transparent) inset,
-			0 12px 26px -18px color-mix(in oklab, var(--ui-accent) 70%, transparent);
+		box-shadow: none;
 	}
 
 	.variant-primary:hover:not(:disabled) {
-		border-color: color-mix(in oklab, var(--ui-accent) 46%, var(--ui-accent-strong));
-		background:
-			linear-gradient(180deg, color-mix(in oklab, white 22%, var(--ui-accent)), var(--ui-accent));
+		border-color: var(--ui-accent-strong);
+		background: var(--ui-accent-strong);
 	}
 
 	.variant-secondary {

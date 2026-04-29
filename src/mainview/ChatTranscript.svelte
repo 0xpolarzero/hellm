@@ -14,6 +14,11 @@
 		deriveTranscriptUserScrollState,
 	} from "./transcript-scroll";
 	import { TranscriptVirtualizer } from "./transcript-virtualizer";
+	import EpisodeCard, { type ReferenceEpisode } from "./reference-cards/EpisodeCard.svelte";
+	import FailedCard from "./reference-cards/FailedCard.svelte";
+	import type { ReferenceStatus } from "./reference-cards/StatusBadge.svelte";
+	import WaitingCard from "./reference-cards/WaitingCard.svelte";
+	import WorkflowCard, { type ReferenceWorkflow } from "./reference-cards/WorkflowCard.svelte";
 	import Button from "./ui/Button.svelte";
 
 	const DEFAULT_TRANSCRIPT_ROW_GAP = 16;
@@ -31,6 +36,8 @@
 		onOpenArtifact: (filename: string) => void;
 		onOpenWorkspacePath: (path: string) => void;
 		onInspectCommand?: (commandId: string) => void;
+		onReplyToWait?: (block: TranscriptSemanticBlock & { kind: "wait" }, text: string) => void;
+		onRetryFailure?: (block: TranscriptSemanticBlock & { kind: "failure" }) => void;
 		onScrollStateChange?: (scroll: { transcriptAnchorId: string | null; offsetPx: number }) => void;
 	};
 
@@ -46,6 +53,8 @@
 		onOpenArtifact,
 		onOpenWorkspacePath,
 		onInspectCommand,
+		onReplyToWait,
+		onRetryFailure,
 		onScrollStateChange,
 	}: Props = $props();
 
@@ -111,19 +120,48 @@
 		return conversation.artifactResultTextById.get(message.toolCallId) || toolResultText(message);
 	}
 
-	function commandStatusTone(status: string): "success" | "warning" | "danger" | "neutral" {
-		if (status === "succeeded") return "success";
-		if (status === "failed" || status === "cancelled") return "danger";
-		if (status === "running" || status === "waiting" || status === "requested") return "warning";
-		return "neutral";
-	}
-
 	function commandStatusLabel(status: string): string {
 		if (status === "succeeded") return "Complete";
 		if (status === "failed") return "Failed";
 		if (status === "cancelled") return "Cancelled";
 		if (status === "requested") return "Queued";
 		return status[0]?.toUpperCase() + status.slice(1);
+	}
+
+	function commandReferenceStatus(status: string): ReferenceStatus {
+		if (status === "succeeded") return "done";
+		if (status === "failed" || status === "cancelled") return "failed";
+		if (status === "waiting" || status === "requested") return "waiting";
+		if (status === "running") return "running";
+		return "idle";
+	}
+
+	function commandReferenceWorkflow(command: TranscriptSemanticBlock & { kind: "command-rollup" }): ReferenceWorkflow {
+		const status = commandReferenceStatus(command.command.status);
+		const stepsTotal = Math.max(
+			1,
+			command.command.summaryChildCount + command.command.traceChildCount,
+		);
+		return {
+			id: command.command.commandId,
+			name: command.command.title,
+			status,
+			elapsed: formatTimestamp(command.command.updatedAt),
+			stepsDone: status === "done" ? stepsTotal : command.command.summaryChildCount,
+			stepsTotal,
+			currentStep: command.command.summary,
+			runId: command.command.toolName,
+		};
+	}
+
+	function episodeReference(block: TranscriptSemanticBlock & { kind: "handoff-episode" }): ReferenceEpisode {
+		return {
+			id: block.episode.episodeId,
+			title: block.episode.title,
+			summary: block.episode.summary,
+			thread: block.thread.title,
+			verified: block.episode.kind !== "clarification",
+		};
 	}
 
 	function toolStatus(toolCallId: string): "pending" | "error" | "done" {
@@ -318,83 +356,43 @@
 			<section class="transcript-semantic-stack" aria-label="Structured transcript projection">
 				{#each semanticBlocks as block (block.key)}
 					{#if block.kind === "wait"}
-						<article class="semantic-card wait-card">
-							<header>
-								<div class="semantic-title-row">
-									<span class="status-dot pulse-dot warning"></span>
-									<strong>{block.title}</strong>
-								</div>
-								<span class="semantic-badge tone-warning">waiting</span>
-							</header>
-							<p>{block.reason}</p>
-							<div class="semantic-meta-grid">
-								<span>{block.summary}</span>
-								<span>Resume: {block.resumeWhen}</span>
-								<span>Since {formatTimestamp(block.since)}</span>
-							</div>
-						</article>
+						<WaitingCard
+							context={`${block.summary} · resume ${block.resumeWhen} · since ${formatTimestamp(block.since)}`}
+							question={block.reason}
+							onreply={(text) => onReplyToWait?.(block, text)}
+						/>
 					{:else if block.kind === "failure"}
-						<article class="semantic-card failure-card">
-							<header>
-								<div class="semantic-title-row">
-									<span class="status-dot danger"></span>
-									<strong>{block.title}</strong>
-								</div>
-								<span class="semantic-badge tone-danger">failed</span>
-							</header>
-							<pre>{block.summary}</pre>
-						</article>
+						<FailedCard
+							title={block.title}
+							testsPassed={0}
+							testsTotal={1}
+							errorSnippet={block.summary}
+							onretry={onRetryFailure ? () => onRetryFailure(block) : undefined}
+						/>
 					{:else if block.kind === "command-rollup"}
-						<article class={`semantic-card command-card tone-${commandStatusTone(block.command.status)}`.trim()}>
-							<header>
-								<div>
-									<strong>{block.command.title}</strong>
-									<span>{block.command.toolName}</span>
-								</div>
-								<div class="semantic-card-actions">
-									<span class={`semantic-badge tone-${commandStatusTone(block.command.status)}`.trim()}>
-										{commandStatusLabel(block.command.status)}
-									</span>
-									{#if onInspectCommand}
-										<Button size="sm" variant="ghost" onclick={() => onInspectCommand?.(block.command.commandId)}>
-											Inspect
-										</Button>
-									{/if}
-								</div>
-							</header>
-							<p>{block.command.summary}</p>
+						<div class="reference-command-block">
+							<WorkflowCard
+								workflow={commandReferenceWorkflow(block)}
+								onclick={() => onInspectCommand?.(block.command.commandId)}
+							/>
 							{#if block.command.summaryChildren.length > 0}
-								<div class="semantic-child-list" aria-label="Summary-visible child commands">
+								<div class="reference-command-children" aria-label="Summary command details">
 									{#each block.command.summaryChildren as child (child.commandId)}
-										<div class="semantic-child-row">
-											<span>{child.toolName}</span>
+										<div class="reference-command-child">
 											<strong>{child.title}</strong>
-											<small>{child.summary}</small>
+											<span>{child.summary}</span>
 										</div>
 									{/each}
 								</div>
 							{/if}
-							<footer>
-								<span>{block.command.summaryChildCount} rollup details</span>
-								<span>{block.command.traceChildCount} trace steps nested in inspector</span>
-								<span>{formatTimestamp(block.command.updatedAt)}</span>
-							</footer>
-						</article>
+							{#if onInspectCommand}
+								<Button size="sm" variant="ghost" onclick={() => onInspectCommand?.(block.command.commandId)}>
+									Inspect {commandStatusLabel(block.command.status)}
+								</Button>
+							{/if}
+						</div>
 					{:else if block.kind === "handoff-episode"}
-						<article class="semantic-card episode-card">
-							<header>
-								<div>
-									<strong>{block.episode.title}</strong>
-									<span>{block.thread.title}</span>
-								</div>
-								<span class="semantic-badge tone-info">{block.episode.kind}</span>
-							</header>
-							<p>{block.episode.summary}</p>
-							<footer>
-								<span>Thread {block.thread.threadId}</span>
-								<span>{formatTimestamp(block.episode.createdAt)}</span>
-							</footer>
-						</article>
+						<EpisodeCard episode={episodeReference(block)} />
 					{/if}
 				{/each}
 			</section>
@@ -669,9 +667,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
-		width: min(100%, 72rem);
+		width: min(100%, 45.5rem);
 		margin: 0 auto;
-		padding: 1.15rem clamp(1rem, 3vw, 2rem) 1.35rem;
+		padding: 1rem 1.25rem 1.1rem;
 	}
 
 	.chat-thread-virtual {
@@ -704,34 +702,30 @@
 	.message-bubble,
 	.tool-result {
 		position: relative;
-		width: min(100%, 58rem);
-		padding: 0.95rem 1rem;
-		border-radius: var(--ui-radius-lg);
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-		background: var(--ui-surface-raised);
-		box-shadow: var(--ui-shadow-soft);
+		width: min(100%, 45.5rem);
+		padding: 0;
+		border-radius: var(--ui-radius-md);
+		border: 0;
+		background: transparent;
+		box-shadow: none;
 		overflow: visible;
 	}
 
 	.user-bubble {
-		width: min(100%, 44rem);
-		border-color: color-mix(in oklab, var(--ui-border-accent) 68%, var(--ui-border-soft));
-		background:
-			linear-gradient(180deg, color-mix(in oklab, white 18%, transparent), transparent),
-			color-mix(in oklab, var(--ui-accent-soft) 78%, var(--ui-surface-raised));
+		width: min(100%, 36rem);
+		padding: 0.68rem 0.78rem;
+		border: 1px solid var(--ui-border-soft);
+		background: color-mix(in oklab, var(--ui-surface-subtle) 62%, transparent);
 	}
 
 	.assistant-bubble {
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-raised) 72%, transparent), transparent),
-			var(--ui-surface);
+		background: transparent;
 	}
 
 	.tool-result {
-		border-color: color-mix(in oklab, var(--ui-border-accent) 72%, var(--ui-border-soft));
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-accent-soft) 36%, transparent), transparent),
-			var(--ui-surface-raised);
+		padding: 0.72rem 0.82rem;
+		border: 1px solid var(--ui-border-soft);
+		background: var(--ui-surface);
 	}
 
 	.streaming {
@@ -739,201 +733,45 @@
 	}
 
 	.system-bubble {
-		padding-top: 0.55rem;
-		padding-bottom: 0.55rem;
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-accent-soft) 20%, transparent), transparent),
-			color-mix(in oklab, var(--ui-surface-raised) 92%, var(--ui-surface));
+		padding: 0.55rem 0.65rem;
+		border: 1px solid var(--ui-border-soft);
+		background: color-mix(in oklab, var(--ui-surface-subtle) 54%, transparent);
 	}
 
 	.transcript-semantic-stack {
 		display: flex;
 		flex-direction: column;
 		gap: 0.7rem;
-		width: min(100%, 58rem);
+		width: min(100%, 45.5rem);
 	}
 
-	.semantic-card {
-		position: relative;
-		display: flex;
-		flex-direction: column;
-		gap: 0.6rem;
-		padding: 0.78rem 0.85rem;
-		border-radius: var(--ui-radius-md);
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 84%, transparent);
-		background: color-mix(in oklab, var(--ui-surface-raised) 88%, var(--ui-surface));
-		box-shadow: var(--ui-shadow-soft);
-		overflow: hidden;
+	.reference-command-block {
+		display: grid;
+		gap: 0.4rem;
+		justify-items: start;
 	}
 
-	.semantic-card::before {
-		content: "";
-		position: absolute;
-		inset: 0 auto 0 0;
-		width: 2px;
-		background: var(--ui-border-strong);
+	.reference-command-children {
+		display: grid;
+		gap: 0.28rem;
+		width: 100%;
+		padding-inline: 0.2rem;
 	}
 
-	.semantic-card header,
-	.semantic-card-actions,
-	.semantic-title-row,
-	.semantic-card footer,
-	.semantic-meta-grid,
-	.semantic-child-row {
-		display: flex;
-		align-items: center;
-		gap: 0.48rem;
-		min-width: 0;
-	}
-
-	.semantic-card header {
-		justify-content: space-between;
-		align-items: flex-start;
-	}
-
-	.semantic-card header > div {
-		display: flex;
-		flex-direction: column;
-		gap: 0.18rem;
-		min-width: 0;
-	}
-
-	.semantic-card strong {
-		font-size: 0.8rem;
-		font-weight: 650;
-		color: var(--ui-text-primary);
-	}
-
-	.semantic-card p {
-		margin: 0;
-		font-size: 0.8rem;
-		line-height: 1.5;
-		color: var(--ui-text-secondary);
-	}
-
-	.semantic-card span,
-	.semantic-card small,
-	.semantic-card footer {
-		font-size: 0.68rem;
+	.reference-command-child {
+		display: grid;
+		gap: 0.12rem;
+		padding-left: 0.62rem;
+		border-left: 1px solid var(--ui-border-soft);
 		color: var(--ui-text-tertiary);
-		font-variant-numeric: tabular-nums;
-	}
-
-	.semantic-card pre {
-		margin: 0;
-		max-height: 11rem;
-		overflow: auto;
-		padding: 0.62rem 0.68rem;
-		border-radius: var(--ui-radius-sm);
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
-		background: color-mix(in oklab, var(--ui-code) 90%, var(--ui-surface));
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
-		font-size: 0.75rem;
-		line-height: 1.5;
-		color: var(--ui-text-primary);
-	}
-
-	.wait-card::before,
-	.command-card.tone-warning::before {
-		background: var(--ui-warning);
-	}
-
-	.failure-card::before,
-	.command-card.tone-danger::before {
-		background: var(--ui-danger);
-	}
-
-	.episode-card::before {
-		background: var(--ui-info);
-	}
-
-	.command-card.tone-success::before {
-		background: var(--ui-success);
-	}
-
-	.semantic-badge {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-height: 1.25rem;
-		padding: 0 0.4rem;
-		border-radius: var(--ui-radius-sm);
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
-		background: color-mix(in oklab, var(--ui-surface) 82%, transparent);
-		font-family: var(--font-mono);
 		font-size: 0.64rem;
 	}
 
-	.semantic-badge.tone-success {
-		color: color-mix(in oklab, var(--ui-success) 82%, var(--ui-text-primary));
-	}
-
-	.semantic-badge.tone-warning {
-		color: color-mix(in oklab, var(--ui-warning) 84%, var(--ui-text-primary));
-	}
-
-	.semantic-badge.tone-danger {
-		color: color-mix(in oklab, var(--ui-danger) 84%, var(--ui-text-primary));
-	}
-
-	.semantic-badge.tone-info {
-		color: color-mix(in oklab, var(--ui-info) 82%, var(--ui-text-primary));
-	}
-
-	.status-dot {
-		flex: 0 0 auto;
-		width: 0.45rem;
-		height: 0.45rem;
-		border-radius: 999px;
-		background: var(--ui-border-strong);
-	}
-
-	.status-dot.warning {
-		background: var(--ui-warning);
-	}
-
-	.status-dot.danger {
-		background: var(--ui-danger);
-	}
-
-	.pulse-dot {
-		animation: pulse-dot 1.4s ease-in-out infinite;
-	}
-
-	.semantic-meta-grid,
-	.semantic-card footer {
-		flex-wrap: wrap;
-	}
-
-	.semantic-child-list,
-	.execute-result-grid {
-		display: flex;
-		flex-direction: column;
-		gap: 0.45rem;
-	}
-
-	.semantic-child-row {
-		align-items: flex-start;
-		padding: 0.48rem 0.55rem;
-		border-radius: var(--ui-radius-sm);
-		background: color-mix(in oklab, var(--ui-code) 72%, transparent);
-	}
-
-	.semantic-child-row span {
-		flex: 0 0 auto;
-		font-family: var(--font-mono);
+	.reference-command-child strong {
 		color: var(--ui-text-secondary);
-	}
-
-	.semantic-child-row strong {
-		flex: 0 0 auto;
-		font-size: 0.72rem;
-	}
-
-	.semantic-child-row small {
-		min-width: 0;
-		overflow-wrap: anywhere;
+		font-family: var(--font-mono);
+		font-size: 0.58rem;
+		font-weight: 650;
 	}
 
 	.message-bubble header,
@@ -941,22 +779,25 @@
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
-		gap: 0.9rem;
-		margin-bottom: 0.55rem;
+		gap: 0.65rem;
+		margin-bottom: 0.45rem;
 	}
 
 	.message-bubble header span,
 	.tool-result-header strong {
-		font-size: 0.74rem;
-		font-weight: 650;
-		letter-spacing: 0.01em;
-		color: var(--ui-text-primary);
+		font-family: var(--font-mono);
+		font-size: 0.56rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ui-text-tertiary);
 	}
 
 	.message-bubble header small,
 	.tool-result-header span,
 	time {
-		font-size: 0.66rem;
+		font-family: var(--font-mono);
+		font-size: 0.56rem;
 		color: var(--ui-text-secondary);
 		font-variant-numeric: tabular-nums;
 	}
@@ -1002,8 +843,8 @@
 		margin: 0;
 		white-space: pre-wrap;
 		word-break: break-word;
-		font-size: 0.9rem;
-		line-height: 1.64;
+		font-size: 0.81rem;
+		line-height: 1.58;
 		color: var(--ui-text-primary);
 	}
 
@@ -1076,12 +917,12 @@
 		position: relative;
 		display: flex;
 		flex-direction: column;
-		gap: 0.8rem;
-		margin-top: 0.8rem;
-		padding: 0.75rem 0.85rem;
+		gap: 0.62rem;
+		margin-top: 0.72rem;
+		padding: 0.68rem 0.78rem;
 		border-radius: var(--ui-radius-md);
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 84%, transparent);
-		background: color-mix(in oklab, var(--ui-code) 94%, transparent);
+		border: 1px solid var(--ui-border-soft);
+		background: color-mix(in oklab, var(--ui-code) 72%, transparent);
 		overflow: visible;
 	}
 
@@ -1124,14 +965,14 @@
 	}
 
 	.tool-card-copy strong {
-		font-size: 0.82rem;
-		font-weight: 640;
+		font-size: 0.72rem;
+		font-weight: 600;
 		color: var(--ui-text-primary);
 	}
 
 	.tool-card-copy span {
 		font-family: var(--font-mono);
-		font-size: 0.72rem;
+		font-size: 0.6rem;
 		color: var(--ui-text-secondary);
 	}
 
@@ -1242,20 +1083,14 @@
 
 		.message-bubble header,
 		.tool-result-header,
-		.tool-card-header,
-		.semantic-card header {
+		.tool-card-header {
 			flex-direction: column;
 			align-items: stretch;
 		}
 
 		.message-meta,
-		.tool-result-actions,
-		.semantic-card-actions {
+		.tool-result-actions {
 			justify-content: flex-start;
-		}
-
-		.semantic-child-row {
-			flex-direction: column;
 		}
 	}
 </style>

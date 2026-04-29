@@ -89,10 +89,12 @@ function keyEvent(input: {
 
 function createRuntime(): CommandRuntime & {
   calls: string[];
+  createRequests: unknown[];
   paneTarget: WorkspacePaneSurfaceTarget | null;
 } {
   const runtime = {
     calls: [] as string[],
+    createRequests: [] as unknown[],
     paneTarget: null as WorkspacePaneSurfaceTarget | null,
     getPane: (paneId: string) => ({
       id: paneId,
@@ -105,8 +107,9 @@ function createRuntime(): CommandRuntime & {
       rowEnd: 1,
       timelineDensity: "comfortable" as const,
     }),
-    createSession: async (_request = {}, paneId: unknown = "primary") => {
+    createSession: async (request = {}, paneId: unknown = "primary") => {
       runtime.calls.push(`create:${paneId}`);
+      runtime.createRequests.push(request);
       runtime.paneTarget = {
         workspaceSessionId: "new-session",
         surface: "orchestrator",
@@ -322,7 +325,7 @@ describe("buildCommandRegistry", () => {
     );
     expect(
       actions.find((action) => action.id === "session.open.task-agent.task-attempt-1")?.badge,
-    ).toBe("Task Agent");
+    ).toBe("Workflow Task-Agent");
     expect(actions.find((action) => action.id === "session.pin.session-2")?.availability.kind).toBe(
       "disabled",
     );
@@ -479,6 +482,7 @@ describe("executeCommandAction", () => {
       "create:command-palette-abc",
       "prompt:new-session:Implement command palette",
     ]);
+    expect(runtime.createRequests).toEqual([{}]);
     expect(createdTargets).toEqual([
       {
         workspaceSessionId: "new-session",

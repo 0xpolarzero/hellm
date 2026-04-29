@@ -23,17 +23,18 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.24rem;
-		min-height: 1.2rem;
-		padding: 0.14rem 0.42rem;
+		min-height: 1.12rem;
+		padding: 0.1rem 0.36rem;
 		border-radius: var(--ui-radius-sm);
-		font-size: 0.65rem;
-		font-weight: 620;
+		font-family: var(--font-mono);
+		font-size: 0.58rem;
+		font-weight: 600;
 		letter-spacing: 0;
 		white-space: nowrap;
 		border: 1px solid transparent;
 		font-variant-numeric: tabular-nums;
 		line-height: 1;
-		box-shadow: inset 0 1px 0 color-mix(in oklab, white 12%, transparent);
+		box-shadow: none;
 	}
 
 	.tone-neutral {

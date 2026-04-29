@@ -6,11 +6,14 @@
   import SearchIcon from "@lucide/svelte/icons/search";
   import SettingsIcon from "@lucide/svelte/icons/settings";
   import Columns2Icon from "@lucide/svelte/icons/columns-2";
+  import GitBranchIcon from "@lucide/svelte/icons/git-branch";
+  import Grid2x2Icon from "@lucide/svelte/icons/grid-2x2";
   import Rows2Icon from "@lucide/svelte/icons/rows-2";
   import CopyIcon from "@lucide/svelte/icons/copy";
   import XIcon from "@lucide/svelte/icons/x";
   import type { AssistantMessage, Model } from "@mariozechner/pi-ai";
   import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+  import type { SessionMode } from "../shared/agent-settings";
   import ArtifactsPanel from "./ArtifactsPanel.svelte";
   import { ArtifactsController, type ArtifactsSnapshot } from "./artifacts";
   import ChatComposer from "./ChatComposer.svelte";
@@ -34,7 +37,10 @@
     projectConversation,
     projectConversationSummary,
   } from "./conversation-projection";
-  import { buildTranscriptSemanticBlocks } from "./transcript-projection";
+  import {
+    buildTranscriptSemanticBlocks,
+    type TranscriptSemanticBlock,
+  } from "./transcript-projection";
   import { buildSessionTranscriptExport } from "./session-transcript";
   import type {
     WorkspaceCommandArtifactLink,
@@ -85,13 +91,20 @@
     type CommandPaletteMode,
   } from "./command-palette";
   import ModelPickerDialog from "./ModelPickerDialog.svelte";
+  import EpisodeCard, { type ReferenceEpisode } from "./reference-cards/EpisodeCard.svelte";
+  import VerificationCard, { type ReferenceVerification } from "./reference-cards/VerificationCard.svelte";
+  import type { ReferenceStatus } from "./reference-cards/StatusBadge.svelte";
+  import type { ReferenceSubagent } from "./reference-cards/SubagentCard.svelte";
+  import ThreadCard, { type ReferenceThread } from "./reference-cards/ThreadCard.svelte";
+  import WaitingCard from "./reference-cards/WaitingCard.svelte";
+  import WorkflowCard, { type ReferenceWorkflow } from "./reference-cards/WorkflowCard.svelte";
   import Dialog from "./ui/Dialog.svelte";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
   import Input from "./ui/Input.svelte";
   import MetadataChip from "./ui/MetadataChip.svelte";
 
-  const DEFAULT_SIDEBAR_WIDTH = 292;
+  const DEFAULT_SIDEBAR_WIDTH = 240;
 
   type Props = {
     runtime: ChatRuntime;
@@ -108,6 +121,7 @@
   let errorMessage = $state<string | undefined>(undefined);
   let currentModel = $state<Model<any> | null>(null);
   let currentThinkingLevel = $state<ThinkingLevel>("off");
+  let currentSessionMode = $state<SessionMode>("orchestrator");
   let artifactsSnapshot = $state<ArtifactsSnapshot>({
     activeFilename: null,
     artifacts: [],
@@ -220,7 +234,7 @@
       return `Messaging handler thread ${currentSurface.threadId ?? currentSurface.surfacePiSessionId}`;
     }
 
-    if (currentSurfaceController?.sessionMode === "quick") {
+    if (currentSessionMode === "quick") {
       return "Messaging quick session";
     }
 
@@ -243,7 +257,7 @@
   );
   const currentWorktreeSummary = $derived(runtime.branch ? runtime.branch : "workspace");
   function formatPaneSurfaceLabel(
-    controller: ChatSurfaceController | null,
+    paneController: ChatSurfaceController | null,
     binding?: WorkspacePaneSurfaceTarget | null,
   ): string {
     if (binding?.surface === "workflow-inspector") {
@@ -256,7 +270,7 @@
       return "Command Inspector";
     }
     if (binding?.surface === "workflow-task-attempt") {
-      return "Task Attempt";
+      return "Workflow Task-Agent";
     }
     if (binding?.surface === "artifact") {
       return "Artifact";
@@ -264,13 +278,13 @@
     if (binding?.surface === "project-ci-check") {
       return "Project CI Check";
     }
-    if (controller?.target.surface === "thread") {
+    if (paneController?.target.surface === "thread") {
       return "Handler Thread";
     }
-    return controller?.sessionMode === "quick" ? "Quick Session" : "Orchestrator";
+    return paneController?.sessionMode === "quick" ? "Quick Session" : "Orchestrator";
   }
   function formatPaneAgentSummary(
-    controller: ChatSurfaceController | null,
+    paneController: ChatSurfaceController | null,
     binding?: WorkspacePaneSurfaceTarget | null,
   ): string {
     if (binding?.surface === "workflow-inspector") {
@@ -282,8 +296,8 @@
     if (binding && binding.surface !== "orchestrator" && binding.surface !== "thread") {
       return binding.workspaceSessionId;
     }
-    const model = controller?.agent.state.model;
-    const thinking = controller?.agent.state.thinkingLevel;
+    const model = paneController?.agent.state.model;
+    const thinking = paneController?.agent.state.thinkingLevel;
     if (!model) return "No agent";
     return `${model.provider}/${model.id} · ${thinking}`;
   }
@@ -297,13 +311,13 @@
     return runtime.branch ? runtime.branch : "workspace";
   }
   function getPaneSurfaceStatus(
-    controller: ChatSurfaceController | null,
+    paneController: ChatSurfaceController | null,
     binding?: WorkspacePaneSurfaceTarget | null,
   ): string {
-    if (controller?.agent.state.isStreaming || controller?.promptStatus === "streaming") {
+    if (paneController?.agent.state.isStreaming || paneController?.promptStatus === "streaming") {
       return "running";
     }
-    if (controller?.agent.state.error) {
+    if (paneController?.agent.state.error) {
       return "failed";
     }
     if (binding?.surface && binding.surface !== "orchestrator" && binding.surface !== "thread") {
@@ -311,9 +325,12 @@
     }
     return "idle";
   }
-  function getPaneContextBudget(controller: ChatSurfaceController | null): ContextBudget | null {
-    if (!controller) return null;
-    return buildSurfaceContextBudget(controller.agent.state.messages, controller.agent.state.model);
+  function getPaneContextBudget(paneController: ChatSurfaceController | null): ContextBudget | null {
+    if (!paneController) return null;
+    return buildSurfaceContextBudget(
+      paneController.agent.state.messages,
+      paneController.agent.state.model,
+    );
   }
   const usageText = $derived(formatUsage(conversation.usage));
   const contextBudget = $derived(
@@ -358,12 +375,30 @@
       !!projectCiStatus?.latestRun ||
       (projectCiStatus?.entries.length ?? 0) > 0 ||
       (projectCiStatus?.checks.length ?? 0) > 0 ||
-      (projectCiStatus !== null &&
-        projectCiStatus.status !== "not-configured" &&
-        projectCiStatus.status !== "unavailable"),
+      (!!projectCiStatus && summaryMessageCount > 0),
   );
   const showDetailedProjectCiPanel = $derived(
     currentSurface?.surface === "orchestrator" && currentSession && hasActionableProjectCiStatus,
+  );
+  const transcriptSemanticBlocks = $derived(
+    buildTranscriptSemanticBlocks({
+      session: currentSession,
+      errorMessage,
+      commandRollups: currentCommandRollups,
+      handlerThreads,
+    }),
+  );
+  const showNewSessionEmptyState = $derived(
+    currentSurface?.surface === "orchestrator" &&
+      summaryMessageCount === 0 &&
+      !streamMessage &&
+      !isStreaming &&
+      !errorMessage &&
+      !showHandlerThreadPanel &&
+      !showDetailedProjectCiPanel,
+  );
+  const recentSessionSuggestions = $derived(
+    sessions.filter((session) => session.id !== activeSessionId).slice(0, 3),
   );
   const threadLocalProjectCiRun = $derived.by(() => {
     if (!threadInspector || !projectCiStatus?.latestRun) {
@@ -427,7 +462,9 @@
 
   async function openModelSelector() {
     if (!currentModel) return;
-    showModelPicker = true;
+    setTimeout(() => {
+      showModelPicker = true;
+    }, 0);
     allowedProviders = [currentModel.provider];
     try {
       const configuredProviders = await runtime.listConfiguredProviders();
@@ -542,9 +579,11 @@
   }
 
   function openPalette(mode: CommandPaletteMode) {
-    paletteMode = mode;
-    paletteError = undefined;
-    paletteOpen = true;
+    setTimeout(() => {
+      paletteMode = mode;
+      paletteError = undefined;
+      paletteOpen = true;
+    }, 0);
   }
 
   function closePalette() {
@@ -617,6 +656,19 @@
 
   async function handleCreateSession() {
     await runSessionMutation(() => runtime.createSession({}, { kind: "new-pane", direction: "right" }));
+  }
+
+  async function handleCreateQuickSession() {
+    await runSessionMutation(() =>
+      runtime.createSession({ mode: "quick" }, { kind: "new-pane", direction: "right" }),
+    );
+  }
+
+  async function handleSelectCurrentSessionMode(mode: SessionMode) {
+    if (currentSessionMode === mode) {
+      return;
+    }
+    await runSessionMutation(() => runtime.setSessionMode(focusedPaneId, mode));
   }
 
   async function handleOpenSession(sessionId: string) {
@@ -775,13 +827,13 @@
     await runSessionMutation(() => runtime.setArchivedGroupCollapsed(collapsed));
   }
 
-  async function persistPromptHistoryEntry(input: string) {
+  async function persistPromptHistoryEntry(input: string, target: PromptTarget | null = currentSurface) {
     try {
       const entry = await runtime.storage.promptHistory.append({
         text: input,
         sentAt: Date.now(),
         workspaceId: runtime.workspaceId,
-        sessionId: currentSurface?.workspaceSessionId ?? currentSession?.id ?? "unknown-session",
+        sessionId: target?.workspaceSessionId ?? currentSession?.id ?? "unknown-session",
       });
       promptHistory = [...promptHistory, entry];
     } catch (error) {
@@ -790,12 +842,23 @@
   }
 
   async function handleSend(input: string): Promise<boolean> {
-    const surface = currentSurfaceController;
+    return handleSendToPane(focusedPaneId, input);
+  }
+
+  async function handleSendToPane(paneId: string, input: string): Promise<boolean> {
+    const surface = runtime.getPaneController(paneId);
     if (!input.trim() || !surface || surface.agent.state.isStreaming || sendingPrompt) return false;
 
     sendingPrompt = true;
     try {
-      await persistPromptHistoryEntry(input);
+      if (paneId !== focusedPaneId) {
+        await runtime.focusPane(paneId);
+        syncRuntimeState();
+        resubscribeSurfaceController();
+        syncSurfaceState();
+      }
+
+      await persistPromptHistoryEntry(input, surface.target);
 
       const hasProviderAccess = await runtime.requireProviderAccess(surface.agent.state.model.provider);
       if (!hasProviderAccess) return false;
@@ -960,25 +1023,106 @@
     }
   }
 
-  function getThreadStatusClass(
-    status:
-      | WorkspaceHandlerThreadSummary["status"]
-      | WorkspaceHandlerThreadInspector["status"],
-  ): string {
+  function getReferenceThreadStatus(status: WorkspaceHandlerThreadSummary["status"]): ReferenceStatus {
     switch (status) {
       case "running-handler":
-        return "handler-active";
       case "running-workflow":
-        return "workflow-active";
+        return "running";
       case "waiting":
         return "waiting";
-      case "troubleshooting":
-        return "troubleshooting";
       case "completed":
-        return "completed";
+        return "done";
+      case "troubleshooting":
+        return "failed";
       default:
-        return "neutral";
+        return "idle";
     }
+  }
+
+  function getReferenceThread(thread: WorkspaceHandlerThreadSummary): ReferenceThread {
+    return {
+      id: thread.threadId,
+      title: thread.title,
+      objective: getHandlerThreadPreview(thread),
+      status: getReferenceThreadStatus(thread.status),
+      elapsed: formatTimestamp(thread.updatedAt),
+      model: "handler-thread",
+    };
+  }
+
+  function getReferenceWorkflowStatus(status: WorkspaceHandlerThreadWorkflowSummary["status"]): ReferenceStatus {
+    switch (status) {
+      case "running":
+      case "continued":
+        return "running";
+      case "waiting":
+        return "waiting";
+      case "completed":
+        return "done";
+      case "failed":
+      case "cancelled":
+        return "failed";
+      default:
+        return "idle";
+    }
+  }
+
+  function getReferenceWorkflowTaskAttemptStatus(
+    status: WorkspaceWorkflowTaskAttemptSummary["status"],
+  ): ReferenceStatus {
+    switch (status) {
+      case "running":
+        return "running";
+      case "waiting":
+        return "waiting";
+      case "completed":
+        return "done";
+      case "failed":
+      case "cancelled":
+        return "failed";
+      default:
+        return "idle";
+    }
+  }
+
+  function getReferenceWorkflowTaskAgents(
+    thread: WorkspaceHandlerThreadSummary,
+  ): ReferenceSubagent[] {
+    return (thread.workflowTaskAttempts ?? []).map((attempt) => ({
+      id: attempt.workflowTaskAttemptId,
+      type: "workflow-task-agent",
+      headline: attempt.title,
+      status: getReferenceWorkflowTaskAttemptStatus(attempt.status),
+      model: "workflow-task-agent",
+      tokens: attempt.contextBudget?.usedTokens,
+    }));
+  }
+
+  function getReferenceWorkflow(run: WorkspaceHandlerThreadWorkflowSummary): ReferenceWorkflow {
+    const status = getReferenceWorkflowStatus(run.status);
+    return {
+      id: run.workflowRunId,
+      name: run.workflowName,
+      status,
+      elapsed: formatTimestamp(run.updatedAt),
+      stepsDone: status === "done" ? 1 : 0,
+      stepsTotal: 1,
+      currentStep: run.summary,
+      runId: run.workflowRunId,
+    };
+  }
+
+  function getReferenceEpisode(
+    episode: NonNullable<WorkspaceHandlerThreadSummary["latestEpisode"]>,
+    thread: WorkspaceHandlerThreadSummary,
+  ): ReferenceEpisode {
+    return {
+      id: episode.episodeId,
+      title: episode.title,
+      summary: episode.summary,
+      thread: thread.title,
+      verified: thread.status === "completed",
+    };
   }
 
   function getThreadStateDetail(
@@ -1073,6 +1217,31 @@
     return `${counts.passed}/${counts.total} passed`;
   }
 
+  function getProjectCiVerification(status: WorkspaceProjectCiStatusPanel): ReferenceVerification {
+    const testsPassed = status.checkCounts.passed;
+    const testsTotal = status.checkCounts.total;
+    return {
+      id: status.latestRun?.ciRunId ?? status.updatedAt ?? "project-ci",
+      passed: status.status === "passed",
+      testsPassed,
+      testsTotal,
+      summary: status.summary,
+      checks: status.checks.map((check) => ({
+        label: check.label,
+        status:
+          check.status === "passed"
+            ? "pass"
+            : check.status === "skipped"
+              ? "skip"
+              : check.status === "blocked"
+                ? "blocked"
+                : check.status === "cancelled"
+                  ? "cancelled"
+              : "fail",
+      })),
+    };
+  }
+
   function handleInspectLatestProjectCiRun() {
     if (!projectCiStatus?.latestRun) {
       return;
@@ -1087,6 +1256,17 @@
         workspaceSessionId: sessionId,
         surface: "workflow-inspector",
         workflowRunId,
+      },
+      { kind: "split", paneId: focusedPaneId, direction: "right" },
+    );
+  }
+
+  function openSavedWorkflowLibrary(sessionId = activeSessionId): void {
+    if (!sessionId) return;
+    void runtime.openSurface(
+      {
+        workspaceSessionId: sessionId,
+        surface: "saved-workflow-library",
       },
       { kind: "split", paneId: focusedPaneId, direction: "right" },
     );
@@ -1286,6 +1466,63 @@
     }, 0);
   }
 
+  async function sendPromptToHandlerThread(
+    thread: Pick<WorkspaceHandlerThreadSummary, "threadId" | "surfacePiSessionId">,
+    prompt: string,
+  ) {
+    const session = currentSession;
+    if (!session) {
+      return;
+    }
+
+    const target = {
+      workspaceSessionId: session.id,
+      surface: "thread" as const,
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.threadId,
+    };
+
+    await runSessionMutation(async () => {
+      await runtime.openSurface(target, focusedPaneId);
+      await runtime.sendPromptToTarget(target, prompt);
+    });
+  }
+
+  async function handleReplyToWait(
+    block: TranscriptSemanticBlock & { kind: "wait" },
+    text: string,
+  ) {
+    const targetThread = block.threadId
+      ? handlerThreads.find((thread) => thread.threadId === block.threadId)
+      : null;
+
+    if (targetThread) {
+      await sendPromptToHandlerThread(targetThread, text);
+      return;
+    }
+
+    const target = currentSurfaceController?.target;
+    if (!target) {
+      return;
+    }
+
+    await runSessionMutation(() => runtime.sendPromptToTarget(target, text));
+  }
+
+  async function handleRetryFailure(block: TranscriptSemanticBlock & { kind: "failure" }) {
+    const target = currentSurfaceController?.target;
+    if (!target) {
+      return;
+    }
+
+    await runSessionMutation(() =>
+      runtime.sendPromptToTarget(
+        target,
+        `Retry the failed turn and address this failure:\n\n${block.summary}`,
+      ),
+    );
+  }
+
   async function loadHandlerThreadInspector(threadId: string, sessionId: string) {
     try {
       const inspector = await runtime.getHandlerThreadInspector(threadId, sessionId);
@@ -1366,12 +1603,6 @@
       return;
     }
 
-    const target = {
-      workspaceSessionId: session.id,
-      surface: "thread" as const,
-      surfacePiSessionId: thread.surfacePiSessionId,
-      threadId: thread.threadId,
-    };
     const prompt = [
       "Inspect the workflow work owned by this thread.",
       "If there are reusable saved workflow files worth keeping, write them directly into `.svvy/workflows/...` using the normal repo write APIs.",
@@ -1379,10 +1610,7 @@
       "If nothing here is worth saving, say so briefly inside the thread.",
     ].join(" ");
 
-    await runSessionMutation(async () => {
-      await runtime.openSurface(target, focusedPaneId);
-      await runtime.sendPromptToTarget(target, prompt);
-    });
+    await sendPromptToHandlerThread(thread, prompt);
   }
 
   async function handleInspectWorkflowTaskAttempt(
@@ -1604,6 +1832,7 @@
       errorMessage = undefined;
       currentModel = null;
       currentThinkingLevel = "off";
+      currentSessionMode = "orchestrator";
       return;
     }
 
@@ -1618,6 +1847,7 @@
     errorMessage = surface.agent.state.error ?? getLatestAssistantFailureMessage(nextMessages);
     currentModel = surface.agent.state.model;
     currentThinkingLevel = surface.agent.state.thinkingLevel as ThinkingLevel;
+    currentSessionMode = surface.sessionMode;
   }
 
   function syncRuntimeState() {
@@ -1724,7 +1954,7 @@
   });
 </script>
 
-<div class="workspace-shell">
+<div class="workspace-shell" style={`--sidebar-width: ${effectiveSidebarWidth}px;`}>
   <header class="workspace-titlebar electrobun-webkit-app-region-drag">
     <div class="workspace-titlebar-start">
       <button
@@ -1747,7 +1977,7 @@
       <button
         class="titlebar-icon"
         type="button"
-        aria-label="Open command palette"
+        aria-label="Titlebar command palette"
         title="Command Palette (Cmd+Shift+P)"
         onclick={() => openPalette("actions")}
       >
@@ -1756,7 +1986,7 @@
       <button
         class="titlebar-icon"
         type="button"
-        aria-label="Open quick open"
+        aria-label="Titlebar quick open"
         title="Quick Open (Cmd+P)"
         onclick={() => openPalette("quick-open")}
       >
@@ -1766,7 +1996,7 @@
         <button
           class="titlebar-icon"
           type="button"
-          aria-label="Open settings"
+          aria-label="Titlebar settings"
           title="Settings"
           onclick={onOpenSettings}
         >
@@ -1793,7 +2023,9 @@
             busy={mutatingSession}
             errorMessage={sidebarError}
             onCreateSession={handleCreateSession}
+            onCreateQuickSession={handleCreateQuickSession}
             onOpenSession={handleOpenSession}
+            onFocusPane={handleFocusPane}
             onRenameSession={handleRenameSession}
             onForkSession={handleForkSession}
             onDeleteSession={handleDeleteSession}
@@ -1802,6 +2034,8 @@
             onArchiveSession={handleArchiveSession}
             onUnarchiveSession={handleUnarchiveSession}
             onToggleArchivedGroup={handleToggleArchivedGroup}
+            onOpenWorkflowLibrary={() => openSavedWorkflowLibrary()}
+            onOpenSettings={onOpenSettings}
           />
         </div>
       </aside>
@@ -1825,19 +2059,21 @@
     <section class="workspace-main">
       <header class="workspace-main-header">
         <div class="workspace-main-copy">
-          <div class="workspace-main-title-row">
-            <span
-              class="status-dot"
-              class:pulse-dot={workspaceStatusText === "Streaming"}
-              data-status={workspaceStatusText === "Attention" ? "failed" : workspaceStatusText === "Streaming" ? "running" : "idle"}
-              aria-hidden="true"
-            ></span>
-            <h2 class="workspace-main-title">{currentSession?.title ?? "New Session"}</h2>
-          </div>
-          <p class="workspace-main-subtitle">{currentSurfaceLabel}</p>
+          <button class="workspace-main-title-button" type="button" onclick={() => openPalette("actions")}>
+            <span class="workspace-main-title">{currentSession?.title ?? "New Session"}</span>
+          </button>
+          <Badge tone={workspaceStatusTone}>{workspaceStatusText}</Badge>
+          <span class="workspace-main-separator">/</span>
+          <span class="workspace-main-branch">
+            <GitBranchIcon aria-hidden="true" size={10} strokeWidth={1.8} />
+            {currentWorktreeSummary}
+          </span>
         </div>
 
         <div class="workspace-main-meta">
+          <span class="workspace-main-stat">{summaryMessageCount} {summaryMessageCount === 1 ? "turn" : "turns"}</span>
+          <span class="workspace-main-stat">{toolCallCount} {toolCallCount === 1 ? "tool run" : "tool runs"}</span>
+          <span class="workspace-main-stat">{lastActivityLabel}</span>
           {#if currentSurface?.surface === "thread"}
             <Button
               variant="ghost"
@@ -1848,38 +2084,47 @@
               Return to orchestrator
             </Button>
           {/if}
-          <Badge tone={workspaceStatusTone}>{workspaceStatusText}</Badge>
-          <div class="workspace-main-chips" aria-label="Focused surface metadata">
-            <MetadataChip label="target" value={currentSurface?.surface ?? "orchestrator"} />
-            <MetadataChip label="worktree" value={currentWorktreeSummary} tone="info" />
-            <MetadataChip label="model" value={currentModelSummary} />
-            <MetadataChip label="reasoning" value={currentReasoningSummary} />
-            <ContextBudgetBar budget={contextBudget} variant="compact" label="Focused context" />
-          </div>
-          <span>{summaryMessageCount} turns</span>
-          <span>{toolCallCount} tool runs</span>
-          <span>{lastActivityLabel}</span>
+          <ContextBudgetBar budget={contextBudget} variant="compact" label="Focused context" />
+          <button
+            class="header-chip layout-chip"
+            type="button"
+            data-testid="pane-layout-summary"
+            title="Pane layout"
+            onclick={() => void handleSplitPane("right")}
+          >
+            <Grid2x2Icon aria-hidden="true" size={12} strokeWidth={1.8} />
+            <span>{paneLayout.columns.length}x{paneLayout.rows.length}</span>
+          </button>
+          <span class="header-chip model-chip" title={currentModelSummary}>
+            {currentModel?.id ?? currentSession?.modelId ?? "no model"}
+            {currentReasoningSummary !== "off" ? ` + ${currentReasoningSummary}` : ""}
+          </span>
           <Button
             variant="ghost"
             size="sm"
+            iconOnly
+            aria-label={copyTranscriptLabel}
             title="Copy the full session transcript, including tool calls and tool results."
             disabled={copyTranscriptState === "copying"}
             onclick={() => void handleCopyTranscript()}
           >
-            {copyTranscriptLabel}
+            <CopyIcon aria-hidden="true" size={14} strokeWidth={1.9} />
           </Button>
-          {#if hasArtifacts}
-            <Button
-              variant="ghost"
-              size="sm"
-              onclick={() => (showArtifactsPanel = !showArtifactsPanel)}
-            >
-              Artifacts {artifactCount}
-            </Button>
-          {/if}
           <Button
             variant="ghost"
             size="sm"
+            iconOnly
+            aria-label={`Artifacts ${artifactCount}`}
+            title={`Artifacts ${artifactCount}`}
+            disabled={!hasArtifacts}
+            onclick={() => (showArtifactsPanel = !showArtifactsPanel)}
+          >
+            <FileSearchIcon aria-hidden="true" size={14} strokeWidth={1.9} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
             data-testid="pane-split-right"
             aria-label="Split pane right"
             title="Split pane right"
@@ -1891,6 +2136,7 @@
           <Button
             variant="ghost"
             size="sm"
+            iconOnly
             data-testid="pane-split-below"
             aria-label="Split pane below"
             title="Split pane below"
@@ -1902,6 +2148,7 @@
           <Button
             variant="ghost"
             size="sm"
+            iconOnly
             aria-label="Duplicate focused pane"
             title="Duplicate focused pane"
             disabled={mutatingSession}
@@ -1909,17 +2156,49 @@
           >
             <CopyIcon aria-hidden="true" size={14} strokeWidth={1.9} />
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            data-testid="pane-close"
-            aria-label="Close focused pane"
-            title="Close focused pane"
-            disabled={mutatingSession}
-            onclick={() => void handleCloseFocusedPane()}
+          {#if paneLayout.panes.length > 1}
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              data-testid="pane-close"
+              aria-label="Close focused pane"
+              title="Close focused pane"
+              disabled={mutatingSession}
+              onclick={() => void handleCloseFocusedPane()}
+            >
+              <XIcon aria-hidden="true" size={14} strokeWidth={1.9} />
+            </Button>
+          {/if}
+          <button
+            class="header-icon-button"
+            type="button"
+            aria-label="Open command palette"
+            title="Command Palette (Cmd+Shift+P)"
+            onclick={() => openPalette("actions")}
           >
-            <XIcon aria-hidden="true" size={14} strokeWidth={1.9} />
-          </Button>
+            <SearchIcon aria-hidden="true" size={14} strokeWidth={1.85} />
+          </button>
+          <button
+            class="header-icon-button"
+            type="button"
+            aria-label="Open quick open"
+            title="Quick Open (Cmd+P)"
+            onclick={() => openPalette("quick-open")}
+          >
+            <FileSearchIcon aria-hidden="true" size={14} strokeWidth={1.85} />
+          </button>
+          {#if onOpenSettings}
+            <button
+              class="header-icon-button"
+              type="button"
+              aria-label={sidebarHidden ? "Open settings" : "Settings"}
+              title="Settings"
+              onclick={onOpenSettings}
+            >
+              <SettingsIcon aria-hidden="true" size={14} strokeWidth={1.85} />
+            </button>
+          {/if}
           {#if projectCiStatus && hasActionableProjectCiStatus}
             <div class="project-ci-compact" aria-label="Project CI summary">
               <Badge tone={getProjectCiStatusTone(projectCiStatus.status)}>
@@ -2087,6 +2366,10 @@
                 <div class="project-ci-body">
                   <p class="project-ci-summary">{projectCiStatus.summary}</p>
 
+                  {#if projectCiStatus.checks.length > 0}
+                    <VerificationCard result={getProjectCiVerification(projectCiStatus)} onreportopen={handleInspectLatestProjectCiRun} />
+                  {/if}
+
                   {#if projectCiStatus.status === "not-configured"}
                     <p class="project-ci-muted">Ask svvy to configure Project CI.</p>
                   {/if}
@@ -2222,55 +2505,39 @@
               {:else}
                 <div class="handler-thread-list">
                   {#each handlerThreads as thread (thread.threadId)}
-                    <article class={`handler-thread-card state-${getThreadStatusClass(thread.status)}`.trim()}>
-                      <div class="handler-thread-card-top">
-                        <div class="handler-thread-card-copy">
-                          <strong>{thread.title}</strong>
-                          <p>{thread.objective}</p>
-                        </div>
-                        <Badge tone={getThreadStatusTone(thread.status)}>
-                          {getThreadStatusLabel(thread.status)}
-                        </Badge>
-                      </div>
-
-                      <p class="handler-thread-preview">{getHandlerThreadPreview(thread)}</p>
-
-                      <div class="handler-thread-state">
-                        <span class="handler-thread-state-dot" aria-hidden="true"></span>
-                        <span>{getThreadStateDetail(thread)}</span>
-                      </div>
+                    <article class="handler-thread-reference-entry">
+                      <ThreadCard
+                        thread={getReferenceThread(thread)}
+                        subagents={getReferenceWorkflowTaskAgents(thread)}
+                        onopen={() => void handleOpenHandlerThread(thread)}
+                        onsubagentopen={(agent) => {
+                          const attempt = thread.workflowTaskAttempts?.find(
+                            (candidate) => candidate.workflowTaskAttemptId === agent.id,
+                          );
+                          if (attempt) void handleInspectWorkflowTaskAttempt(attempt, activeSessionId);
+                        }}
+                      />
 
                       {#if thread.wait}
-                        <article class="handler-thread-wait" aria-label="Handler thread wait state">
-                          <strong>Waiting on {thread.wait.owner}</strong>
-                          <span>{thread.wait.kind} · since {formatTimestamp(thread.wait.since)}</span>
-                          <p>{thread.wait.reason}</p>
-                        </article>
+                        <WaitingCard
+                          context={`${thread.wait.owner} ${thread.wait.kind} · since ${formatTimestamp(thread.wait.since)}`}
+                          question={thread.wait.reason}
+                          onreply={(text) => void sendPromptToHandlerThread(thread, text)}
+                        />
                       {/if}
 
                       {#if thread.latestWorkflowRun}
-                        <article class="compact-workflow-card" aria-label="Latest workflow run">
-                          <div>
-                            <strong>{thread.latestWorkflowRun.workflowName}</strong>
-                            <span>{thread.latestWorkflowRun.summary}</span>
-                          </div>
-                          <Badge tone={getThreadStatusTone(thread.latestWorkflowRun.status)}>
-                            {getThreadStatusLabel(thread.latestWorkflowRun.status)}
-                          </Badge>
-                        </article>
+                        <WorkflowCard
+                          workflow={getReferenceWorkflow(thread.latestWorkflowRun)}
+                          onclick={(workflow) => openWorkflowInspector(workflow.id, activeSessionId)}
+                        />
                       {/if}
 
                       {#if thread.latestEpisode}
-                        <article class="compact-handoff-card" aria-label="Latest handoff">
-                          <div>
-                            <strong>{thread.latestEpisode.title}</strong>
-                            <span>{thread.latestEpisode.summary}</span>
-                          </div>
-                          <span>{formatTimestamp(thread.latestEpisode.createdAt)}</span>
-                        </article>
+                        <EpisodeCard episode={getReferenceEpisode(thread.latestEpisode, thread)} />
                       {/if}
 
-                      <div class="handler-thread-pills">
+                      <div class="handler-thread-pills reference-pills">
                         <span>{thread.threadId}</span>
                         <span>
                           {thread.workflowRunCount}
@@ -2325,25 +2592,100 @@
             </section>
           {/if}
 
-          <ChatTranscript
-            {conversation}
-            sessionId={currentSurfaceController?.agent.sessionId ?? "no-surface"}
-            systemPrompt={currentSurfaceController?.resolvedSystemPrompt ?? ""}
-            streamMessage={streamMessage ?? undefined}
-            {pendingToolCalls}
-            {isStreaming}
-            {workspaceMentionPaths}
-            semanticBlocks={buildTranscriptSemanticBlocks({
-              session: currentSession,
-              errorMessage,
-              commandRollups: currentCommandRollups,
-              handlerThreads,
-            })}
-            onOpenArtifact={handleOpenArtifact}
-            onOpenWorkspacePath={(path) => void handleOpenWorkspacePath(path)}
-            onInspectCommand={(commandId) => void handleInspectCommand(commandId)}
-            onScrollStateChange={(scroll) => handleTranscriptScrollState(pane.paneId, scroll)}
-          />
+          {#if showNewSessionEmptyState}
+            <section class="new-session-empty" aria-label="Start orchestrating">
+              <p class="new-session-watermark">svvy</p>
+              <div class="new-session-heading">
+                <h2>Start orchestrating</h2>
+                <p>Choose a session type or resume a recent session.</p>
+              </div>
+
+              <div class="new-session-options" aria-label="Session type">
+                <button
+                  type="button"
+                  class={`new-session-option ${currentSessionMode === "orchestrator" ? "active" : ""}`.trim()}
+                  aria-pressed={currentSessionMode === "orchestrator"}
+                  disabled={mutatingSession}
+                  onclick={() => void handleSelectCurrentSessionMode("orchestrator")}
+                >
+                  <span class="new-session-option-icon">o</span>
+                  <strong>Orchestrator session</strong>
+                  <small>Use this session for handler threads and workflow task-agents</small>
+                </button>
+                <button
+                  type="button"
+                  class={`new-session-option ${currentSessionMode === "quick" ? "active" : ""}`.trim()}
+                  aria-pressed={currentSessionMode === "quick"}
+                  disabled={mutatingSession}
+                  onclick={() => void handleSelectCurrentSessionMode("quick")}
+                >
+                  <span class="new-session-option-icon quick">q</span>
+                  <strong>Quick session</strong>
+                  <small>Keep this session direct, lightweight, and focused</small>
+                </button>
+                <button
+                  type="button"
+                  class="new-session-option"
+                  disabled={recentSessionSuggestions.length === 0}
+                  onclick={() => {
+                    const nextSession = recentSessionSuggestions[0];
+                    if (nextSession) void handleOpenSession(nextSession.id);
+                  }}
+                >
+                  <span class="new-session-option-icon resume">r</span>
+                  <strong>Resume session</strong>
+                  <small>Pick up where you left off</small>
+                </button>
+              </div>
+
+              <div class="new-session-mode-preview">
+                <div class="new-session-mode-header">
+                  <span>Session mode preview</span>
+                  <code>orchestrator vs quick</code>
+                </div>
+                <div class="new-session-mode-grid">
+                  <div class:active={currentSessionMode === "orchestrator"}>
+                    <strong>Orchestrator</strong>
+                    <p>Direct, delegated, verification, and pause paths with per-agent runtime profiles.</p>
+                  </div>
+                  <div class:active={currentSessionMode === "quick"}>
+                    <strong>Quick</strong>
+                    <p>Single surface, smaller context budget, faster answer path with fewer delegated actions.</p>
+                  </div>
+                </div>
+              </div>
+
+              {#if recentSessionSuggestions.length > 0}
+                <div class="new-session-recent" aria-label="Recent sessions">
+                  <p>Recent</p>
+                  {#each recentSessionSuggestions as session (session.id)}
+                    <button type="button" onclick={() => void handleOpenSession(session.id)}>
+                      <span class="status-dot" data-status={session.status} aria-hidden="true"></span>
+                      <span>{session.title}</span>
+                      <small>{formatTimestamp(session.updatedAt)}</small>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </section>
+          {:else}
+            <ChatTranscript
+              {conversation}
+              sessionId={currentSurfaceController?.agent.sessionId ?? "no-surface"}
+              systemPrompt={currentSurfaceController?.resolvedSystemPrompt ?? ""}
+              streamMessage={streamMessage ?? undefined}
+              {pendingToolCalls}
+              {isStreaming}
+              {workspaceMentionPaths}
+              semanticBlocks={transcriptSemanticBlocks}
+              onOpenArtifact={handleOpenArtifact}
+              onOpenWorkspacePath={(path) => void handleOpenWorkspacePath(path)}
+              onInspectCommand={(commandId) => void handleInspectCommand(commandId)}
+              onReplyToWait={(block, text) => void handleReplyToWait(block, text)}
+              onRetryFailure={(block) => void handleRetryFailure(block)}
+              onScrollStateChange={(scroll) => handleTranscriptScrollState(pane.paneId, scroll)}
+            />
+          {/if}
           <ChatComposer
             currentModel={currentModel}
             thinkingLevel={currentThinkingLevel}
@@ -2367,7 +2709,7 @@
                 </div>
               </section>
             {:else if paneController}
-              <section class="chat-pane pane-readonly" aria-label="Pane transcript preview">
+              <section class="chat-pane" aria-label="Pane transcript preview">
                 <div class="chat-pane-shell">
                   <ChatTranscript
                     conversation={projectConversation(paneController.agent.state.messages)}
@@ -2380,6 +2722,27 @@
                     onOpenArtifact={handleOpenArtifact}
                     onOpenWorkspacePath={(path) => void handleOpenWorkspacePath(path)}
                     onScrollStateChange={(scroll) => handleTranscriptScrollState(pane.paneId, scroll)}
+                  />
+                  <ChatComposer
+                    currentModel={paneController.agent.state.model}
+                    thinkingLevel={paneController.agent.state.thinkingLevel}
+                    isStreaming={paneController.agent.state.isStreaming || paneController.promptStatus === "streaming"}
+                    errorMessage={paneController.agent.state.error}
+                    {promptHistory}
+                    usageText={formatUsage(projectConversation(paneController.agent.state.messages).usage) || undefined}
+                    contextBudget={paneContextBudget}
+                    sessionName={formatPaneSurfaceLabel(paneController, pane.binding)}
+                    targetLabel={formatPaneSurfaceLabel(paneController, pane.binding)}
+                    worktreeLabel={formatPaneWorktreeLabel(pane.binding)}
+                    onAbort={() => void paneController.abort()}
+                    onOpenModelPicker={() => {
+                      void handleFocusPane(pane.paneId).then(() => openModelSelector());
+                    }}
+                    onSend={(input) => handleSendToPane(pane.paneId, input)}
+                    onThinkingChange={(level) => {
+                      paneController.agent.setThinkingLevel(level);
+                    }}
+                    listWorkspacePaths={() => runtime.listWorkspacePaths()}
                   />
                 </div>
               </section>
@@ -2747,8 +3110,8 @@
           <section class="thread-inspector-section">
             <header class="thread-inspector-section-header">
               <div>
-                <h3>Task Attempts</h3>
-                <p>Inspect the Smithers task-agent attempts under this thread without promoting them into a top-level surface.</p>
+                <h3>Workflow Task-Agents</h3>
+                <p>Inspect the Smithers workflow task-agent attempts under this thread without promoting them into a top-level surface.</p>
               </div>
               <span>{threadInspector.workflowTaskAttempts?.length ?? 0}</span>
             </header>
@@ -3069,8 +3432,8 @@
 
 {#if showWorkflowTaskAttemptInspector}
   <Dialog
-    eyebrow="Task Attempt"
-    title={workflowTaskAttemptInspector?.title ?? "Inspect Task Attempt"}
+    eyebrow="Workflow Task-Agent"
+    title={workflowTaskAttemptInspector?.title ?? "Inspect Workflow Task-Agent"}
     description="Inspect the durable workflow task attempt transcript, nested command rollups, and artifacts without opening a separate interactive surface."
     width="lg"
     onClose={closeWorkflowTaskAttemptInspector}
@@ -3250,40 +3613,38 @@
     grid-template-rows: minmax(0, 1fr);
     height: 100%;
     min-height: 0;
-    margin-inline: calc(var(--workspace-inset, 0rem) * -1);
+    margin-inline: 0;
+    background: var(--ui-bg);
   }
 
   .workspace-titlebar {
     position: absolute;
-    top: 0.32rem;
-    right: 0.42rem;
+    top: 0;
+    left: 0;
     z-index: 12;
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 0.75rem;
-    min-height: 0;
-    padding: 0;
+    gap: 0.35rem;
+    width: var(--sidebar-width, 240px);
+    height: 2.25rem;
+    padding: 0 0.35rem 0 0;
     border: 0;
     background: transparent;
-    pointer-events: none;
+    pointer-events: auto;
   }
 
   .workspace-titlebar-start {
-    display: none;
+    display: flex;
+    align-items: center;
   }
 
   .workspace-titlebar-title {
-    margin: 0;
-    font-size: 0.74rem;
-    font-weight: 650;
-    letter-spacing: -0.01em;
-    color: var(--ui-text-secondary);
-    white-space: nowrap;
+    display: none;
   }
 
   .workspace-titlebar-actions {
-    display: flex;
+    display: none;
     align-items: center;
     gap: 0.16rem;
     padding: 0.12rem;
@@ -3300,7 +3661,7 @@
     justify-content: center;
     padding: 0;
     border: 0;
-    border-radius: calc(var(--ui-radius-sm) + 0.14rem);
+    border-radius: var(--ui-radius-md);
     background: transparent;
     color: var(--ui-text-tertiary);
     cursor: pointer;
@@ -3311,15 +3672,15 @@
   }
 
   .titlebar-icon {
-    width: 1.9rem;
-    height: 1.35rem;
+    width: 1.72rem;
+    height: 1.72rem;
   }
 
   .chat-workspace {
     --sidebar-width: 240px;
     position: relative;
     display: grid;
-    grid-template-columns: var(--sidebar-width) 0.4rem minmax(0, 1fr);
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
     height: 100%;
     min-height: 0;
     padding: 0;
@@ -3330,7 +3691,7 @@
   }
 
   .chat-workspace.split {
-    grid-template-columns: var(--sidebar-width) 0.4rem minmax(0, 1fr) minmax(22rem, 28rem);
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr) minmax(22rem, 28rem);
   }
 
   .chat-workspace.sidebar-hidden.split {
@@ -3350,16 +3711,18 @@
   .sidebar-surface {
     height: 100%;
     min-height: 0;
-    padding: 2.45rem 0.62rem 0.68rem 0.72rem;
-    border-right: 1px solid color-mix(in oklab, var(--ui-shell-edge) 56%, transparent);
-    background:
-      linear-gradient(180deg, color-mix(in oklab, var(--ui-bg-elevated) 84%, transparent), transparent 20%),
-      color-mix(in oklab, var(--ui-panel) 90%, transparent);
+    padding: 0;
+    border-right: 1px solid var(--ui-shell-edge);
+    background: var(--ui-shell);
   }
 
   .sidebar-resize-handle {
-    position: relative;
-    min-height: 0;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--sidebar-width) - 0.2rem);
+    z-index: 9;
+    width: 0.4rem;
     cursor: col-resize;
     touch-action: none;
   }
@@ -3388,6 +3751,7 @@
     gap: 0;
     min-height: 0;
     padding: 0;
+    background: var(--ui-bg);
   }
 
   .pane-grid {
@@ -3407,7 +3771,7 @@
     border: 1px dashed color-mix(in oklab, var(--ui-accent) 48%, var(--ui-shell-edge));
     border-radius: var(--ui-radius-sm);
     background: color-mix(in oklab, var(--ui-accent) 13%, var(--ui-shell));
-    color: color-mix(in oklab, var(--ui-text) 78%, var(--ui-muted));
+    color: color-mix(in oklab, var(--ui-text-primary) 78%, var(--ui-text-tertiary));
     font-size: 0.68rem;
     font-weight: 650;
     opacity: 0;
@@ -3445,10 +3809,9 @@
     min-width: 0;
     min-height: 16.25rem;
     overflow: hidden;
-    border: 0;
-    border-left: 1px solid color-mix(in oklab, var(--ui-shell-edge) 70%, transparent);
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
     border-radius: 0;
-    background: color-mix(in oklab, var(--ui-shell) 88%, transparent);
+    background: var(--ui-bg);
   }
 
   .pane-placement-zones {
@@ -3507,7 +3870,17 @@
   }
 
   .workspace-pane.focused {
-    box-shadow: inset 2px 0 0 color-mix(in oklab, var(--ui-accent) 58%, transparent);
+    border-color: color-mix(in oklab, var(--ui-accent) 48%, var(--ui-border-strong));
+    box-shadow: inset 3px 0 0 color-mix(in oklab, var(--ui-accent) 72%, transparent);
+  }
+
+  .workspace-pane.focused .pane-chrome {
+    border-bottom-color: color-mix(in oklab, var(--ui-accent) 24%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-accent-soft) 26%, var(--ui-surface));
+  }
+
+  .workspace-pane.focused .pane-focus-button strong {
+    color: color-mix(in oklab, var(--ui-accent) 72%, var(--ui-text-primary));
   }
 
   .pane-chrome {
@@ -3515,10 +3888,10 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.7rem;
-    min-height: 2.25rem;
-    padding: 0.42rem 0.58rem;
-    border-bottom: 1px solid color-mix(in oklab, var(--ui-shell-edge) 58%, transparent);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 62%, transparent);
+    min-height: 1.9rem;
+    padding: 0.28rem 0.54rem;
+    border-bottom: 1px solid var(--ui-border-soft);
+    background: color-mix(in oklab, var(--ui-surface) 54%, transparent);
   }
 
   .pane-focus-button {
@@ -3542,11 +3915,13 @@
   }
 
   .pane-focus-button strong {
-    font-size: 0.72rem;
+    font-size: 0.68rem;
+    font-weight: 600;
   }
 
   .pane-focus-button span {
-    font-size: 0.64rem;
+    font-family: var(--font-mono);
+    font-size: 0.58rem;
     color: var(--ui-text-tertiary);
   }
 
@@ -3627,18 +4002,34 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.9rem;
+    gap: 0.75rem;
     min-height: 2.25rem;
-    padding: 0.38rem 5.8rem 0.36rem 0.72rem;
-    border-bottom: 1px solid color-mix(in oklab, var(--ui-shell-edge) 58%, transparent);
-    background: color-mix(in oklab, var(--ui-shell) 70%, transparent);
+    padding: 0 0.78rem;
+    border-bottom: 1px solid var(--ui-border-soft);
+    background: color-mix(in oklab, var(--ui-surface) 52%, transparent);
   }
 
   .workspace-main-copy {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.48rem;
     min-width: 0;
+  }
+
+  .workspace-main-title-button {
+    display: inline-flex;
+    min-width: 0;
+    max-width: 24rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .workspace-main-title-button:hover .workspace-main-title {
+    color: color-mix(in oklab, var(--ui-text-primary) 86%, var(--ui-accent));
   }
 
   .workspace-main-title-row,
@@ -3660,28 +4051,38 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.96rem;
-    font-weight: 700;
-    letter-spacing: -0.03em;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0;
   }
 
-  .workspace-main-subtitle {
-    margin: 0.24rem 0 0;
+  .workspace-main-separator {
+    color: var(--ui-border-strong);
+    font-size: 0.68rem;
+  }
+
+  .workspace-main-branch {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.22rem;
     min-width: 0;
+    max-width: 15rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.74rem;
     color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
   }
 
   .workspace-main-meta {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    flex-wrap: wrap;
-    gap: 0.36rem;
-    font-size: 0.66rem;
+    flex-wrap: nowrap;
+    gap: 0.38rem;
+    min-width: 0;
+    font-size: 0.64rem;
     color: var(--ui-text-tertiary);
   }
 
@@ -3695,8 +4096,91 @@
 
   .workspace-main-meta :global(.context-budget-compact) {
     position: static;
-    width: 8.4rem;
-    flex: 0 1 8.4rem;
+    width: 5.25rem;
+    flex: 0 0 5.25rem;
+  }
+
+  .workspace-main-stat {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.35rem;
+    max-width: 10.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    line-height: 1;
+  }
+
+  .header-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.32rem;
+    height: 1.45rem;
+    min-width: 0;
+    padding: 0 0.45rem;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .header-icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.45rem;
+    height: 1.45rem;
+    padding: 0;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    cursor: pointer;
+    transition:
+      border-color 140ms cubic-bezier(0.19, 1, 0.22, 1),
+      background-color 140ms cubic-bezier(0.19, 1, 0.22, 1),
+      color 140ms cubic-bezier(0.19, 1, 0.22, 1);
+  }
+
+  .header-icon-button:hover,
+  .header-icon-button:focus-visible {
+    border-color: var(--ui-border-strong);
+    background: var(--ui-surface-subtle);
+    color: var(--ui-text-primary);
+  }
+
+  button.header-chip {
+    cursor: pointer;
+  }
+
+  button.header-chip:hover {
+    border-color: var(--ui-border-strong);
+    background: var(--ui-surface-subtle);
+    color: var(--ui-text-primary);
+  }
+
+  .model-chip {
+    max-width: 11rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .inline-titlebar-action {
+    color: var(--ui-text-tertiary);
+  }
+
+  .inline-titlebar-action:hover,
+  .inline-titlebar-action:focus-visible {
+    outline: none;
+    background: var(--ui-surface-subtle);
+    color: var(--ui-text-primary);
   }
 
   .project-ci-compact {
@@ -3729,9 +4213,232 @@
     overflow: hidden;
     border: 0;
     border-radius: 0;
-    background:
-      linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-raised) 80%, transparent), transparent),
-      color-mix(in oklab, var(--ui-shell) 88%, transparent);
+    background: var(--ui-bg);
+  }
+
+  .new-session-empty {
+    display: grid;
+    align-content: start;
+    justify-items: center;
+    gap: 1.4rem;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: clamp(2.2rem, 7vh, 4rem) 1.25rem 1.5rem;
+    color: var(--ui-text-secondary);
+  }
+
+  .new-session-watermark {
+    margin: 0;
+    color: color-mix(in oklab, var(--ui-text-tertiary) 22%, transparent);
+    font-size: 1.7rem;
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+
+  .new-session-heading {
+    display: grid;
+    justify-items: center;
+    gap: 0.36rem;
+    text-align: center;
+  }
+
+  .new-session-heading h2,
+  .new-session-heading p {
+    margin: 0;
+  }
+
+  .new-session-heading h2 {
+    color: var(--ui-text-primary);
+    font-size: 1rem;
+    font-weight: 700;
+  }
+
+  .new-session-heading p {
+    color: var(--ui-text-tertiary);
+    font-size: 0.72rem;
+  }
+
+  .new-session-options,
+  .new-session-mode-preview,
+  .new-session-recent {
+    width: min(36rem, 100%);
+  }
+
+  .new-session-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .new-session-option {
+    display: grid;
+    justify-items: start;
+    gap: 0.38rem;
+    min-height: 5.4rem;
+    padding: 0.82rem;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-md);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 66%, transparent);
+    color: var(--ui-text-secondary);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .new-session-option:hover:not(:disabled),
+  .new-session-option:focus-visible,
+  .new-session-option.active {
+    border-color: color-mix(in oklab, var(--ui-accent) 32%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-surface-muted) 72%, transparent);
+  }
+
+  .new-session-option:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .new-session-option-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.42rem;
+    height: 1.42rem;
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-accent) 22%, transparent);
+    color: var(--ui-accent);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .new-session-option-icon.quick {
+    background: color-mix(in oklab, var(--ui-warning) 20%, transparent);
+    color: var(--ui-warning);
+  }
+
+  .new-session-option-icon.resume {
+    background: color-mix(in oklab, var(--ui-info) 18%, transparent);
+    color: var(--ui-info);
+  }
+
+  .new-session-option strong {
+    color: var(--ui-text-primary);
+    font-size: 0.74rem;
+    font-weight: 600;
+  }
+
+  .new-session-option small {
+    color: var(--ui-text-tertiary);
+    font-size: 0.64rem;
+    line-height: 1.35;
+  }
+
+  .new-session-mode-preview {
+    display: grid;
+    gap: 0.56rem;
+    padding: 0.72rem;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-md);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 54%, transparent);
+  }
+
+  .new-session-mode-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    color: var(--ui-text-primary);
+    font-size: 0.62rem;
+    font-weight: 600;
+  }
+
+  .new-session-mode-header code {
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.56rem;
+    font-weight: 500;
+  }
+
+  .new-session-mode-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .new-session-mode-grid > div {
+    min-height: 3.5rem;
+    padding: 0.66rem;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface) 68%, transparent);
+  }
+
+  .new-session-mode-grid > div.active {
+    border-color: color-mix(in oklab, var(--ui-accent) 34%, var(--ui-border-soft));
+  }
+
+  .new-session-mode-grid strong,
+  .new-session-mode-grid p,
+  .new-session-recent p {
+    margin: 0;
+  }
+
+  .new-session-mode-grid strong {
+    color: var(--ui-text-primary);
+    font-size: 0.66rem;
+  }
+
+  .new-session-mode-grid p {
+    margin-top: 0.34rem;
+    color: var(--ui-text-tertiary);
+    font-size: 0.62rem;
+    line-height: 1.45;
+  }
+
+  .new-session-recent {
+    display: grid;
+    gap: 0.3rem;
+  }
+
+  .new-session-recent p {
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.56rem;
+    text-transform: uppercase;
+  }
+
+  .new-session-recent button {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 1.7rem;
+    padding: 0 0.38rem;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-secondary);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .new-session-recent button:hover,
+  .new-session-recent button:focus-visible {
+    background: var(--ui-surface-subtle);
+    color: var(--ui-text-primary);
+  }
+
+  .new-session-recent span:not(.status-dot) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.68rem;
+  }
+
+  .new-session-recent small {
+    color: var(--ui-text-tertiary);
+    font-size: 0.58rem;
   }
 
   .project-ci-panel,
@@ -3922,156 +4629,23 @@
   .handler-thread-list {
     display: grid;
     gap: 0.55rem;
-    max-height: 9rem;
+    max-height: 18rem;
     overflow: auto;
     padding-right: 0.1rem;
   }
 
-  .handler-thread-card {
-    position: relative;
+  .handler-thread-reference-entry {
     display: grid;
-    gap: 0.62rem;
-    padding: 0.8rem 0.85rem;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 84%, transparent);
-    border-radius: var(--ui-radius-md);
-    background: color-mix(in oklab, var(--ui-surface-raised) 92%, transparent);
-    overflow: hidden;
+    gap: 0.5rem;
   }
 
-  .handler-thread-card::before {
-    content: "";
-    position: absolute;
-    inset: 0 auto 0 0;
-    width: 2px;
-    background: var(--ui-border-strong);
+  .handler-thread-reference-entry :global(.reference-thread-card) {
+    box-shadow: none;
   }
 
-  .handler-thread-card.state-handler-active::before,
-  .handler-thread-card.state-workflow-active::before {
-    background: var(--ui-info);
-  }
-
-  .handler-thread-card.state-waiting::before {
-    background: var(--ui-warning);
-  }
-
-  .handler-thread-card.state-troubleshooting::before {
-    background: var(--ui-danger);
-  }
-
-  .handler-thread-card.state-completed::before {
-    background: var(--ui-success);
-  }
-
-  .handler-thread-state,
-  .handler-thread-wait,
-  .compact-workflow-card,
-  .compact-handoff-card {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 0.75rem;
-  }
-
-  .handler-thread-state {
+  .reference-pills {
     justify-content: flex-start;
-    align-items: center;
-    color: var(--ui-text-tertiary);
-    font-size: 0.68rem;
-  }
-
-  .handler-thread-state-dot {
-    width: 0.42rem;
-    height: 0.42rem;
-    flex: 0 0 auto;
-    border-radius: 999px;
-    background: var(--ui-border-strong);
-  }
-
-  .state-handler-active .handler-thread-state-dot,
-  .state-workflow-active .handler-thread-state-dot {
-    background: var(--ui-info);
-    animation: pulse-dot 1.8s ease-in-out infinite;
-  }
-
-  .state-waiting .handler-thread-state-dot {
-    background: var(--ui-warning);
-    animation: pulse-dot 2.1s ease-in-out infinite;
-  }
-
-  .state-troubleshooting .handler-thread-state-dot {
-    background: var(--ui-danger);
-  }
-
-  .state-completed .handler-thread-state-dot {
-    background: var(--ui-success);
-  }
-
-  .handler-thread-wait,
-  .compact-workflow-card,
-  .compact-handoff-card {
-    padding: 0.55rem 0.62rem;
-    border: 1px solid color-mix(in oklab, var(--ui-shell-edge) 58%, transparent);
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 72%, transparent);
-  }
-
-  .handler-thread-wait {
-    display: grid;
-    justify-content: stretch;
-    gap: 0.18rem;
-    border-color: color-mix(in oklab, var(--ui-warning) 38%, var(--ui-border-soft));
-    background: color-mix(in oklab, var(--ui-warning-soft) 58%, var(--ui-surface));
-  }
-
-  .handler-thread-wait strong,
-  .handler-thread-wait span,
-  .handler-thread-wait p {
-    margin: 0;
-    font-size: 0.68rem;
-    line-height: 1.45;
-  }
-
-  .handler-thread-wait strong {
-    color: var(--ui-text-primary);
-  }
-
-  .handler-thread-wait span,
-  .handler-thread-wait p {
-    color: var(--ui-text-secondary);
-  }
-
-  .compact-workflow-card div,
-  .compact-handoff-card div {
-    display: grid;
-    gap: 0.16rem;
-    min-width: 0;
-  }
-
-  .compact-workflow-card strong,
-  .compact-workflow-card span,
-  .compact-handoff-card strong,
-  .compact-handoff-card span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .compact-workflow-card strong,
-  .compact-handoff-card strong {
-    font-size: 0.72rem;
-    color: var(--ui-text-primary);
-  }
-
-  .compact-workflow-card span,
-  .compact-handoff-card span {
-    font-size: 0.67rem;
-    color: var(--ui-text-secondary);
-  }
-
-  .compact-handoff-card > span {
-    flex: 0 0 auto;
-    color: var(--ui-text-tertiary);
+    padding-inline: 0.1rem;
   }
 
   .structured-command-list {
@@ -4111,7 +4685,6 @@
     box-shadow: var(--ui-focus-ring);
   }
 
-  .handler-thread-card-top,
   .structured-command-card-top,
   .structured-command-card-footer,
   .thread-inspector-summary-top,
@@ -4127,7 +4700,6 @@
     gap: 0.85rem;
   }
 
-  .handler-thread-card-copy,
   .structured-command-card-copy,
   .thread-inspector-summary-copy,
   .thread-inspector-command-copy,
@@ -4140,7 +4712,6 @@
     min-width: 0;
   }
 
-  .handler-thread-card-copy strong,
   .structured-command-card-copy strong,
   .thread-inspector-summary-copy strong,
   .thread-inspector-command-copy strong,
@@ -4152,7 +4723,6 @@
     color: var(--ui-text-primary);
   }
 
-  .handler-thread-card-copy p,
   .handler-thread-preview,
   .structured-command-card-copy span,
   .thread-inspector-summary-copy p,
@@ -4752,7 +5322,6 @@
       display: none;
     }
 
-    .handler-thread-card-top,
     .structured-command-card-top,
     .structured-command-card-footer,
     .thread-inspector-summary-top,
@@ -4761,10 +5330,7 @@
     .thread-inspector-section-header,
     .command-inspector-summary-top,
     .command-inspector-child-top,
-    .command-inspector-artifact,
-    .handler-thread-state,
-    .compact-workflow-card,
-    .compact-handoff-card {
+    .command-inspector-artifact {
       flex-direction: column;
       align-items: stretch;
     }

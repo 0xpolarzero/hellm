@@ -78,6 +78,17 @@ export interface SetSurfaceThoughtLevelRequest {
   level: ReasoningEffort;
 }
 
+export interface SetSessionModeRequest {
+  target: PromptTarget;
+  mode: SessionMode;
+}
+
+export interface SetSessionModeResponse {
+  ok: boolean;
+  snapshot?: ConversationSurfaceSnapshot;
+  error?: string;
+}
+
 export interface StreamEventMessage {
   streamId: string;
   event: AssistantMessageEvent;
@@ -909,6 +920,10 @@ export interface ChatRPCSchema {
       renameSession: {
         params: RenameSessionRequest;
         response: WorkspaceMutationResponse;
+      };
+      setSessionMode: {
+        params: SetSessionModeRequest;
+        response: SetSessionModeResponse;
       };
       forkSession: {
         params: ForkSessionRequest;

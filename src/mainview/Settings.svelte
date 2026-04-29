@@ -406,7 +406,7 @@
 		<section class="settings-pane">
 			{#if activeSection === "providers"}
 				<div class="settings-search">
-					<Input bind:value={searchQuery} placeholder="Search providers or auth state" />
+					<Input bind:value={searchQuery} placeholder="Search providers, auth types, or access state" />
 					<p class="settings-search-summary">
 						{filteredProviders.length} match{filteredProviders.length === 1 ? "" : "es"}
 					</p>
@@ -468,7 +468,7 @@
 													<div class="key-input-row">
 														<Input
 															type="password"
-															placeholder="Paste API key"
+															placeholder="Paste API key..."
 															bind:value={apiKeyInput[info.provider]}
 															onkeydown={(event) =>
 																event.key === "Enter" && handleSaveApiKey(info.provider)}
@@ -506,6 +506,7 @@
 															variant="ghost"
 															size="xs"
 															class="row-action"
+															aria-label={info.hasKey ? "Change API key" : "Add API key"}
 															onclick={() => {
 																editingProvider = info.provider;
 																apiKeyInput[info.provider] = "";
@@ -757,8 +758,8 @@
 
 	.settings-shell {
 		display: grid;
-		grid-template-columns: minmax(11rem, 12rem) minmax(0, 42rem);
-		gap: 0.9rem;
+		grid-template-columns: minmax(10.5rem, 11.5rem) minmax(0, 42rem);
+		gap: 0.72rem;
 		min-height: 0;
 		justify-content: start;
 	}
@@ -838,10 +839,10 @@
 		position: sticky;
 		top: 0;
 		z-index: var(--ui-z-sticky);
-		padding: 0.46rem 0.55rem;
+		padding: 0.38rem 0.48rem;
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 		border-radius: var(--ui-radius-sm);
-		background: var(--ui-surface-subtle);
+		background: color-mix(in oklab, var(--ui-surface-subtle) 92%, transparent);
 		box-shadow: none;
 	}
 
@@ -903,7 +904,7 @@
 		grid-template-columns: minmax(0, 1fr) minmax(11.25rem, 13rem);
 		align-items: center;
 		gap: 0.55rem 0.75rem;
-		padding: 0.46rem 0.62rem;
+		padding: 0.42rem 0.58rem;
 		border: 0;
 		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 		border-radius: 0;
@@ -919,7 +920,7 @@
 	}
 
 	.provider-row:hover {
-		background: color-mix(in oklab, var(--ui-surface-raised) 70%, var(--ui-surface));
+		background: color-mix(in oklab, var(--ui-surface-raised) 84%, var(--ui-surface));
 	}
 
 	.provider-main {
@@ -939,6 +940,7 @@
 		grid-template-columns: minmax(0, 1fr);
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 		border-radius: var(--ui-radius-sm);
+		background: color-mix(in oklab, var(--ui-surface) 92%, transparent);
 		box-shadow: none;
 	}
 
@@ -1004,11 +1006,11 @@
 		min-width: 0;
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 		border-radius: var(--ui-radius-sm);
-		padding: 0.44rem 0.54rem;
+		padding: 0.38rem 0.48rem;
 		background: color-mix(in oklab, var(--ui-surface-subtle) 82%, transparent);
 		color: var(--ui-text-primary);
 		font: inherit;
-		font-size: 0.76rem;
+		font-size: 0.72rem;
 	}
 
 	.agent-field select:disabled {
@@ -1023,11 +1025,12 @@
 		resize: vertical;
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 		border-radius: var(--ui-radius-sm);
-		padding: 0.55rem;
-		background: color-mix(in oklab, var(--ui-surface-subtle) 82%, transparent);
+		padding: 0.5rem;
+		background: color-mix(in oklab, var(--ui-code) 92%, transparent);
 		color: var(--ui-text-primary);
-		font: inherit;
-		line-height: 1.5;
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
+		line-height: 1.52;
 	}
 
 	.provider-heading {
@@ -1058,6 +1061,21 @@
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 84%, transparent);
 		border-radius: var(--ui-radius-sm);
 		padding: 0.04rem 0.26rem;
+	}
+
+	.provider-status.tone-success {
+		border-color: color-mix(in oklab, var(--ui-success) 24%, var(--ui-border-soft));
+		background: color-mix(in oklab, var(--ui-success-soft) 72%, transparent);
+	}
+
+	.provider-status.tone-warning {
+		border-color: color-mix(in oklab, var(--ui-warning) 28%, var(--ui-border-soft));
+		background: color-mix(in oklab, var(--ui-warning-soft) 72%, transparent);
+	}
+
+	.provider-status.tone-info {
+		border-color: color-mix(in oklab, var(--ui-info) 24%, var(--ui-border-soft));
+		background: color-mix(in oklab, var(--ui-info-soft) 72%, transparent);
 	}
 
 	.provider-status.tone-success,

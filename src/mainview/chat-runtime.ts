@@ -157,6 +157,7 @@ export interface ChatRuntimeRpcClient {
     openSurface: typeof rpc.request.openSurface;
     closeSurface: typeof rpc.request.closeSurface;
     renameSession: typeof rpc.request.renameSession;
+    setSessionMode: typeof rpc.request.setSessionMode;
     forkSession: typeof rpc.request.forkSession;
     deleteSession: typeof rpc.request.deleteSession;
     pinSession: typeof rpc.request.pinSession;
@@ -262,6 +263,7 @@ export interface ChatRuntime {
   ) => Promise<void>;
   closePaneSurface: (paneId: string) => Promise<void>;
   renameSession: (sessionId: string, title: string) => Promise<void>;
+  setSessionMode: (paneId: string, mode: SessionMode) => Promise<void>;
   forkSession: (
     sessionId: string,
     title?: string,
@@ -1450,6 +1452,18 @@ export async function createChatRuntime(
       await rpcClient.request.renameSession({ sessionId, title });
       await refreshSessions();
     },
+    setSessionMode: async (paneId, mode) => {
+      const target = paneLayout.panes.find((pane) => pane.paneId === paneId)?.binding ?? null;
+      if (!isPromptTarget(target) || target.surface !== "orchestrator") {
+        return;
+      }
+      const response = await rpcClient.request.setSessionMode({ target, mode });
+      if (!response.ok || !response.snapshot) {
+        throw new Error(response.error ?? "Session mode update failed.");
+      }
+      await bindPaneToSnapshot(paneId, response.snapshot);
+      await refreshSessions();
+    },
     forkSession: async (sessionId, title, openTarget) => {
       const nextPaneId = resolveOpenTarget(openTarget);
       const snapshot = await rpcClient.request.forkSession({ sessionId, title });
@@ -1538,7 +1552,7 @@ export async function createChatRuntime(
     syncProviderAuth,
     requireProviderAccess,
     listConfiguredProviders,
-    listWorkspacePaths: (options) => rpcClient.request.listWorkspacePaths(options),
+    listWorkspacePaths: (pathOptions) => rpcClient.request.listWorkspacePaths(pathOptions),
     openWorkspacePath: async (workspaceRelativePath) => {
       const result = await rpcClient.request.openWorkspacePath({ workspaceRelativePath });
       return result.opened;

@@ -276,10 +276,10 @@
   .saved-workflow-library {
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr);
-    gap: 0.75rem;
+    gap: 0;
     min-height: 0;
     height: 100%;
-    padding: 0.85rem;
+    padding: 0;
     color: var(--ui-text-primary);
     background: var(--ui-surface);
   }
@@ -301,49 +301,58 @@
     margin: 0;
     color: var(--ui-text-secondary);
     font-family: var(--font-mono);
-    font-size: 0.68rem;
+    font-size: 0.64rem;
     text-transform: uppercase;
   }
 
   .library-header h2,
   .detail-header h3 {
     margin: 0.12rem 0 0;
-    font-size: 0.95rem;
+    font-size: 0.82rem;
+    font-weight: 660;
     line-height: 1.2;
+  }
+
+  .library-header {
+    padding: 0.58rem 0.78rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 88%, transparent);
   }
 
   .library-tabs {
     display: flex;
-    gap: 0.35rem;
+    gap: 0.22rem;
     overflow-x: auto;
-    padding-bottom: 0.1rem;
+    padding: 0.42rem 0.78rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+    background: color-mix(in oklab, var(--ui-surface) 92%, transparent);
   }
 
   .library-tabs button {
     display: inline-flex;
     align-items: center;
-    gap: 0.45rem;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
+    gap: 0.4rem;
+    border: 1px solid transparent;
     border-radius: var(--ui-radius-sm);
-    padding: 0.42rem 0.56rem;
-    background: color-mix(in oklab, var(--ui-surface-subtle) 78%, transparent);
+    padding: 0.32rem 0.5rem;
+    background: transparent;
     color: var(--ui-text-secondary);
     font: inherit;
-    font-size: 0.74rem;
+    font-size: 0.7rem;
     cursor: pointer;
     white-space: nowrap;
   }
 
   .library-tabs button.active {
-    border-color: color-mix(in oklab, var(--ui-border-accent) 76%, var(--ui-border-soft));
+    border-color: color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
     color: var(--ui-text-primary);
-    background: color-mix(in oklab, var(--ui-accent-soft) 58%, var(--ui-surface-raised));
+    background: color-mix(in oklab, var(--ui-surface-raised) 86%, transparent);
   }
 
   .library-body {
     display: grid;
     grid-template-columns: minmax(16rem, 0.82fr) minmax(0, 1.18fr);
-    gap: 0.75rem;
+    gap: 0;
     min-height: 0;
   }
 
@@ -351,16 +360,18 @@
   .library-detail {
     min-height: 0;
     overflow: auto;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-    border-radius: var(--ui-radius-md);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 72%, transparent);
+    border: 0;
+    border-radius: 0;
+    background: var(--ui-surface);
   }
 
   .library-list {
     display: grid;
     align-content: start;
-    gap: 0.25rem;
+    gap: 0;
     padding: 0.35rem;
+    border-right: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 84%, transparent);
   }
 
   .library-group {
@@ -391,9 +402,9 @@
 
   .library-row {
     display: grid;
-    gap: 0.35rem;
+    gap: 0.28rem;
     width: 100%;
-    padding: 0.62rem;
+    padding: 0.5rem 0.56rem;
     border: 1px solid transparent;
     border-radius: var(--ui-radius-sm);
     background: transparent;
@@ -406,8 +417,12 @@
   .library-row:focus-visible,
   .library-row.active {
     outline: none;
-    border-color: color-mix(in oklab, var(--ui-border-strong) 74%, transparent);
-    background: var(--ui-surface-raised);
+    border-color: color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-raised) 88%, transparent);
+  }
+
+  .library-row.active {
+    box-shadow: inset 2px 0 0 var(--ui-accent);
   }
 
   .library-row strong,
@@ -416,7 +431,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.78rem;
+    font-size: 0.74rem;
   }
 
   .row-meta,
@@ -426,7 +441,7 @@
   .asset-group,
   .diagnostic {
     color: var(--ui-text-secondary);
-    font-size: 0.72rem;
+    font-size: 0.68rem;
     line-height: 1.45;
   }
 
@@ -463,8 +478,8 @@
   .library-detail {
     display: grid;
     align-content: start;
-    gap: 0.8rem;
-    padding: 0.85rem;
+    gap: 0.68rem;
+    padding: 0.72rem;
   }
 
   .detail-actions {
@@ -476,9 +491,10 @@
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);
     gap: 0.35rem 0.7rem;
-    padding: 0.65rem;
+    padding: 0.58rem 0.62rem;
     border: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
     border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 68%, transparent);
   }
 
   .detail-section {
@@ -514,13 +530,13 @@
     max-height: 18rem;
     margin: 0;
     overflow: auto;
-    padding: 0.72rem;
+    padding: 0.68rem;
     border: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
     border-radius: var(--ui-radius-sm);
-    background: var(--ui-surface);
+    background: color-mix(in oklab, var(--ui-code) 92%, transparent);
     color: var(--ui-text-primary);
     font-family: var(--font-mono);
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     line-height: 1.55;
     white-space: pre-wrap;
   }
@@ -551,6 +567,11 @@
   @media (max-width: 860px) {
     .library-body {
       grid-template-columns: minmax(0, 1fr);
+    }
+
+    .library-list {
+      border-right: 0;
+      border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
     }
   }
 </style>

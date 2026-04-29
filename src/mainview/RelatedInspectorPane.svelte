@@ -33,7 +33,7 @@
         title = "Command";
         content = await runtime.getCommandInspector(target.commandId, target.workspaceSessionId);
       } else if (target.surface === "workflow-task-attempt") {
-        title = "Task Agent";
+        title = "Workflow Task-Agent";
         content = await runtime.getWorkflowTaskAttemptInspector(
           target.workflowTaskAttemptId,
           target.workspaceSessionId,
@@ -93,6 +93,19 @@
   function artifactPreviewMode(artifact: WorkspaceArtifactPreview): "metadata" | "text" {
     if (artifact.missingFile || artifact.kind === "file") return "metadata";
     return "text";
+  }
+
+  function isDiffArtifact(artifact: WorkspaceArtifactPreview): boolean {
+    const filename = (artifact.path ?? artifact.name).toLowerCase();
+    return filename.endsWith(".diff") || filename.endsWith(".patch");
+  }
+
+  function diffLineClass(line: string): string {
+    if (line.startsWith("+++") || line.startsWith("---")) return "diff-line diff-file";
+    if (line.startsWith("@@")) return "diff-line diff-hunk";
+    if (line.startsWith("+")) return "diff-line diff-add";
+    if (line.startsWith("-")) return "diff-line diff-remove";
+    return "diff-line";
   }
 </script>
 
@@ -197,6 +210,18 @@
     </div>
     {#if content.missingFile}
       <p class="callout warning">The artifact record exists, but the backing file is not available.</p>
+    {:else if isDiffArtifact(content)}
+      <section class="inspector-section">
+        <h4>Preview</h4>
+        <div class="diff-viewer" aria-label={`Diff preview for ${content.name}`}>
+          {#each content.content.split("\n") as line, index (`${index}:${line}`)}
+            <div class={diffLineClass(line)}>
+              <span class="diff-line-number">{index + 1}</span>
+              <code>{line || " "}</code>
+            </div>
+          {/each}
+        </div>
+      </section>
     {:else if artifactPreviewMode(content) === "text"}
       <section class="inspector-section">
         <h4>Preview</h4>
@@ -239,35 +264,46 @@
     grid-template-rows: auto 1fr;
     min-height: 0;
     height: 100%;
-    background: var(--surface);
-    color: var(--text);
+    overflow: auto;
+    background: var(--ui-surface);
+    color: var(--ui-text-primary);
   }
 
   header {
-    border-bottom: 1px solid var(--border);
-    padding: 0.75rem 1rem;
+    position: sticky;
+    top: 0;
+    z-index: var(--ui-z-sticky);
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
+    padding: 0.58rem 0.78rem;
+    background: color-mix(in oklab, var(--ui-surface-subtle) 88%, transparent);
   }
 
   header p {
-    margin: 0 0 0.2rem;
-    color: var(--text-muted);
-    font-size: 0.72rem;
+    margin: 0 0 0.14rem;
+    color: var(--ui-text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
     text-transform: uppercase;
   }
 
   header h3 {
     margin: 0;
-    font-size: 1rem;
+    font-size: 0.82rem;
+    font-weight: 660;
+    line-height: 1.25;
   }
 
   pre {
     margin: 0;
     min-height: 0;
     overflow: auto;
-    padding: 1rem;
+    padding: 0.78rem;
     white-space: pre-wrap;
     word-break: break-word;
-    font-size: 0.78rem;
+    color: var(--ui-text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    line-height: 1.56;
   }
 
   .inspector-summary,
@@ -278,10 +314,10 @@
     justify-content: space-between;
     gap: 0.75rem;
     min-width: 0;
-    margin: 0.78rem 1rem 0;
-    padding: 0.72rem 0.76rem;
+    margin: 0.62rem 0.78rem 0;
+    padding: 0.56rem 0.62rem;
     border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
-    border-radius: var(--ui-radius-md);
+    border-radius: var(--ui-radius-sm);
     background: color-mix(in oklab, var(--ui-surface-subtle) 76%, transparent);
   }
 
@@ -300,7 +336,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     color: var(--ui-text-primary);
-    font-size: 0.78rem;
+    font-size: 0.74rem;
     white-space: nowrap;
   }
 
@@ -311,7 +347,7 @@
     min-width: 0;
     overflow-wrap: anywhere;
     color: var(--ui-text-secondary);
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     line-height: 1.45;
   }
 
@@ -319,12 +355,12 @@
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);
     gap: 0.34rem 0.65rem;
-    margin: 0.78rem 1rem 0;
-    padding: 0.64rem 0.7rem;
+    margin: 0.62rem 0.78rem 0;
+    padding: 0.56rem 0.62rem;
     border: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
     border-radius: var(--ui-radius-sm);
     background: color-mix(in oklab, var(--ui-surface-subtle) 68%, transparent);
-    font-size: 0.7rem;
+    font-size: 0.68rem;
   }
 
   .metadata-grid span {
@@ -343,7 +379,7 @@
   .inspector-section {
     display: grid;
     gap: 0.48rem;
-    margin: 0.78rem 1rem 0;
+    margin: 0.62rem 0.78rem 0;
   }
 
   .inspector-section h4 {
@@ -362,16 +398,75 @@
     font-size: 0.72rem;
   }
 
+  .diff-viewer {
+    min-height: 0;
+    max-height: 24rem;
+    overflow: auto;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-code) 92%, transparent);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    line-height: 1.55;
+  }
+
+  .diff-line {
+    display: grid;
+    grid-template-columns: 3.2rem minmax(0, 1fr);
+    min-width: max-content;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 38%, transparent);
+    color: var(--ui-text-secondary);
+  }
+
+  .diff-line:last-child {
+    border-bottom: 0;
+  }
+
+  .diff-line-number {
+    padding: 0.08rem 0.58rem;
+    border-right: 1px solid color-mix(in oklab, var(--ui-border-soft) 62%, transparent);
+    color: var(--ui-text-tertiary);
+    text-align: right;
+    user-select: none;
+  }
+
+  .diff-line code {
+    padding: 0.08rem 0.62rem;
+    color: inherit;
+    font-family: inherit;
+    white-space: pre;
+  }
+
+  .diff-hunk {
+    background: color-mix(in oklab, var(--ui-info-soft) 70%, transparent);
+    color: color-mix(in oklab, var(--ui-info) 82%, var(--ui-text-primary));
+  }
+
+  .diff-file {
+    background: color-mix(in oklab, var(--ui-surface-subtle) 84%, transparent);
+    color: var(--ui-text-primary);
+  }
+
+  .diff-add {
+    background: color-mix(in oklab, var(--ui-success-soft) 68%, transparent);
+    color: color-mix(in oklab, var(--ui-success) 82%, var(--ui-text-primary));
+  }
+
+  .diff-remove {
+    background: color-mix(in oklab, var(--ui-danger-soft) 68%, transparent);
+    color: color-mix(in oklab, var(--ui-danger) 82%, var(--ui-text-primary));
+  }
+
   .artifact-row,
   .child-row {
     margin: 0;
   }
 
   .callout {
-    margin: 0.78rem 1rem 0;
-    padding: 0.66rem 0.72rem;
+    margin: 0.62rem 0.78rem 0;
+    padding: 0.58rem 0.64rem;
     border-radius: var(--ui-radius-sm);
-    font-size: 0.72rem;
+    font-size: 0.7rem;
     line-height: 1.5;
   }
 
@@ -389,9 +484,9 @@
 
   .task-agent-summary {
     display: grid;
-    gap: 0.65rem;
-    padding: 0.78rem 1rem;
-    border-bottom: 1px solid var(--border);
+    gap: 0.55rem;
+    padding: 0.62rem 0.78rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
   }
 
   .task-agent-summary-row {
@@ -400,11 +495,11 @@
     justify-content: space-between;
     gap: 0.8rem;
     min-width: 0;
-    font-size: 0.76rem;
+    font-size: 0.72rem;
   }
 
   .task-agent-summary-row span {
-    color: var(--text-muted);
+    color: var(--ui-text-secondary);
   }
 
   .task-agent-summary-row strong {
@@ -415,7 +510,7 @@
   }
 
   .related-inspector-error {
-    margin: 1rem;
-    color: var(--danger);
+    margin: 0.78rem;
+    color: var(--ui-danger);
   }
 </style>

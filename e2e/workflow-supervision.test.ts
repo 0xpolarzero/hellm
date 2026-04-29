@@ -125,11 +125,12 @@ async function clickWhenEnabled(
 }
 
 async function sendPrompt(page: SvvyApp["page"], text: string): Promise<void> {
-  const composer = page.locator(
+  const focusedPane = page.locator(".workspace-pane.focused");
+  const composer = focusedPane.locator(
     'textarea[placeholder="Ask svvy to inspect the repo, make a change, or run Project CI."]',
   );
   await composer.fill(text);
-  const sendButton = page.getByRole("button", { name: "Send" });
+  const sendButton = focusedPane.locator('button[aria-label="Send"]');
   await clickWhenEnabled(sendButton);
 }
 
@@ -200,7 +201,7 @@ test("drives a real delegated workflow run through the app and routes workflow a
           await waitForVisible(page.getByText("Run the bundled hello_world workflow"));
           await waitForVisible(page.getByText("1 thread"));
 
-          const threadCard = page.locator(".handler-thread-card").filter({
+          const threadCard = page.locator(".handler-thread-reference-entry").filter({
             has: page.getByText("Run the bundled hello_world workflow"),
           });
           await waitForVisible(threadCard);
@@ -210,7 +211,9 @@ test("drives a real delegated workflow run through the app and routes workflow a
 
           await clickWhenEnabled(page.locator(".handler-thread-actions button").nth(1));
           await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
-          await waitForVisible(page.getByText(/Messaging handler thread/));
+          await waitForVisible(
+            page.locator(".pane-title-line").filter({ hasText: "Handler Thread" }),
+          );
 
           await sendPrompt(
             page,
@@ -222,7 +225,7 @@ test("drives a real delegated workflow run through the app and routes workflow a
           await waitForVisible(page.getByText("Run the bundled hello_world workflow"), 90_000);
           await waitForVisible(page.getByText("1 workflow"), 90_000);
 
-          await waitForVisible(page.getByText("Completed"), 90_000);
+          await waitForVisible(page.getByText("Done"), 90_000);
           await waitForVisible(page.getByText("1 handoff"), 180_000);
 
           await clickWhenEnabled(page.locator(".handler-thread-actions button").first());
@@ -314,13 +317,15 @@ test("drives a real delegated workflow run through the app with z.ai loaded from
         await waitForVisible(page.getByText("Delegated Threads"), 60_000);
         await waitForVisible(page.getByText("Run the bundled hello_world workflow"), 60_000);
 
-        const threadCard = page.locator(".handler-thread-card").filter({
+        const threadCard = page.locator(".handler-thread-reference-entry").filter({
           has: page.getByText("Run the bundled hello_world workflow"),
         });
         await waitForVisible(threadCard, 60_000);
         await clickWhenEnabled(page.locator(".handler-thread-actions button").nth(1), 60_000);
         await waitForVisible(page.getByRole("button", { name: "Return to orchestrator" }));
-        await waitForVisible(page.getByText(/Messaging handler thread/));
+        await waitForVisible(
+          page.locator(".pane-title-line").filter({ hasText: "Handler Thread" }),
+        );
 
         await sendPrompt(
           page,
@@ -337,7 +342,7 @@ test("drives a real delegated workflow run through the app with z.ai loaded from
         await returnToOrchestrator(page);
         await waitForVisible(page.getByText("Delegated Threads"), 90_000);
 
-        await waitForVisible(page.getByText("Completed"), 90_000);
+        await waitForVisible(page.getByText("Done"), 90_000);
         await waitForVisible(page.getByText("1 handoff"), 180_000);
 
         await clickWhenEnabled(page.locator(".handler-thread-actions button").first());

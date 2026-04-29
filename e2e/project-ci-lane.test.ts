@@ -519,11 +519,11 @@ test("renders typed Project CI context and persisted CI results after app boot",
         await waitForVisible(page.getByText("Delegated Threads"));
         await expectProjectCiRegion({ page, state: "passed" });
 
-        const threadCard = page.locator(".handler-thread-card").first();
+        const threadCard = page.locator(".handler-thread-reference-entry").first();
         await waitForVisible(threadCard);
         const cardText = (await threadCard.textContent()) ?? "";
         expect(cardText).toContain("Project CI Handler");
-        expect(cardText).toContain("Completed");
+        expect(cardText).toContain("Done");
         expect(cardText).toContain("Project CI passed.");
         expect(cardText).toContain("1 workflow");
         expect(cardText).toContain("1 CI run");

@@ -29,12 +29,10 @@
 <style>
 	.ui-surface {
 		position: relative;
-		border-radius: var(--ui-radius-lg);
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-raised) 78%, transparent), transparent),
-			var(--ui-surface);
-		box-shadow: var(--ui-shadow-soft);
+		border-radius: var(--ui-radius-md);
+		border: 1px solid var(--ui-border-soft);
+		background: var(--ui-surface);
+		box-shadow: none;
 		overflow: hidden;
 	}
 
@@ -43,18 +41,15 @@
 	}
 
 	.tone-subtle {
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-raised) 72%, transparent), transparent),
-			var(--ui-surface-subtle);
+		background: color-mix(in oklab, var(--ui-surface-subtle) 92%, transparent);
 	}
 
 	.tone-muted {
-		background: var(--ui-surface-muted);
+		background: color-mix(in oklab, var(--ui-surface-muted) 88%, transparent);
 	}
 
 	.tone-danger {
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-danger-soft) 90%, transparent), var(--ui-surface));
+		background: color-mix(in oklab, var(--ui-danger-soft) 72%, var(--ui-surface));
 		border-color: color-mix(in oklab, var(--ui-danger) 22%, var(--ui-border-soft));
 	}
 
@@ -63,14 +58,14 @@
 	}
 
 	.padding-sm {
-		padding: 0.72rem;
+		padding: 0.58rem;
 	}
 
 	.padding-md {
-		padding: 0.9rem;
+		padding: 0.72rem;
 	}
 
 	.padding-lg {
-		padding: 1.15rem;
+		padding: 0.95rem;
 	}
 </style>
