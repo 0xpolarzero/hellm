@@ -105,12 +105,12 @@ The workflow inspector remains tree-first. Replit artifact graph-oriented workfl
 
 ## 9. Command Palette And Quick Open
 
-- [ ] Restyle the command palette to match the Replit artifact compact action-list treatment while preserving `cmdk-sv` and svvy-owned command semantics.
-- [ ] Treat Replit artifact command-palette source as primitive-only; preserve production `cmdk-sv` command semantics and derive compact action-list styling from Svelte fixtures or production screenshots.
-- [ ] Render action categories, kind badges, shortcuts, disabled states, placement hints, and unmatched prompt-session fallback clearly.
-- [ ] Render `Cmd+P` quick-open placeholder or no-op state without implying a file editor surface exists before it does.
-- [ ] Preserve command routing for sessions, surfaces, handler threads, workflow inspectors, Project CI, panes, settings, and agent settings.
-- [ ] Verify keyboard dispatch, command matching, disabled or hidden actions, pane placement, and unmatched prompt creation.
+- [x] Restyle the command palette to match the Replit artifact compact action-list treatment while preserving `cmdk-sv` and svvy-owned command semantics. `729c1b9`
+- [x] Treat Replit artifact command-palette source as primitive-only; preserve production `cmdk-sv` command semantics and derive compact action-list styling from Svelte fixtures or production screenshots. `729c1b9`
+- [x] Render action categories, kind badges, shortcuts, disabled states, placement hints, and unmatched prompt-session fallback clearly. `729c1b9`
+- [x] Render `Cmd+P` quick-open placeholder or no-op state without implying a file editor surface exists before it does. `729c1b9`
+- [x] Preserve command routing for sessions, surfaces, handler threads, workflow inspectors, Project CI, panes, settings, and agent settings. `729c1b9`
+- [x] Verify keyboard dispatch, command matching, disabled or hidden actions, pane placement, and unmatched prompt creation. `729c1b9`
 
 ## 10. Settings And Auth Surfaces
 
