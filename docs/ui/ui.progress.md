@@ -114,12 +114,12 @@ The workflow inspector remains tree-first. Replit artifact graph-oriented workfl
 
 ## 10. Settings And Auth Surfaces
 
-- [x] Restyle provider auth settings to match the Replit artifact treatment for provider state, OAuth/key entry affordances, validation, missing-provider recovery, and destructive-action confirmation. `3d9645c`
-- [x] Restyle session-agent settings to match the Replit artifact treatment for default session, quick session, namer, and per-surface inspection. `3d9645c`
-- [x] Restyle workflow-agent settings to match the Replit artifact treatment for conventional saved workflow agents while preserving `.svvy/workflows/components/agents.ts` synchronization. `3d9645c`
-- [x] Restyle app preferences such as external editor selection to match the Replit artifact settings form treatment. `3d9645c`
-- [x] Preserve provider auth synchronization, model discovery, reasoning dropdown behavior, settings persistence, and recovery from startup provider gaps. `3d9645c`
-- [x] Verify disconnected providers, invalid keys, OAuth cancellation, missing models, long prompt text, and narrow viewport settings layout. `3d9645c`
+- [x] Restyle provider auth settings to match the Replit artifact treatment for provider state, OAuth/key entry affordances, validation, missing-provider recovery, and destructive-action confirmation. `a4c279b`
+- [x] Restyle session-agent settings to match the Replit artifact treatment for default session, quick session, namer, and per-surface inspection. `a4c279b`
+- [x] Restyle workflow-agent settings to match the Replit artifact treatment for conventional saved workflow agents while preserving `.svvy/workflows/components/agents.ts` synchronization. `a4c279b`
+- [x] Restyle app preferences such as external editor selection to match the Replit artifact settings form treatment. `a4c279b`
+- [x] Preserve provider auth synchronization, model discovery, reasoning dropdown behavior, settings persistence, and recovery from startup provider gaps. `a4c279b`
+- [x] Verify disconnected providers, invalid keys, OAuth cancellation, missing models, long prompt text, and narrow viewport settings layout. `a4c279b`
 
 ## 11. Responsive And Accessibility Pass
 
