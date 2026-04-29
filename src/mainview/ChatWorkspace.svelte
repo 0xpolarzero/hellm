@@ -5,12 +5,10 @@
   import FileSearchIcon from "@lucide/svelte/icons/file-search";
   import SearchIcon from "@lucide/svelte/icons/search";
   import SettingsIcon from "@lucide/svelte/icons/settings";
-  import Columns2Icon from "@lucide/svelte/icons/columns-2";
   import GitBranchIcon from "@lucide/svelte/icons/git-branch";
   import GripVerticalIcon from "@lucide/svelte/icons/grip-vertical";
-  import Grid2x2Icon from "@lucide/svelte/icons/grid-2x2";
   import PlusIcon from "@lucide/svelte/icons/plus";
-  import Rows2Icon from "@lucide/svelte/icons/rows-2";
+  import CopyPlusIcon from "@lucide/svelte/icons/copy-plus";
   import CopyIcon from "@lucide/svelte/icons/copy";
   import XIcon from "@lucide/svelte/icons/x";
   import type { AssistantMessage, Model } from "@mariozechner/pi-ai";
@@ -211,7 +209,13 @@
   let paneGridElement = $state<HTMLElement | null>(null);
   let artifactSyncSessionId: string | undefined = undefined;
   let artifactSyncMessageCount = 0;
-  let copyTranscriptState = $state<"idle" | "copying" | "copied" | "error">("idle");
+  let copyTranscriptState = $state<{
+    paneId: string | null;
+    status: "idle" | "copying" | "copied" | "error";
+  }>({
+    paneId: null,
+    status: "idle",
+  });
   let showCommandInspector = $state(false);
   let commandInspector = $state<WorkspaceCommandInspector | null>(null);
   let commandInspectorError = $state<string | undefined>(undefined);
@@ -289,21 +293,6 @@
 
     return "Messaging orchestrator";
   });
-  const currentModelSummary = $derived.by(() => {
-    if (currentModel) {
-      return `${currentModel.provider}/${currentModel.id}`;
-    }
-    if (currentSession?.provider && currentSession.modelId) {
-      return `${currentSession.provider}/${currentSession.modelId}`;
-    }
-    if (currentSession?.modelId) {
-      return currentSession.modelId;
-    }
-    return "No model";
-  });
-  const currentReasoningSummary = $derived(
-    currentThinkingLevel || currentSession?.thinkingLevel || "off",
-  );
   const currentWorktreeSummary = $derived(runtime.branch ? runtime.branch : "workspace");
   function formatPaneSurfaceLabel(
     paneController: ChatSurfaceController | null,
@@ -424,8 +413,11 @@
   const promptBusy = $derived(isStreaming || sendingPrompt);
   const workspaceStatusText = $derived(composerErrorMessage ? "Attention" : promptBusy ? "Streaming" : "Ready");
   const workspaceStatusTone = $derived(composerErrorMessage ? "danger" : promptBusy ? "warning" : "neutral");
-  const copyTranscriptLabel = $derived.by(() => {
-    switch (copyTranscriptState) {
+  function getCopyTranscriptLabel(paneId: string): string {
+    if (copyTranscriptState.paneId !== paneId) {
+      return "Copy pane transcript";
+    }
+    switch (copyTranscriptState.status) {
       case "copying":
         return "Copying...";
       case "copied":
@@ -433,9 +425,9 @@
       case "error":
         return "Copy failed";
       default:
-        return "Copy transcript";
+        return "Copy pane transcript";
     }
-  });
+  }
   const commandInspectorSections = $derived(getCommandInspectorSections(commandInspector));
   const showHandlerThreadPanel = $derived(
     currentSurface?.surface === "orchestrator" &&
@@ -500,7 +492,7 @@
   function scheduleCopyTranscriptReset() {
     clearCopyTranscriptResetTimer();
     copyTranscriptResetTimer = window.setTimeout(() => {
-      copyTranscriptState = "idle";
+      copyTranscriptState = { paneId: null, status: "idle" };
       copyTranscriptResetTimer = null;
     }, 2400);
   }
@@ -799,11 +791,11 @@
     await syncArtifactsFromRuntime(true);
   }
 
-  async function handleSplitPane(direction: "right" | "below", duplicateBinding = false) {
+  async function handleDuplicatePane(paneId: string) {
     await runSessionMutation(async () => {
-      const paneId = await runtime.splitPane(focusedPaneId, direction, { duplicateBinding });
-      if (paneId) {
-        runtime.focusPane(paneId);
+      const nextPaneId = await runtime.splitPane(paneId, "right", { duplicateBinding: true });
+      if (nextPaneId) {
+        runtime.focusPane(nextPaneId);
       }
     });
   }
@@ -1183,15 +1175,18 @@
     }
   }
 
-  async function handleCopyTranscript() {
-    if (copyTranscriptState === "copying") return;
+  async function handleCopyPaneTranscript(paneId: string) {
+    if (copyTranscriptState.status === "copying") return;
 
-    const session = currentSession;
-    const agent = currentSurfaceController?.agent;
-    if (!agent) {
+    const paneController = runtime.getPaneController(paneId);
+    const agent = paneController?.agent;
+    const activeModel = agent?.state.model;
+    if (!paneController || !agent || !activeModel) {
       return;
     }
-    const activeModel = currentModel ?? agent.state.model;
+    const session =
+      sessions.find((candidate) => candidate.id === paneController.target.workspaceSessionId) ??
+      currentSession;
     const exportText = buildSessionTranscriptExport({
       session: {
         id: session?.id ?? agent.sessionId ?? "unknown-session",
@@ -1201,28 +1196,28 @@
         updatedAt: session?.updatedAt ?? new Date().toISOString(),
       },
       target:
-        currentSurfaceController?.target ?? {
+        paneController.target ?? {
           workspaceSessionId: session?.id ?? "unknown-session",
           surface: "orchestrator",
           surfacePiSessionId: agent.sessionId ?? "unknown-surface",
         },
       provider: activeModel.provider,
       model: activeModel.id,
-      reasoningEffort: currentThinkingLevel,
-      systemPrompt: currentSurfaceController.resolvedSystemPrompt,
-      messages,
-      streamMessage,
+      reasoningEffort: agent.state.thinkingLevel,
+      systemPrompt: paneController.resolvedSystemPrompt,
+      messages: agent.state.messages,
+      streamMessage: agent.state.streamMessage?.role === "assistant" ? agent.state.streamMessage : null,
     });
 
-    copyTranscriptState = "copying";
+    copyTranscriptState = { paneId, status: "copying" };
 
     try {
       await copyTextToClipboard(exportText);
-      copyTranscriptState = "copied";
+      copyTranscriptState = { paneId, status: "copied" };
       scheduleCopyTranscriptReset();
     } catch (error) {
       console.error("Failed to copy transcript:", error);
-      copyTranscriptState = "error";
+      copyTranscriptState = { paneId, status: "error" };
       scheduleCopyTranscriptReset();
     }
   }
@@ -2389,31 +2384,6 @@
             </Button>
           {/if}
           <ContextBudgetBar budget={contextBudget} variant="compact" label="Focused context" />
-          <button
-            class="header-chip layout-chip"
-            type="button"
-            data-testid="pane-layout-summary"
-            title="Pane layout"
-            onclick={() => void handleSplitPane("right")}
-          >
-            <Grid2x2Icon aria-hidden="true" size={12} strokeWidth={1.8} />
-            <span>{paneLayout.columns.length}x{paneLayout.rows.length}</span>
-          </button>
-          <span class="header-chip model-chip" title={currentModelSummary}>
-            {currentModel?.id ?? currentSession?.modelId ?? "no model"}
-            {currentReasoningSummary !== "off" ? ` + ${currentReasoningSummary}` : ""}
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label={copyTranscriptLabel}
-            title="Copy the full session transcript, including tool calls and tool results."
-            disabled={copyTranscriptState === "copying"}
-            onclick={() => void handleCopyTranscript()}
-          >
-            <CopyIcon aria-hidden="true" size={14} strokeWidth={1.9} />
-          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -2424,41 +2394,6 @@
             onclick={() => (showArtifactsPanel = !showArtifactsPanel)}
           >
             <FileSearchIcon aria-hidden="true" size={14} strokeWidth={1.9} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            data-testid="pane-split-right"
-            aria-label="Split pane right"
-            title="Split pane right"
-            disabled={mutatingSession}
-            onclick={() => void handleSplitPane("right")}
-          >
-            <Columns2Icon aria-hidden="true" size={14} strokeWidth={1.9} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            data-testid="pane-split-below"
-            aria-label="Split pane below"
-            title="Split pane below"
-            disabled={mutatingSession}
-            onclick={() => void handleSplitPane("below")}
-          >
-            <Rows2Icon aria-hidden="true" size={14} strokeWidth={1.9} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label="Duplicate focused pane"
-            title="Duplicate focused pane"
-            disabled={mutatingSession}
-            onclick={() => void handleSplitPane("right", true)}
-          >
-            <CopyIcon aria-hidden="true" size={14} strokeWidth={1.9} />
           </Button>
           <button
             class="header-icon-button"
@@ -2598,8 +2533,36 @@
                   <MetadataChip label="context" value={paneContextBudget.label} tone={paneContextBudget.tone === "red" ? "danger" : paneContextBudget.tone === "orange" ? "warning" : "neutral"} />
                 {/if}
               </div>
-              {#if paneLayout.panes.length > 1}
-                <div class="pane-chrome-actions">
+              <div class="pane-chrome-actions">
+                {#if paneController}
+                  <button
+                    type="button"
+                    data-testid="pane-copy-transcript-button"
+                    aria-label={`Copy transcript for pane ${pane.paneId}`}
+                    title={getCopyTranscriptLabel(pane.paneId)}
+                    disabled={copyTranscriptState.status === "copying"}
+                    onclick={(event) => {
+                      event.stopPropagation();
+                      void handleCopyPaneTranscript(pane.paneId);
+                    }}
+                  >
+                    <CopyIcon aria-hidden="true" size={13} strokeWidth={1.9} />
+                  </button>
+                {/if}
+                <button
+                  type="button"
+                  data-testid="pane-duplicate-button"
+                  aria-label={`Duplicate pane ${pane.paneId}`}
+                  title="Duplicate pane"
+                  disabled={mutatingSession || !pane.binding}
+                  onclick={(event) => {
+                    event.stopPropagation();
+                    void handleDuplicatePane(pane.paneId);
+                  }}
+                >
+                  <CopyPlusIcon aria-hidden="true" size={13} strokeWidth={1.9} />
+                </button>
+                {#if paneLayout.panes.length > 1}
                   <button
                     type="button"
                     data-testid="pane-close-button"
@@ -2612,8 +2575,8 @@
                   >
                     <XIcon aria-hidden="true" size={13} strokeWidth={1.9} />
                   </button>
-                </div>
-              {/if}
+                {/if}
+              </div>
             </header>
             {#if pane.paneId !== focusedPaneId && paneContextBudget}
               <ContextBudgetBar budget={paneContextBudget} variant="compact" label="Context" />
@@ -4714,23 +4677,6 @@
     line-height: 1;
   }
 
-  .header-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.32rem;
-    height: 1.45rem;
-    min-width: 0;
-    padding: 0 0.45rem;
-    border: 1px solid var(--ui-border-soft);
-    border-radius: var(--ui-radius-sm);
-    background: transparent;
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: 0.6rem;
-    line-height: 1;
-    white-space: nowrap;
-  }
-
   .header-icon-button {
     display: inline-flex;
     align-items: center;
@@ -4756,21 +4702,6 @@
     color: var(--ui-text-primary);
   }
 
-  button.header-chip {
-    cursor: pointer;
-  }
-
-  button.header-chip:hover {
-    border-color: var(--ui-border-strong);
-    background: var(--ui-surface-subtle);
-    color: var(--ui-text-primary);
-  }
-
-  .model-chip {
-    max-width: 11rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
 
   .inline-titlebar-action {
     color: var(--ui-text-tertiary);

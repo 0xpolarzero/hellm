@@ -37,8 +37,13 @@ test("splits, exposes resize dividers, and closes the durable pane grid", async 
     async (app) => {
       await waitForPaneShell(app.page);
       expect(await app.page.locator('[data-testid="workspace-pane"]').count()).toBe(1);
+      expect(await app.page.locator('[data-testid="pane-copy-transcript-button"]').count()).toBe(1);
+      expect(await app.page.locator('[data-testid="pane-duplicate-button"]').count()).toBe(1);
 
-      await app.page.locator('[data-testid="pane-split-right"]').click();
+      expect(await app.page.locator('[data-testid="pane-split-right"]').count()).toBe(0);
+      expect(await app.page.locator('[data-testid="pane-split-below"]').count()).toBe(0);
+
+      await app.page.locator('[data-testid="pane-duplicate-button"]').first().click();
       await app.page.locator('[data-testid="workspace-pane"]').nth(1).waitFor({ state: "visible" });
       expect(await app.page.locator('[data-testid="workspace-pane"]').count()).toBe(2);
 
@@ -57,6 +62,8 @@ test("splits, exposes resize dividers, and closes the durable pane grid", async 
       expect(await app.page.locator('[data-testid="pane-divider-vertical"]').count()).toBe(1);
       expect(await app.page.locator('[data-testid="pane-divider-add-vertical"]').count()).toBe(1);
       expect(await app.page.locator(".pane-drag-handle").count()).toBe(2);
+      expect(await app.page.locator('[data-testid="pane-copy-transcript-button"]').count()).toBe(2);
+      expect(await app.page.locator('[data-testid="pane-duplicate-button"]').count()).toBe(2);
       expect(await app.page.locator('[data-testid="pane-close-button"]').count()).toBe(2);
       expect(await app.page.locator('[data-testid="pane-close"]').count()).toBe(0);
       expect(await app.page.locator('[data-testid^="pane-span-drop-"]').count()).toBe(4);
@@ -80,7 +87,7 @@ test("splits, exposes resize dividers, and closes the durable pane grid", async 
         ),
       ).toBeLessThan(1);
 
-      await app.page.locator('[data-testid="pane-split-below"]').click();
+      await app.page.locator('[data-testid="pane-duplicate-button"]').first().click();
       expect(await app.page.locator('[data-testid="workspace-pane"]').count()).toBe(3);
       expect(await app.page.locator('[data-testid="pane-close-button"]').count()).toBe(3);
 
