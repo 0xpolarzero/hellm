@@ -6,7 +6,9 @@
 	import GitBranchIcon from "@lucide/svelte/icons/git-branch";
 	import LayersIcon from "@lucide/svelte/icons/layers";
 	import XIcon from "@lucide/svelte/icons/x";
+	import CommandPalette from "./CommandPalette.svelte";
 	import ContextBudgetBar from "./ContextBudgetBar.svelte";
+	import { buildCommandRegistry } from "./command-palette";
 	import Badge from "./ui/Badge.svelte";
 	import Button from "./ui/Button.svelte";
 	import DenseRow from "./ui/DenseRow.svelte";
@@ -65,6 +67,99 @@
 		{ label: "smithers.run_workflow", tone: "warning" as const, detail: "workflow active" },
 		{ label: "api.exec.run", tone: "success" as const, detail: "tests passed" },
 	];
+
+	const commandPaletteActions = buildCommandRegistry({
+		focusedSessionId: "fixture-session-1",
+		projectCiStatus: {
+			status: "passed",
+			summary: "Last run passed",
+			entries: [],
+			activeWorkflowRun: null,
+			latestRun: null,
+			checks: [],
+			checkCounts: {
+				passed: 0,
+				failed: 0,
+				blocked: 0,
+				cancelled: 0,
+				skipped: 0,
+				total: 0,
+			},
+			updatedAt: "2026-04-27T10:00:00.000Z",
+		},
+		sessions: [
+			{
+				id: "fixture-session-1",
+				title: "OAuth provider hardening",
+				preview: "Handler is validating refresh-token edge cases.",
+				createdAt: "2026-04-27T10:00:00.000Z",
+				updatedAt: "2026-04-27T10:00:00.000Z",
+				messageCount: 12,
+				status: "running",
+				isPinned: true,
+				pinnedAt: "2026-04-27T10:00:00.000Z",
+				isArchived: false,
+				archivedAt: null,
+				wait: null,
+			},
+			{
+				id: "fixture-session-2",
+				title: "Workflow approval",
+				preview: "Waiting for package install approval from the owner.",
+				createdAt: "2026-04-27T09:00:00.000Z",
+				updatedAt: "2026-04-27T10:00:00.000Z",
+				messageCount: 8,
+				status: "waiting",
+				isPinned: false,
+				pinnedAt: null,
+				isArchived: true,
+				archivedAt: "2026-04-27T10:00:00.000Z",
+				wait: null,
+			},
+		],
+		handlerThreads: [
+			{
+				threadId: "fixture-thread-1",
+				surfacePiSessionId: "fixture-thread-surface-1",
+				title: "Refresh token verifier",
+				objective: "Validate refresh-token edge cases.",
+				status: "running-workflow",
+				wait: null,
+				startedAt: "2026-04-27T10:00:00.000Z",
+				updatedAt: "2026-04-27T10:05:00.000Z",
+				finishedAt: null,
+				commandCount: 4,
+				workflowRunCount: 1,
+				workflowTaskAttemptCount: 1,
+				episodeCount: 0,
+				artifactCount: 2,
+				ciRunCount: 0,
+				loadedContextKeys: ["ci"],
+				latestWorkflowRun: null,
+				latestCiRun: null,
+				latestEpisode: null,
+				workflowTaskAttempts: [
+					{
+						workflowTaskAttemptId: "fixture-task-agent-1",
+						workflowRunId: "fixture-workflow-run-1",
+						smithersRunId: "smithers-fixture-run-1",
+						nodeId: "verify-refresh",
+						iteration: 0,
+						attempt: 1,
+						title: "Verify refresh flow",
+						kind: "agent",
+						status: "running",
+						summary: "Inspecting token refresh behavior.",
+						updatedAt: "2026-04-27T10:05:00.000Z",
+						commandCount: 2,
+						artifactCount: 1,
+						transcriptMessageCount: 5,
+						contextBudget: null,
+					},
+				],
+			},
+		],
+	});
 </script>
 
 <main class="fixture-shell" aria-label="svvy shell chrome fixture preview">
@@ -293,6 +388,15 @@
 		</div>
 	</section>
 </main>
+
+<CommandPalette
+	open={true}
+	mode="actions"
+	actions={commandPaletteActions}
+	onClose={() => undefined}
+	onExecute={() => undefined}
+	onFallbackPrompt={() => undefined}
+/>
 
 <style>
 	.fixture-shell {
