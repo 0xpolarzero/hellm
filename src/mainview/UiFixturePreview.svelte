@@ -131,6 +131,65 @@
 					{/snippet}
 				</PaneHeader>
 				<div class="fixture-pane-body">
+					<section class="fixture-transcript-poc" aria-label="Transcript projection POC">
+						<article class="fixture-user-message">
+							<header><span>You</span><time>10:24</time></header>
+							<p>Run the UI progress section 6 port and keep the transcript parent-first.</p>
+						</article>
+						<article class="fixture-assistant-message">
+							<header>
+								<span>svvy</span>
+								<small>openai / gpt-5.2</small>
+							</header>
+							<p>I'll build this as a transcript projection pass, then verify focused helpers.</p>
+							<span class="fixture-stream-cursor" aria-hidden="true"></span>
+						</article>
+						<article class="fixture-semantic-card fixture-command-card">
+							<header>
+								<div>
+									<strong>Run execute_typescript</strong>
+									<span>Parent command</span>
+								</div>
+								<Badge tone="warning">running</Badge>
+							</header>
+							<pre>{'const files = await api.repo.search({ pattern: "ChatTranscript" });'}</pre>
+							<div class="fixture-child-command">
+								<span>api.exec.run</span>
+								<strong>bun test src/mainview/transcript-projection.test.ts</strong>
+								<small>Nested trace step, not a top-level card.</small>
+							</div>
+						</article>
+						<article class="fixture-semantic-card fixture-episode-card">
+							<header>
+								<div>
+									<strong>Handler handoff</strong>
+									<span>CI handler</span>
+								</div>
+								<Badge tone="info">workflow</Badge>
+							</header>
+							<p>All checks passed and the durable artifacts are ready for inspection.</p>
+						</article>
+						<article class="fixture-semantic-card fixture-wait-card">
+							<header>
+								<div>
+									<strong>Waiting for approval</strong>
+									<span>Workflow-owned pause</span>
+								</div>
+								<Badge tone="warning">waiting</Badge>
+							</header>
+							<p>Approve the package install before the owning handler resumes.</p>
+						</article>
+						<article class="fixture-semantic-card fixture-failure-card">
+							<header>
+								<div>
+									<strong>Verification failed</strong>
+									<span>Project CI</span>
+								</div>
+								<Badge tone="danger">failed</Badge>
+							</header>
+							<pre>src/mainview/ChatTranscript.svelte: Type check failed</pre>
+						</article>
+					</section>
 					<section class="fixture-card">
 						<SectionHeader title="Handler Threads">
 							{#snippet actions()}
@@ -452,6 +511,148 @@
 
 	.fixture-card :global(.context-budget-compact) {
 		display: none;
+	}
+
+	.fixture-transcript-poc {
+		display: flex;
+		flex-direction: column;
+		gap: 0.7rem;
+		min-width: 0;
+		min-height: 0;
+		overflow: auto;
+		padding: 0.25rem 0.2rem;
+	}
+
+	.fixture-user-message,
+	.fixture-assistant-message,
+	.fixture-semantic-card {
+		border-radius: var(--ui-radius-md);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-raised) 88%, var(--ui-surface));
+	}
+
+	.fixture-user-message {
+		align-self: flex-end;
+		width: min(100%, 32rem);
+		padding: 0.72rem 0.82rem;
+		background: color-mix(in oklab, var(--ui-accent-soft) 54%, var(--ui-surface-raised));
+	}
+
+	.fixture-assistant-message {
+		align-self: flex-start;
+		width: min(100%, 42rem);
+		padding: 0.74rem 0.82rem;
+		background: transparent;
+	}
+
+	.fixture-user-message header,
+	.fixture-assistant-message header,
+	.fixture-semantic-card header,
+	.fixture-child-command {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 0.55rem;
+		min-width: 0;
+	}
+
+	.fixture-user-message header span,
+	.fixture-assistant-message header span,
+	.fixture-semantic-card strong {
+		font-size: 0.76rem;
+		font-weight: 650;
+		color: var(--ui-text-primary);
+	}
+
+	.fixture-user-message time,
+	.fixture-assistant-message small,
+	.fixture-semantic-card span,
+	.fixture-child-command span,
+	.fixture-child-command small {
+		font-size: 0.66rem;
+		color: var(--ui-text-tertiary);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.fixture-user-message p,
+	.fixture-assistant-message p,
+	.fixture-semantic-card p {
+		margin: 0.45rem 0 0;
+		font-size: 0.84rem;
+		line-height: 1.55;
+		color: var(--ui-text-secondary);
+	}
+
+	.fixture-stream-cursor {
+		display: inline-block;
+		width: 0.48rem;
+		height: 0.9rem;
+		margin-top: 0.38rem;
+		background: var(--ui-accent);
+		animation: blink-cursor 1s steps(2, start) infinite;
+	}
+
+	.fixture-semantic-card {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+		padding: 0.74rem 0.82rem;
+		overflow: hidden;
+	}
+
+	.fixture-semantic-card::before {
+		content: "";
+		position: absolute;
+		inset: 0 auto 0 0;
+		width: 2px;
+		background: var(--ui-border-strong);
+	}
+
+	.fixture-command-card::before,
+	.fixture-wait-card::before {
+		background: var(--ui-warning);
+	}
+
+	.fixture-episode-card::before {
+		background: var(--ui-info);
+	}
+
+	.fixture-failure-card::before {
+		background: var(--ui-danger);
+	}
+
+	.fixture-semantic-card pre {
+		margin: 0;
+		max-height: 7rem;
+		overflow: auto;
+		padding: 0.58rem 0.62rem;
+		border-radius: var(--ui-radius-sm);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
+		background: color-mix(in oklab, var(--ui-code) 90%, var(--ui-surface));
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		font-size: 0.74rem;
+		line-height: 1.48;
+		color: var(--ui-text-primary);
+	}
+
+	.fixture-child-command {
+		align-items: center;
+		justify-content: flex-start;
+		flex-wrap: wrap;
+		padding: 0.48rem 0.55rem;
+		border-radius: var(--ui-radius-sm);
+		background: color-mix(in oklab, var(--ui-code) 72%, transparent);
+	}
+
+	.fixture-child-command span {
+		font-family: var(--font-mono);
+		color: var(--ui-text-secondary);
+	}
+
+	.fixture-child-command strong {
+		font-size: 0.72rem;
 	}
 
 	.inspector-card {

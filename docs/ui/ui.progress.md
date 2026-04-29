@@ -73,13 +73,13 @@ Always read [ui.prd.md](ui.prd.md) before implementing any item in this roadmap,
 
 ## 6. Transcript And Turn Projection
 
-- [ ] Build a POC transcript projection that matches Replit message, thread, episode, verification, wait, and failure card treatments over static fixture data.
-- [ ] Render user, orchestrator, handler-thread, system-prompt metadata, assistant streaming, tool-call, and error transcript items with the ported Replit visual treatment.
-- [ ] Render turn decisions and command rollups as compact semantic blocks without promoting nested child commands to top-level cards.
-- [ ] Render `execute_typescript` submitted snippets, diagnostics, logs, child command summaries, and artifacts with clear parent-first hierarchy.
-- [ ] Render durable handoff episodes as reusable semantic outputs while preserving earlier handoff points.
-- [ ] Preserve transcript virtualization, pane-local scroll, copy transcript, streaming cursor, pending tool calls, and failure states.
-- [ ] Verify long transcripts, large code blocks, interrupted streams, failed turns, and duplicated pane views of the same surface.
+- [x] Build a POC transcript projection that matches Replit message, thread, episode, verification, wait, and failure card treatments over static fixture data.
+- [x] Render user, orchestrator, handler-thread, system-prompt metadata, assistant streaming, tool-call, and error transcript items with the ported Replit visual treatment.
+- [x] Render turn decisions and command rollups as compact semantic blocks without promoting nested child commands to top-level cards.
+- [x] Render `execute_typescript` submitted snippets, diagnostics, logs, child command summaries, and artifacts with clear parent-first hierarchy.
+- [x] Render durable handoff episodes as reusable semantic outputs while preserving earlier handoff points.
+- [x] Preserve transcript virtualization, pane-local scroll, copy transcript, streaming cursor, pending tool calls, and failure states.
+- [x] Verify long transcripts, large code blocks, interrupted streams, failed turns, and duplicated pane views of the same surface.
 
 ## 7. Handler Threads And Delegation Projection
 

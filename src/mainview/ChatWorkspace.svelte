@@ -34,6 +34,7 @@
     projectConversation,
     projectConversationSummary,
   } from "./conversation-projection";
+  import { buildTranscriptSemanticBlocks } from "./transcript-projection";
   import { buildSessionTranscriptExport } from "./session-transcript";
   import type {
     WorkspaceCommandArtifactLink,
@@ -2219,74 +2220,6 @@
             </section>
           {/if}
 
-          {#if currentCommandRollups.length > 0}
-            <section class="structured-command-panel" aria-label="Structured command rollups">
-              <header class="structured-command-header">
-                <div>
-                  <p class="structured-command-eyebrow">Command History</p>
-                  <h3>
-                    {currentCommandRollups.length}
-                    {currentCommandRollups.length === 1 ? " parent command" : " parent commands"}
-                  </h3>
-                </div>
-                <p class="structured-command-copy">
-                  Parent rollups stay visible here. Child `api.*` commands stay nested in the
-                  inspector.
-                </p>
-              </header>
-
-              <div class="structured-command-list">
-                {#each currentCommandRollups as rollup (rollup.commandId)}
-                  <button
-                    class="structured-command-card"
-                    type="button"
-                    onclick={() => void handleInspectCommand(rollup.commandId)}
-                  >
-                    <div class="structured-command-card-top">
-                      <div class="structured-command-card-copy">
-                        <strong>{rollup.title}</strong>
-                        <span>{rollup.toolName}</span>
-                      </div>
-                      <div class="structured-command-card-meta">
-                        <span
-                          class={`structured-command-status tone-${getCommandStatusTone(rollup.status)}`.trim()}
-                        >
-                          {getCommandStatusLabel(rollup.status)}
-                        </span>
-                        <span>{formatTimestamp(rollup.updatedAt)}</span>
-                      </div>
-                    </div>
-
-                    <p class="structured-command-summary">{rollup.summary}</p>
-
-                    {#if rollup.summaryChildren.length > 0}
-                      <div class="structured-command-highlights" aria-label="Summary-visible child commands">
-                        {#each rollup.summaryChildren as child (child.commandId)}
-                          <div class="structured-command-highlight">
-                            <span class="structured-command-highlight-tool">{child.toolName}</span>
-                            <span>{child.summary}</span>
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-
-                    <div class="structured-command-card-footer">
-                      <span>
-                        {rollup.summaryChildCount}
-                        {rollup.summaryChildCount === 1 ? " rollup detail" : " rollup details"}
-                      </span>
-                      <span>
-                        {rollup.traceChildCount}
-                        {rollup.traceChildCount === 1 ? " trace step" : " trace steps"}
-                      </span>
-                      <span>Inspect</span>
-                    </div>
-                  </button>
-                {/each}
-              </div>
-            </section>
-          {/if}
-
           <ChatTranscript
             {conversation}
             sessionId={currentSurfaceController?.agent.sessionId ?? "no-surface"}
@@ -2295,8 +2228,15 @@
             {pendingToolCalls}
             {isStreaming}
             {workspaceMentionPaths}
+            semanticBlocks={buildTranscriptSemanticBlocks({
+              session: currentSession,
+              errorMessage,
+              commandRollups: currentCommandRollups,
+              handlerThreads,
+            })}
             onOpenArtifact={handleOpenArtifact}
             onOpenWorkspacePath={(path) => void handleOpenWorkspacePath(path)}
+            onInspectCommand={(commandId) => void handleInspectCommand(commandId)}
             onScrollStateChange={(scroll) => handleTranscriptScrollState(pane.paneId, scroll)}
           />
           <ChatComposer
