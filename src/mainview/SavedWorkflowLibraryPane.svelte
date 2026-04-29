@@ -43,6 +43,20 @@
     return items.find((item) => item.id === selectedId) ?? visibleItems[0] ?? null;
   });
 
+  const visibleGroups = $derived.by(() => {
+    const groups = new Map<WorkspaceSavedWorkflowLibraryItemKind, WorkspaceSavedWorkflowLibraryItem[]>();
+    for (const item of visibleItems) {
+      groups.set(item.kind, [...(groups.get(item.kind) ?? []), item]);
+    }
+    return FILTERS.filter((filter) => filter.kind !== "all")
+      .map((filter) => ({
+        kind: filter.kind as WorkspaceSavedWorkflowLibraryItemKind,
+        label: filter.label,
+        items: groups.get(filter.kind as WorkspaceSavedWorkflowLibraryItemKind) ?? [],
+      }))
+      .filter((group) => group.items.length > 0);
+  });
+
   async function loadLibrary() {
     loading = true;
     error = null;
@@ -135,25 +149,33 @@
         {#if visibleItems.length === 0}
           <p class="library-empty">No workflow files in this group.</p>
         {/if}
-        {#each visibleItems as item (item.id)}
-          <button
-            type="button"
-            class:active={selectedItem?.id === item.id}
-            class="library-row"
-            onclick={() => (selectedId = item.id)}
-          >
-            <span class="row-top">
-              <strong>{item.title}</strong>
-              <Badge tone={statusTone(item.validationStatus)}>{item.validationStatus}</Badge>
-            </span>
-            <span class="row-meta">
-              <span>{kindLabel(item.kind)}</span>
-              <code>{item.path}</code>
-            </span>
-            {#if item.summary}
-              <span class="row-summary">{item.summary}</span>
-            {/if}
-          </button>
+        {#each visibleGroups as group (group.kind)}
+          <section class="library-group">
+            <header class="library-group-header">
+              <span>{group.label}</span>
+              <strong>{group.items.length}</strong>
+            </header>
+            {#each group.items as item (item.id)}
+              <button
+                type="button"
+                class:active={selectedItem?.id === item.id}
+                class="library-row"
+                onclick={() => (selectedId = item.id)}
+              >
+                <span class="row-top">
+                  <strong>{item.title}</strong>
+                  <span class={`source-chip scope-${item.scope}`.trim()}>{item.scope}</span>
+                </span>
+                <span class="row-meta">
+                  <Badge tone={statusTone(item.validationStatus)}>{item.validationStatus}</Badge>
+                  <code>{item.path}</code>
+                </span>
+                {#if item.summary}
+                  <span class="row-summary">{item.summary}</span>
+                {/if}
+              </button>
+            {/each}
+          </section>
         {/each}
       </div>
 
@@ -341,6 +363,32 @@
     padding: 0.35rem;
   }
 
+  .library-group {
+    display: grid;
+    gap: 0.25rem;
+  }
+
+  .library-group + .library-group {
+    margin-top: 0.45rem;
+  }
+
+  .library-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.38rem 0.4rem 0.2rem;
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    text-transform: uppercase;
+  }
+
+  .library-group-header strong {
+    font-size: 0.64rem;
+    font-weight: 620;
+  }
+
   .library-row {
     display: grid;
     gap: 0.35rem;
@@ -380,6 +428,23 @@
     color: var(--ui-text-secondary);
     font-size: 0.72rem;
     line-height: 1.45;
+  }
+
+  .source-chip {
+    flex: 0 0 auto;
+    padding: 0.12rem 0.38rem;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
+    border-radius: var(--ui-radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    color: var(--ui-text-secondary);
+    background: color-mix(in oklab, var(--ui-surface-muted) 78%, transparent);
+  }
+
+  .source-chip.scope-artifact {
+    border-color: color-mix(in oklab, var(--ui-warning) 28%, var(--ui-border-soft));
+    color: color-mix(in oklab, var(--ui-warning) 82%, var(--ui-text-primary));
+    background: color-mix(in oklab, var(--ui-warning-soft) 68%, transparent);
   }
 
   code {

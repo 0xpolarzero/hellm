@@ -12,6 +12,7 @@
 	};
 
 	let { controller, snapshot, overlay = false, onClose }: Props = $props();
+	let activeView = $state<"preview" | "raw" | "metadata">("preview");
 
 	const activeArtifact = $derived.by(() => {
 		if (snapshot.artifacts.length === 0) return null;
@@ -24,6 +25,7 @@
 
 	function openArtifact(filename: string) {
 		controller.selectArtifact(filename);
+		activeView = "preview";
 	}
 
 	function svgDataUrl(artifact: ArtifactRecord): string {
@@ -74,7 +76,23 @@
 					<span class="artifact-kind">{activeKind}</span>
 				</div>
 
-				{#if activeKind === "html"}
+				<div class="artifact-view-tabs" aria-label="Artifact preview modes">
+					<button type="button" class:active={activeView === "preview"} onclick={() => (activeView = "preview")}>
+						Preview
+					</button>
+					<button type="button" class:active={activeView === "raw"} onclick={() => (activeView = "raw")}>
+						Raw
+					</button>
+					<button type="button" class:active={activeView === "metadata"} onclick={() => (activeView = "metadata")}>
+						Metadata
+					</button>
+				</div>
+
+				{#if activeView === "metadata"}
+					<pre class="artifact-code">{JSON.stringify({ filename: activeArtifact.filename, kind: activeKind, updatedAt: activeArtifact.updatedAt, bytes: activeArtifact.content.length }, null, 2)}</pre>
+				{:else if activeView === "raw"}
+					<pre class="artifact-code">{activeArtifact.content}</pre>
+				{:else if activeKind === "html"}
 					<iframe class="artifact-preview html-preview" title={activeArtifact.filename} srcdoc={controller.getPreviewDocument(activeArtifact.filename)}></iframe>
 					{#if snapshot.logsByFilename[activeArtifact.filename]}
 						<div class="artifact-logs">
@@ -221,6 +239,36 @@
 		border-radius: var(--ui-radius-md);
 		background: color-mix(in oklab, var(--ui-surface-subtle) 88%, transparent);
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+	}
+
+	.artifact-view-tabs {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		min-width: 0;
+		overflow-x: auto;
+	}
+
+	.artifact-view-tabs button {
+		min-height: 1.7rem;
+		padding: 0.18rem 0.58rem;
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
+		border-radius: var(--ui-radius-sm);
+		background: transparent;
+		color: var(--ui-text-secondary);
+		font: inherit;
+		font-size: 0.7rem;
+		cursor: pointer;
+	}
+
+	.artifact-view-tabs button:hover,
+	.artifact-view-tabs button.active {
+		background: color-mix(in oklab, var(--ui-surface-raised) 84%, transparent);
+		color: var(--ui-text-primary);
+	}
+
+	.artifact-view-tabs button.active {
+		border-color: color-mix(in oklab, var(--ui-border-accent) 72%, var(--ui-border-soft));
 	}
 
 	.artifact-name,
