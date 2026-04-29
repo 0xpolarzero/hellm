@@ -1,4 +1,10 @@
 <script lang="ts">
+	import CheckCircle2Icon from "@lucide/svelte/icons/check-circle-2";
+	import CircleIcon from "@lucide/svelte/icons/circle";
+	import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
+	import InfoIcon from "@lucide/svelte/icons/info";
+	import KeyIcon from "@lucide/svelte/icons/key";
+	import ShieldIcon from "@lucide/svelte/icons/shield";
 	import { getModels, getProviders, supportsXhigh, type Model } from "@mariozechner/pi-ai";
 	import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 	import { onMount } from "svelte";
@@ -42,6 +48,7 @@
 	let error = $state<string | null>(null);
 	let searchQuery = $state("");
 	let editingProvider = $state<string | null>(null);
+	let confirmingProviderRemoval = $state<string | null>(null);
 	let apiKeyInput = $state<Record<string, string>>({});
 	let oauthLoading = $state<Record<string, boolean>>({});
 	let saveMessage = $state<Record<string, string>>({});
@@ -105,6 +112,37 @@
 		if (info.keyType === "env") return { text: "Env var", tone: "warning" as const };
 		return { text: "API key", tone: "info" as const };
 	}
+
+	function providerCredentialLabel(info: ProviderAuthInfo): string {
+		if (!info.hasKey) return info.supportsOAuth ? "OAuth or API key available" : "API key required";
+		if (info.keyType === "env") return "Loaded from environment";
+		if (info.keyType === "oauth") return "Connected with OAuth";
+		return "Stored API key";
+	}
+
+	function providerSectionLabel(info: ProviderAuthInfo): string {
+		if (info.hasKey && info.keyType === "env") return "Environment-backed credentials";
+		if (info.hasKey && info.keyType === "oauth") return "OAuth connections";
+		return "AI providers";
+	}
+
+	const sessionAgentLabels = {
+		defaultSession: "Default Session",
+		quickSession: "Quick Session",
+		namer: "Namer",
+	} satisfies Record<SessionAgentKey, string>;
+
+	const sessionAgentSummaries = {
+		defaultSession: "Used for normal repository sessions and long-running orchestrator turns.",
+		quickSession: "Used when a fast prompt should start with the lightweight session defaults.",
+		namer: "Generates session and handler-thread titles from the saved naming instruction.",
+	} satisfies Record<SessionAgentKey, string>;
+
+	const workflowAgentSummaries = {
+		explorer: "Conventional saved workflow agent for bounded investigation tasks.",
+		implementer: "Conventional saved workflow agent for production code changes.",
+		reviewer: "Conventional saved workflow agent for verification and review tasks.",
+	} satisfies Record<WorkflowAgentKey, string>;
 
 	function selectedModelKey(settings: EditableAgentSettings): string {
 		return `${settings.provider}:${settings.model}`;
@@ -175,6 +213,15 @@
 				return left.info.provider.localeCompare(right.info.provider);
 			})
 			.map((entry) => entry.info);
+	});
+
+	const providerGroups = $derived.by(() => {
+		const aiProviders = filteredProviders.filter((info) => info.keyType !== "env");
+		const envProviders = filteredProviders.filter((info) => info.keyType === "env");
+		return [
+			{ title: "AI Providers", providers: aiProviders, warning: false },
+			{ title: "Environment-backed Credentials", providers: envProviders, warning: true },
+		].filter((group) => group.providers.length > 0);
 	});
 
 	onMount(async () => {
@@ -290,8 +337,14 @@
 	}
 
 	async function handleRemove(providerId: string) {
+		if (confirmingProviderRemoval !== providerId) {
+			confirmingProviderRemoval = providerId;
+			saveMessage[providerId] = "Click Confirm remove to revoke this credential.";
+			return;
+		}
 		try {
 			await rpc.request.removeProviderAuth({ providerId });
+			confirmingProviderRemoval = null;
 			await refreshProviders();
 			await notifyAuthChanged(providerId);
 			setTimedSaveMessage(providerId, "Removed", 2000);
@@ -306,6 +359,7 @@
 	eyebrow="Workbench"
 	description="Configure runtime integrations and account access. Credentials stay local in ~/.config/svvy/auth.json, and environment variables still take precedence."
 	width="lg"
+	class="settings-dialog"
 	onClose={onClose}
 >
 	<div class="settings-shell">
@@ -368,99 +422,139 @@
 							<p class="provider-empty">No providers match the current search.</p>
 						{/if}
 
-						{#each filteredProviders as info (info.provider)}
-							{@const status = providerStatus(info)}
-							{@const isEditing = editingProvider === info.provider}
-							<article class="provider-row">
-								<div class="provider-main">
-									<div class="provider-heading">
-										<span class="provider-name">{info.provider}</span>
-										<span class={`provider-status tone-${status.tone}`.trim()}>{status.text}</span>
+						{#each providerGroups as group (group.title)}
+							<section class="settings-group" aria-label={group.title}>
+								<div class="settings-group-heading">
+									<h3>{group.title}</h3>
+									<span>{group.providers.length}</span>
+								</div>
+								{#if group.warning}
+									<div class="settings-section-note tone-warning">
+										<ShieldIcon aria-hidden="true" size={15} strokeWidth={1.8} />
+										<p>These credentials are loaded from your shell environment and cannot be edited here.</p>
 									</div>
-									<p class="provider-meta">
-										{#if info.supportsOAuth}
-											OAuth and API-key login supported.
-										{:else}
-											API-key authentication only.
-										{/if}
-									</p>
-									{#if saveMessage[info.provider]}
-										<p class="save-msg">{saveMessage[info.provider]}</p>
-									{/if}
-								</div>
+								{/if}
+								<div class="settings-row-stack">
+									{#each group.providers as info (info.provider)}
+										{@const status = providerStatus(info)}
+										{@const isEditing = editingProvider === info.provider}
+										{@const isConfirmingRemoval = confirmingProviderRemoval === info.provider}
+										<article class="provider-row">
+											<div class="provider-main">
+												<div class="provider-heading">
+													<span class={`provider-icon tone-${status.tone}`} aria-hidden="true">
+														{#if info.hasKey}
+															<CheckCircle2Icon size={14} strokeWidth={1.9} />
+														{:else}
+															<CircleIcon size={14} strokeWidth={1.9} />
+														{/if}
+													</span>
+													<span class="provider-name">{info.provider}</span>
+													<span class={`provider-status tone-${status.tone}`.trim()}>{status.text}</span>
+												</div>
+												<p class="provider-meta">
+													<span>{providerSectionLabel(info)}</span>
+													<span>{providerCredentialLabel(info)}</span>
+												</p>
+												{#if saveMessage[info.provider]}
+													<p class={`save-msg ${isConfirmingRemoval ? "tone-danger" : ""}`.trim()}>
+														{saveMessage[info.provider]}
+													</p>
+												{/if}
+											</div>
 
-								<div class="provider-actions">
-									{#if isEditing}
-										<div class="key-input-row">
-											<Input
-												type="password"
-												placeholder="Paste API key..."
-												bind:value={apiKeyInput[info.provider]}
-												onkeydown={(event) => event.key === "Enter" && handleSaveApiKey(info.provider)}
-											/>
-											<Button variant="primary" size="sm" onclick={() => handleSaveApiKey(info.provider)}>
-												Save
-											</Button>
-											<Button
-												size="sm"
-												onclick={() => {
-													editingProvider = null;
-													apiKeyInput[info.provider] = "";
-												}}
-											>
-												Cancel
-											</Button>
-										</div>
-									{:else}
-										{#if info.hasKey}
-											<Button variant="danger" size="sm" onclick={() => handleRemove(info.provider)}>
-												Remove
-											</Button>
-										{/if}
-										<Button
-											size="sm"
-											onclick={() => {
-												editingProvider = info.provider;
-												apiKeyInput[info.provider] = "";
-											}}
-										>
-											API Key
-										</Button>
-										{#if info.supportsOAuth}
-											<Button
-												variant="success"
-												size="sm"
-												disabled={oauthLoading[info.provider]}
-												onclick={() => handleOAuth(info.provider)}
-											>
-												{oauthLoading[info.provider] ? "Waiting..." : "OAuth"}
-											</Button>
-										{/if}
-									{/if}
+											<div class="provider-actions">
+												{#if isEditing}
+													<div class="key-input-row">
+														<Input
+															type="password"
+															placeholder="Paste API key..."
+															bind:value={apiKeyInput[info.provider]}
+															onkeydown={(event) =>
+																event.key === "Enter" && handleSaveApiKey(info.provider)}
+														/>
+														<Button variant="primary" size="sm" onclick={() => handleSaveApiKey(info.provider)}>
+															Save
+														</Button>
+														<Button
+															size="sm"
+															onclick={() => {
+																editingProvider = null;
+																apiKeyInput[info.provider] = "";
+															}}
+														>
+															Cancel
+														</Button>
+													</div>
+												{:else}
+													{#if info.hasKey && info.keyType !== "env"}
+														<Button
+															variant="danger"
+															size="sm"
+															onclick={() => handleRemove(info.provider)}
+															aria-label={isConfirmingRemoval
+																? `Confirm removing ${info.provider} credentials`
+																: `Remove ${info.provider} credentials`}
+														>
+															{isConfirmingRemoval ? "Confirm remove" : "Remove"}
+														</Button>
+													{/if}
+													{#if info.keyType !== "env"}
+														<Button
+															size="sm"
+															onclick={() => {
+																editingProvider = info.provider;
+																apiKeyInput[info.provider] = "";
+															}}
+														>
+															<KeyIcon aria-hidden="true" size={12} strokeWidth={1.9} />
+															{info.hasKey ? "API Key" : "Add API key"}
+														</Button>
+													{/if}
+													{#if info.supportsOAuth && info.keyType !== "env"}
+														<Button
+															variant="success"
+															size="sm"
+															disabled={oauthLoading[info.provider]}
+															onclick={() => handleOAuth(info.provider)}
+														>
+															<ExternalLinkIcon aria-hidden="true" size={12} strokeWidth={1.9} />
+															{oauthLoading[info.provider] ? "Waiting..." : "Connect OAuth"}
+														</Button>
+													{/if}
+												{/if}
+											</div>
+										</article>
+									{/each}
 								</div>
-							</article>
+							</section>
 						{/each}
 					</div>
 				{/if}
 			{/if}
 			{#if activeSection === "agents" && agentSettings}
+				<div class="settings-section-note">
+					<InfoIcon aria-hidden="true" size={15} strokeWidth={1.8} />
+					<p>Session agents use connected provider models and save changes directly to workspace settings.</p>
+				</div>
 				<div class="agent-list">
 					{#each ["defaultSession", "quickSession", "namer"] as key (key)}
 						{@const settings = agentSettings.sessionAgents[key as SessionAgentKey]}
 						<article class="provider-row agent-row">
 							<div class="provider-main">
 								<div class="provider-heading">
-									<span class="provider-name"
-										>{key === "defaultSession"
-											? "Default Session"
-											: key === "quickSession"
-												? "Quick Session"
-												: "Namer"}</span
-									>
+									<span class="provider-name">{sessionAgentLabels[key as SessionAgentKey]}</span>
+									<span class="model-chip">{settings.provider} / {settings.model}</span>
 									<span class="provider-status tone-info">{settings.reasoningEffort}</span>
 									{#if agentSaveMessage[`session:${key}`]}
 										<span class="provider-status">{agentSaveMessage[`session:${key}`]}</span>
 									{/if}
+								</div>
+								<p class="provider-meta">{sessionAgentSummaries[key as SessionAgentKey]}</p>
+								<div class="agent-meta-grid">
+									<div><span>Model</span><strong>{settings.model}</strong></div>
+									<div><span>Provider</span><strong>{settings.provider}</strong></div>
+									<div><span>Reasoning</span><strong>{settings.reasoningEffort}</strong></div>
 								</div>
 								<div class="agent-grid">
 									<label class="agent-field">
@@ -502,6 +596,7 @@
 									bind:value={settings.systemPrompt}
 									class="agent-prompt"
 									rows="5"
+									aria-label={`${sessionAgentLabels[key as SessionAgentKey]} system prompt`}
 									oninput={() => scheduleSessionAgentSave(key as SessionAgentKey)}
 								></textarea>
 							</div>
@@ -521,10 +616,17 @@
 							<div class="provider-main">
 								<div class="provider-heading">
 									<span class="provider-name">{settings.label}</span>
+									<span class="model-chip">{settings.provider} / {settings.model}</span>
 									<span class="provider-status tone-info">{settings.reasoningEffort}</span>
 									{#if agentSaveMessage[`workflow:${key}`]}
 										<span class="provider-status">{agentSaveMessage[`workflow:${key}`]}</span>
 									{/if}
+								</div>
+								<p class="provider-meta">{workflowAgentSummaries[key as WorkflowAgentKey]}</p>
+								<div class="agent-meta-grid">
+									<div><span>Model</span><strong>{settings.model}</strong></div>
+									<div><span>Provider</span><strong>{settings.provider}</strong></div>
+									<div><span>Tool surface</span><strong>execute_typescript</strong></div>
 								</div>
 								<div class="agent-grid">
 									<label class="agent-field">
@@ -566,6 +668,7 @@
 									bind:value={settings.systemPrompt}
 									class="agent-prompt"
 									rows="5"
+									aria-label={`${settings.label} system prompt`}
 									oninput={() => scheduleWorkflowAgentSave(key as WorkflowAgentKey)}
 								></textarea>
 							</div>
@@ -574,6 +677,10 @@
 				</div>
 			{/if}
 			{#if activeSection === "preferences" && agentSettings}
+				<div class="settings-section-note">
+					<InfoIcon aria-hidden="true" size={15} strokeWidth={1.8} />
+					<p>Editor preferences are used when svvy opens saved workflow sources and artifact-local workflow files.</p>
+				</div>
 				<article class="provider-row agent-row">
 					<div class="provider-main">
 						<div class="provider-heading">
@@ -612,6 +719,7 @@
 								<input
 									value={agentSettings.appPreferences.customExternalEditorCommand}
 									placeholder="editor-command --reuse-window"
+									disabled={agentSettings.appPreferences.preferredExternalEditor !== "custom"}
 									oninput={(event) => {
 										agentSettings!.appPreferences.customExternalEditorCommand =
 											event.currentTarget.value;
@@ -628,17 +736,24 @@
 </Dialog>
 
 <style>
+	:global(.settings-dialog.ui-dialog-panel) {
+		width: min(96vw, 960px);
+		max-width: 960px;
+		max-height: min(92vh, 64rem);
+	}
+
 	.settings-shell {
 		display: grid;
-		grid-template-columns: minmax(10.5rem, 11.75rem) minmax(0, 1fr);
-		gap: 1rem;
+		grid-template-columns: minmax(11rem, 12rem) minmax(0, 42rem);
+		gap: 1.15rem;
 		min-height: 0;
+		justify-content: start;
 	}
 
 	.settings-nav {
 		display: grid;
 		align-content: start;
-		gap: 0.45rem;
+		gap: 0.18rem;
 		padding: 0.3rem 0.25rem 0 0;
 		border-right: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
 	}
@@ -657,9 +772,9 @@
 		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: center;
 		gap: 0.7rem;
-		padding: 0.66rem 0.72rem;
+		padding: 0.52rem 0.65rem;
 		border: 1px solid transparent;
-		border-radius: var(--ui-radius-md);
+		border-radius: var(--ui-radius-sm);
 		background: transparent;
 		color: var(--ui-text-primary);
 		font: inherit;
@@ -690,8 +805,8 @@
 	}
 
 	.settings-nav-item.active {
-		border-color: color-mix(in oklab, var(--ui-border-accent) 78%, var(--ui-border-soft));
-		background: color-mix(in oklab, var(--ui-accent-soft) 72%, var(--ui-surface-raised));
+		border-color: color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-raised) 86%, transparent);
 	}
 
 	.settings-pane {
@@ -708,9 +823,9 @@
 		position: sticky;
 		top: 0;
 		z-index: var(--ui-z-sticky);
-		padding: 0.85rem;
+		padding: 0.7rem;
 		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-		border-radius: var(--ui-radius-md);
+		border-radius: var(--ui-radius-sm);
 		background:
 			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-raised) 74%, transparent), transparent),
 			var(--ui-surface-subtle);
@@ -732,7 +847,42 @@
 	.provider-list {
 		display: flex;
 		flex-direction: column;
+		gap: 1.05rem;
+	}
+
+	.settings-group {
+		display: grid;
+		gap: 0.45rem;
+	}
+
+	.settings-group-heading {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
 		gap: 0.7rem;
+	}
+
+	.settings-group-heading h3 {
+		margin: 0;
+		font-family: var(--font-mono);
+		font-size: 0.68rem;
+		font-weight: 680;
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
+		color: var(--ui-text-secondary);
+	}
+
+	.settings-group-heading span {
+		font-family: var(--font-mono);
+		font-size: 0.64rem;
+		color: var(--ui-text-tertiary);
+	}
+
+	.settings-row-stack {
+		display: grid;
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+		border-radius: var(--ui-radius-md);
+		overflow: hidden;
 	}
 
 	.provider-row {
@@ -740,13 +890,23 @@
 		grid-template-columns: minmax(0, 1fr) minmax(13rem, auto);
 		align-items: start;
 		gap: 0.9rem 1.2rem;
-		padding: 1rem 1rem 1rem 1.05rem;
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
-		border-radius: var(--ui-radius-md);
-		background:
-			linear-gradient(180deg, color-mix(in oklab, var(--ui-surface-raised) 74%, transparent), transparent),
-			var(--ui-surface);
-		box-shadow: var(--ui-shadow-soft);
+		padding: 0.72rem 0.85rem;
+		border: 0;
+		border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+		border-radius: 0;
+		background: var(--ui-surface);
+		box-shadow: none;
+		transition:
+			background-color 170ms cubic-bezier(0.19, 1, 0.22, 1),
+			border-color 170ms cubic-bezier(0.19, 1, 0.22, 1);
+	}
+
+	.provider-row:last-child {
+		border-bottom: 0;
+	}
+
+	.provider-row:hover {
+		background: color-mix(in oklab, var(--ui-surface-raised) 70%, var(--ui-surface));
 	}
 
 	.provider-main {
@@ -762,6 +922,9 @@
 
 	.agent-row {
 		grid-template-columns: minmax(0, 1fr);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+		border-radius: var(--ui-radius-md);
+		box-shadow: var(--ui-shadow-soft);
 	}
 
 	.agent-grid {
@@ -769,6 +932,38 @@
 		grid-template-columns: minmax(0, 2fr) minmax(9rem, 1fr);
 		gap: 0.5rem;
 		margin-top: 0.35rem;
+	}
+
+	.agent-meta-grid {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0.25rem 0.8rem;
+		margin-top: 0.4rem;
+		padding: 0.48rem 0;
+	}
+
+	.agent-meta-grid div {
+		display: flex;
+		align-items: center;
+		gap: 0.38rem;
+		min-width: 0;
+	}
+
+	.agent-meta-grid span {
+		font-size: 0.66rem;
+		color: var(--ui-text-tertiary);
+	}
+
+	.agent-meta-grid strong,
+	.model-chip {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--font-mono);
+		font-size: 0.66rem;
+		font-weight: 520;
+		color: var(--ui-text-secondary);
 	}
 
 	.agent-field {
@@ -824,9 +1019,15 @@
 	}
 
 	.provider-name {
-		font-size: 0.9rem;
+		font-size: 0.82rem;
 		font-weight: 660;
-		letter-spacing: -0.02em;
+		letter-spacing: 0;
+	}
+
+	.provider-icon {
+		display: inline-flex;
+		align-items: center;
+		color: var(--ui-text-tertiary);
 	}
 
 	.provider-status {
@@ -834,22 +1035,36 @@
 		font-family: var(--font-mono);
 		font-variant-numeric: tabular-nums;
 		color: var(--ui-text-secondary);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 84%, transparent);
+		border-radius: var(--ui-radius-sm);
+		padding: 0.08rem 0.32rem;
 	}
 
-	.provider-status.tone-success {
+	.provider-status.tone-success,
+	.provider-icon.tone-success {
 		color: color-mix(in oklab, var(--ui-success) 78%, var(--ui-text-primary));
 	}
 
-	.provider-status.tone-warning {
+	.provider-status.tone-warning,
+	.provider-icon.tone-warning {
 		color: color-mix(in oklab, var(--ui-warning) 82%, var(--ui-text-primary));
 	}
 
-	.provider-status.tone-info {
+	.provider-status.tone-info,
+	.provider-icon.tone-info {
 		color: color-mix(in oklab, var(--ui-info) 78%, var(--ui-text-primary));
+	}
+
+	.provider-status.tone-neutral,
+	.provider-icon.tone-neutral {
+		color: var(--ui-text-tertiary);
 	}
 
 	.provider-meta {
 		margin: 0;
+		display: flex;
+		gap: 0.45rem;
+		flex-wrap: wrap;
 		font-size: 0.8rem;
 		line-height: 1.6;
 		color: var(--ui-text-secondary);
@@ -857,6 +1072,10 @@
 
 	.save-msg {
 		color: var(--ui-accent-strong);
+	}
+
+	.save-msg.tone-danger {
+		color: color-mix(in oklab, var(--ui-danger) 84%, var(--ui-text-primary));
 	}
 
 	.provider-actions {
@@ -876,6 +1095,28 @@
 		gap: 0.45rem;
 		flex-wrap: wrap;
 		justify-content: flex-end;
+	}
+
+	.settings-section-note {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.52rem;
+		padding: 0.55rem 0.65rem;
+		border: 1px solid color-mix(in oklab, var(--ui-info) 18%, var(--ui-border-soft));
+		border-radius: var(--ui-radius-sm);
+		background: color-mix(in oklab, var(--ui-info-soft) 58%, transparent);
+		color: var(--ui-text-secondary);
+	}
+
+	.settings-section-note.tone-warning {
+		border-color: color-mix(in oklab, var(--ui-warning) 20%, var(--ui-border-soft));
+		background: color-mix(in oklab, var(--ui-warning-soft) 60%, transparent);
+	}
+
+	.settings-section-note p {
+		margin: 0;
+		font-size: 0.72rem;
+		line-height: 1.45;
 	}
 
 	:global(.key-input-row .ui-input) {
@@ -899,6 +1140,10 @@
 		}
 
 		.agent-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.agent-meta-grid {
 			grid-template-columns: 1fr;
 		}
 

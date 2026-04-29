@@ -6,6 +6,10 @@
 	import { parseTranscriptMentionLinks } from "./composer-mentions";
 	import type { ConversationProjection, ProjectedToolCall } from "./conversation-projection";
 	import {
+		summarizeExecuteTypescriptResult,
+		type TranscriptSemanticBlock,
+	} from "./transcript-projection";
+	import {
 		compensateTranscriptScrollForMeasuredRow,
 		deriveTranscriptUserScrollState,
 	} from "./transcript-scroll";
@@ -23,8 +27,10 @@
 		pendingToolCalls: ReadonlySet<string>;
 		isStreaming: boolean;
 		workspaceMentionPaths?: ReadonlySet<string>;
+		semanticBlocks?: TranscriptSemanticBlock[];
 		onOpenArtifact: (filename: string) => void;
 		onOpenWorkspacePath: (path: string) => void;
+		onInspectCommand?: (commandId: string) => void;
 		onScrollStateChange?: (scroll: { transcriptAnchorId: string | null; offsetPx: number }) => void;
 	};
 
@@ -36,8 +42,10 @@
 		pendingToolCalls,
 		isStreaming,
 		workspaceMentionPaths = new Set(),
+		semanticBlocks = [],
 		onOpenArtifact,
 		onOpenWorkspacePath,
+		onInspectCommand,
 		onScrollStateChange,
 	}: Props = $props();
 
@@ -101,6 +109,21 @@
 
 	function resultDetailsText(message: ToolResultMessage): string {
 		return conversation.artifactResultTextById.get(message.toolCallId) || toolResultText(message);
+	}
+
+	function commandStatusTone(status: string): "success" | "warning" | "danger" | "neutral" {
+		if (status === "succeeded") return "success";
+		if (status === "failed" || status === "cancelled") return "danger";
+		if (status === "running" || status === "waiting" || status === "requested") return "warning";
+		return "neutral";
+	}
+
+	function commandStatusLabel(status: string): string {
+		if (status === "succeeded") return "Complete";
+		if (status === "failed") return "Failed";
+		if (status === "cancelled") return "Cancelled";
+		if (status === "requested") return "Queued";
+		return status[0]?.toUpperCase() + status.slice(1);
 	}
 
 	function toolStatus(toolCallId: string): "pending" | "error" | "done" {
@@ -284,11 +307,97 @@
 			<article class="message-row system-row">
 				<div class="message-bubble assistant-bubble system-bubble">
 					<details class="thinking-block system-prompt-block">
-						<summary>System prompt</summary>
+						<summary>Surface system prompt metadata</summary>
 						<pre>{resolvedSystemPrompt}</pre>
 					</details>
 				</div>
 			</article>
+		{/if}
+
+		{#if semanticBlocks.length > 0}
+			<section class="transcript-semantic-stack" aria-label="Structured transcript projection">
+				{#each semanticBlocks as block (block.key)}
+					{#if block.kind === "wait"}
+						<article class="semantic-card wait-card">
+							<header>
+								<div class="semantic-title-row">
+									<span class="status-dot pulse-dot warning"></span>
+									<strong>{block.title}</strong>
+								</div>
+								<span class="semantic-badge tone-warning">waiting</span>
+							</header>
+							<p>{block.reason}</p>
+							<div class="semantic-meta-grid">
+								<span>{block.summary}</span>
+								<span>Resume: {block.resumeWhen}</span>
+								<span>Since {formatTimestamp(block.since)}</span>
+							</div>
+						</article>
+					{:else if block.kind === "failure"}
+						<article class="semantic-card failure-card">
+							<header>
+								<div class="semantic-title-row">
+									<span class="status-dot danger"></span>
+									<strong>{block.title}</strong>
+								</div>
+								<span class="semantic-badge tone-danger">failed</span>
+							</header>
+							<pre>{block.summary}</pre>
+						</article>
+					{:else if block.kind === "command-rollup"}
+						<article class={`semantic-card command-card tone-${commandStatusTone(block.command.status)}`.trim()}>
+							<header>
+								<div>
+									<strong>{block.command.title}</strong>
+									<span>{block.command.toolName}</span>
+								</div>
+								<div class="semantic-card-actions">
+									<span class={`semantic-badge tone-${commandStatusTone(block.command.status)}`.trim()}>
+										{commandStatusLabel(block.command.status)}
+									</span>
+									{#if onInspectCommand}
+										<Button size="sm" variant="ghost" onclick={() => onInspectCommand?.(block.command.commandId)}>
+											Inspect
+										</Button>
+									{/if}
+								</div>
+							</header>
+							<p>{block.command.summary}</p>
+							{#if block.command.summaryChildren.length > 0}
+								<div class="semantic-child-list" aria-label="Summary-visible child commands">
+									{#each block.command.summaryChildren as child (child.commandId)}
+										<div class="semantic-child-row">
+											<span>{child.toolName}</span>
+											<strong>{child.title}</strong>
+											<small>{child.summary}</small>
+										</div>
+									{/each}
+								</div>
+							{/if}
+							<footer>
+								<span>{block.command.summaryChildCount} rollup details</span>
+								<span>{block.command.traceChildCount} trace steps nested in inspector</span>
+								<span>{formatTimestamp(block.command.updatedAt)}</span>
+							</footer>
+						</article>
+					{:else if block.kind === "handoff-episode"}
+						<article class="semantic-card episode-card">
+							<header>
+								<div>
+									<strong>{block.episode.title}</strong>
+									<span>{block.thread.title}</span>
+								</div>
+								<span class="semantic-badge tone-info">{block.episode.kind}</span>
+							</header>
+							<p>{block.episode.summary}</p>
+							<footer>
+								<span>Thread {block.thread.threadId}</span>
+								<span>{formatTimestamp(block.episode.createdAt)}</span>
+							</footer>
+						</article>
+					{/if}
+				{/each}
+			</section>
 		{/if}
 
 		<div
@@ -411,6 +520,7 @@
 				{:else if message.role === "toolResult"}
 					{@const projectedToolCall = conversation.toolCallsById.get(message.toolCallId)}
 					{@const params = projectedToolCall?.artifactParams}
+					{@const executeSummary = summarizeExecuteTypescriptResult(message)}
 					<article
 						class={`message-row ${shouldVirtualize ? "virtual-row " : ""}tool-row`.trim()}
 						use:trackRowHeight={shouldVirtualize ? rowIndex : undefined}
@@ -447,6 +557,48 @@
 								<summary>{message.isError ? "Error output" : "Tool output"}</summary>
 								<pre>{resultDetailsText(message)}</pre>
 							</details>
+						{/if}
+						{#if executeSummary}
+							<div class="execute-result-grid">
+								{#if executeSummary.error}
+									<section class="execute-result-section error">
+										<strong>
+											{executeSummary.error.stage
+												? `execute_typescript ${executeSummary.error.stage} error`
+												: "execute_typescript error"}
+										</strong>
+										<pre>{executeSummary.error.message}</pre>
+									</section>
+								{/if}
+								{#if executeSummary.diagnostics.length > 0}
+									<section class="execute-result-section">
+										<strong>Diagnostics</strong>
+										{#each executeSummary.diagnostics as diagnostic, diagnosticIndex (`${message.toolCallId}:diagnostic:${diagnosticIndex}`)}
+											<div class="diagnostic-row">
+												<span>{diagnostic.severity ?? "diagnostic"}</span>
+												<p>{diagnostic.message}</p>
+												{#if diagnostic.file}
+													<small>
+														{diagnostic.file}{diagnostic.line ? `:${diagnostic.line}` : ""}{diagnostic.column ? `:${diagnostic.column}` : ""}
+													</small>
+												{/if}
+											</div>
+										{/each}
+									</section>
+								{/if}
+								{#if executeSummary.logs.length > 0}
+									<section class="execute-result-section">
+										<strong>Logs</strong>
+										<pre>{executeSummary.logs.join("\n")}</pre>
+									</section>
+								{/if}
+								{#if executeSummary.resultPreview}
+									<section class="execute-result-section">
+										<strong>Return value</strong>
+										<pre>{executeSummary.resultPreview}</pre>
+									</section>
+								{/if}
+							</div>
 						{/if}
 						</div>
 					</article>
@@ -592,6 +744,196 @@
 		background:
 			linear-gradient(180deg, color-mix(in oklab, var(--ui-accent-soft) 20%, transparent), transparent),
 			color-mix(in oklab, var(--ui-surface-raised) 92%, var(--ui-surface));
+	}
+
+	.transcript-semantic-stack {
+		display: flex;
+		flex-direction: column;
+		gap: 0.7rem;
+		width: min(100%, 58rem);
+	}
+
+	.semantic-card {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+		padding: 0.78rem 0.85rem;
+		border-radius: var(--ui-radius-md);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 84%, transparent);
+		background: color-mix(in oklab, var(--ui-surface-raised) 88%, var(--ui-surface));
+		box-shadow: var(--ui-shadow-soft);
+		overflow: hidden;
+	}
+
+	.semantic-card::before {
+		content: "";
+		position: absolute;
+		inset: 0 auto 0 0;
+		width: 2px;
+		background: var(--ui-border-strong);
+	}
+
+	.semantic-card header,
+	.semantic-card-actions,
+	.semantic-title-row,
+	.semantic-card footer,
+	.semantic-meta-grid,
+	.semantic-child-row {
+		display: flex;
+		align-items: center;
+		gap: 0.48rem;
+		min-width: 0;
+	}
+
+	.semantic-card header {
+		justify-content: space-between;
+		align-items: flex-start;
+	}
+
+	.semantic-card header > div {
+		display: flex;
+		flex-direction: column;
+		gap: 0.18rem;
+		min-width: 0;
+	}
+
+	.semantic-card strong {
+		font-size: 0.8rem;
+		font-weight: 650;
+		color: var(--ui-text-primary);
+	}
+
+	.semantic-card p {
+		margin: 0;
+		font-size: 0.8rem;
+		line-height: 1.5;
+		color: var(--ui-text-secondary);
+	}
+
+	.semantic-card span,
+	.semantic-card small,
+	.semantic-card footer {
+		font-size: 0.68rem;
+		color: var(--ui-text-tertiary);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.semantic-card pre {
+		margin: 0;
+		max-height: 11rem;
+		overflow: auto;
+		padding: 0.62rem 0.68rem;
+		border-radius: var(--ui-radius-sm);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
+		background: color-mix(in oklab, var(--ui-code) 90%, var(--ui-surface));
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: var(--ui-text-primary);
+	}
+
+	.wait-card::before,
+	.command-card.tone-warning::before {
+		background: var(--ui-warning);
+	}
+
+	.failure-card::before,
+	.command-card.tone-danger::before {
+		background: var(--ui-danger);
+	}
+
+	.episode-card::before {
+		background: var(--ui-info);
+	}
+
+	.command-card.tone-success::before {
+		background: var(--ui-success);
+	}
+
+	.semantic-badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 1.25rem;
+		padding: 0 0.4rem;
+		border-radius: var(--ui-radius-sm);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+		background: color-mix(in oklab, var(--ui-surface) 82%, transparent);
+		font-family: var(--font-mono);
+		font-size: 0.64rem;
+	}
+
+	.semantic-badge.tone-success {
+		color: color-mix(in oklab, var(--ui-success) 82%, var(--ui-text-primary));
+	}
+
+	.semantic-badge.tone-warning {
+		color: color-mix(in oklab, var(--ui-warning) 84%, var(--ui-text-primary));
+	}
+
+	.semantic-badge.tone-danger {
+		color: color-mix(in oklab, var(--ui-danger) 84%, var(--ui-text-primary));
+	}
+
+	.semantic-badge.tone-info {
+		color: color-mix(in oklab, var(--ui-info) 82%, var(--ui-text-primary));
+	}
+
+	.status-dot {
+		flex: 0 0 auto;
+		width: 0.45rem;
+		height: 0.45rem;
+		border-radius: 999px;
+		background: var(--ui-border-strong);
+	}
+
+	.status-dot.warning {
+		background: var(--ui-warning);
+	}
+
+	.status-dot.danger {
+		background: var(--ui-danger);
+	}
+
+	.pulse-dot {
+		animation: pulse-dot 1.4s ease-in-out infinite;
+	}
+
+	.semantic-meta-grid,
+	.semantic-card footer {
+		flex-wrap: wrap;
+	}
+
+	.semantic-child-list,
+	.execute-result-grid {
+		display: flex;
+		flex-direction: column;
+		gap: 0.45rem;
+	}
+
+	.semantic-child-row {
+		align-items: flex-start;
+		padding: 0.48rem 0.55rem;
+		border-radius: var(--ui-radius-sm);
+		background: color-mix(in oklab, var(--ui-code) 72%, transparent);
+	}
+
+	.semantic-child-row span {
+		flex: 0 0 auto;
+		font-family: var(--font-mono);
+		color: var(--ui-text-secondary);
+	}
+
+	.semantic-child-row strong {
+		flex: 0 0 auto;
+		font-size: 0.72rem;
+	}
+
+	.semantic-child-row small {
+		min-width: 0;
+		overflow-wrap: anywhere;
 	}
 
 	.message-bubble header,
@@ -825,6 +1167,74 @@
 		color: var(--ui-text-primary);
 	}
 
+	.execute-result-grid {
+		margin-top: 0.7rem;
+		padding-top: 0.7rem;
+		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+	}
+
+	.execute-result-section {
+		display: flex;
+		flex-direction: column;
+		gap: 0.38rem;
+	}
+
+	.execute-result-section strong {
+		font-size: 0.7rem;
+		font-weight: 650;
+		letter-spacing: 0.02em;
+		text-transform: uppercase;
+		color: var(--ui-text-secondary);
+	}
+
+	.execute-result-section.error strong {
+		color: color-mix(in oklab, var(--ui-danger) 82%, var(--ui-text-primary));
+	}
+
+	.execute-result-section pre {
+		margin: 0;
+		max-height: 12rem;
+		overflow: auto;
+		padding: 0.62rem 0.68rem;
+		border-radius: var(--ui-radius-sm);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
+		background: color-mix(in oklab, var(--ui-code) 90%, var(--ui-surface));
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: var(--ui-text-primary);
+	}
+
+	.diagnostic-row {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		gap: 0.25rem 0.55rem;
+		padding: 0.5rem 0.58rem;
+		border-radius: var(--ui-radius-sm);
+		background: color-mix(in oklab, var(--ui-danger-soft) 38%, transparent);
+	}
+
+	.diagnostic-row span {
+		font-family: var(--font-mono);
+		font-size: 0.66rem;
+		color: color-mix(in oklab, var(--ui-danger) 82%, var(--ui-text-primary));
+	}
+
+	.diagnostic-row p,
+	.diagnostic-row small {
+		margin: 0;
+		font-size: 0.74rem;
+		line-height: 1.45;
+		color: var(--ui-text-secondary);
+	}
+
+	.diagnostic-row small {
+		grid-column: 2;
+		font-family: var(--font-mono);
+		color: var(--ui-text-tertiary);
+	}
+
 	@media (max-width: 760px) {
 		.chat-thread {
 			padding-inline: 0.9rem;
@@ -832,14 +1242,20 @@
 
 		.message-bubble header,
 		.tool-result-header,
-		.tool-card-header {
+		.tool-card-header,
+		.semantic-card header {
 			flex-direction: column;
 			align-items: stretch;
 		}
 
 		.message-meta,
-		.tool-result-actions {
+		.tool-result-actions,
+		.semantic-card-actions {
 			justify-content: flex-start;
+		}
+
+		.semantic-child-row {
+			flex-direction: column;
 		}
 	}
 </style>

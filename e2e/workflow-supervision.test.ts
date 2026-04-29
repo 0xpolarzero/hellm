@@ -312,10 +312,7 @@ test("drives a real delegated workflow run through the app with z.ai loaded from
         );
 
         await waitForVisible(page.getByText("Delegated Threads"), 60_000);
-        await waitForVisible(
-          page.getByText("Run the bundled hello_world workflow"),
-          60_000,
-        );
+        await waitForVisible(page.getByText("Run the bundled hello_world workflow"), 60_000);
 
         const threadCard = page.locator(".handler-thread-card").filter({
           has: page.getByText("Run the bundled hello_world workflow"),

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import XIcon from "@lucide/svelte/icons/x";
+	import { onMount } from "svelte";
 	import type { Snippet } from "svelte";
 	import Button from "./Button.svelte";
 
@@ -25,37 +26,75 @@
 		children,
 	}: Props = $props();
 
+	const dialogId = `ui-dialog-${Math.random().toString(36).slice(2)}`;
+	const titleId = `${dialogId}-title`;
+	const descriptionId = `${dialogId}-description`;
+	let panelElement = $state<HTMLElement | null>(null);
+	let previouslyFocusedElement: HTMLElement | null = null;
+
 	function close() {
 		onClose?.();
-	}
-
-	function handleBackdropKeydown(event: KeyboardEvent) {
-		if (event.key === "Escape" || event.key === "Enter" || event.key === " ") {
-			event.preventDefault();
-			close();
-		}
 	}
 
 	function handlePanelKeydown(event: KeyboardEvent) {
 		if (event.key === "Escape") {
 			event.stopPropagation();
 			close();
+			return;
+		}
+
+		if (event.key !== "Tab" || !panelElement) {
+			return;
+		}
+
+		const focusable = Array.from(
+			panelElement.querySelectorAll<HTMLElement>(
+				'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+			),
+		).filter((element) => !element.hasAttribute("disabled") && element.offsetParent !== null);
+
+		if (focusable.length === 0) {
+			event.preventDefault();
+			panelElement.focus();
+			return;
+		}
+
+		const first = focusable[0];
+		const last = focusable[focusable.length - 1];
+
+		if (event.shiftKey && document.activeElement === first) {
+			event.preventDefault();
+			last.focus();
+		} else if (!event.shiftKey && document.activeElement === last) {
+			event.preventDefault();
+			first.focus();
 		}
 	}
+
+	onMount(() => {
+		previouslyFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		requestAnimationFrame(() => {
+			const firstFocusable = panelElement?.querySelector<HTMLElement>(
+				'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+			);
+			(firstFocusable ?? panelElement)?.focus();
+		});
+
+		return () => {
+			previouslyFocusedElement?.focus();
+		};
+	});
 </script>
 
-<div
-	class="ui-dialog-overlay"
-	role="button"
-	tabindex="0"
-	aria-label="Close dialog"
-	onclick={close}
-	onkeydown={handleBackdropKeydown}
->
-	<section
+<div class="ui-dialog-overlay">
+	<button class="ui-dialog-backdrop" type="button" tabindex="-1" aria-label="Close dialog" onclick={close}></button>
+	<div
+		bind:this={panelElement}
 		class={`ui-dialog-panel width-${width} ${className}`.trim()}
 		role="dialog"
 		aria-modal="true"
+		aria-labelledby={titleId}
+		aria-describedby={description ? descriptionId : undefined}
 		tabindex="0"
 		onclick={(event) => event.stopPropagation()}
 		onkeydown={handlePanelKeydown}
@@ -65,9 +104,9 @@
 				{#if eyebrow}
 					<p class="ui-dialog-eyebrow">{eyebrow}</p>
 				{/if}
-				<h2>{title}</h2>
+				<h2 id={titleId}>{title}</h2>
 				{#if description}
-					<p class="ui-dialog-description">{description}</p>
+					<p id={descriptionId} class="ui-dialog-description">{description}</p>
 				{/if}
 			</div>
 			<Button variant="ghost" size="sm" class="ui-dialog-close" onclick={close} aria-label="Close dialog">
@@ -80,7 +119,7 @@
 				{@render children()}
 			{/if}
 		</div>
-	</section>
+	</div>
 </div>
 
 <style>
@@ -95,6 +134,14 @@
 		background:
 			linear-gradient(180deg, color-mix(in oklab, black 12%, transparent), color-mix(in oklab, black 34%, transparent));
 		backdrop-filter: blur(10px);
+	}
+
+	.ui-dialog-backdrop {
+		position: absolute;
+		inset: 0;
+		border: 0;
+		background: transparent;
+		cursor: default;
 	}
 
 	.ui-dialog-panel {
@@ -138,7 +185,7 @@
 		margin: 0;
 		font-size: 1.02rem;
 		font-weight: 660;
-		letter-spacing: -0.03em;
+		letter-spacing: 0;
 		color: var(--ui-text-primary);
 	}
 
@@ -189,6 +236,10 @@
 		.ui-dialog-header,
 		.ui-dialog-body {
 			padding-inline: 1rem;
+		}
+
+		.ui-dialog-close {
+			inline-size: 2.75rem;
 		}
 	}
 </style>

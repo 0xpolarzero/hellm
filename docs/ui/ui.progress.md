@@ -45,90 +45,90 @@ Always read [ui.prd.md](ui.prd.md) before implementing any item in this roadmap,
 
 ## 3. Svelte UI Primitives
 
-- [ ] Consolidate button, icon button, badge, input, textarea, dialog, and surface primitives around the ported Replit artifact token system.
-- [ ] Add dense row, section header, pane header, toolbar, divider, keyboard hint, empty state, error state, and loading state primitives.
-- [ ] Add reusable status badge primitives for session, thread, workflow-run, command, Project CI, provider auth, and wait states.
-- [ ] Add reusable metadata chip primitives for model, reasoning, worktree, context pack, pane location, artifact type, and command kind.
-- [ ] Add resize-handle, pane-focus, hover, active, disabled, and keyboard-focus styling primitives.
-- [ ] Verify primitive contrast, focus visibility, hit targets, and text overflow across desktop and narrow viewport sizes.
+- [x] Consolidate button, icon button, badge, input, textarea, dialog, and surface primitives around the ported Replit artifact token system. `a868fe6`
+- [x] Add dense row, section header, pane header, toolbar, divider, keyboard hint, empty state, error state, and loading state primitives. `a868fe6`
+- [x] Add reusable status badge primitives for session, thread, workflow-run, command, Project CI, provider auth, and wait states. `a868fe6`
+- [x] Add reusable metadata chip primitives for model, reasoning, worktree, context pack, pane location, artifact type, and command kind. `a868fe6`
+- [x] Add resize-handle, pane-focus, hover, active, disabled, and keyboard-focus styling primitives. `a868fe6`
+- [x] Verify primitive contrast, focus visibility, hit targets, and text overflow across desktop and narrow viewport sizes. `a868fe6`
 
 ## 4. Shell Chrome
 
-- [ ] Build a POC Svelte shell chrome that matches the Replit artifact shell over static fixture data.
-- [ ] Render the production app frame with the ported Replit sidebar, top bar, pane chrome, inspector chrome, and composer dock while preserving current runtime behavior.
-- [ ] Render session title, status, worktree, active surface target, model summary, context budget, and pane layout controls in dense pane chrome.
-- [ ] Render sidebar session groups, pinned sessions, active sessions, archived sessions, and pane-location indicators using the ported Replit row language.
-- [ ] Preserve current session actions for create, switch, rename, fork, delete, pin, unpin, archive, and unarchive.
-- [ ] Preserve pane actions for split, resize, close, drag placement, focus, and opening the same surface in multiple panes.
-- [ ] Verify restored pane layout, sidebar state, focused pane, and inspector selection after app restart.
+- [x] Build a POC Svelte shell chrome that matches the Replit artifact shell over static fixture data. `4eef4c5`
+- [x] Render the production app frame with the ported Replit sidebar, top bar, pane chrome, inspector chrome, and composer dock while preserving current runtime behavior. `4eef4c5`
+- [x] Render session title, status, worktree, active surface target, model summary, context budget, and pane layout controls in dense pane chrome. `4eef4c5`
+- [x] Render sidebar session groups, pinned sessions, active sessions, archived sessions, and pane-location indicators using the ported Replit row language. `4eef4c5`
+- [x] Preserve current session actions for create, switch, rename, fork, delete, pin, unpin, archive, and unarchive. `4eef4c5`
+- [x] Preserve pane actions for split, resize, close, drag placement, focus, and opening the same surface in multiple panes. `4eef4c5`
+- [x] Verify restored pane layout, sidebar state, focused pane, and inspector selection after app restart. `4eef4c5`
 
 ## 5. Composer And Prompt Entry
 
-- [ ] Build a POC Svelte composer that matches the Replit bottom composer over static fixture state.
-- [ ] Render production prompt entry with the ported Replit compact composer styling while preserving prompt history, submit locking, cancellation, target selection, and provider-missing behavior.
-- [ ] Render file and folder mention chips with the ported Replit visual treatment while preserving serialization as ordinary `@path` user text.
-- [ ] Render mention autocomplete with dense keyboard navigation, missing-path state, and no eager file reads.
-- [ ] Render target surface, worktree, model, reasoning, context budget, and submit state in composer chrome without crowding prompt text.
-- [ ] Verify long prompt text, long paths, narrow viewport layout, keyboard shortcuts, and reduced-motion behavior.
+- [x] Build a POC Svelte composer that matches the Replit bottom composer over static fixture state.
+- [x] Render production prompt entry with the ported Replit compact composer styling while preserving prompt history, submit locking, cancellation, target selection, and provider-missing behavior.
+- [x] Render file and folder mention chips with the ported Replit visual treatment while preserving serialization as ordinary `@path` user text.
+- [x] Render mention autocomplete with dense keyboard navigation, missing-path state, and no eager file reads.
+- [x] Render target surface, worktree, model, reasoning, context budget, and submit state in composer chrome without crowding prompt text.
+- [x] Verify long prompt text, long paths, narrow viewport layout, keyboard shortcuts, and reduced-motion behavior.
 
 ## 6. Transcript And Turn Projection
 
-- [ ] Build a POC transcript projection that matches Replit message, thread, episode, verification, wait, and failure card treatments over static fixture data.
-- [ ] Render user, orchestrator, handler-thread, system-prompt metadata, assistant streaming, tool-call, and error transcript items with the ported Replit visual treatment.
-- [ ] Render turn decisions and command rollups as compact semantic blocks without promoting nested child commands to top-level cards.
-- [ ] Render `execute_typescript` submitted snippets, diagnostics, logs, child command summaries, and artifacts with clear parent-first hierarchy.
-- [ ] Render durable handoff episodes as reusable semantic outputs while preserving earlier handoff points.
-- [ ] Preserve transcript virtualization, pane-local scroll, copy transcript, streaming cursor, pending tool calls, and failure states.
-- [ ] Verify long transcripts, large code blocks, interrupted streams, failed turns, and duplicated pane views of the same surface.
+- [x] Build a POC transcript projection that matches Replit message, thread, episode, verification, wait, and failure card treatments over static fixture data.
+- [x] Render user, orchestrator, handler-thread, system-prompt metadata, assistant streaming, tool-call, and error transcript items with the ported Replit visual treatment.
+- [x] Render turn decisions and command rollups as compact semantic blocks without promoting nested child commands to top-level cards.
+- [x] Render `execute_typescript` submitted snippets, diagnostics, logs, child command summaries, and artifacts with clear parent-first hierarchy.
+- [x] Render durable handoff episodes as reusable semantic outputs while preserving earlier handoff points.
+- [x] Preserve transcript virtualization, pane-local scroll, copy transcript, streaming cursor, pending tool calls, and failure states.
+- [x] Verify long transcripts, large code blocks, interrupted streams, failed turns, and duplicated pane views of the same surface.
 
 ## 7. Handler Threads And Delegation Projection
 
-- [ ] Render handler-thread summaries with objective, title, lifecycle state, wait state, loaded context keys, latest handoff, latest workflow-run summary, and related artifacts.
-- [ ] Render handler-active, workflow-active, waiting, troubleshooting, and completed states with distinct but restrained visual semantics.
-- [ ] Render direct handler-thread surfaces with the same transcript and composer quality as orchestrator surfaces.
-- [ ] Normalize Replit artifact "subagent" visual vocabulary into handler-thread and workflow task-agent labels before porting delegation surfaces.
-- [ ] Render thread metadata so users can inspect active system prompt, model, reasoning, worktree, context packs, and workflow ownership.
-- [ ] Preserve direct user messaging into handler threads before and after handoff.
-- [ ] Verify workflow attention routes back to the owning handler surface rather than the currently focused pane.
+- [x] Render handler-thread summaries with objective, title, lifecycle state, wait state, loaded context keys, latest handoff, latest workflow-run summary, and related artifacts.
+- [x] Render handler-active, workflow-active, waiting, troubleshooting, and completed states with distinct but restrained visual semantics.
+- [x] Render direct handler-thread surfaces with the same transcript and composer quality as orchestrator surfaces.
+- [x] Normalize Replit artifact "subagent" visual vocabulary into handler-thread and workflow task-agent labels before porting delegation surfaces.
+- [x] Render thread metadata so users can inspect active system prompt, model, reasoning, worktree, context packs, and workflow ownership.
+- [x] Preserve direct user messaging into handler threads before and after handoff.
+- [x] Verify workflow attention routes back to the owning handler surface rather than the currently focused pane.
 
 ## 8. Workflow, Artifact, And Command Inspectors
 
 The workflow inspector remains tree-first. Replit artifact graph-oriented workflow pieces are not ported; the Svelte UI should build a consistent tree-based visual layout that fits the Replit workbench treatment.
 
-- [ ] Document how Replit graph-only workflow visuals adapt to the tree-first Svelte workflow inspector before styling tree rows and detail panes.
-- [ ] Restyle workflow inspector tree, selected-node details, tabs, frame scrubber, search, keyboard navigation, and row states around the tree-first inspector model.
-- [ ] Restyle artifact panel and artifact browser to match the Replit artifact treatment for source, scope, type, preview, logs, open-in-editor, and related-command affordances.
-- [ ] Restyle command inspector to match the Replit artifact treatment for parent command facts, nested child command facts, logs, artifacts, errors, and raw detail without losing hierarchy.
-- [ ] Restyle saved workflow library to match the Replit artifact treatment for asset groups, runnable entries, diagnostics, source previews, deletion controls, and open-in-editor handoff.
-- [ ] Preserve inspector pane bindings, historical workflow inspector availability, selected-node state, artifact linkage, and restart restoration.
-- [ ] Verify large workflow trees, failed descendants, waiting descendants, missing artifacts, large logs, and long source paths.
+- [x] Document how Replit graph-only workflow visuals adapt to the tree-first Svelte workflow inspector before styling tree rows and detail panes. `5713347`
+- [x] Restyle workflow inspector tree, selected-node details, tabs, frame scrubber, search, keyboard navigation, and row states around the tree-first inspector model. `5713347`
+- [x] Restyle artifact panel and artifact browser to match the Replit artifact treatment for source, scope, type, preview, logs, open-in-editor, and related-command affordances. `5713347`
+- [x] Restyle command inspector to match the Replit artifact treatment for parent command facts, nested child command facts, logs, artifacts, errors, and raw detail without losing hierarchy. `5713347`
+- [x] Restyle saved workflow library to match the Replit artifact treatment for asset groups, runnable entries, diagnostics, source previews, deletion controls, and open-in-editor handoff. `5713347`
+- [x] Preserve inspector pane bindings, historical workflow inspector availability, selected-node state, artifact linkage, and restart restoration. `5713347`
+- [x] Verify large workflow trees, failed descendants, waiting descendants, missing artifacts, large logs, and long source paths. `5713347`
 
 ## 9. Command Palette And Quick Open
 
-- [ ] Restyle the command palette to match the Replit artifact compact action-list treatment while preserving `cmdk-sv` and svvy-owned command semantics.
-- [ ] Treat Replit artifact command-palette source as primitive-only; preserve production `cmdk-sv` command semantics and derive compact action-list styling from Svelte fixtures or production screenshots.
-- [ ] Render action categories, kind badges, shortcuts, disabled states, placement hints, and unmatched prompt-session fallback clearly.
-- [ ] Render `Cmd+P` quick-open placeholder or no-op state without implying a file editor surface exists before it does.
-- [ ] Preserve command routing for sessions, surfaces, handler threads, workflow inspectors, Project CI, panes, settings, and agent settings.
-- [ ] Verify keyboard dispatch, command matching, disabled or hidden actions, pane placement, and unmatched prompt creation.
+- [x] Restyle the command palette to match the Replit artifact compact action-list treatment while preserving `cmdk-sv` and svvy-owned command semantics. `729c1b9`
+- [x] Treat Replit artifact command-palette source as primitive-only; preserve production `cmdk-sv` command semantics and derive compact action-list styling from Svelte fixtures or production screenshots. `729c1b9`
+- [x] Render action categories, kind badges, shortcuts, disabled states, placement hints, and unmatched prompt-session fallback clearly. `729c1b9`
+- [x] Render `Cmd+P` quick-open placeholder or no-op state without implying a file editor surface exists before it does. `729c1b9`
+- [x] Preserve command routing for sessions, surfaces, handler threads, workflow inspectors, Project CI, panes, settings, and agent settings. `729c1b9`
+- [x] Verify keyboard dispatch, command matching, disabled or hidden actions, pane placement, and unmatched prompt creation. `729c1b9`
 
 ## 10. Settings And Auth Surfaces
 
-- [ ] Restyle provider auth settings to match the Replit artifact treatment for provider state, OAuth/key entry affordances, validation, missing-provider recovery, and destructive-action confirmation.
-- [ ] Restyle session-agent settings to match the Replit artifact treatment for default session, quick session, namer, and per-surface inspection.
-- [ ] Restyle workflow-agent settings to match the Replit artifact treatment for conventional saved workflow agents while preserving `.svvy/workflows/components/agents.ts` synchronization.
-- [ ] Restyle app preferences such as external editor selection to match the Replit artifact settings form treatment.
-- [ ] Preserve provider auth synchronization, model discovery, reasoning dropdown behavior, settings persistence, and recovery from startup provider gaps.
-- [ ] Verify disconnected providers, invalid keys, OAuth cancellation, missing models, long prompt text, and narrow viewport settings layout.
+- [x] Restyle provider auth settings to match the Replit artifact treatment for provider state, OAuth/key entry affordances, validation, missing-provider recovery, and destructive-action confirmation. `a4c279b`
+- [x] Restyle session-agent settings to match the Replit artifact treatment for default session, quick session, namer, and per-surface inspection. `a4c279b`
+- [x] Restyle workflow-agent settings to match the Replit artifact treatment for conventional saved workflow agents while preserving `.svvy/workflows/components/agents.ts` synchronization. `a4c279b`
+- [x] Restyle app preferences such as external editor selection to match the Replit artifact settings form treatment. `a4c279b`
+- [x] Preserve provider auth synchronization, model discovery, reasoning dropdown behavior, settings persistence, and recovery from startup provider gaps. `a4c279b`
+- [x] Verify disconnected providers, invalid keys, OAuth cancellation, missing models, long prompt text, and narrow viewport settings layout. `a4c279b`
 
 ## 11. Responsive And Accessibility Pass
 
-- [ ] Extract supported viewport classes from the Replit artifact app, including full desktop, constrained desktop, and narrow shell behavior.
-- [ ] Recompose the shell for narrow viewports without merely shrinking dense desktop panes.
-- [ ] Verify no text overlaps or escapes buttons, badges, pane headers, cards, command rows, composer chrome, or settings controls.
-- [ ] Verify keyboard navigation across sidebar, pane chrome, transcript actions, composer, command palette, inspectors, and dialogs.
-- [ ] Verify focus order, focus rings, accessible names, status text, color contrast, reduced motion, and screen-reader behavior for critical controls.
-- [ ] Add targeted tests or fixtures for text overflow, state rendering, shortcut behavior, and responsive layout rules where practical.
+- [x] Extract supported viewport classes from the Replit artifact app, including full desktop, constrained desktop, and narrow shell behavior.
+- [x] Recompose the shell for narrow viewports without merely shrinking dense desktop panes.
+- [x] Verify no text overlaps or escapes buttons, badges, pane headers, cards, command rows, composer chrome, or settings controls.
+- [x] Verify keyboard navigation across sidebar, pane chrome, transcript actions, composer, command palette, inspectors, and dialogs.
+- [x] Verify focus order, focus rings, accessible names, status text, color contrast, reduced motion, and screen-reader behavior for critical controls.
+- [x] Add targeted tests or fixtures for text overflow, state rendering, shortcut behavior, and responsive layout rules where practical.
 
 ## 12. Visual Verification And Rollout
 

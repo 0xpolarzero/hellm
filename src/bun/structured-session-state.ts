@@ -968,9 +968,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         pi.defaultOrchestratorPromptKey ??
           existing?.default_orchestrator_prompt_key ??
           "defaultSession",
-        pi.titleGenerationStatus ??
-          existing?.title_generation_status ??
-          "not-started",
+        pi.titleGenerationStatus ?? existing?.title_generation_status ?? "not-started",
         pi.titleGenerationTriggeredAt ?? existing?.title_generation_triggered_at ?? null,
         pi.titleGenerationFinishedAt ?? existing?.title_generation_finished_at ?? null,
         pi.titleGenerationError ?? existing?.title_generation_error ?? null,

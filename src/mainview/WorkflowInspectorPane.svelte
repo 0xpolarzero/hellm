@@ -192,6 +192,10 @@
     return inspector?.tree.nodes.some((candidate) => candidate.parentKey === node.key) ?? false;
   }
 
+  function treeItemId(nodeKey: string): string {
+    return `workflow-tree-${paneId}-${nodeKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  }
+
   function formatContent(content: unknown): string {
     if (content == null) return "";
     if (typeof content === "string") return content;
@@ -291,7 +295,7 @@
             oninput={() => void loadInspector()}
           />
         </label>
-        <div class="workflow-inspector-frame-strip">
+        <div class="workflow-inspector-frame-strip" aria-label="Workflow frames">
           {#each inspector.frames.slice(0, 18) as frame (frame.frameNo)}
             <button
               type="button"
@@ -302,12 +306,21 @@
             </button>
           {/each}
         </div>
-        <div class="workflow-tree-rows" tabindex="0" role="tree" onkeydown={handleTreeKeydown}>
+        <div
+          class="workflow-tree-rows"
+          tabindex="0"
+          role="tree"
+          aria-label="Workflow node tree"
+          aria-activedescendant={selectedNodeKey ? treeItemId(selectedNodeKey) : undefined}
+          onkeydown={handleTreeKeydown}
+        >
           {#each visibleNodes as node (node.key)}
             <div
+              id={treeItemId(node.key)}
               role="treeitem"
               tabindex="-1"
               aria-selected={node.key === selectedNodeKey}
+              aria-expanded={hasChildren(node) ? expandedNodeKeys.includes(node.key) : undefined}
               class={`workflow-tree-row ${node.key === selectedNodeKey ? "selected" : ""} status-${node.status}`.trim()}
               style={`--depth: ${depthFor(node)}`}
               onclick={() => selectNode(node.key)}
@@ -334,6 +347,7 @@
                   </button>
                 {/if}
               </span>
+              <span class="workflow-tree-status-dot" aria-hidden="true"></span>
               <span class="workflow-tree-type">{node.type}</span>
               <span class="workflow-tree-label">{node.label}</span>
               {#if node.latestActivity}
@@ -358,9 +372,22 @@
           </header>
           <div class="workflow-node-meta">
             <span>{selectedNode.smithersNodeId ?? "run root"}</span>
+            {#if selectedNode.detail.worktree}<span>{selectedNode.detail.worktree}</span>{/if}
             {#if selectedNode.task?.workflowTaskAttemptId}<span>{selectedNode.task.workflowTaskAttemptId}</span>{/if}
             {#if selectedNode.projectCi}<span>{selectedNode.projectCi.checkId}</span>{/if}
           </div>
+          {#if selectedNode.detail.latestOutput || selectedNode.detail.partialOutput || selectedNode.waitReason}
+            <div class="workflow-node-output">
+              {#if selectedNode.waitReason}
+                <p class="workflow-node-wait">{selectedNode.waitReason}</p>
+              {/if}
+              {#if selectedNode.detail.latestOutput}
+                <p>{selectedNode.detail.latestOutput}</p>
+              {:else if selectedNode.detail.partialOutput}
+                <p>{selectedNode.detail.partialOutput}</p>
+              {/if}
+            </div>
+          {/if}
           <div class="workflow-node-related">
             {#each selectedNode.relatedSurfaceTargets as target}
               <Button variant="ghost" size="sm" onclick={() => openRelated(target)}>
@@ -392,3 +419,413 @@
     <div class="workflow-inspector-empty">Loading workflow inspector...</div>
   {/if}
 </section>
+
+<style>
+  .workflow-inspector {
+    container-type: inline-size;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+    height: 100%;
+    background: var(--ui-surface);
+    color: var(--ui-text-primary);
+  }
+
+  .workflow-inspector-header,
+  .workflow-node-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.85rem;
+    min-width: 0;
+  }
+
+  .workflow-inspector-header {
+    padding: 0.78rem 0.9rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 88%, transparent);
+  }
+
+  .workflow-inspector-header p,
+  .workflow-node-header p {
+    margin: 0 0 0.18rem;
+    color: var(--ui-text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+  }
+
+  .workflow-inspector-header h3,
+  .workflow-node-header h4 {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 0.92rem;
+    line-height: 1.22;
+    font-weight: 660;
+  }
+
+  .workflow-inspector-header-meta,
+  .workflow-node-meta,
+  .workflow-node-related,
+  .workflow-node-tabs {
+    display: flex;
+    align-items: center;
+    gap: 0.42rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  .workflow-inspector-header-meta span,
+  .workflow-inspector-header-meta code,
+  .workflow-node-meta span {
+    min-width: 0;
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+  }
+
+  .workflow-inspector-body {
+    display: grid;
+    grid-template-columns: minmax(18rem, 0.82fr) minmax(0, 1.18fr);
+    min-height: 0;
+  }
+
+  .workflow-inspector-tree,
+  .workflow-node-inspector {
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .workflow-inspector-tree {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 0.58rem;
+    padding: 0.72rem;
+    border-right: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 78%, transparent);
+  }
+
+  .workflow-inspector-search {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+    padding: 0.42rem 0.54rem;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 88%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface) 88%, transparent);
+    color: var(--ui-text-tertiary);
+  }
+
+  .workflow-inspector-search:focus-within {
+    border-color: color-mix(in oklab, var(--ui-border-accent) 78%, var(--ui-border-soft));
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .workflow-inspector-search input {
+    min-width: 0;
+    width: 100%;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--ui-text-primary);
+    font: inherit;
+    font-size: 0.76rem;
+  }
+
+  .workflow-inspector-frame-strip {
+    display: flex;
+    gap: 0.28rem;
+    min-width: 0;
+    overflow-x: auto;
+    padding-bottom: 0.08rem;
+  }
+
+  .workflow-inspector-frame-strip button,
+  .workflow-node-tabs button {
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-surface-raised) 78%, transparent);
+    color: var(--ui-text-secondary);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+  }
+
+  .workflow-inspector-frame-strip button {
+    min-width: 2rem;
+    min-height: 1.55rem;
+    padding: 0 0.4rem;
+  }
+
+  .workflow-inspector-frame-strip button.active,
+  .workflow-node-tabs button.active {
+    border-color: color-mix(in oklab, var(--ui-border-accent) 74%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-accent-soft) 64%, var(--ui-surface-raised));
+    color: var(--ui-text-primary);
+  }
+
+  .workflow-tree-rows {
+    display: grid;
+    align-content: start;
+    gap: 0.24rem;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .workflow-tree-rows:focus-visible {
+    outline: none;
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .workflow-tree-row {
+    display: grid;
+    grid-template-columns: 1.1rem 0.5rem auto minmax(6rem, 1fr) auto auto auto;
+    align-items: center;
+    gap: 0.38rem;
+    min-width: 0;
+    min-height: 2.2rem;
+    padding: 0.38rem 0.42rem 0.38rem calc(0.42rem + var(--depth) * 0.85rem);
+    border: 1px solid transparent;
+    border-radius: var(--ui-radius-sm);
+    cursor: pointer;
+    color: var(--ui-text-secondary);
+    transition:
+      border-color 160ms cubic-bezier(0.19, 1, 0.22, 1),
+      background-color 160ms cubic-bezier(0.19, 1, 0.22, 1);
+  }
+
+  .workflow-tree-row:hover,
+  .workflow-tree-row.selected {
+    border-color: color-mix(in oklab, var(--ui-border-strong) 72%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-raised) 84%, transparent);
+  }
+
+  .workflow-tree-row.selected {
+    border-color: color-mix(in oklab, var(--ui-border-accent) 72%, var(--ui-border-soft));
+    box-shadow: inset 2px 0 0 var(--ui-accent);
+  }
+
+  .workflow-tree-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.1rem;
+    height: 1.1rem;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    cursor: pointer;
+  }
+
+  .workflow-tree-toggle:hover {
+    background: color-mix(in oklab, var(--ui-surface-subtle) 86%, transparent);
+    color: var(--ui-text-primary);
+  }
+
+  .workflow-tree-status-dot {
+    width: 0.42rem;
+    height: 0.42rem;
+    border-radius: 999px;
+    background: var(--ui-text-tertiary);
+  }
+
+  .status-completed .workflow-tree-status-dot,
+  .status-passed .workflow-tree-status-dot {
+    background: var(--ui-success);
+  }
+
+  .status-running .workflow-tree-status-dot,
+  .status-retrying .workflow-tree-status-dot {
+    background: var(--ui-warning);
+    animation: workflow-pulse 1.5s ease-in-out infinite;
+  }
+
+  .status-waiting .workflow-tree-status-dot {
+    background: var(--ui-warning);
+  }
+
+  .status-failed .workflow-tree-status-dot,
+  .status-cancelled .workflow-tree-status-dot {
+    background: var(--ui-danger);
+  }
+
+  .workflow-tree-type,
+  .workflow-descendant {
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    text-transform: uppercase;
+  }
+
+  .workflow-tree-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ui-text-primary);
+    font-size: 0.76rem;
+    font-weight: 610;
+  }
+
+  .workflow-tree-preview {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ui-text-tertiary);
+    font-size: 0.68rem;
+  }
+
+  .workflow-descendant {
+    padding: 0.1rem 0.32rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--ui-surface-muted) 80%, transparent);
+  }
+
+  .workflow-descendant.failed {
+    color: color-mix(in oklab, var(--ui-danger) 84%, var(--ui-text-primary));
+  }
+
+  .workflow-descendant.waiting {
+    color: color-mix(in oklab, var(--ui-warning) 84%, var(--ui-text-primary));
+  }
+
+  .workflow-node-inspector {
+    display: grid;
+    align-content: start;
+    gap: 0.74rem;
+    padding: 0.84rem;
+  }
+
+  .workflow-node-header,
+  .workflow-node-output,
+  .workflow-node-props,
+  .workflow-node-tab-content {
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
+    border-radius: var(--ui-radius-md);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 74%, transparent);
+  }
+
+  .workflow-node-header,
+  .workflow-node-output {
+    padding: 0.78rem 0.84rem;
+  }
+
+  .workflow-node-meta {
+    justify-content: flex-start;
+  }
+
+  .workflow-node-meta span {
+    max-width: 100%;
+    padding: 0.14rem 0.42rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--ui-surface-subtle) 82%, transparent);
+  }
+
+  .workflow-node-output {
+    display: grid;
+    gap: 0.36rem;
+    color: var(--ui-text-primary);
+    font-size: 0.76rem;
+    line-height: 1.55;
+  }
+
+  .workflow-node-output p {
+    margin: 0;
+  }
+
+  .workflow-node-wait {
+    color: color-mix(in oklab, var(--ui-warning) 84%, var(--ui-text-primary));
+  }
+
+  .workflow-node-related {
+    justify-content: flex-start;
+  }
+
+  .workflow-node-props pre,
+  .workflow-node-tab-content {
+    margin: 0;
+    max-height: 22rem;
+    overflow: auto;
+    padding: 0.76rem 0.82rem;
+    background: color-mix(in oklab, var(--ui-code) 94%, transparent);
+    color: var(--ui-text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .workflow-node-tabs {
+    justify-content: flex-start;
+    padding-top: 0.12rem;
+  }
+
+  .workflow-node-tabs button {
+    min-height: 1.7rem;
+    padding: 0.18rem 0.54rem;
+  }
+
+  .workflow-inspector-error,
+  .workflow-inspector-empty {
+    margin: 0.9rem;
+    padding: 0.9rem;
+    border: 1px dashed color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
+    border-radius: var(--ui-radius-md);
+    background: color-mix(in oklab, var(--ui-surface-subtle) 72%, transparent);
+    color: var(--ui-text-secondary);
+    font-size: 0.76rem;
+  }
+
+  .workflow-inspector-error {
+    border-color: color-mix(in oklab, var(--ui-danger) 32%, transparent);
+    color: color-mix(in oklab, var(--ui-danger) 82%, var(--ui-text-primary));
+  }
+
+  @keyframes workflow-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 color-mix(in oklab, var(--ui-warning) 38%, transparent);
+    }
+    50% {
+      box-shadow: 0 0 0 0.28rem color-mix(in oklab, var(--ui-warning) 0%, transparent);
+    }
+  }
+
+  @container (max-width: 48rem) {
+    .workflow-inspector-body {
+      grid-template-columns: 1fr;
+    }
+
+    .workflow-inspector-tree {
+      max-height: 42vh;
+      border-right: 0;
+      border-bottom: 1px solid color-mix(in oklab, var(--ui-border-soft) 90%, transparent);
+    }
+
+    .workflow-tree-row {
+      grid-template-columns: 1.1rem 0.5rem auto minmax(4rem, 1fr) auto;
+    }
+
+    .workflow-tree-preview,
+    .workflow-descendant {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .workflow-tree-status-dot {
+      animation: none;
+    }
+  }
+</style>

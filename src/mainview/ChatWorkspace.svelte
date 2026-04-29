@@ -34,6 +34,7 @@
     projectConversation,
     projectConversationSummary,
   } from "./conversation-projection";
+  import { buildTranscriptSemanticBlocks } from "./transcript-projection";
   import { buildSessionTranscriptExport } from "./session-transcript";
   import type {
     WorkspaceCommandArtifactLink,
@@ -60,6 +61,7 @@
     isSidebarToggleShortcut,
     MIN_SIDEBAR_WIDTH,
   } from "./sidebar-layout";
+  import { getViewportClass, shouldUseDesktopInspectorSplit, shouldUseNarrowShell } from "./responsive-layout";
   import SessionSidebar from "./SessionSidebar.svelte";
   import ChatTranscript from "./ChatTranscript.svelte";
   import {
@@ -87,8 +89,8 @@
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
   import Input from "./ui/Input.svelte";
+  import MetadataChip from "./ui/MetadataChip.svelte";
 
-  const DESKTOP_SPLIT_BREAKPOINT = 1220;
   const DEFAULT_SIDEBAR_WIDTH = 292;
 
   type Props = {
@@ -191,11 +193,13 @@
   const artifactCount = $derived(artifactsSnapshot.artifacts.length);
   const hasArtifacts = $derived(artifactCount > 0);
   const showDesktopSplit = $derived(
-    windowWidth >= DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts,
+    shouldUseDesktopInspectorSplit(windowWidth) && showArtifactsPanel && hasArtifacts,
   );
   const showOverlayArtifacts = $derived(
-    windowWidth < DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts,
+    !shouldUseDesktopInspectorSplit(windowWidth) && showArtifactsPanel && hasArtifacts,
   );
+  const viewportClass = $derived(getViewportClass(windowWidth));
+  const narrowShell = $derived(shouldUseNarrowShell(windowWidth));
   const effectiveSidebarWidth = $derived(clampSidebarWidth(sidebarWidth, windowWidth));
   const currentSession = $derived(sessions.find((session) => session.id === activeSessionId) ?? null);
   const currentCommandRollups = $derived(getVisibleCommandRollups(currentSession));
@@ -206,7 +210,7 @@
         session.id,
         getOpenPaneLocations(
           paneLayout,
-          (binding) => binding.workspaceSessionId === session.id && binding.surface === "orchestrator",
+          (binding) => binding.workspaceSessionId === session.id,
         ),
       ]),
     ),
@@ -222,6 +226,22 @@
 
     return "Messaging orchestrator";
   });
+  const currentModelSummary = $derived.by(() => {
+    if (currentModel) {
+      return `${currentModel.provider}/${currentModel.id}`;
+    }
+    if (currentSession?.provider && currentSession.modelId) {
+      return `${currentSession.provider}/${currentSession.modelId}`;
+    }
+    if (currentSession?.modelId) {
+      return currentSession.modelId;
+    }
+    return "No model";
+  });
+  const currentReasoningSummary = $derived(
+    currentThinkingLevel || currentSession?.thinkingLevel || "off",
+  );
+  const currentWorktreeSummary = $derived(runtime.branch ? runtime.branch : "workspace");
   function formatPaneSurfaceLabel(
     controller: ChatSurfaceController | null,
     binding?: WorkspacePaneSurfaceTarget | null,
@@ -266,6 +286,30 @@
     const thinking = controller?.agent.state.thinkingLevel;
     if (!model) return "No agent";
     return `${model.provider}/${model.id} · ${thinking}`;
+  }
+  function formatPaneWorktreeLabel(binding?: WorkspacePaneSurfaceTarget | null): string {
+    if (binding?.surface === "workflow-inspector") return "workflow";
+    if (binding?.surface === "saved-workflow-library") return "library";
+    if (binding?.surface === "command") return "command";
+    if (binding?.surface === "workflow-task-attempt") return "task";
+    if (binding?.surface === "artifact") return "artifact";
+    if (binding?.surface === "project-ci-check") return "project-ci";
+    return runtime.branch ? runtime.branch : "workspace";
+  }
+  function getPaneSurfaceStatus(
+    controller: ChatSurfaceController | null,
+    binding?: WorkspacePaneSurfaceTarget | null,
+  ): string {
+    if (controller?.agent.state.isStreaming || controller?.promptStatus === "streaming") {
+      return "running";
+    }
+    if (controller?.agent.state.error) {
+      return "failed";
+    }
+    if (binding?.surface && binding.surface !== "orchestrator" && binding.surface !== "thread") {
+      return "active";
+    }
+    return "idle";
   }
   function getPaneContextBudget(controller: ChatSurfaceController | null): ContextBudget | null {
     if (!controller) return null;
@@ -442,7 +486,7 @@
   }
 
   function startSidebarResize(event: PointerEvent) {
-    if (sidebarHidden || !sidebarResizeHandle) return;
+    if (sidebarHidden || narrowShell || !sidebarResizeHandle) return;
     event.preventDefault();
 
     sidebarResizePointerId = event.pointerId;
@@ -906,6 +950,48 @@
     }
   }
 
+  function getThreadStatusClass(
+    status:
+      | WorkspaceHandlerThreadSummary["status"]
+      | WorkspaceHandlerThreadInspector["status"],
+  ): string {
+    switch (status) {
+      case "running-handler":
+        return "handler-active";
+      case "running-workflow":
+        return "workflow-active";
+      case "waiting":
+        return "waiting";
+      case "troubleshooting":
+        return "troubleshooting";
+      case "completed":
+        return "completed";
+      default:
+        return "neutral";
+    }
+  }
+
+  function getThreadStateDetail(
+    thread: WorkspaceHandlerThreadSummary | WorkspaceHandlerThreadInspector,
+  ): string {
+    switch (thread.status) {
+      case "running-handler":
+        return "Handler is actively reasoning or using thread-local tools.";
+      case "running-workflow":
+        return "Smithers workflow work is active under this handler.";
+      case "waiting":
+        return thread.wait
+          ? `Waiting on ${thread.wait.owner} ${thread.wait.kind}: ${thread.wait.resumeWhen}`
+          : "Waiting for an external prerequisite before continuing.";
+      case "troubleshooting":
+        return "Thread needs repair or follow-up before it can hand work back.";
+      case "completed":
+        return "Thread has handed durable output back to the orchestrator.";
+      default:
+        return thread.objective;
+    }
+  }
+
   function getProjectCiStatusLabel(status: WorkspaceProjectCiPanelStatus): string {
     switch (status) {
       case "not-configured":
@@ -1050,6 +1136,15 @@
     }
 
     return thread.objective;
+  }
+
+  function getHandlerThreadArtifactLabel(
+    thread: WorkspaceHandlerThreadSummary | WorkspaceHandlerThreadInspector,
+  ): string | null {
+    if (thread.artifactCount <= 0) {
+      return null;
+    }
+    return `${thread.artifactCount} ${thread.artifactCount === 1 ? "artifact" : "artifacts"}`;
   }
 
   function formatCommandFacts(facts: Record<string, unknown> | null | undefined): string | null {
@@ -1661,10 +1756,10 @@
   </header>
 
   <div
-    class={`chat-workspace ${showDesktopSplit ? "split" : ""} ${sidebarHidden ? "sidebar-hidden" : ""}`.trim()}
+    class={`chat-workspace ${showDesktopSplit ? "split" : ""} ${sidebarHidden ? "sidebar-hidden" : ""} viewport-${viewportClass}`.trim()}
     style={`--sidebar-width: ${effectiveSidebarWidth}px;`}
   >
-    {#if !sidebarHidden}
+    {#if !sidebarHidden && !narrowShell}
       <aside class="workspace-sidebar">
         <div class="sidebar-surface">
           <SessionSidebar
@@ -1709,7 +1804,15 @@
     <section class="workspace-main">
       <header class="workspace-main-header">
         <div class="workspace-main-copy">
-          <h2 class="workspace-main-title">{currentSession?.title ?? "New Session"}</h2>
+          <div class="workspace-main-title-row">
+            <span
+              class="status-dot"
+              class:pulse-dot={workspaceStatusText === "Streaming"}
+              data-status={workspaceStatusText === "Attention" ? "failed" : workspaceStatusText === "Streaming" ? "running" : "idle"}
+              aria-hidden="true"
+            ></span>
+            <h2 class="workspace-main-title">{currentSession?.title ?? "New Session"}</h2>
+          </div>
           <p class="workspace-main-subtitle">{currentSurfaceLabel}</p>
         </div>
 
@@ -1725,6 +1828,13 @@
             </Button>
           {/if}
           <Badge tone={workspaceStatusTone}>{workspaceStatusText}</Badge>
+          <div class="workspace-main-chips" aria-label="Focused surface metadata">
+            <MetadataChip label="target" value={currentSurface?.surface ?? "orchestrator"} />
+            <MetadataChip label="worktree" value={currentWorktreeSummary} tone="info" />
+            <MetadataChip label="model" value={currentModelSummary} />
+            <MetadataChip label="reasoning" value={currentReasoningSummary} />
+            <ContextBudgetBar budget={contextBudget} variant="compact" label="Focused context" />
+          </div>
           <span>{summaryMessageCount} turns</span>
           <span>{toolCallCount} tool runs</span>
           <span>{lastActivityLabel}</span>
@@ -1749,6 +1859,7 @@
             variant="ghost"
             size="sm"
             data-testid="pane-split-right"
+            aria-label="Split pane right"
             title="Split pane right"
             disabled={mutatingSession}
             onclick={() => void handleSplitPane("right")}
@@ -1759,6 +1870,7 @@
             variant="ghost"
             size="sm"
             data-testid="pane-split-below"
+            aria-label="Split pane below"
             title="Split pane below"
             disabled={mutatingSession}
             onclick={() => void handleSplitPane("below")}
@@ -1768,6 +1880,7 @@
           <Button
             variant="ghost"
             size="sm"
+            aria-label="Duplicate focused pane"
             title="Duplicate focused pane"
             disabled={mutatingSession}
             onclick={() => void handleSplitPane("right", true)}
@@ -1778,6 +1891,7 @@
             variant="ghost"
             size="sm"
             data-testid="pane-close"
+            aria-label="Close focused pane"
             title="Close focused pane"
             disabled={mutatingSession}
             onclick={() => void handleCloseFocusedPane()}
@@ -1845,13 +1959,15 @@
             ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "replace")}
             style={`grid-column: ${pane.columnStart + 1} / ${pane.columnEnd + 1}; grid-row: ${pane.rowStart + 1} / ${pane.rowEnd + 1};`}
           >
-            <div class="pane-placement-zones" aria-hidden={!draggingPaneId}>
-              <button type="button" class="pane-placement-zone replace" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "replace")}>Replace</button>
-              <button type="button" class="pane-placement-zone left" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "left")}>Left</button>
-              <button type="button" class="pane-placement-zone right" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "right")}>Right</button>
-              <button type="button" class="pane-placement-zone above" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "above")}>Above</button>
-              <button type="button" class="pane-placement-zone below" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "below")}>Below</button>
-            </div>
+            {#if draggingPaneId}
+              <div class="pane-placement-zones">
+                <button type="button" class="pane-placement-zone replace" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "replace")}>Replace</button>
+                <button type="button" class="pane-placement-zone left" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "left")}>Left</button>
+                <button type="button" class="pane-placement-zone right" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "right")}>Right</button>
+                <button type="button" class="pane-placement-zone above" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "above")}>Above</button>
+                <button type="button" class="pane-placement-zone below" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "below")}>Below</button>
+              </div>
+            {/if}
             <header class="pane-chrome">
               <button
                 class="pane-focus-button"
@@ -1859,9 +1975,24 @@
                 aria-label={`Focus pane ${pane.paneId}`}
                 onclick={() => void handleFocusPane(pane.paneId)}
               >
-                <strong>{formatPaneSurfaceLabel(paneController, pane.binding)}</strong>
+                <span class="pane-title-line">
+                  <span
+                    class="status-dot"
+                    class:pulse-dot={getPaneSurfaceStatus(paneController, pane.binding) === "running"}
+                    data-status={getPaneSurfaceStatus(paneController, pane.binding)}
+                    aria-hidden="true"
+                  ></span>
+                  <strong>{formatPaneSurfaceLabel(paneController, pane.binding)}</strong>
+                </span>
                 <span>{formatPaneAgentSummary(paneController, pane.binding)}</span>
               </button>
+              <div class="pane-chrome-meta" aria-label="Pane metadata">
+                <MetadataChip label="target" value={pane.binding?.surface ?? "empty"} />
+                <MetadataChip label="worktree" value={formatPaneWorktreeLabel(pane.binding)} tone="info" />
+                {#if paneContextBudget}
+                  <MetadataChip label="context" value={paneContextBudget.label} tone={paneContextBudget.tone === "red" ? "danger" : paneContextBudget.tone === "orange" ? "warning" : "neutral"} />
+                {/if}
+              </div>
               <div class="pane-chrome-actions">
                 <button
                   class="pane-resize-button vertical"
@@ -2069,7 +2200,7 @@
               {:else}
                 <div class="handler-thread-list">
                   {#each handlerThreads as thread (thread.threadId)}
-                    <article class="handler-thread-card">
+                    <article class={`handler-thread-card state-${getThreadStatusClass(thread.status)}`.trim()}>
                       <div class="handler-thread-card-top">
                         <div class="handler-thread-card-copy">
                           <strong>{thread.title}</strong>
@@ -2081,6 +2212,19 @@
                       </div>
 
                       <p class="handler-thread-preview">{getHandlerThreadPreview(thread)}</p>
+
+                      <div class="handler-thread-state">
+                        <span class="handler-thread-state-dot" aria-hidden="true"></span>
+                        <span>{getThreadStateDetail(thread)}</span>
+                      </div>
+
+                      {#if thread.wait}
+                        <article class="handler-thread-wait" aria-label="Handler thread wait state">
+                          <strong>Waiting on {thread.wait.owner}</strong>
+                          <span>{thread.wait.kind} · since {formatTimestamp(thread.wait.since)}</span>
+                          <p>{thread.wait.reason}</p>
+                        </article>
+                      {/if}
 
                       {#if thread.latestWorkflowRun}
                         <article class="compact-workflow-card" aria-label="Latest workflow run">
@@ -2094,7 +2238,18 @@
                         </article>
                       {/if}
 
+                      {#if thread.latestEpisode}
+                        <article class="compact-handoff-card" aria-label="Latest handoff">
+                          <div>
+                            <strong>{thread.latestEpisode.title}</strong>
+                            <span>{thread.latestEpisode.summary}</span>
+                          </div>
+                          <span>{formatTimestamp(thread.latestEpisode.createdAt)}</span>
+                        </article>
+                      {/if}
+
                       <div class="handler-thread-pills">
+                        <span>{thread.threadId}</span>
                         <span>
                           {thread.workflowRunCount}
                           {thread.workflowRunCount === 1 ? " workflow" : " workflows"}
@@ -2113,6 +2268,9 @@
                             {thread.ciRunCount === 1 ? " CI run" : " CI runs"}
                           </span>
                         {/if}
+                        {#if getHandlerThreadArtifactLabel(thread)}
+                          <span>{getHandlerThreadArtifactLabel(thread)}</span>
+                        {/if}
                         {#if thread.loadedContextKeys.length > 0}
                           <span>Context {thread.loadedContextKeys.join(", ")}</span>
                         {/if}
@@ -2123,12 +2281,7 @@
                           variant="ghost"
                           size="sm"
                           aria-label={`Inspect ${thread.title}`}
-                          disabled={promptBusy ||
-                            mutatingSession ||
-                            thread.status === "running-handler" ||
-                            thread.status === "running-workflow" ||
-                            thread.latestWorkflowRun?.status === "running" ||
-                            thread.latestWorkflowRun?.status === "waiting"}
+                          disabled={mutatingSession}
                           onclick={() => void handleInspectHandlerThread(thread)}
                         >
                           Inspect
@@ -2150,74 +2303,6 @@
             </section>
           {/if}
 
-          {#if currentCommandRollups.length > 0}
-            <section class="structured-command-panel" aria-label="Structured command rollups">
-              <header class="structured-command-header">
-                <div>
-                  <p class="structured-command-eyebrow">Command History</p>
-                  <h3>
-                    {currentCommandRollups.length}
-                    {currentCommandRollups.length === 1 ? " parent command" : " parent commands"}
-                  </h3>
-                </div>
-                <p class="structured-command-copy">
-                  Parent rollups stay visible here. Child `api.*` commands stay nested in the
-                  inspector.
-                </p>
-              </header>
-
-              <div class="structured-command-list">
-                {#each currentCommandRollups as rollup (rollup.commandId)}
-                  <button
-                    class="structured-command-card"
-                    type="button"
-                    onclick={() => void handleInspectCommand(rollup.commandId)}
-                  >
-                    <div class="structured-command-card-top">
-                      <div class="structured-command-card-copy">
-                        <strong>{rollup.title}</strong>
-                        <span>{rollup.toolName}</span>
-                      </div>
-                      <div class="structured-command-card-meta">
-                        <span
-                          class={`structured-command-status tone-${getCommandStatusTone(rollup.status)}`.trim()}
-                        >
-                          {getCommandStatusLabel(rollup.status)}
-                        </span>
-                        <span>{formatTimestamp(rollup.updatedAt)}</span>
-                      </div>
-                    </div>
-
-                    <p class="structured-command-summary">{rollup.summary}</p>
-
-                    {#if rollup.summaryChildren.length > 0}
-                      <div class="structured-command-highlights" aria-label="Summary-visible child commands">
-                        {#each rollup.summaryChildren as child (child.commandId)}
-                          <div class="structured-command-highlight">
-                            <span class="structured-command-highlight-tool">{child.toolName}</span>
-                            <span>{child.summary}</span>
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-
-                    <div class="structured-command-card-footer">
-                      <span>
-                        {rollup.summaryChildCount}
-                        {rollup.summaryChildCount === 1 ? " rollup detail" : " rollup details"}
-                      </span>
-                      <span>
-                        {rollup.traceChildCount}
-                        {rollup.traceChildCount === 1 ? " trace step" : " trace steps"}
-                      </span>
-                      <span>Inspect</span>
-                    </div>
-                  </button>
-                {/each}
-              </div>
-            </section>
-          {/if}
-
           <ChatTranscript
             {conversation}
             sessionId={currentSurfaceController?.agent.sessionId ?? "no-surface"}
@@ -2226,8 +2311,15 @@
             {pendingToolCalls}
             {isStreaming}
             {workspaceMentionPaths}
+            semanticBlocks={buildTranscriptSemanticBlocks({
+              session: currentSession,
+              errorMessage,
+              commandRollups: currentCommandRollups,
+              handlerThreads,
+            })}
             onOpenArtifact={handleOpenArtifact}
             onOpenWorkspacePath={(path) => void handleOpenWorkspacePath(path)}
+            onInspectCommand={(commandId) => void handleInspectCommand(commandId)}
             onScrollStateChange={(scroll) => handleTranscriptScrollState(pane.paneId, scroll)}
           />
           <ChatComposer
@@ -2238,6 +2330,9 @@
             {promptHistory}
             usageText={usageText || undefined}
             {contextBudget}
+            sessionName={currentSession?.title ?? "New Session"}
+            targetLabel={currentSurfaceLabel}
+            worktreeLabel={currentWorktreeSummary}
             onAbort={() => void currentSurfaceController?.abort()}
             onOpenModelPicker={() => void openModelSelector()}
             onSend={handleSend}
@@ -2475,11 +2570,37 @@
             <span>{threadInspector.threadId}</span>
           </div>
 
-          {#if threadInspector.wait}
-            <p class="thread-inspector-wait">
-              Waiting on {threadInspector.wait.owner} {threadInspector.wait.kind}: {threadInspector.wait.reason}
-            </p>
+            {#if threadInspector.wait}
+            <article class="thread-inspector-wait">
+              <strong>Waiting on {threadInspector.wait.owner} {threadInspector.wait.kind}</strong>
+              <span>Since {formatTimestamp(threadInspector.wait.since)}</span>
+              <p>{threadInspector.wait.reason}</p>
+              <p>{threadInspector.wait.resumeWhen}</p>
+            </article>
           {/if}
+
+          <div class="thread-inspector-metadata" aria-label="Thread runtime metadata">
+            <div>
+              <span>Surface</span>
+              <strong>{threadInspector.surfacePiSessionId}</strong>
+            </div>
+            <div>
+              <span>System prompt</span>
+              <strong>Open the thread surface to inspect the active pi system prompt.</strong>
+            </div>
+            <div>
+              <span>Workflow ownership</span>
+              <strong>
+                {threadInspector.workflowRunCount}
+                {threadInspector.workflowRunCount === 1 ? " run" : " runs"}
+                owned by this handler
+              </strong>
+            </div>
+            <div>
+              <span>Context packs</span>
+              <strong>{threadInspector.loadedContextKeys.length > 0 ? threadInspector.loadedContextKeys.join(", ") : "none loaded"}</strong>
+            </div>
+          </div>
 
           {#if threadInspector.latestEpisode}
             <div class="thread-inspector-highlight">
@@ -3408,6 +3529,7 @@
 
   .pane-focus-button {
     display: grid;
+    gap: 0.1rem;
     min-width: 0;
     padding: 0;
     border: 0;
@@ -3418,7 +3540,8 @@
   }
 
   .pane-focus-button strong,
-  .pane-focus-button span {
+  .pane-focus-button > span:not(.pane-title-line),
+  .pane-title-line strong {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -3431,6 +3554,19 @@
   .pane-focus-button span {
     font-size: 0.64rem;
     color: var(--ui-text-tertiary);
+  }
+
+  .pane-chrome-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+  }
+
+  .pane-chrome-meta :global(.ui-metadata-chip) {
+    max-width: 9.6rem;
   }
 
   .pane-chrome-actions {
@@ -3463,6 +3599,14 @@
     border-color: color-mix(in oklab, var(--ui-shell-edge) 78%, transparent);
     color: var(--ui-text-primary);
     background: color-mix(in oklab, var(--ui-surface-raised) 72%, transparent);
+  }
+
+  .pane-focus-button:focus-visible,
+  .pane-chrome-actions button:focus-visible,
+  .pane-placement-zone:focus-visible,
+  .pane-span-drop-zone:focus-visible {
+    outline: none;
+    box-shadow: var(--ui-focus-ring);
   }
 
   .pane-placeholder {
@@ -3500,6 +3644,19 @@
     min-width: 0;
   }
 
+  .workspace-main-title-row,
+  .pane-title-line {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 0.42rem;
+  }
+
+  .workspace-main-title-row .status-dot,
+  .pane-title-line .status-dot {
+    flex: 0 0 auto;
+  }
+
   .workspace-main-title {
     margin: 0;
     min-width: 0;
@@ -3526,9 +3683,23 @@
     align-items: center;
     justify-content: flex-end;
     flex-wrap: wrap;
-    gap: 0.45rem 0.6rem;
-    font-size: 0.7rem;
+    gap: 0.36rem;
+    font-size: 0.66rem;
     color: var(--ui-text-tertiary);
+  }
+
+  .workspace-main-meta :global(.ui-metadata-chip) {
+    max-width: 13rem;
+  }
+
+  .workspace-main-chips {
+    display: contents;
+  }
+
+  .workspace-main-meta :global(.context-budget-compact) {
+    position: static;
+    width: 8.4rem;
+    flex: 0 1 8.4rem;
   }
 
   .project-ci-compact {
@@ -3760,46 +3931,150 @@
   }
 
   .handler-thread-card {
+    position: relative;
     display: grid;
     gap: 0.62rem;
     padding: 0.8rem 0.85rem;
     border: 1px solid color-mix(in oklab, var(--ui-border-soft) 84%, transparent);
     border-radius: var(--ui-radius-md);
     background: color-mix(in oklab, var(--ui-surface-raised) 92%, transparent);
+    overflow: hidden;
   }
 
-  .compact-workflow-card {
+  .handler-thread-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 2px;
+    background: var(--ui-border-strong);
+  }
+
+  .handler-thread-card.state-handler-active::before,
+  .handler-thread-card.state-workflow-active::before {
+    background: var(--ui-info);
+  }
+
+  .handler-thread-card.state-waiting::before {
+    background: var(--ui-warning);
+  }
+
+  .handler-thread-card.state-troubleshooting::before {
+    background: var(--ui-danger);
+  }
+
+  .handler-thread-card.state-completed::before {
+    background: var(--ui-success);
+  }
+
+  .handler-thread-state,
+  .handler-thread-wait,
+  .compact-workflow-card,
+  .compact-handoff-card {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 0.75rem;
+  }
+
+  .handler-thread-state {
+    justify-content: flex-start;
+    align-items: center;
+    color: var(--ui-text-tertiary);
+    font-size: 0.68rem;
+  }
+
+  .handler-thread-state-dot {
+    width: 0.42rem;
+    height: 0.42rem;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--ui-border-strong);
+  }
+
+  .state-handler-active .handler-thread-state-dot,
+  .state-workflow-active .handler-thread-state-dot {
+    background: var(--ui-info);
+    animation: pulse-dot 1.8s ease-in-out infinite;
+  }
+
+  .state-waiting .handler-thread-state-dot {
+    background: var(--ui-warning);
+    animation: pulse-dot 2.1s ease-in-out infinite;
+  }
+
+  .state-troubleshooting .handler-thread-state-dot {
+    background: var(--ui-danger);
+  }
+
+  .state-completed .handler-thread-state-dot {
+    background: var(--ui-success);
+  }
+
+  .handler-thread-wait,
+  .compact-workflow-card,
+  .compact-handoff-card {
     padding: 0.55rem 0.62rem;
     border: 1px solid color-mix(in oklab, var(--ui-shell-edge) 58%, transparent);
     border-radius: var(--ui-radius-sm);
     background: color-mix(in oklab, var(--ui-surface-subtle) 72%, transparent);
   }
 
-  .compact-workflow-card div {
+  .handler-thread-wait {
+    display: grid;
+    justify-content: stretch;
+    gap: 0.18rem;
+    border-color: color-mix(in oklab, var(--ui-warning) 38%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-warning-soft) 58%, var(--ui-surface));
+  }
+
+  .handler-thread-wait strong,
+  .handler-thread-wait span,
+  .handler-thread-wait p {
+    margin: 0;
+    font-size: 0.68rem;
+    line-height: 1.45;
+  }
+
+  .handler-thread-wait strong {
+    color: var(--ui-text-primary);
+  }
+
+  .handler-thread-wait span,
+  .handler-thread-wait p {
+    color: var(--ui-text-secondary);
+  }
+
+  .compact-workflow-card div,
+  .compact-handoff-card div {
     display: grid;
     gap: 0.16rem;
     min-width: 0;
   }
 
   .compact-workflow-card strong,
-  .compact-workflow-card span {
+  .compact-workflow-card span,
+  .compact-handoff-card strong,
+  .compact-handoff-card span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .compact-workflow-card strong {
+  .compact-workflow-card strong,
+  .compact-handoff-card strong {
     font-size: 0.72rem;
     color: var(--ui-text-primary);
   }
 
-  .compact-workflow-card span {
+  .compact-workflow-card span,
+  .compact-handoff-card span {
     font-size: 0.67rem;
     color: var(--ui-text-secondary);
+  }
+
+  .compact-handoff-card > span {
+    flex: 0 0 auto;
+    color: var(--ui-text-tertiary);
   }
 
   .structured-command-list {
@@ -3973,6 +4248,7 @@
 
   .structured-command-highlights,
   .thread-inspector-highlight,
+  .thread-inspector-metadata,
   .thread-inspector-command-list,
   .thread-inspector-timeline,
   .command-inspector-sections,
@@ -3984,6 +4260,7 @@
 
   .thread-inspector-summary,
   .thread-inspector-section,
+  .thread-inspector-metadata,
   .thread-inspector-command,
   .thread-inspector-timeline-item,
   .structured-command-highlight,
@@ -3997,9 +4274,36 @@
   }
 
   .thread-inspector-highlight,
+  .thread-inspector-metadata,
   .thread-inspector-command,
   .thread-inspector-timeline-item {
     padding: 0.72rem 0.76rem;
+  }
+
+  .thread-inspector-metadata {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .thread-inspector-metadata div {
+    display: grid;
+    gap: 0.18rem;
+    min-width: 0;
+  }
+
+  .thread-inspector-metadata span,
+  .thread-inspector-wait span {
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    color: var(--ui-text-tertiary);
+  }
+
+  .thread-inspector-metadata strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ui-text-primary);
+    font-size: 0.72rem;
+    font-weight: 560;
+    white-space: nowrap;
   }
 
   .thread-inspector-highlight span,
@@ -4078,6 +4382,25 @@
     font-size: 0.74rem;
     line-height: 1.55;
     color: var(--ui-text-secondary);
+  }
+
+  .thread-inspector-wait {
+    display: grid;
+    gap: 0.2rem;
+    padding: 0.64rem 0.7rem;
+    border: 1px solid color-mix(in oklab, var(--ui-warning) 38%, var(--ui-border-soft));
+    border-radius: var(--ui-radius-md);
+    background: color-mix(in oklab, var(--ui-warning-soft) 58%, var(--ui-surface));
+  }
+
+  .thread-inspector-wait strong,
+  .thread-inspector-wait p {
+    margin: 0;
+  }
+
+  .thread-inspector-wait strong {
+    color: var(--ui-text-primary);
+    font-size: 0.74rem;
   }
 
   .command-inspector-error {
@@ -4337,12 +4660,167 @@
     }
 
     .chat-workspace {
-      padding-inline: 0;
+      grid-template-columns: minmax(0, 1fr) !important;
+      padding: 0 0 0.32rem;
       padding-bottom: 0;
     }
 
     .workspace-shell {
       margin-inline: 0;
+    }
+
+    .workspace-main {
+      gap: 0.42rem;
+      padding: 0.32rem 0.42rem 0;
+    }
+
+    .workspace-main-header {
+      gap: 0.52rem;
+      padding: 0;
+    }
+
+    .workspace-main-title-row {
+      max-width: 100%;
+    }
+
+    .workspace-main-title {
+      font-size: 0.86rem;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .workspace-main-subtitle {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .workspace-main-meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      width: 100%;
+      gap: 0.35rem;
+    }
+
+    .workspace-main-meta > span,
+    .workspace-main-meta :global(.ui-button),
+    .project-ci-compact {
+      width: 100%;
+      max-width: 100%;
+      justify-content: center;
+    }
+
+    .workspace-main-chips {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.35rem;
+      min-width: 0;
+    }
+
+    .workspace-main-meta :global(.ui-metadata-chip),
+    .workspace-main-meta :global(.context-budget-compact) {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      flex: none;
+    }
+
+    .project-ci-compact {
+      grid-column: 1 / -1;
+      flex-wrap: wrap;
+      justify-content: flex-start;
+      padding: 0.38rem;
+    }
+
+    .pane-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 0.48rem;
+      overflow: auto;
+      padding-bottom: 0.28rem;
+    }
+
+    .workspace-pane {
+      min-height: min(34rem, calc(100dvh - 12rem));
+      border-radius: var(--ui-radius-md);
+    }
+
+    .pane-chrome {
+      align-items: flex-start;
+      gap: 0.44rem;
+      min-height: 2.75rem;
+      padding: 0.5rem;
+    }
+
+    .pane-focus-button {
+      min-height: 2.1rem;
+      justify-content: center;
+    }
+
+    .pane-focus-button > span:not(.pane-title-line) {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .pane-chrome-meta {
+      display: none;
+    }
+
+    .pane-chrome-actions button,
+    .titlebar-icon,
+    .statusbar-icon {
+      width: 2.75rem;
+      min-width: 2.75rem;
+      height: 2.75rem;
+    }
+
+    .pane-resize-button.vertical {
+      display: none;
+    }
+
+    .pane-span-drop-zone,
+    .pane-placement-zones {
+      display: none;
+    }
+
+    .handler-thread-card-top,
+    .structured-command-card-top,
+    .structured-command-card-footer,
+    .thread-inspector-summary-top,
+    .thread-inspector-command-top,
+    .thread-inspector-timeline-top,
+    .thread-inspector-section-header,
+    .command-inspector-summary-top,
+    .command-inspector-child-top,
+    .command-inspector-artifact,
+    .handler-thread-state,
+    .compact-workflow-card,
+    .compact-handoff-card {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .handler-thread-actions,
+    .thread-inspector-actions,
+    .thread-inspector-command-footer,
+    .handler-thread-pills,
+    .structured-command-card-meta,
+    .thread-inspector-summary-meta,
+    .thread-inspector-pills,
+    .thread-inspector-command-meta,
+    .command-inspector-summary-meta,
+    .command-inspector-child-meta,
+    .command-inspector-child-footer,
+    .command-inspector-pills {
+      justify-content: flex-start;
+    }
+
+    .thread-inspector-metadata {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .mobile-overlay {
+      padding: 0.42rem;
     }
   }
 </style>

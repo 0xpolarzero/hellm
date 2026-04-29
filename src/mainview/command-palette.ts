@@ -69,6 +69,17 @@ export type CommandAction = {
   badge?: string;
 };
 
+export type CommandActionGroup = {
+  category: CommandActionCategory;
+  label: string;
+  actions: CommandAction[];
+};
+
+export type CommandActionPlacementHint = {
+  shortcut: string;
+  label: string;
+};
+
 export type CommandRegistryInput = {
   sessions: WorkspaceSessionSummary[];
   focusedSessionId?: string;
@@ -103,6 +114,30 @@ function isPromptTarget(target: WorkspacePaneSurfaceTarget | null): target is Pr
 
 export const COMMAND_PALETTE_NEW_PANE_PREFIX = "command-palette";
 const PRIMARY_COMMAND_PANE_ID = "primary";
+
+const COMMAND_ACTION_CATEGORY_LABELS: Record<CommandActionCategory, string> = {
+  session: "Sessions",
+  surface: "Surfaces",
+  "project-ci": "Project CI",
+  "handler-thread": "Handler Threads",
+  "workflow-inspector": "Workflow Inspectors",
+  "workflow-library": "Workflow Library",
+  pane: "Panes",
+  settings: "Settings",
+  "agent-settings": "Agent Settings",
+};
+
+const COMMAND_ACTION_CATEGORY_ORDER: CommandActionCategory[] = [
+  "session",
+  "handler-thread",
+  "surface",
+  "workflow-inspector",
+  "workflow-library",
+  "project-ci",
+  "pane",
+  "settings",
+  "agent-settings",
+];
 
 export function isCommandPaletteShortcut(
   event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">,
@@ -450,6 +485,10 @@ export function scoreCommandAction(action: CommandAction, query: string): number
 }
 
 export function filterCommandActions(actions: CommandAction[], query: string): CommandAction[] {
+  if (!query.trim()) {
+    return getVisibleCommandActions(actions);
+  }
+
   return getVisibleCommandActions(actions)
     .map((action) => ({ action, score: scoreCommandAction(action, query) }))
     .filter((entry) => entry.score > 0)
@@ -458,6 +497,31 @@ export function filterCommandActions(actions: CommandAction[], query: string): C
         right.score - left.score || left.action.label.localeCompare(right.action.label),
     )
     .map((entry) => entry.action);
+}
+
+export function getCommandActionCategoryLabel(category: CommandActionCategory): string {
+  return COMMAND_ACTION_CATEGORY_LABELS[category];
+}
+
+export function groupCommandActions(actions: CommandAction[]): CommandActionGroup[] {
+  const grouped = new Map<CommandActionCategory, CommandAction[]>();
+  for (const action of actions) {
+    const categoryActions = grouped.get(action.category) ?? [];
+    categoryActions.push(action);
+    grouped.set(action.category, categoryActions);
+  }
+
+  return COMMAND_ACTION_CATEGORY_ORDER.flatMap((category) => {
+    const categoryActions = grouped.get(category) ?? [];
+    if (categoryActions.length === 0) return [];
+    return [
+      {
+        category,
+        label: getCommandActionCategoryLabel(category),
+        actions: categoryActions,
+      },
+    ];
+  });
 }
 
 export function findSelectedCommandAction(
@@ -481,6 +545,28 @@ export function getCommandActionShortcutHints(action: CommandAction): string[] {
       return ["Enter", "Cmd+Enter"];
     default:
       return action.shortcut ? [action.shortcut] : [];
+  }
+}
+
+export function getCommandActionPlacementHints(
+  action: CommandAction,
+): CommandActionPlacementHint[] {
+  if (action.availability.kind !== "available") {
+    return [];
+  }
+
+  switch (action.execute.kind) {
+    case "create-session":
+    case "open-session":
+    case "open-surface":
+    case "open-saved-workflow-library":
+    case "start-orchestrator-turn":
+      return [
+        { shortcut: "Enter", label: "New pane" },
+        { shortcut: "Cmd+Enter", label: "Focused pane" },
+      ];
+    default:
+      return [];
   }
 }
 

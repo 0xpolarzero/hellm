@@ -10,9 +10,12 @@ import {
   executeCommandAction,
   executePaletteFallbackPrompt,
   filterCommandActions,
+  getCommandActionCategoryLabel,
+  getCommandActionPlacementHints,
   getCommandActionShortcutHints,
   getCommandExecutionPaneId,
   getCommandPalettePlacement,
+  groupCommandActions,
   isCommandPaletteShortcut,
   isQuickOpenShortcut,
   type CommandRuntime,
@@ -209,6 +212,59 @@ describe("command palette shortcuts", () => {
         actions.find((action) => action.id === "session.open.session-1")!,
       ),
     ).toEqual(["Enter", "Cmd+Enter"]);
+  });
+
+  it("labels and groups visible actions by product category", () => {
+    const actions = filterCommandActions(
+      buildCommandRegistry({
+        sessions: [session("session-1", "Parser Fix")],
+        focusedSessionId: "session-1",
+      }),
+      "",
+    );
+
+    const groups = groupCommandActions(actions);
+
+    expect(getCommandActionCategoryLabel("project-ci")).toBe("Project CI");
+    expect(actions[0]?.id).toBe("session.new");
+    expect(groups.map((group) => group.category)).toEqual([
+      "session",
+      "workflow-library",
+      "project-ci",
+      "pane",
+      "settings",
+      "agent-settings",
+    ]);
+    expect(
+      groups.find((group) => group.category === "session")?.actions.map((action) => action.id),
+    ).toContain("session.open.session-1");
+  });
+
+  it("adds explicit placement labels for pane-opening actions only", () => {
+    const actions = buildCommandRegistry({
+      sessions: [session("session-1", "Parser Fix")],
+      focusedSessionId: "session-1",
+    });
+
+    expect(
+      getCommandActionPlacementHints(
+        actions.find((action) => action.id === "session.open.session-1")!,
+      ),
+    ).toEqual([
+      { shortcut: "Enter", label: "New pane" },
+      { shortcut: "Cmd+Enter", label: "Focused pane" },
+    ]);
+    expect(
+      getCommandActionPlacementHints(actions.find((action) => action.id === "pane.split-right")!),
+    ).toEqual([]);
+    expect(
+      getCommandActionPlacementHints(
+        actions.find((action) => action.id === "workflow-library.open")!,
+      ),
+    ).toEqual([
+      { shortcut: "Enter", label: "New pane" },
+      { shortcut: "Cmd+Enter", label: "Focused pane" },
+    ]);
   });
 });
 
