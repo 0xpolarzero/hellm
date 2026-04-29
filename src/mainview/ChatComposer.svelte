@@ -1065,6 +1065,21 @@
 			display: none;
 		}
 
+		.composer-icon-button,
+		.composer-submit,
+		.model-pill,
+		.status-chip,
+		.composer-control,
+		.mention-option {
+			min-height: 2.75rem;
+		}
+
+		.composer-icon-button,
+		.composer-submit {
+			width: 2.75rem;
+			height: 2.75rem;
+		}
+
 		.model-pill,
 		.compact-budget {
 			display: none;

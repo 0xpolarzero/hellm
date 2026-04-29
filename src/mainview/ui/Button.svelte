@@ -179,13 +179,13 @@
 		.size-xs,
 		.size-sm,
 		.size-md {
-			min-height: 2.1rem;
+			min-height: 2.75rem;
 		}
 
 		.icon-only.size-xs,
 		.icon-only.size-sm,
 		.icon-only.size-md {
-			width: 2.1rem;
+			width: 2.75rem;
 		}
 	}
 </style>

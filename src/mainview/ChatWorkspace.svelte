@@ -61,6 +61,7 @@
     isSidebarToggleShortcut,
     MIN_SIDEBAR_WIDTH,
   } from "./sidebar-layout";
+  import { getViewportClass, shouldUseDesktopInspectorSplit, shouldUseNarrowShell } from "./responsive-layout";
   import SessionSidebar from "./SessionSidebar.svelte";
   import ChatTranscript from "./ChatTranscript.svelte";
   import {
@@ -90,7 +91,6 @@
   import Input from "./ui/Input.svelte";
   import MetadataChip from "./ui/MetadataChip.svelte";
 
-  const DESKTOP_SPLIT_BREAKPOINT = 1220;
   const DEFAULT_SIDEBAR_WIDTH = 292;
 
   type Props = {
@@ -193,11 +193,13 @@
   const artifactCount = $derived(artifactsSnapshot.artifacts.length);
   const hasArtifacts = $derived(artifactCount > 0);
   const showDesktopSplit = $derived(
-    windowWidth >= DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts,
+    shouldUseDesktopInspectorSplit(windowWidth) && showArtifactsPanel && hasArtifacts,
   );
   const showOverlayArtifacts = $derived(
-    windowWidth < DESKTOP_SPLIT_BREAKPOINT && showArtifactsPanel && hasArtifacts,
+    !shouldUseDesktopInspectorSplit(windowWidth) && showArtifactsPanel && hasArtifacts,
   );
+  const viewportClass = $derived(getViewportClass(windowWidth));
+  const narrowShell = $derived(shouldUseNarrowShell(windowWidth));
   const effectiveSidebarWidth = $derived(clampSidebarWidth(sidebarWidth, windowWidth));
   const currentSession = $derived(sessions.find((session) => session.id === activeSessionId) ?? null);
   const currentCommandRollups = $derived(getVisibleCommandRollups(currentSession));
@@ -484,7 +486,7 @@
   }
 
   function startSidebarResize(event: PointerEvent) {
-    if (sidebarHidden || !sidebarResizeHandle) return;
+    if (sidebarHidden || narrowShell || !sidebarResizeHandle) return;
     event.preventDefault();
 
     sidebarResizePointerId = event.pointerId;
@@ -1754,10 +1756,10 @@
   </header>
 
   <div
-    class={`chat-workspace ${showDesktopSplit ? "split" : ""} ${sidebarHidden ? "sidebar-hidden" : ""}`.trim()}
+    class={`chat-workspace ${showDesktopSplit ? "split" : ""} ${sidebarHidden ? "sidebar-hidden" : ""} viewport-${viewportClass}`.trim()}
     style={`--sidebar-width: ${effectiveSidebarWidth}px;`}
   >
-    {#if !sidebarHidden}
+    {#if !sidebarHidden && !narrowShell}
       <aside class="workspace-sidebar">
         <div class="sidebar-surface">
           <SessionSidebar
@@ -1857,6 +1859,7 @@
             variant="ghost"
             size="sm"
             data-testid="pane-split-right"
+            aria-label="Split pane right"
             title="Split pane right"
             disabled={mutatingSession}
             onclick={() => void handleSplitPane("right")}
@@ -1867,6 +1870,7 @@
             variant="ghost"
             size="sm"
             data-testid="pane-split-below"
+            aria-label="Split pane below"
             title="Split pane below"
             disabled={mutatingSession}
             onclick={() => void handleSplitPane("below")}
@@ -1876,6 +1880,7 @@
           <Button
             variant="ghost"
             size="sm"
+            aria-label="Duplicate focused pane"
             title="Duplicate focused pane"
             disabled={mutatingSession}
             onclick={() => void handleSplitPane("right", true)}
@@ -1886,6 +1891,7 @@
             variant="ghost"
             size="sm"
             data-testid="pane-close"
+            aria-label="Close focused pane"
             title="Close focused pane"
             disabled={mutatingSession}
             onclick={() => void handleCloseFocusedPane()}
@@ -1953,13 +1959,15 @@
             ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "replace")}
             style={`grid-column: ${pane.columnStart + 1} / ${pane.columnEnd + 1}; grid-row: ${pane.rowStart + 1} / ${pane.rowEnd + 1};`}
           >
-            <div class="pane-placement-zones" aria-hidden={!draggingPaneId}>
-              <button type="button" class="pane-placement-zone replace" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "replace")}>Replace</button>
-              <button type="button" class="pane-placement-zone left" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "left")}>Left</button>
-              <button type="button" class="pane-placement-zone right" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "right")}>Right</button>
-              <button type="button" class="pane-placement-zone above" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "above")}>Above</button>
-              <button type="button" class="pane-placement-zone below" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "below")}>Below</button>
-            </div>
+            {#if draggingPaneId}
+              <div class="pane-placement-zones">
+                <button type="button" class="pane-placement-zone replace" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "replace")}>Replace</button>
+                <button type="button" class="pane-placement-zone left" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "left")}>Left</button>
+                <button type="button" class="pane-placement-zone right" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "right")}>Right</button>
+                <button type="button" class="pane-placement-zone above" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "above")}>Above</button>
+                <button type="button" class="pane-placement-zone below" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "below")}>Below</button>
+              </div>
+            {/if}
             <header class="pane-chrome">
               <button
                 class="pane-focus-button"
@@ -3593,6 +3601,14 @@
     background: color-mix(in oklab, var(--ui-surface-raised) 72%, transparent);
   }
 
+  .pane-focus-button:focus-visible,
+  .pane-chrome-actions button:focus-visible,
+  .pane-placement-zone:focus-visible,
+  .pane-span-drop-zone:focus-visible {
+    outline: none;
+    box-shadow: var(--ui-focus-ring);
+  }
+
   .pane-placeholder {
     display: grid;
     place-content: center;
@@ -4644,12 +4660,167 @@
     }
 
     .chat-workspace {
-      padding-inline: 0;
+      grid-template-columns: minmax(0, 1fr) !important;
+      padding: 0 0 0.32rem;
       padding-bottom: 0;
     }
 
     .workspace-shell {
       margin-inline: 0;
+    }
+
+    .workspace-main {
+      gap: 0.42rem;
+      padding: 0.32rem 0.42rem 0;
+    }
+
+    .workspace-main-header {
+      gap: 0.52rem;
+      padding: 0;
+    }
+
+    .workspace-main-title-row {
+      max-width: 100%;
+    }
+
+    .workspace-main-title {
+      font-size: 0.86rem;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .workspace-main-subtitle {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .workspace-main-meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      width: 100%;
+      gap: 0.35rem;
+    }
+
+    .workspace-main-meta > span,
+    .workspace-main-meta :global(.ui-button),
+    .project-ci-compact {
+      width: 100%;
+      max-width: 100%;
+      justify-content: center;
+    }
+
+    .workspace-main-chips {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.35rem;
+      min-width: 0;
+    }
+
+    .workspace-main-meta :global(.ui-metadata-chip),
+    .workspace-main-meta :global(.context-budget-compact) {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      flex: none;
+    }
+
+    .project-ci-compact {
+      grid-column: 1 / -1;
+      flex-wrap: wrap;
+      justify-content: flex-start;
+      padding: 0.38rem;
+    }
+
+    .pane-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 0.48rem;
+      overflow: auto;
+      padding-bottom: 0.28rem;
+    }
+
+    .workspace-pane {
+      min-height: min(34rem, calc(100dvh - 12rem));
+      border-radius: var(--ui-radius-md);
+    }
+
+    .pane-chrome {
+      align-items: flex-start;
+      gap: 0.44rem;
+      min-height: 2.75rem;
+      padding: 0.5rem;
+    }
+
+    .pane-focus-button {
+      min-height: 2.1rem;
+      justify-content: center;
+    }
+
+    .pane-focus-button > span:not(.pane-title-line) {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .pane-chrome-meta {
+      display: none;
+    }
+
+    .pane-chrome-actions button,
+    .titlebar-icon,
+    .statusbar-icon {
+      width: 2.75rem;
+      min-width: 2.75rem;
+      height: 2.75rem;
+    }
+
+    .pane-resize-button.vertical {
+      display: none;
+    }
+
+    .pane-span-drop-zone,
+    .pane-placement-zones {
+      display: none;
+    }
+
+    .handler-thread-card-top,
+    .structured-command-card-top,
+    .structured-command-card-footer,
+    .thread-inspector-summary-top,
+    .thread-inspector-command-top,
+    .thread-inspector-timeline-top,
+    .thread-inspector-section-header,
+    .command-inspector-summary-top,
+    .command-inspector-child-top,
+    .command-inspector-artifact,
+    .handler-thread-state,
+    .compact-workflow-card,
+    .compact-handoff-card {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .handler-thread-actions,
+    .thread-inspector-actions,
+    .thread-inspector-command-footer,
+    .handler-thread-pills,
+    .structured-command-card-meta,
+    .thread-inspector-summary-meta,
+    .thread-inspector-pills,
+    .thread-inspector-command-meta,
+    .command-inspector-summary-meta,
+    .command-inspector-child-meta,
+    .command-inspector-child-footer,
+    .command-inspector-pills {
+      justify-content: flex-start;
+    }
+
+    .thread-inspector-metadata {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .mobile-overlay {
+      padding: 0.42rem;
     }
   }
 </style>

@@ -32,6 +32,18 @@ Static screenshots do not capture everything. Inspect the running Replit artifac
 - Real product data must come from svvy read models and runtime contracts: sessions, panes, handler threads, workflows, commands, artifacts, provider settings, Project CI, context budgets, prompt history, and model/reasoning choices.
 - Report clearly when the source UI is incomplete, unintuitive, missing expected states, poorly adapted to svvy's product model, or weaker than the way svvy needs to show runtime state.
 
+## Responsive And Accessibility Rules
+
+The supported viewport classes are:
+
+- Full desktop: 1220 px and wider. The shell keeps the dense workbench model with expanded or user-collapsed sidebar, horizontal pane grid, desktop artifact inspector split, compact header metadata, and docked composer.
+- Constrained desktop: 768-1219 px. The shell keeps desktop navigation and pane semantics, but inspector artifacts use an overlay, metadata wraps, and component-level overflow rules preserve text containment.
+- Narrow shell: 767 px and below. Navigation is collapsed out of the pane grid, the workbench becomes a single-column stacked pane surface, secondary pane metadata is suppressed from pane chrome, artifact inspection uses an overlay, and critical controls use touch-sized hit areas while preserving the same runtime surface bindings.
+
+Narrow behavior is derived from viewport state inside the production Svelte renderer. The Replit artifact `/narrow` route is a source state for layout intent, not a production route or alternate runtime.
+
+Critical interactive surfaces must remain keyboard reachable and screen-reader coherent across all viewport classes. Hidden placement controls must not remain focusable, dialogs must expose labelled modal semantics with focus containment and focus restoration, tree-style inspectors must expose the active descendant, and reduced-motion preferences must disable live-state animation.
+
 ## Workflow, Artifact, And Command Inspector Rules
 
 The Replit workflow graph is a non-portable visual reference. Production `svvy` keeps the Svelte workflow inspector tree-first because Smithers workflow state, historical frames, search, keyboard navigation, related surfaces, and restart restoration are already shaped around a durable tree read model.
@@ -65,6 +77,8 @@ The saved workflow library has no direct Replit route. It uses the closest dense
 - Run `bun run test:e2e` only for end-to-end UI paths and only through the OrbStack machine lane.
 - Do not run e2e for documentation-only work unless there is a product behavior change.
 - Store manually captured verification screenshots in repo-root `screenshots/`.
+
+For UI rollout verification, use a repeatable screenshot checklist that covers startup, a normal session, active stream, waiting handler thread, failed command, split panes, workflow inspector, artifact panel or overlay, command palette, settings, and the narrow shell. Pair screenshot review with focused checks for horizontal overflow, text containment, focus order, accessible names, color contrast, reduced motion, and screen-reader state on critical controls.
 
 ## Documentation Rules
 

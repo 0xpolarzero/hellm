@@ -123,12 +123,12 @@ The workflow inspector remains tree-first. Replit artifact graph-oriented workfl
 
 ## 11. Responsive And Accessibility Pass
 
-- [ ] Extract supported viewport classes from the Replit artifact app, including full desktop, constrained desktop, and narrow shell behavior.
-- [ ] Recompose the shell for narrow viewports without merely shrinking dense desktop panes.
-- [ ] Verify no text overlaps or escapes buttons, badges, pane headers, cards, command rows, composer chrome, or settings controls.
-- [ ] Verify keyboard navigation across sidebar, pane chrome, transcript actions, composer, command palette, inspectors, and dialogs.
-- [ ] Verify focus order, focus rings, accessible names, status text, color contrast, reduced motion, and screen-reader behavior for critical controls.
-- [ ] Add targeted tests or fixtures for text overflow, state rendering, shortcut behavior, and responsive layout rules where practical.
+- [x] Extract supported viewport classes from the Replit artifact app, including full desktop, constrained desktop, and narrow shell behavior.
+- [x] Recompose the shell for narrow viewports without merely shrinking dense desktop panes.
+- [x] Verify no text overlaps or escapes buttons, badges, pane headers, cards, command rows, composer chrome, or settings controls.
+- [x] Verify keyboard navigation across sidebar, pane chrome, transcript actions, composer, command palette, inspectors, and dialogs.
+- [x] Verify focus order, focus rings, accessible names, status text, color contrast, reduced motion, and screen-reader behavior for critical controls.
+- [x] Add targeted tests or fixtures for text overflow, state rendering, shortcut behavior, and responsive layout rules where practical.
 
 ## 12. Visual Verification And Rollout
 

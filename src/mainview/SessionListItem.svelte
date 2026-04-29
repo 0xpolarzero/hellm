@@ -466,5 +466,14 @@
       opacity: 1;
       pointer-events: auto;
     }
+
+    .session-menu-trigger {
+      min-width: 2.75rem;
+      min-height: 2.75rem;
+    }
+
+    .session-menu button {
+      min-height: 2.75rem;
+    }
   }
 </style>

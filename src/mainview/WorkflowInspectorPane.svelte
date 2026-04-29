@@ -192,6 +192,10 @@
     return inspector?.tree.nodes.some((candidate) => candidate.parentKey === node.key) ?? false;
   }
 
+  function treeItemId(nodeKey: string): string {
+    return `workflow-tree-${paneId}-${nodeKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  }
+
   function formatContent(content: unknown): string {
     if (content == null) return "";
     if (typeof content === "string") return content;
@@ -307,13 +311,16 @@
           tabindex="0"
           role="tree"
           aria-label="Workflow node tree"
+          aria-activedescendant={selectedNodeKey ? treeItemId(selectedNodeKey) : undefined}
           onkeydown={handleTreeKeydown}
         >
           {#each visibleNodes as node (node.key)}
             <div
+              id={treeItemId(node.key)}
               role="treeitem"
               tabindex="-1"
               aria-selected={node.key === selectedNodeKey}
+              aria-expanded={hasChildren(node) ? expandedNodeKeys.includes(node.key) : undefined}
               class={`workflow-tree-row ${node.key === selectedNodeKey ? "selected" : ""} status-${node.status}`.trim()}
               style={`--depth: ${depthFor(node)}`}
               onclick={() => selectNode(node.key)}
