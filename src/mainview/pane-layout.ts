@@ -7,7 +7,7 @@ export const MIN_PANE_HEIGHT_PX = 260;
 
 export type PaneSplitDirection = "left" | "right" | "above" | "below";
 export type PanePlacementZone = "replace" | PaneSplitDirection;
-export type PaneSpanPlacement = "top" | "bottom";
+export type PaneSpanPlacement = "top" | "bottom" | "left" | "right";
 export type PaneResizeAxis = "column" | "row";
 
 export interface PaneGridTrack {
@@ -272,10 +272,30 @@ export function splitPane(
 
   const shiftedPanes = layout.panes.map((pane) => {
     if (splitColumn) {
+      if (
+        pane.paneId !== paneId &&
+        pane.columnStart <= sourceTrackIndex &&
+        pane.columnEnd > sourceTrackIndex
+      ) {
+        return {
+          ...pane,
+          columnEnd: pane.columnEnd + 1,
+        };
+      }
       return {
         ...pane,
         columnStart: pane.columnStart >= insertIndex ? pane.columnStart + 1 : pane.columnStart,
         columnEnd: pane.columnEnd >= insertIndex ? pane.columnEnd + 1 : pane.columnEnd,
+      };
+    }
+    if (
+      pane.paneId !== paneId &&
+      pane.rowStart <= sourceTrackIndex &&
+      pane.rowEnd > sourceTrackIndex
+    ) {
+      return {
+        ...pane,
+        rowEnd: pane.rowEnd + 1,
       };
     }
     return {
@@ -318,23 +338,24 @@ export function splitPane(
     }
     if (splitColumn) {
       if (direction === "left") {
-        return { ...pane, columnStart: pane.columnStart + 1 };
+        return pane;
       }
       return { ...pane, columnEnd: pane.columnEnd - 1 };
     }
     if (direction === "above") {
-      return { ...pane, rowStart: pane.rowStart + 1 };
+      return pane;
     }
     return { ...pane, rowEnd: pane.rowEnd - 1 };
   });
 
-  return normalizePaneLayout({
+  const nextLayout = normalizePaneLayout({
     ...layout,
     columns: splitColumn ? nextTracks : layout.columns,
     rows: splitColumn ? layout.rows : nextTracks,
     panes: [...panes, newPane],
     focusedPaneId: nextPaneId,
   });
+  return hasCompletePaneCoverage(nextLayout) ? nextLayout : layout;
 }
 
 export function placePane(
@@ -352,12 +373,15 @@ export function placePane(
   if (sourcePaneId === targetPaneId) {
     return layout;
   }
+  if (zone !== "replace" && isPaneAlreadyPlaced(source, target, zone)) {
+    return touch({ ...layout, focusedPaneId: sourcePaneId });
+  }
 
   const movedBinding = source.binding ? { ...source.binding } : null;
   const movedLocalState = structuredClone(source.localState);
 
   if (zone === "replace") {
-    return touch({
+    const nextLayout = touch({
       ...layout,
       panes: layout.panes.map((pane) => {
         if (pane.paneId === targetPaneId) {
@@ -378,6 +402,7 @@ export function placePane(
       }),
       focusedPaneId: targetPaneId,
     });
+    return hasCompletePaneCoverage(nextLayout) ? nextLayout : layout;
   }
 
   const baseLayout = options.duplicateBinding ? layout : closePane(layout, sourcePaneId);
@@ -390,7 +415,7 @@ export function placePane(
     nextPaneId,
     size: options.size,
   });
-  return normalizePaneLayout({
+  const nextLayout = normalizePaneLayout({
     ...splitLayout,
     panes: splitLayout.panes.map((pane) =>
       pane.paneId === nextPaneId
@@ -403,6 +428,7 @@ export function placePane(
     ),
     focusedPaneId: nextPaneId,
   });
+  return hasCompletePaneCoverage(nextLayout) ? nextLayout : layout;
 }
 
 export function closePane(
@@ -425,7 +451,7 @@ export function closePane(
     layout.focusedPaneId === paneId
       ? (findNearestPane(pane, panes)?.paneId ?? panes[0]!.paneId)
       : layout.focusedPaneId;
-  return normalizePaneLayout({ ...layout, panes, focusedPaneId });
+  return compactUnusedPaneTracks(normalizePaneLayout({ ...layout, panes, focusedPaneId }));
 }
 
 export function movePaneToSpanningRow(
@@ -437,6 +463,57 @@ export function movePaneToSpanningRow(
   const pane = layout.panes.find((candidate) => candidate.paneId === paneId);
   if (!pane || layout.panes.length === 1) {
     return layout;
+  }
+  if (isPaneAlreadySpanningEdge(pane, layout, placement)) {
+    return touch({ ...layout, focusedPaneId: paneId });
+  }
+
+  if (placement === "left" || placement === "right") {
+    const columnIndex = placement === "left" ? 0 : layout.columns.length;
+    const sourceColumnIndex = placement === "left" ? 0 : layout.columns.length - 1;
+    const sourceColumn = layout.columns[sourceColumnIndex];
+    if (!sourceColumn) {
+      return layout;
+    }
+
+    const size = clampSize(options.size ?? 0.36);
+    const newTrackPercent = sourceColumn.percent * size;
+    const oldTrackPercent = sourceColumn.percent - newTrackPercent;
+    const nextColumns = [
+      ...layout.columns.slice(0, columnIndex),
+      { id: `col-${createPaneId()}`, percent: newTrackPercent },
+      ...layout.columns.slice(columnIndex),
+    ].map((column, index) =>
+      index === (columnIndex <= sourceColumnIndex ? sourceColumnIndex + 1 : sourceColumnIndex)
+        ? { ...column, percent: oldTrackPercent }
+        : column,
+    );
+
+    const repairedPanes = expandAdjacentPaneIntoVacancy(
+      pane,
+      layout.panes.filter((candidate) => candidate.paneId !== paneId),
+    ).map((candidate) => ({
+      ...candidate,
+      columnStart:
+        candidate.columnStart >= columnIndex ? candidate.columnStart + 1 : candidate.columnStart,
+      columnEnd: candidate.columnEnd > columnIndex ? candidate.columnEnd + 1 : candidate.columnEnd,
+    }));
+    const spanningPane: PaneGridPane = {
+      ...pane,
+      columnStart: columnIndex,
+      columnEnd: columnIndex + 1,
+      rowStart: 0,
+      rowEnd: layout.rows.length,
+    };
+
+    const nextLayout = normalizePaneLayout({
+      ...layout,
+      columns: nextColumns,
+      panes: [...repairedPanes, spanningPane],
+      focusedPaneId: paneId,
+    });
+    const compactedLayout = compactUnusedPaneTracks(nextLayout);
+    return hasCompletePaneCoverage(compactedLayout) ? compactedLayout : layout;
   }
 
   const rowIndex = placement === "top" ? 0 : layout.rows.length;
@@ -475,12 +552,14 @@ export function movePaneToSpanningRow(
     rowEnd: rowIndex + 1,
   };
 
-  return normalizePaneLayout({
+  const nextLayout = normalizePaneLayout({
     ...layout,
     rows: nextRows,
     panes: [...repairedPanes, spanningPane],
     focusedPaneId: paneId,
   });
+  const compactedLayout = compactUnusedPaneTracks(nextLayout);
+  return hasCompletePaneCoverage(compactedLayout) ? compactedLayout : layout;
 }
 
 export function resizeTrack(
@@ -569,6 +648,175 @@ function createPaneId(): string {
   return `pane-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function hasCompletePaneCoverage(layout: WorkspacePaneLayoutState): boolean {
+  if (layout.columns.length === 0 || layout.rows.length === 0 || layout.panes.length === 0) {
+    return false;
+  }
+
+  const occupiedCells = new Set<string>();
+  const paneIds = new Set<string>();
+  for (const pane of layout.panes) {
+    if (paneIds.has(pane.paneId)) {
+      return false;
+    }
+    paneIds.add(pane.paneId);
+    if (
+      pane.columnStart < 0 ||
+      pane.rowStart < 0 ||
+      pane.columnEnd > layout.columns.length ||
+      pane.rowEnd > layout.rows.length ||
+      pane.columnStart >= pane.columnEnd ||
+      pane.rowStart >= pane.rowEnd
+    ) {
+      return false;
+    }
+
+    for (let column = pane.columnStart; column < pane.columnEnd; column += 1) {
+      for (let row = pane.rowStart; row < pane.rowEnd; row += 1) {
+        const key = `${column}:${row}`;
+        if (occupiedCells.has(key)) {
+          return false;
+        }
+        occupiedCells.add(key);
+      }
+    }
+  }
+
+  return occupiedCells.size === layout.columns.length * layout.rows.length;
+}
+
+function isPaneAlreadyPlaced(
+  source: PaneGridPane,
+  target: PaneGridPane,
+  zone: PaneSplitDirection,
+): boolean {
+  switch (zone) {
+    case "left":
+      return (
+        source.columnEnd === target.columnStart &&
+        source.rowStart === target.rowStart &&
+        source.rowEnd === target.rowEnd
+      );
+    case "right":
+      return (
+        source.columnStart === target.columnEnd &&
+        source.rowStart === target.rowStart &&
+        source.rowEnd === target.rowEnd
+      );
+    case "above":
+      return (
+        source.rowEnd === target.rowStart &&
+        source.columnStart === target.columnStart &&
+        source.columnEnd === target.columnEnd
+      );
+    case "below":
+      return (
+        source.rowStart === target.rowEnd &&
+        source.columnStart === target.columnStart &&
+        source.columnEnd === target.columnEnd
+      );
+  }
+}
+
+function isPaneAlreadySpanningEdge(
+  pane: PaneGridPane,
+  layout: WorkspacePaneLayoutState,
+  placement: PaneSpanPlacement,
+): boolean {
+  switch (placement) {
+    case "left":
+      return (
+        pane.columnStart === 0 &&
+        pane.columnEnd === 1 &&
+        pane.rowStart === 0 &&
+        pane.rowEnd === layout.rows.length
+      );
+    case "right":
+      return (
+        pane.columnStart === layout.columns.length - 1 &&
+        pane.columnEnd === layout.columns.length &&
+        pane.rowStart === 0 &&
+        pane.rowEnd === layout.rows.length
+      );
+    case "top":
+      return (
+        pane.rowStart === 0 &&
+        pane.rowEnd === 1 &&
+        pane.columnStart === 0 &&
+        pane.columnEnd === layout.columns.length
+      );
+    case "bottom":
+      return (
+        pane.rowStart === layout.rows.length - 1 &&
+        pane.rowEnd === layout.rows.length &&
+        pane.columnStart === 0 &&
+        pane.columnEnd === layout.columns.length
+      );
+  }
+}
+
+function compactUnusedPaneTracks(layout: WorkspacePaneLayoutState): WorkspacePaneLayoutState {
+  let columns = layout.columns.map((column) => ({ ...column }));
+  let rows = layout.rows.map((row) => ({ ...row }));
+  let panes = layout.panes.map((pane) => ({ ...pane }));
+
+  ({ tracks: columns, panes } = compactUnusedAxisTracks(columns, panes, "column"));
+  ({ tracks: rows, panes } = compactUnusedAxisTracks(rows, panes, "row"));
+
+  return {
+    ...layout,
+    columns: normalizeTracks(columns),
+    rows: normalizeTracks(rows),
+    panes,
+  };
+}
+
+function compactUnusedAxisTracks(
+  tracks: PaneGridTrack[],
+  panes: PaneGridPane[],
+  axis: PaneResizeAxis,
+): { tracks: PaneGridTrack[]; panes: PaneGridPane[] } {
+  let nextTracks = tracks;
+  let nextPanes = panes;
+  let lineIndex = 1;
+
+  while (lineIndex < nextTracks.length) {
+    const lineIsPaneBoundary = nextPanes.some((pane) =>
+      axis === "column"
+        ? pane.columnStart === lineIndex || pane.columnEnd === lineIndex
+        : pane.rowStart === lineIndex || pane.rowEnd === lineIndex,
+    );
+    if (lineIsPaneBoundary) {
+      lineIndex += 1;
+      continue;
+    }
+
+    nextTracks = [
+      ...nextTracks.slice(0, lineIndex - 1),
+      {
+        ...nextTracks[lineIndex - 1]!,
+        percent: nextTracks[lineIndex - 1]!.percent + nextTracks[lineIndex]!.percent,
+      },
+      ...nextTracks.slice(lineIndex + 1),
+    ];
+    nextPanes = nextPanes.map((pane) =>
+      axis === "column"
+        ? {
+            ...pane,
+            columnStart: pane.columnStart > lineIndex ? pane.columnStart - 1 : pane.columnStart,
+            columnEnd: pane.columnEnd > lineIndex ? pane.columnEnd - 1 : pane.columnEnd,
+          }
+        : {
+            ...pane,
+            rowStart: pane.rowStart > lineIndex ? pane.rowStart - 1 : pane.rowStart,
+            rowEnd: pane.rowEnd > lineIndex ? pane.rowEnd - 1 : pane.rowEnd,
+          },
+    );
+  }
+
+  return { tracks: nextTracks, panes: nextPanes };
+}
+
 function findNearestPane(source: PaneGridPane, panes: PaneGridPane[]): PaneGridPane | null {
   let nearest: PaneGridPane | null = null;
   let nearestDistance = Number.POSITIVE_INFINITY;
@@ -587,6 +835,54 @@ function expandAdjacentPaneIntoVacancy(
   closedPane: PaneGridPane,
   panes: PaneGridPane[],
 ): PaneGridPane[] {
+  const rightStrip = findCoveringAdjacentStrip(
+    panes.filter((pane) => pane.columnStart === closedPane.columnEnd),
+    "row",
+    closedPane.rowStart,
+    closedPane.rowEnd,
+  );
+  if (rightStrip) {
+    return panes.map((pane) =>
+      rightStrip.has(pane.paneId) ? { ...pane, columnStart: closedPane.columnStart } : pane,
+    );
+  }
+
+  const leftStrip = findCoveringAdjacentStrip(
+    panes.filter((pane) => pane.columnEnd === closedPane.columnStart),
+    "row",
+    closedPane.rowStart,
+    closedPane.rowEnd,
+  );
+  if (leftStrip) {
+    return panes.map((pane) =>
+      leftStrip.has(pane.paneId) ? { ...pane, columnEnd: closedPane.columnEnd } : pane,
+    );
+  }
+
+  const belowStrip = findCoveringAdjacentStrip(
+    panes.filter((pane) => pane.rowStart === closedPane.rowEnd),
+    "column",
+    closedPane.columnStart,
+    closedPane.columnEnd,
+  );
+  if (belowStrip) {
+    return panes.map((pane) =>
+      belowStrip.has(pane.paneId) ? { ...pane, rowStart: closedPane.rowStart } : pane,
+    );
+  }
+
+  const aboveStrip = findCoveringAdjacentStrip(
+    panes.filter((pane) => pane.rowEnd === closedPane.rowStart),
+    "column",
+    closedPane.columnStart,
+    closedPane.columnEnd,
+  );
+  if (aboveStrip) {
+    return panes.map((pane) =>
+      aboveStrip.has(pane.paneId) ? { ...pane, rowEnd: closedPane.rowEnd } : pane,
+    );
+  }
+
   const verticalCandidate = panes.find(
     (pane) =>
       pane.columnStart === closedPane.columnStart &&
@@ -624,4 +920,40 @@ function expandAdjacentPaneIntoVacancy(
   }
 
   return panes;
+}
+
+function findCoveringAdjacentStrip(
+  candidates: PaneGridPane[],
+  axis: "column" | "row",
+  rangeStart: number,
+  rangeEnd: number,
+): Set<string> | null {
+  const coveringPanes = candidates
+    .filter((pane) =>
+      axis === "column"
+        ? pane.columnStart >= rangeStart && pane.columnEnd <= rangeEnd
+        : pane.rowStart >= rangeStart && pane.rowEnd <= rangeEnd,
+    )
+    .sort((left, right) =>
+      axis === "column" ? left.columnStart - right.columnStart : left.rowStart - right.rowStart,
+    );
+  if (coveringPanes.length === 0) {
+    return null;
+  }
+
+  let cursor = rangeStart;
+  for (const pane of coveringPanes) {
+    const start = axis === "column" ? pane.columnStart : pane.rowStart;
+    const end = axis === "column" ? pane.columnEnd : pane.rowEnd;
+    if (start !== cursor) {
+      return null;
+    }
+    cursor = end;
+  }
+
+  if (cursor !== rangeEnd) {
+    return null;
+  }
+
+  return new Set(coveringPanes.map((pane) => pane.paneId));
 }

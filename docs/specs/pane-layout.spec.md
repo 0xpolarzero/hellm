@@ -393,6 +393,15 @@ Dragging a surface or pane over another pane should expose explicit placement zo
 - split above
 - split below
 
+Dragging a pane to a workspace edge should expose unlabeled full-span drop targets:
+
+- top edge places the pane as a full-width top row
+- bottom edge places the pane as a full-width bottom row
+- left edge places the pane as a full-height left column
+- right edge places the pane as a full-height right column
+
+The full-span edge targets should rely on visual previews instead of visible text labels. They are layout targets, not separate command buttons.
+
 Dropping a surface on `replace` binds the target pane to that surface.
 
 Dropping a pane on a split zone moves that pane when the source is unique, or duplicates the binding when the command is explicitly a duplicate action. Moving a pane should preserve its pane-local state when the pane id moves with the pane.

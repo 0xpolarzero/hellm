@@ -7,7 +7,9 @@
   import SettingsIcon from "@lucide/svelte/icons/settings";
   import Columns2Icon from "@lucide/svelte/icons/columns-2";
   import GitBranchIcon from "@lucide/svelte/icons/git-branch";
+  import GripVerticalIcon from "@lucide/svelte/icons/grip-vertical";
   import Grid2x2Icon from "@lucide/svelte/icons/grid-2x2";
+  import PlusIcon from "@lucide/svelte/icons/plus";
   import Rows2Icon from "@lucide/svelte/icons/rows-2";
   import CopyIcon from "@lucide/svelte/icons/copy";
   import XIcon from "@lucide/svelte/icons/x";
@@ -77,7 +79,14 @@
     type ChatPaneState,
     type ChatSurfaceController,
   } from "./chat-runtime";
-  import { createEmptyPaneLayout, getOpenPaneLocations, type PanePlacementZone } from "./pane-layout";
+  import {
+    createEmptyPaneLayout,
+    getOpenPaneLocations,
+    type PanePlacementZone,
+    type PaneResizeAxis,
+    type PaneSpanPlacement,
+    type PaneSplitDirection,
+  } from "./pane-layout";
   import {
     buildCommandRegistry,
     executeCommandAction,
@@ -109,6 +118,40 @@
   type Props = {
     runtime: ChatRuntime;
     onOpenSettings?: () => void;
+  };
+
+  type PaneDividerControl = {
+    axis: PaneResizeAxis;
+    index: number;
+    positionPercent: number;
+  };
+
+  type ActivePaneResize = {
+    axis: PaneResizeAxis;
+    gridSizePx: number;
+    lastClientPosition: number;
+    pointerId: number;
+    trackIndex: number;
+  };
+
+  type ActivePaneDrag = {
+    hasMoved: boolean;
+    lastX: number;
+    lastY: number;
+    pointerId: number;
+    sourcePaneId: string;
+    startX: number;
+    startY: number;
+  };
+
+  type PaneSplitAction = {
+    direction: PaneSplitDirection;
+    paneId: string;
+  };
+
+  type PaneDropPreview = {
+    targetPaneId: string;
+    zone: PanePlacementZone;
   };
 
   let { runtime, onOpenSettings }: Props = $props();
@@ -155,12 +198,17 @@
   let sidebarWidth = $state(DEFAULT_SIDEBAR_WIDTH);
   let sidebarResizing = $state(false);
   let draggingPaneId = $state<string | null>(null);
+  let activePaneResize = $state<ActivePaneResize | null>(null);
+  let activePaneDrag = $state<ActivePaneDrag | null>(null);
+  let paneDropPreview = $state<PaneDropPreview | null>(null);
+  let paneSpanDropPreview = $state<PaneSpanPlacement | null>(null);
   let mutatingSession = $state(false);
   let sendingPrompt = $state(false);
   let renameTarget = $state<WorkspaceSessionSummary | null>(null);
   let renameValue = $state("");
   let deleteTarget = $state<WorkspaceSessionSummary | null>(null);
   let sidebarResizeHandle = $state<HTMLDivElement | null>(null);
+  let paneGridElement = $state<HTMLElement | null>(null);
   let artifactSyncSessionId: string | undefined = undefined;
   let artifactSyncMessageCount = 0;
   let copyTranscriptState = $state<"idle" | "copying" | "copied" | "error">("idle");
@@ -218,6 +266,7 @@
   const currentSession = $derived(sessions.find((session) => session.id === activeSessionId) ?? null);
   const currentCommandRollups = $derived(getVisibleCommandRollups(currentSession));
   const currentSurface = $derived(focusedSurfaceTarget);
+  const paneDividerControls = $derived.by(() => createPaneDividerControls(paneLayout));
   const paneLocationsBySessionId = $derived(
     Object.fromEntries(
       sessions.map((session) => [
@@ -300,6 +349,26 @@
     const thinking = paneController?.agent.state.thinkingLevel;
     if (!model) return "No agent";
     return `${model.provider}/${model.id} · ${thinking}`;
+  }
+  function formatPaneDropActionLabel(zone: PanePlacementZone): string {
+    switch (zone) {
+      case "left":
+        return "Place left";
+      case "right":
+        return "Place right";
+      case "above":
+        return "Place above";
+      case "below":
+        return "Place below";
+      case "replace":
+      default:
+        return "Replace pane";
+    }
+  }
+  function formatPaneDragSourceLabel(paneId: string | null): string {
+    if (!paneId) return "Pane";
+    const pane = paneLayout.panes.find((candidate) => candidate.paneId === paneId);
+    return formatPaneSurfaceLabel(runtime.getPaneController(paneId), pane?.binding ?? null);
   }
   function formatPaneWorktreeLabel(binding?: WorkspacePaneSurfaceTarget | null): string {
     if (binding?.surface === "workflow-inspector") return "workflow";
@@ -736,8 +805,8 @@
     });
   }
 
-  async function handleCloseFocusedPane() {
-    await runSessionMutation(() => runtime.closePane(focusedPaneId));
+  async function handleClosePane(paneId: string) {
+    await runSessionMutation(() => runtime.closePane(paneId));
   }
 
   function handleResizeTrack(axis: "column" | "row", index: number, deltaPercent: number) {
@@ -745,49 +814,273 @@
     syncRuntimeState();
   }
 
-  function handlePaneDragStart(event: DragEvent, paneId: string) {
+  function createPaneDividerControls(layout: ChatPaneLayoutState): PaneDividerControl[] {
+    return [
+      ...createTrackDividerControls("column", layout.columns),
+      ...createTrackDividerControls("row", layout.rows),
+    ];
+  }
+
+  function createTrackDividerControls(
+    axis: PaneResizeAxis,
+    tracks: ChatPaneLayoutState["columns"],
+  ): PaneDividerControl[] {
+    let positionPercent = 0;
+    return tracks.slice(0, -1).map((track, index) => {
+      positionPercent += track.percent;
+      return {
+        axis,
+        index: index + 1,
+        positionPercent,
+      };
+    });
+  }
+
+  function getPaneSplitActionForDivider(
+    axis: PaneResizeAxis,
+    dividerIndex: number,
+  ): PaneSplitAction | null {
+    const focusedPane = paneLayout.panes.find((pane) => pane.paneId === focusedPaneId);
+    const touchingPanes = paneLayout.panes.filter((pane) => {
+      if (axis === "column") {
+        return pane.columnEnd === dividerIndex || pane.columnStart === dividerIndex;
+      }
+      return pane.rowEnd === dividerIndex || pane.rowStart === dividerIndex;
+    });
+    const candidate =
+      (focusedPane && touchingPanes.find((pane) => pane.paneId === focusedPane.paneId)) ??
+      touchingPanes.find((pane) =>
+        axis === "column" ? pane.columnEnd === dividerIndex : pane.rowEnd === dividerIndex,
+      ) ??
+      touchingPanes[0] ??
+      null;
+    if (!candidate) {
+      return null;
+    }
+
+    if (axis === "column") {
+      return {
+        paneId: candidate.paneId,
+        direction: candidate.columnEnd === dividerIndex ? "right" : "left",
+      };
+    }
+    return {
+      paneId: candidate.paneId,
+      direction: candidate.rowEnd === dividerIndex ? "below" : "above",
+    };
+  }
+
+  async function handleSplitAtDivider(axis: PaneResizeAxis, dividerIndex: number) {
+    const action = getPaneSplitActionForDivider(axis, dividerIndex);
+    if (!action) {
+      return;
+    }
+    await runSessionMutation(async () => {
+      const paneId = await runtime.splitPane(action.paneId, action.direction);
+      if (paneId) {
+        runtime.focusPane(paneId);
+      }
+    });
+  }
+
+  function startPaneDividerResize(
+    event: PointerEvent,
+    axis: PaneResizeAxis,
+    dividerIndex: number,
+  ) {
+    if (event.button !== 0) {
+      return;
+    }
+    const gridRect = paneGridElement?.getBoundingClientRect();
+    if (!gridRect) {
+      return;
+    }
+    const gridSizePx = axis === "column" ? gridRect.width : gridRect.height;
+    if (gridSizePx <= 0) {
+      return;
+    }
+
+    event.preventDefault();
+    activePaneResize = {
+      axis,
+      gridSizePx,
+      lastClientPosition: axis === "column" ? event.clientX : event.clientY,
+      pointerId: event.pointerId,
+      trackIndex: dividerIndex - 1,
+    };
+    window.addEventListener("pointermove", handlePaneDividerResizeMove);
+    window.addEventListener("pointerup", stopPaneDividerResize);
+    window.addEventListener("pointercancel", stopPaneDividerResize);
+  }
+
+  function handlePaneDividerResizeMove(event: PointerEvent) {
+    const resize = activePaneResize;
+    if (!resize || resize.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    const nextPosition = resize.axis === "column" ? event.clientX : event.clientY;
+    const deltaPx = nextPosition - resize.lastClientPosition;
+    const deltaPercent = (deltaPx / resize.gridSizePx) * 100;
+    if (Math.abs(deltaPercent) < 0.05) {
+      return;
+    }
+
+    runtime.resizePaneTrack(resize.axis, resize.trackIndex, deltaPercent);
+    activePaneResize = {
+      ...resize,
+      lastClientPosition: nextPosition,
+    };
+    syncRuntimeState();
+  }
+
+  function stopPaneDividerResize(event?: PointerEvent) {
+    if (event && activePaneResize && activePaneResize.pointerId !== event.pointerId) {
+      return;
+    }
+    activePaneResize = null;
+    window.removeEventListener("pointermove", handlePaneDividerResizeMove);
+    window.removeEventListener("pointerup", stopPaneDividerResize);
+    window.removeEventListener("pointercancel", stopPaneDividerResize);
+  }
+
+  function handlePaneDividerKeydown(
+    event: KeyboardEvent,
+    axis: PaneResizeAxis,
+    dividerIndex: number,
+  ) {
+    const forwardKey = axis === "column" ? "ArrowRight" : "ArrowDown";
+    const backwardKey = axis === "column" ? "ArrowLeft" : "ArrowUp";
+    if (event.key !== forwardKey && event.key !== backwardKey) {
+      return;
+    }
+    event.preventDefault();
+    handleResizeTrack(axis, dividerIndex - 1, event.key === forwardKey ? 3 : -3);
+  }
+
+  function getPanePlacementZoneForPoint(paneElement: HTMLElement, clientX: number, clientY: number): PanePlacementZone {
+    const rect = paneElement.getBoundingClientRect();
+    const edgeThreshold = Math.min(96, Math.max(44, Math.min(rect.width, rect.height) * 0.28));
+    const distances = [
+      { zone: "left" as const, value: clientX - rect.left },
+      { zone: "right" as const, value: rect.right - clientX },
+      { zone: "above" as const, value: clientY - rect.top },
+      { zone: "below" as const, value: rect.bottom - clientY },
+    ].sort((left, right) => left.value - right.value);
+
+    return distances[0]?.value <= edgeThreshold ? distances[0].zone : "replace";
+  }
+
+  function clearPaneDragListeners() {
+    window.removeEventListener("pointermove", handlePaneDragPointerMove);
+    window.removeEventListener("pointerup", stopPaneDrag);
+    window.removeEventListener("pointercancel", stopPaneDrag);
+  }
+
+  function clearPaneDragState() {
+    activePaneDrag = null;
+    draggingPaneId = null;
+    paneDropPreview = null;
+    paneSpanDropPreview = null;
+  }
+
+  function startPaneDrag(event: PointerEvent, paneId: string) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    void handleFocusPane(paneId);
+    activePaneDrag = {
+      hasMoved: false,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      pointerId: event.pointerId,
+      sourcePaneId: paneId,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
     draggingPaneId = paneId;
-    event.dataTransfer?.setData("application/x-svvy-pane-id", paneId);
-    event.dataTransfer?.setData("text/plain", paneId);
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = "move";
-    }
+    paneDropPreview = null;
+    paneSpanDropPreview = null;
+    window.addEventListener("pointermove", handlePaneDragPointerMove);
+    window.addEventListener("pointerup", stopPaneDrag);
+    window.addEventListener("pointercancel", stopPaneDrag);
   }
 
-  function getDraggedPaneId(event: DragEvent): string | null {
-    return event.dataTransfer?.getData("application/x-svvy-pane-id") || event.dataTransfer?.getData("text/plain") || null;
-  }
-
-  function allowPaneDrop(event: DragEvent) {
-    if (!event.dataTransfer) {
+  function handlePaneDragPointerMove(event: PointerEvent) {
+    const drag = activePaneDrag;
+    if (!drag || drag.pointerId !== event.pointerId) {
       return;
     }
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-  }
 
-  function handleSpanningPaneDrop(event: DragEvent, placement: "top" | "bottom") {
     event.preventDefault();
-    const paneId = getDraggedPaneId(event);
-    draggingPaneId = null;
-    if (!paneId) {
+    const distanceX = Math.abs(event.clientX - drag.startX);
+    const distanceY = Math.abs(event.clientY - drag.startY);
+    const hasMoved = drag.hasMoved || distanceX > 4 || distanceY > 4;
+    if (!hasMoved) {
       return;
     }
-    runtime.movePaneToSpanningRow(paneId, placement);
-    syncRuntimeState();
-  }
+    activePaneDrag = { ...drag, hasMoved, lastX: event.clientX, lastY: event.clientY };
 
-  function handlePanePlacementDrop(event: DragEvent, targetPaneId: string, zone: PanePlacementZone) {
-    event.preventDefault();
-    const sourcePaneId = getDraggedPaneId(event);
-    draggingPaneId = null;
-    if (!sourcePaneId) {
+    const targetElement = document.elementFromPoint(event.clientX, event.clientY);
+    const spanDropElement = targetElement?.closest("[data-pane-span-drop]") as HTMLElement | null;
+    const spanDropPlacement = spanDropElement?.dataset.paneSpanDrop;
+    if (
+      spanDropPlacement === "top" ||
+      spanDropPlacement === "bottom" ||
+      spanDropPlacement === "left" ||
+      spanDropPlacement === "right"
+    ) {
+      paneSpanDropPreview = spanDropPlacement;
+      paneDropPreview = null;
       return;
     }
-    runtime.placePane(sourcePaneId, targetPaneId, zone);
-    syncRuntimeState();
-    resubscribeSurfaceController();
-    syncSurfaceState();
+
+    const paneElement = targetElement?.closest("[data-pane-id]") as HTMLElement | null;
+    const targetPaneId = paneElement?.dataset.paneId;
+    paneSpanDropPreview = null;
+    if (!paneElement || !targetPaneId || targetPaneId === drag.sourcePaneId) {
+      paneDropPreview = null;
+      return;
+    }
+
+    paneDropPreview = {
+      targetPaneId,
+      zone: getPanePlacementZoneForPoint(paneElement, event.clientX, event.clientY),
+    };
+  }
+
+  function stopPaneDrag(event?: PointerEvent) {
+    const drag = activePaneDrag;
+    if (event && drag && drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const preview = paneDropPreview;
+    const spanPreview = paneSpanDropPreview;
+    if (drag?.hasMoved) {
+      if (spanPreview) {
+        runtime.movePaneToSpanningRow(drag.sourcePaneId, spanPreview);
+        syncRuntimeState();
+        resubscribeSurfaceController();
+        syncSurfaceState();
+      } else if (preview) {
+        runtime.placePane(drag.sourcePaneId, preview.targetPaneId, preview.zone);
+        syncRuntimeState();
+        resubscribeSurfaceController();
+        syncSurfaceState();
+      }
+    }
+
+    clearPaneDragState();
+    clearPaneDragListeners();
+  }
+
+  function cancelPaneDrag() {
+    clearPaneDragState();
+    clearPaneDragListeners();
   }
 
   function handleTranscriptScrollState(paneId: string, scroll: { transcriptAnchorId: string | null; offsetPx: number }) {
@@ -1890,6 +2183,12 @@
       windowWidth = window.innerWidth;
     };
     const handleWindowKeydown = (event: KeyboardEvent) => {
+      if (activePaneDrag && event.key === "Escape") {
+        event.preventDefault();
+        cancelPaneDrag();
+        return;
+      }
+
       if (isCommandPaletteShortcut(event)) {
         event.preventDefault();
         openPalette("actions");
@@ -1946,6 +2245,8 @@
       unsubscribeSurfaceController?.();
       nextController.dispose();
       setSidebarResizing(false);
+      stopPaneDividerResize();
+      stopPaneDrag();
       clearCopyTranscriptResetTimer();
       window.removeEventListener("resize", handleResize);
       window.removeEventListener("keydown", handleWindowKeydown);
@@ -2156,20 +2457,6 @@
           >
             <CopyIcon aria-hidden="true" size={14} strokeWidth={1.9} />
           </Button>
-          {#if paneLayout.panes.length > 1}
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              data-testid="pane-close"
-              aria-label="Close focused pane"
-              title="Close focused pane"
-              disabled={mutatingSession}
-              onclick={() => void handleCloseFocusedPane()}
-            >
-              <XIcon aria-hidden="true" size={14} strokeWidth={1.9} />
-            </Button>
-          {/if}
           <button
             class="header-icon-button"
             type="button"
@@ -2221,55 +2508,68 @@
       </header>
 
       <section
-        class={`pane-grid ${draggingPaneId ? "dragging-pane" : ""}`.trim()}
+        bind:this={paneGridElement}
+        class={`pane-grid ${draggingPaneId ? "dragging-pane" : ""} ${activePaneResize ? "resizing-pane" : ""}`.trim()}
         data-testid="pane-grid"
-        style={`grid-template-columns: ${paneLayout.columns.map((column) => `${column.percent}fr`).join(" ")}; grid-template-rows: ${paneLayout.rows.map((row) => `${row.percent}fr`).join(" ")};`}
+        style={`grid-template-columns: ${paneLayout.columns.map((column) => `${column.percent}fr`).join(" ")}; grid-template-rows: ${paneLayout.rows.map((row) => `${row.percent}fr`).join(" ")}; --pane-drag-x: ${activePaneDrag?.lastX ?? 0}px; --pane-drag-y: ${activePaneDrag?.lastY ?? 0}px;`}
       >
         <button
-          class="pane-span-drop-zone top"
+          class={`pane-span-drop-zone top ${paneSpanDropPreview === "top" ? "active" : ""}`.trim()}
           type="button"
           data-testid="pane-span-drop-top"
+          data-pane-span-drop="top"
           aria-label="Move dragged pane to full-width top row"
-          ondragover={allowPaneDrop}
-          ondrop={(event) => handleSpanningPaneDrop(event, "top")}
-        >
-          Span top
-        </button>
+          title="Move pane to top"
+        ></button>
         <button
-          class="pane-span-drop-zone bottom"
+          class={`pane-span-drop-zone right ${paneSpanDropPreview === "right" ? "active" : ""}`.trim()}
+          type="button"
+          data-testid="pane-span-drop-right"
+          data-pane-span-drop="right"
+          aria-label="Move dragged pane to full-height right column"
+          title="Move pane to right"
+        ></button>
+        <button
+          class={`pane-span-drop-zone bottom ${paneSpanDropPreview === "bottom" ? "active" : ""}`.trim()}
           type="button"
           data-testid="pane-span-drop-bottom"
+          data-pane-span-drop="bottom"
           aria-label="Move dragged pane to full-width bottom row"
-          ondragover={allowPaneDrop}
-          ondrop={(event) => handleSpanningPaneDrop(event, "bottom")}
-        >
-          Span bottom
-        </button>
+          title="Move pane to bottom"
+        ></button>
+        <button
+          class={`pane-span-drop-zone left ${paneSpanDropPreview === "left" ? "active" : ""}`.trim()}
+          type="button"
+          data-testid="pane-span-drop-left"
+          data-pane-span-drop="left"
+          aria-label="Move dragged pane to full-height left column"
+          title="Move pane to left"
+        ></button>
         {#each paneLayout.panes as pane (pane.paneId)}
           {@const paneController = runtime.getPaneController(pane.paneId)}
           {@const paneContextBudget = getPaneContextBudget(paneController)}
           <article
-            class={`workspace-pane ${pane.paneId === focusedPaneId ? "focused" : ""}`.trim()}
+            class={`workspace-pane ${pane.paneId === focusedPaneId ? "focused" : ""} ${draggingPaneId === pane.paneId ? "dragging-source" : ""} ${paneDropPreview?.targetPaneId === pane.paneId ? `drop-preview drop-${paneDropPreview.zone}` : ""}`.trim()}
             data-testid="workspace-pane"
             data-pane-id={pane.paneId}
             aria-current={pane.paneId === focusedPaneId ? "true" : "false"}
-            draggable="true"
-            ondragstart={(event) => handlePaneDragStart(event, pane.paneId)}
-            ondragend={() => (draggingPaneId = null)}
-            ondragover={allowPaneDrop}
-            ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "replace")}
             style={`grid-column: ${pane.columnStart + 1} / ${pane.columnEnd + 1}; grid-row: ${pane.rowStart + 1} / ${pane.rowEnd + 1};`}
           >
-            {#if draggingPaneId}
-              <div class="pane-placement-zones">
-                <button type="button" class="pane-placement-zone replace" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "replace")}>Replace</button>
-                <button type="button" class="pane-placement-zone left" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "left")}>Left</button>
-                <button type="button" class="pane-placement-zone right" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "right")}>Right</button>
-                <button type="button" class="pane-placement-zone above" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "above")}>Above</button>
-                <button type="button" class="pane-placement-zone below" ondragover={allowPaneDrop} ondrop={(event) => handlePanePlacementDrop(event, pane.paneId, "below")}>Below</button>
+            {#if activePaneDrag?.hasMoved && paneDropPreview?.targetPaneId === pane.paneId}
+              <div class={`pane-drop-callout ${paneDropPreview.zone}`.trim()}>
+                <span>{formatPaneDropActionLabel(paneDropPreview.zone)}</span>
               </div>
             {/if}
             <header class="pane-chrome">
+              <button
+                class="pane-drag-handle"
+                type="button"
+                aria-label={`Move pane ${pane.paneId}`}
+                title="Drag to move pane"
+                onpointerdown={(event) => startPaneDrag(event, pane.paneId)}
+              >
+                <GripVerticalIcon aria-hidden="true" size={13} strokeWidth={1.9} />
+              </button>
               <button
                 class="pane-focus-button"
                 type="button"
@@ -2294,34 +2594,22 @@
                   <MetadataChip label="context" value={paneContextBudget.label} tone={paneContextBudget.tone === "red" ? "danger" : paneContextBudget.tone === "orange" ? "warning" : "neutral"} />
                 {/if}
               </div>
-              <div class="pane-chrome-actions">
-                <button
-                  class="pane-resize-button vertical"
-                  type="button"
-                  data-testid="pane-resize-vertical"
-                  aria-label="Widen pane"
-                  title="Widen pane"
-                  onclick={(event) => {
-                    event.stopPropagation();
-                    handleResizeTrack("column", Math.max(0, pane.columnStart - 1), 5);
-                  }}
-                >
-                  <Columns2Icon aria-hidden="true" size={13} strokeWidth={1.9} />
-                </button>
-                <button
-                  class="pane-resize-button horizontal"
-                  type="button"
-                  data-testid="pane-resize-horizontal"
-                  aria-label="Heighten pane"
-                  title="Heighten pane"
-                  onclick={(event) => {
-                    event.stopPropagation();
-                    handleResizeTrack("row", Math.max(0, pane.rowStart - 1), 5);
-                  }}
-                >
-                  <Rows2Icon aria-hidden="true" size={13} strokeWidth={1.9} />
-                </button>
-              </div>
+              {#if paneLayout.panes.length > 1}
+                <div class="pane-chrome-actions">
+                  <button
+                    type="button"
+                    data-testid="pane-close-button"
+                    aria-label={`Close pane ${pane.paneId}`}
+                    title="Close pane"
+                    onclick={(event) => {
+                      event.stopPropagation();
+                      void handleClosePane(pane.paneId);
+                    }}
+                  >
+                    <XIcon aria-hidden="true" size={13} strokeWidth={1.9} />
+                  </button>
+                </div>
+              {/if}
             </header>
             {#if pane.paneId !== focusedPaneId && paneContextBudget}
               <ContextBudgetBar budget={paneContextBudget} variant="compact" label="Context" />
@@ -2755,6 +3043,46 @@
               </div>
             {/if}
           </article>
+        {/each}
+        {#if activePaneDrag?.hasMoved}
+          <div class="pane-drag-ghost" aria-hidden="true">
+            <span>Move</span>
+            <strong>{formatPaneDragSourceLabel(draggingPaneId)}</strong>
+          </div>
+        {/if}
+        {#each paneDividerControls as divider (`${divider.axis}-${divider.index}`)}
+          <div
+            class={`pane-divider-shell ${divider.axis === "column" ? "vertical" : "horizontal"} ${activePaneResize?.axis === divider.axis && activePaneResize?.trackIndex === divider.index - 1 ? "active" : ""}`.trim()}
+            style={divider.axis === "column" ? `left: ${divider.positionPercent}%;` : `top: ${divider.positionPercent}%;`}
+          >
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <div
+              class="pane-divider-line"
+              data-testid={divider.axis === "column" ? "pane-divider-vertical" : "pane-divider-horizontal"}
+              role="separator"
+              aria-orientation={divider.axis === "column" ? "vertical" : "horizontal"}
+              aria-label={divider.axis === "column" ? "Resize panes horizontally" : "Resize panes vertically"}
+              tabindex="0"
+              title="Drag to resize panes"
+              onpointerdown={(event) => startPaneDividerResize(event, divider.axis, divider.index)}
+              onkeydown={(event) => handlePaneDividerKeydown(event, divider.axis, divider.index)}
+            ></div>
+            <button
+              class="pane-divider-split"
+              type="button"
+              data-testid={divider.axis === "column" ? "pane-divider-add-vertical" : "pane-divider-add-horizontal"}
+              aria-label={divider.axis === "column" ? "Add pane at vertical divider" : "Add pane at horizontal divider"}
+              title="Add pane here"
+              onpointerdown={(event) => event.stopPropagation()}
+              onclick={(event) => {
+                event.stopPropagation();
+                void handleSplitAtDivider(divider.axis, divider.index);
+              }}
+            >
+              <PlusIcon aria-hidden="true" size={13} strokeWidth={2.1} />
+            </button>
+          </div>
         {/each}
       </section>
     </section>
@@ -3760,20 +4088,18 @@
     min-height: 0;
     gap: 0;
     overflow: hidden;
+    --pane-drop-preview-color: color-mix(in oklab, var(--ui-accent) 58%, transparent);
+  }
+
+  .pane-grid.resizing-pane {
+    user-select: none;
   }
 
   .pane-span-drop-zone {
     position: absolute;
     z-index: 8;
-    left: 0.8rem;
-    right: 0.8rem;
-    height: 1.45rem;
-    border: 1px dashed color-mix(in oklab, var(--ui-accent) 48%, var(--ui-shell-edge));
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-accent) 13%, var(--ui-shell));
-    color: color-mix(in oklab, var(--ui-text-primary) 78%, var(--ui-text-tertiary));
-    font-size: 0.68rem;
-    font-weight: 650;
+    border: 0;
+    background: color-mix(in oklab, var(--ui-accent) 16%, transparent);
     opacity: 0;
     pointer-events: none;
     transition:
@@ -3781,24 +4107,48 @@
       background-color 140ms cubic-bezier(0.19, 1, 0.22, 1);
   }
 
+  .pane-span-drop-zone.top,
+  .pane-span-drop-zone.bottom {
+    left: 0.8rem;
+    right: 0.8rem;
+    height: 1.45rem;
+  }
+
+  .pane-span-drop-zone.left,
+  .pane-span-drop-zone.right {
+    top: 0.8rem;
+    bottom: 0.8rem;
+    width: 1.45rem;
+  }
+
   .pane-span-drop-zone.top {
     top: 0.55rem;
+  }
+
+  .pane-span-drop-zone.right {
+    right: 0.55rem;
   }
 
   .pane-span-drop-zone.bottom {
     bottom: 0.55rem;
   }
 
+  .pane-span-drop-zone.left {
+    left: 0.55rem;
+  }
+
   .pane-grid.dragging-pane .pane-span-drop-zone,
-  .pane-span-drop-zone:focus-visible,
-  .pane-span-drop-zone:hover {
+  .pane-grid.dragging-pane .pane-span-drop-zone:focus-visible,
+  .pane-grid.dragging-pane .pane-span-drop-zone:hover,
+  .pane-grid.dragging-pane .pane-span-drop-zone.active {
     opacity: 1;
     pointer-events: auto;
   }
 
-  .pane-span-drop-zone:hover,
-  .pane-span-drop-zone:focus-visible {
-    background: color-mix(in oklab, var(--ui-accent) 22%, var(--ui-shell));
+  .pane-grid.dragging-pane .pane-span-drop-zone:hover,
+  .pane-grid.dragging-pane .pane-span-drop-zone:focus-visible,
+  .pane-grid.dragging-pane .pane-span-drop-zone.active {
+    background: color-mix(in oklab, var(--ui-accent) 34%, transparent);
   }
 
   .workspace-pane {
@@ -3812,61 +4162,142 @@
     border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
     border-radius: 0;
     background: var(--ui-bg);
+    animation: pane-enter 180ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition:
+      border-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 150ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 150ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  .pane-placement-zones {
-    position: absolute;
-    inset: 2.4rem 0.55rem 0.55rem;
-    z-index: 7;
-    display: grid;
-    grid-template:
-      ". above ." 1fr
-      "left replace right" 1fr
-      ". below ." 1fr / 1fr 1fr 1fr;
-    gap: 0.28rem;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 140ms cubic-bezier(0.19, 1, 0.22, 1);
+  .workspace-pane.dragging-source {
+    opacity: 0.58;
+    transform: scale(0.992);
   }
 
-  .pane-grid.dragging-pane .pane-placement-zones {
+  .pane-grid.dragging-pane .workspace-pane:not(.dragging-source):not(.drop-preview) {
+    opacity: 0.72;
+  }
+
+  .pane-grid.dragging-pane .workspace-pane {
+    user-select: none;
+  }
+
+  .workspace-pane.drop-preview {
+    border-color: color-mix(in oklab, var(--ui-accent) 58%, var(--ui-border-strong));
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ui-accent) 32%, transparent);
     opacity: 1;
-    pointer-events: auto;
   }
 
-  .pane-placement-zone {
-    border: 1px dashed color-mix(in oklab, var(--ui-accent) 52%, var(--ui-shell-edge));
+  .workspace-pane.drop-preview::after {
+    position: absolute;
+    z-index: 6;
+    border: 2px solid var(--pane-drop-preview-color);
     border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-accent) 10%, transparent);
-    color: var(--ui-text-secondary);
-    font-size: 0.64rem;
+    background: color-mix(in oklab, var(--ui-accent) 13%, transparent);
+    content: "";
+    pointer-events: none;
+    transition:
+      opacity 120ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 120ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .workspace-pane.drop-replace::after {
+    inset: 2.7rem 0.7rem 0.7rem;
+  }
+
+  .workspace-pane.drop-left::after {
+    inset: 2.7rem 50% 0.7rem 0.7rem;
+  }
+
+  .workspace-pane.drop-right::after {
+    inset: 2.7rem 0.7rem 0.7rem 50%;
+  }
+
+  .workspace-pane.drop-above::after {
+    inset: 2.7rem 0.7rem 50% 0.7rem;
+  }
+
+  .workspace-pane.drop-below::after {
+    inset: 50% 0.7rem 0.7rem;
+  }
+
+  .pane-drag-ghost {
+    position: fixed;
+    z-index: 60;
+    top: var(--pane-drag-y);
+    left: var(--pane-drag-x);
+    display: grid;
+    gap: 0.08rem;
+    min-width: 9rem;
+    max-width: 14rem;
+    padding: 0.45rem 0.58rem;
+    border: 1px solid color-mix(in oklab, var(--ui-accent) 46%, var(--ui-shell-edge));
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-shell) 91%, var(--ui-accent));
+    box-shadow: 0 0.72rem 1.8rem color-mix(in oklab, var(--ui-bg) 72%, transparent);
+    color: var(--ui-text-primary);
+    pointer-events: none;
+    transform: translate(0.7rem, 0.7rem);
+  }
+
+  .pane-drag-ghost span {
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.54rem;
     font-weight: 700;
+    text-transform: uppercase;
   }
 
-  .pane-placement-zone:hover,
-  .pane-placement-zone:focus-visible {
-    background: color-mix(in oklab, var(--ui-accent) 20%, var(--ui-shell));
-    color: var(--ui-text);
+  .pane-drag-ghost strong {
+    overflow: hidden;
+    color: var(--ui-text-primary);
+    font-size: 0.72rem;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .pane-placement-zone.replace {
-    grid-area: replace;
+  .pane-drop-callout {
+    position: absolute;
+    z-index: 8;
+    display: grid;
+    place-items: center;
+    border-radius: var(--ui-radius-sm);
+    pointer-events: none;
   }
 
-  .pane-placement-zone.left {
-    grid-area: left;
+  .pane-drop-callout.replace {
+    inset: 2.7rem 0.7rem 0.7rem;
   }
 
-  .pane-placement-zone.right {
-    grid-area: right;
+  .pane-drop-callout.left {
+    inset: 2.7rem 50% 0.7rem 0.7rem;
   }
 
-  .pane-placement-zone.above {
-    grid-area: above;
+  .pane-drop-callout.right {
+    inset: 2.7rem 0.7rem 0.7rem 50%;
   }
 
-  .pane-placement-zone.below {
-    grid-area: below;
+  .pane-drop-callout.above {
+    inset: 2.7rem 0.7rem 50% 0.7rem;
+  }
+
+  .pane-drop-callout.below {
+    inset: 50% 0.7rem 0.7rem;
+  }
+
+  .pane-drop-callout span {
+    padding: 0.24rem 0.42rem;
+    border: 1px solid color-mix(in oklab, var(--ui-accent) 58%, var(--ui-shell-edge));
+    border-radius: var(--ui-radius-sm);
+    background: color-mix(in oklab, var(--ui-shell) 86%, var(--ui-accent));
+    box-shadow: 0 0.5rem 1.4rem color-mix(in oklab, var(--ui-bg) 62%, transparent);
+    color: var(--ui-text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
   }
 
   .workspace-pane.focused {
@@ -3887,16 +4318,50 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.7rem;
+    gap: 0.5rem;
     min-height: 1.9rem;
     padding: 0.28rem 0.54rem;
     border-bottom: 1px solid var(--ui-border-soft);
     background: color-mix(in oklab, var(--ui-surface) 54%, transparent);
   }
 
+  .pane-drag-handle {
+    display: inline-grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 1.35rem;
+    height: 1.35rem;
+    border: 1px solid transparent;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    cursor: grab;
+    opacity: 0.64;
+    touch-action: none;
+    transition:
+      opacity 140ms cubic-bezier(0.22, 1, 0.36, 1),
+      color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+      background-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 140ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .pane-drag-handle:hover,
+  .pane-drag-handle:focus-visible {
+    border-color: color-mix(in oklab, var(--ui-shell-edge) 78%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-raised) 72%, transparent);
+    color: var(--ui-text-primary);
+    opacity: 1;
+  }
+
+  .pane-drag-handle:active,
+  .pane-grid.dragging-pane .pane-drag-handle {
+    cursor: grabbing;
+  }
+
   .pane-focus-button {
     display: grid;
     gap: 0.1rem;
+    flex: 1;
     min-width: 0;
     padding: 0;
     border: 0;
@@ -3970,12 +4435,143 @@
     background: color-mix(in oklab, var(--ui-surface-raised) 72%, transparent);
   }
 
+  .pane-divider-shell {
+    position: absolute;
+    z-index: 10;
+    display: grid;
+    place-items: center;
+    outline: none;
+  }
+
+  .pane-divider-shell.vertical {
+    top: 0;
+    bottom: 0;
+    width: 0.7rem;
+    transform: translateX(-50%);
+    cursor: col-resize;
+  }
+
+  .pane-divider-shell.horizontal {
+    left: 0;
+    right: 0;
+    height: 0.7rem;
+    transform: translateY(-50%);
+    cursor: row-resize;
+  }
+
+  .pane-divider-line {
+    position: absolute;
+    inset: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: inherit;
+  }
+
+  .pane-divider-line::before {
+    position: absolute;
+    background: currentColor;
+    content: "";
+    transition:
+      background-color 130ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 130ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .pane-divider-shell.vertical .pane-divider-line {
+    color: color-mix(in oklab, var(--ui-border-soft) 72%, transparent);
+  }
+
+  .pane-divider-shell.horizontal .pane-divider-line {
+    color: color-mix(in oklab, var(--ui-border-soft) 72%, transparent);
+  }
+
+  .pane-divider-shell.vertical .pane-divider-line::before {
+    top: 0;
+    bottom: 0;
+    left: calc(50% - 0.5px);
+    width: 1px;
+  }
+
+  .pane-divider-shell.horizontal .pane-divider-line::before {
+    top: calc(50% - 0.5px);
+    right: 0;
+    left: 0;
+    height: 1px;
+  }
+
+  .pane-divider-shell:hover .pane-divider-line,
+  .pane-divider-shell:focus-within .pane-divider-line,
+  .pane-divider-shell.active .pane-divider-line {
+    color: color-mix(in oklab, var(--ui-accent) 68%, var(--ui-border-strong));
+  }
+
+  .pane-divider-shell.vertical:hover .pane-divider-line::before,
+  .pane-divider-shell.vertical:focus-within .pane-divider-line::before,
+  .pane-divider-shell.vertical.active .pane-divider-line::before {
+    transform: scaleX(3);
+  }
+
+  .pane-divider-shell.horizontal:hover .pane-divider-line::before,
+  .pane-divider-shell.horizontal:focus-within .pane-divider-line::before,
+  .pane-divider-shell.horizontal.active .pane-divider-line::before {
+    transform: scaleY(3);
+  }
+
+  .pane-divider-split {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    box-sizing: border-box;
+    width: 1.45rem;
+    height: 1.45rem;
+    padding: 0;
+    border: 1px solid color-mix(in oklab, var(--ui-accent) 42%, var(--ui-shell-edge));
+    border-radius: 50%;
+    background: color-mix(in oklab, var(--ui-shell) 88%, var(--ui-accent));
+    color: var(--ui-accent);
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.86);
+    transition:
+      opacity 130ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 130ms cubic-bezier(0.22, 1, 0.36, 1),
+      background-color 130ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .pane-divider-shell:hover .pane-divider-split,
+  .pane-divider-shell:focus-within .pane-divider-split,
+  .pane-divider-shell.active .pane-divider-split {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  .pane-divider-split:hover,
+  .pane-divider-split:focus-visible {
+    background: color-mix(in oklab, var(--ui-accent) 18%, var(--ui-shell));
+  }
+
   .pane-focus-button:focus-visible,
+  .pane-drag-handle:focus-visible,
   .pane-chrome-actions button:focus-visible,
-  .pane-placement-zone:focus-visible,
-  .pane-span-drop-zone:focus-visible {
+  .pane-span-drop-zone:focus-visible,
+  .pane-divider-line:focus-visible,
+  .pane-divider-split:focus-visible {
     outline: none;
     box-shadow: var(--ui-focus-ring);
+  }
+
+  @keyframes pane-enter {
+    from {
+      opacity: 0.7;
+      transform: scale(0.995);
+    }
+
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
   }
 
   .pane-placeholder {
@@ -5306,6 +5902,7 @@
       display: none;
     }
 
+    .pane-drag-handle,
     .pane-chrome-actions button,
     .titlebar-icon {
       width: 2.75rem;
@@ -5313,12 +5910,9 @@
       height: 2.75rem;
     }
 
-    .pane-resize-button.vertical {
-      display: none;
-    }
-
-    .pane-span-drop-zone,
-    .pane-placement-zones {
+    .pane-divider-shell,
+    .pane-drag-ghost,
+    .pane-span-drop-zone {
       display: none;
     }
 

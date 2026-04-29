@@ -145,7 +145,7 @@ function createRuntime(): CommandRuntime & {
     closePane: async (paneId: string) => {
       runtime.calls.push(`close:${paneId}`);
     },
-    movePaneToSpanningRow: (paneId: string, placement: "top" | "bottom") => {
+    movePaneToSpanningRow: (paneId: string, placement: "top" | "bottom" | "left" | "right") => {
       runtime.calls.push(`span:${paneId}:${placement}`);
     },
     pinSession: async (sessionId: string) => {

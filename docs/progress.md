@@ -178,7 +178,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Define the stored shape for a user-driven pane grid, including ordered row and column tracks, track percentages, minimum pane constraints, deterministic pane coordinates, and pane surface bindings. Commit(s): `77681bb`
 - [x] Persist pane-to-surface bindings separately from live surface runtime state. Commit(s): `77681bb`
 - [x] Build a POC workspace pane-grid layout that opens one surface in a targeted pane. Commit(s): `77681bb`
-- [x] Support persisted user-driven split, resize, close, and drag placement into a chosen pane. Commit(s): `902f79c`
+- [x] Support persisted user-driven split, divider resize, close, drag placement, and full-width or full-height span placement into a chosen pane. Commit(s): `902f79c`
 - [x] Manage explicit open and close semantics for live surfaces independently from pane focus. Commit(s): `9a21f87`, `b0ee858`
 - [x] Allow the same interactive surface to be opened in more than one pane at once. Commit(s): `9a21f87`, `b0ee858`
 - [x] Keep one underlying live surface controller per `surfacePiSessionId` regardless of pane count. Commit(s): `9a21f87`, `b0ee858`
