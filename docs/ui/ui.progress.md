@@ -95,13 +95,13 @@ Always read [ui.prd.md](ui.prd.md) before implementing any item in this roadmap,
 
 The workflow inspector remains tree-first. Replit artifact graph-oriented workflow pieces are not ported; the Svelte UI should build a consistent tree-based visual layout that fits the Replit workbench treatment.
 
-- [x] Document how Replit graph-only workflow visuals adapt to the tree-first Svelte workflow inspector before styling tree rows and detail panes.
-- [x] Restyle workflow inspector tree, selected-node details, tabs, frame scrubber, search, keyboard navigation, and row states around the tree-first inspector model.
-- [x] Restyle artifact panel and artifact browser to match the Replit artifact treatment for source, scope, type, preview, logs, open-in-editor, and related-command affordances.
-- [x] Restyle command inspector to match the Replit artifact treatment for parent command facts, nested child command facts, logs, artifacts, errors, and raw detail without losing hierarchy.
-- [x] Restyle saved workflow library to match the Replit artifact treatment for asset groups, runnable entries, diagnostics, source previews, deletion controls, and open-in-editor handoff.
-- [x] Preserve inspector pane bindings, historical workflow inspector availability, selected-node state, artifact linkage, and restart restoration.
-- [x] Verify large workflow trees, failed descendants, waiting descendants, missing artifacts, large logs, and long source paths.
+- [x] Document how Replit graph-only workflow visuals adapt to the tree-first Svelte workflow inspector before styling tree rows and detail panes. `5713347`
+- [x] Restyle workflow inspector tree, selected-node details, tabs, frame scrubber, search, keyboard navigation, and row states around the tree-first inspector model. `5713347`
+- [x] Restyle artifact panel and artifact browser to match the Replit artifact treatment for source, scope, type, preview, logs, open-in-editor, and related-command affordances. `5713347`
+- [x] Restyle command inspector to match the Replit artifact treatment for parent command facts, nested child command facts, logs, artifacts, errors, and raw detail without losing hierarchy. `5713347`
+- [x] Restyle saved workflow library to match the Replit artifact treatment for asset groups, runnable entries, diagnostics, source previews, deletion controls, and open-in-editor handoff. `5713347`
+- [x] Preserve inspector pane bindings, historical workflow inspector availability, selected-node state, artifact linkage, and restart restoration. `5713347`
+- [x] Verify large workflow trees, failed descendants, waiting descendants, missing artifacts, large logs, and long source paths. `5713347`
 
 ## 9. Command Palette And Quick Open
 
