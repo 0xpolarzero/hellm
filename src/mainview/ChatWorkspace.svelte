@@ -6,6 +6,8 @@
   import SearchIcon from "@lucide/svelte/icons/search";
   import SettingsIcon from "@lucide/svelte/icons/settings";
   import GitBranchIcon from "@lucide/svelte/icons/git-branch";
+  import Grid2x2Icon from "@lucide/svelte/icons/grid-2x2";
+  import PanelRightIcon from "@lucide/svelte/icons/panel-right";
   import GripVerticalIcon from "@lucide/svelte/icons/grip-vertical";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import CopyPlusIcon from "@lucide/svelte/icons/copy-plus";
@@ -394,9 +396,7 @@
     buildContextBudgetFromUsage(conversationSummary.latestContextUsage, currentModel?.contextWindow),
   );
   const summaryMessageCount = $derived(conversationSummary.messageCount);
-  const toolCallCount = $derived(conversationSummary.toolCallCount);
-  const lastActivity = $derived(conversation.lastActivity);
-  const lastActivityLabel = $derived(lastActivity ? `Last activity ${formatTimestamp(lastActivity)}` : "Waiting for first turn");
+  const paneLayoutSummary = $derived(`${paneLayout.columns.length}×${paneLayout.rows.length}`);
   const composerErrorMessage = $derived.by(() => {
     const message =
       errorMessage ?? (currentSession?.status === "error" ? currentSession.preview : undefined);
@@ -434,8 +434,7 @@
       !!projectCiStatus?.activeWorkflowRun ||
       !!projectCiStatus?.latestRun ||
       (projectCiStatus?.entries.length ?? 0) > 0 ||
-      (projectCiStatus?.checks.length ?? 0) > 0 ||
-      (!!projectCiStatus && summaryMessageCount > 0),
+      (projectCiStatus?.checks.length ?? 0) > 0,
   );
   const showDetailedProjectCiPanel = $derived(
     currentSurface?.surface === "orchestrator" && currentSession && hasActionableProjectCiStatus,
@@ -2389,9 +2388,6 @@
         </div>
 
         <div class="workspace-main-meta">
-          <span class="workspace-main-stat">{summaryMessageCount} {summaryMessageCount === 1 ? "turn" : "turns"}</span>
-          <span class="workspace-main-stat">{toolCallCount} {toolCallCount === 1 ? "tool run" : "tool runs"}</span>
-          <span class="workspace-main-stat">{lastActivityLabel}</span>
           {#if currentSurface?.surface === "thread"}
             <Button
               variant="ghost"
@@ -2403,17 +2399,17 @@
             </Button>
           {/if}
           <ContextBudgetBar budget={contextBudget} variant="compact" label="Focused context" />
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label={`Artifacts ${artifactCount}`}
-            title={`Artifacts ${artifactCount}`}
-            disabled={!hasArtifacts}
-            onclick={() => (showArtifactsPanel = !showArtifactsPanel)}
+          <button
+            class="layout-chip-button"
+            type="button"
+            aria-label={`Pane layout ${paneLayoutSummary}`}
+            title={`Pane layout ${paneLayoutSummary}`}
+            onclick={() => openPalette("actions")}
           >
-            <FileSearchIcon aria-hidden="true" size={14} strokeWidth={1.9} />
-          </Button>
+            <Grid2x2Icon aria-hidden="true" size={13} strokeWidth={1.85} />
+            <span>{paneLayoutSummary}</span>
+          </button>
+          <span class="runtime-summary">{currentModel?.name ?? "No surface"} + {paneLayout.panes.length}</span>
           <button
             class="header-icon-button"
             type="button"
@@ -2443,6 +2439,16 @@
               <SettingsIcon aria-hidden="true" size={14} strokeWidth={1.85} />
             </button>
           {/if}
+          <button
+            class="header-icon-button"
+            type="button"
+            aria-label="Toggle artifacts inspector"
+            title="Toggle artifacts inspector"
+            disabled={!hasArtifacts}
+            onclick={() => (showArtifactsPanel = !showArtifactsPanel)}
+          >
+            <PanelRightIcon aria-hidden="true" size={14} strokeWidth={1.85} />
+          </button>
           {#if projectCiStatus && hasActionableProjectCiStatus}
             <div class="project-ci-compact" aria-label="Project CI summary">
               <Badge tone={getProjectCiStatusTone(projectCiStatus.status)}>
@@ -3972,8 +3978,9 @@
     position: relative;
     display: grid;
     min-height: 0;
-    gap: 0;
+    gap: 0.25rem;
     overflow: hidden;
+    padding: 0.5rem;
     --pane-drop-preview-color: color-mix(in oklab, var(--ui-accent) 58%, transparent);
   }
 
@@ -4045,8 +4052,8 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
-    border-radius: 0;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-md);
     background: var(--ui-bg);
     animation: pane-enter 180ms cubic-bezier(0.22, 1, 0.36, 1);
     transition:
@@ -4187,28 +4194,28 @@
   }
 
   .workspace-pane.focused {
-    border-color: color-mix(in oklab, var(--ui-accent) 48%, var(--ui-border-strong));
-    box-shadow: inset 3px 0 0 color-mix(in oklab, var(--ui-accent) 72%, transparent);
+    border-color: color-mix(in oklab, var(--ui-accent) 34%, var(--ui-border-strong));
+    box-shadow: inset 2px 0 0 var(--ui-accent);
   }
 
   .workspace-pane.focused .pane-chrome {
-    border-bottom-color: color-mix(in oklab, var(--ui-accent) 24%, var(--ui-border-soft));
-    background: color-mix(in oklab, var(--ui-accent-soft) 26%, var(--ui-surface));
+    border-bottom-color: var(--ui-border-soft);
+    background: color-mix(in oklab, var(--ui-surface-muted) 34%, transparent);
   }
 
   .workspace-pane.focused .pane-focus-button strong {
-    color: color-mix(in oklab, var(--ui-accent) 72%, var(--ui-text-primary));
+    color: var(--ui-text-primary);
   }
 
   .pane-chrome {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.5rem;
-    min-height: 1.9rem;
-    padding: 0.28rem 0.54rem;
+    gap: 0.38rem;
+    min-height: 1.78rem;
+    padding: 0.2rem 0.48rem;
     border-bottom: 1px solid var(--ui-border-soft);
-    background: color-mix(in oklab, var(--ui-surface) 54%, transparent);
+    background: color-mix(in oklab, var(--ui-surface-muted) 26%, transparent);
   }
 
   .pane-drag-handle {
@@ -4283,6 +4290,14 @@
     min-width: 0;
     margin-left: auto;
     overflow: hidden;
+    opacity: 0;
+    transition: opacity 140ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .workspace-pane:hover .pane-chrome-meta,
+  .workspace-pane:focus-within .pane-chrome-meta,
+  .workspace-pane.focused .pane-chrome-meta {
+    opacity: 1;
   }
 
   .pane-chrome-meta :global(.ui-metadata-chip) {
@@ -4294,6 +4309,13 @@
     align-items: center;
     gap: 0.24rem;
     flex-shrink: 0;
+    opacity: 0.72;
+    transition: opacity 140ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .workspace-pane:hover .pane-chrome-actions,
+  .workspace-pane:focus-within .pane-chrome-actions {
+    opacity: 1;
   }
 
   .pane-chrome-actions button {
@@ -4600,7 +4622,7 @@
     align-items: center;
     justify-content: flex-end;
     flex-wrap: nowrap;
-    gap: 0.38rem;
+    gap: 0.5rem;
     min-width: 0;
     font-size: 0.64rem;
     color: var(--ui-text-tertiary);
@@ -4650,6 +4672,42 @@
       border-color 140ms cubic-bezier(0.19, 1, 0.22, 1),
       background-color 140ms cubic-bezier(0.19, 1, 0.22, 1),
       color 140ms cubic-bezier(0.19, 1, 0.22, 1);
+  }
+
+  .layout-chip-button,
+  .runtime-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    min-height: 1.45rem;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .layout-chip-button {
+    padding: 0 0.46rem;
+    cursor: pointer;
+  }
+
+  .runtime-summary {
+    max-width: 9.6rem;
+    overflow: hidden;
+    padding: 0 0.42rem;
+    text-overflow: ellipsis;
+  }
+
+  .layout-chip-button:hover,
+  .layout-chip-button:focus-visible {
+    outline: none;
+    border-color: var(--ui-border-strong);
+    background: var(--ui-surface-subtle);
+    color: var(--ui-text-primary);
   }
 
   .header-icon-button:hover,

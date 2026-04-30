@@ -102,6 +102,7 @@ export function buildTranscriptSemanticBlocks(
   }
 
   for (const command of input.commandRollups ?? []) {
+    if (command.visibility === "surface") continue;
     blocks.push({
       kind: "command-rollup",
       key: `command:${command.commandId}`,

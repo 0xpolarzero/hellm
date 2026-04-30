@@ -312,28 +312,30 @@
 			<p class="composer-error">{errorMessage}</p>
 		{/if}
 
-		{#if selectedMentions.length > 0}
-			<section class="composer-context-row" aria-label="Selected workspace mentions">
-				<div class="mention-chip-row">
-					{#each selectedMentions as mention (mention.id)}
-						<button
-							class="mention-chip"
-							type="button"
-							aria-label={`Remove ${mention.workspaceRelativePath}`}
-							onclick={() => void removeMention(mention)}
-						>
-							{#if mention.kind === "folder"}
-								<FolderIcon size={12} aria-hidden="true" />
-							{:else}
-								<FileIcon size={12} aria-hidden="true" />
-							{/if}
-							<span>{mention.workspaceRelativePath}</span>
-							<XIcon size={11} aria-hidden="true" />
-						</button>
-					{/each}
-				</div>
-			</section>
-		{/if}
+		<section class="composer-context-row" aria-label="Selected workspace mentions">
+			<div class="mention-chip-row">
+				{#each selectedMentions as mention (mention.id)}
+					<button
+						class="mention-chip"
+						type="button"
+						aria-label={`Remove ${mention.workspaceRelativePath}`}
+						onclick={() => void removeMention(mention)}
+					>
+						{#if mention.kind === "folder"}
+							<FolderIcon size={12} aria-hidden="true" />
+						{:else}
+							<FileIcon size={12} aria-hidden="true" />
+						{/if}
+						<span>{mention.workspaceRelativePath}</span>
+						<XIcon size={11} aria-hidden="true" />
+					</button>
+				{/each}
+				<button class="mention-add-chip" type="button" onclick={focusMentionEntry}>
+					<AtSignIcon size={12} aria-hidden="true" />
+					<span>Add context</span>
+				</button>
+			</div>
+		</section>
 
 		<div class="composer-main-row">
 			<div class="composer-input-wrap">
@@ -540,6 +542,26 @@
 		cursor: pointer;
 	}
 
+	.mention-add-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.26rem;
+		min-height: 1.32rem;
+		padding: 0.12rem 0.4rem;
+		border: 1px dashed var(--ui-border-soft);
+		border-radius: var(--ui-radius-sm);
+		background: transparent;
+		color: var(--ui-text-tertiary);
+		font: inherit;
+		font-family: var(--font-mono);
+		font-size: 0.62rem;
+		cursor: pointer;
+		transition:
+			border-color 150ms cubic-bezier(0.19, 1, 0.22, 1),
+			background-color 150ms cubic-bezier(0.19, 1, 0.22, 1),
+			color 150ms cubic-bezier(0.19, 1, 0.22, 1);
+	}
+
 	.mention-chip span {
 		min-width: 0;
 		overflow: hidden;
@@ -549,17 +571,20 @@
 	}
 
 	.mention-chip:hover,
-	.mention-chip:focus-visible {
+	.mention-chip:focus-visible,
+	.mention-add-chip:hover,
+	.mention-add-chip:focus-visible {
 		outline: none;
 		border-color: color-mix(in oklab, var(--ui-accent) 62%, var(--ui-border-strong));
-		background: color-mix(in oklab, var(--ui-accent-soft) 76%, var(--ui-surface-raised));
+		background: color-mix(in oklab, var(--ui-accent-soft) 54%, var(--ui-surface-raised));
+		color: var(--ui-text-primary);
 	}
 
 	.composer-main-row {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr);
-		align-items: stretch;
-		gap: 0.44rem;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: start;
+		gap: 0.72rem;
 		min-height: 6.65rem;
 		padding: 0.58rem 0.72rem 0.48rem;
 	}
@@ -601,6 +626,7 @@
 		justify-content: flex-end;
 		gap: 0.36rem;
 		flex-wrap: wrap;
+		max-width: 18rem;
 	}
 
 	.composer-icon-button,
@@ -1026,6 +1052,7 @@
 
 	@container (max-width: 420px) {
 		.composer-main-row {
+			grid-template-columns: 1fr;
 			min-height: 6.1rem;
 			padding: 0.48rem 0.56rem 0.42rem;
 		}

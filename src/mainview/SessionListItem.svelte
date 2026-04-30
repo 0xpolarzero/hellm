@@ -248,7 +248,7 @@
     position: relative;
     width: 100%;
     min-width: 0;
-    padding: 0.46rem 0.46rem 0.5rem 0.9rem;
+    padding: 0.42rem 0.46rem 0.44rem 0.9rem;
     border-radius: var(--ui-radius-md);
     border: 1px solid transparent;
     background: transparent;
@@ -289,10 +289,8 @@
   }
 
   .active .session-main {
-    border-color: color-mix(in oklab, var(--ui-accent) 22%, var(--ui-border-soft));
-    background:
-      linear-gradient(90deg, color-mix(in oklab, var(--ui-accent-soft) 62%, transparent), transparent 58%),
-      color-mix(in oklab, var(--ui-surface-subtle) 78%, transparent);
+    border-color: transparent;
+    background: color-mix(in oklab, var(--ui-surface-subtle) 82%, transparent);
   }
 
   .active .session-main::before {
@@ -300,7 +298,7 @@
   }
 
   .active-thread .session-main {
-    border-style: dashed;
+    border-color: color-mix(in oklab, var(--ui-accent) 22%, transparent);
   }
 
   .archived .session-main {
@@ -333,8 +331,8 @@
 
   .session-main-body {
     display: grid;
-    gap: 0.2rem;
-    margin-top: 0.22rem;
+    gap: 0.16rem;
+    margin-top: 0.18rem;
     min-width: 0;
   }
 
@@ -343,9 +341,9 @@
     overflow: hidden;
     display: -webkit-box;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    font-size: 0.62rem;
-    line-height: 1.28;
+    -webkit-line-clamp: 1;
+    font-size: 0.64rem;
+    line-height: 1.22;
     color: var(--ui-text-secondary);
   }
 
@@ -359,10 +357,11 @@
   .session-progress-pill {
     display: inline-flex;
     align-items: center;
-    min-height: 0.95rem;
-    padding: 0.1rem 0.32rem;
+    min-height: 0.9rem;
+    padding: 0 0.24rem;
+    border: 1px solid var(--ui-border-soft);
     border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 84%, transparent);
+    background: transparent;
     color: var(--ui-text-tertiary);
     font-family: var(--font-mono);
     font-size: 0.52rem;
@@ -374,9 +373,10 @@
   .session-main-meta {
     display: flex;
     align-items: center;
-    gap: 0.36rem;
-    flex-wrap: wrap;
-    margin-top: 0.28rem;
+    gap: 0.32rem;
+    flex-wrap: nowrap;
+    margin-top: 0.22rem;
+    overflow: hidden;
   }
 
   .session-navigation-meta {
@@ -423,11 +423,10 @@
   }
 
   .session-surface {
-    padding-inline: 0.36rem;
-    border-radius: var(--ui-radius-sm);
-    background: color-mix(in oklab, var(--ui-accent-soft) 72%, transparent);
-    color: color-mix(in oklab, var(--ui-accent) 80%, var(--ui-text-primary));
-    text-transform: uppercase;
+    max-width: 7rem;
+    overflow: hidden;
+    color: var(--ui-text-tertiary);
+    text-overflow: ellipsis;
   }
 
   .session-menu-wrap {

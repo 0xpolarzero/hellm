@@ -123,6 +123,8 @@
     <div
       class="new-session-menu-shell"
       class:menu-open={showNewSessionMenu}
+      role="group"
+      aria-label="New session options"
       onmouseenter={() => (showNewSessionMenu = true)}
       onmouseleave={() => (showNewSessionMenu = false)}
       onfocusin={() => (showNewSessionMenu = true)}
@@ -320,8 +322,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-    min-height: 2.75rem;
-    padding: 0 0.68rem 0 4.72rem;
+    min-height: 2.25rem;
+    padding: 0.45rem 0.72rem 0.45rem 3.6rem;
     border-bottom: 1px solid var(--ui-shell-edge);
   }
 
@@ -413,7 +415,7 @@
   .sidebar-actions {
     display: grid;
     gap: 0.28rem;
-    padding: 0.62rem 0.68rem;
+    padding: 0.5rem 0.72rem;
     border-bottom: 1px solid var(--ui-shell-edge);
   }
 
@@ -473,7 +475,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 0.42rem 0.24rem 0.68rem 0.42rem;
+    padding: 0.36rem 0.24rem 0.62rem;
   }
 
   .sidebar-list {
@@ -487,8 +489,8 @@
   }
 
   .sidebar-section-label {
-    margin: 0.3rem 0 0.08rem;
-    padding-inline: 0.28rem;
+    margin: 0.38rem 0 0.12rem;
+    padding-inline: 0.72rem;
     font-size: 0.56rem;
     font-family: var(--font-mono);
     letter-spacing: 0.08em;
@@ -525,8 +527,8 @@
   }
 
   .reference-nav-section {
-    margin-top: 0.18rem;
-    padding-top: 0.2rem;
+    margin-top: 0.28rem;
+    padding-top: 0.18rem;
   }
 
   .reference-nav-row,
@@ -536,8 +538,8 @@
     align-items: center;
     gap: 0.38rem;
     width: 100%;
-    min-height: 1.52rem;
-    padding: 0.18rem 0.38rem;
+    min-height: 1.65rem;
+    padding: 0.24rem 0.72rem;
     border: 1px solid transparent;
     border-radius: var(--ui-radius-sm);
     background: transparent;
@@ -577,8 +579,8 @@
 
   .open-surface-row {
     grid-template-columns: minmax(0, 1fr) auto;
-    min-height: 1.42rem;
-    padding-left: 0.5rem;
+    min-height: 1.5rem;
+    padding-left: 0.72rem;
   }
 
   .open-surface-row.focused {

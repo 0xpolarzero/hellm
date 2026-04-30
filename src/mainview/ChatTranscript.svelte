@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { AssistantMessage, ToolResultMessage, UserMessage } from "@mariozechner/pi-ai";
 	import { onMount, tick } from "svelte";
-	import { getArtifactCommandCopy, parseArtifactsParams } from "./artifacts";
+	import { parseArtifactsParams } from "./artifacts";
 	import { formatTimestamp, formatUsage } from "./chat-format";
 	import { parseTranscriptMentionLinks } from "./composer-mentions";
 	import type { ConversationProjection, ProjectedToolCall } from "./conversation-projection";
@@ -18,7 +18,7 @@
 	import FailedCard from "./reference-cards/FailedCard.svelte";
 	import type { ReferenceStatus } from "./reference-cards/StatusBadge.svelte";
 	import ThreadCard, { type ReferenceThread } from "./reference-cards/ThreadCard.svelte";
-	import ToolCallCard, { type ReferenceToolCall } from "./reference-cards/ToolCallCard.svelte";
+	import ToolCallCard from "./reference-cards/ToolCallCard.svelte";
 	import WaitingCard from "./reference-cards/WaitingCard.svelte";
 	import WorkflowCard, { type ReferenceWorkflow } from "./reference-cards/WorkflowCard.svelte";
 	import type { WorkspaceHandlerThreadSummary } from "../shared/workspace-contract";
@@ -68,7 +68,7 @@
 	}: Props = $props();
 
 	let scroller = $state<HTMLDivElement | null>(null);
-	let thread = $state<HTMLDivElement | null>(null);
+	let threadElement = $state<HTMLDivElement | null>(null);
 	let transcriptScrollTop = $state(0);
 	let transcriptViewportHeight = $state(0);
 	let transcriptRowGap = $state(DEFAULT_TRANSCRIPT_ROW_GAP);
@@ -103,8 +103,24 @@
 	const streamingAssistant = $derived(streamMessage ?? null);
 
 	function userLines(message: UserMessage): string[] {
-		if (typeof message.content === "string") return [message.content];
-		return message.content.map((block) => (block.type === "text" ? block.text : `[${block.mimeType} image]`));
+		if (typeof message.content === "string") return [stripUserDisplayWrapper(message.content)];
+		return message.content.map((block) =>
+			block.type === "text" ? stripUserDisplayWrapper(block.text) : `[${block.mimeType} image]`,
+		);
+	}
+
+	function stripUserDisplayWrapper(text: string): string {
+		const continuationMarker =
+			"Continue the conversation from the latest user message. Respond only as the assistant.";
+		let displayText = text.trim();
+		if (displayText.startsWith("User:")) {
+			displayText = displayText.slice("User:".length).trimStart();
+		}
+		const markerIndex = displayText.indexOf(continuationMarker);
+		if (markerIndex >= 0) {
+			displayText = displayText.slice(0, markerIndex).trimEnd();
+		}
+		return displayText;
 	}
 
 	function userLineSegments(line: string) {
@@ -138,10 +154,11 @@
 	}
 
 	function commandReferenceStatus(status: string): ReferenceStatus {
-		if (status === "succeeded") return "done";
+		if (status === "succeeded" || status === "completed" || status === "passed") return "done";
 		if (status === "failed" || status === "cancelled") return "failed";
+		if (status === "blocked" || status === "troubleshooting") return "blocked";
 		if (status === "waiting" || status === "requested") return "waiting";
-		if (status === "running") return "running";
+		if (status === "running" || status === "running-handler" || status === "running-workflow" || status === "continued") return "running";
 		return "idle";
 	}
 
@@ -150,12 +167,12 @@
 		const stepsTotal = Math.max(1, run.stepsTotal ?? 1);
 		return {
 			id: run.workflowRunId,
-			name: run.title,
+			name: run.workflowName ?? run.title ?? run.workflowRunId,
 			status: commandReferenceStatus(run.status),
 			elapsed: formatTimestamp(run.updatedAt),
 			stepsDone,
 			stepsTotal,
-			currentStep: run.status === "running" ? run.latestStep?.title || "Running" : "Completed",
+			currentStep: run.summary ?? (run.status === "running" ? "Running" : "Completed"),
 			runId: run.workflowRunId,
 		};
 	}
@@ -188,20 +205,20 @@
 		};
 	}
 
-	function threadReference(thread: WorkspaceHandlerThreadSummary): ReferenceThread {
+	function threadReference(handlerThread: WorkspaceHandlerThreadSummary): ReferenceThread {
 		return {
-			id: thread.threadId,
-			title: thread.title,
-			objective: thread.latestEpisode?.summary || thread.objective,
-			status: commandReferenceStatus(thread.status),
-			elapsed: formatTimestamp(thread.updatedAt),
+			id: handlerThread.threadId,
+			title: handlerThread.title,
+			objective: handlerThread.latestEpisode?.summary || handlerThread.objective,
+			status: commandReferenceStatus(handlerThread.status),
+			elapsed: formatTimestamp(handlerThread.updatedAt),
 			model: "handler-thread",
-			latestWorkflowRun: thread.latestWorkflowRun ? workflowReference(thread.latestWorkflowRun) : undefined,
+			latestWorkflowRun: handlerThread.latestWorkflowRun ? workflowReference(handlerThread.latestWorkflowRun) : undefined,
 		};
 	}
 
-	function subagentReferences(thread: WorkspaceHandlerThreadSummary) {
-		return (thread.workflowTaskAttempts ?? []).map((attempt) => ({
+	function subagentReferences(handlerThread: WorkspaceHandlerThreadSummary) {
+		return (handlerThread.workflowTaskAttempts ?? []).map((attempt) => ({
 			id: attempt.workflowTaskAttemptId,
 			type: "workflow-task-agent" as const,
 			headline: attempt.title,
@@ -217,17 +234,42 @@
 		return "pending";
 	}
 
-	function toolAttemptLabel(toolCall: ProjectedToolCall | undefined): string | null {
-		if (!toolCall || toolCall.totalAttempts <= 1) return null;
-		return `Attempt ${toolCall.attempt} of ${toolCall.totalAttempts}`;
-	}
-
 	function executeTypescriptBody(toolName: string, argumentsValue: unknown): string | null {
 		if (toolName !== "execute_typescript" || !argumentsValue || typeof argumentsValue !== "object") {
 			return null;
 		}
 		const body = (argumentsValue as Record<string, unknown>).typescriptCode;
 		return typeof body === "string" && body.length > 0 ? body : null;
+	}
+
+	function toolInputBody(toolName: string, argumentsValue: unknown): string | null {
+		const executeBody = executeTypescriptBody(toolName, argumentsValue);
+		if (executeBody) return executeBody;
+		if (typeof argumentsValue === "undefined" || argumentsValue === null || argumentsValue === "") return null;
+		if (typeof argumentsValue === "string") return argumentsValue;
+		try {
+			return JSON.stringify(argumentsValue, null, 2);
+		} catch {
+			return String(argumentsValue);
+		}
+	}
+
+	function toolResultPreview(message: ToolResultMessage | undefined): string | null {
+		if (!message) return null;
+		const executeSummary = summarizeExecuteTypescriptResult(message);
+		if (executeSummary) {
+			const lines: string[] = [];
+			if (executeSummary.resultPreview) lines.push(executeSummary.resultPreview);
+			if (executeSummary.error?.message) lines.push(executeSummary.error.message);
+			for (const diagnostic of executeSummary.diagnostics.slice(0, 6)) {
+				lines.push(`${diagnostic.severity ?? "diagnostic"}: ${diagnostic.message}`);
+			}
+			for (const log of executeSummary.logs.slice(0, 8)) {
+				lines.push(log);
+			}
+			return lines.join("\n").trim() || null;
+		}
+		return resultDetailsText(message) || null;
 	}
 
 	function handleScroll() {
@@ -253,8 +295,8 @@
 	function syncViewportMetrics() {
 		if (!scroller) return;
 		transcriptViewportHeight = scroller.clientHeight;
-		if (thread) {
-			const rowGap = parseFloat(getComputedStyle(thread).rowGap || "16");
+		if (threadElement) {
+			const rowGap = parseFloat(getComputedStyle(threadElement).rowGap || "16");
 			if (Number.isFinite(rowGap) && rowGap > 0) {
 				transcriptRowGap = rowGap;
 			}
@@ -333,7 +375,7 @@
 		});
 
 		if (scroller) observer.observe(scroller);
-		if (thread) observer.observe(thread);
+		if (threadElement) observer.observe(threadElement);
 
 		return () => {
 			observer.disconnect();
@@ -386,7 +428,7 @@
 </script>
 
 <div bind:this={scroller} class="chat-transcript" onscroll={handleScroll}>
-	<div bind:this={thread} class="chat-thread">
+	<div bind:this={threadElement} class="chat-thread">
 		{#if resolvedSystemPrompt}
 			<article class="message-row system-row">
 				<div class="message-bubble assistant-bubble system-bubble">
@@ -418,7 +460,7 @@
 					{:else if block.kind === "command-rollup"}
 						<div class="reference-command-block">
 							<WorkflowCard
-								workflow={commandReferenceWorkflow(block)}
+								workflow={commandRollupReference(block)}
 								onclick={() => onInspectCommand?.(block.command.commandId)}
 							/>
 							{#if block.command.summaryChildren.length > 0}
@@ -530,10 +572,9 @@
 							{:else if block.type === "toolCall"}
 								{@const projectedToolCall = conversation.toolCallsById.get(block.id)}
 								{@const params = projectedToolCall?.artifactParams ?? parseArtifactsParams(block.arguments)}
-								{@const toolBody = executeTypescriptBody(
-									block.name,
-									projectedToolCall?.argumentsValue ?? block.arguments,
-								)}
+								{@const resultMessage = conversation.toolResultsById.get(block.id)}
+								{@const toolArguments = projectedToolCall?.argumentsValue ?? block.arguments}
+								{@const toolBody = toolInputBody(block.name, toolArguments)}
 								{@const status = toolStatus(block.id)}
 								<ToolCallCard
 									toolCall={{
@@ -542,7 +583,8 @@
 										status: status === "done" ? "done" : status === "error" ? "failed" : "running",
 										params,
 										body: toolBody,
-										isError: status === "error",
+										result: toolResultPreview(resultMessage),
+										isError: status === "error" || resultMessage?.isError,
 										attempt: projectedToolCall?.attempt,
 										totalAttempts: projectedToolCall?.totalAttempts,
 									}}
@@ -554,35 +596,29 @@
 					</article>
 				{:else if message.role === "toolResult"}
 					{@const projectedToolCall = conversation.toolCallsById.get(message.toolCallId)}
-					{@const params = projectedToolCall?.artifactParams}
-					{@const executeSummary = summarizeExecuteTypescriptResult(message)}
-					<article
-						class={`message-row ${shouldVirtualize ? "virtual-row " : ""}tool-row`.trim()}
-						use:trackRowHeight={shouldVirtualize ? rowIndex : undefined}
-						style={
-							shouldVirtualize
-								? `transform: translate3d(0, ${virtualizer.getOffsetForIndex(rowIndex)}px, 0);`
-								: undefined
-						}
-					>
-						<ToolCallCard
-							toolCall={{
-								id: message.toolCallId,
-								name: message.toolName,
-								status: message.isError ? "failed" : "done",
-								params,
-								body: executeTypescriptBody(
-									message.toolName,
-									projectedToolCall?.argumentsValue,
-								),
-								result: resultDetailsText(message),
-								isError: message.isError,
-								attempt: projectedToolCall?.attempt,
-								totalAttempts: projectedToolCall?.totalAttempts,
-							}}
-							onopen={onOpenArtifact}
-						/>
-					</article>
+					{#if !projectedToolCall}
+						<article
+							class={`message-row ${shouldVirtualize ? "virtual-row " : ""}tool-row`.trim()}
+							use:trackRowHeight={shouldVirtualize ? rowIndex : undefined}
+							style={
+								shouldVirtualize
+									? `transform: translate3d(0, ${virtualizer.getOffsetForIndex(rowIndex)}px, 0);`
+									: undefined
+							}
+						>
+							<ToolCallCard
+								toolCall={{
+									id: message.toolCallId,
+									name: message.toolName,
+									status: message.isError ? "failed" : "done",
+									body: toolInputBody(message.toolName, undefined),
+									result: toolResultPreview(message),
+									isError: message.isError,
+								}}
+								onopen={onOpenArtifact}
+							/>
+						</article>
+					{/if}
 				{/if}
 			{/each}
 		</div>
@@ -602,7 +638,7 @@
 						{#if block.type === "text"}
 							<div class="message-text">{block.text}</div>
 						{:else if block.type === "thinking"}
-							<details class="thinking-block" open>
+							<details class="thinking-block">
 								<summary>Reasoning trace</summary>
 								<pre>{block.thinking || "[redacted]"}</pre>
 							</details>
@@ -749,8 +785,7 @@
 		font-weight: 650;
 	}
 
-	.message-bubble header,
-	.tool-result-header {
+	.message-bubble header {
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
@@ -758,8 +793,7 @@
 		margin-bottom: 0.45rem;
 	}
 
-	.message-bubble header span,
-	.tool-result-header strong {
+	.message-bubble header span {
 		font-family: var(--font-mono);
 		font-size: 0.56rem;
 		font-weight: 600;
@@ -769,7 +803,6 @@
 	}
 
 	.message-bubble header small,
-	.tool-result-header span,
 	time {
 		font-family: var(--font-mono);
 		font-size: 0.56rem;
@@ -898,18 +931,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.38rem;
-	}
-
-	.execute-result-section strong {
-		font-size: 0.7rem;
-		font-weight: 650;
-		letter-spacing: 0.02em;
-		text-transform: uppercase;
-		color: var(--ui-text-secondary);
-	}
-
-	.execute-result-section.error strong {
-		color: color-mix(in oklab, var(--ui-danger) 82%, var(--ui-text-primary));
 	}
 
 	.execute-result-section pre {

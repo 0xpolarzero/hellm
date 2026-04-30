@@ -1,6 +1,7 @@
 <script lang="ts" module>
   import type { ReferenceStatus } from "./StatusBadge.svelte";
   import type { ReferenceSubagent } from "./SubagentCard.svelte";
+  import type { ReferenceWorkflow } from "./WorkflowCard.svelte";
 
 	export type ReferenceThread = {
 		id: string;
@@ -172,19 +173,19 @@
     display: flex;
     flex-direction: column;
     border: 1px solid var(--ui-border-soft);
-    border-left: 2.5px solid var(--thread-status-color);
+    border-left: 2px solid var(--thread-status-color);
     border-radius: var(--ui-radius-md);
     background: color-mix(in oklab, var(--ui-surface) 92%, var(--thread-status-bg));
     box-shadow: var(--ui-shadow-soft);
-    transition: all 0.2s cubic-bezier(0.23, 1, 0.32, 1);
+    transition:
+      border-color 0.2s cubic-bezier(0.23, 1, 0.32, 1),
+      background-color 0.2s cubic-bezier(0.23, 1, 0.32, 1);
     overflow: hidden;
   }
 
   .reference-thread-card:hover {
     border-color: color-mix(in oklab, var(--ui-border-soft) 80%, var(--thread-status-color));
     background: color-mix(in oklab, var(--ui-surface) 88%, var(--thread-status-bg));
-    transform: translateY(-1px);
-    box-shadow: var(--ui-shadow-strong);
   }
 
   header {
