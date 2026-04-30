@@ -1,6 +1,5 @@
 <script lang="ts">
   import PlusIcon from "@lucide/svelte/icons/plus";
-  import ZapIcon from "@lucide/svelte/icons/zap";
   import GitBranchIcon from "@lucide/svelte/icons/git-branch";
   import BookOpenIcon from "@lucide/svelte/icons/book-open";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
@@ -22,7 +21,7 @@
     busy?: boolean;
     errorMessage?: string;
     onCreateSession: () => void;
-    onCreateQuickSession: () => void;
+    onCreateDumbSession: () => void;
     onOpenSession: (sessionId: string) => void;
     onFocusPane: (paneId: string) => void;
     onRenameSession: (session: WorkspaceSessionSummary) => void;
@@ -47,7 +46,7 @@
     busy = false,
     errorMessage,
     onCreateSession,
-    onCreateQuickSession,
+    onCreateDumbSession,
     onOpenSession,
     onFocusPane,
     onRenameSession,
@@ -61,6 +60,8 @@
     onOpenWorkflowLibrary,
     onOpenSettings,
   }: Props = $props();
+
+  let showNewSessionMenu = $state(false);
 
   const sessionCount = $derived(
     navigation.pinnedSessions.length +
@@ -90,6 +91,15 @@
       })
       .slice(0, 8),
   );
+
+  function handleNewSessionMenuFocusOut(event: FocusEvent) {
+    const current = event.currentTarget as HTMLElement | null;
+    const next = event.relatedTarget as Node | null;
+    if (current && next && current.contains(next)) {
+      return;
+    }
+    showNewSessionMenu = false;
+  }
 </script>
 
 <div class="session-sidebar">
@@ -110,30 +120,43 @@
   </header>
 
   <div class="sidebar-actions" aria-label="Session actions">
-    <Button
-      variant="primary"
-      size="sm"
-      class="new-session"
-      onclick={onCreateSession}
-      disabled={busy}
-      aria-label="Create a new session"
-      title="New Session"
+    <div
+      class="new-session-menu-shell"
+      class:menu-open={showNewSessionMenu}
+      onmouseenter={() => (showNewSessionMenu = true)}
+      onmouseleave={() => (showNewSessionMenu = false)}
+      onfocusin={() => (showNewSessionMenu = true)}
+      onfocusout={handleNewSessionMenuFocusOut}
     >
-      <PlusIcon aria-hidden="true" size={13} strokeWidth={2} />
-      New session
-    </Button>
-    <Button
-      variant="ghost"
-      size="sm"
-      class="quick-session"
-      onclick={onCreateQuickSession}
-      disabled={busy}
-      aria-label="Create a quick session"
-      title="Quick Session"
-    >
-      <ZapIcon aria-hidden="true" size={13} strokeWidth={1.9} />
-      Quick session
-    </Button>
+      <Button
+        variant="primary"
+        size="sm"
+        class="new-session"
+        onclick={onCreateSession}
+        disabled={busy}
+        aria-label="Create a new session"
+        title="New Session"
+        aria-haspopup="menu"
+        aria-expanded={showNewSessionMenu}
+      >
+        <PlusIcon aria-hidden="true" size={13} strokeWidth={2} />
+        <span>New session</span>
+        <ChevronDownIcon aria-hidden="true" size={12} strokeWidth={1.9} />
+      </Button>
+      {#if showNewSessionMenu}
+        <button
+          type="button"
+          class="new-session-menu-item"
+          disabled={busy}
+          onclick={() => {
+            showNewSessionMenu = false;
+            onCreateDumbSession();
+          }}
+        >
+          New dumb session
+        </button>
+      {/if}
+    </div>
   </div>
 
   {#if errorMessage}
@@ -394,8 +417,12 @@
     border-bottom: 1px solid var(--ui-shell-edge);
   }
 
-  :global(button.new-session),
-  :global(button.quick-session) {
+  .new-session-menu-shell {
+    position: relative;
+    display: grid;
+  }
+
+  :global(button.new-session) {
     justify-content: flex-start;
     width: 100%;
     min-height: 1.76rem;
@@ -404,8 +431,42 @@
     font-size: 0.68rem;
   }
 
-  :global(button.quick-session) {
+  :global(button.new-session span) {
+    flex: 1;
+    text-align: left;
+  }
+
+  .new-session-menu-shell.menu-open :global(button.new-session) {
+    border-bottom-right-radius: var(--ui-radius-xs);
+    border-bottom-left-radius: var(--ui-radius-xs);
+  }
+
+  .new-session-menu-item {
+    width: 100%;
+    min-height: 1.54rem;
+    padding: 0.28rem 0.52rem 0.28rem 1.62rem;
+    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 84%, transparent);
+    border-top: 0;
+    border-radius: 0 0 var(--ui-radius-md) var(--ui-radius-md);
+    background: color-mix(in oklab, var(--ui-panel) 72%, transparent);
     color: var(--ui-text-secondary);
+    font-size: 0.64rem;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .new-session-menu-item:hover,
+  .new-session-menu-item:focus-visible {
+    outline: none;
+    border-color: color-mix(in oklab, var(--ui-accent) 42%, var(--ui-border-soft));
+    background: color-mix(in oklab, var(--ui-accent) 9%, var(--ui-panel));
+    color: var(--ui-text-primary);
+  }
+
+  .new-session-menu-item:disabled {
+    cursor: default;
+    opacity: 0.55;
   }
 
   .sidebar-sections {

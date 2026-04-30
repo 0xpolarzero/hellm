@@ -29,7 +29,7 @@ export type CommandAvailability =
 export type CommandPlacement = "new-pane" | "focused-pane";
 
 export type CommandExecutionTarget =
-  | { kind: "create-session"; mode?: "orchestrator" | "quick"; initialPrompt?: string }
+  | { kind: "create-session"; mode?: "orchestrator" | "dumb"; initialPrompt?: string }
   | { kind: "open-session"; workspaceSessionId: string }
   | {
       kind: "open-workflow-task-attempt";
@@ -199,13 +199,13 @@ export function buildCommandRegistry(input: CommandRegistryInput): CommandAction
       execute: { kind: "create-session" },
     },
     {
-      id: "session.quick",
-      label: "New Quick Session",
-      category: "agent-settings",
-      aliases: ["quick session", "scratch session", "fast session"],
+      id: "session.dumb",
+      label: "New Dumb Session",
+      category: "session",
+      aliases: ["dumb session", "scratch session", "fast session", "lightweight orchestrator"],
       shortcut: null,
       availability: { kind: "available" },
-      execute: { kind: "create-session", mode: "quick" },
+      execute: { kind: "create-session", mode: "dumb" },
     },
     {
       id: "settings.open",

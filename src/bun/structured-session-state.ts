@@ -94,7 +94,7 @@ export interface StructuredPiSessionRecord {
   reasoningEffort?: string;
   sessionMode?: SessionMode;
   defaultSessionAgentJson?: string | null;
-  quickSessionAgentJson?: string | null;
+  dumbOrchestratorSessionAgentJson?: string | null;
   namerSessionAgentJson?: string | null;
   defaultOrchestratorPromptKey?: SessionAgentKey;
   titleGenerationStatus?: StructuredTitleGenerationStatus;
@@ -616,7 +616,7 @@ type SessionRow = {
   reasoning_effort: string | null;
   session_mode: SessionMode | null;
   default_session_agent_json: string | null;
-  quick_session_agent_json: string | null;
+  dumb_orchestrator_session_agent_json: string | null;
   namer_session_agent_json: string | null;
   default_orchestrator_prompt_key: SessionAgentKey | null;
   title_generation_status: StructuredTitleGenerationStatus | null;
@@ -931,7 +931,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            reasoning_effort,
            session_mode,
            default_session_agent_json,
-           quick_session_agent_json,
+           dumb_orchestrator_session_agent_json,
            namer_session_agent_json,
            default_orchestrator_prompt_key,
            title_generation_status,
@@ -963,7 +963,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         pi.reasoningEffort ?? null,
         pi.sessionMode ?? existing?.session_mode ?? "orchestrator",
         pi.defaultSessionAgentJson ?? existing?.default_session_agent_json ?? null,
-        pi.quickSessionAgentJson ?? existing?.quick_session_agent_json ?? null,
+        pi.dumbOrchestratorSessionAgentJson ??
+          existing?.dumb_orchestrator_session_agent_json ??
+          null,
         pi.namerSessionAgentJson ?? existing?.namer_session_agent_json ?? null,
         pi.defaultOrchestratorPromptKey ??
           existing?.default_orchestrator_prompt_key ??
@@ -2648,7 +2650,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            reasoning_effort,
            session_mode,
            default_session_agent_json,
-           quick_session_agent_json,
+           dumb_orchestrator_session_agent_json,
            namer_session_agent_json,
            default_orchestrator_prompt_key,
            title_generation_status,
@@ -3207,7 +3209,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       reasoningEffort: row.reasoning_effort ?? undefined,
       sessionMode: row.session_mode ?? undefined,
       defaultSessionAgentJson: row.default_session_agent_json,
-      quickSessionAgentJson: row.quick_session_agent_json,
+      dumbOrchestratorSessionAgentJson: row.dumb_orchestrator_session_agent_json,
       namerSessionAgentJson: row.namer_session_agent_json,
       defaultOrchestratorPromptKey: row.default_orchestrator_prompt_key ?? undefined,
       titleGenerationStatus: row.title_generation_status ?? "not-started",
@@ -3524,7 +3526,7 @@ function initializeSchema(db: Database): void {
       reasoning_effort TEXT,
       session_mode TEXT,
       default_session_agent_json TEXT,
-      quick_session_agent_json TEXT,
+      dumb_orchestrator_session_agent_json TEXT,
       namer_session_agent_json TEXT,
       default_orchestrator_prompt_key TEXT,
       title_generation_status TEXT NOT NULL DEFAULT 'not-started',
@@ -3768,7 +3770,7 @@ function initializeSchema(db: Database): void {
   ensureColumn(db, "session", "archived_at", "TEXT");
   ensureColumn(db, "session", "session_mode", "TEXT");
   ensureColumn(db, "session", "default_session_agent_json", "TEXT");
-  ensureColumn(db, "session", "quick_session_agent_json", "TEXT");
+  ensureColumn(db, "session", "dumb_orchestrator_session_agent_json", "TEXT");
   ensureColumn(db, "session", "namer_session_agent_json", "TEXT");
   ensureColumn(db, "session", "default_orchestrator_prompt_key", "TEXT");
   ensureColumn(db, "session", "title_generation_status", "TEXT NOT NULL DEFAULT 'not-started'");

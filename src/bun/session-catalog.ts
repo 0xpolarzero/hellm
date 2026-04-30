@@ -640,12 +640,13 @@ export class WorkspaceSessionCatalog {
       model: defaults.model,
       thinkingLevel: defaults.thinkingLevel,
       systemPrompt:
-        defaults.sessionAgentKey || request.mode === "quick"
+        defaults.sessionAgentKey || request.mode === "dumb"
           ? defaults.systemPrompt
           : buildSystemPrompt("orchestrator"),
       sessionMode: request.mode ?? "orchestrator",
       sessionAgentKey:
-        defaults.sessionAgentKey ?? (request.mode === "quick" ? "quickSession" : "defaultSession"),
+        defaults.sessionAgentKey ??
+        (request.mode === "dumb" ? "dumbOrchestrator" : "defaultSession"),
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
     session.retainCount += 1;
@@ -911,7 +912,7 @@ export class WorkspaceSessionCatalog {
     }
 
     const sessionAgentKey =
-      defaults.sessionAgentKey ?? (mode === "quick" ? "quickSession" : "defaultSession");
+      defaults.sessionAgentKey ?? (mode === "dumb" ? "dumbOrchestrator" : "defaultSession");
     const updated = await this.recreateManagedSurface(session, {
       actorKind: "orchestrator",
       provider: defaults.provider,
@@ -1333,8 +1334,8 @@ export class WorkspaceSessionCatalog {
   ): SessionAgentSettings {
     const current = this.agentSettingsStore.getState().sessionAgents[key];
     const json =
-      key === "quickSession"
-        ? snapshot?.pi.quickSessionAgentJson
+      key === "dumbOrchestrator"
+        ? snapshot?.pi.dumbOrchestratorSessionAgentJson
         : key === "namer"
           ? snapshot?.pi.namerSessionAgentJson
           : snapshot?.pi.defaultSessionAgentJson;
@@ -1429,9 +1430,9 @@ export class WorkspaceSessionCatalog {
         defaultSessionAgentJson:
           snapshot?.pi.defaultSessionAgentJson ??
           JSON.stringify(this.agentSettingsStore.getState().sessionAgents.defaultSession),
-        quickSessionAgentJson:
-          snapshot?.pi.quickSessionAgentJson ??
-          JSON.stringify(this.agentSettingsStore.getState().sessionAgents.quickSession),
+        dumbOrchestratorSessionAgentJson:
+          snapshot?.pi.dumbOrchestratorSessionAgentJson ??
+          JSON.stringify(this.agentSettingsStore.getState().sessionAgents.dumbOrchestrator),
         namerSessionAgentJson:
           snapshot?.pi.namerSessionAgentJson ??
           JSON.stringify(this.agentSettingsStore.getState().sessionAgents.namer),
@@ -1458,7 +1459,7 @@ export class WorkspaceSessionCatalog {
       reasoningEffort: session.thinkingLevel,
       sessionMode: session.sessionMode,
       defaultSessionAgentJson: JSON.stringify(state.sessionAgents.defaultSession),
-      quickSessionAgentJson: JSON.stringify(state.sessionAgents.quickSession),
+      dumbOrchestratorSessionAgentJson: JSON.stringify(state.sessionAgents.dumbOrchestrator),
       namerSessionAgentJson: JSON.stringify(state.sessionAgents.namer),
       defaultOrchestratorPromptKey: session.sessionAgentKey,
       messageCount: summary.messageCount,
@@ -1696,7 +1697,7 @@ export class WorkspaceSessionCatalog {
       return;
     }
     const snapshot = this.getStructuredSnapshot(promptContext.sessionId);
-    if (!snapshot || snapshot.pi.sessionMode === "quick" || snapshot.turns.length !== 1) {
+    if (!snapshot || snapshot.pi.sessionMode === "dumb" || snapshot.turns.length !== 1) {
       return;
     }
     const queued = this.structuredSessionStore.queueTitleGeneration(promptContext.sessionId);

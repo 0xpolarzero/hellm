@@ -236,7 +236,6 @@ describe("command palette shortcuts", () => {
       "project-ci",
       "pane",
       "settings",
-      "agent-settings",
     ]);
     expect(
       groups.find((group) => group.category === "session")?.actions.map((action) => action.id),
@@ -307,6 +306,7 @@ describe("buildCommandRegistry", () => {
     });
 
     expect(actions.map((action) => action.id)).toContain("session.new");
+    expect(actions.map((action) => action.id)).toContain("session.dumb");
     expect(actions.map((action) => action.id)).toContain("settings.open");
     expect(actions.map((action) => action.id)).toContain("workflow-library.open");
     expect(actions.map((action) => action.id)).toContain("pane.split-right");
@@ -373,6 +373,11 @@ describe("executeCommandAction", () => {
       action: actions.find((action) => action.id === "workflow-library.open")!,
       paneId: "pane-c",
     });
+    await executeCommandAction({
+      runtime,
+      action: actions.find((action) => action.id === "session.dumb")!,
+      paneId: "pane-d",
+    });
 
     expect(runtime.calls).toEqual([
       "open:session-1:pane-a",
@@ -380,7 +385,9 @@ describe("executeCommandAction", () => {
       "open:session-1:pane-b",
       "prompt:session-1:Run Project CI for this workspace.",
       "surface:saved-workflow-library:pane-c",
+      "create:pane-d",
     ]);
+    expect(runtime.createRequests.at(-1)).toEqual({ mode: "dumb" });
   });
 
   it("routes pane actions to focused pane layout operations", async () => {

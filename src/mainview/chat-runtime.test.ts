@@ -702,11 +702,11 @@ function createFakeRpc(input: {
               reasoningEffort: "medium",
               systemPrompt: "Default",
             },
-            quickSession: {
+            dumbOrchestrator: {
               provider: "openai",
               model: "gpt-4o-mini",
               reasoningEffort: "low",
-              systemPrompt: "Quick",
+              systemPrompt: "Dumb",
             },
             namer: {
               provider: "openai-codex",
@@ -1000,9 +1000,9 @@ function createFakeRpc(input: {
           const snapshot = createSurfaceSnapshot({
             ...record.snapshot,
             sessionMode: mode,
-            sessionAgentKey: mode === "quick" ? "quickSession" : "defaultSession",
-            systemPrompt: mode === "quick" ? "Quick" : "Default",
-            resolvedSystemPrompt: mode === "quick" ? "Quick" : "Default",
+            sessionAgentKey: mode === "dumb" ? "dumbOrchestrator" : "defaultSession",
+            systemPrompt: mode === "dumb" ? "Dumb" : "Default",
+            resolvedSystemPrompt: mode === "dumb" ? "Dumb" : "Default",
           });
           record.snapshot = snapshot;
           return { ok: true, snapshot: structuredClone(snapshot) };
@@ -2062,16 +2062,16 @@ describe("createChatRuntime", () => {
     const initialSessionCount = runtime.sessions.length;
     const initialPaneCount = runtime.paneLayout.panes.length;
 
-    await runtime.setSessionMode(runtime.primaryPaneId, "quick");
+    await runtime.setSessionMode(runtime.primaryPaneId, "dumb");
 
     const focusedPane = runtime.getPane(runtime.primaryPaneId);
     const controller = runtime.getPaneController(runtime.primaryPaneId);
     expect(runtime.sessions).toHaveLength(initialSessionCount);
     expect(runtime.paneLayout.panes).toHaveLength(initialPaneCount);
     expect(focusedPane?.target?.workspaceSessionId).toBe("session-1");
-    expect(controller?.sessionMode).toBe("quick");
-    expect(controller?.sessionAgentKey).toBe("quickSession");
-    expect(harness.getSurfaceSnapshot("session-1").sessionMode).toBe("quick");
+    expect(controller?.sessionMode).toBe("dumb");
+    expect(controller?.sessionAgentKey).toBe("dumbOrchestrator");
+    expect(harness.getSurfaceSnapshot("session-1").sessionMode).toBe("dumb");
 
     runtime.dispose();
   });

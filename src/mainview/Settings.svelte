@@ -128,13 +128,13 @@
 
 	const sessionAgentLabels = {
 		defaultSession: "Default Session",
-		quickSession: "Quick Session",
+		dumbOrchestrator: "Dumb Orchestrator",
 		namer: "Namer",
 	} satisfies Record<SessionAgentKey, string>;
 
 	const sessionAgentSummaries = {
 		defaultSession: "Used for normal repository sessions and long-running orchestrator turns.",
-		quickSession: "Used when a fast prompt should start with the lightweight session defaults.",
+		dumbOrchestrator: "Used when a new dumb session should use the lightweight orchestrator defaults.",
 		namer: "Generates session and handler-thread titles from the saved naming instruction.",
 	} satisfies Record<SessionAgentKey, string>;
 
@@ -544,7 +544,7 @@
 					<p>Session agent changes save directly to workspace settings.</p>
 				</div>
 				<div class="agent-list">
-					{#each ["defaultSession", "quickSession", "namer"] as key (key)}
+					{#each ["defaultSession", "dumbOrchestrator", "namer"] as key (key)}
 						{@const settings = agentSettings.sessionAgents[key as SessionAgentKey]}
 						<article class="provider-row agent-row">
 							<div class="provider-main">

@@ -98,9 +98,9 @@ export function normalizeAgentSettingsState(
         ...defaults.sessionAgents.defaultSession,
         ...sessionAgents.defaultSession,
       }),
-      quickSession: normalizeSessionAgentSettings({
-        ...defaults.sessionAgents.quickSession,
-        ...sessionAgents.quickSession,
+      dumbOrchestrator: normalizeSessionAgentSettings({
+        ...defaults.sessionAgents.dumbOrchestrator,
+        ...sessionAgents.dumbOrchestrator,
       }),
       namer: normalizeSessionAgentSettings(namerInput),
     } satisfies SessionAgentDefaults,

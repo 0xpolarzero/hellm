@@ -194,16 +194,16 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 
 ## 11. Session Agents And Workflow Agents
 
-- [x] Define the stored shape for session agent settings used by orchestrator/handler surfaces and quick sessions. Commit(s): `8e19462`
+- [x] Define the stored shape for session agent settings used by orchestrator, dumb orchestrator, and handler surfaces. Commit(s): `8e19462`
 - [x] Keep session agent settings separate from typed handler context packs so Project CI uses normal handler-thread execution plus `context: ["ci"]`. Commit(s): `2a5dbbe`
-- [x] Seed initial app-wide default values for the default session agent and quick session agent. Commit(s): `8e19462`
+- [x] Seed initial app-wide default values for the default session agent and dumb orchestrator session agent. Commit(s): `8e19462`
 - [x] Build a POC settings model for editing app-wide session agent defaults. Commit(s): `8e19462`
 - [x] Persist app-wide session agent defaults. Commit(s): `8e19462`
-- [x] Build a POC session creation flow with separate orchestrator-session and quick-session actions. Commit(s): `8e19462`
+- [x] Build a POC session creation flow with a primary orchestrator session action and a dumb session alternative. Commit(s): `8e19462`
 - [x] Persist session mode and the default orchestrator-surface prompt selection. Commit(s): `8e19462`
-- [x] Persist per-session overrides for the default session agent and quick session agent. Commit(s): `8e19462`
+- [x] Persist per-session overrides for the default session agent and dumb orchestrator session agent. Commit(s): `8e19462`
 - [x] Persist per-thread overrides for handler-thread session agent settings when a delegated thread needs a specific model or reasoning level. Commit(s): `8e19462`
-- [x] Apply the quick-session agent settings and quick-session system prompt at session creation. Commit(s): `8e19462`
+- [x] Apply the dumb orchestrator agent settings and dumb orchestrator system prompt at session creation. Commit(s): `8e19462`
 - [x] Show the current focused-surface session agent summary in pane chrome. Commit(s): `8e19462`
 - [x] Expand the session agent panel to inspect the session agent settings for the focused surface's session and thread. Commit(s): `8e19462`
 - [x] Seed `.svvy/workflows/components/agents.ts` with conventional `explorer`, `implementer`, and `reviewer` workflow agent exports. Commit(s): `8e19462`
@@ -213,7 +213,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 ## 12. Session Titles
 
 - [x] Define the stored title states for top-level sessions and handler threads. Commit(s): `b510857`, `fe53a3b`
-- [x] Add `namer` as a pi-backed session-agent default, alongside `defaultSession` and `quickSession`, for one-shot top-level session naming rather than as a Smithers workflow agent. Commit(s): `354db28`
+- [x] Add `namer` as a pi-backed session-agent default, alongside `defaultSession` and `dumbOrchestrator`, for one-shot top-level session naming rather than as a Smithers workflow agent. Commit(s): `354db28`
 - [x] Seed the `namer` session agent to `openai-codex`/`gpt-5.4-mini` with low reasoning effort, expose it in session-agent settings for customization, and treat its settings prompt as the only naming instruction. Commit(s): `354db28`
 - [x] Build a POC event-driven title-generation flow that starts a durable one-shot naming job concurrently with the first real top-level user turn without waiting for the orchestrator response. Commit(s): `354db28`
 - [x] Persist generated top-level session titles, title-generation lifecycle state, and the first-turn trigger so app restart cannot duplicate or lose title generation. Commit(s): `354db28`

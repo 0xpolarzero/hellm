@@ -5,7 +5,7 @@
     | "orchestrator"
     | "handler-thread"
     | "workflow-task-agent"
-    | "quick"
+    | "dumb"
     | "explorer"
     | "implementer"
     | "reviewer"
@@ -44,7 +44,7 @@
     orchestrator: { icon: BotIcon, label: "orchestrator", tone: "orange" },
     "handler-thread": { icon: BotIcon, label: "handler", tone: "blue" },
     "workflow-task-agent": { icon: WorkflowIcon, label: "task-agent", tone: "cyan" },
-    quick: { icon: ZapIcon, label: "quick", tone: "yellow" },
+    dumb: { icon: ZapIcon, label: "dumb", tone: "yellow" },
     explorer: { icon: SearchIcon, label: "explorer", tone: "blue" },
     implementer: { icon: Code2Icon, label: "implementer", tone: "purple" },
     reviewer: { icon: EyeIcon, label: "reviewer", tone: "cyan" },

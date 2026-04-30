@@ -235,7 +235,7 @@ function getDefaultAgentSettings(): AgentDefaults {
 function getSessionDefaults(mode: SessionMode = "orchestrator"): SessionDefaults {
   const agentSettings =
     agentSettingsStore.getState().sessionAgents[
-      mode === "quick" ? "quickSession" : "defaultSession"
+      mode === "dumb" ? "dumbOrchestrator" : "defaultSession"
     ];
   const defaults =
     agentSettings.provider && agentSettings.model ? agentSettings : getDefaultAgentSettings();
@@ -245,7 +245,7 @@ function getSessionDefaults(mode: SessionMode = "orchestrator"): SessionDefaults
     systemPrompt: buildRuntimeSystemPrompt(agentSettings),
     thinkingLevel: defaults.reasoningEffort,
     sessionMode: mode,
-    sessionAgentKey: mode === "quick" ? "quickSession" : "defaultSession",
+    sessionAgentKey: mode === "dumb" ? "dumbOrchestrator" : "defaultSession",
   };
 }
 

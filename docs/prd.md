@@ -588,15 +588,15 @@ Each handler thread should have:
 
 Typed context keys describe optional product knowledge loaded into a handler prompt, such as `ci`.
 
-Session agent settings describe the model, reasoning level, prompt selection, and callable surface used by pi-backed product agents. The `defaultSession` and `quickSession` agents back interactive orchestrator surfaces. The `namer` agent is the same product-agent family as the orchestrator, not a Smithers workflow agent, but it runs as a one-shot non-interactive title-generation surface whose settings prompt is the only title-generation instruction.
+Session agent settings describe the model, reasoning level, prompt selection, and callable surface used by pi-backed product agents. The `defaultSession` and `dumbOrchestrator` agents back interactive orchestrator surfaces. The `namer` agent is the same product-agent family as the orchestrator, not a Smithers workflow agent, but it runs as a one-shot non-interactive title-generation surface whose settings prompt is the only title-generation instruction.
 
 The app owns three app-wide session-agent defaults:
 
 - `defaultSession` for ordinary orchestrator sessions
-- `quickSession` for short focused sessions created through quick-session actions
+- `dumbOrchestrator` for dumb sessions created as the lightweight alternative under New Session
 - `namer` for one-shot top-level session and handler-thread title generation, seeded to `openai-codex`/`gpt-5.4-mini` with low reasoning effort
 
-Session records persist their mode, the app-wide defaults that were active at creation time, and the default orchestrator prompt selection. A quick session is still a normal pi-backed orchestrator surface with the normal svvy callable surface and durable state; it only starts from the quick-session agent default and quick-session system prompt.
+Session records persist their mode, the app-wide defaults that were active at creation time, and the default orchestrator prompt selection. A dumb session is still a normal pi-backed orchestrator surface with the normal svvy callable surface and durable state; it starts from the `dumbOrchestrator` agent default and dumb orchestrator system prompt.
 
 Handler threads may persist a per-thread session-agent override when `thread.start` declares a specific provider, model, reasoning level, or handler prompt suffix for the delegated objective. Typed handler context packs remain separate product knowledge and do not carry model, reasoning, or prompt-selection settings.
 

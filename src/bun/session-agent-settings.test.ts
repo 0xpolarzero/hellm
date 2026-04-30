@@ -12,14 +12,14 @@ describe("session agent settings", () => {
       agentDir: join(root, ".agent"),
     });
 
-    const updated = store.setSessionAgentDefault("quickSession", {
+    const updated = store.setSessionAgentDefault("dumbOrchestrator", {
       provider: "openai",
       model: "gpt-5.4-mini",
       reasoningEffort: "low",
       systemPrompt: "Handle short direct work.",
     });
 
-    expect(updated.sessionAgents.quickSession).toEqual({
+    expect(updated.sessionAgents.dumbOrchestrator).toEqual({
       provider: "openai",
       model: "gpt-5.4-mini",
       reasoningEffort: "low",
