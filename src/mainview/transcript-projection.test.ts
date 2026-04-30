@@ -101,6 +101,7 @@ describe("transcript projection", () => {
       "wait",
       "failure",
       "command-rollup",
+      "thread",
       "handoff-episode",
     ]);
     expect(blocks[0]).toMatchObject({

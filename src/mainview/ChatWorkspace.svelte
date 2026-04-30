@@ -2756,116 +2756,6 @@
             </section>
           {/if}
 
-          {#if showHandlerThreadPanel}
-            <section class="handler-thread-panel" aria-label="Delegated handler threads">
-              <header class="handler-thread-header">
-                <div>
-                  <p class="handler-thread-eyebrow">Delegated Threads</p>
-                  <h3>
-                    {handlerThreads.length}
-                    {handlerThreads.length === 1 ? " thread" : " threads"}
-                  </h3>
-                </div>
-                <p class="handler-thread-copy">
-                  Reopen a handed-back thread for follow-up chat or inspect its durable state
-                  without routing every orchestrator turn through the full thread transcript.
-                </p>
-              </header>
-
-              {#if handlerThreadsLoading}
-                <p class="handler-thread-empty">Loading delegated thread summaries…</p>
-              {:else if handlerThreadsError}
-                <p class="handler-thread-empty error">{handlerThreadsError}</p>
-              {:else}
-                <div class="handler-thread-list">
-                  {#each handlerThreads as thread (thread.threadId)}
-                    <article class="handler-thread-reference-entry">
-                      <ThreadCard
-                        thread={getReferenceThread(thread)}
-                        subagents={getReferenceWorkflowTaskAgents(thread)}
-                        onopen={() => void handleOpenHandlerThread(thread)}
-                        onsubagentopen={(agent) => {
-                          const attempt = thread.workflowTaskAttempts?.find(
-                            (candidate) => candidate.workflowTaskAttemptId === agent.id,
-                          );
-                          if (attempt) void handleInspectWorkflowTaskAttempt(attempt, activeSessionId);
-                        }}
-                      />
-
-                      {#if thread.wait}
-                        <WaitingCard
-                          context={`${thread.wait.owner} ${thread.wait.kind} · since ${formatTimestamp(thread.wait.since)}`}
-                          question={thread.wait.reason}
-                          onreply={(text) => void sendPromptToHandlerThread(thread, text)}
-                        />
-                      {/if}
-
-                      {#if thread.latestWorkflowRun}
-                        <WorkflowCard
-                          workflow={getReferenceWorkflow(thread.latestWorkflowRun)}
-                          onclick={(workflow) => openWorkflowInspector(workflow.id, activeSessionId)}
-                        />
-                      {/if}
-
-                      {#if thread.latestEpisode}
-                        <EpisodeCard episode={getReferenceEpisode(thread.latestEpisode, thread)} />
-                      {/if}
-
-                      <div class="handler-thread-pills reference-pills">
-                        <span>{thread.threadId}</span>
-                        <span>
-                          {thread.workflowRunCount}
-                          {thread.workflowRunCount === 1 ? " workflow" : " workflows"}
-                        </span>
-                        <span>
-                          {thread.episodeCount}
-                          {thread.episodeCount === 1 ? " handoff" : " handoffs"}
-                        </span>
-                        <span>
-                          {thread.commandCount}
-                          {thread.commandCount === 1 ? " command" : " commands"}
-                        </span>
-                        {#if thread.ciRunCount > 0}
-                          <span>
-                            {thread.ciRunCount}
-                            {thread.ciRunCount === 1 ? " CI run" : " CI runs"}
-                          </span>
-                        {/if}
-                        {#if getHandlerThreadArtifactLabel(thread)}
-                          <span>{getHandlerThreadArtifactLabel(thread)}</span>
-                        {/if}
-                        {#if thread.loadedContextKeys.length > 0}
-                          <span>Context {thread.loadedContextKeys.join(", ")}</span>
-                        {/if}
-                      </div>
-
-                      <div class="handler-thread-actions">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`Inspect ${thread.title}`}
-                          disabled={mutatingSession}
-                          onclick={() => void handleInspectHandlerThread(thread)}
-                        >
-                          Inspect
-                        </Button>
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          aria-label={`Open ${thread.title}`}
-                          disabled={promptBusy || mutatingSession}
-                          onclick={() => void handleOpenHandlerThread(thread)}
-                        >
-                          Open thread
-                        </Button>
-                      </div>
-                    </article>
-                  {/each}
-                </div>
-              {/if}
-            </section>
-          {/if}
-
           {#if showNewSessionEmptyState}
             <section class="new-session-empty" aria-label="Start orchestrating">
               <p class="new-session-watermark">svvy</p>
@@ -2955,6 +2845,14 @@
               onOpenArtifact={handleOpenArtifact}
               onOpenWorkspacePath={(path) => void handleOpenWorkspacePath(path)}
               onInspectCommand={(commandId) => void handleInspectCommand(commandId)}
+              onOpenHandlerThread={(id) => {
+                const thread = handlerThreads.find((t) => t.threadId === id);
+                if (thread) void handleOpenHandlerThread(thread);
+              }}
+              onInspectWorkflowTaskAttempt={(id) => {
+                void handleInspectWorkflowTaskAttempt({ workflowTaskAttemptId: id }, activeSessionId);
+              }}
+              onInspectWorkflow={(id) => openWorkflowInspector(id, activeSessionId)}
               onReplyToWait={(block, text) => void handleReplyToWait(block, text)}
               onRetryFailure={(block) => void handleRetryFailure(block)}
               onScrollStateChange={(scroll) => handleTranscriptScrollState(pane.paneId, scroll)}

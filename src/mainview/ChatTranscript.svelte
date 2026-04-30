@@ -17,8 +17,11 @@
 	import EpisodeCard, { type ReferenceEpisode } from "./reference-cards/EpisodeCard.svelte";
 	import FailedCard from "./reference-cards/FailedCard.svelte";
 	import type { ReferenceStatus } from "./reference-cards/StatusBadge.svelte";
+	import ThreadCard, { type ReferenceThread } from "./reference-cards/ThreadCard.svelte";
+	import ToolCallCard, { type ReferenceToolCall } from "./reference-cards/ToolCallCard.svelte";
 	import WaitingCard from "./reference-cards/WaitingCard.svelte";
 	import WorkflowCard, { type ReferenceWorkflow } from "./reference-cards/WorkflowCard.svelte";
+	import type { WorkspaceHandlerThreadSummary } from "../shared/workspace-contract";
 	import Button from "./ui/Button.svelte";
 
 	const DEFAULT_TRANSCRIPT_ROW_GAP = 16;
@@ -36,6 +39,9 @@
 		onOpenArtifact: (filename: string) => void;
 		onOpenWorkspacePath: (path: string) => void;
 		onInspectCommand?: (commandId: string) => void;
+		onOpenHandlerThread?: (threadId: string) => void;
+		onInspectWorkflow?: (workflowId: string) => void;
+		onInspectWorkflowTaskAttempt?: (workflowTaskAttemptId: string) => void;
 		onReplyToWait?: (block: TranscriptSemanticBlock & { kind: "wait" }, text: string) => void;
 		onRetryFailure?: (block: TranscriptSemanticBlock & { kind: "failure" }) => void;
 		onScrollStateChange?: (scroll: { transcriptAnchorId: string | null; offsetPx: number }) => void;
@@ -53,6 +59,9 @@
 		onOpenArtifact,
 		onOpenWorkspacePath,
 		onInspectCommand,
+		onOpenHandlerThread,
+		onInspectWorkflow,
+		onInspectWorkflowTaskAttempt,
 		onReplyToWait,
 		onRetryFailure,
 		onScrollStateChange,
@@ -136,7 +145,22 @@
 		return "idle";
 	}
 
-	function commandReferenceWorkflow(command: TranscriptSemanticBlock & { kind: "command-rollup" }): ReferenceWorkflow {
+	function workflowReference(run: any): ReferenceWorkflow {
+		const stepsDone = run.stepsDone ?? 0;
+		const stepsTotal = Math.max(1, run.stepsTotal ?? 1);
+		return {
+			id: run.workflowRunId,
+			name: run.title,
+			status: commandReferenceStatus(run.status),
+			elapsed: formatTimestamp(run.updatedAt),
+			stepsDone,
+			stepsTotal,
+			currentStep: run.status === "running" ? run.latestStep?.title || "Running" : "Completed",
+			runId: run.workflowRunId,
+		};
+	}
+
+	function commandRollupReference(command: TranscriptSemanticBlock & { kind: "command-rollup" }): ReferenceWorkflow {
 		const status = commandReferenceStatus(command.command.status);
 		const stepsTotal = Math.max(
 			1,
@@ -162,6 +186,28 @@
 			thread: block.thread.title,
 			verified: block.episode.kind !== "clarification",
 		};
+	}
+
+	function threadReference(thread: WorkspaceHandlerThreadSummary): ReferenceThread {
+		return {
+			id: thread.threadId,
+			title: thread.title,
+			objective: thread.latestEpisode?.summary || thread.objective,
+			status: commandReferenceStatus(thread.status),
+			elapsed: formatTimestamp(thread.updatedAt),
+			model: "handler-thread",
+			latestWorkflowRun: thread.latestWorkflowRun ? workflowReference(thread.latestWorkflowRun) : undefined,
+		};
+	}
+
+	function subagentReferences(thread: WorkspaceHandlerThreadSummary) {
+		return (thread.workflowTaskAttempts ?? []).map((attempt) => ({
+			id: attempt.workflowTaskAttemptId,
+			type: "workflow-task-agent" as const,
+			headline: attempt.title,
+			status: commandReferenceStatus(attempt.status),
+			model: attempt.model,
+		}));
 	}
 
 	function toolStatus(toolCallId: string): "pending" | "error" | "done" {
@@ -392,7 +438,18 @@
 							{/if}
 						</div>
 					{:else if block.kind === "handoff-episode"}
-						<EpisodeCard episode={episodeReference(block)} />
+						<EpisodeCard
+							episode={episodeReference(block)}
+							onartifactopen={(artifact) => onOpenArtifact(artifact.name)}
+						/>
+					{:else if block.kind === "thread"}
+						<ThreadCard
+							thread={threadReference(block.thread)}
+							subagents={subagentReferences(block.thread)}
+							onopen={() => onOpenHandlerThread?.(block.thread.threadId)}
+							onworkflowopen={(workflow) => onInspectWorkflow?.(workflow.id)}
+							onsubagentopen={(agent) => onInspectWorkflowTaskAttempt?.(agent.id)}
+						/>
 					{/if}
 				{/each}
 			</section>
@@ -478,39 +535,19 @@
 									projectedToolCall?.argumentsValue ?? block.arguments,
 								)}
 								{@const status = toolStatus(block.id)}
-								<div class={`relative flex flex-col gap-2.5 mt-3 p-3 rounded-md border border-border/80 bg-muted/40 shadow-sm overflow-visible transition-colors duration-200 ${status === 'error' ? 'bg-destructive/10 border-destructive/40' : ''}`.trim()}>
-									<div class="flex items-start justify-between gap-3">
-										<div class="flex flex-col gap-1 items-start">
-											<strong>
-												{params ? getArtifactCommandCopy(params.command).complete : `Ran ${block.name}`}
-											</strong>
-											{#if params}
-												<span>{params.filename}</span>
-											{:else}
-												<span>{block.name}</span>
-											{/if}
-										</div>
-										<div class="flex items-start gap-2 flex-wrap justify-end">
-											{#if toolAttemptLabel(projectedToolCall)}
-												<span class="tool-attempt">{toolAttemptLabel(projectedToolCall)}</span>
-											{/if}
-											<span class={`tool-status tone-${status === "error" ? "danger" : status === "done" ? "success" : "warning"}`.trim()}>
-												{status}
-											</span>
-											{#if params}
-												<Button size="sm" variant="ghost" onclick={() => onOpenArtifact(params.filename)}>
-													Open
-												</Button>
-											{/if}
-										</div>
-									</div>
-									{#if toolBody}
-										<div class="flex flex-col gap-2 pt-3 mt-2 border-t border-border/60">
-											<span class="text-[11px] font-semibold tracking-wide uppercase text-muted-foreground">TypeScript body</span>
-											<pre class="m-0 max-h-64 overflow-auto p-3 rounded-sm border border-border/60 bg-muted text-[12.5px] leading-relaxed text-foreground whitespace-pre-wrap break-words">{toolBody}</pre>
-										</div>
-									{/if}
-								</div>
+								<ToolCallCard
+									toolCall={{
+										id: block.id,
+										name: block.name,
+										status: status === "done" ? "done" : status === "error" ? "failed" : "running",
+										params,
+										body: toolBody,
+										isError: status === "error",
+										attempt: projectedToolCall?.attempt,
+										totalAttempts: projectedToolCall?.totalAttempts,
+									}}
+									onopen={onOpenArtifact}
+								/>
 							{/if}
 						{/each}
 						</div>
@@ -528,77 +565,23 @@
 								: undefined
 						}
 					>
-					<div class={`p-3 border border-border/80 bg-card rounded-md shadow-sm transition-colors duration-200 ${message.isError ? "bg-destructive/10 border-destructive/40" : ""}`.trim()}>
-						<div class="flex items-start justify-between gap-3 mb-2">
-							<div class="flex flex-col gap-1">
-								<strong>
-									{params ? getArtifactCommandCopy(params.command).complete : `Tool ${message.toolName}`}
-								</strong>
-								{#if params}
-									<span>{params.filename}</span>
-								{/if}
-							</div>
-							<div class="flex items-start gap-2 flex-wrap justify-end">
-								{#if toolAttemptLabel(projectedToolCall)}
-									<span class="tool-attempt">{toolAttemptLabel(projectedToolCall)}</span>
-								{/if}
-								<span class={`tool-status tone-${message.isError ? "danger" : "success"}`.trim()}>
-									{message.isError ? "Error" : "Complete"}
-								</span>
-								{#if params}
-									<Button size="sm" variant="ghost" onclick={() => onOpenArtifact(params.filename)}>Open</Button>
-								{/if}
-							</div>
-						</div>
-						{#if resultDetailsText(message)}
-							<details class="result-details">
-								<summary>{message.isError ? "Error output" : "Tool output"}</summary>
-								<pre>{resultDetailsText(message)}</pre>
-							</details>
-						{/if}
-						{#if executeSummary}
-							<div class="execute-result-grid">
-								{#if executeSummary.error}
-									<section class="execute-result-section error">
-										<strong>
-											{executeSummary.error.stage
-												? `execute_typescript ${executeSummary.error.stage} error`
-												: "execute_typescript error"}
-										</strong>
-										<pre>{executeSummary.error.message}</pre>
-									</section>
-								{/if}
-								{#if executeSummary.diagnostics.length > 0}
-									<section class="execute-result-section">
-										<strong>Diagnostics</strong>
-										{#each executeSummary.diagnostics as diagnostic, diagnosticIndex (`${message.toolCallId}:diagnostic:${diagnosticIndex}`)}
-											<div class="diagnostic-row">
-												<span>{diagnostic.severity ?? "diagnostic"}</span>
-												<p>{diagnostic.message}</p>
-												{#if diagnostic.file}
-													<small>
-														{diagnostic.file}{diagnostic.line ? `:${diagnostic.line}` : ""}{diagnostic.column ? `:${diagnostic.column}` : ""}
-													</small>
-												{/if}
-											</div>
-										{/each}
-									</section>
-								{/if}
-								{#if executeSummary.logs.length > 0}
-									<section class="execute-result-section">
-										<strong>Logs</strong>
-										<pre>{executeSummary.logs.join("\n")}</pre>
-									</section>
-								{/if}
-								{#if executeSummary.resultPreview}
-									<section class="execute-result-section">
-										<strong>Return value</strong>
-										<pre>{executeSummary.resultPreview}</pre>
-									</section>
-								{/if}
-							</div>
-						{/if}
-						</div>
+						<ToolCallCard
+							toolCall={{
+								id: message.toolCallId,
+								name: message.toolName,
+								status: message.isError ? "failed" : "done",
+								params,
+								body: executeTypescriptBody(
+									message.toolName,
+									projectedToolCall?.argumentsValue,
+								),
+								result: resultDetailsText(message),
+								isError: message.isError,
+								attempt: projectedToolCall?.attempt,
+								totalAttempts: projectedToolCall?.totalAttempts,
+							}}
+							onopen={onOpenArtifact}
+						/>
 					</article>
 				{/if}
 			{/each}
@@ -626,27 +609,16 @@
 						{:else if block.type === "toolCall"}
 							{@const params = parseArtifactsParams(block.arguments)}
 							{@const toolBody = executeTypescriptBody(block.name, block.arguments)}
-							<div class="relative flex flex-col gap-2.5 mt-3 p-3 rounded-md border border-border/80 bg-muted/40 shadow-sm overflow-visible transition-colors duration-200">
-								<div class="flex items-start justify-between gap-3">
-									<div class="flex flex-col gap-1 items-start">
-										<strong>
-											{params ? getArtifactCommandCopy(params.command).inProgress : `Running ${block.name}`}
-										</strong>
-										{#if params}
-											<span>{params.filename}</span>
-										{:else}
-											<span>{block.name}</span>
-										{/if}
-									</div>
-									<span class="tool-status tone-warning">pending</span>
-								</div>
-								{#if toolBody}
-									<div class="flex flex-col gap-2 pt-3 mt-2 border-t border-border/60">
-										<span class="text-[11px] font-semibold tracking-wide uppercase text-muted-foreground">TypeScript body</span>
-										<pre class="m-0 max-h-64 overflow-auto p-3 rounded-sm border border-border/60 bg-muted text-[12.5px] leading-relaxed text-foreground whitespace-pre-wrap break-words">{toolBody}</pre>
-									</div>
-								{/if}
-							</div>
+							<ToolCallCard
+								toolCall={{
+									id: `streaming-${blockIndex}`,
+									name: block.name,
+									status: "running",
+									params,
+									body: toolBody,
+								}}
+								onopen={onOpenArtifact}
+							/>
 						{/if}
 					{/each}
 				</div>

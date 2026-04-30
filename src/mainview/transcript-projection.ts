@@ -50,6 +50,11 @@ export type TranscriptSemanticBlock =
       command: WorkspaceCommandRollup;
     }
   | {
+      kind: "thread";
+      key: string;
+      thread: WorkspaceHandlerThreadSummary;
+    }
+  | {
       kind: "handoff-episode";
       key: string;
       thread: Pick<WorkspaceHandlerThreadSummary, "threadId" | "title">;
@@ -105,16 +110,23 @@ export function buildTranscriptSemanticBlocks(
   }
 
   for (const thread of input.handlerThreads ?? []) {
-    if (!thread.latestEpisode) continue;
     blocks.push({
-      kind: "handoff-episode",
-      key: `episode:${thread.threadId}:${thread.latestEpisode.episodeId}`,
-      thread: {
-        threadId: thread.threadId,
-        title: thread.title,
-      },
-      episode: thread.latestEpisode,
+      kind: "thread",
+      key: `thread:${thread.threadId}`,
+      thread,
     });
+
+    if (thread.latestEpisode) {
+      blocks.push({
+        kind: "handoff-episode",
+        key: `episode:${thread.threadId}:${thread.latestEpisode.episodeId}`,
+        thread: {
+          threadId: thread.threadId,
+          title: thread.title,
+        },
+        episode: thread.latestEpisode,
+      });
+    }
   }
 
   return blocks;
