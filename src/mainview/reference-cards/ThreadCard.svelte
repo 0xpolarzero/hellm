@@ -23,6 +23,8 @@
   import ModelBadge from "./ModelBadge.svelte";
   import StatusBadge from "./StatusBadge.svelte";
   import SubagentCard from "./SubagentCard.svelte";
+  import { slide } from "svelte/transition";
+  import { quintOut } from "svelte/easing";
 
   type Props = {
     thread: ReferenceThread;
@@ -49,16 +51,24 @@
   $effect(() => {
     expanded = defaultExpanded;
   });
+
+  const borderColor = $derived(
+    thread.status === "running" ? "border-l-orange-500" :
+    thread.status === "done" ? "border-l-emerald-500/50" :
+    thread.status === "waiting" ? "border-l-amber-500" :
+    thread.status === "failed" ? "border-l-red-500" :
+    "border-l-border"
+  );
 </script>
 
 <article
-  class={`reference-thread-card status-${thread.status} ${className}`.trim()}
+  class={`border border-border rounded-md bg-card border-l-2 transition-colors ${borderColor} ${className}`}
   data-testid={`thread-card-${thread.id}`}
 >
-  <header class="thread-header">
+  <header class="flex items-center gap-2 px-3 py-2.5">
     <button
       type="button"
-      class="icon-button"
+      class="text-muted-foreground flex-shrink-0 cursor-pointer hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
       onclick={() => (expanded = !expanded)}
       data-testid={`thread-card-toggle-${thread.id}`}
       aria-label={expanded ? "Collapse handler thread" : "Expand handler thread"}
@@ -73,7 +83,7 @@
     </button>
     <button
       type="button"
-      class="thread-title"
+      class="text-[12px] font-medium text-foreground flex-1 truncate text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
       onclick={() => (expanded = !expanded)}
       aria-expanded={expanded}
       aria-controls={bodyId}
@@ -81,10 +91,12 @@
       {thread.title}
     </button>
     <StatusBadge status={thread.status} size="xs" />
-    <span class="thread-elapsed">{thread.elapsed}</span>
+    <span class="font-mono text-[10px] text-muted-foreground tabular-nums">
+      {thread.elapsed}
+    </span>
     <button
       type="button"
-      class="icon-button open-button"
+      class="text-muted-foreground/40 hover:text-muted-foreground transition-colors flex-shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
       title="Open handler thread"
       aria-label="Open handler thread"
       onclick={() => onopen?.(thread)}
@@ -95,176 +107,45 @@
   </header>
 
   {#if thread.status === "running"}
-    <div class="thread-progress" aria-hidden="true">
-      <span style={`width: ${progress}%`}></span>
+    <div class="px-3 pb-1" aria-hidden="true">
+      <div class="h-0.5 bg-muted rounded-full overflow-hidden">
+        <div
+          class="h-full bg-orange-500 rounded-full transition-all duration-500"
+          style={`width: ${progress}%`}
+        ></div>
+      </div>
     </div>
   {/if}
 
   {#if expanded}
-    <div class="thread-body" id={bodyId}>
-      <p>{thread.objective}</p>
+    <div
+      class="border-t border-border px-3 py-2 space-y-2"
+      id={bodyId}
+      transition:slide={{ duration: 150, easing: quintOut }}
+    >
+      <p class="text-[11px] text-muted-foreground leading-relaxed">
+        {thread.objective}
+      </p>
 
       {#if subagents.length > 0}
-        <div class="thread-subagents">
+        <div class="space-y-1">
           {#each subagents as agent (agent.id)}
             <SubagentCard agent={agent} onclick={onsubagentopen} />
           {/each}
         </div>
       {/if}
 
-      <footer class="thread-footer">
+      <footer class="flex items-center gap-3 pt-1 flex-wrap">
         {#if thread.worktree}
-          <span><GitBranchIcon size={11} strokeWidth={2} />{thread.worktree}</span>
+          <span class="font-mono text-[10px] text-muted-foreground flex items-center gap-1">
+            <GitBranchIcon size={11} strokeWidth={2} />{thread.worktree}
+          </span>
         {/if}
-        <span><ClockIcon size={11} strokeWidth={2} />{thread.elapsed}</span>
+        <span class="font-mono text-[10px] text-muted-foreground flex items-center gap-1 tabular-nums">
+          <ClockIcon size={11} strokeWidth={2} />{thread.elapsed}
+        </span>
         <ModelBadge model={thread.model} size="xs" />
       </footer>
     </div>
   {/if}
 </article>
-
-<style>
-  .reference-thread-card {
-    --thread-color: var(--ui-status-idle);
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
-    border-left: 2px solid var(--thread-color);
-    border-radius: var(--ui-radius-md);
-    background: var(--ui-surface);
-    box-shadow: var(--ui-shadow-soft);
-    overflow: hidden;
-  }
-
-  .status-running,
-  .status-active {
-    --thread-color: var(--ui-status-running);
-  }
-
-  .status-done,
-  .status-verified,
-  .status-passed {
-    --thread-color: color-mix(in oklab, var(--ui-status-success) 62%, transparent);
-  }
-
-  .status-waiting,
-  .status-blocked {
-    --thread-color: var(--ui-status-waiting);
-  }
-
-  .status-failed,
-  .status-cancelled {
-    --thread-color: var(--ui-status-danger);
-  }
-
-  .thread-header {
-    display: flex;
-    align-items: center;
-    gap: 0.48rem;
-    min-width: 0;
-    padding: 0.6rem 0.72rem;
-  }
-
-  .icon-button,
-  .thread-title {
-    border: 0;
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
-  }
-
-  .icon-button {
-    display: inline-grid;
-    place-items: center;
-    width: 1.2rem;
-    height: 1.2rem;
-    padding: 0;
-    border-radius: var(--ui-radius-sm);
-    color: var(--ui-text-tertiary);
-    flex: 0 0 auto;
-  }
-
-  .icon-button:hover,
-  .thread-title:hover {
-    color: var(--ui-text-primary);
-  }
-
-  .icon-button:focus-visible,
-  .thread-title:focus-visible {
-    outline: none;
-    box-shadow: var(--ui-focus-ring);
-  }
-
-  .thread-title {
-    min-width: 0;
-    flex: 1 1 auto;
-    overflow: hidden;
-    padding: 0;
-    text-align: left;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.74rem;
-    font-weight: 650;
-  }
-
-  .thread-elapsed,
-  .thread-footer span {
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: 0.58rem;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-
-  .open-button {
-    opacity: 0.62;
-  }
-
-  .thread-progress {
-    margin: 0 0.72rem 0.22rem;
-    height: 0.14rem;
-    overflow: hidden;
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--ui-surface-muted) 90%, transparent);
-  }
-
-  .thread-progress span {
-    display: block;
-    height: 100%;
-    border-radius: inherit;
-    background: var(--ui-status-running);
-    transition: width 500ms ease;
-  }
-
-  .thread-body {
-    display: grid;
-    gap: 0.55rem;
-    padding: 0.62rem 0.72rem 0.7rem;
-    border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 78%, transparent);
-  }
-
-  .thread-body p {
-    margin: 0;
-    color: var(--ui-text-secondary);
-    font-size: 0.68rem;
-    line-height: 1.48;
-  }
-
-  .thread-subagents {
-    display: grid;
-    gap: 0.28rem;
-  }
-
-  .thread-footer {
-    display: flex;
-    align-items: center;
-    gap: 0.72rem;
-    min-width: 0;
-    padding-top: 0.1rem;
-    flex-wrap: wrap;
-  }
-
-  .thread-footer span {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.24rem;
-  }
-</style>

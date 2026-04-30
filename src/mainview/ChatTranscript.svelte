@@ -478,9 +478,9 @@
 									projectedToolCall?.argumentsValue ?? block.arguments,
 								)}
 								{@const status = toolStatus(block.id)}
-								<div class={`tool-card ${status}`.trim()}>
-									<div class="tool-card-header">
-										<div class="tool-card-copy">
+								<div class={`relative flex flex-col gap-2.5 mt-3 p-3 rounded-md border border-border/80 bg-muted/40 shadow-sm overflow-visible transition-colors duration-200 ${status === 'error' ? 'bg-destructive/10 border-destructive/40' : ''}`.trim()}>
+									<div class="flex items-start justify-between gap-3">
+										<div class="flex flex-col gap-1 items-start">
 											<strong>
 												{params ? getArtifactCommandCopy(params.command).complete : `Ran ${block.name}`}
 											</strong>
@@ -490,7 +490,7 @@
 												<span>{block.name}</span>
 											{/if}
 										</div>
-										<div class="tool-card-actions">
+										<div class="flex items-start gap-2 flex-wrap justify-end">
 											{#if toolAttemptLabel(projectedToolCall)}
 												<span class="tool-attempt">{toolAttemptLabel(projectedToolCall)}</span>
 											{/if}
@@ -505,9 +505,9 @@
 										</div>
 									</div>
 									{#if toolBody}
-										<div class="tool-body-preview">
-											<span class="tool-body-label">TypeScript body</span>
-											<pre>{toolBody}</pre>
+										<div class="flex flex-col gap-2 pt-3 mt-2 border-t border-border/60">
+											<span class="text-[11px] font-semibold tracking-wide uppercase text-muted-foreground">TypeScript body</span>
+											<pre class="m-0 max-h-64 overflow-auto p-3 rounded-sm border border-border/60 bg-muted text-[12.5px] leading-relaxed text-foreground whitespace-pre-wrap break-words">{toolBody}</pre>
 										</div>
 									{/if}
 								</div>
@@ -528,9 +528,9 @@
 								: undefined
 						}
 					>
-					<div class={`tool-result ${message.isError ? "error" : ""}`.trim()}>
-						<div class="tool-result-header">
-							<div>
+					<div class={`p-3 border border-border/80 bg-card rounded-md shadow-sm transition-colors duration-200 ${message.isError ? "bg-destructive/10 border-destructive/40" : ""}`.trim()}>
+						<div class="flex items-start justify-between gap-3 mb-2">
+							<div class="flex flex-col gap-1">
 								<strong>
 									{params ? getArtifactCommandCopy(params.command).complete : `Tool ${message.toolName}`}
 								</strong>
@@ -538,7 +538,7 @@
 									<span>{params.filename}</span>
 								{/if}
 							</div>
-							<div class="tool-result-actions">
+							<div class="flex items-start gap-2 flex-wrap justify-end">
 								{#if toolAttemptLabel(projectedToolCall)}
 									<span class="tool-attempt">{toolAttemptLabel(projectedToolCall)}</span>
 								{/if}
@@ -626,9 +626,9 @@
 						{:else if block.type === "toolCall"}
 							{@const params = parseArtifactsParams(block.arguments)}
 							{@const toolBody = executeTypescriptBody(block.name, block.arguments)}
-							<div class="tool-card pending">
-								<div class="tool-card-header">
-									<div class="tool-card-copy">
+							<div class="relative flex flex-col gap-2.5 mt-3 p-3 rounded-md border border-border/80 bg-muted/40 shadow-sm overflow-visible transition-colors duration-200">
+								<div class="flex items-start justify-between gap-3">
+									<div class="flex flex-col gap-1 items-start">
 										<strong>
 											{params ? getArtifactCommandCopy(params.command).inProgress : `Running ${block.name}`}
 										</strong>
@@ -641,9 +641,9 @@
 									<span class="tool-status tone-warning">pending</span>
 								</div>
 								{#if toolBody}
-									<div class="tool-body-preview">
-										<span class="tool-body-label">TypeScript body</span>
-										<pre>{toolBody}</pre>
+									<div class="flex flex-col gap-2 pt-3 mt-2 border-t border-border/60">
+										<span class="text-[11px] font-semibold tracking-wide uppercase text-muted-foreground">TypeScript body</span>
+										<pre class="m-0 max-h-64 overflow-auto p-3 rounded-sm border border-border/60 bg-muted text-[12.5px] leading-relaxed text-foreground whitespace-pre-wrap break-words">{toolBody}</pre>
 									</div>
 								{/if}
 							</div>
@@ -724,8 +724,11 @@
 
 	.tool-result {
 		padding: 0.72rem 0.82rem;
-		border: 1px solid var(--ui-border-soft);
+		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 86%, transparent);
 		background: var(--ui-surface);
+		border-radius: var(--ui-radius-md);
+		box-shadow: var(--ui-shadow-soft);
+		transition: background-color 200ms ease, border-color 200ms ease;
 	}
 
 	.streaming {
@@ -913,101 +916,6 @@
 		color: var(--ui-text-secondary);
 	}
 
-	.tool-card {
-		position: relative;
-		display: flex;
-		flex-direction: column;
-		gap: 0.62rem;
-		margin-top: 0.72rem;
-		padding: 0.68rem 0.78rem;
-		border-radius: var(--ui-radius-md);
-		border: 1px solid var(--ui-border-soft);
-		background: color-mix(in oklab, var(--ui-code) 72%, transparent);
-		overflow: visible;
-	}
-
-	.tool-card::before,
-	.tool-result::before {
-		content: none;
-	}
-
-	.tool-card-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 0.8rem;
-	}
-
-	.tool-card.error,
-	.tool-result.error {
-		background: color-mix(in oklab, var(--ui-danger-soft) 56%, transparent);
-	}
-
-	.tool-card.error,
-	.tool-result.error {
-		border-color: color-mix(in oklab, var(--ui-danger) 36%, var(--ui-border-soft));
-	}
-
-	.tool-result.error {
-		border-color: color-mix(in oklab, var(--ui-danger) 42%, var(--ui-border-soft));
-	}
-
-	.tool-card-copy,
-	.tool-card-actions {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-	}
-
-	.tool-card-copy {
-		flex-direction: column;
-	}
-
-	.tool-card-copy strong {
-		font-size: 0.72rem;
-		font-weight: 600;
-		color: var(--ui-text-primary);
-	}
-
-	.tool-card-copy span {
-		font-family: var(--font-mono);
-		font-size: 0.6rem;
-		color: var(--ui-text-secondary);
-	}
-
-	.tool-body-preview {
-		display: flex;
-		flex-direction: column;
-		gap: 0.45rem;
-		padding-top: 0.7rem;
-		border-top: 1px solid color-mix(in oklab, var(--ui-border-soft) 82%, transparent);
-	}
-
-	.tool-body-label {
-		font-size: 0.68rem;
-		font-weight: 620;
-		letter-spacing: 0.02em;
-		text-transform: uppercase;
-		color: var(--ui-text-secondary);
-	}
-
-	.tool-body-preview pre {
-		margin: 0;
-		max-height: 16rem;
-		overflow: auto;
-		padding: 0.72rem 0.78rem;
-		border-radius: var(--ui-radius-sm);
-		border: 1px solid color-mix(in oklab, var(--ui-border-soft) 80%, transparent);
-		background: color-mix(in oklab, var(--ui-code) 90%, var(--ui-surface));
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
-		word-break: break-word;
-		font-size: 0.78rem;
-		line-height: 1.58;
-		color: var(--ui-text-primary);
-	}
-
 	.execute-result-grid {
 		margin-top: 0.7rem;
 		padding-top: 0.7rem;
@@ -1082,8 +990,7 @@
 		}
 
 		.message-bubble header,
-		.tool-result-header,
-		.tool-card-header {
+		.tool-result-header {
 			flex-direction: column;
 			align-items: stretch;
 		}

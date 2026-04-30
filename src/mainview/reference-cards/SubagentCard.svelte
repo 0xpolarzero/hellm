@@ -70,119 +70,27 @@
 
 <button
   type="button"
-  class={`reference-subagent-card ${expandable ? "is-expandable" : ""} tone-${config.tone} ${className}`.trim()}
+  class={`flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/40 border border-border/50 text-left min-w-0 ${expandable ? "hover:bg-muted/70 transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" : ""} ${className}`.trim()}
   aria-disabled={!expandable}
   onclick={open}
   onkeydown={keydown}
   data-testid={`subagent-card-${agent.id}`}
 >
-  <Icon size={13} strokeWidth={2.1} class="agent-icon" />
-  <span class="agent-label">{config.label}</span>
-  <span class="agent-headline">{agent.headline}</span>
-  <div class="agent-meta">
+  <Icon class="w-3.5 h-3.5 text-muted-foreground group-hover:text-foreground transition-colors flex-shrink-0" strokeWidth={2.1} />
+
+  <div class="flex-1 min-w-0 flex items-center gap-1.5">
+    <span class="text-[11px] font-medium text-foreground truncate">{agent.headline}</span>
+    <span class="text-[9px] font-mono text-muted-foreground/60 uppercase tracking-wider flex-shrink-0">{config.label}</span>
+  </div>
+
+  <div class="flex items-center gap-1.5 flex-shrink-0">
     <StatusBadge status={agent.status} dotOnly size="xs" />
     {#if tokenLabel}
-      <span class="agent-tokens">{tokenLabel}</span>
+      <span class="text-[9px] font-mono text-muted-foreground/60">{tokenLabel}</span>
     {/if}
     <ModelBadge model={agent.model} size="xs" />
     {#if expandable}
-      <span class="agent-arrow" aria-hidden="true">-&gt;</span>
+      <span class="text-[9px] font-mono text-muted-foreground/40" aria-hidden="true">-&gt;</span>
     {/if}
   </div>
 </button>
-
-<style>
-  .reference-subagent-card {
-    --agent-color: var(--ui-text-tertiary);
-    display: flex;
-    align-items: center;
-    gap: 0.48rem;
-    min-width: 0;
-    min-height: 1.85rem;
-    padding: 0.38rem 0.5rem;
-    border: 1px solid color-mix(in oklab, var(--ui-border-soft) 72%, transparent);
-    border-radius: var(--ui-radius-md);
-    background: color-mix(in oklab, var(--ui-surface-muted) 42%, transparent);
-    color: var(--ui-text-primary);
-    text-align: left;
-  }
-
-  .is-expandable {
-    cursor: pointer;
-    transition:
-      background-color 140ms ease,
-      border-color 140ms ease;
-  }
-
-  .is-expandable:hover {
-    border-color: color-mix(in oklab, var(--agent-color) 24%, var(--ui-border-soft));
-    background: color-mix(in oklab, var(--ui-surface-muted) 70%, transparent);
-  }
-
-  .is-expandable:focus-visible {
-    outline: none;
-    box-shadow: var(--ui-focus-ring);
-  }
-
-  .agent-icon,
-  .agent-label {
-    color: var(--agent-color);
-    flex: 0 0 auto;
-  }
-
-  .agent-label,
-  .agent-tokens,
-  .agent-arrow {
-    font-family: var(--font-mono);
-    font-size: 0.58rem;
-    font-weight: 650;
-    line-height: 1;
-  }
-
-  .agent-headline {
-    min-width: 0;
-    flex: 1 1 auto;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: color-mix(in oklab, var(--ui-text-primary) 82%, transparent);
-    font-size: 0.68rem;
-    line-height: 1.25;
-  }
-
-  .agent-meta {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.38rem;
-    flex: 0 0 auto;
-  }
-
-  .agent-tokens,
-  .agent-arrow {
-    color: var(--ui-text-tertiary);
-  }
-
-  .agent-arrow {
-    opacity: 0.48;
-  }
-
-  .tone-orange {
-    --agent-color: var(--ui-accent);
-  }
-
-  .tone-yellow {
-    --agent-color: var(--ui-warning);
-  }
-
-  .tone-blue {
-    --agent-color: var(--ui-info);
-  }
-
-  .tone-purple {
-    --agent-color: hsl(268 83% 65%);
-  }
-
-  .tone-cyan {
-    --agent-color: hsl(188 86% 45%);
-  }
-</style>
