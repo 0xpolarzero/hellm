@@ -56,7 +56,7 @@ Use the graph only for compact status semantics:
 - failed descendants remain visible through compact descendant chips
 - selected nodes open a dense detail pane with objective, latest output, worktree, task, command, artifact, Project CI, and raw tabs from the workflow inspector contract
 
-Artifact surfaces use the Replit artifact browser as styling input: compact grouped rows, selected-row treatment, preview/raw/metadata modes, bordered code/log areas, missing-artifact callouts, and tiny artifact rows in command and workflow details. Real content must come from durable artifact records or the existing local artifact controller for legacy renderer artifacts.
+Artifact surfaces use the Replit artifact browser as styling input: compact grouped rows, selected-row treatment, preview/raw/metadata modes, bordered code/log areas, missing-artifact callouts, and tiny artifact rows in command and workflow details. Real content must come from durable artifact records or the existing local artifact controller.
 
 Command inspectors use the Replit right-inspector density as a visual pattern, not its mock omniscient tab model. The product keeps command, task-attempt, artifact, Project CI, and workflow inspectors backed by their separate read models, with compact summary sections, metadata rows, child-command hierarchy, artifacts, errors, and raw details.
 

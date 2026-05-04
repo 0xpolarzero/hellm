@@ -45,6 +45,7 @@ flowchart TD
     end
 
     subgraph Tools["Tool Surface"]
+        DirectTools["PI-backed direct tools"]
         Generic["execute_typescript"]
         ThreadStart["thread.start"]
         RequestContext["request_context"]
@@ -58,11 +59,10 @@ flowchart TD
         Compile["Compile or typecheck snippet against api.* types"]
         Run["Run valid TypeScript program"]
         Api["Injected api.* SDK"]
-        ApiRepo["api.repo.*"]
-        ApiGit["api.git.*"]
-        ApiWeb["api.web.*"]
+        ApiRead["api.read / api.grep / api.find / api.ls"]
+        ApiBash["api.bash"]
         ApiArtifact["api.artifact.*"]
-        ApiExec["api.exec.run"]
+        ApiWorkflow["api.workflow.*"]
     end
 
     subgraph Runtime["Runtime Handlers"]
@@ -101,11 +101,10 @@ flowchart TD
     Generic --> Compile
     Compile --> Run
     Run --> Api
-    Api --> ApiRepo
-    Api --> ApiGit
-    Api --> ApiWeb
+    Api --> ApiRead
+    Api --> ApiBash
     Api --> ApiArtifact
-    Api --> ApiExec
+    Api --> ApiWorkflow
     Api --> RuntimeHandler
 
     ThreadStart --> RuntimeHandler
@@ -196,7 +195,7 @@ The adopted direction is:
 
 - use a PI-backed workflow task agent by default when a workflow task needs an adaptive agent
 - give that workflow task agent a `svvy` workflow-task prompt rather than the orchestrator or handler-thread prompt
-- expose only task-local tools; the default adopted task-agent surface is `execute_typescript`
+- expose task-local direct tools plus `execute_typescript` for typed composition
 - do not expose `thread.start`, `thread.handoff`, `wait`, or `smithers.*` to workflow task agents
 - do not load ambient pi built-in tools or workspace-discovered extension tools into workflow task agents
 - execute workflow task agents from Smithers' current task root or worktree rather than from the workspace runtime DB root
@@ -293,13 +292,13 @@ No runtime path infers CI from arbitrary workflow output, command names, logs, o
 
 ## Key Guarantees
 
-- `execute_typescript` remains the default generic work surface.
-- `api.exec.run` remains the explicit bounded process execution capability inside `execute_typescript`.
+- Direct tools are the default coding-agent work surface.
+- `api.bash` duplicates the direct `bash` tool inside `execute_typescript` when typed composition needs shell-backed inspection.
 - `thread.start`, `thread.handoff`, and `wait` remain `svvy`-native control tools.
 - workflow supervision should use Smithers-native bridge tools such as `smithers.run_workflow`, `smithers.get_run`, and `smithers.resolve_approval`.
 - the Smithers-native tool surface targets product-runtime runnable workflows rather than the repo authoring workspace under `workflows/`.
 - capability declarations are actor-specific: the orchestrator gets only orchestrator-callable tools, and handler threads get only handler-callable tools.
-- workflow task agents are another actor class below handler threads and should receive only task-local tool declarations, with `execute_typescript` as the default adopted task tool and no ambient pi extension-tool leakage.
+- workflow task agents are another actor class below handler threads and should receive only task-local direct tools plus `execute_typescript`, with no ambient pi extension-tool leakage.
 - runtime handlers and bridges write durable facts from real execution; agents do not mutate product state through arbitrary write tools.
 - child `api.*` calls remain nested command facts under a parent `execute_typescript` command.
 - tool-run summaries stay on command records and artifacts; ordinary handler replies do not emit episodes.

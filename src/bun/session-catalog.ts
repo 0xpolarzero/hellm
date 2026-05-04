@@ -86,9 +86,11 @@ import { buildSystemPrompt, type SvvyActorKind } from "./default-system-prompt";
 import { createSmithersTools } from "./smithers-tools";
 import { SmithersRuntimeManager } from "./smithers-runtime/manager";
 import { createBundledWorkflowDefinitions } from "./smithers-runtime/bundled-workflows";
+import { createWorkflowLibrary } from "./smithers-runtime/workflow-library";
 import { createRequestContextTool } from "./request-context-tool";
 import { getHandlerContextPack, type HandlerContextKey } from "./handler-context-packs";
 import { createSessionAgentSettingsStore } from "./session-agent-settings";
+import { createSvvyDirectTools } from "./svvy-direct-tools";
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
   input: 0,
@@ -2283,6 +2285,17 @@ async function createManagedSession(
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
   });
+  const directTools = createSvvyDirectTools({
+    cwd: options.sessionManager.getCwd(),
+    runtime: promptExecutionRuntime,
+    store: options.structuredSessionStore,
+    workflowLibrary: createWorkflowLibrary(options.sessionManager.getCwd()),
+  });
+  const sharedWorkTools = [
+    ...directTools.codingTools,
+    ...directTools.artifactTools,
+    executeTypescriptTool,
+  ] as const;
   const waitTool = createWaitTool({
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
@@ -2297,7 +2310,8 @@ async function createManagedSession(
   });
   const buildHandlerTools = () =>
     [
-      executeTypescriptTool,
+      ...sharedWorkTools,
+      ...directTools.workflowTools,
       requestContextTool,
       threadHandoffTool,
       ...createSmithersTools({
@@ -2312,7 +2326,7 @@ async function createManagedSession(
       ? ([] as const)
       : options.actorKind === "orchestrator"
         ? ([
-            executeTypescriptTool,
+            ...sharedWorkTools,
             createStartThreadTool({
               runtime: promptExecutionRuntime,
               store: options.structuredSessionStore,

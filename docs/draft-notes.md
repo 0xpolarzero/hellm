@@ -79,8 +79,8 @@
   - this helps agents in sessions focus purely on product and not in anything-harness, so you have clear separation of concerns, and snitch suggesting stuff so you don't have to think too much about this either
   - including maybe having it help on a specific set of surfaces, e.g. its notes, todos, this kind of more user-facing stuff?
 
-- a benefit of our api inside execute_typescript is that we can add hooks and programatically enforce rules, which will automatically run and return back diagnostics/output to the agent, without expanding conceptual surface for the agent to remember to use special tools or whatever
-  - e.g. typecheck on editing workflows (writeFile/writeJson inside .svvy/workflows/)
+- a benefit of svvy-wrapped direct tools is that we can add hooks and programatically enforce rules, which will automatically run and return back diagnostics/output to the agent without expanding conceptual surface
+  - e.g. typecheck on editing workflows through direct `write` or `edit` under `.svvy/workflows/`
   - e.g. run CI on git commit/push
 
 - "qa" step similar to ci; have an agent look at changes, figure out if there is any new/changed UI surface, test the flow itself by driving the app, take screenshots, examine the screenshots to make sure everything works and displays as expected, and return a structured output

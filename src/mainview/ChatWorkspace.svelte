@@ -1912,12 +1912,12 @@
       return;
     }
 
-    const prompt = [
-      "Inspect the workflow work owned by this thread.",
-      "If there are reusable saved workflow files worth keeping, write them directly into `.svvy/workflows/...` using the normal repo write APIs.",
-      "Rely on the automatic workflow validation feedback returned in the surrounding `execute_typescript` logs, and keep editing until the final saved workflow state validates cleanly.",
-      "If nothing here is worth saving, say so briefly inside the thread.",
-    ].join(" ");
+      const prompt = [
+        "Inspect the workflow work owned by this thread.",
+        "If there are reusable saved workflow files worth keeping, write them directly into `.svvy/workflows/...` using the direct write or edit tools.",
+        "Rely on the automatic workflow validation feedback returned in structured tool output, and keep editing until the final saved workflow state validates cleanly.",
+        "If nothing here is worth saving, say so briefly inside the thread.",
+      ].join(" ");
 
     await sendPromptToHandlerThread(thread, prompt);
   }

@@ -34,8 +34,8 @@ const WORKFLOW_AUTHORING_RUN_PROMPT =
   "Run the artifact workflow you just authored, use smithers.get_run as needed until it finishes, and then hand the result back.";
 const WORKFLOW_AUTHORING_SAVE_SHORTCUT_PROMPT = [
   "Inspect the workflow work owned by this thread.",
-  "If there are reusable saved workflow files worth keeping, write them directly into `.svvy/workflows/...` using the normal repo write APIs.",
-  "Rely on the automatic workflow validation feedback returned in the surrounding `execute_typescript` logs, and keep editing until the final saved workflow state validates cleanly.",
+  "If there are reusable saved workflow files worth keeping, write them directly into `.svvy/workflows/...` using the direct write or edit tools.",
+  "Rely on the automatic workflow validation feedback returned in structured tool output, and keep editing until the final saved workflow state validates cleanly.",
   "If nothing here is worth saving, say so briefly inside the thread.",
 ].join(" ");
 const WORKFLOW_AUTHORING_ARTIFACT_WORKFLOW_ID = "workflow_authoring_proof_draft";
@@ -360,6 +360,16 @@ export function startWorkflowAuthoringSavedWritesChatStub(): WorkflowSupervision
               "Expected workflow-authoring proof execute_typescript result to return the artifact workflow id.",
             );
           }
+          const nextArtifactFile = nextUnwrittenFile(toolCalls, readFilePayloads(authoringPayload));
+          if (nextArtifactFile) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "write",
+              args: nextArtifactFile,
+            });
+          }
 
           return createTextResponse({
             responseId,
@@ -458,35 +468,32 @@ export function startWorkflowAuthoringSavedWritesChatStub(): WorkflowSupervision
           if (parsedSaveResult?.success !== true) {
             throw new Error("Expected workflow-authoring save execute_typescript to succeed.");
           }
-
-          const saveLogs = readStringArrayProperty(parsedSaveResult, "logs");
-          if (
-            !saveLogs.some((log) =>
-              log.includes(
-                "[error] Workflow validation reported 1 error after writing .svvy/workflows/components/workflow-authoring-proof-reviewer.ts.",
-              ),
-            )
-          ) {
-            throw new Error(
-              "Expected save execute_typescript logs to include the initial workflow validation error.",
-            );
+          const savePayload = readObjectProperty(parsedSaveResult, "result");
+          const invalidFile = readFilePayload(readObjectProperty(savePayload, "invalidFile"));
+          if (invalidFile && !hasWriteCall(toolCalls, invalidFile.path, invalidFile.content)) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "write",
+              args: invalidFile,
+            });
           }
-          if (
-            !saveLogs.some((log) =>
-              log.includes(
-                "Workflow validation passed after writing .svvy/workflows/entries/workflow-authoring-proof.ts.",
-              ),
-            )
-          ) {
-            throw new Error(
-              "Expected save execute_typescript logs to include the final workflow validation success.",
-            );
+          const nextSavedFile = nextUnwrittenFile(toolCalls, readFilePayloads(savePayload));
+          if (nextSavedFile) {
+            return createToolCallResponse({
+              responseId,
+              model: payload.model,
+              toolCallId: `call-${++toolCallCounter}`,
+              toolName: "write",
+              args: nextSavedFile,
+            });
           }
 
           if (
             !hasThreadHandoffCallWithSummary(
               toolCalls,
-              "Saved reusable workflow files through normal repo write APIs and finished with clean workflow validation logs.",
+              "Saved reusable workflow files through direct write tools and finished with clean workflow validation output.",
             )
           ) {
             return createToolCallResponse({
@@ -605,7 +612,7 @@ function workflowAuthoringArtifactHandoffArgs(): Record<string, unknown> {
       "Authored and ran a short-lived artifact workflow without creating reusable saved workflow files.",
     body: [
       "Checked runnable saved entries through smithers.list_workflows before authoring.",
-      "Inspected reusable saved assets and models inside execute_typescript through api.workflow.listAssets(...) and api.workflow.listModels().",
+      "Inspected reusable saved assets and models inside execute_typescript through api.workflow.list_assets(...) and api.workflow.list_models().",
       `Authored ${WORKFLOW_AUTHORING_ARTIFACT_WORKFLOW_ID} under ${WORKFLOW_AUTHORING_ARTIFACT_ROOT}/ and launched it through smithers.run_workflow with workflowId ${WORKFLOW_AUTHORING_ARTIFACT_WORKFLOW_ID}.`,
       "No reusable .svvy/workflows files were written before an explicit save request arrived.",
     ].join("\n\n"),
@@ -617,12 +624,12 @@ function workflowAuthoringSaveHandoffArgs(): Record<string, unknown> {
     kind: "workflow",
     title: "saved workflow proof completed",
     summary:
-      "Saved reusable workflow files through normal repo write APIs and finished with clean workflow validation logs.",
+      "Saved reusable workflow files through direct write tools and finished with clean workflow validation output.",
     body: [
       "The save shortcut only sent a new prompt into the owning handler thread.",
-      "The handler wrote reusable saved workflow files directly into .svvy/workflows/ with api.repo.writeFile(...).",
+      "The handler wrote reusable saved workflow files directly into .svvy/workflows/ with the direct write-capable tool surface.",
       "An intentional invalid component write surfaced workflow validation errors in the enclosing execute_typescript result logs.",
-      "The handler fixed the saved workflow files and stopped only after the final validation logs were clean.",
+      "The handler fixed the saved workflow files and stopped only after the final validation output was clean.",
     ].join("\n\n"),
   };
 }
@@ -933,6 +940,53 @@ function readStringArrayProperty(
     : [];
 }
 
+type WriteFilePayload = {
+  path: string;
+  content: string;
+};
+
+function readFilePayload(
+  value: Record<string, unknown> | null | undefined,
+): WriteFilePayload | null {
+  const path = readStringProperty(value, "path");
+  const content = readStringProperty(value, "content");
+  return path && content != null ? { path, content } : null;
+}
+
+function readFilePayloads(value: Record<string, unknown> | null | undefined): WriteFilePayload[] {
+  const files = value?.files;
+  if (!Array.isArray(files)) {
+    return [];
+  }
+  return files.flatMap((entry) => {
+    const payload = readFilePayload(
+      entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null,
+    );
+    return payload ? [payload] : [];
+  });
+}
+
+function nextUnwrittenFile(
+  toolCalls: StubAssistantToolCall[],
+  files: WriteFilePayload[],
+): WriteFilePayload | null {
+  return files.find((file) => !hasWriteCall(toolCalls, file.path, file.content)) ?? null;
+}
+
+function hasWriteCall(toolCalls: StubAssistantToolCall[], path: string, content?: string): boolean {
+  return toolCalls.some((toolCall) => {
+    if (
+      toolCall.name !== "write" ||
+      readStringProperty(toolCall.parsedArguments, "path") !== path
+    ) {
+      return false;
+    }
+    return (
+      content === undefined || readStringProperty(toolCall.parsedArguments, "content") === content
+    );
+  });
+}
+
 function buildWorkflowAuthoringDefinitionFileText(): string {
   return [
     "/**",
@@ -1017,13 +1071,13 @@ function buildWorkflowAuthoringDefinitionFileText(): string {
 
 function buildWorkflowAuthoringArtifactCode(): string {
   return [
-    'const savedDefinitions = await api.workflow.listAssets({ kind: "definition", scope: "saved" });',
-    'const savedPrompts = await api.workflow.listAssets({ kind: "prompt", scope: "saved" });',
-    'const savedComponents = await api.workflow.listAssets({ kind: "component", scope: "saved" });',
-    "const models = await api.workflow.listModels();",
+    'const savedDefinitions = await api.workflow.list_assets({ kind: "definition", scope: "saved" });',
+    'const savedPrompts = await api.workflow.list_assets({ kind: "prompt", scope: "saved" });',
+    'const savedComponents = await api.workflow.list_assets({ kind: "component", scope: "saved" });',
+    "const models = await api.workflow.list_models();",
     "const directWorkFits = false;",
     "const savedRunnableFits = false;",
-    "const chosenModel = models.find((model) => model.authAvailable) ?? models[0] ?? {",
+    "const chosenModel = models.details.models.find((model) => model.authAvailable) ?? models.details.models[0] ?? {",
     '  providerId: "unknown",',
     '  modelId: "unknown",',
     "};",
@@ -1109,21 +1163,7 @@ function buildWorkflowAuthoringArtifactCode(): string {
     '  "",',
     '].join("\\n");',
     "",
-    `await api.repo.writeFile({ path: ${JSON.stringify(
-      WORKFLOW_AUTHORING_ARTIFACT_DEFINITION_PATH,
-    )}, text: definitionText, createDirectories: true });`,
-    `await api.repo.writeFile({ path: ${JSON.stringify(
-      WORKFLOW_AUTHORING_ARTIFACT_PROMPT_PATH,
-    )}, text: promptText, createDirectories: true });`,
-    `await api.repo.writeFile({ path: ${JSON.stringify(
-      WORKFLOW_AUTHORING_ARTIFACT_COMPONENT_PATH,
-    )}, text: componentText, createDirectories: true });`,
-    `await api.repo.writeFile({ path: ${JSON.stringify(
-      WORKFLOW_AUTHORING_ARTIFACT_ENTRY_PATH,
-    )}, text: entryText, createDirectories: true });`,
-    `await api.repo.writeJson({ path: ${JSON.stringify(
-      WORKFLOW_AUTHORING_ARTIFACT_METADATA_PATH,
-    )}, value: {`,
+    "const metadata = {",
     "  artifactWorkflowId,",
     "  schemaVersion: 1,",
     '  sessionId: "svvy-e2e-session",',
@@ -1132,33 +1172,43 @@ function buildWorkflowAuthoringArtifactCode(): string {
     "  createdAt: now,",
     "  updatedAt: now,",
     `  entryPaths: [${JSON.stringify(WORKFLOW_AUTHORING_ARTIFACT_ENTRY_PATH)}],`,
-    "}, pretty: true, createDirectories: true });",
+    "};",
     "return {",
     "  directWorkFits,",
     "  savedRunnableFits,",
     "  savedAssetCounts: {",
-    "    definitions: savedDefinitions.length,",
-    "    prompts: savedPrompts.length,",
-    "    components: savedComponents.length,",
+    "    definitions: savedDefinitions.details.assets.length,",
+    "    prompts: savedPrompts.details.assets.length,",
+    "    components: savedComponents.details.assets.length,",
     "  },",
-    "  modelCount: models.length,",
+    "  modelCount: models.details.models.length,",
     "  artifactWorkflowId,",
     `  entryPath: ${JSON.stringify(WORKFLOW_AUTHORING_ARTIFACT_ENTRY_PATH)},`,
+    "  files: [",
+    `    { path: ${JSON.stringify(WORKFLOW_AUTHORING_ARTIFACT_DEFINITION_PATH)}, content: definitionText },`,
+    `    { path: ${JSON.stringify(WORKFLOW_AUTHORING_ARTIFACT_PROMPT_PATH)}, content: promptText },`,
+    `    { path: ${JSON.stringify(WORKFLOW_AUTHORING_ARTIFACT_COMPONENT_PATH)}, content: componentText },`,
+    `    { path: ${JSON.stringify(WORKFLOW_AUTHORING_ARTIFACT_ENTRY_PATH)}, content: entryText },`,
+    `    { path: ${JSON.stringify(WORKFLOW_AUTHORING_ARTIFACT_METADATA_PATH)}, content: JSON.stringify(metadata, null, 2) },`,
+    "  ],",
     "};",
   ].join("\n");
 }
 
 function buildWorkflowAuthoringSaveCode(): string {
   return [
-    `const artifactPrompt = await api.repo.readFile({ path: ${JSON.stringify(
+    `const artifactPrompt = await api.read({ path: ${JSON.stringify(
       WORKFLOW_AUTHORING_ARTIFACT_PROMPT_PATH,
     )} });`,
-    `const artifactComponent = await api.repo.readFile({ path: ${JSON.stringify(
+    `const artifactComponent = await api.read({ path: ${JSON.stringify(
       WORKFLOW_AUTHORING_ARTIFACT_COMPONENT_PATH,
     )} });`,
-    `const artifactDefinition = await api.repo.readFile({ path: ${JSON.stringify(
+    `const artifactDefinition = await api.read({ path: ${JSON.stringify(
       WORKFLOW_AUTHORING_ARTIFACT_DEFINITION_PATH,
     )} });`,
+    "const artifactPromptText = artifactPrompt.content[0]?.type === 'text' ? artifactPrompt.content[0].text : '';",
+    "const artifactComponentText = artifactComponent.content[0]?.type === 'text' ? artifactComponent.content[0].text : '';",
+    "const artifactDefinitionText = artifactDefinition.content[0]?.type === 'text' ? artifactDefinition.content[0].text : '';",
     "",
     "function readPromptBody(text: string): string {",
     '  if (!text.startsWith("---\\n")) {',
@@ -1168,26 +1218,22 @@ function buildWorkflowAuthoringSaveCode(): string {
     "  return (end === -1 ? text : text.slice(end + 5)).trim();",
     "}",
     "",
-    'const provider = artifactComponent.text.match(/provider:\\s*"([^"]+)"/)?.[1] ?? "unknown";',
-    'const model = artifactComponent.text.match(/model:\\s*"([^"]+)"/)?.[1] ?? "unknown";',
+    'const provider = artifactComponentText.match(/provider:\\s*"([^"]+)"/)?.[1] ?? "unknown";',
+    'const model = artifactComponentText.match(/model:\\s*"([^"]+)"/)?.[1] ?? "unknown";',
     "",
     "const invalidComponentText = [",
     '  "/**",',
     '  " * @svvyAssetKind component",',
     '  " * @svvyId workflow_authoring_proof_reviewer",',
     '  " * @svvyTitle Workflow Authoring Proof Reviewer",',
-    '  " * @svvySummary Broken saved reviewer used to prove workflow validation logs.",',
+    '  " * @svvySummary Broken saved reviewer used to prove workflow validation output.",',
     '  " */",',
     "  'const brokenReviewer: number = \"oops\";',",
     '  "export const workflowAuthoringReviewer = brokenReviewer;",',
     '  "",',
     '].join("\\n");',
     "",
-    `await api.repo.writeFile({ path: ${JSON.stringify(
-      WORKFLOW_AUTHORING_SAVED_COMPONENT_PATH,
-    )}, text: invalidComponentText, createDirectories: true });`,
-    "",
-    "const definitionText = artifactDefinition.text;",
+    "const definitionText = artifactDefinitionText;",
     "",
     "const promptText = [",
     '  "---",',
@@ -1197,7 +1243,7 @@ function buildWorkflowAuthoringSaveCode(): string {
     '  "summary: Reusable prompt for the workflow authoring proof.",',
     '  "---",',
     '  "",',
-    "  readPromptBody(artifactPrompt.text),",
+    "  readPromptBody(artifactPromptText),",
     '  "",',
     '].join("\\n");',
     "",
@@ -1266,27 +1312,22 @@ function buildWorkflowAuthoringSaveCode(): string {
     '  "",',
     '].join("\\n");',
     "",
-    `await api.repo.writeFile({ path: ${JSON.stringify(
-      WORKFLOW_AUTHORING_SAVED_COMPONENT_PATH,
-    )}, text: componentText, createDirectories: true });`,
-    `await api.repo.writeFile({ path: ${JSON.stringify(
-      WORKFLOW_AUTHORING_SAVED_DEFINITION_PATH,
-    )}, text: definitionText, createDirectories: true });`,
-    `await api.repo.writeFile({ path: ${JSON.stringify(
-      WORKFLOW_AUTHORING_SAVED_PROMPT_PATH,
-    )}, text: promptText, createDirectories: true });`,
-    `await api.repo.writeFile({ path: ${JSON.stringify(
-      WORKFLOW_AUTHORING_SAVED_ENTRY_PATH,
-    )}, text: entryText, createDirectories: true });`,
     "return {",
-    "  reusedArtifactPromptBytes: artifactPrompt.text.length,",
-    "  reusedArtifactComponentBytes: artifactComponent.text.length,",
-    "  reusedArtifactDefinitionBytes: artifactDefinition.text.length,",
+    "  reusedArtifactPromptBytes: artifactPromptText.length,",
+    "  reusedArtifactComponentBytes: artifactComponentText.length,",
+    "  reusedArtifactDefinitionBytes: artifactDefinitionText.length,",
     "  savedPaths: [",
     `    ${JSON.stringify(WORKFLOW_AUTHORING_SAVED_DEFINITION_PATH)},`,
     `    ${JSON.stringify(WORKFLOW_AUTHORING_SAVED_PROMPT_PATH)},`,
     `    ${JSON.stringify(WORKFLOW_AUTHORING_SAVED_COMPONENT_PATH)},`,
     `    ${JSON.stringify(WORKFLOW_AUTHORING_SAVED_ENTRY_PATH)},`,
+    "  ],",
+    `  invalidFile: { path: ${JSON.stringify(WORKFLOW_AUTHORING_SAVED_COMPONENT_PATH)}, content: invalidComponentText },`,
+    "  files: [",
+    `    { path: ${JSON.stringify(WORKFLOW_AUTHORING_SAVED_COMPONENT_PATH)}, content: componentText },`,
+    `    { path: ${JSON.stringify(WORKFLOW_AUTHORING_SAVED_DEFINITION_PATH)}, content: definitionText },`,
+    `    { path: ${JSON.stringify(WORKFLOW_AUTHORING_SAVED_PROMPT_PATH)}, content: promptText },`,
+    `    { path: ${JSON.stringify(WORKFLOW_AUTHORING_SAVED_ENTRY_PATH)}, content: entryText },`,
     "  ],",
     "};",
   ].join("\n");

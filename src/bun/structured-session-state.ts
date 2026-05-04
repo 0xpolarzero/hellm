@@ -9,6 +9,15 @@ export type StructuredTurnDecision =
   | "pending"
   | "reply"
   | "execute_typescript"
+  | "read"
+  | "grep"
+  | "find"
+  | "ls"
+  | "edit"
+  | "write"
+  | "bash"
+  | `artifact.${string}`
+  | `workflow.${string}`
   | "clarify"
   | "thread.start"
   | "request_context"
@@ -491,6 +500,7 @@ export interface StructuredSessionStateStore {
     body: string;
   }): StructuredEpisodeRecord;
   createArtifact(input: {
+    sessionId?: string | null;
     threadId?: string | null;
     workflowRunId?: string | null;
     workflowTaskAttemptId?: string | null;
@@ -1892,6 +1902,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   }
 
   createArtifact(input: {
+    sessionId?: string | null;
     threadId?: string | null;
     workflowRunId?: string | null;
     workflowTaskAttemptId?: string | null;
@@ -1928,11 +1939,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       null;
     const workflowTaskAttemptId = input.workflowTaskAttemptId ?? workflowTaskAttempt?.id ?? null;
     const sourceCommandId = input.sourceCommandId ?? null;
+    const explicitSession = input.sessionId ? this.mustFindSessionRow(input.sessionId) : null;
     const sessionId =
       thread?.session_id ??
       workflowTaskAttempt?.session_id ??
       workflowRun?.session_id ??
       sourceCommand?.session_id ??
+      explicitSession?.session_id ??
       null;
 
     if (!sessionId) {

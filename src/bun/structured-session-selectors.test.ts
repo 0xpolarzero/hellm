@@ -498,7 +498,7 @@ describe("structured session selectors", () => {
         {
           id: "command-002",
           parentCommandId: "command-001",
-          toolName: "api.repo.readFile",
+          toolName: "api.read",
           visibility: "trace",
           title: "Read docs/prd.md",
           summary: "Loaded docs/prd.md.",
@@ -661,7 +661,7 @@ describe("structured session selectors", () => {
         {
           id: "command-summary-child",
           parentCommandId: "command-parent",
-          toolName: "artifact.writeText",
+          toolName: "artifact.write_text",
           visibility: "summary",
           title: "Create summary.md",
           summary: "Created summary.md.",
@@ -677,7 +677,7 @@ describe("structured session selectors", () => {
         {
           id: "command-trace-child",
           parentCommandId: "command-parent",
-          toolName: "repo.readFile",
+          toolName: "read",
           visibility: "trace",
           title: "Read docs/prd.md",
           summary: "Loaded docs/prd.md.",
@@ -750,7 +750,7 @@ describe("structured session selectors", () => {
       summaryChildren: [
         {
           commandId: "command-summary-child",
-          toolName: "artifact.writeText",
+          toolName: "artifact.write_text",
           status: "succeeded",
           title: "Create summary.md",
           summary: "Created summary.md.",
@@ -780,7 +780,7 @@ describe("structured session selectors", () => {
       traceChildren: [
         {
           commandId: "command-trace-child",
-          toolName: "repo.readFile",
+          toolName: "read",
           status: "succeeded",
           title: "Read docs/prd.md",
           summary: "Loaded docs/prd.md.",
@@ -1021,7 +1021,7 @@ describe("structured session selectors", () => {
           id: "command-handler-child",
           threadId: "thread-handler",
           parentCommandId: "command-handler-parent",
-          toolName: "artifact.writeText",
+          toolName: "artifact.write_text",
           visibility: "summary",
           title: "Write parser test",
           summary: "Created parser regression coverage.",
@@ -1205,7 +1205,7 @@ describe("structured session selectors", () => {
           summaryChildren: [
             {
               commandId: "command-handler-child",
-              toolName: "artifact.writeText",
+              toolName: "artifact.write_text",
               status: "succeeded",
               title: "Write parser test",
               summary: "Created parser regression coverage.",
@@ -1576,7 +1576,7 @@ describe("structured session selectors", () => {
           threadId: "thread-001",
           workflowRunId: "workflow-attempt-1",
           parentCommandId: "command-task-parent",
-          toolName: "repo.writeFile",
+          toolName: "write",
           executor: "execute_typescript",
           visibility: "summary",
           title: "Write workflow-proof.txt",
@@ -1667,7 +1667,7 @@ describe("structured session selectors", () => {
           summaryChildren: [
             {
               commandId: "command-task-child",
-              toolName: "repo.writeFile",
+              toolName: "write",
               status: "succeeded",
               title: "Write workflow-proof.txt",
               summary: "Wrote workflow-proof.txt.",

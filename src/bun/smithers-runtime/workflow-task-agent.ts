@@ -21,12 +21,10 @@ import {
   runExecuteTypescript,
   type ExecuteTypescriptCommandStore,
   type ExecuteTypescriptResult,
-  type ExecuteTypescriptRunCommandInput,
-  type ExecuteTypescriptRunCommandResult,
-  type ExecuteTypescriptWebFetchResult,
-  type ExecuteTypescriptWebSearchResult,
 } from "../execute-typescript-tool";
 import type { StructuredSessionStateStore } from "../structured-session-state";
+import { createSvvyDirectTools } from "../svvy-direct-tools";
+import { createWorkflowLibrary } from "./workflow-library";
 import {
   createDefaultWorkflowTaskAgentConfig,
   type WorkflowTaskAgentConfig,
@@ -38,18 +36,6 @@ type WorkflowTaskAgentOptions = {
   artifactDir: string;
   store: StructuredSessionStateStore;
   config?: WorkflowTaskAgentConfig;
-  runCommand?: (
-    input: ExecuteTypescriptRunCommandInput,
-  ) => Promise<ExecuteTypescriptRunCommandResult>;
-  webSearch?: (input: {
-    query: string;
-    maxResults?: number;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebSearchResult>;
-  fetchText?: (input: {
-    url: string;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebFetchResult>;
 };
 
 type WorkflowTaskAgentGenerateArgs = {
@@ -136,9 +122,12 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         store: options.store,
         getSurfacePiSessionId: () => sessionIdentity.surfacePiSessionId,
         getResumeHandle: () => resumeHandleRef.current,
-        runCommand: options.runCommand,
-        webSearch: options.webSearch,
-        fetchText: options.fetchText,
+      });
+      const directTools = createSvvyDirectTools({
+        cwd: taskRoot,
+        runtime: { current: null },
+        store: options.store,
+        workflowLibrary: createWorkflowLibrary(taskRoot),
       });
 
       const { session } = await createAgentSession({
@@ -151,10 +140,14 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         model,
         thinkingLevel: config.thinkingLevel,
         tools: [],
-        customTools: createCustomToolDefinitions([executeTypescriptTool]),
+        customTools: createCustomToolDefinitions([
+          ...directTools.codingTools,
+          ...directTools.artifactTools,
+          executeTypescriptTool,
+        ]),
         resourceLoader,
       });
-      assertStrictTaskAgentToolSurface(session.getActiveToolNames());
+      assertTaskAgentToolSurface(session.getActiveToolNames());
 
       const durableSessionManager =
         (session as { sessionManager?: SessionManager }).sessionManager ?? sessionManager;
@@ -428,24 +421,12 @@ function createWorkflowTaskExecuteTypescriptTool(input: {
   store: StructuredSessionStateStore;
   getSurfacePiSessionId: () => string;
   getResumeHandle: () => string | null;
-  runCommand?: (
-    args: ExecuteTypescriptRunCommandInput,
-  ) => Promise<ExecuteTypescriptRunCommandResult>;
-  webSearch?: (args: {
-    query: string;
-    maxResults?: number;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebSearchResult>;
-  fetchText?: (args: {
-    url: string;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebFetchResult>;
 }): AgentTool<typeof executeTypescriptParamsSchema, ExecuteTypescriptResult> {
   return {
     label: "Code Mode",
     name: EXECUTE_TYPESCRIPT_TOOL_NAME,
     description:
-      "Run bounded TypeScript against the injected api.* SDK for repository work inside the workflow task agent.",
+      "Run bounded TypeScript against selected duplicated direct tools inside the workflow task agent.",
     parameters: executeTypescriptParamsSchema,
     execute: async (_toolCallId, params, signal) => {
       const projection = await waitForWorkflowTaskAttemptProjection({
@@ -470,9 +451,6 @@ function createWorkflowTaskExecuteTypescriptTool(input: {
           workflowRunId: projection.workflowRunId,
           executor: "workflow-task-agent",
         },
-        runCommand: input.runCommand,
-        webSearch: input.webSearch,
-        fetchText: input.fetchText,
       });
 
       return {
@@ -787,11 +765,23 @@ function syncAuthStorage(authStorage: AuthStorage): void {
   }
 }
 
-function assertStrictTaskAgentToolSurface(activeToolNames: string[]): void {
-  if (activeToolNames.length !== 1 || activeToolNames[0] !== EXECUTE_TYPESCRIPT_TOOL_NAME) {
-    throw new Error(
-      `Workflow task agent tool surface must be exactly ${EXECUTE_TYPESCRIPT_TOOL_NAME}.`,
-    );
+function assertTaskAgentToolSurface(activeToolNames: string[]): void {
+  const allowed = new Set([
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "edit",
+    "write",
+    "bash",
+    "artifact.write_text",
+    "artifact.write_json",
+    "artifact.attach_file",
+    EXECUTE_TYPESCRIPT_TOOL_NAME,
+  ]);
+  const unexpected = activeToolNames.filter((name) => !allowed.has(name));
+  if (unexpected.length > 0) {
+    throw new Error(`Workflow task agent received unexpected tools: ${unexpected.join(", ")}.`);
   }
 }
 

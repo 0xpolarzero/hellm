@@ -271,7 +271,7 @@ describe("workflow task agent", () => {
                 "tool-call-task-agent",
                 {
                   typescriptCode: [
-                    'await api.repo.writeFile({ path: "task-root-output.txt", text: "task-root-ok" });',
+                    'await api.bash({ command: "printf task-root-ok > task-root-output.txt" });',
                     "return {",
                     '  status: "completed",',
                     '  summary: "Wrote task-root-output.txt",',
@@ -369,6 +369,21 @@ describe("workflow task agent", () => {
 
     const [createAgentSessionOptions] = createAgentSessionSpy.mock.calls[0] ?? [];
     expect(createAgentSessionOptions?.cwd).toBe(fixture.taskRoot);
+    expect(
+      createAgentSessionOptions?.customTools?.map((tool: { name: string }) => tool.name),
+    ).toEqual([
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash",
+      "artifact.write_text",
+      "artifact.write_json",
+      "artifact.attach_file",
+      "execute_typescript",
+    ]);
     expect(readFileSync(join(fixture.taskRoot, "task-root-output.txt"), "utf8")).toBe(
       "task-root-ok",
     );

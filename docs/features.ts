@@ -49,10 +49,10 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
   },
   {
     id: "execute-typescript-surface",
-    name: "Execute Typescript Work Surface",
+    name: "Direct Tools And Execute Typescript",
     status: "in-progress",
     summary:
-      "Provides the default generic top-level work surface with observable typed api.* host capabilities, a generated JSDoc-rich SDK declaration embedded in the system prompt and reused for static checking, explicit api.exec.run, workspace-fs-style repo reads and searches, curated git command names, preflight typecheck or compile diagnostics, file-backed snippet artifacts for every attempt, and parent-first rollups over nested child command facts.",
+      "Provides PI-backed direct tools as the default coding-agent work surface, with svvy recording around reads, searches, edits, writes, bash commands, artifacts, and workflow discovery; keeps execute_typescript as a typed composition tool with a generated JSDoc-rich declaration embedded in the system prompt, preflight typecheck or compile diagnostics, file-backed snippet artifacts for every attempt, and parent-first rollups over nested child command facts.",
     sourceSpecs: ["docs/prd.md", "docs/specs/execute-typescript.spec.md"],
   },
   {
@@ -89,7 +89,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workflow Task Agents",
     status: "in-progress",
     summary:
-      "Defines lower-level Smithers workflow task agents as a separate actor class beneath handler threads, using a PI-backed svvy task configuration with a strict `execute_typescript`-only callable surface, no ambient pi built-ins or extension-tool leakage, task-root or worktree execution aligned to the active Smithers attempt, first-class durable workflow-task-attempt records keyed by Smithers attempt identity before task-local tool calls run, message-native retry and hijack continuation, live task-agent activity streaming, and projected nested transcript, command, artifact, and usage traces, while keeping approval and hijack as Smithers runtime controls rather than ordinary task-agent tools.",
+      "Defines lower-level Smithers workflow task agents as a separate actor class beneath handler threads, using a PI-backed svvy task configuration with a task-local direct-tool callable surface plus `execute_typescript`, no ambient pi built-ins or extension-tool leakage, task-root or worktree execution aligned to the active Smithers attempt, first-class durable workflow-task-attempt records keyed by Smithers attempt identity before task-local tool calls run, message-native retry and hijack continuation, live task-agent activity streaming, and projected nested transcript, command, artifact, and usage traces, while keeping approval and hijack as Smithers runtime controls rather than ordinary task-agent tools.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/workflow-supervision.spec.md",
@@ -117,7 +117,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workspace Saved Workflow Library",
     status: "shipped",
     summary:
-      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, exposes minimal asset index metadata from required JSDoc and MDX frontmatter, keeps conventional workflow agents such as `explorer`, `implementer`, and `reviewer` as ordinary component exports in `.svvy/workflows/components/agents.ts`, supports optional product metadata and result schemas on entries such as Project CI, lets handlers list asset paths and read saved asset source through the `execute_typescript` host SDK, validates writes under `.svvy/workflows/...` automatically through the enclosing `execute_typescript` result logs, and presents a read-only library surface with source previews, diagnostics, deletion controls, and open-in-editor handoff to the user's configured external editor.",
+      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, exposes minimal asset index metadata from required JSDoc and MDX frontmatter, keeps conventional workflow agents such as `explorer`, `implementer`, and `reviewer` as ordinary component exports in `.svvy/workflows/components/agents.ts`, supports optional product metadata and result schemas on entries such as Project CI, lets handlers list asset paths through `workflow.list_assets` and read saved asset source through direct file tools, validates writes under `.svvy/workflows/...` automatically through structured tool output, and presents a read-only library surface with source previews, diagnostics, deletion controls, and open-in-editor handoff to the user's configured external editor.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
   },
   {

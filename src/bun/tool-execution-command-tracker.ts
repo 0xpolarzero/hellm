@@ -44,6 +44,11 @@ export function createToolExecutionCommandTracker(options: {
         return;
       }
 
+      options.store.setTurnDecision({
+        turnId: options.promptContext.turnId,
+        decision: input.toolName as never,
+        onlyIfPending: true,
+      });
       const command = options.store.createCommand({
         turnId: options.promptContext.turnId,
         threadId: options.promptContext.surfaceThreadId ?? options.promptContext.rootThreadId,
@@ -104,6 +109,13 @@ function inferExecutor(
 
 function inferVisibility(toolName: string): StructuredCommandVisibility {
   if (toolName.startsWith("api.")) {
+    return "trace";
+  }
+  if (
+    ["read", "grep", "find", "ls", "workflow.list_assets", "workflow.list_models"].includes(
+      toolName,
+    )
+  ) {
     return "trace";
   }
 

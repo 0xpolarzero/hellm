@@ -25,7 +25,7 @@ function commandRollup(commandId = "command-1"): WorkspaceCommandRollup {
     summaryChildren: [
       {
         commandId: "child-1",
-        toolName: "api.exec.run",
+        toolName: "api.bash",
         status: "succeeded",
         title: "Run bun test",
         summary: "Tests passed.",

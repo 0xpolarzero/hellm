@@ -5,12 +5,12 @@
  * - saved reusable assets live under `.svvy/workflows/{definitions,prompts,components}`
  * - runnable saved entries live under `.svvy/workflows/entries`
  * - artifact workflows live under `.svvy/artifacts/workflows/<id>/{...,entries,metadata.json}`
- * - `api.workflow.listAssets(...)` and `api.workflow.listModels()` are authoring-time discovery APIs inside `execute_typescript`
+ * - `workflow.list_assets(...)` and `workflow.list_models()` are authoring-time discovery APIs inside `execute_typescript`
  * - `smithers.list_workflows` is reserved for runnable entries and lists both saved and artifact entries
  * - launch goes through a minimal bridge-shaped `smithers.*` seam rather than a trace-local helper
  * - runnable entries publish explicit grouped asset refs instead of relying on inferred import graphs
  * - writing reusable saved workflow files happens through ordinary repo writes into `.svvy/workflows/...`
- * - writes under `.svvy/workflows/...` return validation feedback through the surrounding `execute_typescript` result
+ * - direct writes under `.svvy/workflows/...` return validation feedback through structured command output
  *
  * Proof boundaries:
  * - this POC proves asset discovery, runnable-entry registry validation, bridge-shaped launch, and saved-library write semantics
@@ -1039,7 +1039,7 @@ function writeArtifactWorkflow(
       provider: input.reviewerModel.providerId,
       model: input.reviewerModel.modelId,
       reasoning: "medium",
-      toolSurface: ["execute_typescript"],
+      toolSurface: ["read", "grep", "find", "ls", "bash", "execute_typescript"],
       instructions:
         "Focus on callback validation, redirect allowlists, CSRF/state handling, token exchange errors, and session integrity.",
     },
@@ -1134,7 +1134,7 @@ function saveArtifactAssetsToLibrary(
       provider: input.artifact.reviewerModel.providerId,
       model: input.artifact.reviewerModel.modelId,
       reasoning: "medium",
-      toolSurface: ["execute_typescript"],
+      toolSurface: ["read", "grep", "find", "ls", "bash", "execute_typescript"],
       instructions:
         "Focus on callback validation, redirect allowlists, CSRF/state handling, token exchange errors, and session integrity.",
     },
@@ -1189,7 +1189,7 @@ async function runSavedEntryScenario(workspaceRoot: string): Promise<ScenarioRes
     args: { purpose: "inspect the saved runnable entry and its declared assets before launch" },
     childCalls: [
       {
-        toolName: "api.repo.readFiles",
+        toolName: "api.read",
         args: { paths: [savedEntry.entryPath, ...savedEntry.assetPaths] },
         result: {
           files: [savedEntry.entryPath, ...savedEntry.assetPaths],
@@ -1243,7 +1243,7 @@ async function runArtifactAuthoringScenario(
     args: { purpose: "discover saved definitions before reading promising files" },
     childCalls: [
       {
-        toolName: "api.workflow.listAssets",
+        toolName: "workflow.list_assets",
         args: { kind: "definition", scope: "saved" },
         result: summarizeAssets(definitionAssets),
       },
@@ -1260,7 +1260,7 @@ async function runArtifactAuthoringScenario(
     args: { purpose: "discover saved prompts before reading promising files" },
     childCalls: [
       {
-        toolName: "api.workflow.listAssets",
+        toolName: "workflow.list_assets",
         args: { kind: "prompt", scope: "saved" },
         result: summarizeAssets(promptAssets),
       },
@@ -1277,7 +1277,7 @@ async function runArtifactAuthoringScenario(
     args: { purpose: "discover saved components before reading promising files" },
     childCalls: [
       {
-        toolName: "api.workflow.listAssets",
+        toolName: "workflow.list_assets",
         args: { kind: "component", scope: "saved" },
         result: summarizeAssets(savedComponents),
       },
@@ -1290,7 +1290,7 @@ async function runArtifactAuthoringScenario(
     args: { purpose: "inspect the reusable saved assets before authoring" },
     childCalls: [
       {
-        toolName: "api.repo.readFiles",
+        toolName: "api.read",
         args: { paths: [seed.definitionPath, seed.promptPath, seed.componentPath, seed.entryPath] },
         result: {
           files: [seed.definitionPath, seed.promptPath, seed.componentPath, seed.entryPath],
@@ -1324,7 +1324,7 @@ async function runArtifactAuthoringScenario(
     },
     childCalls: [
       {
-        toolName: "api.workflow.listModels",
+        toolName: "workflow.list_models",
         args: {},
         result: models,
       },
@@ -1355,22 +1355,22 @@ async function runArtifactAuthoringScenario(
     },
     childCalls: [
       {
-        toolName: "api.repo.writeFile",
+        toolName: "write",
         args: { path: artifact.promptPath },
         result: { path: artifact.promptPath },
       },
       {
-        toolName: "api.repo.writeFile",
+        toolName: "write",
         args: { path: artifact.componentPath },
         result: { path: artifact.componentPath },
       },
       {
-        toolName: "api.repo.writeFile",
+        toolName: "write",
         args: { path: artifact.entryPath },
         result: { path: artifact.entryPath },
       },
       {
-        toolName: "api.repo.writeJson",
+        toolName: "write",
         args: { path: artifact.metadataPath },
         result: { path: artifact.metadataPath },
       },
@@ -1389,7 +1389,7 @@ async function runArtifactAuthoringScenario(
     },
     childCalls: [
       {
-        toolName: "api.workflow.listAssets",
+        toolName: "workflow.list_assets",
         args: { kind: "component", scope: "both" },
         result: summarizeAssets(allComponents),
       },
@@ -1417,7 +1417,7 @@ async function runArtifactAuthoringScenario(
     args: { purpose: "inspect the artifact entry and its declared assets before launch" },
     childCalls: [
       {
-        toolName: "api.repo.readFiles",
+        toolName: "api.read",
         args: { paths: [artifactEntry.entryPath, ...artifactEntry.assetPaths] },
         result: { files: [artifactEntry.entryPath, ...artifactEntry.assetPaths] },
       },
@@ -1471,7 +1471,7 @@ async function runExplicitSaveScenario(
     args: { purpose: "inspect the reusable artifact files selected for explicit save" },
     childCalls: [
       {
-        toolName: "api.repo.readFiles",
+        toolName: "api.read",
         args: { paths: [artifact.promptPath, artifact.componentPath, artifact.entryPath] },
         result: { files: [artifact.promptPath, artifact.componentPath, artifact.entryPath] },
       },
@@ -1495,17 +1495,17 @@ async function runExplicitSaveScenario(
     },
     childCalls: [
       {
-        toolName: "api.repo.writeFile",
+        toolName: "write",
         args: { path: saved.promptPath },
         result: { path: saved.promptPath },
       },
       {
-        toolName: "api.repo.writeFile",
+        toolName: "write",
         args: { path: saved.componentPath },
         result: { path: saved.componentPath },
       },
       {
-        toolName: "api.repo.writeFile",
+        toolName: "write",
         args: { path: saved.entryPath },
         result: { path: saved.entryPath },
       },
@@ -1530,7 +1530,7 @@ async function runExplicitSaveScenario(
     },
     childCalls: [
       {
-        toolName: "api.workflow.listAssets",
+        toolName: "workflow.list_assets",
         args: { scope: "saved", pathPrefix: ".svvy/workflows/" },
         result: summarizeAssets(savedAssets),
       },
@@ -1558,7 +1558,7 @@ async function runExplicitSaveScenario(
     args: { purpose: "inspect the saved entry and its declared assets before relaunch" },
     childCalls: [
       {
-        toolName: "api.repo.readFiles",
+        toolName: "api.read",
         args: { paths: [savedEntry.entryPath, ...savedEntry.assetPaths] },
         result: { files: [savedEntry.entryPath, ...savedEntry.assetPaths] },
       },

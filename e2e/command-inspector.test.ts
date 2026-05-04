@@ -117,7 +117,7 @@ async function seedStructuredCommandInspector(input: {
       turnId: turn.id,
       threadId: thread.id,
       parentCommandId: parentCommand.id,
-      toolName: "repo.readFile",
+      toolName: "read",
       executor: "execute_typescript",
       visibility: "trace",
       title: "Read docs/prd.md",
@@ -141,7 +141,7 @@ async function seedStructuredCommandInspector(input: {
       turnId: turn.id,
       threadId: thread.id,
       parentCommandId: parentCommand.id,
-      toolName: "artifact.writeText",
+      toolName: "artifact.write_text",
       executor: "execute_typescript",
       visibility: "summary",
       title: "Create summary.md",
@@ -164,7 +164,7 @@ async function seedStructuredCommandInspector(input: {
       sourceCommandId: parentCommand.id,
       kind: "text",
       name: "execute-typescript.ts",
-      content: 'const doc = await api.repo.readFile({ path: "docs/prd.md" });',
+      content: 'const doc = await api.read({ path: "docs/prd.md" });',
     });
     store.createArtifact({
       threadId: thread.id,

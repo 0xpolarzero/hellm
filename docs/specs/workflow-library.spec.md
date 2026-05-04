@@ -22,7 +22,7 @@
 
 The product should optimize for:
 
-- using direct `execute_typescript` when a workflow is unnecessary
+- using direct tools when a workflow is unnecessary
 - reusing a saved runnable entry when one clearly fits
 - authoring a short-lived artifact workflow when saved entries do not fit
 - writing reusable saved workflow files only when the user explicitly asks for that
@@ -39,15 +39,15 @@ The product should optimize for:
 
 The naming rule is:
 
-- `api.workflow.*` is the handler's authoring-time discovery surface inside `execute_typescript`
-- `api.repo.writeFile(...)` and `api.repo.writeJson(...)` are the handler's write surface for saved workflow files
+- `workflow.*` is the handler's authoring-time discovery surface
+- `write` and `edit` are the handler's file-modification surface for saved workflow files
 - `smithers.*` is the handler's launch and supervision surface
 
 This split is intentional.
 
 Asset discovery and saved-library writes are not workflow launch.
 
-Exact `api.*` shapes are provided by the generated `execute_typescript` declaration. Exact handler-authored runnable entry and workflow task-agent shapes are provided by the generated workflow-authoring declaration.
+Exact direct-tool and code-mode shapes are provided by generated tool schemas and TypeScript declarations. Exact handler-authored runnable entry and workflow task-agent shapes are provided by the generated workflow-authoring declaration.
 
 ## Handler-Owned Authoring
 
@@ -186,7 +186,7 @@ A handler lists component assets and reads candidate component files before usin
 
 Entry files are launchable workflow wrappers under `entries/`.
 
-They are not returned by `api.workflow.listAssets(...)`.
+They are not returned by `workflow.list_assets`.
 
 They are returned by `smithers.list_workflows`.
 
@@ -209,7 +209,7 @@ Normative example:
 
 For component assets, the same pattern applies with `@svvyAssetKind component`.
 
-The header is a compact index. Handlers read the file through `api.repo.readFile(...)` when they need source context.
+The header is a compact index. Handlers read the file through the direct `read` tool when they need source context.
 
 ### MDX Prompt Frontmatter
 
@@ -264,14 +264,14 @@ The adopted handler-side workflow-authoring flow is:
 
 1. A handler thread decides that direct bounded work is not enough and a workflow is justified.
 2. The handler uses its injected generated workflow-authoring contract, guide, and examples first.
-3. The handler calls `api.workflow.listAssets(...)` as needed.
+3. The handler calls `workflow.list_assets` as needed.
 4. The handler reads promising saved definitions, prompts, or component files through ordinary file reads before relying on implementation details.
 5. The handler reads `.svvy/workflows/components/agents.ts` when a Smithers task needs a reusable explorer, implementer, or reviewer.
-6. The handler optionally calls `api.workflow.listModels()` when it must create or revise a workflow agent.
+6. The handler optionally calls `workflow.list_models` when it must create or revise a workflow agent.
 7. The handler authors a short-lived artifact workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/`, including artifact-local workflow agents when the conventional saved agents are not a good fit.
 8. The handler calls `smithers.list_workflows`, inspects the artifact entry, and launches it through `smithers.run_workflow({ workflowId, input, runId? })`.
-9. If the user explicitly asks to keep reusable workflow files, the handler writes those files directly into `.svvy/workflows/...` through normal repo write APIs.
-10. The handler reads the returned validation feedback in the enclosing `execute_typescript` result and keeps editing until the final saved workflow state validates cleanly.
+9. If the user explicitly asks to keep reusable workflow files, the handler writes those files directly into `.svvy/workflows/...` through `write` or `edit`.
+10. The handler reads the returned validation feedback in structured command output and keeps editing until the final saved workflow state validates cleanly.
 
 ## Discovery Surface
 
@@ -279,13 +279,13 @@ The adopted handler-side workflow-authoring flow is:
 
 Handlers discover reusable assets through:
 
-- `api.workflow.listAssets(input)`
+- `workflow.list_assets(input)`
 
 This is the primary discovery surface for saved and artifact authoring assets.
 
-The generated `execute_typescript` declaration is the exact input and output contract for this method.
+The direct tool schema is the exact input and output contract for this method. The same shape is duplicated as `api.workflow.list_assets(...)` inside code mode.
 
-`listAssets(...)` returns the enforced asset identity metadata plus a workspace-relative `path`.
+`workflow.list_assets` returns the enforced asset identity metadata plus a workspace-relative `path`.
 
 Each returned asset has:
 
@@ -308,9 +308,9 @@ Runnable entries are discovered through `smithers.list_workflows`.
 
 Handlers use:
 
-- `api.workflow.listModels()`
+- `workflow.list_models()`
 
-The generated `execute_typescript` declaration is the exact result contract for model discovery.
+The direct tool schema is the exact result contract for model discovery. The same shape is duplicated as `api.workflow.list_models()` inside code mode.
 
 ### Runnable Workflow Discovery
 
@@ -331,8 +331,8 @@ Each returned runnable workflow entry includes the handler-visible launch contra
 
 This preserves the intended split:
 
-- `api.workflow.*` for authoring-time asset discovery
-- `api.repo.writeFile(...)` and `api.repo.writeJson(...)` for saved-library writes
+- `workflow.*` for authoring-time asset discovery
+- `write` and `edit` for saved-library writes
 - `smithers.*` for launch and supervision
 
 ### Workflow Launch Surface
@@ -355,8 +355,8 @@ Where:
 
 Handlers write reusable saved workflow files through:
 
-- `api.repo.writeFile(...)`
-- `api.repo.writeJson(...)`
+- `write`
+- `edit`
 
 The handler writes the final file contents directly into `.svvy/workflows/...`.
 
@@ -374,7 +374,7 @@ That validation should check:
 - result schema validation for entries that declare `productKind = "project-ci"`
 - grouped asset refs for saved entries
 
-Validation feedback is surfaced automatically in the enclosing `execute_typescript` result through captured console logs.
+Validation feedback is surfaced automatically through structured command output.
 
 That means the handler does not need a separate follow-up tool call just to validate what it wrote.
 
@@ -406,14 +406,14 @@ The saved workflow library surface must not block on an in-app source editor. In
 
 Handler-thread instructions should say:
 
-- prefer direct `execute_typescript` for small one-off work that does not benefit from workflow supervision
-- use generated declarations for exact `api.*`, runnable-entry, and workflow task-agent shapes
+- prefer direct tools for small one-off work that does not benefit from workflow supervision
+- use generated declarations for exact code-mode, runnable-entry, and workflow task-agent shapes
 - reuse a saved runnable entry when one clearly fits
 - otherwise author a short-lived artifact workflow
 - mix saved definitions, prompts, and components freely when that produces a clearer workflow than reusing one saved entry unchanged
 - read `.svvy/workflows/components/agents.ts` before creating new workflow agents and reuse `explorer`, `implementer`, or `reviewer` when one clearly fits
 - define task-specific workflow agents inside the current artifact workflow when the conventional saved agents do not fit
-- call `api.workflow.listModels()` only when no saved workflow agent fits or the user explicitly wants a different provider or model
+- call `workflow.list_models` only when no saved workflow agent fits or the user explicitly wants a different provider or model
 - write reusable saved workflow files only on explicit request
 - rely on the returned validation feedback after writes under `.svvy/workflows/...`
 - discover and run configured Project CI entries when CI is needed
@@ -423,7 +423,7 @@ Handler-thread instructions should say:
 
 The adopted decision order is:
 
-1. if direct bounded work in `execute_typescript` is enough, do that
+1. if direct bounded work is enough, do that
 2. otherwise, if a saved runnable entry clearly fits, run it
 3. otherwise author a short-lived artifact workflow, usually reusing saved definitions, prompts, and components
 4. run the authored artifact entry through `smithers.run_workflow({ workflowId, input, runId? })`

@@ -11,6 +11,18 @@ export function createDefaultWorkflowTaskAgentConfig(
     model: input.model ?? DEFAULT_AGENT_SETTINGS.model,
     thinkingLevel: input.thinkingLevel ?? DEFAULT_AGENT_SETTINGS.reasoningEffort,
     systemPrompt: WORKFLOW_TASK_SYSTEM_PROMPT,
-    toolSurface: ["execute_typescript"],
+    toolSurface: [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash",
+      "artifact.write_text",
+      "artifact.write_json",
+      "artifact.attach_file",
+      "execute_typescript",
+    ],
   };
 }

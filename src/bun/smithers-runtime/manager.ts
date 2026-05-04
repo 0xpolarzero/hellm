@@ -25,12 +25,6 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type {
-  ExecuteTypescriptRunCommandInput,
-  ExecuteTypescriptRunCommandResult,
-  ExecuteTypescriptWebFetchResult,
-  ExecuteTypescriptWebSearchResult,
-} from "../execute-typescript-tool";
-import type {
   StructuredSessionStateStore,
   StructuredWorkflowWaitKind,
   StructuredWorkflowRunRecord,
@@ -85,18 +79,6 @@ type SmithersRuntimeManagerOptions = {
     summary: string;
     reason: string;
   }) => boolean | Promise<boolean>;
-  runCommand?: (
-    input: ExecuteTypescriptRunCommandInput,
-  ) => Promise<ExecuteTypescriptRunCommandResult>;
-  webSearch?: (input: {
-    query: string;
-    maxResults?: number;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebSearchResult>;
-  fetchText?: (input: {
-    url: string;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebFetchResult>;
 };
 
 type LaunchWorkflowInput = {

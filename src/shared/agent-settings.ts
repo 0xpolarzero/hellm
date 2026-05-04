@@ -5,6 +5,18 @@ export type SessionMode = "orchestrator" | "dumb";
 export type SessionAgentKey = "defaultSession" | "dumbOrchestrator" | "namer";
 export type WorkflowAgentKey = "explorer" | "implementer" | "reviewer";
 export type PreferredExternalEditor = "system" | "code" | "cursor" | "zed" | "sublime" | "custom";
+export type WorkflowAgentToolName =
+  | "read"
+  | "grep"
+  | "find"
+  | "ls"
+  | "edit"
+  | "write"
+  | "bash"
+  | "artifact.write_text"
+  | "artifact.write_json"
+  | "artifact.attach_file"
+  | "execute_typescript";
 
 export interface AgentDefaults {
   provider: string;
@@ -25,7 +37,7 @@ export interface SessionAgentDefaults {
 export interface WorkflowAgentSettings extends SessionAgentSettings {
   id: WorkflowAgentKey;
   label: string;
-  toolSurface: readonly ["execute_typescript"];
+  toolSurface: readonly WorkflowAgentToolName[];
 }
 
 export interface AgentSettingsState {
@@ -87,7 +99,7 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
     ...DEFAULT_AGENT_SETTINGS,
     systemPrompt:
       "Inspect the repository and return concise findings, evidence, and unresolved questions. Do not edit files.",
-    toolSurface: ["execute_typescript"],
+    toolSurface: ["read", "grep", "find", "ls", "bash", "execute_typescript"],
   },
   implementer: {
     id: "implementer",
@@ -95,7 +107,19 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
     ...DEFAULT_AGENT_SETTINGS,
     systemPrompt:
       "Implement the assigned scoped change, keep edits focused, and return changed files plus verification.",
-    toolSurface: ["execute_typescript"],
+    toolSurface: [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash",
+      "artifact.write_text",
+      "artifact.write_json",
+      "artifact.attach_file",
+      "execute_typescript",
+    ],
   },
   reviewer: {
     id: "reviewer",
@@ -103,7 +127,7 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
     ...DEFAULT_AGENT_SETTINGS,
     systemPrompt:
       "Review the assigned result for correctness, regressions, edge cases, and missing tests. Lead with findings.",
-    toolSurface: ["execute_typescript"],
+    toolSurface: ["read", "grep", "find", "ls", "bash", "execute_typescript"],
   },
 } satisfies Record<WorkflowAgentKey, WorkflowAgentSettings>;
 

@@ -44,14 +44,14 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Build a POC `execute_typescript` runtime with compile or typecheck-before-run diagnostics and the adopted TypeScript input/output contract. Commit(s): `76cc8f3`, `b41e5e6`
 - [x] Expose a minimal `execute_typescript` tool with the adopted input/output contract and injected `api.*` surface. Commit(s): `76cc8f3`
 - [x] Persist each attempted snippet as a file-backed artifact before execution, with SQLite metadata and path indexing. Commit(s): `76cc8f3`, `fff54d7`
-- [x] Generate the first curated typed `api.*` capability namespaces for repo, git, web, artifact, and bounded exec work. Commit(s): `76cc8f3`, `29d8452`
-- [x] Run a simple ordinary scripted task through `execute_typescript`. Commit(s): `76cc8f3`
+- [x] Generate the typed `api.*` declaration for the code-mode subset of direct tools. Commit(s): `76cc8f3`, `29d8452`
+- [x] Run a simple composed scripted task through `execute_typescript`. Commit(s): `76cc8f3`
 - [x] Build a POC artifact and tracing pipeline for code-mode execution. Commit(s): `76cc8f3`
 - [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Keep only `thread.start`, `thread.handoff`, and `wait` as `svvy`-native control tools while exposing Smithers workflow operations through Smithers-native bridge tools. Commit(s): `a02bd48`
-- [x] Limit day-one capabilities to the curated `api.*` surface defined by the spec, including explicit `api.exec.run`. Commit(s): `76cc8f3`, `29d8452`
-- [x] Expand the repo namespace to workspace-fs and search utilities with plural reads and structured listings. Commit(s): `76cc8f3`, `29d8452`
-- [x] Expand the git namespace to the settled command-shaped surface, including `status`, `diff`, `log`, `show`, `branch`, `mergeBase`, `fetch`, `pull`, `push`, `add`, `commit`, `switch`, `checkout`, `restore`, `rebase`, `cherryPick`, `stash`, and `tag`. Commit(s): `76cc8f3`, `29d8452`
+- [x] Keep the code-mode API bounded to duplicated direct tools that benefit from typed composition. Commit(s): `76cc8f3`, `29d8452`
+- [x] Expose PI-backed direct file, search, edit, write, and bash tools as the normal coding-agent work surface. Commit(s): `76cc8f3`, `29d8452`
+- [x] Record direct tool calls and nested code-mode calls in the shared structured command model. Commit(s): `76cc8f3`, `29d8452`
 - [x] Persist normalized child-command facts for nested `api.*` calls while the parent `execute_typescript` attempt remains the main semantic unit. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Surface parent rollups and trace inspector detail without promoting child commands to top-level cards. Commit(s): `5b0a223`
 
@@ -91,9 +91,9 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Let handler threads call the generated per-workflow Smithers run-launch surface through the Bun bridge for both new and resumed runs. Commit(s): `4674e67`
 - [x] Extend the Smithers-native supervision surface beyond the shipped Step 5 handler-thread/runtime coverage for blocker diagnosis, approvals, signals, cancellation, node detail, artifacts, transcripts, event history, frames, and DevTools inspection, focusing on the remaining operator-only and richer troubleshooting controls. Commit(s): `f8557d9`
 - [x] Define workflow task agents as a lower-level Smithers actor class distinct from orchestrator and handler-thread surfaces. Commit(s): `a02bd48`
-- [x] Adopt PI-backed svvy workflow task agents with a dedicated task prompt and `execute_typescript` as the default task-local tool surface. Commit(s): `a02bd48`
+- [x] Adopt PI-backed svvy workflow task agents with a dedicated task prompt, task-local direct tools, and `execute_typescript` for typed composition. Commit(s): `a02bd48`
 - [x] Keep approval gates and hijack as Smithers runtime or operator controls around workflow task agents rather than exposing them as ordinary task-agent tools. Commit(s): `a02bd48`
-- [x] Build a POC bundled workflow task that runs the svvy workflow-task PI configuration with `execute_typescript` only. Commit(s): `a02bd48`
+- [x] Build a POC bundled workflow task that runs the svvy workflow-task PI configuration with task-local direct tools and code mode. Commit(s): `a02bd48`
 - [x] Wake the supervising handler thread in a background turn only when a workflow run reaches a terminal outcome, an actionable wait, a continuation boundary, or a supervision fault that requires handler judgment, while keeping duplicate terminal reconciliation idempotent after a valid handoff. Commit(s): `a02bd48`
 - [x] Support multiple workflow runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
 - [x] Derive active and latest workflow summaries from workflow-run state without a persisted thread-level latest pointer. Commit(s): `a02bd48`
@@ -110,11 +110,11 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Persist every authored short-lived workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/` with `definitions/`, `prompts/`, `components/`, `entries/`, and `metadata.json`. Commit(s): `dc1da8c`
 - [x] Define the saved workflow library layout under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and `.svvy/workflows/entries/`. Commit(s): `37afcb3`, `4515233`
 - [x] Define the discovery metadata contract compiled from JSDoc headers in `ts` or `tsx` files and frontmatter in `mdx` prompt files. Commit(s): `37afcb3`, `4515233`
-- [x] Expose `api.workflow.listAssets(...)` inside `execute_typescript` so handlers can discover saved definitions, prompts, and components before reading files directly. Commit(s): `4515233`
-- [x] Expose `api.workflow.listModels()` inside `execute_typescript` for the escape hatch where no saved workflow agent fits. Commit(s): `4515233`
+- [x] Expose `workflow.list_assets` directly and duplicate it as `api.workflow.list_assets(...)` for code-mode composition. Commit(s): `4515233`
+- [x] Expose `workflow.list_models` directly and duplicate it as `api.workflow.list_models()` for code-mode composition. Commit(s): `4515233`
 - [x] Build a POC saved definition plus saved entry that are reused by a new short-lived artifact entry with different prompts, workflow agents, or config bound at authoring time. Commit(s): `37afcb3`
 - [x] Keep authored workflows artifact-only by default until the handler explicitly writes reusable files into `.svvy/workflows/`. Commit(s): `0b2d1ff`
-- [x] Run automatic saved-workflow validation after `api.repo.writeFile(...)` and `api.repo.writeJson(...)` writes under `.svvy/workflows/...`, surfacing diagnostics in the enclosing `execute_typescript` result logs. Commit(s): `0b2d1ff`
+- [x] Run automatic saved-workflow validation after direct `write` or `edit` operations under `.svvy/workflows/...`, surfacing diagnostics through structured command records. Commit(s): `0b2d1ff`
 - [x] Surface all runnable saved and artifact entries through `smithers.list_workflows` and `smithers.run_workflow({ workflowId, input, runId? })`, with `smithers.list_workflows` returning each entry's explicit launch contract, `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `workflowId` filter support rather than relying on inferred import graphs. Commit(s): `4515233`, `dc1da8c`
 - [x] Persist workflow agent files as ordinary saved workflow components that handlers discover by path and inspect through file reads. Commit(s): `4515233`
 

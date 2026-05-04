@@ -185,8 +185,8 @@ test("transcript rendering projects assistant metadata, tool cards, tool results
 test("transcript rendering shows execute_typescript bodies on tool cards", async () => {
   const executeTypescriptCall = toolCall("execute_typescript", {
     typescriptCode: [
-      'const result = await api.exec.run({ command: "ls", args: ["-la"] });',
-      "console.log(result.stdout);",
+      'const result = await api.bash({ command: "ls -la" });',
+      "console.log(result.content);",
     ].join("\n"),
   });
 
@@ -230,10 +230,8 @@ test("transcript rendering shows execute_typescript bodies on tool cards", async
         "TypeScript body",
       );
       const toolBody = (await toolCard.locator(".tool-body-preview pre").textContent()) ?? "";
-      expect(toolBody).toContain(
-        'const result = await api.exec.run({ command: "ls", args: ["-la"] });',
-      );
-      expect(toolBody).toContain("console.log(result.stdout);");
+      expect(toolBody).toContain('const result = await api.bash({ command: "ls -la" });');
+      expect(toolBody).toContain("console.log(result.content);");
     },
   );
 });

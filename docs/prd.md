@@ -93,8 +93,8 @@ Before any target surface runs a turn through pi:
 The actor-specific capability split is:
 
 - the orchestrator prompt knows that handler threads can supervise Smithers workflows, but it does not receive the `smithers.*` tool declarations; if it wants workflow action, it must delegate by calling `thread.start`
-- a handler-thread prompt receives `smithers.*`, `request_context`, `thread.handoff`, `wait`, and any allowed generic work surface such as `execute_typescript`, but it does not receive `thread.start` in the default adopted model
-- a workflow-task-agent prompt receives only task-local instructions and task-local callable declarations; in the default adopted model it should receive `execute_typescript` and not `thread.start`, `thread.handoff`, `wait`, or `smithers.*`
+- a handler-thread prompt receives `smithers.*`, `request_context`, `thread.handoff`, `wait`, direct tools, and `execute_typescript` for typed composition, but it does not receive `thread.start` in the default adopted model
+- a workflow-task-agent prompt receives only task-local instructions and task-local callable declarations; in the default adopted model it receives task-local direct tools plus `execute_typescript`, and not `thread.start`, `thread.handoff`, `wait`, or `smithers.*`
 - a workflow-task-agent runtime must not load ambient pi built-in tools or workspace-discovered extension tools that would widen that callable surface beyond the explicit task-local tool set
 - if `svvy` later adopts nested delegation or additional actor classes, those capabilities must be added explicitly rather than leaked through one shared global prompt surface
 
@@ -195,10 +195,10 @@ The adopted direction for task agents is:
 
 - use a PI-backed workflow task agent by default when a workflow task needs an adaptive coding agent
 - give that task agent a `svvy` workflow-task system prompt rather than the orchestrator or handler-thread prompt
-- expose only a task-local tool surface; the default adopted task-agent tool surface is `execute_typescript`
+- expose a task-local direct-tool surface plus `execute_typescript` for typed composition
 - keep `thread.start`, `thread.handoff`, `wait`, and `smithers.*` out of the task-agent prompt and tool schema
 - keep human approval and hijack as Smithers runtime or operator controls around the task, not as ordinary task-agent tools
-- execute the task agent and its task-local `execute_typescript` calls from Smithers' current task root, including the active worktree when the task is worktree-bound
+- execute the task agent and its task-local tool calls from Smithers' current task root, including the active worktree when the task is worktree-bound
 - keep the workflow runtime DB, run ownership, and structured projection workspace-scoped even when the task itself executes in a worktree
 - bind the workflow-task-attempt record before any task-local tool call runs by exact persisted resume-handle lookup against the current Smithers attempt row; do not use heuristic recency scans, transcript inference, or multi-stage fallback chains to discover ownership
 - preserve structured message history, step boundaries, and usage across retries, schema repair prompts, and hijack handoff instead of flattening continuation state into role-labelled prose
@@ -210,25 +210,34 @@ This lets `svvy` reuse the same general PI-based agent recipe at three different
 - handler thread
 - workflow task agent
 
-### 6. `execute_typescript` Is The Default Generic Work Surface
+### 6. Direct Tools And `execute_typescript`
 
-`execute_typescript` remains the default generic work surface for bounded repository work.
+Direct tools are the default coding-agent work surface for bounded repository work.
 
-That includes:
+Direct tools cover:
 
 - reading files
 - searching text
-- inspecting git state
+- inspecting repository and git state
 - generating artifacts
-- performing web lookups
-- composing several small tool calls into one bounded program
-- handling multi-step semantic work across more than one turn when that is the right unit of work
+- running bounded shell commands
+- editing and writing files
+- discovering workflow assets and workflow-authoring models
+
+`execute_typescript` is available when typed control flow is the right unit of work.
+
+That includes:
+
+- batching direct-tool calls
+- looping over many results
+- filtering and aggregating search output
+- producing durable artifact evidence from composed results
 
 Inside `execute_typescript`, the runtime injects `api.*` as a host SDK.
 
-`api.*` is the observable capability surface for external effects and facts, not a hard permission boundary.
+`api.*` duplicates only the selected direct tools that are useful inside TypeScript composition: `read`, `grep`, `find`, `ls`, `bash`, artifact creation, and workflow discovery.
 
-The SDK includes explicit `api.exec.run` for command execution.
+File edits and writes use the direct `edit` and `write` tools.
 
 Every submitted snippet is persisted as a file-backed artifact in the workspace artifact directory, and the runtime must compile or typecheck the snippet before execution.
 
@@ -640,16 +649,16 @@ Saved entries are the launchable wrappers in the saved workflow library.
 
 The intended decision order inside a handler thread is:
 
-1. can the task be completed directly in `execute_typescript`?
+1. can the task be completed directly with direct tools?
 2. if not, does a saved runnable entry clearly fit?
 3. if not, author a short-lived artifact workflow, usually by mixing saved definitions, prompts, and components; when task agents are needed, reuse `.svvy/workflows/components/agents.ts` exports when they fit and define artifact-local agents for one-off needs
 4. execute the selected or authored workflow
 
 Artifact workflows are persisted by default under `.svvy/artifacts/workflows/`.
 
-Saving reusable workflow files means the handler writes those files directly into `.svvy/workflows/` through the normal repo write APIs.
+Saving reusable workflow files means the handler writes those files directly into `.svvy/workflows/` through the direct `write` or `edit` tools.
 
-Writes under `.svvy/workflows/` automatically surface saved-workflow validation feedback in the enclosing `execute_typescript` result.
+Writes under `.svvy/workflows/` automatically surface saved-workflow validation feedback in structured tool output.
 
 The UI should expose:
 

@@ -187,7 +187,7 @@ The app should create artifact records in these cases:
 1. Automatically, for mandatory runtime evidence such as every submitted `execute_typescript` snippet.
 2. Automatically, when a runtime needs to retain a large stdout, stderr, diagnostics, trace, screenshot, workflow export, or other execution payload that is too bulky for command facts or transcript text.
 3. Explicitly, through `api.artifact.*`, when an agent creates a durable byproduct that should be inspectable later but should not normally live in the repository.
-4. Explicitly, through `api.artifact.attachFile(...)`, when an existing generated file should be retained as evidence without treating that file as a normal workspace deliverable.
+4. Explicitly, through `api.artifact.attach_file(...)`, when an existing generated file should be retained as evidence without treating that file as a normal workspace deliverable.
 
 The app should not create artifact records for:
 
@@ -201,9 +201,9 @@ The app should not create artifact records for:
 
 Agent-facing prompts and generated API docs should teach this decision rule:
 
-- use `api.repo.writeFile(...)` or `api.repo.writeJson(...)` when the file is part of the workspace the user is asking to change
+- use direct `write` or `edit` when the file is part of the workspace the user is asking to change
 - answer in prose when the information is small and only needs to appear in the transcript
-- use `api.artifact.writeText(...)`, `api.artifact.writeJson(...)`, or `api.artifact.attachFile(...)` only for durable byproducts, evidence, previews, logs, reports, screenshots, or large payloads that should be inspectable later but should not normally be placed in the repository
+- use `artifact.write_text`, `artifact.write_json`, or `artifact.attach_file` only for durable byproducts, evidence, previews, logs, reports, screenshots, or large payloads that should be inspectable later but should not normally be placed in the repository
 
 This keeps artifacts from becoming a confusing second filesystem for normal project files.
 

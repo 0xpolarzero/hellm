@@ -10,6 +10,19 @@ import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { AgentLike, SmithersWorkflow } from "smithers-orchestrator";
 import type { z } from "zod";
 
+export type WorkflowTaskToolName =
+  | "read"
+  | "grep"
+  | "find"
+  | "ls"
+  | "edit"
+  | "write"
+  | "bash"
+  | "artifact.write_text"
+  | "artifact.write_json"
+  | "artifact.attach_file"
+  | "execute_typescript";
+
 /**
  * Where a runnable workflow entry and its declared assets live.
  */
@@ -75,7 +88,7 @@ export interface WorkflowTaskAgentConfig {
   model: string;
   thinkingLevel: ThinkingLevel;
   systemPrompt: string;
-  toolSurface: readonly ["execute_typescript"];
+  toolSurface: readonly WorkflowTaskToolName[];
 }
 
 /**

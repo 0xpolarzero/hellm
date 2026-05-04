@@ -50,7 +50,7 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Model top-level session auto-title generation as explicit durable state driven by the first real user turn start, with pending/running/completed/failed title-generation status, manual-rename freeze state, and a rename lock while generation is pending or running. The configured `namer` session-agent prompt owns the title-generation instruction; the one-shot prompt body carries only the first user message context being titled, without a second naming instruction or extracted keyword list. The namer runs concurrently with the orchestrator's first turn: neither surface waits for the other to finish.
 - Persist one top-level per-turn decision for every surface, with orchestrator routing decisions and handler supervision decisions sharing one field.
 - Treat every tool call as a `CommandRecord`.
-- Make `execute_typescript` the default generic work surface.
+- Make direct PI-backed tools the default coding-agent work surface.
 - Treat every top-level `execute_typescript` invocation as one parent command record and every nested `api.*` call as a child command record.
 - Keep only a very small set of native control tools for thread spawning, handler context loading, explicit thread handoff, and wait; workflow control belongs on Smithers-native `smithers.*` bridge tools.
 - Treat handler context-pack loading as explicit handler state through `thread.start` context keys and the top-level handler-only `request_context` tool, not as an `execute_typescript` API.
@@ -154,6 +154,15 @@ type StructuredSessionState = {
     turnDecision:
       | "pending"
       | "reply"
+      | "read"
+      | "grep"
+      | "find"
+      | "ls"
+      | "edit"
+      | "write"
+      | "bash"
+      | `artifact.${string}`
+      | `workflow.${string}`
       | "execute_typescript"
       | "clarify"
       | "thread.start"
@@ -709,8 +718,8 @@ The adopted visibility levels are:
 
 Use them this way:
 
-- low-level repo or web reads inside `execute_typescript` are usually `trace`
-- material writes, artifact creation, and failed execs usually roll up as `summary`
+- low-level reads, searches, and workflow discovery calls are usually `trace`
+- material writes, artifact creation, bash commands, and failures usually roll up as `summary`
 - `thread.start`, `request_context`, `thread.handoff`, `wait`, and Smithers-mutating commands such as `smithers.run_workflow`, `smithers.resolve_approval`, `smithers.runs.cancel`, and `smithers.signals.send` are normally `surface`
 - read-only Smithers inspection commands are usually `summary` unless the UI chooses to surface a specific one directly
 - child `api.*` commands remain nested detail by default

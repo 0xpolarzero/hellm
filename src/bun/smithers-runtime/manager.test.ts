@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock, setDefaultTimeout, spyOn } from "bun:test";
+import { afterEach, describe, expect, it, setDefaultTimeout, spyOn } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -1955,13 +1955,8 @@ describe("SmithersRuntimeManager", () => {
     expect(assistantDetail.node.outputTable).toBeTruthy();
   });
 
-  it("runs the execute_typescript_task workflow through the real task-agent path with execute_typescript as the only product tool", async () => {
+  it("runs the execute_typescript_task workflow through the real task-agent path with direct tools and code mode", async () => {
     const createAgentSessionSpy = spyOn(PiCodingAgent, "createAgentSession");
-    const runCommand = mock(async () => ({
-      exitCode: 0,
-      stdout: "workflow-validated\n",
-      stderr: "",
-    }));
 
     const root = mkdtempSync(join(tmpdir(), "svvy-smithers-runtime-task-agent-"));
     tempDirs.push(root);
@@ -2023,7 +2018,6 @@ describe("SmithersRuntimeManager", () => {
         handlerAttentions.push(event.reason);
         return false;
       },
-      runCommand,
     });
     managers.push(manager);
     registerWorkflow(manager, createHelloWorldTestWorkflow(smithersDbPath(cwd)));
@@ -2038,7 +2032,6 @@ describe("SmithersRuntimeManager", () => {
         provider: "openai",
         model: "gpt-5.4",
         thinkingLevel: "medium",
-        runCommand,
       }),
     );
 
@@ -2064,7 +2057,7 @@ describe("SmithersRuntimeManager", () => {
                 (tool: { name: string }) => tool.name === "execute_typescript",
               );
               if (!executeTypescript) {
-                throw new Error("Expected execute_typescript to be the only custom tool.");
+                throw new Error("Expected execute_typescript in the custom task tool surface.");
               }
 
               subscribers.forEach((callback) =>
@@ -2079,8 +2072,7 @@ describe("SmithersRuntimeManager", () => {
                 "tool-call-workflow-task",
                 {
                   typescriptCode: [
-                    'const validation = await api.exec.run({ command: "echo", args: ["workflow-validated"] });',
-                    'await api.repo.writeFile({ path: "workflow-task-output.txt", text: validation.stdout.trim() });',
+                    'await api.bash({ command: "printf workflow-validated > workflow-task-output.txt" });',
                     "return {",
                     '  summary: "Completed the workflow task and wrote the output file.",',
                     '  filesChanged: ["workflow-task-output.txt"],',
@@ -2194,19 +2186,24 @@ describe("SmithersRuntimeManager", () => {
       const outputPath = join(cwd, "workflow-task-output.txt");
       expect(existsSync(outputPath)).toBe(true);
       expect(readFileSync(outputPath, "utf8")).toBe("workflow-validated");
-      expect(runCommand).toHaveBeenCalledTimes(1);
-      expect(runCommand).toHaveBeenCalledWith(
-        expect.objectContaining({
-          command: "echo",
-          args: ["workflow-validated"],
-        }),
-      );
 
       const [createAgentSessionOptions] = createAgentSessionSpy.mock.calls[0] ?? [];
       expect(createAgentSessionOptions?.tools).toEqual([]);
       expect(
         createAgentSessionOptions?.customTools?.map((tool: { name: string }) => tool.name),
-      ).toEqual(["execute_typescript"]);
+      ).toEqual([
+        "read",
+        "grep",
+        "find",
+        "ls",
+        "edit",
+        "write",
+        "bash",
+        "artifact.write_text",
+        "artifact.write_json",
+        "artifact.attach_file",
+        "execute_typescript",
+      ]);
 
       const snapshot = store.getSessionState(sessionId);
       const workflowRun = snapshot.workflowRuns.find(

@@ -270,7 +270,7 @@ function createCommandInspector(
     summaryChildren: [
       {
         commandId: "command-summary-1",
-        toolName: "artifact.writeText",
+        toolName: "artifact.write_text",
         visibility: "summary",
         status: "succeeded",
         title: "Create summary.md",

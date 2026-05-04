@@ -9,12 +9,6 @@ import {
 } from "./runtime-input";
 import { createWorkflowTaskAgent } from "./workflow-task-agent";
 import { createDefaultWorkflowTaskAgentConfig } from "./workflow-task-agent-config";
-import type {
-  ExecuteTypescriptRunCommandInput,
-  ExecuteTypescriptRunCommandResult,
-  ExecuteTypescriptWebFetchResult,
-  ExecuteTypescriptWebSearchResult,
-} from "../execute-typescript-tool";
 import type { StructuredSessionStateStore } from "../structured-session-state";
 
 function getLatestOutput<T>(entries: T[] | undefined): T | null {
@@ -88,18 +82,6 @@ export function createExecuteTypescriptTaskTestWorkflow(input: {
   provider: string;
   model: string;
   thinkingLevel: ThinkingLevel;
-  runCommand?: (
-    args: ExecuteTypescriptRunCommandInput,
-  ) => Promise<ExecuteTypescriptRunCommandResult>;
-  webSearch?: (args: {
-    query: string;
-    maxResults?: number;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebSearchResult>;
-  fetchText?: (args: {
-    url: string;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebFetchResult>;
 }): TestWorkflowDefinition {
   const launchSchema = z.object({
     objective: z.string().min(1),
@@ -139,16 +121,12 @@ export function createExecuteTypescriptTaskTestWorkflow(input: {
       model: input.model,
       thinkingLevel: input.thinkingLevel,
     }),
-    runCommand: input.runCommand,
-    webSearch: input.webSearch,
-    fetchText: input.fetchText,
   });
 
   return {
     id: "execute_typescript_task",
     label: "Execute TypeScript Task",
-    summary:
-      "Run one PI-backed workflow task agent with execute_typescript as its only product tool.",
+    summary: "Run one PI-backed workflow task agent with direct tools plus execute_typescript.",
     launchSchema,
     workflow: smithersApi.smithers((ctx) => {
       const workflowInput = readBundledWorkflowLaunchInput(launchSchema, ctx.input);

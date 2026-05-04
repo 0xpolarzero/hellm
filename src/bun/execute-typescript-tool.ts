@@ -1,31 +1,14 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import type { Static } from "@sinclair/typebox";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { basename, dirname, relative, resolve } from "node:path";
+import { basename } from "node:path";
 import { inspect } from "node:util";
 import * as ts from "typescript";
 import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
-import type {
-  GitCommitSummary,
-  GitFileChange,
-  RepoGrepMatch,
-  RepoStat,
-  SvvyApi,
-  SvvyConsole,
-  WebFetchTextResult,
-  WebSearchResult,
-} from "./execute-typescript-api-contract";
+import type { SvvyApi, SvvyConsole } from "./execute-typescript-api-contract";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import { createWorkflowLibrary, type WorkflowLibrary } from "./smithers-runtime/workflow-library";
+import { createSvvyDirectTools } from "./svvy-direct-tools";
 import type {
   StructuredArtifactKind,
   StructuredCommandExecutor,
@@ -62,25 +45,6 @@ export type ExecuteTypescriptResult = {
   };
 };
 
-export type ExecuteTypescriptRunCommandInput = {
-  command: string;
-  args?: string[];
-  cwd?: string;
-  timeoutMs?: number;
-  env?: Record<string, string>;
-  signal?: AbortSignal;
-};
-
-export type ExecuteTypescriptRunCommandResult = {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-};
-
-export type ExecuteTypescriptWebSearchResult = WebSearchResult;
-
-export type ExecuteTypescriptWebFetchResult = WebFetchTextResult;
-
 export const executeTypescriptParamsSchema = Type.Object(
   {
     typescriptCode: Type.String({ minLength: 1 }),
@@ -91,13 +55,13 @@ export const executeTypescriptParamsSchema = Type.Object(
 export type ExecuteTypescriptParams = Static<typeof executeTypescriptParamsSchema>;
 
 const EXECUTE_TYPESCRIPT_DESCRIPTION = [
-  "Run a bounded TypeScript program against the injected typed api.* host SDK.",
-  "Use this as the default generic work surface for ordinary repository, git, web, artifact, and explicit api.exec.run work.",
+  "Run a bounded TypeScript program against a small duplicate subset of direct svvy tools.",
+  "Use this only when TypeScript control flow is needed for batching, looping, filtering, aggregation, workflow discovery, bash-backed inspection, or artifact evidence.",
   "Inside the snippet, use the injected api object instead of Node.js built-ins such as fs, path, process, or node:* imports.",
-  "The runtime persists the submitted snippet before execution, typechecks before running, and records nested api.* calls as child commands.",
+  "The runtime persists the submitted snippet before execution, typechecks before running, and records nested api tool calls as child commands.",
 ].join(" ");
 
-const EXECUTE_TYPESCRIPT_SUMMARY = "Execute bounded TypeScript against the injected api.* SDK.";
+const EXECUTE_TYPESCRIPT_SUMMARY = "Execute bounded TypeScript against duplicated direct tools.";
 const API_DECLARATIONS_FILE = "svvy-api.d.ts";
 const SOURCE_FILE = "execute-typescript.ts";
 const WRAPPER_PREFIX = "export default async function __svvy(api: SvvyApi, console: SvvyConsole) {";
@@ -144,6 +108,7 @@ export interface ExecuteTypescriptCommandStore {
     error?: string | null;
   }): unknown;
   createArtifact(input: {
+    sessionId?: string | null;
     threadId?: string | null;
     workflowRunId?: string | null;
     workflowTaskAttemptId?: string | null;
@@ -163,24 +128,8 @@ type ExecuteTypescriptToolOptions = {
   runtime: PromptExecutionRuntimeHandle;
   store: StructuredSessionStateStore;
   workflowLibrary?: WorkflowLibrary;
-  runCommand?: (
-    input: ExecuteTypescriptRunCommandInput,
-  ) => Promise<ExecuteTypescriptRunCommandResult>;
-  webSearch?: (input: {
-    query: string;
-    maxResults?: number;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebSearchResult>;
-  fetchText?: (input: {
-    url: string;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebFetchResult>;
 };
 
-type ExecuteTypescriptRepoStat = RepoStat;
-type ExecuteTypescriptRepoGrepMatch = RepoGrepMatch;
-type ExecuteTypescriptGitFileChange = GitFileChange;
-type ExecuteTypescriptGitCommitSummary = GitCommitSummary;
 type ExecuteTypescriptApi = SvvyApi;
 
 type ExecuteTypescriptCommandFacts = Record<string, unknown>;
@@ -235,9 +184,6 @@ export function createExecuteTypescriptTool(
           executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
         },
         workflowLibrary: options.workflowLibrary,
-        runCommand: options.runCommand,
-        webSearch: options.webSearch,
-        fetchText: options.fetchText,
       });
 
       return {
@@ -284,18 +230,6 @@ export async function runExecuteTypescript(input: {
   typescriptCode: string;
   context: ExecuteTypescriptContext;
   workflowLibrary?: WorkflowLibrary;
-  runCommand?: (
-    input: ExecuteTypescriptRunCommandInput,
-  ) => Promise<ExecuteTypescriptRunCommandResult>;
-  webSearch?: (input: {
-    query: string;
-    maxResults?: number;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebSearchResult>;
-  fetchText?: (input: {
-    url: string;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebFetchResult>;
 }): Promise<ExecuteTypescriptResult> {
   const parentCommand = input.store.createCommand({
     turnId: input.context.turnId ?? null,
@@ -364,9 +298,6 @@ export async function runExecuteTypescript(input: {
       parentCommandId: parentCommand.id,
       signal: input.signal,
       workflowLibrary: input.workflowLibrary ?? createWorkflowLibrary(input.cwd),
-      runCommand: input.runCommand ?? defaultRunCommand,
-      webSearch: input.webSearch ?? defaultWebSearch,
-      fetchText: input.fetchText ?? defaultFetchText,
       emitConsole(level, ...args) {
         appendCapturedConsoleLine(logs, level, ...args);
       },
@@ -606,18 +537,6 @@ function createExecuteTypescriptApi(input: {
   parentCommandId: string;
   signal?: AbortSignal;
   workflowLibrary: WorkflowLibrary;
-  runCommand: (
-    input: ExecuteTypescriptRunCommandInput,
-  ) => Promise<ExecuteTypescriptRunCommandResult>;
-  webSearch: (input: {
-    query: string;
-    maxResults?: number;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebSearchResult>;
-  fetchText: (input: {
-    url: string;
-    signal?: AbortSignal;
-  }) => Promise<ExecuteTypescriptWebFetchResult>;
   emitConsole: (level: CapturedConsoleLevel, ...args: unknown[]) => void;
   recordChildActivity: (activity: ExecuteTypescriptChildActivity) => void;
 }): ExecuteTypescriptApi {
@@ -685,1116 +604,155 @@ function createExecuteTypescriptApi(input: {
     }
   };
 
-  const runGit = async (args: string[]): Promise<ExecuteTypescriptRunCommandResult> =>
-    await input.runCommand({
-      command: "git",
-      args,
-      cwd: input.cwd,
-      signal: input.signal,
+  const invokeTool = async <T>(inputTool: {
+    tool: AgentTool<any>;
+    params: unknown;
+    title: string;
+    summary: string;
+    visibility?: StructuredCommandVisibility;
+    facts?: (result: T) => ExecuteTypescriptCommandFacts | null;
+  }): Promise<T> =>
+    await call<T>({
+      toolName: inputTool.tool.name,
+      title: inputTool.title,
+      summary: inputTool.summary,
+      visibility: inputTool.visibility,
+      run: async (commandId) => {
+        const value = (await inputTool.tool.execute(
+          commandId,
+          inputTool.params as never,
+          input.signal,
+        )) as T;
+        return {
+          value,
+          facts: inputTool.facts?.(value) ?? null,
+          summary: summarizeDirectToolResult(inputTool.tool.name, value),
+        };
+      },
     });
 
-  const validateWorkflowWrite = async (path: string) => {
-    const validation = await input.workflowLibrary.validateSavedWorkflowWrite(path);
-    if (!validation) {
-      return null;
+  const directTools = createSvvyDirectTools({
+    cwd: input.cwd,
+    runtime: { current: null },
+    store: input.store,
+    workflowLibrary: input.workflowLibrary,
+  });
+  const toolByName = new Map(
+    [...directTools.codingTools, ...directTools.artifactTools, ...directTools.workflowTools].map(
+      (tool) => [tool.name, tool] as const,
+    ),
+  );
+  const getTool = (name: string): AgentTool<any> => {
+    const tool = toolByName.get(name);
+    if (!tool) {
+      throw new Error(`Code mode tool ${name} is not available.`);
     }
-
-    if (validation.ok) {
-      input.emitConsole("info", `Workflow validation passed after writing ${validation.path}.`);
-    } else {
-      input.emitConsole(
-        "error",
-        `Workflow validation reported ${pluralize(validation.diagnostics.length, "error")} after writing ${validation.path}.`,
-      );
-      for (const diagnostic of validation.diagnostics) {
-        const location = [diagnostic.path, diagnostic.line, diagnostic.column]
-          .filter((value) => value !== undefined && value !== null && value !== "")
-          .join(":");
-        input.emitConsole(
-          diagnostic.severity === "warning" ? "warn" : "error",
-          [location, diagnostic.message, diagnostic.code ? `(TS${diagnostic.code})` : null]
-            .filter(Boolean)
-            .join(" "),
-        );
-      }
-    }
-
-    return validation;
+    return tool;
   };
 
   return {
-    repo: {
-      readFile: (params) =>
-        call({
-          toolName: "repo.readFile",
-          title: "Read file",
-          summary: `Read ${params.path}`,
-          run: async () => {
-            const filePath = resolveWorkspacePath(input.cwd, params.path);
-            const path = normalizeWorkspaceRelativePath(input.cwd, filePath);
-            const text = readFileSync(filePath, "utf8");
-            return {
-              value: { path, text },
-              facts: { path, bytesRead: byteLength(text) },
-              summary: `Read ${path}.`,
-            };
-          },
+    read: (params) =>
+      invokeTool({
+        tool: getTool("read"),
+        params,
+        title: "Read file",
+        summary: `Read ${params.path}`,
+        facts: () => ({ path: params.path, offset: params.offset, limit: params.limit }),
+      }),
+    grep: (params) =>
+      invokeTool({
+        tool: getTool("grep"),
+        params,
+        title: "Search text",
+        summary: `Search for ${params.pattern}`,
+        facts: () => ({
+          pattern: params.pattern,
+          path: params.path,
+          glob: params.glob,
+          limit: params.limit,
         }),
-      readFiles: (params) =>
-        call({
-          toolName: "repo.readFiles",
-          title: "Read files",
-          summary: `Read ${params.paths.length} files`,
-          run: async () => {
-            const files = params.paths.map((path) => {
-              const filePath = resolveWorkspacePath(input.cwd, path);
-              const text = readFileSync(filePath, "utf8");
-              return {
-                path: normalizeWorkspaceRelativePath(input.cwd, filePath),
-                text,
-              };
-            });
-            return {
-              value: { files },
-              facts: {
-                paths: files.map((file) => file.path),
-                fileCount: files.length,
-                totalBytesRead: files.reduce((total, file) => total + byteLength(file.text), 0),
-              },
-              summary: `Read ${pluralize(files.length, "file")}.`,
-            };
-          },
-        }),
-      readJson: <T>(params: { path: string }) =>
-        call({
-          toolName: "repo.readJson",
-          title: "Read JSON",
-          summary: `Read JSON from ${params.path}`,
-          run: async () => {
-            const filePath = resolveWorkspacePath(input.cwd, params.path);
-            const path = normalizeWorkspaceRelativePath(input.cwd, filePath);
-            return {
-              value: {
-                path,
-                value: JSON.parse(readFileSync(filePath, "utf8")) as T,
-              },
-              facts: { path },
-              summary: `Read JSON from ${path}.`,
-            };
-          },
-        }),
-      writeFile: (params) =>
-        call({
-          toolName: "repo.writeFile",
-          title: "Write file",
-          summary: `Write ${params.path}`,
-          visibility: "summary",
-          run: async () => {
-            const filePath = resolveWorkspacePath(input.cwd, params.path);
-            if (params.createDirectories) {
-              mkdirSync(dirname(filePath), { recursive: true });
-            }
-            writeFileSync(filePath, params.text, "utf8");
-            const path = normalizeWorkspaceRelativePath(input.cwd, filePath);
-            const bytesWritten = byteLength(params.text);
-            const workflowValidation = await validateWorkflowWrite(path);
-            return {
-              value: { path, bytes: bytesWritten },
-              facts: {
-                path,
-                bytesWritten,
-                ...(workflowValidation
-                  ? {
-                      workflowValidationChecked: true,
-                      workflowValidationOk: workflowValidation.ok,
-                      workflowValidationDiagnosticCount: workflowValidation.diagnostics.length,
-                    }
-                  : {}),
-              },
-              summary: workflowValidation
-                ? workflowValidation.ok
-                  ? `Wrote ${path}. Workflow validation passed.`
-                  : `Wrote ${path}. Workflow validation reported ${pluralize(workflowValidation.diagnostics.length, "error")}.`
-                : `Wrote ${path}.`,
-            };
-          },
-        }),
-      writeJson: <T>(params: {
-        path: string;
-        value: T;
-        pretty?: boolean;
-        createDirectories?: boolean;
-      }) =>
-        call({
-          toolName: "repo.writeJson",
-          title: "Write JSON",
-          summary: `Write JSON to ${params.path}`,
-          visibility: "summary",
-          run: async () => {
-            const filePath = resolveWorkspacePath(input.cwd, params.path);
-            if (params.createDirectories) {
-              mkdirSync(dirname(filePath), { recursive: true });
-            }
-            const text = JSON.stringify(
-              params.value,
-              null,
-              params.pretty === false ? undefined : 2,
-            );
-            writeFileSync(filePath, text, "utf8");
-            const path = normalizeWorkspaceRelativePath(input.cwd, filePath);
-            const bytesWritten = byteLength(text);
-            const workflowValidation = await validateWorkflowWrite(path);
-            return {
-              value: { path, bytes: bytesWritten },
-              facts: {
-                path,
-                bytesWritten,
-                ...(workflowValidation
-                  ? {
-                      workflowValidationChecked: true,
-                      workflowValidationOk: workflowValidation.ok,
-                      workflowValidationDiagnosticCount: workflowValidation.diagnostics.length,
-                    }
-                  : {}),
-              },
-              summary: workflowValidation
-                ? workflowValidation.ok
-                  ? `Wrote JSON to ${path}. Workflow validation passed.`
-                  : `Wrote JSON to ${path}. Workflow validation reported ${pluralize(workflowValidation.diagnostics.length, "error")}.`
-                : `Wrote JSON to ${path}.`,
-            };
-          },
-        }),
-      unlink: (params) =>
-        call<{ path: string; deleted: boolean }>({
-          toolName: "repo.unlink",
-          title: "Delete path",
-          summary: `Delete ${params.path}`,
-          visibility: "summary",
-          run: async () => {
-            const filePath = resolveWorkspacePath(input.cwd, params.path);
-            const path = normalizeWorkspaceRelativePath(input.cwd, filePath);
-            if (!existsSync(filePath)) {
-              return {
-                value: { path, deleted: false },
-                facts: { path, deleted: false },
-                summary: `${path} did not exist.`,
-              };
-            }
-            const stats = statSync(filePath);
-            if (stats.isDirectory()) {
-              rmSync(filePath, { force: true, recursive: true });
-            } else {
-              unlinkSync(filePath);
-            }
-            return {
-              value: { path, deleted: true },
-              facts: { path, deleted: true },
-              summary: `Deleted ${path}.`,
-            };
-          },
-        }),
-      stat: (params) =>
-        call<ExecuteTypescriptRepoStat>({
-          toolName: "repo.stat",
-          title: "Stat path",
-          summary: `Stat ${params.path}`,
-          run: async () => {
-            const filePath = resolveWorkspacePath(input.cwd, params.path);
-            const path = normalizeWorkspaceRelativePath(input.cwd, filePath);
-            if (!existsSync(filePath)) {
-              return {
-                value: { path, exists: false, kind: "missing" },
-                facts: { path, exists: false, kind: "missing" },
-                summary: `${path} is missing.`,
-              };
-            }
-            const stats = statSync(filePath);
-            const kind = stats.isDirectory() ? "directory" : "file";
-            return {
-              value: { path, exists: true, kind, sizeBytes: stats.size },
-              facts: { path, exists: true, kind, sizeBytes: stats.size },
-              summary: `${path} is a ${kind}.`,
-            };
-          },
-        }),
-      glob: (params) =>
-        call({
-          toolName: "repo.glob",
-          title: "Glob workspace paths",
-          summary: `Glob ${params.pattern}`,
-          run: async () => {
-            const scanRoot = params.cwd ? resolveWorkspacePath(input.cwd, params.cwd) : input.cwd;
-            const glob = new Bun.Glob(params.pattern.trim() || "**/*");
-            const paths: string[] = [];
-            for await (const path of glob.scan({
-              cwd: scanRoot,
-              onlyFiles: params.includeDirectories !== true,
-            })) {
-              paths.push(normalizeWorkspaceRelativePath(input.cwd, resolve(scanRoot, path)));
-              if (paths.length >= (params.maxResults ?? 200)) {
-                break;
-              }
-            }
-            const cwd = params.cwd
-              ? normalizeWorkspaceRelativePath(input.cwd, scanRoot)
-              : undefined;
-            return {
-              value: { paths: paths.toSorted() },
-              facts: {
-                pattern: params.pattern,
-                resultCount: paths.length,
-                ...(cwd ? { cwd } : {}),
-              },
-              summary: `Matched ${pluralize(paths.length, "path")}.`,
-            };
-          },
-        }),
-      grep: (params) =>
-        call({
-          toolName: "repo.grep",
-          title: "Search text",
-          summary: `Search for ${params.pattern}`,
-          run: async () => {
-            const glob = new Bun.Glob(params.glob?.trim() || "**/*");
-            const matcher = createRepoTextMatcher(params.pattern, {
-              caseSensitive: params.caseSensitive === true,
-              regex: params.regex === true,
-            });
-            const matches: ExecuteTypescriptRepoGrepMatch[] = [];
-            const matchedPaths = new Set<string>();
-            for await (const path of glob.scan({ cwd: input.cwd, onlyFiles: true })) {
-              const filePath = resolve(input.cwd, path);
-              const contents = readFileSync(filePath, "utf8");
-              const lines = contents.split(/\r?\n/);
-              for (let index = 0; index < lines.length; index += 1) {
-                const line = lines[index];
-                if (line === undefined || !matcher(line)) {
-                  continue;
-                }
-                matches.push({ path, line: index + 1, text: line });
-                matchedPaths.add(path);
-                if (matches.length >= (params.maxResults ?? 50)) {
-                  return {
-                    value: { matches },
-                    facts: {
-                      pattern: params.pattern,
-                      ...(params.glob ? { glob: params.glob } : {}),
-                      matchCount: matches.length,
-                      pathCount: matchedPaths.size,
-                    },
-                    summary: `Found ${pluralize(matches.length, "match")}.`,
-                  };
-                }
-              }
-            }
-            return {
-              value: { matches },
-              facts: {
-                pattern: params.pattern,
-                ...(params.glob ? { glob: params.glob } : {}),
-                matchCount: matches.length,
-                pathCount: matchedPaths.size,
-              },
-              summary: `Found ${pluralize(matches.length, "match")}.`,
-            };
-          },
-        }),
-    },
-    git: {
-      status: (params) =>
-        call({
-          toolName: "git.status",
-          title: "Git status",
-          summary: "Inspect git status",
-          run: async () => {
-            const result = await runGit([
-              "status",
-              "--porcelain=v2",
-              "--branch",
-              "--untracked-files=all",
-              ...(params?.paths?.length ? ["--", ...params.paths] : []),
-            ]);
-            const status = parseGitStatusPorcelainV2(result.stdout);
-            return {
-              value: status,
-              facts: {
-                ...(status.branch ? { branch: status.branch } : {}),
-                changedFileCount: status.files.length,
-                ...(typeof status.ahead === "number" ? { ahead: status.ahead } : {}),
-                ...(typeof status.behind === "number" ? { behind: status.behind } : {}),
-              },
-              summary: status.branch
-                ? `Git status on ${status.branch} with ${pluralize(status.files.length, "changed file")}.`
-                : `Git status returned ${pluralize(status.files.length, "changed file")}.`,
-            };
-          },
-        }),
-      diff: (params) =>
-        call({
-          toolName: "git.diff",
-          title: "Git diff",
-          summary: "Read git diff",
-          run: async () => {
-            const args = ["diff"];
-            if (params?.cached) {
-              args.push("--cached");
-            }
-            if (params?.baseRef && params?.headRef) {
-              args.push(params.baseRef, params.headRef);
-            } else if (params?.baseRef) {
-              args.push(params.baseRef);
-            } else if (params?.headRef) {
-              args.push(params.headRef);
-            }
-            if (params?.paths?.length) {
-              args.push("--", ...params.paths);
-            }
-            const result = await runGit(args);
-            return {
-              value: { text: result.stdout },
-              facts: {
-                ...(params?.paths?.length ? { paths: params.paths } : {}),
-                cached: params?.cached === true,
-                ...(params?.baseRef ? { baseRef: params.baseRef } : {}),
-                ...(params?.headRef ? { headRef: params.headRef } : {}),
-                diffBytes: byteLength(result.stdout),
-              },
-              summary: `Read ${byteLength(result.stdout)} bytes of diff output.`,
-            };
-          },
-        }),
-      log: (params) =>
-        call<{ commits: ExecuteTypescriptGitCommitSummary[] }>({
-          toolName: "git.log",
-          title: "Git log",
-          summary: "Read recent commits",
-          run: async () => {
-            const limit = params?.limit ?? 10;
-            const result = await runGit([
-              "log",
-              "--format=%H%x1f%s%x1f%an%x1f%aI",
-              "-n",
-              String(limit),
-              ...(params?.ref ? [params.ref] : []),
-            ]);
-            const commits = result.stdout
-              .split(/\r?\n/)
-              .filter(Boolean)
-              .map<ExecuteTypescriptGitCommitSummary>((line) => {
-                const [sha = "", subject = "", author, authoredAt] = line.split("\u001f");
-                return { sha, subject, author, authoredAt };
-              });
-            return {
-              value: { commits },
-              facts: {
-                ...(params?.ref ? { ref: params.ref } : {}),
-                limit,
-                commitCount: commits.length,
-              },
-              summary: `Loaded ${pluralize(commits.length, "commit")}.`,
-            };
-          },
-        }),
-      show: (params) =>
-        call({
-          toolName: "git.show",
-          title: "Show git object",
-          summary: `Show ${params.ref}`,
-          run: async () => {
-            const result = await runGit(
-              params.path
-                ? ["show", `${params.ref}:${params.path}`]
-                : ["show", "--format=medium", "--no-patch", params.ref],
-            );
-            return {
-              value: { text: result.stdout },
-              facts: {
-                ref: params.ref,
-                ...(params.path ? { path: params.path } : {}),
-                bytesRead: byteLength(result.stdout),
-              },
-              summary: params.path
-                ? `Read ${params.path} at ${params.ref}.`
-                : `Read ${byteLength(result.stdout)} bytes from ${params.ref}.`,
-            };
-          },
-        }),
-      branch: (params) =>
-        call<{
-          current?: string;
-          branches: Array<{ name: string; current: boolean; upstream?: string }>;
-        }>({
-          toolName: "git.branch",
-          title: "List branches",
-          summary: "Inspect branches",
-          run: async () => {
-            const result = await runGit([
-              "branch",
-              ...(params?.all ? ["--all"] : []),
-              "--format=%(HEAD)%x1f%(refname:short)%x1f%(upstream:short)",
-            ]);
-            const branches = result.stdout
-              .split(/\r?\n/)
-              .filter(Boolean)
-              .flatMap((line) => {
-                const [head, name, upstream] = line.split("\u001f");
-                if (!name) {
-                  return [];
-                }
-                return {
-                  name,
-                  current: head?.trim() === "*",
-                  upstream: upstream || undefined,
-                };
-              });
-            const current = branches.find((branch) => branch.current)?.name;
-            return {
-              value: { current, branches },
-              facts: {
-                ...(current ? { current } : {}),
-                branchCount: branches.length,
-              },
-              summary: current
-                ? `Current branch is ${current}.`
-                : `Loaded ${pluralize(branches.length, "branch")}.`,
-            };
-          },
-        }),
-      mergeBase: (params) =>
-        call({
-          toolName: "git.mergeBase",
-          title: "Merge base",
-          summary: `Find merge base for ${params.baseRef} and ${params.headRef}`,
-          run: async () => {
-            const result = await runGit(["merge-base", params.baseRef, params.headRef]);
-            const sha = result.stdout.trim();
-            return {
-              value: { sha: sha || undefined },
-              facts: {
-                baseRef: params.baseRef,
-                headRef: params.headRef,
-                ...(sha ? { sha } : {}),
-              },
-              summary: sha
-                ? `Merge base is ${sha}.`
-                : `No merge base for ${params.baseRef} and ${params.headRef}.`,
-            };
-          },
-        }),
-      fetch: (params) =>
-        call({
-          toolName: "git.fetch",
-          title: "Git fetch",
-          summary: "Fetch from remote",
-          visibility: "summary",
-          run: async () => {
-            const result = await runGit([
-              "fetch",
-              ...(params?.prune ? ["--prune"] : []),
-              ...(params?.remote ? [params.remote] : []),
-              ...(params?.refspecs ?? []),
-            ]);
-            return buildGitCommandOutcome(
-              result,
-              {
-                ...(params?.remote ? { remote: params.remote } : {}),
-                refspecCount: params?.refspecs?.length ?? 0,
-                prune: params?.prune === true,
-              },
-              "Fetched from remote.",
-            );
-          },
-        }),
-      pull: (params) =>
-        call({
-          toolName: "git.pull",
-          title: "Git pull",
-          summary: "Pull from remote",
-          visibility: "summary",
-          run: async () => {
-            const result = await runGit([
-              "pull",
-              ...(params?.rebase ? ["--rebase"] : []),
-              ...(params?.remote ? [params.remote] : []),
-              ...(params?.branch ? [params.branch] : []),
-            ]);
-            return buildGitCommandOutcome(
-              result,
-              {
-                ...(params?.remote ? { remote: params.remote } : {}),
-                ...(params?.branch ? { branch: params.branch } : {}),
-                rebase: params?.rebase === true,
-              },
-              "Pulled from remote.",
-            );
-          },
-        }),
-      push: (params) =>
-        call({
-          toolName: "git.push",
-          title: "Git push",
-          summary: "Push to remote",
-          visibility: "summary",
-          run: async () => {
-            const result = await runGit([
-              "push",
-              ...(params?.setUpstream ? ["--set-upstream"] : []),
-              ...(params?.forceWithLease ? ["--force-with-lease"] : []),
-              ...(params?.tags ? ["--tags"] : []),
-              ...(params?.remote ? [params.remote] : []),
-              ...(params?.branch ? [params.branch] : []),
-            ]);
-            return buildGitCommandOutcome(
-              result,
-              {
-                ...(params?.remote ? { remote: params.remote } : {}),
-                ...(params?.branch ? { branch: params.branch } : {}),
-                setUpstream: params?.setUpstream === true,
-                forceWithLease: params?.forceWithLease === true,
-                tags: params?.tags === true,
-              },
-              "Pushed to remote.",
-            );
-          },
-        }),
-      add: (params) =>
-        call({
-          toolName: "git.add",
-          title: "Git add",
-          summary: "Stage changes",
-          visibility: "summary",
-          run: async () => {
-            const result = await runGit([
-              "add",
-              ...(params.all ? ["--all"] : []),
-              ...(params.update ? ["--update"] : []),
-              ...(params.paths?.length ? params.paths : []),
-            ]);
-            return buildGitCommandOutcome(
-              result,
-              {
-                ...(params.paths?.length ? { paths: params.paths } : {}),
-                all: params.all === true,
-                update: params.update === true,
-              },
-              "Staged changes.",
-            );
-          },
-        }),
-      commit: (params) =>
-        call({
-          toolName: "git.commit",
-          title: "Git commit",
-          summary: "Create commit",
-          visibility: "summary",
-          run: async () => {
-            const result = await runGit([
-              "commit",
-              ...(params.all ? ["--all"] : []),
-              ...(params.allowEmpty ? ["--allow-empty"] : []),
-              ...(params.amend ? ["--amend"] : []),
-              "-m",
-              params.message,
-            ]);
-            const sha =
-              result.exitCode === 0
-                ? (await runGit(["rev-parse", "HEAD"])).stdout.trim() || undefined
-                : undefined;
-            return buildGitCommandOutcome(
-              { ...result, sha },
-              {
-                messageSummary: summarizeGitMessage(params.message),
-                ...(sha ? { sha } : {}),
-                all: params.all === true,
-                allowEmpty: params.allowEmpty === true,
-                amend: params.amend === true,
-              },
-              sha ? `Committed ${sha.slice(0, 7)}.` : "Committed changes.",
-            );
-          },
-        }),
-      switch: (params) =>
-        call({
-          toolName: "git.switch",
-          title: "Git switch",
-          summary: `Switch to ${params.branch}`,
-          visibility: "summary",
-          run: async () => {
-            const result = await runGit([
-              "switch",
-              ...(params.create ? ["-c"] : []),
-              params.branch,
-              ...(params.startPoint ? [params.startPoint] : []),
-            ]);
-            return buildGitCommandOutcome(
-              result,
-              {
-                branch: params.branch,
-                create: params.create === true,
-                ...(params.startPoint ? { startPoint: params.startPoint } : {}),
-              },
-              `Switched to ${params.branch}.`,
-            );
-          },
-        }),
-      checkout: (params) =>
-        call({
-          toolName: "git.checkout",
-          title: "Git checkout",
-          summary: "Checkout git ref or paths",
-          visibility: "summary",
-          run: async () => {
-            const args = ["checkout"];
-            if (params.createBranch) {
-              args.push("-b", params.createBranch);
-              if (params.ref) {
-                args.push(params.ref);
-              }
-            } else if (params.ref) {
-              args.push(params.ref);
-            }
-            if (params.paths?.length) {
-              args.push("--", ...params.paths);
-            }
-            if (args.length === 1) {
-              throw new Error("git.checkout requires ref, paths, or createBranch.");
-            }
-            const result = await runGit(args);
-            return buildGitCommandOutcome(
-              result,
-              {
-                ...(params.ref ? { ref: params.ref } : {}),
-                ...(params.paths?.length ? { paths: params.paths } : {}),
-                ...(params.createBranch ? { createBranch: params.createBranch } : {}),
-              },
-              "Checked out git state.",
-            );
-          },
-        }),
-      restore: (params) =>
-        call({
-          toolName: "git.restore",
-          title: "Git restore",
-          summary: "Restore tracked paths",
-          visibility: "summary",
-          run: async () => {
-            const worktree = params.worktree ?? params.staged !== true;
-            const result = await runGit([
-              "restore",
-              ...(params.source ? ["--source", params.source] : []),
-              ...(params.staged ? ["--staged"] : []),
-              ...(worktree ? ["--worktree"] : []),
-              "--",
-              ...params.paths,
-            ]);
-            return buildGitCommandOutcome(
-              result,
-              {
-                paths: params.paths,
-                ...(params.source ? { source: params.source } : {}),
-                staged: params.staged === true,
-                worktree,
-              },
-              "Restored tracked paths.",
-            );
-          },
-        }),
-      rebase: (params) =>
-        call({
-          toolName: "git.rebase",
-          title: "Git rebase",
-          summary: "Run git rebase",
-          visibility: "summary",
-          run: async () => {
-            let mode = "start";
-            const args = ["rebase"];
-            if (params.continue) {
-              mode = "continue";
-              args.push("--continue");
-            } else if (params.abort) {
-              mode = "abort";
-              args.push("--abort");
-            } else {
-              if (params.upstream) {
-                args.push(params.upstream);
-              }
-              if (params.branch) {
-                args.push(params.branch);
-              }
-            }
-            const result = await runGit(args);
-            return buildGitCommandOutcome(
-              result,
-              {
-                ...(params.upstream ? { upstream: params.upstream } : {}),
-                ...(params.branch ? { branch: params.branch } : {}),
-                mode,
-              },
-              `Rebase ${mode} completed.`,
-            );
-          },
-        }),
-      cherryPick: (params) =>
-        call({
-          toolName: "git.cherryPick",
-          title: "Git cherry-pick",
-          summary: "Run git cherry-pick",
-          visibility: "summary",
-          run: async () => {
-            let mode = "start";
-            const args = ["cherry-pick"];
-            if (params.continue) {
-              mode = "continue";
-              args.push("--continue");
-            } else if (params.abort) {
-              mode = "abort";
-              args.push("--abort");
-            } else {
-              if (params.noCommit) {
-                args.push("--no-commit");
-              }
-              args.push(...(params.commits ?? []));
-            }
-            const result = await runGit(args);
-            return buildGitCommandOutcome(
-              result,
-              {
-                commitCount: params.commits?.length ?? 0,
-                noCommit: params.noCommit === true,
-                mode,
-              },
-              `Cherry-pick ${mode} completed.`,
-            );
-          },
-        }),
-      stash: (params) =>
-        call({
-          toolName: "git.stash",
-          title: "Git stash",
-          summary: "Run git stash",
-          visibility:
-            params?.subcommand === "list" || params?.subcommand === "show" ? "trace" : "summary",
-          run: async () => {
-            const subcommand = params?.subcommand ?? "push";
-            const args = ["stash", subcommand];
-            if (subcommand === "push") {
-              if (params?.message) {
-                args.push("-m", params.message);
-              }
-              if (params?.includeUntracked) {
-                args.push("--include-untracked");
-              }
-            } else if (params?.stash) {
-              args.push(params.stash);
-            }
-            const result = await runGit(args);
-            return buildGitCommandOutcome(
-              result,
-              {
-                subcommand,
-                ...(params?.stash ? { stash: params.stash } : {}),
-                ...(params?.message ? { message: params.message } : {}),
-              },
-              `Stash ${subcommand} completed.`,
-              subcommand === "list" || subcommand === "show" ? "trace" : "summary",
-            );
-          },
-        }),
-      tag: (params) =>
-        call({
-          toolName: "git.tag",
-          title: "Git tag",
-          summary: "Run git tag",
-          visibility: params?.list ? "trace" : "summary",
-          run: async () => {
-            const args = ["tag"];
-            if (params?.list) {
-              args.push("--list");
-              if (params.pattern) {
-                args.push(params.pattern);
-              }
-            } else if (params?.delete) {
-              if (!params.name) {
-                throw new Error("git.tag delete requires a tag name.");
-              }
-              args.push("-d", params.name);
-            } else {
-              if (!params?.name) {
-                throw new Error("git.tag create requires a tag name.");
-              }
-              if (params.annotate) {
-                args.push("-a");
-              }
-              if (params.message ?? params.annotate) {
-                args.push("-m", params.message ?? params.name);
-              }
-              args.push(params.name);
-              if (params.target) {
-                args.push(params.target);
-              }
-            }
-            const result = await runGit(args);
-            return buildGitCommandOutcome(
-              result,
-              {
-                ...(params?.name ? { name: params.name } : {}),
-                ...(params?.target ? { target: params.target } : {}),
-                annotate: params?.annotate === true,
-                delete: params?.delete === true,
-                list: params?.list === true,
-                ...(params?.pattern ? { pattern: params.pattern } : {}),
-              },
-              "Tag command completed.",
-              params?.list ? "trace" : "summary",
-            );
-          },
-        }),
-    },
-    exec: {
-      run: (params) =>
-        call({
-          toolName: "exec.run",
-          title: "Run command",
-          summary: `Run ${params.command}`,
-          run: async () => {
-            const cwd = params.cwd ? resolveWorkspacePath(input.cwd, params.cwd) : input.cwd;
-            const value = await input.runCommand({
-              ...params,
-              cwd,
-              signal: input.signal,
-            });
-            const failureSummary = summarizeCommandFailure(params.command, value);
-            return {
-              value,
-              facts: {
-                command: params.command,
-                args: params.args ?? [],
-                cwd: normalizeWorkspaceRelativePath(input.cwd, cwd),
-                ...(typeof params.timeoutMs === "number" ? { timeoutMs: params.timeoutMs } : {}),
-                exitCode: value.exitCode,
-                stdoutBytes: byteLength(value.stdout),
-                stderrBytes: byteLength(value.stderr),
-              },
-              status: value.exitCode === 0 ? "succeeded" : "failed",
-              visibility: value.exitCode === 0 ? "trace" : "summary",
-              summary:
-                value.exitCode === 0 ? `${params.command} exited with code 0.` : failureSummary,
-              error: value.exitCode === 0 ? null : failureSummary,
-            };
-          },
-        }),
-    },
+      }),
+    find: (params) =>
+      invokeTool({
+        tool: getTool("find"),
+        params,
+        title: "Find files",
+        summary: `Find ${params.pattern}`,
+        facts: () => ({ pattern: params.pattern, path: params.path, limit: params.limit }),
+      }),
+    ls: (params) =>
+      invokeTool({
+        tool: getTool("ls"),
+        params,
+        title: "List directory",
+        summary: `List ${params.path ?? "."}`,
+        facts: () => ({ path: params.path ?? ".", limit: params.limit }),
+      }),
+    bash: (params) =>
+      invokeTool({
+        tool: getTool("bash"),
+        params,
+        title: "Run bash",
+        summary: `Run ${params.command}`,
+        visibility: "summary",
+        facts: () => ({ command: params.command, timeout: params.timeout }),
+      }),
     artifact: {
-      writeText: (params) =>
-        call({
-          toolName: "artifact.writeText",
+      write_text: (params) =>
+        invokeTool({
+          tool: getTool("artifact.write_text"),
+          params,
           title: "Write artifact",
           summary: `Write artifact ${params.name}`,
           visibility: "summary",
-          run: async (commandId) => {
-            const artifact = input.store.createArtifact({
-              workflowTaskAttemptId: input.workflowTaskAttemptId ?? null,
-              sourceCommandId: commandId,
-              kind: "text",
-              name: params.name,
-              content: params.text,
-            });
-            return {
-              value: { artifactId: artifact.id, path: artifact.path ?? "" },
-              facts: {
-                artifactId: artifact.id,
-                name: params.name,
-                path: artifact.path ?? "",
-                bytesWritten: byteLength(params.text),
-              },
-              summary: `Created artifact ${params.name}.`,
-            };
-          },
+          facts: (result) => readToolResultDetails(result),
         }),
-      writeJson: <T>(params: { name: string; value: T; pretty?: boolean }) =>
-        call({
-          toolName: "artifact.writeJson",
+      write_json: (params) =>
+        invokeTool({
+          tool: getTool("artifact.write_json"),
+          params,
           title: "Write JSON artifact",
           summary: `Write JSON artifact ${params.name}`,
           visibility: "summary",
-          run: async (commandId) => {
-            const text = JSON.stringify(
-              params.value,
-              null,
-              params.pretty === false ? undefined : 2,
-            );
-            const artifact = input.store.createArtifact({
-              workflowTaskAttemptId: input.workflowTaskAttemptId ?? null,
-              sourceCommandId: commandId,
-              kind: "json",
-              name: params.name,
-              content: text,
-            });
-            return {
-              value: { artifactId: artifact.id, path: artifact.path ?? "" },
-              facts: {
-                artifactId: artifact.id,
-                name: params.name,
-                path: artifact.path ?? "",
-                bytesWritten: byteLength(text),
-              },
-              summary: `Created JSON artifact ${params.name}.`,
-            };
-          },
+          facts: (result) => readToolResultDetails(result),
         }),
-      attachFile: (params) =>
-        call({
-          toolName: "artifact.attachFile",
-          title: "Attach file artifact",
+      attach_file: (params) =>
+        invokeTool({
+          tool: getTool("artifact.attach_file"),
+          params,
+          title: "Attach artifact",
           summary: `Attach ${params.path}`,
           visibility: "summary",
-          run: async (commandId) => {
-            const filePath = resolveWorkspacePath(input.cwd, params.path);
-            const name = params.name?.trim() || basename(filePath);
-            const artifact = input.store.createArtifact({
-              workflowTaskAttemptId: input.workflowTaskAttemptId ?? null,
-              sourceCommandId: commandId,
-              kind: "file",
-              name,
-              path: filePath,
-            });
-            return {
-              value: { artifactId: artifact.id, path: artifact.path ?? "" },
-              facts: {
-                artifactId: artifact.id,
-                name,
-                path: artifact.path ?? "",
-              },
-              summary: `Attached artifact ${name}.`,
-            };
-          },
-        }),
-    },
-    web: {
-      search: (params) =>
-        call({
-          toolName: "web.search",
-          title: "Web search",
-          summary: `Search the web for ${params.query}`,
-          run: async () => {
-            const value = await input.webSearch({
-              query: params.query,
-              maxResults: params.maxResults,
-              signal: input.signal,
-            });
-            return {
-              value,
-              facts: {
-                query: params.query,
-                resultCount: value.results.length,
-              },
-              summary: `Found ${pluralize(value.results.length, "web result")}.`,
-            };
-          },
-        }),
-      fetchText: (params) =>
-        call({
-          toolName: "web.fetchText",
-          title: "Fetch URL",
-          summary: `Fetch ${params.url}`,
-          run: async () => {
-            const value = await input.fetchText({
-              url: params.url,
-              signal: input.signal,
-            });
-            return {
-              value,
-              facts: {
-                url: params.url,
-                bytesRead: byteLength(value.text),
-              },
-              summary: `Fetched ${params.url}.`,
-            };
-          },
+          facts: (result) => readToolResultDetails(result),
         }),
     },
     workflow: {
-      listAssets: (params = {}) =>
-        call({
-          toolName: "workflow.listAssets",
+      list_assets: (params = {}) =>
+        invokeTool({
+          tool: getTool("workflow.list_assets"),
+          params,
           title: "List workflow assets",
           summary: "List workflow assets",
-          run: async () => {
-            const value = await Promise.resolve(input.workflowLibrary.listAssets(params));
-            return {
-              value,
-              facts: {
-                ...(params.kind ? { kind: params.kind } : {}),
-                ...(params.pathPrefix ? { pathPrefix: params.pathPrefix } : {}),
-                ...(params.scope ? { scope: params.scope } : {}),
-                assetCount: value.length,
-              },
-              summary:
-                value.length > 0
-                  ? `Listed ${pluralize(value.length, "workflow asset")}.`
-                  : "No workflow assets matched the filters.",
-            };
+          facts: (result) => {
+            const details = readToolResultDetails(result);
+            const assets = Array.isArray(details.assets) ? details.assets : [];
+            return { assetCount: assets.length };
           },
         }),
-      listModels: () =>
-        call({
-          toolName: "workflow.listModels",
+      list_models: () =>
+        invokeTool({
+          tool: getTool("workflow.list_models"),
+          params: {},
           title: "List workflow models",
           summary: "List workflow models",
-          run: async () => {
-            const value = await Promise.resolve(input.workflowLibrary.listModels());
-            const providerCount = new Set(value.map((model) => model.providerId)).size;
-            const authAvailableCount = value.filter((model) => model.authAvailable).length;
-            return {
-              value,
-              facts: {
-                modelCount: value.length,
-                providerCount,
-                authAvailableCount,
-              },
-              summary:
-                value.length > 0
-                  ? `Listed ${pluralize(value.length, "workflow model")} across ${pluralize(providerCount, "provider")}.`
-                  : "No workflow models were discovered.",
-            };
+          facts: (result) => {
+            const details = readToolResultDetails(result);
+            const models = Array.isArray(details.models) ? details.models : [];
+            return { modelCount: models.length };
           },
         }),
     },
   };
-}
-
-function resolveWorkspacePath(cwd: string, path: string): string {
-  const resolved = resolve(cwd, path);
-  const normalizedCwd = `${cwd}${cwd.endsWith("/") ? "" : "/"}`;
-  if (resolved !== cwd && !resolved.startsWith(normalizedCwd)) {
-    throw new Error(`Path ${path} escapes the workspace root.`);
-  }
-  return resolved;
-}
-
-function normalizeWorkspaceRelativePath(cwd: string, path: string): string {
-  const relativePath = relative(cwd, path);
-  return relativePath === "" ? "." : relativePath;
-}
-
-function byteLength(text: string): number {
-  return Buffer.byteLength(text, "utf8");
-}
-
-function createRepoTextMatcher(
-  pattern: string,
-  options: { caseSensitive: boolean; regex: boolean },
-): (text: string) => boolean {
-  if (options.regex) {
-    const regex = new RegExp(pattern, options.caseSensitive ? "" : "i");
-    return (text) => regex.test(text);
-  }
-  if (options.caseSensitive) {
-    return (text) => text.includes(pattern);
-  }
-  const loweredPattern = pattern.toLowerCase();
-  return (text) => text.toLowerCase().includes(loweredPattern);
 }
 
 function summarizeResult(value: unknown): string {
@@ -1808,128 +766,36 @@ function summarizeResult(value: unknown): string {
   return preview.length <= 160 ? preview : `${preview.slice(0, 159).trimEnd()}…`;
 }
 
-function parseGitStatusPorcelainV2(output: string): {
-  branch?: string;
-  ahead?: number;
-  behind?: number;
-  files: ExecuteTypescriptGitFileChange[];
-} {
-  let branch: string | undefined;
-  let ahead: number | undefined;
-  let behind: number | undefined;
-  const files: ExecuteTypescriptGitFileChange[] = [];
-
-  for (const line of output.split(/\r?\n/).filter(Boolean)) {
-    if (line.startsWith("# branch.head ")) {
-      const head = line.slice("# branch.head ".length).trim();
-      branch = head && head !== "(detached)" ? head : undefined;
-      continue;
-    }
-    if (line.startsWith("# branch.ab ")) {
-      const match = line.match(/\+(\d+)\s+-(\d+)/);
-      if (match) {
-        ahead = Number(match[1]);
-        behind = Number(match[2]);
-      }
-      continue;
-    }
-    const parsed = parseGitStatusEntryV2(line);
-    if (parsed) {
-      files.push(parsed);
-    }
+function summarizeDirectToolResult(toolName: string, value: unknown): string {
+  if (!value || typeof value !== "object") {
+    return `${toolName} completed successfully.`;
   }
-
-  return {
-    branch,
-    ahead,
-    behind,
-    files,
-  };
+  const content = "content" in value ? (value as { content?: unknown }).content : undefined;
+  if (!Array.isArray(content)) {
+    return `${toolName} completed successfully.`;
+  }
+  const text = content
+    .flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      return "type" in entry &&
+        (entry as { type?: unknown }).type === "text" &&
+        typeof (entry as { text?: unknown }).text === "string"
+        ? [(entry as { text: string }).text]
+        : [];
+    })
+    .join("\n")
+    .trim();
+  return text || `${toolName} completed successfully.`;
 }
 
-function parseGitStatusEntryV2(line: string): ExecuteTypescriptGitFileChange | null {
-  if (line.startsWith("? ")) {
-    return {
-      path: line.slice(2).trim(),
-      change: "untracked",
-    };
+function readToolResultDetails(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || !("details" in value)) {
+    return {};
   }
-  if (line.startsWith("1 ")) {
-    const fields = line.split(" ");
-    return {
-      path: fields.slice(8).join(" ").trim(),
-      change: mapGitStatusChange(fields[1] ?? ""),
-    };
-  }
-  if (line.startsWith("2 ")) {
-    const tabIndex = line.indexOf("\t");
-    if (tabIndex === -1) {
-      return null;
-    }
-    const [path, previousPath] = line.slice(tabIndex + 1).split("\t");
-    return {
-      path: path?.trim() ?? "",
-      previousPath: previousPath?.trim() || undefined,
-      change: "renamed",
-    };
-  }
-  return null;
-}
-
-function mapGitStatusChange(code: string): ExecuteTypescriptGitFileChange["change"] {
-  if (code.includes("?")) {
-    return "untracked";
-  }
-  if (code.includes("R") || code.includes("C")) {
-    return "renamed";
-  }
-  if (code.includes("A")) {
-    return "added";
-  }
-  if (code.includes("D")) {
-    return "deleted";
-  }
-  return "modified";
-}
-
-function buildGitCommandOutcome<T extends ExecuteTypescriptRunCommandResult>(
-  value: T,
-  facts: ExecuteTypescriptCommandFacts,
-  successSummary: string,
-  visibility: StructuredCommandVisibility = "summary",
-): ExecuteTypescriptChildCallResult<T> {
-  const status = value.exitCode === 0 ? "succeeded" : "failed";
-  const failureSummary = summarizeCommandFailure("git", value);
-  return {
-    value,
-    facts,
-    status,
-    visibility: status === "failed" ? "summary" : visibility,
-    summary: status === "succeeded" ? successSummary : failureSummary,
-    error: status === "succeeded" ? null : failureSummary,
-  };
-}
-
-function summarizeCommandFailure(
-  commandLabel: string,
-  result: ExecuteTypescriptRunCommandResult,
-): string {
-  const detail = firstNonEmptyLine(result.stderr) ?? firstNonEmptyLine(result.stdout);
-  return detail
-    ? `${commandLabel} failed: ${detail}`
-    : `${commandLabel} failed with exit code ${result.exitCode}.`;
-}
-
-function summarizeGitMessage(message: string): string {
-  const firstLine = firstNonEmptyLine(message) ?? "commit";
-  return firstLine.length <= 72 ? firstLine : `${firstLine.slice(0, 71).trimEnd()}…`;
-}
-
-function firstNonEmptyLine(text: string): string | undefined {
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find(Boolean);
+  const details = (value as { details?: unknown }).details;
+  return details && typeof details === "object" && !Array.isArray(details)
+    ? (details as Record<string, unknown>)
+    : {};
 }
 
 function pluralize(count: number, noun: string): string {
@@ -1960,51 +826,28 @@ function buildExecuteTypescriptParentRollup(input: {
   summary?: string;
   facts: ExecuteTypescriptCommandFacts;
 } {
-  let repoReadCount = 0;
-  let repoWriteCount = 0;
+  let readCount = 0;
+  let searchCount = 0;
   let artifactCount = 0;
-  let subprocessCount = 0;
-  let subprocessFailureCount = 0;
-  let grepMatchCount = 0;
-  let grepPathCount = 0;
-  let webSearchCount = 0;
-  let webFetchCount = 0;
+  let bashCount = 0;
+  let bashFailureCount = 0;
   let workflowAssetCount = 0;
   let workflowModelCount = 0;
-  let gitBranch: string | undefined;
-  let gitChangedFileCount: number | undefined;
-  let lastCommitSha: string | undefined;
-  let pushedTarget: string | undefined;
-  const gitActions = new Set<string>();
   const artifactIds: string[] = [];
 
   for (const activity of input.childActivity) {
     switch (activity.toolName) {
-      case "repo.readFile":
-        repoReadCount += 1;
+      case "read":
+      case "ls":
+        readCount += 1;
         break;
-      case "repo.readFiles":
-        repoReadCount += readFactNumber(activity.facts, "fileCount") ?? 0;
+      case "grep":
+      case "find":
+        searchCount += 1;
         break;
-      case "repo.readJson":
-        repoReadCount += 1;
-        break;
-      case "repo.writeFile":
-      case "repo.writeJson":
-        repoWriteCount += 1;
-        break;
-      case "repo.unlink":
-        if (activity.facts?.deleted === true) {
-          repoWriteCount += 1;
-        }
-        break;
-      case "repo.grep":
-        grepMatchCount += readFactNumber(activity.facts, "matchCount") ?? 0;
-        grepPathCount += readFactNumber(activity.facts, "pathCount") ?? 0;
-        break;
-      case "artifact.writeText":
-      case "artifact.writeJson":
-      case "artifact.attachFile": {
+      case "artifact.write_text":
+      case "artifact.write_json":
+      case "artifact.attach_file": {
         artifactCount += 1;
         const artifactId = readFactString(activity.facts, "artifactId");
         if (artifactId) {
@@ -2012,60 +855,16 @@ function buildExecuteTypescriptParentRollup(input: {
         }
         break;
       }
-      case "exec.run":
-        subprocessCount += 1;
+      case "bash":
+        bashCount += 1;
         if (activity.status === "failed") {
-          subprocessFailureCount += 1;
+          bashFailureCount += 1;
         }
         break;
-      case "git.status":
-        gitBranch = readFactString(activity.facts, "branch") ?? gitBranch;
-        gitChangedFileCount =
-          readFactNumber(activity.facts, "changedFileCount") ?? gitChangedFileCount;
-        break;
-      case "git.fetch":
-      case "git.pull":
-      case "git.add":
-      case "git.switch":
-      case "git.checkout":
-      case "git.restore":
-      case "git.rebase":
-      case "git.cherryPick":
-        gitActions.add(activity.toolName.slice(4));
-        break;
-      case "git.push": {
-        const remote = readFactString(activity.facts, "remote");
-        const branch = readFactString(activity.facts, "branch");
-        pushedTarget = [remote, branch].filter(Boolean).join("/") || pushedTarget;
-        gitActions.add("push");
-        break;
-      }
-      case "git.commit":
-        lastCommitSha = readFactString(activity.facts, "sha") ?? lastCommitSha;
-        gitActions.add("commit");
-        break;
-      case "git.stash": {
-        const subcommand = readFactString(activity.facts, "subcommand");
-        if (subcommand && subcommand !== "list" && subcommand !== "show") {
-          gitActions.add(`stash ${subcommand}`);
-        }
-        break;
-      }
-      case "git.tag":
-        if (activity.facts?.list !== true) {
-          gitActions.add(activity.facts?.delete === true ? "tag delete" : "tag");
-        }
-        break;
-      case "web.search":
-        webSearchCount += 1;
-        break;
-      case "web.fetchText":
-        webFetchCount += 1;
-        break;
-      case "workflow.listAssets":
+      case "workflow.list_assets":
         workflowAssetCount += readFactNumber(activity.facts, "assetCount") ?? 0;
         break;
-      case "workflow.listModels":
+      case "workflow.list_models":
         workflowModelCount += readFactNumber(activity.facts, "modelCount") ?? 0;
         break;
       default:
@@ -2074,47 +873,21 @@ function buildExecuteTypescriptParentRollup(input: {
   }
 
   const summaryParts: string[] = [];
-  if (repoReadCount > 0) {
-    summaryParts.push(`Read ${pluralize(repoReadCount, "file")}`);
+  if (readCount > 0) {
+    summaryParts.push(`Read ${pluralize(readCount, "tool result")}`);
   }
-  if (grepMatchCount > 0 || grepPathCount > 0) {
-    summaryParts.push(
-      `Searched ${pluralize(grepPathCount, "file")} and found ${pluralize(grepMatchCount, "match")}`,
-    );
-  }
-  if (repoWriteCount > 0) {
-    summaryParts.push(`Wrote ${pluralize(repoWriteCount, "file")}`);
+  if (searchCount > 0) {
+    summaryParts.push(`Ran ${pluralize(searchCount, "search")}`);
   }
   if (artifactCount > 0) {
     summaryParts.push(`Created ${pluralize(artifactCount, "artifact")}`);
   }
-  if (subprocessCount > 0) {
+  if (bashCount > 0) {
     summaryParts.push(
-      subprocessFailureCount > 0
-        ? `Ran ${pluralize(subprocessCount, "subprocess")} (${subprocessFailureCount} failed)`
-        : `Ran ${pluralize(subprocessCount, "subprocess")}`,
+      bashFailureCount > 0
+        ? `Ran ${pluralize(bashCount, "bash command")} (${bashFailureCount} failed)`
+        : `Ran ${pluralize(bashCount, "bash command")}`,
     );
-  }
-  if (lastCommitSha && pushedTarget) {
-    summaryParts.push(`Git: committed ${lastCommitSha.slice(0, 7)} and pushed ${pushedTarget}`);
-  } else if (gitActions.size > 0) {
-    summaryParts.push(`Git: ${Array.from(gitActions).join(", ")}`);
-  } else if (gitBranch || typeof gitChangedFileCount === "number") {
-    const details = [
-      gitBranch ? `branch ${gitBranch}` : null,
-      typeof gitChangedFileCount === "number"
-        ? `${pluralize(gitChangedFileCount, "changed file")}`
-        : null,
-    ].filter(Boolean);
-    if (details.length > 0) {
-      summaryParts.push(`Git: ${details.join(", ")}`);
-    }
-  }
-  if (webSearchCount > 0) {
-    summaryParts.push(`Searched the web ${webSearchCount} time${webSearchCount === 1 ? "" : "s"}`);
-  }
-  if (webFetchCount > 0) {
-    summaryParts.push(`Fetched ${pluralize(webFetchCount, "page")}`);
   }
   if (workflowAssetCount > 0) {
     summaryParts.push(`Discovered ${pluralize(workflowAssetCount, "workflow asset")}`);
@@ -2123,7 +896,7 @@ function buildExecuteTypescriptParentRollup(input: {
     summaryParts.push(`Listed ${pluralize(workflowModelCount, "workflow model")}`);
   }
   if (summaryParts.length === 0 && input.childActivity.length > 0) {
-    summaryParts.push(`Ran ${pluralize(input.childActivity.length, "api call")}`);
+    summaryParts.push(`Ran ${pluralize(input.childActivity.length, "tool call")}`);
   }
 
   return {
@@ -2135,108 +908,16 @@ function buildExecuteTypescriptParentRollup(input: {
       failedChildCommandCount: input.childActivity.filter(
         (activity) => activity.status === "failed",
       ).length,
-      repoReadCount,
-      repoWriteCount,
+      readCount,
+      searchCount,
       artifactCount,
-      subprocessCount,
-      subprocessFailureCount,
-      grepMatchCount,
-      grepPathCount,
-      webSearchCount,
-      webFetchCount,
+      bashCount,
+      bashFailureCount,
       workflowAssetCount,
       workflowModelCount,
       ...(artifactIds.length > 0 ? { artifactIds } : {}),
-      ...(gitBranch ? { gitBranch } : {}),
-      ...(typeof gitChangedFileCount === "number" ? { gitChangedFileCount } : {}),
-      ...(lastCommitSha ? { lastCommitSha } : {}),
-      ...(pushedTarget ? { pushedTarget } : {}),
-      ...(gitActions.size > 0 ? { gitActions: Array.from(gitActions) } : {}),
     },
   };
-}
-
-async function defaultRunCommand(
-  input: ExecuteTypescriptRunCommandInput,
-): Promise<ExecuteTypescriptRunCommandResult> {
-  const proc = Bun.spawn({
-    cmd: [input.command, ...(input.args ?? [])],
-    cwd: input.cwd,
-    env: {
-      ...process.env,
-      ...input.env,
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-    signal: input.signal,
-  });
-  const timeout =
-    typeof input.timeoutMs === "number" && input.timeoutMs > 0
-      ? setTimeout(() => proc.kill(), input.timeoutMs)
-      : null;
-  try {
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    return {
-      exitCode,
-      stdout,
-      stderr,
-    };
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-  }
-}
-
-async function defaultFetchText(input: {
-  url: string;
-  signal?: AbortSignal;
-}): Promise<ExecuteTypescriptWebFetchResult> {
-  const response = await fetch(input.url, {
-    signal: input.signal,
-  });
-  return {
-    url: input.url,
-    text: await response.text(),
-  };
-}
-
-async function defaultWebSearch(input: {
-  query: string;
-  maxResults?: number;
-  signal?: AbortSignal;
-}): Promise<ExecuteTypescriptWebSearchResult> {
-  const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(input.query)}`;
-  const response = await fetch(url, {
-    signal: input.signal,
-    headers: {
-      "user-agent": "svvy/0.0.1",
-    },
-  });
-  const html = await response.text();
-  const matches = Array.from(
-    html.matchAll(
-      /result__a" href="([^"]+)">([\s\S]*?)<\/a>[\s\S]*?result__snippet">([\s\S]*?)<\/a>/g,
-    ),
-  ).slice(0, input.maxResults ?? 5);
-  return {
-    results: matches.map((match) => ({
-      url: match[1] ?? "",
-      title: stripHtml(match[2] ?? ""),
-      snippet: stripHtml(match[3] ?? ""),
-    })),
-  };
-}
-
-function stripHtml(value: string): string {
-  return value
-    .replace(/<[^>]+>/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 function getRuntimeErrorLine(error: unknown): number | undefined {

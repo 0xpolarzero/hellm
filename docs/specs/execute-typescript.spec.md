@@ -1,52 +1,69 @@
-# `execute_typescript` / Code Mode Spec
+# `execute_typescript` and Direct Tool Surface
 
-## Status
+## Product Contract
 
-- Date: 2026-04-16
-- Status: adopted architecture direction for the generic execution tool
-- Scope of this document:
-  - define the role of `execute_typescript` in the product
-  - specify the stable tool contract and runtime flow
-  - define the day-one `api.*` surface
-  - define which child-command facts are stored and how they surface in the UI
+svvy exposes PI-backed direct tools as the normal coding-agent interface. The direct tools are the canonical surface for reading files, searching, editing, writing, running shell commands, creating artifacts, and discovering workflow assets.
 
-## Purpose
+`execute_typescript` is a composition tool. It receives a bounded TypeScript snippet, injects a small `api` object, typechecks the snippet against a generated declaration, runs it, and records each nested `api` call as a child command. Agents use it when TypeScript control flow is useful: batching, looping, filtering, aggregation, workflow discovery, bash-backed inspection, or artifact evidence.
 
-`svvy` needs one consistent generic work surface for bounded repository work.
+Ordinary one-shot repository actions use direct tools. Code mode does not own general repository I/O.
 
-The adopted answer is `execute_typescript`.
+## Direct Tools
 
-It is the product's deterministic TypeScript runner for composing observable host capabilities through a typed `api.*` surface.
+### Coding Tools
 
-## Product Fit
+svvy ships PI's coding tools directly, wrapped by svvy command recording:
 
-The PRD defines one shared execution model:
+| Tool | Purpose |
+| --- | --- |
+| `read` | Read one file with optional offset and line limit. |
+| `grep` | Search file contents. |
+| `find` | Find files by pattern. |
+| `ls` | List directory entries. |
+| `edit` | Apply targeted edits to an existing file. |
+| `write` | Create or replace a file. |
+| `bash` | Run a bounded shell command in the active workspace or task root. |
 
-```text
-tool call -> command -> handler -> events -> structured state -> UI
-```
+The wrapper keeps PI's input schemas and behavior as the source of truth. svvy adds durable command records, turn-decision projection, transcript visibility, and artifact links where applicable.
 
-Inside that model:
+### Artifact Tools
 
-- `execute_typescript` is the default generic work surface
-- `thread.start`, `thread.handoff`, and `wait` remain `svvy`-native top-level control tools
-- workflow supervision stays on Smithers-native bridge tools rather than `api.exec.run` or a svvy-defined `workflow.*` wrapper
+Artifacts are first-class product state, so svvy provides artifact tools directly:
 
-`execute_typescript` is therefore:
+| Tool | Purpose |
+| --- | --- |
+| `artifact.write_text` | Persist a text artifact. |
+| `artifact.write_json` | Persist a JSON artifact. |
+| `artifact.attach_file` | Attach an existing file as artifact evidence. |
 
-- a top-level tool
-- the default way to perform ordinary generic work
-- the parent semantic unit for bounded scripted capability composition
+Artifacts are for durable byproducts and evidence: logs, reports, large outputs, benchmark data, screenshots, workflow exports, or retained generated files that should be inspectable without becoming normal requested repository state.
 
-## Tool Contract
+### Workflow Discovery Tools
 
-### Tool Name
+Handlers and task agents discover reusable workflow assets through direct workflow tools:
 
-The tool is named `execute_typescript`.
+| Tool | Purpose |
+| --- | --- |
+| `workflow.list_assets` | List saved or artifact workflow definitions, prompts, and components. |
+| `workflow.list_models` | List provider/model options available for workflow task-agent authoring. |
 
-### Input
+Smithers runtime control remains on Smithers-native tools such as `smithers.list_workflows`, `smithers.run_workflow`, `smithers.get_run`, and workflow wait/control tools. Workflow discovery tools only expose source-library metadata and model inventory.
 
-The adopted input shape is:
+## Agent-Facing Tool Sets
+
+### Orchestrator
+
+The orchestrator receives direct coding tools, direct artifact tools, `execute_typescript`, and orchestration tools such as `thread.start` and `wait`. It uses direct tools for local bounded work and starts handler threads for larger owned work.
+
+### Handler
+
+Handler threads receive direct coding tools, direct artifact tools, direct workflow discovery tools, `execute_typescript`, `request_context`, `thread.handoff`, wait tools, and Smithers supervision tools. They can inspect, edit, author, run, and reconcile workflows without relying on code mode as the primary I/O mechanism.
+
+### Workflow Task Agent
+
+Workflow task agents receive task-local direct coding tools, direct artifact tools, and `execute_typescript`. Their working directory is the Smithers task root or assigned worktree. They do not receive handler/orchestrator control tools.
+
+## `execute_typescript` Input
 
 ```ts
 type ExecuteTypescriptInput = {
@@ -54,609 +71,192 @@ type ExecuteTypescriptInput = {
 };
 ```
 
-### Output
-
-The adopted output shape is:
+The snippet body is wrapped as an async function:
 
 ```ts
-type StructuredDiagnostic = {
-  severity: "error" | "warning";
-  message: string;
-  file?: string;
-  line?: number;
-  column?: number;
-  code?: string;
-};
-
-type ExecuteTypescriptResult = {
-  success: boolean;
-  result?: unknown;
-  logs?: string[];
-  error?: {
-    message: string;
-    name?: string;
-    stage?: "compile" | "typecheck" | "runtime";
-    diagnostics?: StructuredDiagnostic[];
-    line?: number;
-  };
-};
+export default async function __svvy(api: SvvyApi, console: SvvyConsole) {
+  // user snippet
+}
 ```
 
-The top-level `{ success, result, logs, error }` contract stays stable.
+The snippet can `return` any JSON-serializable value or a small diagnostic object. The full submitted snippet is stored as an artifact for the attempt.
 
-The submitted snippet artifact is durable product state, not a required tool return field.
+## Runtime Rules
 
-## Prompt Contract
+- The snippet is typechecked before execution against the generated `SvvyApi` declaration.
+- Node built-ins are not part of the snippet contract.
+- The injected `api` object is the only host capability.
+- The injected `console` captures small log lines into the result.
+- Each nested `api` call creates a child command under the parent `execute_typescript` command.
+- Direct tools remain the preferred path for one-shot reads, edits, writes, and commands.
+- Code mode does not expose `edit` or `write`; file modification belongs to direct tools.
 
-The model must see the real `execute_typescript` SDK contract before it writes a snippet.
+## Injected API
 
-Adopted rules:
-
-- the source of truth for the SDK shape is one documented TypeScript contract module in the repo
-- build and dev flows generate one declaration-text module from that source-of-truth contract so prompt injection and static checking use the same shape
-- the generated declaration text keeps relevant JSDoc so usage rules survive into the embedded contract
-- the runtime uses that generated declaration text for `execute_typescript` static checking
-- the active surface system prompt embeds only the generated declaration blocks relevant to that surface's callable tools
-- orchestrator and handler-thread prompts may share the `execute_typescript` declaration when both surfaces can call it, but other tool declarations must still be sliced by actor
-
-Actor-specific capability slicing still applies:
-
-- the orchestrator prompt should not receive handler-only Smithers declarations just because both actors may use `execute_typescript`
-- a handler-thread prompt should not receive orchestrator-only declarations such as `thread.start` just because both actors are backed by pi sessions
-- a workflow-task-agent prompt may receive the `execute_typescript` declaration as its primary task-local tool schema without receiving any handler-thread or orchestrator control declarations or ambient pi extension tools that widen the callable surface
-
-This is required because short prose summaries are not sufficient for a typed host SDK with namespace methods, subtle argument shapes, and important constraints such as:
-
-- use the injected `api` object instead of Node.js built-ins
-- use `api.exec.run({ command, args, cwd, timeoutMs, env })`
-- pass the executable in `command` and argv tokens separately in `args`
-
-## Execution Boundary
-
-Use `execute_typescript` for bounded generic work such as:
-
-- reading files
-- reading several files and reducing them into structured output
-- repo search and tree inspection
-- git inspection and small git mutations
-- artifact creation
-- bounded process execution through `api.exec.run`
-- web lookups
-- pure in-memory TypeScript control flow, parsing, filtering, grouping, and formatting between `api.*` calls
-
-Do not use `execute_typescript` to replace top-level control-flow tools:
-
-- `thread.start`
-- `thread.handoff`
-- `wait`
-- Smithers-native workflow tools such as `smithers.run_workflow`, `smithers.resolve_approval`, or `smithers.runs.cancel`
-
-Those actions change product-owned execution state and stay outside the generic TypeScript runner.
-
-## Observable Capability Boundary
-
-Inside `execute_typescript`, `api.*` is the product's observable capability surface.
-
-That means:
-
-- workspace reads and writes should go through `api.repo.*`
-- git work should go through `api.git.*`
-- process execution should go through `api.exec.run`
-- durable byproduct and evidence artifact creation should go through `api.artifact.*`
-- web access should go through `api.web.*`
-
-Pure TypeScript inside the snippet remains available for local computation.
-
-The runtime and prompt contract must make clear that ordinary JavaScript language features are available inside the snippet, but Node.js modules and globals are not part of the injected environment. The intended path is `api.*`, not ad hoc `fs`, `path`, `process`, or `node:*` imports.
-
-The product does not try to decompose arbitrary in-memory code into separate durable facts.
-
-The product does record `api.*` calls because they are the semantic boundary where repo, git, web, artifact, and subprocess activity becomes observable and worth surfacing.
-
-This is an observability rule, not a permission claim.
-
-## Mandatory Runtime Flow
-
-The runtime flow for one `execute_typescript` call is:
-
-1. create one parent command for `execute_typescript`
-2. persist the exact submitted TypeScript snippet as a file-backed artifact before execution starts
-3. write SQLite artifact metadata and path indexes for that snippet
-4. prepare the injected typed `api.*` surface and helper context
-5. compile or typecheck the submitted code
-6. if static diagnostics fail, return them without executing the program
-7. otherwise execute the program
-8. record every nested `api.*` call as a child command
-9. capture logs, structured errors, and durable outputs
-10. synthesize parent summary facts and update structured state
-11. return `{ success, result, logs, error }`
-
-The important guarantees are:
-
-- the parent `execute_typescript` call is one command
-- every attempted run persists its exact submitted source
-- invalid code never executes
-- nested `api.*` calls are durable trace facts
-- the parent command remains the main semantic unit
-- the tool writes command summaries, trace facts, and artifacts, but does not emit episodes itself
-- Project CI should be expressed through declared Project CI saved workflow entries and recorded only from validated CI result output
-- optional handler context such as Project CI authoring guidance is loaded through the top-level handler-only `request_context` tool, not through the injected `api.*` SDK
-
-## Why Child Commands Exist
-
-The snippet artifact answers:
-
-- what code was submitted
-
-Child commands answer:
-
-- what happened when that code ran
-
-The stored snippet is necessary but not sufficient for inspection or recovery.
-
-The UI and selectors need durable facts such as:
-
-- which files were read
-- which files were written or deleted
-- which git command ran
-- whether a commit or push happened
-- which subprocess failed
-- which artifacts were created
-
-Those facts should not require transcript replay or speculative re-execution of the saved snippet.
-
-## Day-One `api.*` Surface
-
-The day-one SDK should be typed, namespace-based, and close to the underlying concepts.
-
-Rules:
-
-- all repo paths are workspace-relative unless stated otherwise
-- singular helpers stay for one-path operations, and plural helpers batch several known paths
-- camelCase is used when JavaScript identifiers cannot match the underlying command spelling exactly
-- the runtime injects one object named `api`
-- the runtime exposes the same surface to the orchestrator, handler threads, and workflow tasks that are allowed to use `execute_typescript`
-- that shared `execute_typescript` surface does not imply that every actor receives every non-`execute_typescript` tool declaration in the same prompt block
-
-### Representative Usage
+The source contract is generated from `src/bun/execute-typescript-api-contract.ts` into `generated/execute-typescript-api.generated.ts` and embedded in the system prompt.
 
 ```ts
-const docs = await api.repo.readFiles({
-  paths: ["docs/prd.md", "docs/features.ts"],
-});
+interface SvvyConsole {
+  log(...args: unknown[]): void;
+  info(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+}
 
-const matches = await api.repo.grep({
-  pattern: "execute_typescript",
-  glob: "docs/**/*.md",
-});
-
-const status = await api.git.status({});
-
-// Use artifacts only for durable byproducts or evidence that should not be a
-// normal repository file and is too useful to leave only in logs/transcript.
-await api.artifact.writeText({
-  name: "repo-inspection-evidence.json",
-  text: JSON.stringify({ docs, matches, status }, null, 2),
-});
-
-await api.exec.run({
-  command: "bun",
-  args: ["test", "src/bun/execute-typescript-tool.test.ts"],
-});
-```
-
-### Type Shape
-
-```ts
-type RepoTextFile = {
-  path: string;
+interface TextContent {
+  type: "text";
   text: string;
-};
+}
 
-type RepoStat = {
-  path: string;
-  exists: boolean;
-  kind: "file" | "directory" | "missing";
-  sizeBytes?: number;
-};
+interface ImageContent {
+  type: "image";
+  data: string;
+  mimeType: string;
+}
 
-type RepoWriteResult = {
-  path: string;
-  bytes: number;
-};
+interface ToolResult<TDetails = unknown> {
+  content: Array<TextContent | ImageContent>;
+  details: TDetails;
+}
 
-type RepoGrepMatch = {
-  path: string;
-  line: number;
-  text: string;
-};
-
-type GitFileChange = {
-  path: string;
-  change: "added" | "modified" | "deleted" | "renamed" | "untracked";
-  previousPath?: string;
-};
-
-type GitCommitSummary = {
-  sha: string;
-  subject: string;
-  author?: string;
-  authoredAt?: string;
-};
-
-type GitCommandResult = {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-};
-
-type ArtifactWriteResult = {
-  artifactId: string;
-  path: string;
-};
-
-type SvvyApi = {
-  repo: {
-    readFile(input: { path: string }): Promise<RepoTextFile>;
-    readFiles(input: { paths: string[] }): Promise<{ files: RepoTextFile[] }>;
-    readJson<T>(input: { path: string }): Promise<{ path: string; value: T }>;
-    writeFile(input: {
-      path: string;
-      text: string;
-      createDirectories?: boolean;
-    }): Promise<RepoWriteResult>;
-    writeJson<T>(input: {
-      path: string;
-      value: T;
-      pretty?: boolean;
-      createDirectories?: boolean;
-    }): Promise<RepoWriteResult>;
-    unlink(input: { path: string }): Promise<{ path: string; deleted: boolean }>;
-    stat(input: { path: string }): Promise<RepoStat>;
-    glob(input: {
-      pattern: string;
-      cwd?: string;
-      includeDirectories?: boolean;
-      maxResults?: number;
-    }): Promise<{ paths: string[] }>;
-    grep(input: {
-      pattern: string;
-      glob?: string;
-      maxResults?: number;
-      caseSensitive?: boolean;
-      regex?: boolean;
-    }): Promise<{ matches: RepoGrepMatch[] }>;
-  };
-
-  git: {
-    status(input?: { paths?: string[] }): Promise<{
-      branch?: string;
-      files: GitFileChange[];
-      ahead?: number;
-      behind?: number;
-    }>;
-    diff(input?: {
-      paths?: string[];
-      cached?: boolean;
-      baseRef?: string;
-      headRef?: string;
-    }): Promise<{ text: string }>;
-    log(input?: { ref?: string; limit?: number }): Promise<{ commits: GitCommitSummary[] }>;
-    show(input: { ref: string; path?: string }): Promise<{ text: string }>;
-    branch(input?: { all?: boolean; verbose?: boolean }): Promise<{
-      current?: string;
-      branches: Array<{
-        name: string;
-        current: boolean;
-        upstream?: string;
-      }>;
-    }>;
-    mergeBase(input: { baseRef: string; headRef: string }): Promise<{ sha?: string }>;
-    fetch(input?: {
-      remote?: string;
-      refspecs?: string[];
-      prune?: boolean;
-    }): Promise<GitCommandResult>;
-    pull(input?: { remote?: string; branch?: string; rebase?: boolean }): Promise<GitCommandResult>;
-    push(input?: {
-      remote?: string;
-      branch?: string;
-      setUpstream?: boolean;
-      forceWithLease?: boolean;
-      tags?: boolean;
-    }): Promise<GitCommandResult>;
-    add(input: { paths?: string[]; all?: boolean; update?: boolean }): Promise<GitCommandResult>;
-    commit(input: {
-      message: string;
-      all?: boolean;
-      allowEmpty?: boolean;
-      amend?: boolean;
-    }): Promise<GitCommandResult & { sha?: string }>;
-    switch(input: {
-      branch: string;
-      create?: boolean;
-      startPoint?: string;
-    }): Promise<GitCommandResult>;
-    checkout(input: {
-      ref?: string;
-      paths?: string[];
-      createBranch?: string;
-    }): Promise<GitCommandResult>;
-    restore(input: {
-      paths: string[];
-      source?: string;
-      staged?: boolean;
-      worktree?: boolean;
-    }): Promise<GitCommandResult>;
-    rebase(input: {
-      upstream?: string;
-      branch?: string;
-      continue?: boolean;
-      abort?: boolean;
-    }): Promise<GitCommandResult>;
-    cherryPick(input: {
-      commits?: string[];
-      continue?: boolean;
-      abort?: boolean;
-      noCommit?: boolean;
-    }): Promise<GitCommandResult>;
-    stash(input?: {
-      subcommand?: "push" | "pop" | "apply" | "drop" | "list" | "show";
-      stash?: string;
-      message?: string;
-      includeUntracked?: boolean;
-    }): Promise<GitCommandResult>;
-    tag(input?: {
-      name?: string;
-      target?: string;
-      annotate?: boolean;
-      message?: string;
-      delete?: boolean;
-      list?: boolean;
-      pattern?: string;
-    }): Promise<GitCommandResult>;
-  };
-
-  exec: {
-    run(input: {
-      command: string;
-      args?: string[];
-      cwd?: string;
-      timeoutMs?: number;
-      env?: Record<string, string>;
-    }): Promise<{
-      exitCode: number;
-      stdout: string;
-      stderr: string;
-    }>;
-  };
-
+interface SvvyApi {
+  read(input: { path: string; offset?: number; limit?: number }): Promise<ToolResult>;
+  grep(input: {
+    pattern: string;
+    path?: string;
+    glob?: string;
+    ignoreCase?: boolean;
+    literal?: boolean;
+    context?: number;
+    limit?: number;
+  }): Promise<ToolResult>;
+  find(input: { pattern: string; path?: string; limit?: number }): Promise<ToolResult>;
+  ls(input: { path?: string; limit?: number }): Promise<ToolResult>;
+  bash(input: { command: string; timeout?: number }): Promise<ToolResult>;
   artifact: {
-    writeText(input: { name: string; text: string }): Promise<ArtifactWriteResult>;
-    writeJson<T>(input: { name: string; value: T; pretty?: boolean }): Promise<ArtifactWriteResult>;
-    attachFile(input: { path: string; name?: string }): Promise<ArtifactWriteResult>;
+    write_text(input: { name: string; text: string }): Promise<ToolResult<ArtifactWriteResult>>;
+    write_json(input: {
+      name: string;
+      value: unknown;
+      pretty?: boolean;
+    }): Promise<ToolResult<ArtifactWriteResult>>;
+    attach_file(input: { path: string; name?: string }): Promise<ToolResult<ArtifactWriteResult>>;
   };
+  workflow: {
+    list_assets(input?: WorkflowListAssetsInput): Promise<ToolResult<WorkflowListAssetsDetails>>;
+    list_models(): Promise<ToolResult<WorkflowListModelsDetails>>;
+  };
+}
+```
 
-  web: {
-    search(input: { query: string; maxResults?: number }): Promise<{
-      results: Array<{ title: string; url: string; snippet: string }>;
-    }>;
-    fetchText(input: { url: string }): Promise<{ url: string; text: string }>;
-  };
+The code-mode API duplicates these direct tools only:
+
+| Code-mode function | Direct tool duplicated |
+| --- | --- |
+| `api.read` | `read` |
+| `api.grep` | `grep` |
+| `api.find` | `find` |
+| `api.ls` | `ls` |
+| `api.bash` | `bash` |
+| `api.artifact.write_text` | `artifact.write_text` |
+| `api.artifact.write_json` | `artifact.write_json` |
+| `api.artifact.attach_file` | `artifact.attach_file` |
+| `api.workflow.list_assets` | `workflow.list_assets` |
+| `api.workflow.list_models` | `workflow.list_models` |
+
+`edit` and `write` are not duplicated inside code mode. Agents call those tools directly so file modifications stay explicit in the transcript and command stream.
+
+## Examples
+
+### Batch Reads and Aggregate a Result
+
+```ts
+const matches = await api.grep({ pattern: "StructuredTurnDecision", glob: "src/**/*.ts" });
+const files = matches.content
+  .filter((entry) => entry.type === "text")
+  .flatMap((entry) => entry.text.match(/[^\s:]+\.ts/g) ?? []);
+const uniqueFiles = [...new Set(files)].slice(0, 5);
+const reads = await Promise.all(uniqueFiles.map((path) => api.read({ path, limit: 80 })));
+
+return {
+  files: uniqueFiles,
+  previews: reads.map((result) =>
+    result.content.filter((entry) => entry.type === "text").map((entry) => entry.text).join("\n"),
+  ),
 };
 ```
 
-When `api.repo.writeFile(...)` or `api.repo.writeJson(...)` writes under `.svvy/workflows/...`, the host should automatically validate the current saved workflow library state.
+### Workflow Discovery
 
-That validation feedback belongs in the returned `execute_typescript` result through captured console logs, not in a separate workflow-save tool surface.
+```ts
+const prompts = await api.workflow.list_assets({ kind: "prompt", scope: "saved" });
+const components = await api.workflow.list_assets({ kind: "component", scope: "saved" });
+const models = await api.workflow.list_models();
 
-## Command Model
+return {
+  promptCount: prompts.details.assets.length,
+  componentCount: components.details.assets.length,
+  modelCount: models.details.models.length,
+};
+```
 
-Each top-level `execute_typescript` invocation creates one parent command with:
+### Bash-Backed Inspection
 
-- `toolName = "execute_typescript"`
-- `executor = "orchestrator"` or the supervising handler-thread equivalent
-- `visibility = "summary"` or `surface` when the parent run itself is a primary user-facing action
+```ts
+const result = await api.bash({ command: "bun test src/bun/execute-typescript-tool.test.ts" });
+const output = result.content
+  .filter((entry) => entry.type === "text")
+  .map((entry) => entry.text)
+  .join("\n");
 
-Each nested `api.*` call creates one child command with:
+await api.artifact.write_text({
+  name: "execute-typescript-test-output.txt",
+  text: output,
+});
 
-- `parentCommandId` pointing at the parent `execute_typescript` command
-- `executor = "execute_typescript"`
-- `toolName` matching the namespace and method, such as `repo.readFile` or `git.commit`
-- normalized facts describing what happened
+return { outputBytes: output.length };
+```
 
-Day-one child commands should use only:
+## Recording
 
-- `trace`
-- `summary`
+Every direct tool call and every nested code-mode call is recorded as a structured command.
 
-Day-one child commands should not use `surface`.
+Direct tool command records include:
 
-The parent command is the surfaced or summarized unit.
+- tool name
+- owning turn or workflow task attempt
+- status
+- visibility
+- title and summary
+- tool input and selected result facts when available
 
-## Observable Facts And Default UI Surfacing
+`execute_typescript` command records include:
 
-Every child command is durable and visible in nested trace inspection.
+- parent command for the snippet attempt
+- submitted snippet artifact
+- diagnostics artifact when typecheck fails
+- logs artifact when console output exists
+- child command records for nested `api` calls
+- parent rollup facts for reads, searches, bash calls, artifacts, and workflow discovery
 
-The tables below describe what is additionally surfaced by default beyond trace.
+## Visibility
 
-The runtime should store normalized facts, not full raw payloads, on child commands.
+Read/search/discovery calls are trace-visible by default. File modifications, artifact creation, bash commands, failures, waits, handoffs, Smithers control, and `execute_typescript` parents are summary-visible by default.
 
-Large raw payloads such as file contents, diffs, fetched text, or full stdout and stderr are not promoted into child-command facts by default. This rule applies to child-command outputs, not to the submitted snippet itself, which is always stored as a file-backed artifact.
+## Failure Semantics
 
-If a large payload matters beyond immediate execution, the runtime or the agent should retain it as an artifact.
+Typecheck failures stop execution before any nested call runs. Runtime failures finish the parent command as failed, preserve successful child command records that already occurred, and attach the thrown error to the result.
 
-### `api.repo.*`
+Nested failures finish their child command as failed. The snippet may catch and handle the error; otherwise the parent fails.
 
-| Method           | Durable child-command facts                   | Extra default surfacing beyond trace |
-| ---------------- | --------------------------------------------- | ------------------------------------ |
-| `repo.readFile`  | `path`, `bytesRead`                           | Parent rollup only.                  |
-| `repo.readFiles` | `paths`, `fileCount`, `totalBytesRead`        | Parent rollup only.                  |
-| `repo.readJson`  | `path`                                        | Parent rollup only.                  |
-| `repo.writeFile` | `path`, `bytesWritten`                        | Parent summary-visible write.        |
-| `repo.writeJson` | `path`, `bytesWritten`                        | Parent summary-visible write.        |
-| `repo.unlink`    | `path`, `deleted`                             | Parent summary-visible write.        |
-| `repo.stat`      | `path`, `exists`, `kind`, `sizeBytes?`        | Trace only unless it fails.          |
-| `repo.glob`      | `pattern`, `resultCount`, `cwd?`              | Parent rollup only.                  |
-| `repo.grep`      | `pattern`, `glob?`, `matchCount`, `pathCount` | Parent rollup only.                  |
+## Prompt Exposure
 
-### `api.git.*`
+The agent receives:
 
-| Method           | Durable child-command facts                                   | Extra default surfacing beyond trace                                                                 |
-| ---------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `git.status`     | `branch`, `changedFileCount`, `ahead`, `behind`               | Parent rollup only.                                                                                  |
-| `git.diff`       | `paths?`, `cached`, `baseRef?`, `headRef?`, `diffBytes`       | Parent rollup only.                                                                                  |
-| `git.log`        | `ref?`, `limit`, `commitCount`                                | Parent rollup only.                                                                                  |
-| `git.show`       | `ref`, `path?`, `bytesRead`                                   | Parent rollup only.                                                                                  |
-| `git.branch`     | `current`, `branchCount`                                      | Parent rollup only.                                                                                  |
-| `git.mergeBase`  | `baseRef`, `headRef`, `sha?`                                  | Parent rollup only.                                                                                  |
-| `git.fetch`      | `remote?`, `refspecCount`, `prune`                            | Parent summary-visible sync action and failure.                                                      |
-| `git.pull`       | `remote?`, `branch?`, `rebase`                                | Parent summary-visible sync action and failure.                                                      |
-| `git.push`       | `remote?`, `branch?`, `setUpstream`, `forceWithLease`, `tags` | Parent summary-visible sync action and failure.                                                      |
-| `git.add`        | `paths?`, `all`, `update`                                     | Parent summary-visible write.                                                                        |
-| `git.commit`     | `messageSummary`, `sha?`, `all`, `allowEmpty`, `amend`        | Parent summary-visible write.                                                                        |
-| `git.switch`     | `branch`, `create`, `startPoint?`                             | Parent summary-visible branch change.                                                                |
-| `git.checkout`   | `ref?`, `paths?`, `createBranch?`                             | Parent summary-visible branch or file restore action.                                                |
-| `git.restore`    | `paths`, `source?`, `staged`, `worktree`                      | Parent summary-visible write.                                                                        |
-| `git.rebase`     | `upstream?`, `branch?`, `mode`                                | Parent summary-visible action and failure.                                                           |
-| `git.cherryPick` | `commitCount`, `noCommit`, `mode`                             | Parent summary-visible action and failure.                                                           |
-| `git.stash`      | `subcommand`, `stash?`, `message?`                            | `list` and `show` contribute to parent rollup only; mutating subcommands are parent summary-visible. |
-| `git.tag`        | `name?`, `target?`, `annotate`, `delete`, `list`, `pattern?`  | `list` contributes to parent rollup only; create or delete actions are parent summary-visible.       |
+- ordinary tool declarations for direct tools
+- ordinary tool declarations for control and Smithers tools on surfaces that own them
+- one `execute_typescript` tool declaration
+- a generated TypeScript declaration block for the injected code-mode API
+- prompt guidance that direct tools are the default path and code mode is for typed composition
 
-### `api.exec.run`
-
-| Method     | Durable child-command facts                                                      | Extra default surfacing beyond trace                                                                     |
-| ---------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `exec.run` | `command`, `args`, `cwd`, `timeoutMs?`, `exitCode`, `stdoutBytes`, `stderrBytes` | Parent rollup on success. Parent summary-visible on non-zero exit, timeout, or retained output artifact. |
-
-### `api.artifact.*`
-
-| Method                | Durable child-command facts                  | Extra default surfacing beyond trace                     |
-| --------------------- | -------------------------------------------- | -------------------------------------------------------- |
-| `artifact.writeText`  | `artifactId`, `name`, `path`, `bytesWritten` | Parent summary-visible plus first-class artifact record. |
-| `artifact.writeJson`  | `artifactId`, `name`, `path`, `bytesWritten` | Parent summary-visible plus first-class artifact record. |
-| `artifact.attachFile` | `artifactId`, `name`, `path`                 | Parent summary-visible plus first-class artifact record. |
-
-### `api.web.*`
-
-| Method          | Durable child-command facts | Extra default surfacing beyond trace                        |
-| --------------- | --------------------------- | ----------------------------------------------------------- |
-| `web.search`    | `query`, `resultCount`      | Parent rollup only.                                         |
-| `web.fetchText` | `url`, `bytesRead`          | Parent rollup only. Failures become parent summary-visible. |
-
-### Parent Rollups
-
-The parent `execute_typescript` command should synthesize compact rollups from child facts such as:
-
-- `Read 3 files`
-- `Searched 18 files and found 4 matches`
-- `Wrote 2 files`
-- `Created 1 artifact`
-- `Ran 1 subprocess`
-- `Git: branch main, 5 changed files`
-- `Git: committed abc123 and pushed origin/main`
-
-The parent is the summary and inspection entry point.
-
-Child commands stay nested by default and do not become separate top-level session or sidebar objects.
-
-## Artifact And Diagnostics Rules
-
-### Submitted Snippet Artifact
-
-Every attempted `execute_typescript` invocation must persist the exact submitted TypeScript snippet as a file-backed artifact in the dedicated workspace artifact directory.
-
-This includes:
-
-- successful executions
-- compile or typecheck failures
-- runtime failures
-
-The default layout is:
-
-- `.svvy/artifacts/<sessionId>/<artifactId>-<slug>`
-
-SQLite stores metadata and path indexes for lookup.
-
-The session transcript UI must also expose that exact submitted body for each `execute_typescript` attempt so users can inspect retries and diagnostics without leaving the session view.
-
-### Diagnostics
-
-Compile and typecheck failures must:
-
-- be returned as structured diagnostics in `error.diagnostics`
-- be stored as durable command facts
-- block runtime execution
-
-### Output Artifacts
-
-The runtime may retain additional artifacts for:
-
-- large stdout or stderr payloads
-- generated summaries that are evidence of work rather than requested repository files
-- exported reports that are too large or structured for transcript text
-- durable logs
-- retained fetched or derived outputs
-
-The rule is:
-
-- normalized facts stay on the child command
-- durable large payloads go to artifacts
-
-Artifacts are not a second place to write normal workspace files.
-
-Use `api.repo.writeFile(...)` or `api.repo.writeJson(...)` when the user asked to create or edit a file in the repository, including source files, tests, docs, configuration, and product assets.
-
-Use the transcript or command summary when the output is small enough to read inline and does not need a durable file handle.
-
-Use `api.artifact.writeText(...)`, `api.artifact.writeJson(...)`, or `api.artifact.attachFile(...)` only when the content is a durable byproduct or evidence of execution that should remain inspectable later but should not normally be committed as repository state. Examples include retained logs, large command output, screenshots, generated audit or benchmark evidence, workflow exports, and CI check evidence.
-
-## Agent-Facing Guidance
-
-The prompt and type-exposure layer should make these rules explicit:
-
-1. use `execute_typescript` for bounded generic work
-2. use `api.*` for all observable external work
-3. use pure TypeScript for local data shaping between `api.*` calls
-4. use Smithers-native tools for workflow runs, configured Project CI entries, and waiting-related workflow supervision
-5. use top-level handler tools such as `request_context` when optional handler context is needed; do not try to load prompt context from inside `execute_typescript`
-6. write repository files with `api.repo.*` when they are part of the user's requested workspace change
-7. write an artifact only when a durable byproduct, large payload, log, report, screenshot, or execution evidence matters beyond immediate execution and should not normally be placed in the repository
-
-The runtime should expose generated TypeScript declarations or equivalent JSDoc for the injected `api` object so the model can discover the real surface instead of guessing.
-
-## Delegated Usage
-
-The same `execute_typescript` primitive should be available inside delegated Smithers work when generic typed capability composition is the right unit of work.
-
-That means:
-
-- workflow steps may call `execute_typescript`
-- the `api.*` surface stays the same
-- the parent and child command model stays the same
-- snippet artifacts, child command facts, and parent rollups stay the same
-- when a workflow task agent calls `execute_typescript`, the execution root is the current Smithers task root or worktree, not the workspace runtime DB root
-
-The default adopted workflow task agent should expose `execute_typescript` as its task-local tool surface and should not expose `thread.start`, `thread.handoff`, `wait`, or `smithers.*`.
-
-## First Implementation Focus
-
-The first implementation should concentrate on:
-
-- the stable input and output contract
-- compile or typecheck before execution
-- snippet artifact persistence and SQLite indexing
-- the day-one typed `api.*` surface
-- parent and child command recording
-- normalized child-command facts and parent rollups
-- artifact retention for logs and durable outputs when needed
-- reuse of the same primitive inside delegated Smithers work
-
-Later hardening such as stricter sandboxing may change how the runtime is isolated, but it should not change the top-level tool contract or the parent-first observability model.
-
-## Sources
-
-### Local Sources
-
-- [PRD](../prd.md)
-- [Structured Session State Spec](./structured-session-state.spec.md)
+The generated declaration is the prompt contract. Handwritten prose may explain when to use code mode, but it does not redefine the interface.

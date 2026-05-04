@@ -67,7 +67,7 @@ function toolResultMessage(timestamp: number): ToolResultMessage {
   return {
     role: "toolResult",
     toolCallId: "tool-call-1",
-    toolName: "repo.read",
+    toolName: "read",
     timestamp,
     isError: false,
     details: {
@@ -97,7 +97,7 @@ describe("session transcript export", () => {
         assistantMessage(2, {
           responseId: "resp_123",
           toolCalls: [
-            toolCall("tool-call-1", "repo.read", { path: "src/mainview/ChatWorkspace.svelte" }),
+            toolCall("tool-call-1", "read", { path: "src/mainview/ChatWorkspace.svelte" }),
           ],
         }),
         toolResultMessage(3),
@@ -110,7 +110,7 @@ describe("session transcript export", () => {
     expect(output).toContain("### [2] assistant @ 1970-01-01T00:00:00.002Z");
     expect(output).toContain("responseId: resp_123");
     expect(output).toContain("Need to inspect the transcript path.");
-    expect(output).toContain("toolCall[3]: repo.read (tool-call-1)");
+    expect(output).toContain("toolCall[3]: read (tool-call-1)");
     expect(output).toContain('"path": "src/mainview/ChatWorkspace.svelte"');
     expect(output).toContain("### [3] tool result @ 1970-01-01T00:00:00.003Z");
     expect(output).toContain('"lineCount": 200');

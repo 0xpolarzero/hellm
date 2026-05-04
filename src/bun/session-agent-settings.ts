@@ -10,6 +10,7 @@ import {
   type SessionAgentSettings,
   type WorkflowAgentKey,
   type WorkflowAgentSettings,
+  type WorkflowAgentToolName,
 } from "../shared/agent-settings";
 
 export type SessionAgentSettingsStore = {
@@ -143,7 +144,7 @@ export function renderWorkflowAgentsComponent(
     "  model: string;",
     "  reasoningEffort: string;",
     "  systemPrompt: string;",
-    "  toolSurface: readonly ['execute_typescript'];",
+    "  toolSurface: readonly string[];",
     "};",
     "",
   ];
@@ -174,8 +175,30 @@ function normalizeWorkflowAgentSettings(
     id: key,
     label: requireNonEmpty(input.label, "label"),
     ...normalizeSessionAgentSettings(input),
-    toolSurface: ["execute_typescript"],
+    toolSurface: normalizeWorkflowAgentToolSurface(input.toolSurface),
   };
+}
+
+function normalizeWorkflowAgentToolSurface(
+  input: readonly WorkflowAgentToolName[],
+): readonly WorkflowAgentToolName[] {
+  const allowed = new Set<WorkflowAgentToolName>([
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "edit",
+    "write",
+    "bash",
+    "artifact.write_text",
+    "artifact.write_json",
+    "artifact.attach_file",
+    "execute_typescript",
+  ]);
+  const normalized = input.filter((tool): tool is WorkflowAgentToolName => allowed.has(tool));
+  return normalized.length > 0
+    ? normalized
+    : DEFAULT_AGENT_SETTINGS_STATE.workflowAgents.implementer.toolSurface;
 }
 
 function requireNonEmpty(value: string, label: string): string {

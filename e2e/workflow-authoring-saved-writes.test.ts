@@ -22,8 +22,8 @@ const RUN_ARTIFACT_PROMPT =
   "Run the artifact workflow you just authored, use smithers.get_run as needed until it finishes, and then hand the result back.";
 const SAVE_SHORTCUT_PROMPT = [
   "Inspect the workflow work owned by this thread.",
-  "If there are reusable saved workflow files worth keeping, write them directly into `.svvy/workflows/...` using the normal repo write APIs.",
-  "Rely on the automatic workflow validation feedback returned in the surrounding `execute_typescript` logs, and keep editing until the final saved workflow state validates cleanly.",
+  "If there are reusable saved workflow files worth keeping, write them directly into `.svvy/workflows/...` using the direct write or edit tools.",
+  "Rely on the automatic workflow validation feedback returned in structured tool output, and keep editing until the final saved workflow state validates cleanly.",
   "If nothing here is worth saving, say so briefly inside the thread.",
 ].join(" ");
 const ARTIFACT_WORKFLOW_DIR = "workflow-authoring-proof-draft";
@@ -514,10 +514,10 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
   const artifactExecuteToolCall = findFirstToolCall(authoringToolCalls, "execute_typescript");
   const artifactTypescriptCode =
     readStringProperty(artifactExecuteToolCall?.parsedArguments, "typescriptCode") ?? "";
-  expect(artifactTypescriptCode).toContain("api.workflow.listAssets");
-  expect(artifactTypescriptCode).toContain("api.workflow.listModels()");
+  expect(artifactTypescriptCode).toContain("api.workflow.list_assets");
+  expect(artifactTypescriptCode).toContain("api.workflow.list_models()");
   expect(artifactTypescriptCode).toContain(ARTIFACT_ROOT_RELATIVE);
-  expect(artifactTypescriptCode).toContain("api.repo.writeJson");
+  expect(artifactTypescriptCode).toContain("write");
   expect(artifactTypescriptCode).not.toContain(
     ".svvy/workflows/entries/workflow-authoring-proof.ts",
   );
@@ -555,38 +555,25 @@ test("proves artifact-only workflow authoring by default and explicit saved writ
   const saveRequests = requestsMatching(stub.requests, SAVE_SHORTCUT_PROMPT);
   expect(saveRequests.length).toBeGreaterThan(0);
   const saveToolSurface = collectAvailableToolNames(saveRequests);
-  expect(saveToolSurface).toContain("execute_typescript");
+  expect(saveToolSurface).toContain("write");
   expect(saveToolSurface).not.toContain("thread.start");
   expect(saveToolSurface.some((name) => name.includes("saveAssets"))).toBe(false);
 
   const saveToolCalls = collectAssistantToolCalls(saveRequests);
   expect(saveToolCalls.map((toolCall) => toolCall.name)).toEqual(
-    expect.arrayContaining(["execute_typescript", "thread.handoff"]),
+    expect.arrayContaining(["write", "thread.handoff"]),
   );
   expect(saveToolCalls.some((toolCall) => toolCall.name.includes("saveAssets"))).toBe(false);
 
-  const saveExecuteToolCall =
-    findExecuteTypescriptToolCallsContaining(
-      saveToolCalls,
-      `${SAVED_ROOT_RELATIVE}/entries/workflow-authoring-proof.ts`,
-    )[0] ?? null;
-  const saveTypescriptCode =
-    readStringProperty(saveExecuteToolCall?.parsedArguments, "typescriptCode") ?? "";
-  expect(saveTypescriptCode).toContain("api.repo.readFile");
-  expect(saveTypescriptCode).toContain("api.repo.writeFile");
-  expect(saveTypescriptCode).toContain(SAVED_ROOT_RELATIVE);
-  expect(saveTypescriptCode).not.toContain("api.workflow.saveAssets");
-
-  const saveExecuteResult = findLatestToolResultForCallIds(
-    saveRequests,
-    saveToolCalls,
-    new Set(saveExecuteToolCall ? [saveExecuteToolCall.id] : []),
-  );
-  expect(saveExecuteResult?.parsed?.success).toBe(true);
-  expect(readStringArrayProperty(saveExecuteResult?.parsed, "logs")).toEqual(
+  const saveWritePaths = saveToolCalls
+    .filter((toolCall) => toolCall.name === "write")
+    .map((toolCall) => readStringProperty(toolCall.parsedArguments, "path"));
+  expect(saveWritePaths).toEqual(
     expect.arrayContaining([
-      "[error] Workflow validation reported 1 error after writing .svvy/workflows/components/workflow-authoring-proof-reviewer.ts.",
-      "Workflow validation passed after writing .svvy/workflows/entries/workflow-authoring-proof.ts.",
+      `${SAVED_ROOT_RELATIVE}/components/workflow-authoring-proof-reviewer.ts`,
+      `${SAVED_ROOT_RELATIVE}/definitions/workflow-authoring-proof.ts`,
+      `${SAVED_ROOT_RELATIVE}/prompts/workflow-authoring-proof.mdx`,
+      `${SAVED_ROOT_RELATIVE}/entries/workflow-authoring-proof.ts`,
     ]),
   );
 

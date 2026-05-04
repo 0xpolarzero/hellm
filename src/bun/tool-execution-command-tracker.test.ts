@@ -167,12 +167,12 @@ describe("tool execution command tracker", () => {
 
     tracker.handleToolExecutionStart({
       toolCallId: "tool-call-2",
-      toolName: "api.repo.readFile",
+      toolName: "api.read",
       args: { path: "docs/prd.md" },
     });
     tracker.handleToolExecutionEnd({
       toolCallId: "tool-call-2",
-      toolName: "api.repo.readFile",
+      toolName: "api.read",
       result: {
         content: [{ type: "text", text: "Loaded docs/prd.md" }],
       },
@@ -182,7 +182,7 @@ describe("tool execution command tracker", () => {
     const snapshot = store.getSessionState("session-tool-tracker");
     expect(snapshot.commands).toEqual([
       expect.objectContaining({
-        toolName: "api.repo.readFile",
+        toolName: "api.read",
         executor: "execute_typescript",
         visibility: "trace",
         status: "succeeded",
