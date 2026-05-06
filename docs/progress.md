@@ -51,7 +51,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Keep only `thread.start`, `thread.handoff`, and `wait` as `svvy`-native control tools while exposing Smithers workflow operations through Smithers-native bridge tools. Commit(s): `a02bd48`
 - [x] Keep the code-mode API bounded to duplicated direct tools that benefit from typed composition. Commit(s): `76cc8f3`, `29d8452`
 - [x] Expose native cx semantic navigation plus PI-backed file, search, edit, write, and bash tools as the normal coding-agent work surface. Commit(s): `76cc8f3`, `29d8452`
-- [x] Expose read-only cx navigation through the generated `execute_typescript` `api.cx` subset for typed composition. Commit(s): pending
+- [x] Expose read-only cx navigation through the generated `execute_typescript` `api.cx` subset for typed composition. Commit(s): `673837a`
 - [x] Record direct tool calls and nested code-mode calls in the shared structured command model. Commit(s): `76cc8f3`, `29d8452`
 - [x] Persist normalized child-command facts for nested `api.*` calls while the parent `execute_typescript` attempt remains the main semantic unit. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Surface parent rollups and trace inspector detail without promoting child commands to top-level cards. Commit(s): `5b0a223`
@@ -233,8 +233,8 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 
 ## 14. Layered Workflow Knowledge
 
-- [x] Define always-loaded cx and Smithers prompt context plus optional handler-only `ci` prompt context. Commit(s): pending
-- [x] Load actor-specific Smithers prompt context so orchestrators route workflow work, handlers supervise workflows, and workflow task agents keep the Smithers task boundary. Commit(s): pending
+- [x] Define always-loaded cx and Smithers prompt context plus optional handler-only `ci` prompt context. Commit(s): `673837a`
+- [x] Load actor-specific Smithers prompt context so orchestrators route workflow work, handlers supervise workflows, and workflow task agents keep the Smithers task boundary. Commit(s): `673837a`
 - [x] Define optional prompt context as the on-demand product-knowledge layer for specialized handler work. Commit(s): `2a5dbbe`
 - [x] Render loaded optional prompt context keys in thread metadata so users can see when optional context such as `ci` is active. Commit(s): `2a5dbbe`
 
