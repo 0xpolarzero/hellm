@@ -90,7 +90,7 @@ type DirectToolSet = {
 export function createSvvyDirectTools(options: DirectToolOptions): DirectToolSet {
   return {
     codingTools: [
-      createReadTool(options.cwd),
+      createReadToolWithImageGuidance(options.cwd),
       createGrepTool(options.cwd),
       createFindTool(options.cwd),
       createLsTool(options.cwd),
@@ -104,6 +104,14 @@ export function createSvvyDirectTools(options: DirectToolOptions): DirectToolSet
       createArtifactAttachFileTool(options),
     ],
     workflowTools: [createWorkflowListAssetsTool(options), createWorkflowListModelsTool(options)],
+  };
+}
+
+function createReadToolWithImageGuidance(cwd: string): AgentTool<any> {
+  const tool = createReadTool(cwd);
+  return {
+    ...tool,
+    description: `${tool.description} Use this same read tool for visual inspection of local image files; image files are returned to the model as image attachments.`,
   };
 }
 

@@ -2192,6 +2192,7 @@ describe("SmithersRuntimeManager", () => {
       expect(
         createAgentSessionOptions?.customTools?.map((tool: { name: string }) => tool.name),
       ).toEqual([
+        "list_tools",
         "cx.overview",
         "cx.symbols",
         "cx.definition",

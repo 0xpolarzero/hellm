@@ -25,6 +25,7 @@ import {
 import { createCxTools } from "../cx-tools";
 import type { StructuredSessionStateStore } from "../structured-session-state";
 import { createSvvyDirectTools } from "../svvy-direct-tools";
+import { createListToolsTool } from "../list-tools-tool";
 import { createWorkflowLibrary } from "./workflow-library";
 import {
   createDefaultWorkflowTaskAgentConfig,
@@ -131,6 +132,10 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         workflowLibrary: createWorkflowLibrary(taskRoot),
       });
       const cxTools = createCxTools({ cwd: taskRoot });
+      let sessionForListTools: {
+        getActiveToolNames(): string[];
+        getAllTools(): { name: string; description?: string; parameters?: unknown }[];
+      } | null = null;
 
       const { session } = await createAgentSession({
         cwd: taskRoot,
@@ -143,6 +148,9 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         thinkingLevel: config.thinkingLevel,
         tools: [],
         customTools: createCustomToolDefinitions([
+          createListToolsTool({
+            getSession: () => sessionForListTools,
+          }),
           ...cxTools,
           ...directTools.codingTools,
           ...directTools.artifactTools,
@@ -150,6 +158,7 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         ]),
         resourceLoader,
       });
+      sessionForListTools = session;
       assertTaskAgentToolSurface(session.getActiveToolNames());
 
       const durableSessionManager =
@@ -789,6 +798,7 @@ function assertTaskAgentToolSurface(activeToolNames: string[]): void {
     "artifact.write_text",
     "artifact.write_json",
     "artifact.attach_file",
+    "list_tools",
     EXECUTE_TYPESCRIPT_TOOL_NAME,
   ]);
   const unexpected = activeToolNames.filter((name) => !allowed.has(name));

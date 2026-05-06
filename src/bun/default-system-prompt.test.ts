@@ -25,6 +25,9 @@ describe("default system prompt", () => {
       expect(prompt).toContain("Use cx.* for semantic code navigation");
       expect(prompt).toContain("use cx.lang.list and cx.lang.add");
       expect(prompt).toContain("use bash when the work actually requires a shell command");
+      expect(prompt).toContain("pi can run them in parallel");
+      expect(prompt).toContain("Use read for visual inspection of local image files");
+      expect(prompt).toContain("Use list_tools when you need to inspect");
     }
   });
 

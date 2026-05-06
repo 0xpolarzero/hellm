@@ -91,6 +91,7 @@ import { createRequestContextTool } from "./request-context-tool";
 import { getOptionalPromptContext, type OptionalPromptContextKey } from "./prompt-contexts";
 import { createSessionAgentSettingsStore } from "./session-agent-settings";
 import { createSvvyDirectTools } from "./svvy-direct-tools";
+import { createListToolsTool } from "./list-tools-tool";
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
   input: 0,
@@ -2272,6 +2273,7 @@ async function createManagedSession(
 
   const authStorage = AuthStorage.inMemory();
   syncAuthStorage(authStorage);
+  let sessionForListTools: AgentSession | null = null;
   const promptExecutionRuntime: PromptExecutionRuntimeHandle = {
     current: null,
   };
@@ -2287,6 +2289,9 @@ async function createManagedSession(
     workflowLibrary: createWorkflowLibrary(options.sessionManager.getCwd()),
   });
   const sharedWorkTools = [
+    createListToolsTool({
+      getSession: () => sessionForListTools,
+    }),
     ...createCxTools({ cwd: options.sessionManager.getCwd() }),
     ...directTools.codingTools,
     ...directTools.artifactTools,
@@ -2378,6 +2383,7 @@ async function createManagedSession(
     customTools,
     resourceLoader,
   });
+  sessionForListTools = session;
   const activeModel = session.agent.state.model ?? resolvedModel;
 
   const managedSession: ManagedSession = {

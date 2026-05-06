@@ -40,8 +40,11 @@ function buildActorInstructions(actor: SvvyActorKind): string[] {
     "Validate proportionally to risk: use focused checks for touched behavior when practical, broaden checks for shared contracts or user-facing flows, and say plainly when validation is skipped or blocked.",
     "When asked for review, use a code-review stance: lead with concrete, actionable bugs or regressions, include tight file and line evidence, and avoid filling the review with style preferences.",
     "Use the available direct tools for ordinary repository work. Use cx.* for semantic code navigation before reading whole files when cx can cover the language; use cx.lang.list and cx.lang.add when a relevant grammar may be available but is not installed.",
+    "When multiple tool calls are independent, issue them together in the same assistant message so pi can run them in parallel; use sequential calls only when a later call depends on an earlier result.",
     "Use edit for targeted changes to existing files and write only for new files or intentional full rewrites.",
     "Prefer read, grep, find, and ls over bash for file exploration; use bash when the work actually requires a shell command.",
+    "Use read for visual inspection of local image files as well as text files; image reads return image attachments to the model.",
+    "Use list_tools when you need to inspect the exact callable tool surface for the current actor.",
     "Create artifacts only for durable byproducts or evidence that should remain inspectable but should not normally be placed in the repository; use write/edit for requested workspace files and prose for small answers.",
   ];
 
