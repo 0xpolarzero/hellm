@@ -83,8 +83,8 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 
 ## 5. Workflow Supervision Foundations
 
-- [x] Define the packaged-app Smithers runtime boundary so shipped product workflows are bundled app assets under `src/bun/smithers-runtime/` rather than repo-root `workflows/` authoring assets. Commit(s): `a02bd48`
-- [x] Build a POC handler thread that starts one bundled product-runtime hello-world workflow from `src/bun/smithers-runtime/`, supervises it through completion, and regains control in the same thread without relying on repo-root `workflows/`. Commit(s): `a02bd48`
+- [x] Define the packaged-app Smithers runtime boundary so shipped product workflows are configured saved or artifact entries under `.svvy/` rather than repo-root `workflows/` authoring assets. Commit(s): `a02bd48`
+- [x] Build handler-thread supervision for Smithers runs started from explicit runnable entries, with deterministic test workflows registered only inside tests. Commit(s): `a02bd48`
 - [x] Define the workflow-run request envelope from a handler thread to Smithers. Commit(s): `f53c9b8`
 - [x] Persist workflow-run supervision metadata, including raw Smithers status, wait kind, reconnect cursor, handler-attention delivery state, heartbeat freshness, and lineage, as soon as the supervising handler thread has a concrete Smithers run id. Commit(s): `a02bd48`
 - [x] Build a POC one-task workflow under a handler thread that returns to the thread and then emits a handoff episode. Commit(s): `f8557d9`
@@ -93,7 +93,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Define workflow task agents as a lower-level Smithers actor class distinct from orchestrator and handler-thread surfaces. Commit(s): `a02bd48`
 - [x] Adopt PI-backed svvy workflow task agents with a dedicated task prompt, task-local direct tools, and `execute_typescript` for typed composition. Commit(s): `a02bd48`
 - [x] Keep approval gates and hijack as Smithers runtime or operator controls around workflow task agents rather than exposing them as ordinary task-agent tools. Commit(s): `a02bd48`
-- [x] Build a POC bundled workflow task that runs the svvy workflow-task PI configuration with task-local direct tools and code mode. Commit(s): `a02bd48`
+- [x] Build workflow task execution that runs the svvy workflow-task PI configuration with task-local direct tools and code mode. Commit(s): `a02bd48`
 - [x] Wake the supervising handler thread in a background turn only when a workflow run reaches a terminal outcome, an actionable wait, a continuation boundary, or a supervision fault that requires handler judgment, while keeping duplicate terminal reconciliation idempotent after a valid handoff. Commit(s): `a02bd48`
 - [x] Support multiple workflow runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
 - [x] Derive active and latest workflow summaries from workflow-run state without a persisted thread-level latest pointer. Commit(s): `a02bd48`

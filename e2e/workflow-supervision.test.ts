@@ -1,8 +1,8 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { startWorkflowSupervisionChatStub } from "./chat-completions-stub";
 import { createHomeDir, ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 import { resolveProjectEnvValue, writeAgentModelsConfig, writeWorkspaceEnvFile } from "./support";
@@ -10,6 +10,7 @@ import { resolveProjectEnvValue, writeAgentModelsConfig, writeWorkspaceEnvFile }
 setDefaultTimeout(180_000);
 
 const REAL_ZAI_API_KEY = resolveProjectEnvValue("ZAI_API_KEY");
+const HELLO_WORLD_ENTRY_PATH = ".svvy/workflows/entries/hello-world.tsx";
 
 beforeAll(async () => {
   if (!REAL_ZAI_API_KEY) {
@@ -161,11 +162,71 @@ async function withIsolatedLaunchState<T>(
   }
 }
 
+async function seedHelloWorldSavedWorkflowEntry(workspaceDir: string): Promise<void> {
+  const absoluteEntryPath = join(workspaceDir, HELLO_WORLD_ENTRY_PATH);
+  await mkdir(dirname(absoluteEntryPath), { recursive: true });
+  await writeFile(
+    absoluteEntryPath,
+    [
+      'import React from "react";',
+      'import { createSmithers } from "smithers-orchestrator";',
+      'import { z } from "zod";',
+      "",
+      'export const workflowId = "hello_world";',
+      'export const label = "Hello World Fixture";',
+      'export const summary = "E2E fixture workflow for Smithers supervision.";',
+      'export const launchSchema = z.object({ message: z.string().min(1).default("hello world") });',
+      "export const definitionPaths = [] as const;",
+      "export const promptPaths = [] as const;",
+      "export const componentPaths = [] as const;",
+      "",
+      "export function createRunnableEntry(input: { dbPath: string }) {",
+      "  const greetingSchema = z.object({ message: z.string() });",
+      "  const resultSchema = z.object({ summary: z.string(), message: z.string() });",
+      "  const smithersApi = createSmithers(",
+      "    { input: launchSchema, greeting: greetingSchema, result: resultSchema },",
+      "    { dbPath: input.dbPath },",
+      "  );",
+      "  return {",
+      "    workflowId,",
+      '    workflowSource: "saved" as const,',
+      "    launchSchema,",
+      "    workflow: smithersApi.smithers((ctx) => {",
+      "      const greeting = ctx.outputs.greeting?.[ctx.outputs.greeting.length - 1] ?? null;",
+      "      return React.createElement(",
+      "        smithersApi.Workflow,",
+      '        { name: "svvy-hello-world" },',
+      "        React.createElement(",
+      "          smithersApi.Sequence,",
+      "          null,",
+      "          React.createElement(smithersApi.Task, {",
+      '            id: "greeting",',
+      "            output: smithersApi.outputs.greeting,",
+      "            children: { message: ctx.input.message },",
+      "          }),",
+      "          React.createElement(smithersApi.Task, {",
+      '            id: "result",',
+      "            output: smithersApi.outputs.result,",
+      "            children: {",
+      '              summary: `Generated greeting "${greeting?.message ?? ctx.input.message}".`,',
+      "              message: greeting?.message ?? ctx.input.message,",
+      "            },",
+      "          }),",
+      "        ),",
+      "      );",
+      "    }),",
+      "  };",
+      "}",
+    ].join("\n") + "\n",
+  );
+}
+
 test("drives a real delegated workflow run through the app and routes workflow attention back to the owning handler surface", async () => {
   const stub = startWorkflowSupervisionChatStub();
 
   try {
     await withIsolatedLaunchState(async (launchState) => {
+      await seedHelloWorldSavedWorkflowEntry(launchState.workspaceDir);
       await withSvvyApp(
         {
           env: {
@@ -191,22 +252,22 @@ test("drives a real delegated workflow run through the app and routes workflow a
 
           await sendPrompt(
             page,
-            "Open a handler thread dedicated to running the bundled hello_world workflow.",
+            "Open a handler thread dedicated to running the saved hello_world fixture workflow.",
           );
 
           await waitForVisible(
-            page.getByText("Opened a handler thread for the bundled hello_world workflow."),
+            page.getByText("Opened a handler thread for the saved hello_world fixture workflow."),
           );
           await waitForVisible(page.getByText("Delegated Threads"));
-          await waitForVisible(page.getByText("Run the bundled hello_world workflow"));
+          await waitForVisible(page.getByText("Run the saved hello_world fixture workflow"));
           await waitForVisible(page.getByText("1 thread"));
 
           const threadCard = page.locator(".handler-thread-reference-entry").filter({
-            has: page.getByText("Run the bundled hello_world workflow"),
+            has: page.getByText("Run the saved hello_world fixture workflow"),
           });
           await waitForVisible(threadCard);
           expect((await threadCard.textContent()) ?? "").toContain(
-            "Run the bundled hello_world workflow",
+            "Run the saved hello_world fixture workflow",
           );
 
           await clickWhenEnabled(page.locator(".handler-thread-actions button").nth(1));
@@ -217,12 +278,12 @@ test("drives a real delegated workflow run through the app and routes workflow a
 
           await sendPrompt(
             page,
-            "Run the bundled hello_world workflow, let workflow supervision wake this handler when it finishes, and then hand the result back.",
+            "Run the saved hello_world fixture workflow, let workflow supervision wake this handler when it finishes, and then hand the result back.",
           );
 
           await returnToOrchestrator(page);
           await waitForVisible(page.getByText("Delegated Threads"), 90_000);
-          await waitForVisible(page.getByText("Run the bundled hello_world workflow"), 90_000);
+          await waitForVisible(page.getByText("Run the saved hello_world fixture workflow"), 90_000);
           await waitForVisible(page.getByText("1 workflow"), 90_000);
 
           await waitForVisible(page.getByText("Done"), 90_000);
@@ -231,7 +292,7 @@ test("drives a real delegated workflow run through the app and routes workflow a
           await clickWhenEnabled(page.locator(".handler-thread-actions button").first());
 
           const inspector = page.getByRole("dialog").filter({
-            has: page.getByText("Run the bundled hello_world workflow"),
+            has: page.getByText("Run the saved hello_world fixture workflow"),
           });
           await waitForVisible(inspector);
           expect((await inspector.textContent()) ?? "").toContain("Workflow Runs");
@@ -261,7 +322,7 @@ test("drives a real delegated workflow run through the app and routes workflow a
 
   const orchestratorRequest = stub.requests.find((request) =>
     latestUserText(request).includes(
-      "Open a handler thread dedicated to running the bundled hello_world workflow.",
+      "Open a handler thread dedicated to running the saved hello_world fixture workflow.",
     ),
   );
   expect(toolNames(orchestratorRequest)).toContain("thread.start");
@@ -269,7 +330,7 @@ test("drives a real delegated workflow run through the app and routes workflow a
 
   const handlerRequest = stub.requests.find((request) =>
     latestUserText(request).includes(
-      "Run the bundled hello_world workflow, let workflow supervision wake this handler when it finishes, and then hand the result back.",
+      "Run the saved hello_world fixture workflow, let workflow supervision wake this handler when it finishes, and then hand the result back.",
     ),
   );
   expect(toolNames(handlerRequest)).toContain("smithers.run_workflow");
@@ -292,6 +353,7 @@ test("drives a real delegated workflow run through the app with z.ai loaded from
     await writeWorkspaceEnvFile(launchState.workspaceDir, {
       ZAI_API_KEY: REAL_ZAI_API_KEY,
     });
+    await seedHelloWorldSavedWorkflowEntry(launchState.workspaceDir);
 
     await withSvvyApp(
       {
@@ -309,16 +371,16 @@ test("drives a real delegated workflow run through the app with z.ai loaded from
         await sendPrompt(
           page,
           [
-            "Open a handler thread for the objective `Run the bundled hello_world workflow, wait for it to finish, and hand the result back.`",
+            "Open a handler thread for the objective `Run the saved hello_world fixture workflow, wait for it to finish, and hand the result back.`",
             "Do not run the workflow from the orchestrator.",
           ].join(" "),
         );
 
         await waitForVisible(page.getByText("Delegated Threads"), 60_000);
-        await waitForVisible(page.getByText("Run the bundled hello_world workflow"), 60_000);
+        await waitForVisible(page.getByText("Run the saved hello_world fixture workflow"), 60_000);
 
         const threadCard = page.locator(".handler-thread-reference-entry").filter({
-          has: page.getByText("Run the bundled hello_world workflow"),
+          has: page.getByText("Run the saved hello_world fixture workflow"),
         });
         await waitForVisible(threadCard, 60_000);
         await clickWhenEnabled(page.locator(".handler-thread-actions button").nth(1), 60_000);
@@ -330,7 +392,7 @@ test("drives a real delegated workflow run through the app with z.ai loaded from
         await sendPrompt(
           page,
           [
-            "Run the bundled hello_world workflow with input message `hello from the real provider workflow supervision e2e`.",
+            "Run the saved hello_world fixture workflow with input message `hello from the real provider workflow supervision e2e`.",
             "Use smithers.* tools only as needed.",
             "Do not call execute_typescript.",
             "Stay in the thread until smithers.get_run reports the workflow is finished.",
@@ -348,7 +410,7 @@ test("drives a real delegated workflow run through the app with z.ai loaded from
         await clickWhenEnabled(page.locator(".handler-thread-actions button").first());
 
         const inspector = page.getByRole("dialog").filter({
-          has: page.getByText("Run the bundled hello_world workflow"),
+          has: page.getByText("Run the saved hello_world fixture workflow"),
         });
         await waitForVisible(inspector, 60_000);
         expect((await inspector.textContent()) ?? "").toContain("Workflow Runs");

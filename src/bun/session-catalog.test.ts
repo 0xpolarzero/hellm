@@ -225,6 +225,7 @@ function getStructuredSessionStore(catalog: WorkspaceSessionCatalog): Structured
 }
 
 function getSmithersRuntimeManager(catalog: WorkspaceSessionCatalog): {
+  listWorkflows(): unknown[];
   restoreSessionSupervision(
     sessionId: string,
     options?: { emitAttention?: boolean },
@@ -233,6 +234,7 @@ function getSmithersRuntimeManager(catalog: WorkspaceSessionCatalog): {
   return (
     catalog as unknown as {
       smithersRuntimeManager: {
+        listWorkflows(): unknown[];
         restoreSessionSupervision(
           sessionId: string,
           options?: { emitAttention?: boolean },
@@ -411,6 +413,17 @@ describe("WorkspaceSessionCatalog", () => {
     expect(normalizeGeneratedTitle("Project CI Thread")).toBe("Project CI");
     expect(normalizeGeneratedTitle("Greeting Exchange")).toBe("greeting exchange");
     expect(normalizeGeneratedTitle("Session")).toBe("Session");
+  });
+
+  it("starts without registering test or POC Smithers workflows", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      expect(getSmithersRuntimeManager(catalog).listWorkflows()).toEqual([]);
+    } finally {
+      await catalog.dispose();
+    }
   });
 
   it("lists workspace sessions through a sessions array without activeSessionId", async () => {

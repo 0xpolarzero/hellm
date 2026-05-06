@@ -85,7 +85,6 @@ import { createThreadHandoffTool } from "./thread-handoff-tool";
 import { buildSystemPrompt, type SvvyActorKind } from "./default-system-prompt";
 import { createSmithersTools } from "./smithers-tools";
 import { SmithersRuntimeManager } from "./smithers-runtime/manager";
-import { createBundledWorkflowDefinitions } from "./smithers-runtime/bundled-workflows";
 import { createWorkflowLibrary } from "./smithers-runtime/workflow-library";
 import { createRequestContextTool } from "./request-context-tool";
 import { getHandlerContextPack, type HandlerContextKey } from "./handler-context-packs";
@@ -225,11 +224,6 @@ export class WorkspaceSessionCatalog {
         return await this.resumeHandlerAfterWorkflowAttention(event);
       },
     });
-    for (const definition of createBundledWorkflowDefinitions(
-      join(this.cwd, ".svvy", "smithers-runtime", "smithers.db"),
-    )) {
-      this.smithersRuntimeManager.registerTestWorkflow(definition);
-    }
     setTimeout(() => this.resumeDurableTitleGenerationJobs(), 0);
   }
 

@@ -848,7 +848,7 @@ describe("SmithersRuntimeManager", () => {
     expect(afterInvalidSnapshot.ciCheckResults).toHaveLength(1);
   });
 
-  it("runs the bundled hello_world workflow through the real Smithers runtime and projects completion back to the handler thread", async () => {
+  it("runs the saved hello_world fixture workflow through the real Smithers runtime and projects completion back to the handler thread", async () => {
     const {
       cwd,
       store,
@@ -1658,7 +1658,7 @@ describe("SmithersRuntimeManager", () => {
     expect(launched.runId).toBe(parentSmithersRunId!);
   });
 
-  it("diagnoses signal waits and exposes real frame plus DevTools inspection for bundled runs", async () => {
+  it("diagnoses signal waits and exposes real frame plus DevTools inspection for fixture runs", async () => {
     const { cwd, store, manager, sessionId, threadId, surfacePiSessionId } =
       createWorkspaceFixture();
     registerWorkflow(manager, createSignalWorkflowDefinition(smithersDbPath(cwd)));

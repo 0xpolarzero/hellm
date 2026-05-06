@@ -166,6 +166,8 @@ type SmithersAttemptRow = {
   jjCwd?: string | null;
 };
 
+// Fixture-only workflow definition used by unit/e2e harnesses. Normal product startup discovers
+// runnable entries from workspace `.svvy/` assets instead of registering these definitions.
 export type TestWorkflowDefinition = {
   id: string;
   label: string;
@@ -286,6 +288,8 @@ export class SmithersRuntimeManager {
     ]);
   }
 
+  // Fixture hook for tests that need deterministic in-process workflows without writing `.svvy`
+  // entry files. Product code should use saved/artifact entry discovery.
   registerTestWorkflow(definition: TestWorkflowDefinition): void {
     const sourceScope = definition.sourceScope ?? "saved";
     const entryPath =

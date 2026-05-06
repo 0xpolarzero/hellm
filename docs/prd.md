@@ -287,7 +287,7 @@ Workflow supervision is different.
 
 Instead, the shipped app should register Smithers-native semantic tools through the Bun-owned bridge, using Smithers' own operation names where the docs already define them and Smithers' own nouns and verbs for the remaining adopted bridge surfaces.
 
-That Smithers-native tool surface is a product runtime API over bundled in-app Smithers workflows, not a thin wrapper around the repo authoring workspace under `workflows/`.
+That Smithers-native tool surface is a product runtime API over configured saved and artifact Smithers workflow entries, not a thin wrapper around the repo authoring workspace under `workflows/`.
 
 More precisely, this means:
 

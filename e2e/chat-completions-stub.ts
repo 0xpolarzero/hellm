@@ -78,7 +78,7 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
       try {
         if (
           latestUserText.includes(
-            "Open a handler thread dedicated to running the bundled hello_world workflow.",
+            "Open a handler thread dedicated to running the saved hello_world fixture workflow.",
           )
         ) {
           if (!hasToolCall(toolCalls, "thread.start")) {
@@ -89,7 +89,7 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
               toolName: "thread.start",
               args: {
                 objective:
-                  "Run the bundled hello_world workflow, monitor it to completion, and hand the result back to the orchestrator.",
+                  "Run the saved hello_world fixture workflow, monitor it to completion, and hand the result back to the orchestrator.",
               },
             });
           }
@@ -97,13 +97,13 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
           return createTextResponse({
             responseId,
             model: payload.model,
-            text: "Opened a handler thread for the bundled hello_world workflow.",
+            text: "Opened a handler thread for the saved hello_world fixture workflow.",
           });
         }
 
         if (
           latestUserText.includes(
-            "Run the bundled hello_world workflow, let workflow supervision wake this handler when it finishes, and then hand the result back.",
+            "Run the saved hello_world fixture workflow, let workflow supervision wake this handler when it finishes, and then hand the result back.",
           )
         ) {
           if (!hasToolCall(toolCalls, "smithers.list_workflows")) {
@@ -135,7 +135,7 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
             responseId,
             model: payload.model,
             text: [
-              "Launched the bundled hello_world workflow.",
+              "Launched the saved hello_world fixture workflow.",
               "Workflow supervision will wake this handler surface when durable attention is needed.",
             ].join(" "),
           });
@@ -143,7 +143,7 @@ export function startWorkflowSupervisionChatStub(): WorkflowSupervisionChatStub 
 
         if (
           latestUserText.includes(
-            "Run the bundled hello_world workflow, wait for it to finish, and hand the result back.",
+            "Run the saved hello_world fixture workflow, wait for it to finish, and hand the result back.",
           )
         ) {
           if (!hasToolCall(toolCalls, "smithers.list_workflows")) {
@@ -595,9 +595,9 @@ function helloWorldHandoffArgs(): Record<string, unknown> {
   return {
     kind: "workflow",
     title: "hello_world completed",
-    summary: "Ran the bundled hello_world workflow and verified that it finished successfully.",
+    summary: "Ran the saved hello_world fixture workflow and verified that it finished successfully.",
     body: [
-      "Launched the bundled hello_world workflow through smithers.run_workflow.",
+      "Launched the saved hello_world fixture workflow through smithers.run_workflow.",
       "Observed the Smithers run until it reported finished through smithers.get_run.",
       "The workflow completed successfully and is ready for orchestrator follow-up.",
     ].join("\n\n"),

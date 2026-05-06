@@ -224,12 +224,13 @@ The packaged-app contract is:
 - let the Bun side own the Smithers bridge, DB location, run lifecycle, and event projection for product workflows
 - use embedded `smithers-orchestrator` APIs for lifecycle control rather than source-checkout-relative CLI paths
 - let pi-facing tools talk to the Bun-owned bridge; they must not spawn `smithers` directly
+- discover normal product workflows only from configured saved entries under `.svvy/workflows/entries/` and artifact entries under `.svvy/artifacts/workflows/`; test and POC workflow definitions are registered only by tests or fixture harnesses
 - use official Smithers control-plane surfaces for monitoring and reconnect semantics:
   - `runWorkflow(...)` for direct start and resume behavior
   - multi-workflow server semantics such as `POST /v1/runs`, `POST /v1/runs/:runId/resume`, `POST /v1/runs/:runId/cancel`, and `GET /v1/runs/:runId/events?afterSeq=N` for lifecycle parity
   - Gateway-style devtools snapshots and streams when the product needs live graph inspection
 
-The current source-tree bootstrap that points at repo-root `workflows/` may remain a development aid, but it is not the shipped design and must not be cited as the product runtime architecture.
+Normal product startup must not register smoke-test, proof, or fixture workflows. If the workspace has no saved or artifact entries, `smithers.list_workflows` returns an empty list.
 
 ## Workflow Task Agents
 
@@ -286,7 +287,7 @@ The exact contract is:
 - each exposed `smithers.*` tool is a narrow adapter around one Smithers semantic tool, server route, or Gateway method
 - those adapters may add only product-runtime concerns that Smithers itself does not know about:
   - bind the call to the current handler thread or session
-  - resolve bundled product workflow identifiers
+  - resolve runnable saved and artifact workflow identifiers
   - normalize transport and packaging details for the desktop app
   - record durable `svvy` command facts, linkage, and lifecycle metadata
 - those adapters must not create a second abstract API that renames Smithers concepts into `workflow.*` or other `svvy`-specific verbs when Smithers already provides the right vocabulary
