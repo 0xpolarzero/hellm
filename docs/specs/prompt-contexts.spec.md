@@ -9,7 +9,8 @@
   - define optional prompt contexts
   - define `thread.start({ context })`
   - define the handler-only `request_context` tool
-  - define the adopted context keys: `cx`, `smithers`, and `ci`
+  - define the adopted context keys: `cx`, `smithers`, `web`, and `ci`
+  - define provider-backed `web` as an always-loaded settings-derived context
 
 ## Purpose
 
@@ -24,6 +25,7 @@ The adopted context keys are:
 
 - `cx`
 - `smithers`
+- `web`
 - `ci`
 
 ## Context Registry
@@ -99,6 +101,22 @@ The prompt content is actor-specific:
 The orchestrator receives Smithers routing knowledge, not handler-callable `smithers.*` tool declarations.
 
 Workflow task agents receive Smithers boundary knowledge, not `smithers.*` tools.
+
+### `web`
+
+`web` is the provider-backed web search and fetch context.
+
+Eligible actors:
+
+- orchestrator
+- handler
+- workflow task agent
+
+The `web` context is generated from the active Web Provider settings, tool registry, and checked-in provider prompt pack. It describes the selected provider, whether web tools are usable, the currently callable `web.*` tools, the active provider's vendored `web.search` and `web.fetch` contracts, provider-specific caveats, the deterministic artifact-backed behavior of `web.fetch`, and the rule that fetched web content is untrusted external input.
+
+The selected provider is settings state rather than per-thread optional context. Changing the provider, API keys, or provider runtime configuration regenerates the web context and actor-specific web tool declarations before the next turn.
+
+Detailed behavior is specified in `docs/specs/web-tools.spec.md`.
 
 ## Optional Contexts
 
@@ -190,6 +208,7 @@ Always-loaded context keys are visible through the resolved system prompt rather
 - Prompt contexts are registry-backed.
 - `cx` is always loaded for orchestrator, handler, and workflow task-agent prompts.
 - `smithers` is always loaded with actor-specific content.
+- `web` is always loaded from current provider settings for orchestrator, handler, and workflow task-agent prompts.
 - `ci` is optional and handler-only.
 - The orchestrator may pass optional context keys to `thread.start`.
 - `request_context` is top-level and handler-only.

@@ -56,6 +56,18 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Persist normalized child-command facts for nested `api.*` calls while the parent `execute_typescript` attempt remains the main semantic unit. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Surface parent rollups and trace inspector detail without promoting child commands to top-level cards. Commit(s): `5b0a223`
 
+## 2A. Provider-Backed Web Tools
+
+Current product decisions for this section are specified in `docs/specs/web-tools.spec.md`.
+
+- [ ] Define Web Provider settings for Local, TinyFish, and Firecrawl, including readiness state and secret storage for TinyFish and Firecrawl API keys.
+- [ ] Build the `src/bun/web-runtime/` provider boundary with shared contracts, provider registry, prompt-context generation, tool adapters, TinyFish CLI packaging, and local-provider isolation for future package extraction.
+- [ ] Expose provider-shaped direct `web.search` and deterministic artifact-backed `web.fetch` tools from checked-in TinyFish, Firecrawl, or Local contracts and prompt packs, with structured command facts and no API-key leakage.
+- [ ] Generate always-loaded web prompt context from the active provider, including unavailable-provider guidance when the selected provider is missing required setup.
+- [ ] Regenerate active actor tool declarations, `list_tools` output, and web prompt context after provider or key changes before the next turn.
+- [ ] Add generated `execute_typescript` `api.web.search` and artifact-backed `api.web.fetch` helpers from the active provider's checked-in direct-tool contracts, with provider-readiness errors matching the direct `web.*` tools.
+- [ ] Research and select the first production Local provider implementation that remains fully no-key, efficient, and extractable.
+
 ## 3. Turn Decisions And Delegation
 
 - [x] Persist a per-turn top-level decision for orchestrator and handler-thread surfaces, using one shared model across routing and supervision. Commit(s): `d323012`

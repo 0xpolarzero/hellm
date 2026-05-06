@@ -52,8 +52,16 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Direct Tools And Execute Typescript",
     status: "in-progress",
     summary:
-      "Provides native direct tools as the default coding-agent work surface, with svvy recording around semantic cx navigation, reads, searches, edits, writes, bash commands, artifacts, and workflow discovery; keeps execute_typescript as a typed composition tool with a generated JSDoc-rich declaration for read/search/bash/artifact/workflow and read-only api.cx calls embedded in the system prompt, preflight typecheck or compile diagnostics, file-backed snippet artifacts for every attempt, and parent-first rollups over nested child command facts.",
-    sourceSpecs: ["docs/prd.md", "docs/specs/execute-typescript.spec.md"],
+      "Provides native direct tools as the default coding-agent work surface, with svvy recording around semantic cx navigation, text and image reads, searches, edits, writes, bash commands, artifacts, workflow discovery, provider-backed web search and fetch, and actor-local tool-surface inspection through `list_tools`; explicitly teaches agents to issue independent tool calls together so pi can run them in parallel; keeps execute_typescript as a typed composition tool with a generated JSDoc-rich declaration for read/search/bash/artifact/workflow/web and read-only api.cx calls embedded in the system prompt, preflight typecheck or compile diagnostics, file-backed snippet artifacts for every attempt, and parent-first rollups over nested child command facts.",
+    sourceSpecs: ["docs/prd.md", "docs/specs/execute-typescript.spec.md", "docs/specs/web-tools.spec.md"],
+  },
+  {
+    id: "web-tool-surface",
+    name: "Provider-Backed Web Tools",
+    status: "in-progress",
+    summary:
+      "Lets users choose Local, TinyFish, or Firecrawl as the active web provider in settings, store TinyFish and Firecrawl API keys there, expose provider-shaped `web.search` and deterministic artifact-backed `web.fetch` tools plus generated `api.web` composition helpers from checked-in provider contracts and prompt packs, package TinyFish's CLI under the web-runtime boundary when used by that provider, regenerate prompt context and tool declarations cleanly on provider changes, and keep the Local no-key implementation under `src/bun/web-runtime/` as an extractable future library boundary.",
+    sourceSpecs: ["docs/specs/web-tools.spec.md"],
   },
   {
     id: "handler-thread-surfaces",
@@ -68,10 +76,11 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Prompt Context Packs",
     status: "in-progress",
     summary:
-      "Keeps product prompt knowledge modular with always-loaded cx semantic-navigation context, actor-specific always-loaded Smithers context, and optional handler-only `ci` context loaded through `thread.start({ context })` or `request_context({ keys })`, with loaded optional keys persisted on the handler thread for resume and no prompt-context loading through the `execute_typescript` `api.*` SDK.",
+      "Keeps product prompt knowledge modular with always-loaded cx semantic-navigation context, actor-specific always-loaded Smithers context, settings-derived always-loaded web provider context, and optional handler-only `ci` context loaded through `thread.start({ context })` or `request_context({ keys })`, with loaded optional keys persisted on the handler thread for resume and no prompt-context loading through the `execute_typescript` `api.*` SDK.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/prompt-contexts.spec.md",
+      "docs/specs/web-tools.spec.md",
       "docs/specs/project-ci.spec.md",
       "docs/specs/structured-session-state.spec.md",
     ],
@@ -89,7 +98,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workflow Task Agents",
     status: "in-progress",
     summary:
-      "Defines lower-level Smithers workflow task agents as a separate actor class beneath handler threads, using a PI-backed svvy task configuration with a task-local direct-tool callable surface including cx semantic navigation plus `execute_typescript`, no ambient pi built-ins or extension-tool leakage, task-root or worktree execution aligned to the active Smithers attempt, first-class durable workflow-task-attempt records keyed by Smithers attempt identity before task-local tool calls run, message-native retry and hijack continuation, live task-agent activity streaming, and projected nested transcript, command, artifact, and usage traces, while keeping approval and hijack as Smithers runtime controls rather than ordinary task-agent tools.",
+      "Defines lower-level Smithers workflow task agents as a separate actor class beneath handler threads, using a PI-backed svvy task configuration with a task-local direct-tool callable surface including cx semantic navigation, `list_tools`, plus `execute_typescript`, no ambient pi built-ins or extension-tool leakage, task-root or worktree execution aligned to the active Smithers attempt, first-class durable workflow-task-attempt records keyed by Smithers attempt identity before task-local tool calls run, message-native retry and hijack continuation, live task-agent activity streaming, and projected nested transcript, command, artifact, and usage traces, while keeping approval and hijack as Smithers runtime controls rather than ordinary task-agent tools.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/workflow-supervision.spec.md",

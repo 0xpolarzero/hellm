@@ -218,12 +218,17 @@ Direct tools cover:
 
 - semantic code navigation through `cx.*`
 - reading files
+- visually inspecting local image files through `read`
 - searching text
 - inspecting repository and git state
 - generating artifacts
 - running bounded shell commands
 - editing and writing files
+- provider-backed web search and web fetch through the active `web.*` provider
 - discovering workflow assets and workflow-authoring models
+- listing the currently callable actor-specific tool surface
+
+When a model needs several independent tool results, the prompt should tell it to issue those tool calls together so pi's parallel tool execution can run them concurrently. Sequential tool calls should be reserved for cases where the later call depends on the earlier result.
 
 `cx.*` is the preferred code-navigation layer when the language is supported. The normal inspection ladder is:
 
@@ -254,7 +259,7 @@ That includes:
 
 Inside `execute_typescript`, the runtime injects `api.*` as a host SDK.
 
-`api.*` duplicates only the selected direct tools that are useful inside TypeScript composition: `read`, `grep`, `find`, `ls`, `bash`, artifact creation, workflow discovery, and read-only `cx` navigation.
+`api.*` duplicates only the selected direct tools that are useful inside TypeScript composition: `read`, `grep`, `find`, `ls`, `bash`, artifact creation, workflow discovery, provider-backed web search and fetch when configured, and read-only `cx` navigation.
 
 The `execute_typescript` `api.cx` subset is:
 
@@ -293,6 +298,10 @@ It is not part of the `execute_typescript` `api.*` SDK because it changes the ha
 The optional context key is:
 
 - `ci`
+
+Provider-backed web context is different from optional context.
+
+The active web provider context is always loaded for orchestrator, handler-thread, and workflow task-agent prompts when web tools are configured or when the selected provider is unavailable and the agent needs to know that web is disabled. It is regenerated from settings and tool registrations rather than loaded through `thread.start({ context })` or `request_context`.
 
 The orchestrator does not receive `request_context`.
 
