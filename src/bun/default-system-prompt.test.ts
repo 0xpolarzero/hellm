@@ -10,6 +10,23 @@ import { WORKFLOW_AUTHORING_CONTRACT_DECLARATION } from "../../generated/workflo
 import { HANDLER_WORKFLOW_AUTHORING_APPENDIX } from "./smithers-runtime/workflow-authoring-guide";
 
 describe("default system prompt", () => {
+  it("puts core coding-agent operating policy into every coding surface", () => {
+    for (const prompt of [
+      DEFAULT_SYSTEM_PROMPT,
+      HANDLER_SYSTEM_PROMPT,
+      WORKFLOW_TASK_SYSTEM_PROMPT,
+    ]) {
+      expect(prompt).toContain("Inspect repository facts before making structural assumptions");
+      expect(prompt).toContain("Keep edits narrowly scoped to the requested behavior");
+      expect(prompt).toContain("Treat the worktree as shared user state");
+      expect(prompt).toContain("Do not revert, overwrite, rename, clean up");
+      expect(prompt).toContain("Validate proportionally to risk");
+      expect(prompt).toContain("When asked for review, use a code-review stance");
+      expect(prompt).toContain("Use cx.* for semantic code navigation");
+      expect(prompt).toContain("use bash when the work actually requires a shell command");
+    }
+  });
+
   it("embeds the generated execute_typescript API contract", () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain(
       "The execute_typescript contract follows and is the source of truth",
