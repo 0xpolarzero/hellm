@@ -12,7 +12,7 @@
   - define how handler threads load CI authoring context only when needed
   - define how Project CI is configured organically through normal handler work rather than a setup launcher
 
-Typed context-pack mechanics are defined in [Handler Context Packs Spec](./handler-context-packs.spec.md).
+Prompt context mechanics are defined in [Prompt Contexts Spec](./prompt-contexts.spec.md).
 
 ## Naming
 
@@ -23,7 +23,7 @@ Use these terms consistently:
 - **Project CI**: the dedicated product lane for configuring and running the repository's repeatable confidence checks.
 - **CI lane**: the product projection for Project CI status, configured entries, latest run, check results, and linked workflow artifacts.
 - **CI status surface**: the UI surface or panel that renders the CI lane. It may route user requests into normal handler threads, but it is not a separate setup launcher or runtime.
-- **CI context pack**: the typed optional context loaded by `thread.start({ context: ["ci"] })` or by a handler calling `request_context({ keys: ["ci"] })`.
+- **CI prompt context**: the optional context loaded by `thread.start({ context: ["ci"] })` or by a handler calling `request_context({ keys: ["ci"] })`.
 - **CI entry**: a normal Smithers runnable saved workflow entry that declares `productKind = "project-ci"`.
 - **CI run**: one Smithers workflow run launched from a CI entry and recorded as Project CI state.
 - **CI check result**: one structured check inside a CI run, such as typecheck, test, lint, build, integration, or manual check.
@@ -55,7 +55,7 @@ That means:
 - no custom `svvy` CI component that agents must import into every workflow
 - no fake default CI that claims the project passed without running real checks
 - no CI authoring prompt injected into normal handler threads
-- normal handler-thread execution with the `ci` context pack loaded when CI authoring knowledge is needed
+- normal handler-thread execution with the `ci` prompt context loaded when CI authoring knowledge is needed
 
 ## Non-Goals
 
@@ -95,11 +95,11 @@ Mechanically, this is the same handler-thread actor class used for other delegat
 
 The difference is only the loaded context keys.
 
-Ordinary orchestrator and handler sessions do not receive the `ci` context pack by default.
+Ordinary orchestrator and handler sessions do not receive the `ci` prompt context by default.
 
-The `ci` context pack describes optional product knowledge and instructions.
+The `ci` prompt context describes optional product knowledge and instructions.
 
-Project CI uses normal handler-thread execution plus that context pack when configuration or modification is needed.
+Project CI uses normal handler-thread execution plus that prompt context when configuration or modification is needed.
 
 ## Actor Responsibilities
 
@@ -120,7 +120,7 @@ The orchestrator may:
 
 The orchestrator knows only a lightweight routing fact:
 
-- `ci` is an available handler context key for Project CI authoring.
+- `ci` is an available optional prompt context key for Project CI authoring.
 
 The orchestrator should not receive Smithers workflow tools directly.
 
@@ -132,7 +132,7 @@ The orchestrator should not receive `request_context`.
 
 ### Handler With `ci` Context
 
-A handler thread that has loaded the `ci` context pack owns Project CI configuration work.
+A handler thread that has loaded the `ci` prompt context owns Project CI configuration work.
 
 It is still a normal handler thread.
 
@@ -173,7 +173,7 @@ Normal handler threads start without:
 - repository-specific CI assumptions
 - knowledge of how to write CI entries beyond the existence of the `ci` context key
 
-If a normal handler only needs to run existing CI, it does not need the `ci` context pack.
+If a normal handler only needs to run existing CI, it does not need the `ci` prompt context.
 
 If a normal handler needs to configure or modify Project CI, it should first call:
 
@@ -487,7 +487,7 @@ An inspected handler thread should show CI detail only when that thread launched
 1. User asks in chat, or from the CI status surface, to configure Project CI.
 2. If the request clearly needs CI authoring from the first delegated turn, the orchestrator starts a normal handler thread with `context: ["ci"]`.
 3. If the request arrives in an existing normal handler thread, that handler calls `request_context({ keys: ["ci"] })` before authoring CI assets.
-4. The handler runs with the default handler runtime shape plus the `ci` context pack.
+4. The handler runs with the default handler runtime shape plus the `ci` prompt context.
 5. The handler inspects repository facts through `execute_typescript`.
 6. The handler sees `package.json` with `test` and `typecheck`, but no `lint`.
 7. The handler asks whether lint should be part of Project CI or omitted.
@@ -523,12 +523,12 @@ An inspected handler thread should show CI detail only when that thread launched
 3. No entries are returned.
 4. The handler asks the user whether to configure Project CI or run explicit one-off commands.
 5. If the current thread should configure Project CI, the handler calls `request_context({ keys: ["ci"] })`.
-6. After the `ci` context pack is loaded, the same handler may author the Project CI saved entry.
+6. After the `ci` prompt context is loaded, the same handler may author the Project CI saved entry.
 7. If the user gives explicit commands instead, those commands run as ordinary command records and artifacts, not Project CI state.
 
 ## Context Boundaries
 
-The CI authoring context is loaded only through the typed `ci` context pack.
+The CI authoring context is loaded only through the optional `ci` prompt context.
 
 Normal handler prompts should only include this small rule:
 
@@ -582,9 +582,9 @@ It points back to them.
 - CI entries are normal Smithers runnable entries.
 - CI entries live in the saved workflow library when reusable.
 - CI configuration is ordinary handler-thread work, not a dedicated setup launcher or runtime.
-- CI authoring context is isolated to the typed `ci` context pack.
-- Normal handler threads may run configured CI entries without loading the `ci` context pack.
-- Normal handler threads may configure or modify Project CI after loading the `ci` context pack with `request_context`.
+- CI authoring context is isolated to the optional `ci` prompt context.
+- Normal handler threads may run configured CI entries without loading the `ci` prompt context.
+- Normal handler threads may configure or modify Project CI after loading the `ci` prompt context with `request_context`.
 - No runtime path parses arbitrary workflow logs, node outputs, or final prose to infer CI.
 - No fake passing Project CI entry is scaffolded by default.
 - No generic verification table or event kind is used for Project CI.

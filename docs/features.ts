@@ -52,7 +52,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Direct Tools And Execute Typescript",
     status: "in-progress",
     summary:
-      "Provides PI-backed direct tools as the default coding-agent work surface, with svvy recording around reads, searches, edits, writes, bash commands, artifacts, and workflow discovery; keeps execute_typescript as a typed composition tool with a generated JSDoc-rich declaration embedded in the system prompt, preflight typecheck or compile diagnostics, file-backed snippet artifacts for every attempt, and parent-first rollups over nested child command facts.",
+      "Provides native direct tools as the default coding-agent work surface, with svvy recording around semantic cx navigation, reads, searches, edits, writes, bash commands, artifacts, and workflow discovery; keeps execute_typescript as a typed composition tool with a generated JSDoc-rich declaration for read/search/bash/artifact/workflow and read-only api.cx calls embedded in the system prompt, preflight typecheck or compile diagnostics, file-backed snippet artifacts for every attempt, and parent-first rollups over nested child command facts.",
     sourceSpecs: ["docs/prd.md", "docs/specs/execute-typescript.spec.md"],
   },
   {
@@ -60,18 +60,18 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Handler Thread Surfaces",
     status: "in-progress",
     summary:
-      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, optionally preload typed handler context keys such as `ci` through `thread.start`, derive handler-thread titles through the configured `namer` from the supplied objective instead of exposing a separate title field to the orchestrator, stay multi-turn and directly messageable before and after handoff, distinguish handler-active, workflow-active, waiting, troubleshooting, and completed thread states, reject `thread.handoff` while the thread still owns a running or waiting workflow run for the current span, route workflow attention back to the owning handler surface rather than the focused pane, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread.handoff` calls that append ordered handoff episodes over the thread's lifetime and immediately trigger a fresh orchestrator reconciliation turn.",
+      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, optionally preload prompt context keys such as `ci` through `thread.start`, derive handler-thread titles through the configured `namer` from the supplied objective instead of exposing a separate title field to the orchestrator, stay multi-turn and directly messageable before and after handoff, distinguish handler-active, workflow-active, waiting, troubleshooting, and completed thread states, reject `thread.handoff` while the thread still owns a running or waiting workflow run for the current span, route workflow attention back to the owning handler surface rather than the focused pane, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread.handoff` calls that append ordered handoff episodes over the thread's lifetime and immediately trigger a fresh orchestrator reconciliation turn.",
     sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
   },
   {
-    id: "typed-handler-context-packs",
-    name: "Typed Handler Context Packs",
+    id: "prompt-contexts",
+    name: "Prompt Context Packs",
     status: "in-progress",
     summary:
-      "Separates handler execution settings from optional product knowledge by letting the orchestrator preload typed context keys on `thread.start` and letting handler threads call the top-level `request_context({ keys })` tool later, with `ci` as the first adopted key, loaded keys persisted on the handler thread for resume, and no context-pack loading through the `execute_typescript` `api.*` SDK.",
+      "Keeps product prompt knowledge modular with always-loaded cx semantic-navigation context, actor-specific always-loaded Smithers context, and optional handler-only `ci` context loaded through `thread.start({ context })` or `request_context({ keys })`, with loaded optional keys persisted on the handler thread for resume and no prompt-context loading through the `execute_typescript` `api.*` SDK.",
     sourceSpecs: [
       "docs/prd.md",
-      "docs/specs/handler-context-packs.spec.md",
+      "docs/specs/prompt-contexts.spec.md",
       "docs/specs/project-ci.spec.md",
       "docs/specs/structured-session-state.spec.md",
     ],
@@ -89,7 +89,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workflow Task Agents",
     status: "in-progress",
     summary:
-      "Defines lower-level Smithers workflow task agents as a separate actor class beneath handler threads, using a PI-backed svvy task configuration with a task-local direct-tool callable surface plus `execute_typescript`, no ambient pi built-ins or extension-tool leakage, task-root or worktree execution aligned to the active Smithers attempt, first-class durable workflow-task-attempt records keyed by Smithers attempt identity before task-local tool calls run, message-native retry and hijack continuation, live task-agent activity streaming, and projected nested transcript, command, artifact, and usage traces, while keeping approval and hijack as Smithers runtime controls rather than ordinary task-agent tools.",
+      "Defines lower-level Smithers workflow task agents as a separate actor class beneath handler threads, using a PI-backed svvy task configuration with a task-local direct-tool callable surface including cx semantic navigation plus `execute_typescript`, no ambient pi built-ins or extension-tool leakage, task-root or worktree execution aligned to the active Smithers attempt, first-class durable workflow-task-attempt records keyed by Smithers attempt identity before task-local tool calls run, message-native retry and hijack continuation, live task-agent activity streaming, and projected nested transcript, command, artifact, and usage traces, while keeping approval and hijack as Smithers runtime controls rather than ordinary task-agent tools.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/workflow-supervision.spec.md",
@@ -109,7 +109,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workflow Authoring And Artifact Workflows",
     status: "in-progress",
     summary:
-      "Centers workflow execution around authored artifact workflows stored under `.svvy/artifacts/workflows/`, with every handler thread receiving generated workflow-authoring TypeScript contracts plus curated Smithers guidance and examples, checking saved entries and reusable assets before authoring, authoring through reusable definitions, prompts, and components when needed, and launching concrete saved or artifact entries through the Smithers-native runtime surface.",
+      "Centers workflow execution around authored artifact workflows stored under `.svvy/artifacts/workflows/`, with every handler thread receiving generated workflow-authoring TypeScript contracts plus always-loaded Smithers prompt context, checking saved entries and reusable assets before authoring, authoring through reusable definitions, prompts, and components when needed, and launching concrete saved or artifact entries through the Smithers-native runtime surface.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
   },
   {
@@ -231,10 +231,10 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Project CI Lane",
     status: "in-progress",
     summary:
-      'Provides Project CI status and result projection over normal saved Smithers entries under `.svvy/workflows/.../ci/`, records CI run and CI check result state only from entries declaring `productKind = "project-ci"` whose terminal output validates against the declared result schema, exposes latest CI status in specialized UI, and delivers CI authoring guidance only through the typed `ci` context pack loaded by `thread.start({ context: ["ci"] })` or handler-side `request_context({ keys: ["ci"] })`, without a setup launcher, CI-specific orchestrator, or shipped placeholder CI entry.',
+      'Provides Project CI status and result projection over normal saved Smithers entries under `.svvy/workflows/.../ci/`, records CI run and CI check result state only from entries declaring `productKind = "project-ci"` whose terminal output validates against the declared result schema, exposes latest CI status in specialized UI, and delivers CI authoring guidance only through the optional `ci` prompt context loaded by `thread.start({ context: ["ci"] })` or handler-side `request_context({ keys: ["ci"] })`, without a setup launcher, CI-specific orchestrator, or shipped placeholder CI entry.',
     sourceSpecs: [
       "docs/specs/project-ci.spec.md",
-      "docs/specs/handler-context-packs.spec.md",
+      "docs/specs/prompt-contexts.spec.md",
       "docs/specs/structured-session-state.spec.md",
       "docs/specs/workspace-navigation-core-projection.spec.md",
       "docs/specs/workflow-library.spec.md",

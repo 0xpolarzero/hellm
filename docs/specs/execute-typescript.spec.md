@@ -2,7 +2,7 @@
 
 ## Product Contract
 
-svvy exposes PI-backed direct tools as the normal coding-agent interface. The direct tools are the canonical surface for reading files, searching, editing, writing, running shell commands, creating artifacts, and discovering workflow assets.
+svvy exposes native direct tools as the normal coding-agent interface. The direct tools are the canonical surface for semantic code navigation, reading files, searching, editing, writing, running shell commands, creating artifacts, and discovering workflow assets.
 
 `execute_typescript` is a composition tool. It receives a bounded TypeScript snippet, injects a small `api` object, typechecks the snippet against a generated declaration, runs it, and records each nested `api` call as a child command. Agents use it when TypeScript control flow is useful: batching, looping, filtering, aggregation, workflow discovery, bash-backed inspection, or artifact evidence.
 
@@ -25,6 +25,28 @@ svvy ships PI's coding tools directly, wrapped by svvy command recording:
 | `bash` | Run a bounded shell command in the active workspace or task root. |
 
 The wrapper keeps PI's input schemas and behavior as the source of truth. svvy adds durable command records, turn-decision projection, transcript visibility, and artifact links where applicable.
+
+### cx Semantic Navigation Tools
+
+svvy ships the full cx API as native direct tools:
+
+| Tool | Purpose |
+| --- | --- |
+| `cx.overview` | Inspect a semantic table of contents for a file or directory. |
+| `cx.symbols` | Search semantic symbols across the project. |
+| `cx.definition` | Read a symbol definition body without reading the full source file. |
+| `cx.references` | Find semantic references and callers for a symbol. |
+| `cx.lang.list` | List supported cx language grammars and installation state. |
+| `cx.lang.add` | Install one or more cx language grammars. |
+| `cx.lang.remove` | Remove one or more cx language grammars. |
+| `cx.cache.path` | Show the cx cache path for the workspace. |
+| `cx.cache.clean` | Clean the cx cache for the workspace. |
+
+Agents use this code-navigation ladder when the target language is supported:
+
+```text
+cx.overview -> cx.symbols -> cx.definition / cx.references -> read / grep / find / ls
+```
 
 ### Artifact Tools
 
@@ -53,15 +75,15 @@ Smithers runtime control remains on Smithers-native tools such as `smithers.list
 
 ### Orchestrator
 
-The orchestrator receives direct coding tools, direct artifact tools, `execute_typescript`, and orchestration tools such as `thread.start` and `wait`. It uses direct tools for local bounded work and starts handler threads for larger owned work.
+The orchestrator receives cx tools, direct coding tools, direct artifact tools, `execute_typescript`, and orchestration tools such as `thread.start` and `wait`. It uses direct tools for local bounded work and starts handler threads for larger owned work.
 
 ### Handler
 
-Handler threads receive direct coding tools, direct artifact tools, direct workflow discovery tools, `execute_typescript`, `request_context`, `thread.handoff`, wait tools, and Smithers supervision tools. They can inspect, edit, author, run, and reconcile workflows without relying on code mode as the primary I/O mechanism.
+Handler threads receive cx tools, direct coding tools, direct artifact tools, direct workflow discovery tools, `execute_typescript`, `request_context`, `thread.handoff`, wait tools, and Smithers supervision tools. They can inspect, edit, author, run, and reconcile workflows without relying on code mode as the primary I/O mechanism.
 
 ### Workflow Task Agent
 
-Workflow task agents receive task-local direct coding tools, direct artifact tools, and `execute_typescript`. Their working directory is the Smithers task root or assigned worktree. They do not receive handler/orchestrator control tools.
+Workflow task agents receive task-local cx tools, direct coding tools, direct artifact tools, and `execute_typescript`. Their working directory is the Smithers task root or assigned worktree. They do not receive handler/orchestrator control tools.
 
 ## `execute_typescript` Input
 
@@ -90,6 +112,7 @@ The snippet can `return` any JSON-serializable value or a small diagnostic objec
 - Each nested `api` call creates a child command under the parent `execute_typescript` command.
 - Direct tools remain the preferred path for one-shot reads, edits, writes, and commands.
 - Code mode does not expose `edit` or `write`; file modification belongs to direct tools.
+- Code mode exposes only read-only cx operations.
 
 ## Injected API
 
@@ -133,6 +156,18 @@ interface SvvyApi {
   find(input: { pattern: string; path?: string; limit?: number }): Promise<ToolResult>;
   ls(input: { path?: string; limit?: number }): Promise<ToolResult>;
   bash(input: { command: string; timeout?: number }): Promise<ToolResult>;
+  cx: {
+    overview(input?: CxOverviewInput): Promise<ToolResult<CxCommandDetails>>;
+    symbols(input?: CxSymbolsInput): Promise<ToolResult<CxCommandDetails>>;
+    definition(input: CxDefinitionInput): Promise<ToolResult<CxCommandDetails>>;
+    references(input: CxReferencesInput): Promise<ToolResult<CxCommandDetails>>;
+    lang: {
+      list(): Promise<ToolResult<CxCommandDetails>>;
+    };
+    cache: {
+      path(): Promise<ToolResult<CxCommandDetails>>;
+    };
+  };
   artifact: {
     write_text(input: { name: string; text: string }): Promise<ToolResult<ArtifactWriteResult>>;
     write_json(input: {
@@ -158,13 +193,19 @@ The code-mode API duplicates these direct tools only:
 | `api.find` | `find` |
 | `api.ls` | `ls` |
 | `api.bash` | `bash` |
+| `api.cx.overview` | `cx.overview` |
+| `api.cx.symbols` | `cx.symbols` |
+| `api.cx.definition` | `cx.definition` |
+| `api.cx.references` | `cx.references` |
+| `api.cx.lang.list` | `cx.lang.list` |
+| `api.cx.cache.path` | `cx.cache.path` |
 | `api.artifact.write_text` | `artifact.write_text` |
 | `api.artifact.write_json` | `artifact.write_json` |
 | `api.artifact.attach_file` | `artifact.attach_file` |
 | `api.workflow.list_assets` | `workflow.list_assets` |
 | `api.workflow.list_models` | `workflow.list_models` |
 
-`edit` and `write` are not duplicated inside code mode. Agents call those tools directly so file modifications stay explicit in the transcript and command stream.
+`edit`, `write`, `cx.lang.add`, `cx.lang.remove`, and `cx.cache.clean` are not duplicated inside code mode. Agents call those tools directly so modifications to repository or cx runtime state stay explicit in the transcript and command stream.
 
 ## Examples
 
@@ -197,6 +238,25 @@ return {
   promptCount: prompts.details.assets.length,
   componentCount: components.details.assets.length,
   modelCount: models.details.models.length,
+};
+```
+
+### Semantic Navigation Batch
+
+```ts
+const overview = await api.cx.overview({ path: "src/bun" });
+const symbols = await api.cx.symbols({ kind: "function", name: "create*" });
+const definitions = await Promise.all(
+  symbols.details.json && Array.isArray(symbols.details.json)
+    ? symbols.details.json
+        .slice(0, 3)
+        .map((entry: any) => api.cx.definition({ name: String(entry.name), from: entry.file }))
+    : [],
+);
+
+return {
+  overviewCommand: overview.details.command,
+  definitionCount: definitions.length,
 };
 ```
 

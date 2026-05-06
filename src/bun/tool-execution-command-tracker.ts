@@ -118,6 +118,18 @@ function inferVisibility(toolName: string): StructuredCommandVisibility {
   ) {
     return "trace";
   }
+  if (
+    [
+      "cx.overview",
+      "cx.symbols",
+      "cx.definition",
+      "cx.references",
+      "cx.lang.list",
+      "cx.cache.path",
+    ].includes(toolName)
+  ) {
+    return "trace";
+  }
 
   return "summary";
 }

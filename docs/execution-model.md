@@ -75,7 +75,7 @@ flowchart TD
         Commands["Record commands and parent-child linkage"]
         Events["Append lifecycle events"]
         Artifacts["Persist file-backed artifacts and SQLite metadata"]
-        State["Update turns, commands, threads, loaded handler context keys, workflow runs, CI run/check result records, artifacts, wait state, and any episodes emitted by thread.handoff"]
+        State["Update turns, commands, threads, loaded optional prompt context keys, workflow runs, CI run/check result records, artifacts, wait state, and any episodes emitted by thread.handoff"]
     end
 
     subgraph ReadModels["Read Models"]
@@ -145,6 +145,7 @@ This is shared surface behavior, not special logic for waiting threads only.
 The orchestrator typically chooses among:
 
 - direct reply
+- cx semantic navigation and direct tools
 - `execute_typescript`
 - `thread.start`
 - `wait`
@@ -160,6 +161,7 @@ Instead, it opens a handler thread for that delegated objective.
 Inside a handler thread, the normal choices are:
 
 - direct reply
+- cx semantic navigation and direct tools
 - `execute_typescript`
 - `thread.handoff`
 - Smithers-native workflow tools such as `smithers.list_workflows`, `smithers.run_workflow`, `smithers.get_run`, `smithers.explain_run`, and `smithers.resolve_approval`
@@ -257,9 +259,9 @@ The difference is where the wait lives:
 - orchestrator wait lives in the main orchestrator surface
 - delegated clarification usually lives in the handler thread surface
 
-### 8. Optional Handler Context Uses `request_context`
+### 8. Optional Prompt Context Uses `request_context`
 
-Optional product knowledge should be loaded as typed handler context packs instead of being injected into every handler prompt.
+Optional product knowledge should be loaded as optional prompt context instead of being injected into every handler prompt.
 
 The first adopted context key is `ci`.
 
@@ -293,12 +295,14 @@ No runtime path infers CI from arbitrary workflow output, command names, logs, o
 ## Key Guarantees
 
 - Direct tools are the default coding-agent work surface.
+- cx semantic navigation is part of the native direct-tool surface and is the preferred first step for supported code navigation.
 - `api.bash` duplicates the direct `bash` tool inside `execute_typescript` when typed composition needs shell-backed inspection.
+- `api.cx.overview`, `api.cx.symbols`, `api.cx.definition`, `api.cx.references`, `api.cx.lang.list`, and `api.cx.cache.path` duplicate the read-only cx subset inside `execute_typescript`.
 - `thread.start`, `thread.handoff`, and `wait` remain `svvy`-native control tools.
 - workflow supervision should use Smithers-native bridge tools such as `smithers.run_workflow`, `smithers.get_run`, and `smithers.resolve_approval`.
 - the Smithers-native tool surface targets product-runtime runnable workflows rather than the repo authoring workspace under `workflows/`.
 - capability declarations are actor-specific: the orchestrator gets only orchestrator-callable tools, and handler threads get only handler-callable tools.
-- workflow task agents are another actor class below handler threads and should receive only task-local direct tools plus `execute_typescript`, with no ambient pi extension-tool leakage.
+- workflow task agents are another actor class below handler threads and should receive only task-local cx tools, direct tools, and `execute_typescript`, with no ambient pi extension-tool leakage.
 - runtime handlers and bridges write durable facts from real execution; agents do not mutate product state through arbitrary write tools.
 - child `api.*` calls remain nested command facts under a parent `execute_typescript` command.
 - tool-run summaries stay on command records and artifacts; ordinary handler replies do not emit episodes.

@@ -681,7 +681,7 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("preloads typed handler context packs into handler surface prompts", async () => {
+  it("preloads optional prompt context into handler surface prompts", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
@@ -743,7 +743,7 @@ describe("WorkspaceSessionCatalog", () => {
         buildSystemPrompt("handler", { loadedContextKeys: ["ci"] }),
       );
       expect(openedHandler.resolvedSystemPrompt).toContain(
-        "Loaded handler context pack: Project CI.",
+        "Loaded optional prompt context: Project CI.",
       );
       expect(openedHandler.resolvedSystemPrompt).toContain('productKind = "project-ci"');
       expect(store.getThreadDetail(handlerThread.id).thread.loadedContextKeys).toEqual(["ci"]);

@@ -8,10 +8,10 @@ import type {
   StructuredThreadRecord,
 } from "./structured-session-state";
 import {
-  getHandlerContextPack,
-  validateHandlerContextKeys,
-  type HandlerContextKey,
-} from "./handler-context-packs";
+  getOptionalPromptContext,
+  validateOptionalPromptContextKeys,
+  type OptionalPromptContextKey,
+} from "./prompt-contexts";
 
 export const START_THREAD_TOOL_NAME = "thread.start";
 
@@ -52,7 +52,7 @@ export interface ThreadStartBridge {
     parentThreadId: string | null;
     parentSurfacePiSessionId: string;
     objective: string;
-    contextKeys: HandlerContextKey[];
+    contextKeys: OptionalPromptContextKey[];
     sessionAgentSettings: SessionAgentSettings | null;
     loadedByCommandId: string;
   }): Promise<StructuredThreadRecord>;
@@ -81,7 +81,7 @@ export function createStartThreadTool(options: {
       });
 
       const objective = params.objective.trim();
-      const contextKeys = validateHandlerContextKeys(params.context ?? []);
+      const contextKeys = validateOptionalPromptContextKeys(params.context ?? []);
       const command = options.store.createCommand({
         turnId: runtime.turnId,
         surfacePiSessionId: runtime.surfacePiSessionId,
@@ -121,7 +121,7 @@ export function createStartThreadTool(options: {
             threadId: thread.id,
             surfacePiSessionId: thread.surfacePiSessionId ?? null,
             objective: thread.objective,
-            contextKeys: contextKeys.map((key) => getHandlerContextPack(key).key),
+            contextKeys: contextKeys.map((key) => getOptionalPromptContext(key).key),
           },
         });
 

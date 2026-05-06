@@ -5,7 +5,7 @@ import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
-import type { HandlerContextKey } from "./handler-context-packs";
+import type { OptionalPromptContextKey } from "./prompt-contexts";
 
 const WORKSPACE = {
   id: "/repo/svvy",
@@ -73,10 +73,10 @@ function createOrchestratorRuntime(
 }
 
 describe("thread.start tool", () => {
-  it("passes typed context packs through to handler-thread creation", async () => {
+  it("passes optional prompt context through to handler-thread creation", async () => {
     const store = createStore();
     const runtime = createOrchestratorRuntime(store);
-    let observedContextKeys: HandlerContextKey[] | null = null;
+    let observedContextKeys: OptionalPromptContextKey[] | null = null;
     let observedLoadedByCommandId: string | null = null;
 
     const tool = createStartThreadTool({

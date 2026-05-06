@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
@@ -12,6 +20,7 @@ import { createExecuteTypescriptTool } from "./execute-typescript-tool";
 
 const stores: StructuredSessionStateStore[] = [];
 const tempDirs: string[] = [];
+const originalCxBin = process.env.SVVY_CX_BIN;
 
 afterEach(() => {
   while (stores.length > 0) {
@@ -22,6 +31,11 @@ afterEach(() => {
     if (dir) {
       rmSync(dir, { force: true, recursive: true });
     }
+  }
+  if (originalCxBin === undefined) {
+    delete process.env.SVVY_CX_BIN;
+  } else {
+    process.env.SVVY_CX_BIN = originalCxBin;
   }
 });
 
@@ -35,6 +49,28 @@ function writeWorkspaceFile(workspaceRoot: string, path: string, text: string): 
   const filePath = join(workspaceRoot, path);
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, text, "utf8");
+}
+
+function writeFakeCxBinary(workspaceRoot: string): string {
+  const path = join(workspaceRoot, "fake-cx");
+  writeFileSync(
+    path,
+    [
+      "#!/usr/bin/env bun",
+      "const args = Bun.argv.slice(2);",
+      "if (args[0] === 'overview') console.log(JSON.stringify([{ file: args[1] ?? '.', symbols: ['main'] }]));",
+      "else if (args[0] === 'symbols') console.log(JSON.stringify([{ file: 'src/index.ts', name: 'main', kind: 'function' }]));",
+      "else if (args[0] === 'definition') console.log(JSON.stringify([{ file: 'src/index.ts', line: 1, body: 'function main() {}' }]));",
+      "else if (args[0] === 'references') console.log(JSON.stringify([{ file: 'src/index.ts', line: 2, caller: 'boot' }]));",
+      "else if (args[0] === 'lang' && args[1] === 'list') console.log('typescript installed');",
+      "else if (args[0] === 'cache' && args[1] === 'path') console.log('/tmp/cx-cache');",
+      "else { console.error('unsupported fake cx command'); process.exit(2); }",
+    ].join("\n"),
+    "utf8",
+  );
+  chmodSync(path, 0o755);
+  process.env.SVVY_CX_BIN = path;
+  return path;
 }
 
 function createStore(sessionId: string, workspaceCwd: string): StructuredSessionStateStore {
@@ -150,6 +186,7 @@ describe("execute_typescript tool", () => {
   it("runs a typed composition through duplicated direct tools and records child commands", async () => {
     const workspaceCwd = createWorkspaceRoot();
     writeWorkspaceFile(workspaceCwd, "notes.txt", "alpha\nbeta\n");
+    writeFakeCxBinary(workspaceCwd);
     writeWorkspaceFile(
       workspaceCwd,
       ".svvy/workflows/prompts/proof.mdx",
@@ -168,6 +205,7 @@ describe("execute_typescript tool", () => {
     const result = await tool.execute("tool-call-3", {
       typescriptCode: [
         'const file = await api.read({ path: "notes.txt" });',
+        'const overview = await api.cx.overview({ path: "." });',
         'const status = await api.bash({ command: "printf clean" });',
         'const assets = await api.workflow.list_assets({ kind: "prompt", scope: "saved" });',
         "const artifact = await api.artifact.write_text({",
@@ -175,7 +213,7 @@ describe("execute_typescript tool", () => {
         '  text: `${file.content[0]?.type === "text" ? file.content[0].text.split("\\n")[0] : ""}:${status.content[0]?.type === "text" ? status.content[0].text.trim() : ""}`',
         "});",
         'console.log("artifact", artifact.details.path);',
-        "return { assetCount: assets.details.assets.length, artifactId: artifact.details.artifactId };",
+        "return { assetCount: assets.details.assets.length, artifactId: artifact.details.artifactId, cxCommand: overview.details.command.join(' ') };",
       ].join("\n"),
     });
 
@@ -184,6 +222,7 @@ describe("execute_typescript tool", () => {
       result: {
         assetCount: 1,
         artifactId: expect.any(String),
+        cxCommand: "cx overview . --json",
       },
     });
 
@@ -196,16 +235,30 @@ describe("execute_typescript tool", () => {
     });
     expect(parentCommand?.summary).toContain("Read 1 tool result");
     expect(parentCommand?.summary).toContain("Ran 1 bash command");
+    expect(parentCommand?.summary).toContain("Ran 1 cx navigation call");
     expect(parentCommand?.summary).toContain("Created 1 artifact");
     expect(parentCommand?.summary).toContain("Discovered 1 workflow asset");
     expect(childCommands.map((command) => command.toolName)).toEqual([
       "read",
+      "cx.overview",
       "bash",
       "workflow.list_assets",
       "artifact.write_text",
     ]);
     expect(childCommands).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          parentCommandId: parentCommand!.id,
+          toolName: "cx.overview",
+          executor: "execute_typescript",
+          visibility: "trace",
+          status: "succeeded",
+          facts: expect.objectContaining({
+            command: ["cx", "overview", ".", "--json"],
+            exitCode: 0,
+            resultCount: 1,
+          }),
+        }),
         expect.objectContaining({
           parentCommandId: parentCommand!.id,
           toolName: "read",

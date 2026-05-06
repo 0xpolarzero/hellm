@@ -92,7 +92,7 @@ describe("request_context tool", () => {
     ).rejects.toThrow("request_context can only run from a handler thread surface.");
   });
 
-  it("loads typed context packs idempotently on the current handler thread", async () => {
+  it("loads optional prompt context idempotently on the current handler thread", async () => {
     const store = createStore();
     const runtime = createHandlerRuntime(store);
     const tool = createRequestContextTool({

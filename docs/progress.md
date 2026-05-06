@@ -50,7 +50,8 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Keep only `thread.start`, `thread.handoff`, and `wait` as `svvy`-native control tools while exposing Smithers workflow operations through Smithers-native bridge tools. Commit(s): `a02bd48`
 - [x] Keep the code-mode API bounded to duplicated direct tools that benefit from typed composition. Commit(s): `76cc8f3`, `29d8452`
-- [x] Expose PI-backed direct file, search, edit, write, and bash tools as the normal coding-agent work surface. Commit(s): `76cc8f3`, `29d8452`
+- [x] Expose native cx semantic navigation plus PI-backed file, search, edit, write, and bash tools as the normal coding-agent work surface. Commit(s): `76cc8f3`, `29d8452`
+- [x] Expose read-only cx navigation through the generated `execute_typescript` `api.cx` subset for typed composition. Commit(s): pending
 - [x] Record direct tool calls and nested code-mode calls in the shared structured command model. Commit(s): `76cc8f3`, `29d8452`
 - [x] Persist normalized child-command facts for nested `api.*` calls while the parent `execute_typescript` attempt remains the main semantic unit. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Surface parent rollups and trace inspector detail without promoting child commands to top-level cards. Commit(s): `5b0a223`
@@ -91,9 +92,9 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Let handler threads call the generated per-workflow Smithers run-launch surface through the Bun bridge for both new and resumed runs. Commit(s): `4674e67`
 - [x] Extend the Smithers-native supervision surface beyond the shipped Step 5 handler-thread/runtime coverage for blocker diagnosis, approvals, signals, cancellation, node detail, artifacts, transcripts, event history, frames, and DevTools inspection, focusing on the remaining operator-only and richer troubleshooting controls. Commit(s): `f8557d9`
 - [x] Define workflow task agents as a lower-level Smithers actor class distinct from orchestrator and handler-thread surfaces. Commit(s): `a02bd48`
-- [x] Adopt PI-backed svvy workflow task agents with a dedicated task prompt, task-local direct tools, and `execute_typescript` for typed composition. Commit(s): `a02bd48`
+- [x] Adopt PI-backed svvy workflow task agents with a dedicated task prompt, task-local cx tools, direct tools, and `execute_typescript` for typed composition. Commit(s): `a02bd48`
 - [x] Keep approval gates and hijack as Smithers runtime or operator controls around workflow task agents rather than exposing them as ordinary task-agent tools. Commit(s): `a02bd48`
-- [x] Build workflow task execution that runs the svvy workflow-task PI configuration with task-local direct tools and code mode. Commit(s): `a02bd48`
+- [x] Build workflow task execution that runs the svvy workflow-task PI configuration with task-local cx tools, direct tools, and code mode. Commit(s): `a02bd48`
 - [x] Wake the supervising handler thread in a background turn only when a workflow run reaches a terminal outcome, an actionable wait, a continuation boundary, or a supervision fault that requires handler judgment, while keeping duplicate terminal reconciliation idempotent after a valid handoff. Commit(s): `a02bd48`
 - [x] Support multiple workflow runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
 - [x] Derive active and latest workflow summaries from workflow-run state without a persisted thread-level latest pointer. Commit(s): `a02bd48`
@@ -120,9 +121,9 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 
 ## 7. Project CI Lane
 
-- [x] Build a POC typed context-pack registry with `ci` as the first key. Commit(s): `2a5dbbe`
+- [x] Build a POC prompt context registry with `ci` as the first key. Commit(s): `2a5dbbe`
 - [x] Add the handler-only `request_context({ keys })` tool and persist loaded context keys on handler threads. Commit(s): `2a5dbbe`
-- [x] Extend `thread.start` so the orchestrator can preload typed handler context with `context: ["ci"]`. Commit(s): `2a5dbbe`
+- [x] Extend `thread.start` so the orchestrator can preload optional prompt context with `context: ["ci"]`. Commit(s): `2a5dbbe`
 - [x] Make Project CI configuration happen organically through normal handler-thread work, with `context: ["ci"]` preloaded for first-turn CI authoring or requested later through `request_context({ keys: ["ci"] })`, instead of a setup launcher or CI-specific runtime. Commit(s): `2a5dbbe`
 - [x] Define the conventional Project CI saved-workflow layout under `.svvy/workflows/{definitions,prompts,components,entries}/ci/`, without implying a shipped or auto-created default CI entry. Commit(s): `2a5dbbe`
 - [x] Extend runnable workflow entry discovery with optional `productKind` and `resultSchema` metadata. Commit(s): `2a5dbbe`
@@ -130,7 +131,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Persist `ci_run` and `ci_check_result` records only from terminal Smithers runs launched from declared Project CI entries. Commit(s): `2a5dbbe`
 - [x] Record CI check results with stable check ids, kind, status, required flag, command, exit code, summary, timestamps, and linked artifacts. Commit(s): `2a5dbbe`
 - [x] Treat invalid or missing CI result output as a CI workflow troubleshooting state instead of parsing logs, node outputs, final prose, or command names. Commit(s): `2a5dbbe`
-- [x] Let normal handler threads discover and run configured Project CI entries without loading the `ci` context pack, while using `request_context({ keys: ["ci"] })` before configuring or modifying CI. Commit(s): `2a5dbbe`
+- [x] Let normal handler threads discover and run configured Project CI entries without loading the `ci` prompt context, while using `request_context({ keys: ["ci"] })` before configuring or modifying CI. Commit(s): `2a5dbbe`
 - [x] Render `not configured`, `configured`, `running`, `passed`, `failed`, `blocked`, and `cancelled` Project CI states in a dedicated CI status surface or panel. Commit(s): `ee850fd`
 - [x] Surface the latest Project CI outcome as routing input for orchestrator and handler decisions without making CI a native control tool. Commit(s): `2a5dbbe`
 
@@ -195,7 +196,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 ## 11. Session Agents And Workflow Agents
 
 - [x] Define the stored shape for session agent settings used by orchestrator, dumb orchestrator, and handler surfaces. Commit(s): `8e19462`
-- [x] Keep session agent settings separate from typed handler context packs so Project CI uses normal handler-thread execution plus `context: ["ci"]`. Commit(s): `2a5dbbe`
+- [x] Keep session agent settings separate from optional prompt context so Project CI uses normal handler-thread execution plus `context: ["ci"]`. Commit(s): `2a5dbbe`
 - [x] Seed initial app-wide default values for the default session agent and dumb orchestrator session agent. Commit(s): `8e19462`
 - [x] Build a POC settings model for editing app-wide session agent defaults. Commit(s): `8e19462`
 - [x] Persist app-wide session agent defaults. Commit(s): `8e19462`
@@ -232,14 +233,10 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 
 ## 14. Layered Workflow Knowledge
 
-- [x] Inventory the workflow-related prompt, skill, and knowledge assets the product needs. Commit(s): `0b2d1ff`, `4515233`, `a02bd48`
-- [x] Build a POC repo layout for workflow knowledge with separate orchestrator-facing and handler-facing assets. Commit(s): `0b2d1ff`, `4515233`
-- [x] Define the first minimal orchestrator-facing workflow summary shape. Commit(s): `a02bd48`
-- [x] Define the first richer handler-facing workflow prompt or example shape. Commit(s): `0b2d1ff`
-- [x] Load only minimal workflow summaries into orchestrator routing context. Commit(s): `a02bd48`
-- [x] Build a POC delegated workflow that receives extended workflow knowledge without expanding orchestrator context. Commit(s): `0b2d1ff`, `4515233`
-- [x] Define typed handler context packs as the optional-knowledge layer between minimal handler prompts and specialized product authoring guidance. Commit(s): `2a5dbbe`
-- [x] Render loaded handler context keys in thread metadata so users can see when optional context such as `ci` is active. Commit(s): `2a5dbbe`
+- [x] Define always-loaded cx and Smithers prompt context plus optional handler-only `ci` prompt context. Commit(s): pending
+- [x] Load actor-specific Smithers prompt context so orchestrators route workflow work, handlers supervise workflows, and workflow task agents keep the Smithers task boundary. Commit(s): pending
+- [x] Define optional prompt context as the on-demand product-knowledge layer for specialized handler work. Commit(s): `2a5dbbe`
+- [x] Render loaded optional prompt context keys in thread metadata so users can see when optional context such as `ci` is active. Commit(s): `2a5dbbe`
 
 ## 15. Dedicated Workflow Inspector
 

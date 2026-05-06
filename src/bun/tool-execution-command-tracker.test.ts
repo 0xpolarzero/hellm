@@ -190,6 +190,57 @@ describe("tool execution command tracker", () => {
     ]);
   });
 
+  it("records read-only cx navigation as trace and mutating cx maintenance as summary", () => {
+    const store = createStore();
+    const tracker = createToolExecutionCommandTracker({
+      store,
+      promptContext: createPromptContext(store),
+    });
+
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-cx-overview",
+      toolName: "cx.overview",
+      args: { path: "src" },
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-cx-overview",
+      toolName: "cx.overview",
+      result: {
+        content: [{ type: "text", text: '[{"file":"src/index.ts"}]' }],
+      },
+      isError: false,
+    });
+    tracker.handleToolExecutionStart({
+      toolCallId: "tool-call-cx-clean",
+      toolName: "cx.cache.clean",
+      args: {},
+    });
+    tracker.handleToolExecutionEnd({
+      toolCallId: "tool-call-cx-clean",
+      toolName: "cx.cache.clean",
+      result: {
+        content: [{ type: "text", text: "cleaned" }],
+      },
+      isError: false,
+    });
+
+    const snapshot = store.getSessionState("session-tool-tracker");
+    expect(snapshot.commands).toEqual([
+      expect.objectContaining({
+        toolName: "cx.overview",
+        executor: "orchestrator",
+        visibility: "trace",
+        status: "succeeded",
+      }),
+      expect.objectContaining({
+        toolName: "cx.cache.clean",
+        executor: "orchestrator",
+        visibility: "summary",
+        status: "succeeded",
+      }),
+    ]);
+  });
+
   it("ignores native control tools that already own structured command writes", () => {
     const store = createStore();
     const tracker = createToolExecutionCommandTracker({

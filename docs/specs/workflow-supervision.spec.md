@@ -240,8 +240,8 @@ The adopted direction is:
 
 - when a product workflow needs an adaptive coding agent, use a PI-backed workflow task agent by default
 - configure that task agent with a `svvy` workflow-task system prompt rather than the orchestrator or handler-thread prompt
-- expose only task-local direct tools plus `execute_typescript` to that actor
-- the default adopted task-agent tool surface is task-local direct tools with code mode for typed composition
+- expose only task-local cx tools, direct tools, and `execute_typescript` to that actor
+- the default adopted task-agent tool surface is task-local cx semantic navigation, direct tools, and code mode for typed composition
 - project each Smithers task attempt into a durable `svvy` workflow-task-attempt record and attach any task-agent commands and artifacts to that attempt instead of leaving them in a local ephemeral trace
 - do not expose `thread.start`, `thread.handoff`, `wait`, or `smithers.*` to workflow task agents
 - do not load ambient pi built-in tools or workspace-discovered extension tools into the task agent runtime
@@ -298,7 +298,7 @@ Actor-specific exposure is part of that contract:
 - the orchestrator prompt should know that handler threads can supervise workflows through `smithers.*`, but it should not receive the `smithers.*` generated tool schema in its own prompt
 - handler-thread prompts should receive the `smithers.*` schema because they are the delegated surfaces that actually supervise workflow execution
 - handler-thread prompts should not receive orchestrator-only tools such as `thread.start` in the default adopted model
-- workflow task agents should receive only their task-local direct tools plus `execute_typescript`, with no ambient pi built-ins or extension-provided callable tools beyond that task-local set
+- workflow task agents should receive only their task-local cx tools, direct tools, and `execute_typescript`, with no ambient pi built-ins or extension-provided callable tools beyond that task-local set
 - awareness of another actor's capabilities belongs in compact instructional prose, not in leaked callable declarations for tools that actor cannot invoke
 
 The first adopted Smithers-native surface is:

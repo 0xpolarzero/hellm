@@ -22,6 +22,7 @@ import {
   type ExecuteTypescriptCommandStore,
   type ExecuteTypescriptResult,
 } from "../execute-typescript-tool";
+import { createCxTools } from "../cx-tools";
 import type { StructuredSessionStateStore } from "../structured-session-state";
 import { createSvvyDirectTools } from "../svvy-direct-tools";
 import { createWorkflowLibrary } from "./workflow-library";
@@ -129,6 +130,7 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         store: options.store,
         workflowLibrary: createWorkflowLibrary(taskRoot),
       });
+      const cxTools = createCxTools({ cwd: taskRoot });
 
       const { session } = await createAgentSession({
         cwd: taskRoot,
@@ -141,6 +143,7 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         thinkingLevel: config.thinkingLevel,
         tools: [],
         customTools: createCustomToolDefinitions([
+          ...cxTools,
           ...directTools.codingTools,
           ...directTools.artifactTools,
           executeTypescriptTool,
@@ -774,6 +777,15 @@ function assertTaskAgentToolSurface(activeToolNames: string[]): void {
     "edit",
     "write",
     "bash",
+    "cx.overview",
+    "cx.symbols",
+    "cx.definition",
+    "cx.references",
+    "cx.lang.list",
+    "cx.lang.add",
+    "cx.lang.remove",
+    "cx.cache.path",
+    "cx.cache.clean",
     "artifact.write_text",
     "artifact.write_json",
     "artifact.attach_file",

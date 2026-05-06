@@ -18,6 +18,13 @@ describe("default system prompt", () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain("interface SvvyApi");
     expect(DEFAULT_SYSTEM_PROMPT).toContain("list_assets(");
     expect(DEFAULT_SYSTEM_PROMPT).toContain("list_models(): Promise<ToolResult");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("api.cx");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain(
+      "Loaded always-on prompt context: cx semantic code navigation.",
+    );
+    expect(DEFAULT_SYSTEM_PROMPT).toContain(
+      "Loaded always-on prompt context: Smithers workflow routing.",
+    );
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("providerModelSummary");
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("toolsetSummary");
     expect(DEFAULT_SYSTEM_PROMPT).not.toContain("subtype?: string");
@@ -39,6 +46,9 @@ describe("default system prompt", () => {
 
     expect(HANDLER_SYSTEM_PROMPT).toBe(buildSystemPrompt("handler"));
     expect(HANDLER_SYSTEM_PROMPT).toContain("return control with thread.handoff");
+    expect(HANDLER_SYSTEM_PROMPT).toContain(
+      "Loaded always-on prompt context: Smithers workflow supervision.",
+    );
     expect(HANDLER_SYSTEM_PROMPT).toContain(
       "Ordinary replies inside a handler thread do not close it",
     );
@@ -85,12 +95,14 @@ describe("default system prompt", () => {
     expect(HANDLER_WORKFLOW_AUTHORING_APPENDIX).toContain("workflow.list_assets");
   });
 
-  it("injects full handler context only after that context pack is loaded", () => {
-    expect(buildSystemPrompt("handler")).not.toContain("Loaded handler context pack: Project CI.");
+  it("injects optional prompt context only after that context is loaded", () => {
+    expect(buildSystemPrompt("handler")).not.toContain(
+      "Loaded optional prompt context: Project CI.",
+    );
 
     const handlerPrompt = buildSystemPrompt("handler", { loadedContextKeys: ["ci"] });
 
-    expect(handlerPrompt).toContain("Loaded handler context pack: Project CI.");
+    expect(handlerPrompt).toContain("Loaded optional prompt context: Project CI.");
     expect(handlerPrompt).toContain('productKind = "project-ci"');
     expect(handlerPrompt).toContain("resultSchema");
   });

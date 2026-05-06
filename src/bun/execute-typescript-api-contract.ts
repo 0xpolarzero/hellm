@@ -71,6 +71,51 @@ export interface BashToolDetails {
   fullOutputPath?: string;
 }
 
+export interface CxCommandDetails {
+  command: string[];
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  json: unknown | null;
+}
+
+export interface CxOverviewInput {
+  path?: string;
+  full?: boolean;
+  root?: string;
+}
+
+export interface CxSymbolsInput {
+  kind?: string;
+  name?: string;
+  file?: string;
+  limit?: number;
+  offset?: number;
+  all?: boolean;
+  root?: string;
+}
+
+export interface CxDefinitionInput {
+  name: string;
+  kind?: string;
+  from?: string;
+  maxLines?: number;
+  limit?: number;
+  offset?: number;
+  all?: boolean;
+  root?: string;
+}
+
+export interface CxReferencesInput {
+  name: string;
+  file?: string;
+  unique?: boolean;
+  limit?: number;
+  offset?: number;
+  all?: boolean;
+  root?: string;
+}
+
 export interface ArtifactWriteResult {
   artifactId: string;
   path?: string;
@@ -119,7 +164,7 @@ export interface WorkflowListModelsDetails {
  * These functions duplicate direct tools by name and input shape. Use direct
  * tools for ordinary reads, edits, writes, and commands; use this API only when
  * TypeScript control flow is the clearest way to compose several read/search,
- * bash, artifact, or workflow-discovery calls.
+ * bash, artifact, workflow-discovery, or read-only cx calls.
  */
 export interface SvvyApi {
   read(input: {
@@ -150,6 +195,19 @@ export interface SvvyApi {
     command: string;
     timeout?: number;
   }): Promise<ToolResult<BashToolDetails | undefined>>;
+
+  cx: {
+    overview(input?: CxOverviewInput): Promise<ToolResult<CxCommandDetails>>;
+    symbols(input?: CxSymbolsInput): Promise<ToolResult<CxCommandDetails>>;
+    definition(input: CxDefinitionInput): Promise<ToolResult<CxCommandDetails>>;
+    references(input: CxReferencesInput): Promise<ToolResult<CxCommandDetails>>;
+    lang: {
+      list(): Promise<ToolResult<CxCommandDetails>>;
+    };
+    cache: {
+      path(): Promise<ToolResult<CxCommandDetails>>;
+    };
+  };
 
   artifact: {
     write_text(input: { name: string; text: string }): Promise<ToolResult<ArtifactWriteResult>>;

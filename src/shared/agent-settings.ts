@@ -13,6 +13,15 @@ export type WorkflowAgentToolName =
   | "edit"
   | "write"
   | "bash"
+  | "cx.overview"
+  | "cx.symbols"
+  | "cx.definition"
+  | "cx.references"
+  | "cx.lang.list"
+  | "cx.lang.add"
+  | "cx.lang.remove"
+  | "cx.cache.path"
+  | "cx.cache.clean"
   | "artifact.write_text"
   | "artifact.write_json"
   | "artifact.attach_file"
@@ -99,7 +108,20 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
     ...DEFAULT_AGENT_SETTINGS,
     systemPrompt:
       "Inspect the repository and return concise findings, evidence, and unresolved questions. Do not edit files.",
-    toolSurface: ["read", "grep", "find", "ls", "bash", "execute_typescript"],
+    toolSurface: [
+      "cx.overview",
+      "cx.symbols",
+      "cx.definition",
+      "cx.references",
+      "cx.lang.list",
+      "cx.cache.path",
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "bash",
+      "execute_typescript",
+    ],
   },
   implementer: {
     id: "implementer",
@@ -115,6 +137,15 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
       "edit",
       "write",
       "bash",
+      "cx.overview",
+      "cx.symbols",
+      "cx.definition",
+      "cx.references",
+      "cx.lang.list",
+      "cx.lang.add",
+      "cx.lang.remove",
+      "cx.cache.path",
+      "cx.cache.clean",
       "artifact.write_text",
       "artifact.write_json",
       "artifact.attach_file",
@@ -127,7 +158,20 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
     ...DEFAULT_AGENT_SETTINGS,
     systemPrompt:
       "Review the assigned result for correctness, regressions, edge cases, and missing tests. Lead with findings.",
-    toolSurface: ["read", "grep", "find", "ls", "bash", "execute_typescript"],
+    toolSurface: [
+      "cx.overview",
+      "cx.symbols",
+      "cx.definition",
+      "cx.references",
+      "cx.lang.list",
+      "cx.cache.path",
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "bash",
+      "execute_typescript",
+    ],
   },
 } satisfies Record<WorkflowAgentKey, WorkflowAgentSettings>;
 

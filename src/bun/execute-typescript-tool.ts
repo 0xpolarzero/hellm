@@ -5,6 +5,7 @@ import { basename } from "node:path";
 import { inspect } from "node:util";
 import * as ts from "typescript";
 import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
+import { createCxTools } from "./cx-tools";
 import type { SvvyApi, SvvyConsole } from "./execute-typescript-api-contract";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import { createWorkflowLibrary, type WorkflowLibrary } from "./smithers-runtime/workflow-library";
@@ -131,6 +132,7 @@ type ExecuteTypescriptToolOptions = {
 };
 
 type ExecuteTypescriptApi = SvvyApi;
+type CxApiToolResult = Awaited<ReturnType<ExecuteTypescriptApi["cx"]["overview"]>>;
 
 type ExecuteTypescriptCommandFacts = Record<string, unknown>;
 
@@ -637,10 +639,14 @@ function createExecuteTypescriptApi(input: {
     store: input.store,
     workflowLibrary: input.workflowLibrary,
   });
+  const cxTools = createCxTools({ cwd: input.cwd });
   const toolByName = new Map(
-    [...directTools.codingTools, ...directTools.artifactTools, ...directTools.workflowTools].map(
-      (tool) => [tool.name, tool] as const,
-    ),
+    [
+      ...cxTools,
+      ...directTools.codingTools,
+      ...directTools.artifactTools,
+      ...directTools.workflowTools,
+    ].map((tool) => [tool.name, tool] as const),
   );
   const getTool = (name: string): AgentTool<any> => {
     const tool = toolByName.get(name);
@@ -697,6 +703,60 @@ function createExecuteTypescriptApi(input: {
         visibility: "summary",
         facts: () => ({ command: params.command, timeout: params.timeout }),
       }),
+    cx: {
+      overview: (params = {}) =>
+        invokeTool<CxApiToolResult>({
+          tool: getTool("cx.overview"),
+          params,
+          title: "cx overview",
+          summary: `cx overview ${params.path ?? "."}`,
+          facts: readCxFacts,
+        }),
+      symbols: (params = {}) =>
+        invokeTool<CxApiToolResult>({
+          tool: getTool("cx.symbols"),
+          params,
+          title: "cx symbols",
+          summary: "cx symbols",
+          facts: readCxFacts,
+        }),
+      definition: (params) =>
+        invokeTool<CxApiToolResult>({
+          tool: getTool("cx.definition"),
+          params,
+          title: "cx definition",
+          summary: `cx definition ${params.name}`,
+          facts: readCxFacts,
+        }),
+      references: (params) =>
+        invokeTool<CxApiToolResult>({
+          tool: getTool("cx.references"),
+          params,
+          title: "cx references",
+          summary: `cx references ${params.name}`,
+          facts: readCxFacts,
+        }),
+      lang: {
+        list: () =>
+          invokeTool<CxApiToolResult>({
+            tool: getTool("cx.lang.list"),
+            params: {},
+            title: "cx lang list",
+            summary: "cx lang list",
+            facts: readCxFacts,
+          }),
+      },
+      cache: {
+        path: () =>
+          invokeTool<CxApiToolResult>({
+            tool: getTool("cx.cache.path"),
+            params: {},
+            title: "cx cache path",
+            summary: "cx cache path",
+            facts: readCxFacts,
+          }),
+      },
+    },
     artifact: {
       write_text: (params) =>
         invokeTool({
@@ -798,6 +858,21 @@ function readToolResultDetails(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function readCxFacts(result: unknown): ExecuteTypescriptCommandFacts {
+  const details = readToolResultDetails(result);
+  const json = details.json;
+  const resultCount = Array.isArray(json)
+    ? json.length
+    : json && typeof json === "object" && Array.isArray((json as { results?: unknown }).results)
+      ? (json as { results: unknown[] }).results.length
+      : undefined;
+  return {
+    command: details.command,
+    exitCode: details.exitCode,
+    ...(typeof resultCount === "number" ? { resultCount } : {}),
+  };
+}
+
 function pluralize(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
@@ -831,6 +906,7 @@ function buildExecuteTypescriptParentRollup(input: {
   let artifactCount = 0;
   let bashCount = 0;
   let bashFailureCount = 0;
+  let cxCount = 0;
   let workflowAssetCount = 0;
   let workflowModelCount = 0;
   const artifactIds: string[] = [];
@@ -861,6 +937,14 @@ function buildExecuteTypescriptParentRollup(input: {
           bashFailureCount += 1;
         }
         break;
+      case "cx.overview":
+      case "cx.symbols":
+      case "cx.definition":
+      case "cx.references":
+      case "cx.lang.list":
+      case "cx.cache.path":
+        cxCount += 1;
+        break;
       case "workflow.list_assets":
         workflowAssetCount += readFactNumber(activity.facts, "assetCount") ?? 0;
         break;
@@ -889,6 +973,9 @@ function buildExecuteTypescriptParentRollup(input: {
         : `Ran ${pluralize(bashCount, "bash command")}`,
     );
   }
+  if (cxCount > 0) {
+    summaryParts.push(`Ran ${pluralize(cxCount, "cx navigation call")}`);
+  }
   if (workflowAssetCount > 0) {
     summaryParts.push(`Discovered ${pluralize(workflowAssetCount, "workflow asset")}`);
   }
@@ -913,6 +1000,7 @@ function buildExecuteTypescriptParentRollup(input: {
       artifactCount,
       bashCount,
       bashFailureCount,
+      cxCount,
       workflowAssetCount,
       workflowModelCount,
       ...(artifactIds.length > 0 ? { artifactIds } : {}),

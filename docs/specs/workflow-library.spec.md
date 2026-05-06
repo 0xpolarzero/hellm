@@ -53,7 +53,7 @@ Exact direct-tool and code-mode shapes are provided by generated tool schemas an
 
 Handler threads own workflow authoring.
 
-Each handler thread receives generated workflow-authoring TypeScript declarations plus bundled workflow-authoring guidance and curated examples in its prompt context.
+Each handler thread receives generated workflow-authoring TypeScript declarations plus always-loaded Smithers prompt context for workflow authoring and supervision.
 
 The handler owns:
 
@@ -433,7 +433,7 @@ Project CI is a special product lane over this same library.
 
 Normal handlers may select a configured Project CI entry through `smithers.list_workflows({ productKind: "project-ci" })`.
 
-CI configuration is owned by whichever handler thread has loaded the typed `ci` context pack, either from `thread.start({ context: ["ci"] })` or from `request_context({ keys: ["ci"] })`.
+CI configuration is owned by whichever handler thread has loaded the optional `ci` prompt context, either from `thread.start({ context: ["ci"] })` or from `request_context({ keys: ["ci"] })`.
 
 ## Out Of Scope
 

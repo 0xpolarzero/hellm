@@ -1,7 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import type { Static } from "@sinclair/typebox";
-import { getHandlerContextPack, validateHandlerContextKeys } from "./handler-context-packs";
+import { getOptionalPromptContext, validateOptionalPromptContextKeys } from "./prompt-contexts";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import type { StructuredSessionStateStore } from "./structured-session-state";
 
@@ -19,7 +19,7 @@ export const requestContextParamsSchema = Type.Object(
 export type RequestContextParams = Static<typeof requestContextParamsSchema>;
 
 const REQUEST_CONTEXT_DESCRIPTION = [
-  "Load optional typed product context into the current handler thread for future turns.",
+  "Load optional typed prompt context into the current handler thread for future turns.",
   "Use this before configuring or modifying specialized product lanes such as Project CI.",
   "This is a top-level handler tool, not part of execute_typescript.",
 ].join(" ");
@@ -42,7 +42,7 @@ export function createRequestContextTool(options: {
         throw new Error(`${REQUEST_CONTEXT_TOOL_NAME} can only run from a handler thread surface.`);
       }
 
-      const keys = validateHandlerContextKeys(params.keys);
+      const keys = validateOptionalPromptContextKeys(params.keys);
       options.store.setTurnDecision({
         turnId: runtime.turnId,
         decision: REQUEST_CONTEXT_TOOL_NAME,
@@ -56,18 +56,18 @@ export function createRequestContextTool(options: {
         toolName: REQUEST_CONTEXT_TOOL_NAME,
         executor: "handler",
         visibility: "surface",
-        title: `Load handler context: ${keys.join(", ")}`,
-        summary: `Load optional handler context pack(s): ${keys.join(", ")}.`,
+        title: `Load prompt context: ${keys.join(", ")}`,
+        summary: `Load optional prompt context: ${keys.join(", ")}.`,
       });
       options.store.startCommand(command.id);
 
       try {
         const loaded = keys.map((key) => {
-          const pack = getHandlerContextPack(key);
+          const context = getOptionalPromptContext(key);
           return options.store.loadThreadContext({
             threadId: runtime.surfaceThreadId!,
-            contextKey: pack.key,
-            contextVersion: pack.version,
+            contextKey: context.key,
+            contextVersion: context.version,
             loadedByCommandId: command.id,
           });
         });
@@ -75,7 +75,7 @@ export function createRequestContextTool(options: {
         options.store.finishCommand({
           commandId: command.id,
           status: "succeeded",
-          summary: `Loaded handler context: ${loaded.map((entry) => entry.contextKey).join(", ")}.`,
+          summary: `Loaded prompt context: ${loaded.map((entry) => entry.contextKey).join(", ")}.`,
           facts: {
             contextKeys: loaded.map((entry) => entry.contextKey),
             versions: Object.fromEntries(
@@ -100,7 +100,7 @@ export function createRequestContextTool(options: {
           },
         };
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to load handler context.";
+        const message = error instanceof Error ? error.message : "Failed to load prompt context.";
         options.store.finishCommand({
           commandId: command.id,
           status: "failed",

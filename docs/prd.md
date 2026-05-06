@@ -216,6 +216,7 @@ Direct tools are the default coding-agent work surface for bounded repository wo
 
 Direct tools cover:
 
+- semantic code navigation through `cx.*`
 - reading files
 - searching text
 - inspecting repository and git state
@@ -223,6 +224,24 @@ Direct tools cover:
 - running bounded shell commands
 - editing and writing files
 - discovering workflow assets and workflow-authoring models
+
+`cx.*` is the preferred code-navigation layer when the language is supported. The normal inspection ladder is:
+
+```text
+cx.overview -> cx.symbols -> cx.definition / cx.references -> read / grep / find / ls
+```
+
+The native `cx.*` surface includes:
+
+- `cx.overview`
+- `cx.symbols`
+- `cx.definition`
+- `cx.references`
+- `cx.lang.list`
+- `cx.lang.add`
+- `cx.lang.remove`
+- `cx.cache.path`
+- `cx.cache.clean`
 
 `execute_typescript` is available when typed control flow is the right unit of work.
 
@@ -235,7 +254,16 @@ That includes:
 
 Inside `execute_typescript`, the runtime injects `api.*` as a host SDK.
 
-`api.*` duplicates only the selected direct tools that are useful inside TypeScript composition: `read`, `grep`, `find`, `ls`, `bash`, artifact creation, and workflow discovery.
+`api.*` duplicates only the selected direct tools that are useful inside TypeScript composition: `read`, `grep`, `find`, `ls`, `bash`, artifact creation, workflow discovery, and read-only `cx` navigation.
+
+The `execute_typescript` `api.cx` subset is:
+
+- `api.cx.overview`
+- `api.cx.symbols`
+- `api.cx.definition`
+- `api.cx.references`
+- `api.cx.lang.list`
+- `api.cx.cache.path`
 
 File edits and writes use the direct `edit` and `write` tools.
 
@@ -245,7 +273,7 @@ Structured diagnostics must be produced, and invalid snippets must not run.
 
 ### 7. Native Control Tools Stay Small And Explicit
 
-Some actions are not ordinary generic work because they change product-level control flow or handler prompt context.
+Some actions are not ordinary generic work because they change product-level control flow or optional prompt context.
 
 Those actions stay as `svvy`-native control tools:
 
@@ -258,11 +286,11 @@ These are still tool calls.
 
 `request_context` is handler-only.
 
-It loads typed `svvy` context packs into the current handler thread when that handler needs optional product knowledge that should not be preloaded by default.
+It loads optional typed prompt context into the current handler thread when that handler needs product knowledge that is not always loaded.
 
 It is not part of the `execute_typescript` `api.*` SDK because it changes the handler's prompt context rather than performing bounded repository work.
 
-The first adopted context key is:
+The optional context key is:
 
 - `ci`
 
@@ -277,7 +305,7 @@ thread.start({
 });
 ```
 
-That starts a normal handler thread with the default handler runtime shape and the requested context pack preloaded before its first turn.
+That starts a normal handler thread with the default handler runtime shape and the requested optional prompt context loaded before its first turn.
 
 There is no `thread.start_ci`, no `ci.start`, and no CI-specific orchestrator.
 
@@ -320,7 +348,7 @@ Project CI is a dedicated product status and result lane over normal Smithers ru
 
 The lane is a projection and UI concept, not a setup launcher, CI-specific orchestrator, or custom CI execution surface.
 
-CI authoring knowledge is delivered through the typed `ci` context pack.
+CI authoring knowledge is delivered through the optional `ci` prompt context.
 
 It may be preloaded by `thread.start({ context: ["ci"] })` or loaded later by a handler through `request_context({ keys: ["ci"] })`.
 
@@ -591,11 +619,11 @@ Each handler thread should have:
 - an objective
 - its own direct conversation history
 - durable lifecycle status
-- loaded typed context keys, when optional product context has been preloaded or requested
+- loaded optional prompt context keys, when optional product context has been preloaded or requested
 - zero or more workflow runs
 - zero or more handoff episodes
 
-Typed context keys describe optional product knowledge loaded into a handler prompt, such as `ci`.
+Optional prompt context keys describe product knowledge loaded into a handler prompt on demand, such as `ci`.
 
 Session agent settings describe the model, reasoning level, prompt selection, and callable surface used by pi-backed product agents. The `defaultSession` and `dumbOrchestrator` agents back interactive orchestrator surfaces. The `namer` agent is the same product-agent family as the orchestrator, not a Smithers workflow agent, but it runs as a one-shot non-interactive title-generation surface whose settings prompt is the only title-generation instruction.
 
@@ -607,7 +635,7 @@ The app owns three app-wide session-agent defaults:
 
 Session records persist their mode, the app-wide defaults that were active at creation time, and the default orchestrator prompt selection. A dumb session is still a normal pi-backed orchestrator surface with the normal svvy callable surface and durable state; it starts from the `dumbOrchestrator` agent default and dumb orchestrator system prompt.
 
-Handler threads may persist a per-thread session-agent override when `thread.start` declares a specific provider, model, reasoning level, or handler prompt suffix for the delegated objective. Typed handler context packs remain separate product knowledge and do not carry model, reasoning, or prompt-selection settings.
+Handler threads may persist a per-thread session-agent override when `thread.start` declares a specific provider, model, reasoning level, or handler prompt suffix for the delegated objective. Optional prompt context remains separate product knowledge and does not carry model, reasoning, or prompt-selection settings.
 
 The settings surface edits app-wide session-agent defaults, including `namer`, conventional workflow-agent settings, and the user's preferred external editor for opening workspace source files from read-only product surfaces. Agent setting changes save directly from the setting control rather than through a separate save button. Agent model selection is a constrained picker over models from currently connected providers, and reasoning selection is constrained to the levels supported by the selected model, matching the interactive session controls rather than accepting freeform provider, model, or reasoning text. Workflow-agent settings synchronize to `.svvy/workflows/components/agents.ts`, which remains an ordinary saved workflow component that exports `explorer`, `implementer`, and `reviewer`.
 
@@ -752,7 +780,7 @@ The runtime must not parse arbitrary workflow logs, node outputs, final prose, o
 
 The product must not ship, auto-create, or scaffold a fake passing CI entry for repositories that have not configured real checks.
 
-CI authoring context belongs only to handler threads that load the typed `ci` context pack.
+CI authoring context belongs only to handler threads that load the optional `ci` prompt context.
 
 Normal handler threads may discover and run configured CI entries without that pack.
 
@@ -807,7 +835,7 @@ When the target surface is the main orchestrator:
 4. if delegated:
    - call `thread.start`
    - hand off the delegated objective to a handler thread
-   - include typed context keys such as `context: ["ci"]` only when the objective needs that optional product context from the first handler turn
+   - include optional prompt context keys such as `context: ["ci"]` only when the objective needs that product context from the first handler turn
 5. when a handler thread explicitly hands control back, open an orchestrator turn that reconciles the latest handoff from durable state: thread durable state plus the latest handoff episode
 
 ### Handler Thread Loop

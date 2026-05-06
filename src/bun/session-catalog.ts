@@ -84,10 +84,11 @@ import { createStartThreadTool } from "./thread-start-tool";
 import { createThreadHandoffTool } from "./thread-handoff-tool";
 import { buildSystemPrompt, type SvvyActorKind } from "./default-system-prompt";
 import { createSmithersTools } from "./smithers-tools";
+import { createCxTools } from "./cx-tools";
 import { SmithersRuntimeManager } from "./smithers-runtime/manager";
 import { createWorkflowLibrary } from "./smithers-runtime/workflow-library";
 import { createRequestContextTool } from "./request-context-tool";
-import { getHandlerContextPack, type HandlerContextKey } from "./handler-context-packs";
+import { getOptionalPromptContext, type OptionalPromptContextKey } from "./prompt-contexts";
 import { createSessionAgentSettingsStore } from "./session-agent-settings";
 import { createSvvyDirectTools } from "./svvy-direct-tools";
 
@@ -1645,7 +1646,7 @@ export class WorkspaceSessionCatalog {
     parentThreadId: string | null;
     parentSurfacePiSessionId: string;
     objective: string;
-    contextKeys: HandlerContextKey[];
+    contextKeys: OptionalPromptContextKey[];
     sessionAgentSettings: SessionAgentSettings | null;
     loadedByCommandId: string;
   }) {
@@ -1669,11 +1670,11 @@ export class WorkspaceSessionCatalog {
         : null,
     });
     for (const key of input.contextKeys) {
-      const pack = getHandlerContextPack(key);
+      const context = getOptionalPromptContext(key);
       this.structuredSessionStore.loadThreadContext({
         threadId: thread.id,
-        contextKey: pack.key,
-        contextVersion: pack.version,
+        contextKey: context.key,
+        contextVersion: context.version,
         loadedByCommandId: input.loadedByCommandId,
       });
     }
@@ -2286,6 +2287,7 @@ async function createManagedSession(
     workflowLibrary: createWorkflowLibrary(options.sessionManager.getCwd()),
   });
   const sharedWorkTools = [
+    ...createCxTools({ cwd: options.sessionManager.getCwd() }),
     ...directTools.codingTools,
     ...directTools.artifactTools,
     executeTypescriptTool,
