@@ -23,6 +23,7 @@ describe("default system prompt", () => {
       expect(prompt).toContain("Validate proportionally to risk");
       expect(prompt).toContain("When asked for review, use a code-review stance");
       expect(prompt).toContain("Use cx.* for semantic code navigation");
+      expect(prompt).toContain("use cx.lang.list and cx.lang.add");
       expect(prompt).toContain("use bash when the work actually requires a shell command");
     }
   });

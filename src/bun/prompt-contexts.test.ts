@@ -30,6 +30,9 @@ describe("prompt contexts", () => {
       "Loaded always-on prompt context: Smithers task-agent boundary.",
     );
     expect(buildAlwaysLoadedPromptContext("handler")).toContain("cx.overview");
+    expect(buildAlwaysLoadedPromptContext("handler")).toContain(
+      "cx.lang.add` when a relevant grammar is available but missing",
+    );
     expect(buildAlwaysLoadedPromptContext("handler")).toContain("api.cx.*");
   });
 
