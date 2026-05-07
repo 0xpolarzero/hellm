@@ -38,6 +38,8 @@ const PROVIDER_ENV_VARS: Record<string, string> = {
   "github-copilot": "GH_TOKEN",
   "openai-codex": "OPENAI_API_KEY",
   "gemini-cli": "GEMINI_API_KEY",
+  tinyfish: "TINYFISH_API_KEY",
+  firecrawl: "FIRECRAWL_API_KEY",
 };
 
 function ensureConfigDir(): void {

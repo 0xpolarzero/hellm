@@ -747,6 +747,7 @@ function createFakeRpc(input: {
           appPreferences: {
             preferredExternalEditor: "system",
             customExternalEditorCommand: "",
+            webProvider: "local",
           },
         }),
         updateSessionAgentDefault: async ({ key, settings }) => {

@@ -5,6 +5,7 @@ export type SessionMode = "orchestrator" | "dumb";
 export type SessionAgentKey = "defaultSession" | "dumbOrchestrator" | "namer";
 export type WorkflowAgentKey = "explorer" | "implementer" | "reviewer";
 export type PreferredExternalEditor = "system" | "code" | "cursor" | "zed" | "sublime" | "custom";
+export type WebProviderId = "local" | "tinyfish" | "firecrawl";
 export type WorkflowAgentToolName =
   | "read"
   | "grep"
@@ -25,6 +26,8 @@ export type WorkflowAgentToolName =
   | "artifact.write_text"
   | "artifact.write_json"
   | "artifact.attach_file"
+  | "web.search"
+  | "web.fetch"
   | "execute_typescript";
 
 export interface AgentDefaults {
@@ -59,6 +62,7 @@ export interface AgentSettingsState {
 export interface AppPreferences {
   preferredExternalEditor: PreferredExternalEditor;
   customExternalEditorCommand: string;
+  webProvider: WebProviderId;
 }
 
 export const DEFAULT_AGENT_SETTINGS = {
@@ -120,6 +124,8 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
       "find",
       "ls",
       "bash",
+      "web.search",
+      "web.fetch",
       "execute_typescript",
     ],
   },
@@ -149,6 +155,8 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
       "artifact.write_text",
       "artifact.write_json",
       "artifact.attach_file",
+      "web.search",
+      "web.fetch",
       "execute_typescript",
     ],
   },
@@ -170,6 +178,8 @@ export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
       "find",
       "ls",
       "bash",
+      "web.search",
+      "web.fetch",
       "execute_typescript",
     ],
   },
@@ -182,5 +192,6 @@ export const DEFAULT_AGENT_SETTINGS_STATE = {
   appPreferences: {
     preferredExternalEditor: "system",
     customExternalEditorCommand: "",
+    webProvider: "local",
   },
 } satisfies AgentSettingsState;

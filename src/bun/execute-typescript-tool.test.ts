@@ -17,10 +17,12 @@ import {
   type StructuredSessionStateStore,
 } from "./structured-session-state";
 import { createExecuteTypescriptTool } from "./execute-typescript-tool";
+import { createWebProvider } from "./web-runtime/provider-registry";
 
 const stores: StructuredSessionStateStore[] = [];
 const tempDirs: string[] = [];
 const originalCxBin = process.env.SVVY_CX_BIN;
+const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   while (stores.length > 0) {
@@ -37,6 +39,7 @@ afterEach(() => {
   } else {
     process.env.SVVY_CX_BIN = originalCxBin;
   }
+  globalThis.fetch = originalFetch;
 });
 
 function createWorkspaceRoot(): string {
@@ -296,5 +299,81 @@ describe("execute_typescript tool", () => {
       "summary.md",
       "execute-typescript.logs.log",
     ]);
+  });
+
+  it("exposes api.web and records artifact-backed fetch child facts", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-web", workspaceCwd);
+    const runtime = createRuntime(store, "session-web", "Fetch web evidence");
+    globalThis.fetch = (async () =>
+      new Response("<html><title>Docs</title><article>Fetched evidence</article></html>", {
+        status: 200,
+      })) as unknown as typeof fetch;
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      webProvider: createWebProvider({ provider: "local" }),
+    });
+
+    const result = await tool.execute("tool-call-web", {
+      typescriptCode: [
+        'const fetched = await api.web.fetch({ url: "https://example.com/reference" });',
+        "const artifactPath = fetched.details.artifacts?.[0]?.path;",
+        "if (!artifactPath) throw new Error('missing artifact path');",
+        "const body = await api.read({ path: artifactPath });",
+        "return { provider: fetched.details.providerId, artifactPath, body: body.content[0] };",
+      ].join("\n"),
+    });
+
+    expect(result.details.success).toBe(true);
+    const snapshot = store.getSessionState("session-web");
+    const webFetch = snapshot.commands.find((command) => command.toolName === "web.fetch");
+    expect(webFetch).toMatchObject({
+      executor: "execute_typescript",
+      status: "succeeded",
+      visibility: "summary",
+      facts: expect.objectContaining({
+        providerId: "local",
+        toolName: "web.fetch",
+        artifactPaths: expect.arrayContaining([expect.stringContaining("web-fetch")]),
+        metadataArtifactId: expect.any(String),
+      }),
+    });
+    expect(snapshot.commands.map((command) => command.toolName)).toEqual([
+      "execute_typescript",
+      "web.fetch",
+      "read",
+    ]);
+    expect(snapshot.artifacts.map((artifact) => artifact.name)).toEqual([
+      "execute-typescript.ts",
+      "web-fetch.md",
+      "web-fetch.metadata.json",
+    ]);
+  });
+
+  it("typechecks api.web against the selected provider contract", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const store = createStore("session-web-types", workspaceCwd);
+    const runtime = createRuntime(store, "session-web-types", "Check web provider typing");
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      webProvider: createWebProvider({ provider: "firecrawl" }, { firecrawlApiKey: "fc-key" }),
+    });
+
+    const accepted = await tool.execute("tool-call-web-types-ok", {
+      typescriptCode:
+        'return await api.web.search({ query: "docs", scrapeOptions: { formats: ["markdown"], onlyMainContent: true } });',
+    });
+    expect(accepted.details.success).toBe(true);
+
+    const rejected = await tool.execute("tool-call-web-types-bad", {
+      typescriptCode: 'return await api.web.search({ query: "docs", site: "example.com" });',
+    });
+    expect(rejected.details.success).toBe(false);
+    expect(rejected.details.error?.stage).toBe("typecheck");
+    expect(rejected.details.error?.message).toContain("site");
   });
 });

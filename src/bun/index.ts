@@ -338,7 +338,8 @@ function openPathInPreferredEditor(path: string): { opened: boolean; editor: str
 }
 
 function listProviderAuthSummaries(): ProviderAuthInfo[] {
-  return getProviders().map((provider) => {
+  const providerIds = [...getProviders(), "tinyfish", "firecrawl"];
+  return providerIds.map((provider) => {
     const state = resolveAuthState(provider);
     return {
       provider,

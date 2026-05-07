@@ -158,6 +158,11 @@ export interface WorkflowListModelsDetails {
   models: WorkflowModelInfo[];
 }
 
+export interface ActiveWebSearchInput {}
+export interface ActiveWebSearchOutput {}
+export interface ActiveWebFetchInput {}
+export interface ActiveWebFetchOutput {}
+
 /**
  * Host API injected as the `api` variable inside `execute_typescript`.
  *
@@ -222,5 +227,10 @@ export interface SvvyApi {
   workflow: {
     list_assets(input?: WorkflowListAssetsInput): Promise<ToolResult<WorkflowListAssetsDetails>>;
     list_models(): Promise<ToolResult<WorkflowListModelsDetails>>;
+  };
+
+  web: {
+    search(input: ActiveWebSearchInput): Promise<ToolResult<ActiveWebSearchOutput>>;
+    fetch(input: ActiveWebFetchInput): Promise<ToolResult<ActiveWebFetchOutput>>;
   };
 }

@@ -8,6 +8,7 @@ import {
 import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
 import { WORKFLOW_AUTHORING_CONTRACT_DECLARATION } from "../../generated/workflow-authoring-contract.generated";
 import { HANDLER_WORKFLOW_AUTHORING_APPENDIX } from "./smithers-runtime/workflow-authoring-guide";
+import { createWebProvider } from "./web-runtime/provider-registry";
 
 describe("default system prompt", () => {
   it("puts core coding-agent operating policy into every coding surface", () => {
@@ -36,6 +37,8 @@ describe("default system prompt", () => {
       "The execute_typescript contract follows and is the source of truth",
     );
     expect(DEFAULT_SYSTEM_PROMPT).toContain(EXECUTE_TYPESCRIPT_API_DECLARATION.trim());
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("interface ActiveWebSearchInput");
+    expect(DEFAULT_SYSTEM_PROMPT).toContain("site?: string");
     expect(DEFAULT_SYSTEM_PROMPT).toContain("interface SvvyApi");
     expect(DEFAULT_SYSTEM_PROMPT).toContain("list_assets(");
     expect(DEFAULT_SYSTEM_PROMPT).toContain("list_models(): Promise<ToolResult");
@@ -94,6 +97,17 @@ describe("default system prompt", () => {
     expect(HANDLER_SYSTEM_PROMPT).toContain(".svvy/artifacts/workflows/<artifact_workflow_id>/");
     expect(HANDLER_SYSTEM_PROMPT).toContain('request_context({ keys: ["ci"] })');
     expect(EXECUTE_TYPESCRIPT_API_DECLARATION).not.toContain("request_context");
+  });
+
+  it("selects the active provider declaration for api.web", () => {
+    const firecrawlPrompt = buildSystemPrompt("orchestrator", {
+      webProvider: createWebProvider({ provider: "firecrawl" }, { firecrawlApiKey: "fc-key" }),
+    });
+    expect(firecrawlPrompt).toContain("interface ActiveWebSearchInput");
+    expect(firecrawlPrompt).toContain("scrapeOptions");
+    expect(firecrawlPrompt).toContain("formats?: Array");
+    expect(firecrawlPrompt).not.toContain("site?: string");
+    expect(firecrawlPrompt).not.toContain("fc-key");
   });
 
   it("injects generated workflow authoring contracts only into handler prompts", () => {

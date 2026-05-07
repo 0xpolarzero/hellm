@@ -5,6 +5,9 @@ import {
   type OptionalPromptContextMetadata,
   type PromptContextActor,
 } from "../shared/prompt-context";
+import type { WebProvider } from "./web-runtime/contracts";
+import { createWebProvider } from "./web-runtime/provider-registry";
+import { buildWebPromptContext } from "./web-runtime/prompt-context";
 
 export type { OptionalPromptContextKey, PromptContextActor } from "../shared/prompt-context";
 
@@ -116,7 +119,10 @@ export function getOptionalPromptContext(key: OptionalPromptContextKey): Optiona
   return OPTIONAL_PROMPT_CONTEXTS[key];
 }
 
-export function buildAlwaysLoadedPromptContext(actor: PromptContextActor): string {
+export function buildAlwaysLoadedPromptContext(
+  actor: PromptContextActor,
+  options: { webProvider?: WebProvider } = {},
+): string {
   const sections = [CX_CONTEXT_PROMPT];
   if (actor === "orchestrator") {
     sections.push(SMITHERS_ORCHESTRATOR_CONTEXT_PROMPT);
@@ -125,6 +131,9 @@ export function buildAlwaysLoadedPromptContext(actor: PromptContextActor): strin
   } else {
     sections.push(SMITHERS_WORKFLOW_TASK_CONTEXT_PROMPT);
   }
+  sections.push(
+    buildWebPromptContext(actor, options.webProvider ?? createWebProvider({ provider: "local" })),
+  );
   return sections.join("\n\n");
 }
 

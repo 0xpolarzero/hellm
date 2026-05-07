@@ -92,6 +92,7 @@ import { getOptionalPromptContext, type OptionalPromptContextKey } from "./promp
 import { createSessionAgentSettingsStore } from "./session-agent-settings";
 import { createSvvyDirectTools } from "./svvy-direct-tools";
 import { createListToolsTool } from "./list-tools-tool";
+import { createWebProvider } from "./web-runtime/provider-registry";
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
   input: 0,
@@ -1285,15 +1286,10 @@ export class WorkspaceSessionCatalog {
 
   private buildSystemPromptForTarget(target: PromptTarget): string {
     if (target.surface !== "thread" || !target.threadId) {
-      const liveSession = this.managedSurfaces.get(target.surfacePiSessionId);
-      if (liveSession) {
-        return liveSession.systemPrompt;
-      }
-
       const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
       const key = snapshot?.pi.defaultOrchestratorPromptKey ?? "defaultSession";
       const settings = this.resolveSessionAgentSettingsFromSnapshot(snapshot, key);
-      return buildSessionAgentSystemPrompt(settings);
+      return buildSessionAgentSystemPrompt(settings, this.createActiveWebProvider());
     }
 
     const thread =
@@ -1302,6 +1298,7 @@ export class WorkspaceSessionCatalog {
       ) ?? null;
     const basePrompt = buildSystemPrompt("handler", {
       loadedContextKeys: thread?.loadedContextKeys ?? [],
+      webProvider: this.createActiveWebProvider(),
     });
     const agentSettings = this.resolveThreadAgentSettings(target.surfacePiSessionId);
     const suffix = agentSettings?.systemPrompt.trim();
@@ -1324,6 +1321,17 @@ export class WorkspaceSessionCatalog {
       }
     }
     return null;
+  }
+
+  private createActiveWebProvider() {
+    const webProvider = this.agentSettingsStore.getState().appPreferences.webProvider;
+    return createWebProvider(
+      { provider: webProvider },
+      {
+        tinyfishApiKey: resolveApiKey("tinyfish"),
+        firecrawlApiKey: resolveApiKey("firecrawl"),
+      },
+    );
   }
 
   private resolveSessionAgentSettingsFromSnapshot(
@@ -2277,16 +2285,30 @@ async function createManagedSession(
   const promptExecutionRuntime: PromptExecutionRuntimeHandle = {
     current: null,
   };
+  const webProvider = createWebProvider(
+    {
+      provider: createSessionAgentSettingsStore({
+        cwd: options.sessionManager.getCwd(),
+        agentDir: options.agentDir,
+      }).getState().appPreferences.webProvider,
+    },
+    {
+      tinyfishApiKey: resolveApiKey("tinyfish"),
+      firecrawlApiKey: resolveApiKey("firecrawl"),
+    },
+  );
   const executeTypescriptTool = createExecuteTypescriptTool({
     cwd: options.sessionManager.getCwd(),
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
+    webProvider,
   });
   const directTools = createSvvyDirectTools({
     cwd: options.sessionManager.getCwd(),
     runtime: promptExecutionRuntime,
     store: options.structuredSessionStore,
     workflowLibrary: createWorkflowLibrary(options.sessionManager.getCwd()),
+    webProvider,
   });
   const sharedWorkTools = [
     createListToolsTool({
@@ -2295,6 +2317,7 @@ async function createManagedSession(
     ...createCxTools({ cwd: options.sessionManager.getCwd() }),
     ...directTools.codingTools,
     ...directTools.artifactTools,
+    ...directTools.webTools,
     executeTypescriptTool,
   ] as const;
   const waitTool = createWaitTool({
@@ -2421,12 +2444,15 @@ function createCustomToolDefinitions(tools: readonly AgentTool<any>[]): ToolDefi
   }));
 }
 
-function buildSessionAgentSystemPrompt(settings: { systemPrompt: string }): string {
+function buildSessionAgentSystemPrompt(
+  settings: { systemPrompt: string },
+  webProvider = createWebProvider({ provider: "local" }),
+): string {
   const suffix = settings.systemPrompt.trim();
   if (!suffix || suffix === DEFAULT_ORCHESTRATOR_SESSION_PROMPT) {
-    return buildSystemPrompt("orchestrator");
+    return buildSystemPrompt("orchestrator", { webProvider });
   }
-  return `${buildSystemPrompt("orchestrator")}\n\n## Session Agent\n${suffix}`;
+  return `${buildSystemPrompt("orchestrator", { webProvider })}\n\n## Session Agent\n${suffix}`;
 }
 
 function countVisibleMessages(messages: AgentMessage[]): number {

@@ -5,6 +5,7 @@ import {
   type AgentSettingsState,
   type AppPreferences,
   type PreferredExternalEditor,
+  type WebProviderId,
   type SessionAgentDefaults,
   type SessionAgentKey,
   type SessionAgentSettings,
@@ -193,6 +194,8 @@ function normalizeWorkflowAgentToolSurface(
     "artifact.write_text",
     "artifact.write_json",
     "artifact.attach_file",
+    "web.search",
+    "web.fetch",
     "execute_typescript",
   ]);
   const normalized = input.filter((tool): tool is WorkflowAgentToolName => allowed.has(tool));
@@ -213,6 +216,7 @@ function normalizeAppPreferences(input: AppPreferences): AppPreferences {
   return {
     preferredExternalEditor: normalizePreferredExternalEditor(input.preferredExternalEditor),
     customExternalEditorCommand: input.customExternalEditorCommand.trim(),
+    webProvider: normalizeWebProvider(input.webProvider),
   };
 }
 
@@ -229,4 +233,8 @@ function normalizePreferredExternalEditor(input: string): PreferredExternalEdito
   }
 
   return "system";
+}
+
+function normalizeWebProvider(input: string): WebProviderId {
+  return input === "tinyfish" || input === "firecrawl" || input === "local" ? input : "local";
 }

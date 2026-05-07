@@ -17,6 +17,8 @@ import type {
   StructuredArtifactKind,
   StructuredSessionStateStore,
 } from "./structured-session-state";
+import type { WebProvider } from "./web-runtime/contracts";
+import { createWebTools } from "./web-runtime/tools";
 
 const artifactWriteTextSchema = Type.Object(
   {
@@ -79,12 +81,14 @@ type DirectToolOptions = {
         }) => { id: string; path?: string });
   };
   workflowLibrary?: WorkflowLibrary;
+  webProvider?: WebProvider;
 };
 
 type DirectToolSet = {
   codingTools: AgentTool<any>[];
   artifactTools: AgentTool<any>[];
   workflowTools: AgentTool<any>[];
+  webTools: AgentTool<any>[];
 };
 
 export function createSvvyDirectTools(options: DirectToolOptions): DirectToolSet {
@@ -104,6 +108,14 @@ export function createSvvyDirectTools(options: DirectToolOptions): DirectToolSet
       createArtifactAttachFileTool(options),
     ],
     workflowTools: [createWorkflowListAssetsTool(options), createWorkflowListModelsTool(options)],
+    webTools: options.webProvider
+      ? createWebTools({
+          cwd: options.cwd,
+          runtime: options.runtime,
+          store: options.store,
+          provider: options.webProvider,
+        })
+      : [],
   };
 }
 

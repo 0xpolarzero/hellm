@@ -4,12 +4,15 @@ import type { Static } from "@sinclair/typebox";
 import { basename } from "node:path";
 import { inspect } from "node:util";
 import * as ts from "typescript";
-import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
 import { createCxTools } from "./cx-tools";
+import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
 import type { SvvyApi, SvvyConsole } from "./execute-typescript-api-contract";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import { createWorkflowLibrary, type WorkflowLibrary } from "./smithers-runtime/workflow-library";
 import { createSvvyDirectTools } from "./svvy-direct-tools";
+import type { WebProvider } from "./web-runtime/contracts";
+import { createUnavailableWebToolInvoker } from "./web-runtime/tools";
+import { createWebProvider } from "./web-runtime/provider-registry";
 import type {
   StructuredArtifactKind,
   StructuredCommandExecutor,
@@ -129,6 +132,7 @@ type ExecuteTypescriptToolOptions = {
   runtime: PromptExecutionRuntimeHandle;
   store: StructuredSessionStateStore;
   workflowLibrary?: WorkflowLibrary;
+  webProvider?: WebProvider;
 };
 
 type ExecuteTypescriptApi = SvvyApi;
@@ -186,6 +190,7 @@ export function createExecuteTypescriptTool(
           executor: runtime.surfaceKind === "handler" ? "handler" : "orchestrator",
         },
         workflowLibrary: options.workflowLibrary,
+        webProvider: options.webProvider,
       });
 
       return {
@@ -232,6 +237,7 @@ export async function runExecuteTypescript(input: {
   typescriptCode: string;
   context: ExecuteTypescriptContext;
   workflowLibrary?: WorkflowLibrary;
+  webProvider?: WebProvider;
 }): Promise<ExecuteTypescriptResult> {
   const parentCommand = input.store.createCommand({
     turnId: input.context.turnId ?? null,
@@ -254,7 +260,7 @@ export async function runExecuteTypescript(input: {
     content: input.typescriptCode,
   });
 
-  const preflight = compileAndTypecheck(input.typescriptCode);
+  const preflight = compileAndTypecheck(input.typescriptCode, input.webProvider);
   if (preflight.errors.length > 0) {
     const diagnosticsArtifact = input.store.createArtifact({
       workflowTaskAttemptId: input.context.workflowTaskAttemptId ?? null,
@@ -300,6 +306,7 @@ export async function runExecuteTypescript(input: {
       parentCommandId: parentCommand.id,
       signal: input.signal,
       workflowLibrary: input.workflowLibrary ?? createWorkflowLibrary(input.cwd),
+      webProvider: input.webProvider,
       emitConsole(level, ...args) {
         appendCapturedConsoleLine(logs, level, ...args);
       },
@@ -375,7 +382,10 @@ export async function runExecuteTypescript(input: {
   }
 }
 
-function compileAndTypecheck(typescriptCode: string): {
+function compileAndTypecheck(
+  typescriptCode: string,
+  webProvider?: WebProvider,
+): {
   javascript: string;
   errors: StructuredDiagnostic[];
   warnings: StructuredDiagnostic[];
@@ -393,7 +403,7 @@ function compileAndTypecheck(typescriptCode: string): {
   const defaultHost = ts.createCompilerHost(compilerOptions, true);
   const sourceFiles = new Map<string, string>([
     [SOURCE_FILE, wrappedSource],
-    [API_DECLARATIONS_FILE, EXECUTE_TYPESCRIPT_API_DECLARATION],
+    [API_DECLARATIONS_FILE, buildExecuteTypescriptApiDeclaration(webProvider)],
   ]);
 
   const host: ts.CompilerHost = {
@@ -539,6 +549,7 @@ function createExecuteTypescriptApi(input: {
   parentCommandId: string;
   signal?: AbortSignal;
   workflowLibrary: WorkflowLibrary;
+  webProvider?: WebProvider;
   emitConsole: (level: CapturedConsoleLevel, ...args: unknown[]) => void;
   recordChildActivity: (activity: ExecuteTypescriptChildActivity) => void;
 }): ExecuteTypescriptApi {
@@ -638,6 +649,7 @@ function createExecuteTypescriptApi(input: {
     runtime: { current: null },
     store: input.store,
     workflowLibrary: input.workflowLibrary,
+    webProvider: input.webProvider ?? createWebProvider({ provider: "local" }),
   });
   const cxTools = createCxTools({ cwd: input.cwd });
   const toolByName = new Map(
@@ -646,8 +658,11 @@ function createExecuteTypescriptApi(input: {
       ...directTools.codingTools,
       ...directTools.artifactTools,
       ...directTools.workflowTools,
+      ...directTools.webTools,
     ].map((tool) => [tool.name, tool] as const),
   );
+  const activeWebProvider = input.webProvider ?? createWebProvider({ provider: "local" });
+  const unavailableWeb = createUnavailableWebToolInvoker(activeWebProvider);
   const getTool = (name: string): AgentTool<any> => {
     const tool = toolByName.get(name);
     if (!tool) {
@@ -812,6 +827,72 @@ function createExecuteTypescriptApi(input: {
           },
         }),
     },
+    web: {
+      search: (params) => {
+        const tool = toolByName.get("web.search");
+        if (!tool && unavailableWeb) {
+          return call({
+            toolName: "web.search",
+            title: "Web search",
+            summary: "Web search unavailable",
+            run: async () => {
+              const value = unavailableWeb("web.search") as Awaited<
+                ReturnType<ExecuteTypescriptApi["web"]["search"]>
+              >;
+              return {
+                value,
+                status: "failed",
+                summary: value.content
+                  .filter((entry) => entry.type === "text")
+                  .map((entry) => entry.text)
+                  .join("\n"),
+                facts: readToolResultDetails(value),
+              };
+            },
+          });
+        }
+        return invokeTool({
+          tool: getTool("web.search"),
+          params,
+          title: "Web search",
+          summary: `Web search ${"query" in params ? params.query : ""}`.trim(),
+          facts: (result) => readCommandFacts(result),
+        });
+      },
+      fetch: (params) => {
+        const tool = toolByName.get("web.fetch");
+        if (!tool && unavailableWeb) {
+          return call({
+            toolName: "web.fetch",
+            title: "Web fetch",
+            summary: "Web fetch unavailable",
+            visibility: "summary",
+            run: async () => {
+              const value = unavailableWeb("web.fetch") as Awaited<
+                ReturnType<ExecuteTypescriptApi["web"]["fetch"]>
+              >;
+              return {
+                value,
+                status: "failed",
+                summary: value.content
+                  .filter((entry) => entry.type === "text")
+                  .map((entry) => entry.text)
+                  .join("\n"),
+                facts: readToolResultDetails(value),
+              };
+            },
+          });
+        }
+        return invokeTool({
+          tool: getTool("web.fetch"),
+          params,
+          title: "Web fetch",
+          summary: `Web fetch ${"url" in params ? params.url : ""}`.trim(),
+          visibility: "summary",
+          facts: (result) => readCommandFacts(result),
+        });
+      },
+    },
   };
 }
 
@@ -856,6 +937,14 @@ function readToolResultDetails(value: unknown): Record<string, unknown> {
   return details && typeof details === "object" && !Array.isArray(details)
     ? (details as Record<string, unknown>)
     : {};
+}
+
+function readCommandFacts(value: unknown): ExecuteTypescriptCommandFacts | null {
+  const details = readToolResultDetails(value);
+  const facts = details.commandFacts;
+  return facts && typeof facts === "object" && !Array.isArray(facts)
+    ? (facts as ExecuteTypescriptCommandFacts)
+    : details;
 }
 
 function readCxFacts(result: unknown): ExecuteTypescriptCommandFacts {

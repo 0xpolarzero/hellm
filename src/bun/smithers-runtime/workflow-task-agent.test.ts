@@ -392,6 +392,8 @@ describe("workflow task agent", () => {
       "artifact.write_text",
       "artifact.write_json",
       "artifact.attach_file",
+      "web.search",
+      "web.fetch",
       "execute_typescript",
     ]);
     expect(readFileSync(join(fixture.taskRoot, "task-root-output.txt"), "utf8")).toBe(

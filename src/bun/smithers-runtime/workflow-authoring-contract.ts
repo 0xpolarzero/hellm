@@ -30,6 +30,8 @@ export type WorkflowTaskToolName =
   | "artifact.write_text"
   | "artifact.write_json"
   | "artifact.attach_file"
+  | "web.search"
+  | "web.fetch"
   | "execute_typescript";
 
 /**

@@ -18,6 +18,7 @@
 		WorkflowAgentSettings,
 		AppPreferences,
 		PreferredExternalEditor,
+		WebProviderId,
 	} from "../shared/agent-settings";
 	import { rpc } from "./rpc";
 	import Button from "./ui/Button.svelte";
@@ -29,7 +30,7 @@
 		onProviderAuthChanged?: (providerId: string) => void | Promise<void>;
 	};
 
-	type SettingsSection = "providers" | "agents" | "workflow-agents" | "preferences";
+	type SettingsSection = "providers" | "web" | "agents" | "workflow-agents" | "preferences";
 	type EditableAgentSettings = SessionAgentSettings | WorkflowAgentSettings;
 	type ModelOption = {
 		key: string;
@@ -38,6 +39,11 @@
 	};
 
 	const BASE_REASONING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
+	const WEB_PROVIDER_OPTIONS: Array<{ id: WebProviderId; label: string; summary: string }> = [
+		{ id: "local", label: "Local", summary: "No-key local web search and fetch." },
+		{ id: "tinyfish", label: "TinyFish", summary: "TinyFish Search and Fetch with a stored TinyFish API key." },
+		{ id: "firecrawl", label: "Firecrawl", summary: "Firecrawl Search and Scrape with a stored Firecrawl API key." },
+	];
 
 	let { onClose, onProviderAuthChanged }: Props = $props();
 
@@ -124,6 +130,17 @@
 		if (info.hasKey && info.keyType === "env") return "Environment-backed credentials";
 		if (info.hasKey && info.keyType === "oauth") return "OAuth connections";
 		return "AI providers";
+	}
+
+	function providerInfo(providerId: string): ProviderAuthInfo | null {
+		return providers.find((provider) => provider.provider === providerId) ?? null;
+	}
+
+	function webProviderReady(providerId: WebProviderId): { text: string; tone: "success" | "neutral" | "warning" } {
+		if (providerId === "local") return { text: "Ready", tone: "success" };
+		const info = providerInfo(providerId);
+		if (info?.hasKey) return { text: "Ready", tone: "success" };
+		return { text: "API key required", tone: "warning" };
 	}
 
 	const sessionAgentLabels = {
@@ -375,6 +392,15 @@
 				<span>{providers.length}</span>
 			</button>
 			<button
+				class={`settings-nav-item ${activeSection === "web" ? "active" : ""}`.trim()}
+				type="button"
+				aria-current={activeSection === "web" ? "page" : undefined}
+				onclick={() => (activeSection = "web")}
+			>
+				<span>Web</span>
+				<span>{agentSettings?.appPreferences.webProvider ?? "local"}</span>
+			</button>
+			<button
 				class={`settings-nav-item ${activeSection === "agents" ? "active" : ""}`.trim()}
 				type="button"
 				aria-current={activeSection === "agents" ? "page" : undefined}
@@ -537,6 +563,87 @@
 						{/each}
 					</div>
 				{/if}
+			{/if}
+			{#if activeSection === "web" && agentSettings}
+				<div class="settings-section-note">
+					<ShieldIcon aria-hidden="true" size={15} strokeWidth={1.8} />
+					<p>Web API keys stay in local credential storage and are never included in prompts.</p>
+				</div>
+				<div class="settings-row-stack">
+					{#each WEB_PROVIDER_OPTIONS as option (option.id)}
+						{@const readiness = webProviderReady(option.id)}
+						{@const info = providerInfo(option.id)}
+						<article class="provider-row">
+							<div class="provider-main">
+								<div class="provider-heading">
+									<input
+										type="radio"
+										name="web-provider"
+										checked={agentSettings.appPreferences.webProvider === option.id}
+										onchange={() => {
+											agentSettings.appPreferences.webProvider = option.id;
+											void saveAppPreferences(agentSettings.appPreferences);
+										}}
+									/>
+									<span class="provider-name">{option.label}</span>
+									<span class={`provider-status tone-${readiness.tone}`.trim()}>{readiness.text}</span>
+									{#if agentSettings.appPreferences.webProvider === option.id}
+										<span class="provider-status tone-info">Active</span>
+									{/if}
+								</div>
+								<p class="provider-meta">{option.summary}</p>
+								{#if saveMessage[option.id]}
+									<p class="save-msg">{saveMessage[option.id]}</p>
+								{/if}
+							</div>
+							{#if option.id !== "local"}
+								<div class="provider-actions">
+									{#if editingProvider === option.id}
+										<div class="key-input-row">
+											<Input
+												type="password"
+												placeholder={`Paste ${option.label} API key...`}
+												bind:value={apiKeyInput[option.id]}
+												onkeydown={(event) => event.key === "Enter" && handleSaveApiKey(option.id)}
+											/>
+											<Button variant="primary" size="xs" onclick={() => handleSaveApiKey(option.id)}>
+												Save
+											</Button>
+											<Button
+												variant="ghost"
+												size="xs"
+												onclick={() => {
+													editingProvider = null;
+													apiKeyInput[option.id] = "";
+												}}
+											>
+												Cancel
+											</Button>
+										</div>
+									{:else}
+										{#if info?.hasKey && info.keyType !== "env"}
+											<Button variant="ghost" size="xs" class="row-action action-danger" onclick={() => handleRemove(option.id)}>
+												Remove
+											</Button>
+										{/if}
+										<Button
+											variant="ghost"
+											size="xs"
+											class="row-action"
+											onclick={() => {
+												editingProvider = option.id;
+												apiKeyInput[option.id] = "";
+											}}
+										>
+											<KeyIcon aria-hidden="true" size={12} strokeWidth={1.9} />
+											{info?.hasKey ? "Key" : "Add key"}
+										</Button>
+									{/if}
+								</div>
+							{/if}
+						</article>
+					{/each}
+				</div>
 			{/if}
 			{#if activeSection === "agents" && agentSettings}
 				<div class="settings-section-note">

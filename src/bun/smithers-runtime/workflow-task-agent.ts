@@ -26,6 +26,9 @@ import { createCxTools } from "../cx-tools";
 import type { StructuredSessionStateStore } from "../structured-session-state";
 import { createSvvyDirectTools } from "../svvy-direct-tools";
 import { createListToolsTool } from "../list-tools-tool";
+import { createWebProvider } from "../web-runtime/provider-registry";
+import { createSessionAgentSettingsStore } from "../session-agent-settings";
+import { buildSystemPrompt, WORKFLOW_TASK_SYSTEM_PROMPT } from "../default-system-prompt";
 import { createWorkflowLibrary } from "./workflow-library";
 import {
   createDefaultWorkflowTaskAgentConfig,
@@ -69,6 +72,22 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
       const args = normalizeWorkflowTaskAgentGenerateArgs(rawArgs);
       const taskRoot = resolveWorkflowTaskRoot(args);
       const config = options.config ?? createDefaultWorkflowTaskAgentConfig();
+      const webProvider = createWebProvider(
+        {
+          provider: createSessionAgentSettingsStore({
+            cwd: options.workspaceRoot,
+            agentDir: options.agentDir,
+          }).getState().appPreferences.webProvider,
+        },
+        {
+          tinyfishApiKey: resolveApiKey("tinyfish"),
+          firecrawlApiKey: resolveApiKey("firecrawl"),
+        },
+      );
+      const resolvedSystemPrompt =
+        config.systemPrompt === WORKFLOW_TASK_SYSTEM_PROMPT
+          ? buildSystemPrompt("workflow-task", { webProvider })
+          : config.systemPrompt;
       const model = getModel(
         config.provider as Parameters<typeof getModel>[0],
         config.model as Parameters<typeof getModel>[1],
@@ -108,7 +127,7 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         agentDir,
         settingsManager,
         noExtensions: true,
-        systemPromptOverride: () => config.systemPrompt,
+        systemPromptOverride: () => resolvedSystemPrompt,
       });
       await resourceLoader.reload();
 
@@ -124,12 +143,14 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
         store: options.store,
         getSurfacePiSessionId: () => sessionIdentity.surfacePiSessionId,
         getResumeHandle: () => resumeHandleRef.current,
+        webProvider,
       });
       const directTools = createSvvyDirectTools({
         cwd: taskRoot,
         runtime: { current: null },
         store: options.store,
         workflowLibrary: createWorkflowLibrary(taskRoot),
+        webProvider,
       });
       const cxTools = createCxTools({ cwd: taskRoot });
       let sessionForListTools: {
@@ -154,6 +175,7 @@ export function createWorkflowTaskAgent(options: WorkflowTaskAgentOptions): Agen
           ...cxTools,
           ...directTools.codingTools,
           ...directTools.artifactTools,
+          ...directTools.webTools,
           executeTypescriptTool,
         ]),
         resourceLoader,
@@ -433,6 +455,7 @@ function createWorkflowTaskExecuteTypescriptTool(input: {
   store: StructuredSessionStateStore;
   getSurfacePiSessionId: () => string;
   getResumeHandle: () => string | null;
+  webProvider: ReturnType<typeof createWebProvider>;
 }): AgentTool<typeof executeTypescriptParamsSchema, ExecuteTypescriptResult> {
   return {
     label: "Code Mode",
@@ -463,6 +486,7 @@ function createWorkflowTaskExecuteTypescriptTool(input: {
           workflowRunId: projection.workflowRunId,
           executor: "workflow-task-agent",
         },
+        webProvider: input.webProvider,
       });
 
       return {
@@ -798,6 +822,8 @@ function assertTaskAgentToolSurface(activeToolNames: string[]): void {
     "artifact.write_text",
     "artifact.write_json",
     "artifact.attach_file",
+    "web.search",
+    "web.fetch",
     "list_tools",
     EXECUTE_TYPESCRIPT_TOOL_NAME,
   ]);

@@ -76,11 +76,13 @@ describe("session agent settings", () => {
     const updated = store.setAppPreferences({
       preferredExternalEditor: "custom",
       customExternalEditorCommand: "code --reuse-window",
+      webProvider: "tinyfish",
     });
 
     expect(updated.appPreferences).toEqual({
       preferredExternalEditor: "custom",
       customExternalEditorCommand: "code --reuse-window",
+      webProvider: "tinyfish",
     });
     expect(store.getState().appPreferences.preferredExternalEditor).toBe("custom");
   });

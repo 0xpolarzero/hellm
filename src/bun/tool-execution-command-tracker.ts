@@ -77,6 +77,7 @@ export function createToolExecutionCommandTracker(options: {
           (input.isError
             ? `${input.toolName} failed.`
             : `${input.toolName} completed successfully.`),
+        facts: readCommandFacts(input.result),
         error: input.isError ? (resultText ?? `${input.toolName} failed.`) : null,
       });
       commandIdByToolCallId.delete(input.toolCallId);
@@ -112,9 +113,15 @@ function inferVisibility(toolName: string): StructuredCommandVisibility {
     return "trace";
   }
   if (
-    ["read", "grep", "find", "ls", "workflow.list_assets", "workflow.list_models"].includes(
-      toolName,
-    )
+    [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "workflow.list_assets",
+      "workflow.list_models",
+      "web.search",
+    ].includes(toolName)
   ) {
     return "trace";
   }
@@ -176,6 +183,21 @@ function summarizeToolResult(result: unknown): string | null {
     .trim();
 
   return text || null;
+}
+
+function readCommandFacts(result: unknown): Record<string, unknown> | null {
+  if (!result || typeof result !== "object" || !("details" in result)) {
+    return null;
+  }
+  const details = (result as { details?: unknown }).details;
+  if (!details || typeof details !== "object" || Array.isArray(details)) {
+    return null;
+  }
+  const facts = (details as { commandFacts?: unknown }).commandFacts;
+  if (facts && typeof facts === "object" && !Array.isArray(facts)) {
+    return facts as Record<string, unknown>;
+  }
+  return details as Record<string, unknown>;
 }
 
 function safePreview(value: unknown, limit = 160): string {

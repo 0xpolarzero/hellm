@@ -1,5 +1,5 @@
-import { EXECUTE_TYPESCRIPT_API_DECLARATION } from "../../generated/execute-typescript-api.generated";
 import { WORKFLOW_AUTHORING_CONTRACT_DECLARATION } from "../../generated/workflow-authoring-contract.generated";
+import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
 import {
   buildAlwaysLoadedPromptContext,
   buildLoadedOptionalPromptContextPrompt,
@@ -7,20 +7,23 @@ import {
   buildOrchestratorContextRoutingPrompt,
 } from "./prompt-contexts";
 import { HANDLER_WORKFLOW_AUTHORING_APPENDIX } from "./smithers-runtime/workflow-authoring-guide";
+import type { WebProvider } from "./web-runtime/contracts";
 
 export type SvvyActorKind = "orchestrator" | "handler" | "workflow-task";
 
-const EXECUTE_TYPESCRIPT_PROMPT_SECTION = [
-  "Use execute_typescript only when a small TypeScript program is genuinely useful for batching, looping, filtering, aggregation, workflow discovery, bash-backed inspection, or artifact evidence.",
-  "When you call execute_typescript, write plain TypeScript against the injected `api` object and `console`.",
-  "Do not import or assume Node.js built-ins such as `fs`, `path`, `process`, or `node:*` inside the snippet.",
-  "The injected `api` duplicates only selected direct tools: read, grep, find, ls, bash, artifact.*, workflow.*, and the read-only cx.* subset.",
-  "Do not use execute_typescript for ordinary reads, edits, writes, or simple command runs; call the direct tools instead.",
-  "The execute_typescript contract follows and is the source of truth for the snippet environment:",
-  "```ts",
-  EXECUTE_TYPESCRIPT_API_DECLARATION.trim(),
-  "```",
-].join("\n");
+function buildExecuteTypescriptPromptSection(webProvider?: WebProvider): string {
+  return [
+    "Use execute_typescript only when a small TypeScript program is genuinely useful for batching, looping, filtering, aggregation, workflow discovery, bash-backed inspection, or artifact evidence.",
+    "When you call execute_typescript, write plain TypeScript against the injected `api` object and `console`.",
+    "Do not import or assume Node.js built-ins such as `fs`, `path`, `process`, or `node:*` inside the snippet.",
+    "The injected `api` duplicates only selected direct tools: read, grep, find, ls, bash, artifact.*, workflow.*, web.*, and the read-only cx.* subset.",
+    "Do not use execute_typescript for ordinary reads, edits, writes, or simple command runs; call the direct tools instead.",
+    "The execute_typescript contract follows and is the source of truth for the snippet environment:",
+    "```ts",
+    buildExecuteTypescriptApiDeclaration(webProvider),
+    "```",
+  ].join("\n");
+}
 
 const WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION = [
   "The handler workflow-authoring TypeScript contract follows and is the source of truth for runnable entries and workflow task agents:",
@@ -83,10 +86,10 @@ function buildActorInstructions(actor: SvvyActorKind): string[] {
 
 export function buildSystemPrompt(
   actor: SvvyActorKind,
-  options: { loadedContextKeys?: readonly string[] } = {},
+  options: { loadedContextKeys?: readonly string[]; webProvider?: WebProvider } = {},
 ): string {
   const sections = [...buildActorInstructions(actor)];
-  sections.push(buildAlwaysLoadedPromptContext(actor));
+  sections.push(buildAlwaysLoadedPromptContext(actor, { webProvider: options.webProvider }));
   if (actor === "handler") {
     sections.push(WORKFLOW_AUTHORING_CONTRACT_PROMPT_SECTION);
     sections.push(HANDLER_WORKFLOW_AUTHORING_APPENDIX);
@@ -97,7 +100,7 @@ export function buildSystemPrompt(
       sections.push(loadedContextPrompt);
     }
   }
-  sections.push(EXECUTE_TYPESCRIPT_PROMPT_SECTION);
+  sections.push(buildExecuteTypescriptPromptSection(options.webProvider));
   return sections.join("\n\n");
 }
 
