@@ -722,17 +722,6 @@ function findRunWorkflowToolCalls(
   );
 }
 
-function findExecuteTypescriptToolCallsContaining(
-  toolCalls: StubAssistantToolCall[],
-  snippet: string,
-): StubAssistantToolCall[] {
-  return toolCalls.filter(
-    (toolCall) =>
-      toolCall.name === "execute_typescript" &&
-      readStringProperty(toolCall.parsedArguments, "typescriptCode").includes(snippet),
-  );
-}
-
 function findLatestToolResult(
   requests: StubRequest[],
   toolCalls: StubAssistantToolCall[],
@@ -742,21 +731,6 @@ function findLatestToolResult(
   for (let index = toolResults.length - 1; index >= 0; index -= 1) {
     const toolResult = toolResults[index];
     if (toolResult?.toolName === toolName) {
-      return toolResult;
-    }
-  }
-  return null;
-}
-
-function findLatestToolResultForCallIds(
-  requests: StubRequest[],
-  toolCalls: StubAssistantToolCall[],
-  toolCallIds: Set<string>,
-): StubToolResult | null {
-  const toolResults = collectToolResults(requests, toolCalls);
-  for (let index = toolResults.length - 1; index >= 0; index -= 1) {
-    const toolResult = toolResults[index];
-    if (toolResult && toolCallIds.has(toolResult.toolCallId)) {
       return toolResult;
     }
   }
@@ -845,14 +819,4 @@ function readObjectProperty(
   return property && typeof property === "object" && !Array.isArray(property)
     ? (property as Record<string, unknown>)
     : null;
-}
-
-function readStringArrayProperty(
-  value: Record<string, unknown> | null | undefined,
-  key: string,
-): string[] {
-  const property = value?.[key];
-  return Array.isArray(property)
-    ? property.filter((entry): entry is string => typeof entry === "string")
-    : [];
 }

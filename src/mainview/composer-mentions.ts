@@ -59,7 +59,9 @@ export function searchMentionPaths(
   const scored = entries
     .map((entry) => scoreEntry(entry, normalizedQuery))
     .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-    .sort((left, right) => left.score - right.score || comparePathEntries(left.entry, right.entry));
+    .toSorted(
+      (left, right) => left.score - right.score || comparePathEntries(left.entry, right.entry),
+    );
 
   return addDisambiguation(scored.slice(0, limit).map((entry) => entry.entry));
 }

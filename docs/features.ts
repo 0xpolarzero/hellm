@@ -53,7 +53,11 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     status: "in-progress",
     summary:
       "Provides native direct tools as the default coding-agent work surface, with svvy recording around semantic cx navigation, text and image reads, searches, edits, writes, bash commands, artifacts, workflow discovery, provider-backed web search and fetch, and actor-local tool-surface inspection through `list_tools`; explicitly teaches agents to issue independent tool calls together so pi can run them in parallel; keeps execute_typescript as a typed composition tool with a generated JSDoc-rich declaration for read/search/bash/artifact/workflow/web and read-only api.cx calls embedded in the system prompt, preflight typecheck or compile diagnostics, file-backed snippet artifacts for every attempt, and parent-first rollups over nested child command facts.",
-    sourceSpecs: ["docs/prd.md", "docs/specs/execute-typescript.spec.md", "docs/specs/web-tools.spec.md"],
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/execute-typescript.spec.md",
+      "docs/specs/web-tools.spec.md",
+    ],
   },
   {
     id: "web-tool-surface",

@@ -438,7 +438,7 @@ function recordWorkflowTaskAgentContextBudget(input: {
     agentEngine: existing.agentEngine,
     agentResume: existing.agentResume,
     meta: {
-      ...(existing.meta ?? {}),
+      ...existing.meta,
       contextBudget: {
         usedTokens,
         maxTokens: input.maxTokens,

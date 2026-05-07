@@ -595,7 +595,8 @@ function helloWorldHandoffArgs(): Record<string, unknown> {
   return {
     kind: "workflow",
     title: "hello_world completed",
-    summary: "Ran the saved hello_world fixture workflow and verified that it finished successfully.",
+    summary:
+      "Ran the saved hello_world fixture workflow and verified that it finished successfully.",
     body: [
       "Launched the saved hello_world fixture workflow through smithers.run_workflow.",
       "Observed the Smithers run until it reported finished through smithers.get_run.",
@@ -928,16 +929,6 @@ function readObjectProperty(
   return property && typeof property === "object" && !Array.isArray(property)
     ? (property as Record<string, unknown>)
     : null;
-}
-
-function readStringArrayProperty(
-  value: Record<string, unknown> | null | undefined,
-  key: string,
-): string[] {
-  const property = value?.[key];
-  return Array.isArray(property)
-    ? property.filter((entry): entry is string => typeof entry === "string")
-    : [];
 }
 
 type WriteFilePayload = {

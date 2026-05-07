@@ -27,7 +27,7 @@ export class WorkspacePathIndex {
 export function buildWorkspacePathIndex(cwd: string): WorkspacePathIndexEntry[] {
   const gitEntries = listGitWorkspacePaths(cwd);
   const entries = gitEntries.length > 0 ? gitEntries : walkWorkspacePaths(cwd);
-  return dedupeEntries(entries).sort(compareEntries);
+  return dedupeEntries(entries).toSorted(compareEntries);
 }
 
 function listGitWorkspacePaths(cwd: string): WorkspacePathIndexEntry[] {

@@ -187,17 +187,17 @@ function createArtifactAttachFileTool(
 }
 
 function createArtifactTool<
-  TSchema extends typeof artifactWriteTextSchema | typeof artifactWriteJsonSchema,
+  TArtifactSchema extends typeof artifactWriteTextSchema | typeof artifactWriteJsonSchema,
 >(input: {
   name: string;
   label: string;
   description: string;
-  parameters: TSchema;
+  parameters: TArtifactSchema;
   options: DirectToolOptions;
   kind: StructuredArtifactKind;
-  summarize: (params: Static<TSchema>) => string;
-  content: (params: Static<TSchema>) => string;
-}): AgentTool<TSchema> {
+  summarize: (params: Static<TArtifactSchema>) => string;
+  content: (params: Static<TArtifactSchema>) => string;
+}): AgentTool<TArtifactSchema> {
   return {
     name: input.name,
     label: input.label,

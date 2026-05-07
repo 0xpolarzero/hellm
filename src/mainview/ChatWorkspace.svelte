@@ -976,10 +976,10 @@
     const edgeThreshold = Math.min(96, Math.max(44, Math.min(rect.width, rect.height) * 0.28));
     const distances = [
       { zone: "left" as const, value: clientX - rect.left },
-      { zone: "right" as const, value: rect.right - clientX },
-      { zone: "above" as const, value: clientY - rect.top },
-      { zone: "below" as const, value: rect.bottom - clientY },
-    ].sort((left, right) => left.value - right.value);
+			{ zone: "right" as const, value: rect.right - clientX },
+			{ zone: "above" as const, value: clientY - rect.top },
+			{ zone: "below" as const, value: rect.bottom - clientY },
+		].toSorted((left, right) => left.value - right.value);
 
     return distances[0]?.value <= edgeThreshold ? distances[0].zone : "replace";
   }

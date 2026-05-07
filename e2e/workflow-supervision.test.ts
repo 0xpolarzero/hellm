@@ -283,7 +283,10 @@ test("drives a real delegated workflow run through the app and routes workflow a
 
           await returnToOrchestrator(page);
           await waitForVisible(page.getByText("Delegated Threads"), 90_000);
-          await waitForVisible(page.getByText("Run the saved hello_world fixture workflow"), 90_000);
+          await waitForVisible(
+            page.getByText("Run the saved hello_world fixture workflow"),
+            90_000,
+          );
           await waitForVisible(page.getByText("1 workflow"), 90_000);
 
           await waitForVisible(page.getByText("Done"), 90_000);

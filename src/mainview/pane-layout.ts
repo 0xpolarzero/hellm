@@ -1112,7 +1112,7 @@ function findCoveringAdjacentStrip(
         ? pane.columnStart >= rangeStart && pane.columnEnd <= rangeEnd
         : pane.rowStart >= rangeStart && pane.rowEnd <= rangeEnd,
     )
-    .sort((left, right) =>
+    .toSorted((left, right) =>
       axis === "column" ? left.columnStart - right.columnStart : left.rowStart - right.rowStart,
     );
   if (coveringPanes.length === 0) {
