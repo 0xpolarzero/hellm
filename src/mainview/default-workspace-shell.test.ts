@@ -139,7 +139,7 @@ describe("default workspace renderer shell", () => {
     expect(virtualListEnd).toBeGreaterThan(virtualListStart);
     expect(streamingRowStart).toBeGreaterThan(virtualListEnd);
     expect(transcriptSource).not.toContain('kind: "streaming"');
-    expect(transcriptSource).toContain("scroller.scrollTop = scroller.scrollHeight;");
+    expect(transcriptSource).toContain("scrollTranscriptToBottom({ animated: true });");
   });
 
   it("renders a stop control instead of the send button while a surface is streaming", async () => {

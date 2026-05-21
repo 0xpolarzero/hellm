@@ -21,7 +21,12 @@
 		type TranscriptSemanticBlock,
 	} from "./transcript-projection";
 	import {
+		TRANSCRIPT_SCROLL_TO_BOTTOM_DURATION_MS,
+		TRANSCRIPT_STICK_TO_BOTTOM_THRESHOLD_PX,
+		deriveTranscriptScrollTopForViewportResize,
 		deriveTranscriptUserScrollState,
+		easeTranscriptScrollToBottom,
+		getTranscriptDistanceFromBottom,
 		shouldAdjustTranscriptScrollForMeasuredItem,
 	} from "./transcript-scroll";
 	import AssistantMarkdown from "./AssistantMarkdown.svelte";
@@ -114,6 +119,8 @@
 	let transcriptSessionInitialized = false;
 	let restoredInitialScrollForSession: string | undefined = undefined;
 	let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+	let programmaticScrollFrame: number | null = null;
+	let programmaticScrollActive = false;
 
 	let autoScroll = $state(true);
 	const resolvedSystemPrompt = $derived(systemPrompt?.trim() || null);
@@ -519,7 +526,41 @@
 		return resultDetailsText(message) || null;
 	}
 
-	function handleScroll() {
+	function prefersReducedMotion(): boolean {
+		if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+		return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	}
+
+	function currentDistanceFromBottom(): number {
+		if (!scroller) return 0;
+		return getTranscriptDistanceFromBottom({
+			scrollTop: scroller.scrollTop,
+			scrollHeight: scroller.scrollHeight,
+			clientHeight: scroller.clientHeight,
+		});
+	}
+
+	function persistCurrentScrollState(anchorIndex = transcriptAnchorIndex) {
+		if (!scroller) return;
+		onScrollStateChange?.({
+			transcriptAnchorId: transcriptRows[anchorIndex]?.key ?? null,
+			offsetPx: scroller.scrollTop,
+		});
+	}
+
+	function cancelProgrammaticScroll() {
+		if (programmaticScrollFrame !== null) {
+			cancelAnimationFrame(programmaticScrollFrame);
+			programmaticScrollFrame = null;
+		}
+		programmaticScrollActive = false;
+	}
+
+	function handleUserScrollIntent() {
+		cancelProgrammaticScroll();
+	}
+
+	function syncTranscriptScrollStateFromScroller() {
 		if (!scroller) return;
 		transcriptScrollTop = scroller.scrollTop;
 		const scrollState = deriveTranscriptUserScrollState({
@@ -533,20 +574,98 @@
 		transcriptStickToBottom = scrollState.stickToBottom;
 		autoScroll = scrollState.autoScroll;
 		transcriptAnchorIndex = scrollState.anchorIndex;
-		onScrollStateChange?.({
-			transcriptAnchorId: transcriptRows[scrollState.anchorIndex]?.key ?? null,
-			offsetPx: scroller.scrollTop,
-		});
+		persistCurrentScrollState(scrollState.anchorIndex);
+	}
+
+	function scrollTranscriptToBottom(options: { animated?: boolean } = {}) {
+		if (!scroller) return;
+		const { animated = true } = options;
+		if (programmaticScrollActive) return;
+
+		const startScrollTop = scroller.scrollTop;
+		const initialDistance = currentDistanceFromBottom();
+		const shouldAnimate =
+			animated &&
+			!prefersReducedMotion() &&
+			initialDistance > TRANSCRIPT_STICK_TO_BOTTOM_THRESHOLD_PX;
+
+		transcriptStickToBottom = true;
+		autoScroll = true;
+
+		if (!shouldAnimate) {
+			scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+			transcriptScrollTop = scroller.scrollTop;
+			persistCurrentScrollState();
+			return;
+		}
+
+		programmaticScrollActive = true;
+		const startedAt = performance.now();
+		const step = (now: number) => {
+			if (!scroller) {
+				programmaticScrollActive = false;
+				programmaticScrollFrame = null;
+				return;
+			}
+
+			const progress = Math.min(1, (now - startedAt) / TRANSCRIPT_SCROLL_TO_BOTTOM_DURATION_MS);
+			const targetScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+			const nextScrollTop =
+				startScrollTop + (targetScrollTop - startScrollTop) * easeTranscriptScrollToBottom(progress);
+			scroller.scrollTop = nextScrollTop;
+			transcriptScrollTop = scroller.scrollTop;
+
+			if (
+				progress < 1 &&
+				currentDistanceFromBottom() > TRANSCRIPT_STICK_TO_BOTTOM_THRESHOLD_PX
+			) {
+				programmaticScrollFrame = requestAnimationFrame(step);
+				return;
+			}
+
+			scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+			transcriptScrollTop = scroller.scrollTop;
+			transcriptStickToBottom = true;
+			autoScroll = true;
+			programmaticScrollActive = false;
+			programmaticScrollFrame = null;
+			persistCurrentScrollState();
+		};
+		programmaticScrollFrame = requestAnimationFrame(step);
+	}
+
+	function handleScroll() {
+		if (!scroller) return;
+		if (programmaticScrollActive) {
+			transcriptScrollTop = scroller.scrollTop;
+			return;
+		}
+		syncTranscriptScrollStateFromScroller();
 	}
 
 	function syncViewportMetrics() {
 		if (!scroller) return;
-		transcriptViewportHeight = scroller.clientHeight;
+		const previousViewportHeight = transcriptViewportHeight;
+		const nextViewportHeight = scroller.clientHeight;
+		const resizedScrollTop = deriveTranscriptScrollTopForViewportResize({
+			scrollTop: scroller.scrollTop,
+			previousClientHeight: previousViewportHeight,
+			nextClientHeight: nextViewportHeight,
+			stickToBottom: transcriptStickToBottom,
+		});
+		if (resizedScrollTop !== null && !programmaticScrollActive) {
+			scroller.scrollTop = resizedScrollTop;
+			syncTranscriptScrollStateFromScroller();
+		}
+		transcriptViewportHeight = nextViewportHeight;
 		if (threadElement) {
 			const rowGap = parseFloat(getComputedStyle(threadElement).rowGap || "16");
 			if (Number.isFinite(rowGap) && rowGap > 0) {
 				transcriptRowGap = rowGap;
 			}
+		}
+		if (transcriptStickToBottom && autoScroll) {
+			scrollTranscriptToBottom({ animated: false });
 		}
 	}
 
@@ -568,12 +687,19 @@
 		const observer = new ResizeObserver(() => {
 			syncViewportMetrics();
 		});
+		const scrollElement = scroller;
+		const transcriptThreadElement = threadElement;
+		const userScrollListenerOptions = { passive: true };
 
-		if (scroller) observer.observe(scroller);
-		if (threadElement) observer.observe(threadElement);
+		if (scrollElement) observer.observe(scrollElement);
+		if (transcriptThreadElement) observer.observe(transcriptThreadElement);
+		scrollElement?.addEventListener("pointerdown", handleUserScrollIntent, userScrollListenerOptions);
+		scrollElement?.addEventListener("wheel", handleUserScrollIntent, userScrollListenerOptions);
 
 		return () => {
 			observer.disconnect();
+			scrollElement?.removeEventListener("pointerdown", handleUserScrollIntent);
+			scrollElement?.removeEventListener("wheel", handleUserScrollIntent);
 		};
 	});
 
@@ -582,6 +708,7 @@
 			clearTimeout(copyResetTimer);
 			copyResetTimer = null;
 		}
+		cancelProgrammaticScroll();
 	});
 
 	$effect(() => {
@@ -590,6 +717,7 @@
 		if (transcriptSessionInitialized && sessionId === transcriptSessionId) return;
 		transcriptSessionInitialized = true;
 		transcriptSessionId = sessionId;
+		cancelProgrammaticScroll();
 		transcriptScrollTop = 0;
 		transcriptAnchorIndex = 0;
 		transcriptStickToBottom = true;
@@ -619,6 +747,7 @@
 		void transcriptRows.length;
 		if (!scroller || !initialScroll || restoredInitialScrollForSession === sessionId) return;
 		restoredInitialScrollForSession = sessionId;
+		cancelProgrammaticScroll();
 		const anchorIndex = initialScroll.transcriptAnchorId
 			? transcriptRows.findIndex((row) => row.key === initialScroll.transcriptAnchorId)
 			: -1;
@@ -627,7 +756,7 @@
 		} else {
 			scroller.scrollTop = Math.max(0, initialScroll.offsetPx);
 		}
-		transcriptScrollTop = scroller.scrollTop;
+		syncTranscriptScrollStateFromScroller();
 	});
 
 	$effect(() => {
@@ -640,19 +769,16 @@
 		if (!scroller || !autoScroll) return;
 		void tick().then(() => {
 			if (!scroller) return;
-			if (streamingAssistant) {
-				scroller.scrollTop = scroller.scrollHeight;
-			} else {
-				get(transcriptVirtualizer).scrollToIndex(Math.max(0, transcriptRows.length - 1), {
-					align: "end",
-				});
-			}
-			transcriptScrollTop = scroller.scrollTop;
+			scrollTranscriptToBottom({ animated: true });
 		});
 	});
 </script>
 
-<div bind:this={scroller} class="chat-transcript" onscroll={handleScroll}>
+<div
+	bind:this={scroller}
+	class="chat-transcript"
+	onscroll={handleScroll}
+>
 	<div bind:this={threadElement} class="chat-thread">
 		<div class="chat-thread-virtual" style={`height: ${transcriptVirtualHeight}px;`}>
 			{#each virtualRows as virtualRow (virtualRow.key)}
@@ -1027,6 +1153,7 @@
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
+		overflow-anchor: none;
 		background: transparent;
 	}
 
