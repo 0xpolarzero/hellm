@@ -275,10 +275,22 @@ class SqliteAppLogStore implements AppLogStore {
     const textQuery = query.query?.trim().toLowerCase();
     if (textQuery) {
       clauses.push(
-        `(LOWER(message) LIKE ? OR LOWER(source) LIKE ? OR LOWER(COALESCE(details_json, '')) LIKE ?)`,
+        `(
+          LOWER(message) LIKE ?
+          OR LOWER(source) LIKE ?
+          OR LOWER(level) LIKE ?
+          OR LOWER(COALESCE(workspace_session_id, '')) LIKE ?
+          OR LOWER(COALESCE(surface_pi_session_id, '')) LIKE ?
+          OR LOWER(COALESCE(thread_id, '')) LIKE ?
+          OR LOWER(COALESCE(workflow_run_id, '')) LIKE ?
+          OR LOWER(COALESCE(workflow_task_attempt_id, '')) LIKE ?
+          OR LOWER(COALESCE(command_id, '')) LIKE ?
+          OR LOWER(COALESCE(details_json, '')) LIKE ?
+          OR LOWER(COALESCE(error_json, '')) LIKE ?
+        )`,
       );
       const like = `%${textQuery}%`;
-      params.push(like, like, like);
+      params.push(like, like, like, like, like, like, like, like, like, like, like);
     }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.db

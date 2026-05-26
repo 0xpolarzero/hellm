@@ -21,13 +21,9 @@
 		type TranscriptSemanticBlock,
 	} from "./transcript-projection";
 	import {
-		TRANSCRIPT_SCROLL_TO_BOTTOM_DURATION_MS,
 		TRANSCRIPT_STICK_TO_BOTTOM_THRESHOLD_PX,
-		deriveTranscriptScrollTopForViewportResize,
-		deriveTranscriptUserScrollState,
-		easeTranscriptScrollToBottom,
-		getTranscriptDistanceFromBottom,
-		shouldAdjustTranscriptScrollForMeasuredItem,
+		getTranscriptNativeScrollBehavior,
+		resolveTranscriptRestoreTarget,
 	} from "./transcript-scroll";
 	import AssistantMarkdown from "./AssistantMarkdown.svelte";
 	import ContextBudgetBar from "./ContextBudgetBar.svelte";
@@ -108,21 +104,15 @@
 
 	let scroller = $state<HTMLDivElement | null>(null);
 	let threadElement = $state<HTMLDivElement | null>(null);
-	let transcriptScrollTop = $state(0);
-	let transcriptViewportHeight = $state(0);
 	let transcriptRowGap = $state(DEFAULT_TRANSCRIPT_ROW_GAP);
-	let transcriptStickToBottom = $state(true);
-	let transcriptAnchorIndex = $state(0);
+	let transcriptPinnedToEnd = $state(true);
 	let copiedAssistantMessageTimestamp = $state<string | null>(null);
 	let copiedUserMessageTimestamp = $state<string | null>(null);
 	let transcriptSessionId: string | undefined = undefined;
 	let transcriptSessionInitialized = false;
 	let restoredInitialScrollForSession: string | undefined = undefined;
 	let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
-	let programmaticScrollFrame: number | null = null;
-	let programmaticScrollActive = false;
 
-	let autoScroll = $state(true);
 	const resolvedSystemPrompt = $derived(systemPrompt?.trim() || null);
 	const streamingAssistant = $derived(streamMessage ?? null);
 	const turnTimingByAssistantTimestamp = $derived.by(() => {
@@ -143,7 +133,8 @@
 	type TranscriptRow =
 		| { kind: "system"; key: string; systemPrompt: string }
 		| { kind: "semantic"; key: string; block: TranscriptSemanticBlock }
-		| { kind: "message"; key: string; message: UserMessage | AssistantMessage | ToolResultMessage };
+		| { kind: "message"; key: string; message: UserMessage | AssistantMessage | ToolResultMessage }
+		| { kind: "streaming"; key: string; message: AssistantMessage };
 	const transcriptRows = $derived.by<TranscriptRow[]>(() => {
 		const rows: TranscriptRow[] = [];
 		if (resolvedSystemPrompt) {
@@ -155,9 +146,15 @@
 		for (const message of conversation.visibleMessages) {
 			rows.push({ kind: "message", key: `${message.role}:${message.timestamp}`, message });
 		}
+		if (streamingAssistant) {
+			rows.push({
+				kind: "streaming",
+				key: `streaming:${streamingAssistant.timestamp}`,
+				message: streamingAssistant,
+			});
+		}
 		return rows;
 	});
-	const shouldVirtualize = true;
 	const transcriptVirtualizer = createVirtualizer<HTMLDivElement, HTMLElement>({
 		count: 0,
 		getScrollElement: () => scroller,
@@ -165,15 +162,13 @@
 		getItemKey: (index) => transcriptRows[index]?.key ?? index,
 		overscan: 10,
 		gap: DEFAULT_TRANSCRIPT_ROW_GAP,
+		anchorTo: "end",
+		scrollEndThreshold: TRANSCRIPT_STICK_TO_BOTTOM_THRESHOLD_PX,
+		followOnAppend: "auto",
 		enabled: true,
-		shouldAdjustScrollPositionOnItemSizeChange: (item) =>
-			shouldAdjustTranscriptScrollForMeasuredItem({
-				index: item.index,
-				anchorIndex: transcriptAnchorIndex,
-				stickToBottom: transcriptStickToBottom,
-			}),
 	});
 	const virtualRows = $derived($transcriptVirtualizer.getVirtualItems());
+	const firstVirtualRowStart = $derived(virtualRows[0]?.start ?? 0);
 	const totalTranscriptSize = $derived($transcriptVirtualizer.getTotalSize());
 	const estimatedTranscriptSize = $derived.by(() => {
 		if (transcriptRows.length === 0) return 0;
@@ -191,6 +186,7 @@
 		if (!row) return 132;
 		if (row.kind === "system") return 92;
 		if (row.kind === "semantic") return 156;
+		if (row.kind === "streaming") return 172;
 		if (row.message.role === "user") return 96;
 		if (row.message.role === "toolResult") return 148;
 		return 172;
@@ -531,16 +527,20 @@
 		return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 	}
 
-	function currentDistanceFromBottom(): number {
-		if (!scroller) return 0;
-		return getTranscriptDistanceFromBottom({
-			scrollTop: scroller.scrollTop,
-			scrollHeight: scroller.scrollHeight,
-			clientHeight: scroller.clientHeight,
+	function transcriptFollowBehavior(): ScrollBehavior | false {
+		if (!transcriptPinnedToEnd) return false;
+		return getTranscriptNativeScrollBehavior({
+			animated: true,
+			reducedMotion: prefersReducedMotion(),
 		});
 	}
 
-	function persistCurrentScrollState(anchorIndex = transcriptAnchorIndex) {
+	function currentTranscriptAnchorIndex(): number {
+		if (!scroller) return 0;
+		return $transcriptVirtualizer.getVirtualItemForOffset(scroller.scrollTop)?.index ?? 0;
+	}
+
+	function persistCurrentScrollState(anchorIndex = currentTranscriptAnchorIndex()) {
 		if (!scroller) return;
 		onScrollStateChange?.({
 			transcriptAnchorId: transcriptRows[anchorIndex]?.key ?? null,
@@ -548,124 +548,28 @@
 		});
 	}
 
-	function cancelProgrammaticScroll() {
-		if (programmaticScrollFrame !== null) {
-			cancelAnimationFrame(programmaticScrollFrame);
-			programmaticScrollFrame = null;
-		}
-		programmaticScrollActive = false;
-	}
-
-	function handleUserScrollIntent() {
-		cancelProgrammaticScroll();
-	}
-
 	function syncTranscriptScrollStateFromScroller() {
 		if (!scroller) return;
-		transcriptScrollTop = scroller.scrollTop;
-		const scrollState = deriveTranscriptUserScrollState({
-			scrollTop: scroller.scrollTop,
-			scrollHeight: scroller.scrollHeight,
-			clientHeight: scroller.clientHeight,
-			shouldVirtualize,
-			currentAnchorIndex: transcriptAnchorIndex,
-			getIndexAtOffset: (offset) => $transcriptVirtualizer.getVirtualItemForOffset(offset)?.index ?? 0,
-		});
-		transcriptStickToBottom = scrollState.stickToBottom;
-		autoScroll = scrollState.autoScroll;
-		transcriptAnchorIndex = scrollState.anchorIndex;
-		persistCurrentScrollState(scrollState.anchorIndex);
-	}
-
-	function scrollTranscriptToBottom(options: { animated?: boolean } = {}) {
-		if (!scroller) return;
-		const { animated = true } = options;
-		if (programmaticScrollActive) return;
-
-		const startScrollTop = scroller.scrollTop;
-		const initialDistance = currentDistanceFromBottom();
-		const shouldAnimate =
-			animated &&
-			!prefersReducedMotion() &&
-			initialDistance > TRANSCRIPT_STICK_TO_BOTTOM_THRESHOLD_PX;
-
-		transcriptStickToBottom = true;
-		autoScroll = true;
-
-		if (!shouldAnimate) {
-			scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-			transcriptScrollTop = scroller.scrollTop;
-			persistCurrentScrollState();
-			return;
-		}
-
-		programmaticScrollActive = true;
-		const startedAt = performance.now();
-		const step = (now: number) => {
-			if (!scroller) {
-				programmaticScrollActive = false;
-				programmaticScrollFrame = null;
-				return;
-			}
-
-			const progress = Math.min(1, (now - startedAt) / TRANSCRIPT_SCROLL_TO_BOTTOM_DURATION_MS);
-			const targetScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-			const nextScrollTop =
-				startScrollTop + (targetScrollTop - startScrollTop) * easeTranscriptScrollToBottom(progress);
-			scroller.scrollTop = nextScrollTop;
-			transcriptScrollTop = scroller.scrollTop;
-
-			if (
-				progress < 1 &&
-				currentDistanceFromBottom() > TRANSCRIPT_STICK_TO_BOTTOM_THRESHOLD_PX
-			) {
-				programmaticScrollFrame = requestAnimationFrame(step);
-				return;
-			}
-
-			scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-			transcriptScrollTop = scroller.scrollTop;
-			transcriptStickToBottom = true;
-			autoScroll = true;
-			programmaticScrollActive = false;
-			programmaticScrollFrame = null;
-			persistCurrentScrollState();
-		};
-		programmaticScrollFrame = requestAnimationFrame(step);
+		transcriptPinnedToEnd = $transcriptVirtualizer.isAtEnd(
+			TRANSCRIPT_STICK_TO_BOTTOM_THRESHOLD_PX,
+		);
+		persistCurrentScrollState();
 	}
 
 	function handleScroll() {
-		if (!scroller) return;
-		if (programmaticScrollActive) {
-			transcriptScrollTop = scroller.scrollTop;
-			return;
-		}
 		syncTranscriptScrollStateFromScroller();
 	}
 
 	function syncViewportMetrics() {
 		if (!scroller) return;
-		const previousViewportHeight = transcriptViewportHeight;
-		const nextViewportHeight = scroller.clientHeight;
-		const resizedScrollTop = deriveTranscriptScrollTopForViewportResize({
-			scrollTop: scroller.scrollTop,
-			previousClientHeight: previousViewportHeight,
-			nextClientHeight: nextViewportHeight,
-			stickToBottom: transcriptStickToBottom,
-		});
-		if (resizedScrollTop !== null && !programmaticScrollActive) {
-			scroller.scrollTop = resizedScrollTop;
-			syncTranscriptScrollStateFromScroller();
-		}
-		transcriptViewportHeight = nextViewportHeight;
 		if (threadElement) {
 			const rowGap = parseFloat(getComputedStyle(threadElement).rowGap || "16");
 			if (Number.isFinite(rowGap) && rowGap > 0) {
 				transcriptRowGap = rowGap;
 			}
 		}
-		if (transcriptStickToBottom && autoScroll) {
-			scrollTranscriptToBottom({ animated: false });
+		if (transcriptPinnedToEnd) {
+			$transcriptVirtualizer.scrollToEnd({ behavior: "auto" });
 		}
 	}
 
@@ -689,17 +593,12 @@
 		});
 		const scrollElement = scroller;
 		const transcriptThreadElement = threadElement;
-		const userScrollListenerOptions = { passive: true };
 
 		if (scrollElement) observer.observe(scrollElement);
 		if (transcriptThreadElement) observer.observe(transcriptThreadElement);
-		scrollElement?.addEventListener("pointerdown", handleUserScrollIntent, userScrollListenerOptions);
-		scrollElement?.addEventListener("wheel", handleUserScrollIntent, userScrollListenerOptions);
 
 		return () => {
 			observer.disconnect();
-			scrollElement?.removeEventListener("pointerdown", handleUserScrollIntent);
-			scrollElement?.removeEventListener("wheel", handleUserScrollIntent);
 		};
 	});
 
@@ -708,7 +607,6 @@
 			clearTimeout(copyResetTimer);
 			copyResetTimer = null;
 		}
-		cancelProgrammaticScroll();
 	});
 
 	$effect(() => {
@@ -717,11 +615,7 @@
 		if (transcriptSessionInitialized && sessionId === transcriptSessionId) return;
 		transcriptSessionInitialized = true;
 		transcriptSessionId = sessionId;
-		cancelProgrammaticScroll();
-		transcriptScrollTop = 0;
-		transcriptAnchorIndex = 0;
-		transcriptStickToBottom = true;
-		autoScroll = true;
+		transcriptPinnedToEnd = true;
 	}
 	);
 
@@ -729,6 +623,7 @@
 		void transcriptRows.length;
 		void transcriptRows;
 		void transcriptRowGap;
+		void transcriptPinnedToEnd;
 		void scroller;
 		get(transcriptVirtualizer).setOptions({
 			count: transcriptRows.length,
@@ -736,6 +631,9 @@
 			estimateSize: (index) => estimateTranscriptRowSize(transcriptRows[index]),
 			getItemKey: (index) => transcriptRows[index]?.key ?? index,
 			gap: transcriptRowGap,
+			anchorTo: "end",
+			scrollEndThreshold: TRANSCRIPT_STICK_TO_BOTTOM_THRESHOLD_PX,
+			followOnAppend: transcriptFollowBehavior(),
 			enabled: true,
 		});
 	}
@@ -747,14 +645,16 @@
 		void transcriptRows.length;
 		if (!scroller || !initialScroll || restoredInitialScrollForSession === sessionId) return;
 		restoredInitialScrollForSession = sessionId;
-		cancelProgrammaticScroll();
-		const anchorIndex = initialScroll.transcriptAnchorId
-			? transcriptRows.findIndex((row) => row.key === initialScroll.transcriptAnchorId)
-			: -1;
-		if (anchorIndex >= 0) {
-			get(transcriptVirtualizer).scrollToIndex(anchorIndex, { align: "start" });
+		const restoreTarget = resolveTranscriptRestoreTarget({
+			anchorId: initialScroll.transcriptAnchorId,
+			offsetPx: initialScroll.offsetPx,
+			rows: transcriptRows,
+			getRowKey: (row) => row.key,
+		});
+		if (restoreTarget.kind === "anchor") {
+			get(transcriptVirtualizer).scrollToIndex(restoreTarget.index, { align: "start" });
 		} else {
-			scroller.scrollTop = Math.max(0, initialScroll.offsetPx);
+			get(transcriptVirtualizer).scrollToOffset(restoreTarget.offsetPx);
 		}
 		syncTranscriptScrollStateFromScroller();
 	});
@@ -766,10 +666,15 @@
 		void pendingToolCalls;
 		void isStreaming;
 
-		if (!scroller || !autoScroll) return;
+		if (!scroller || !transcriptPinnedToEnd) return;
 		void tick().then(() => {
 			if (!scroller) return;
-			scrollTranscriptToBottom({ animated: true });
+			$transcriptVirtualizer.scrollToEnd({
+				behavior: getTranscriptNativeScrollBehavior({
+					animated: true,
+					reducedMotion: prefersReducedMotion(),
+				}),
+			});
 		});
 	});
 </script>
@@ -781,30 +686,32 @@
 >
 	<div bind:this={threadElement} class="chat-thread">
 		<div class="chat-thread-virtual" style={`height: ${transcriptVirtualHeight}px;`}>
-			{#each virtualRows as virtualRow (virtualRow.key)}
-				{@const row = transcriptRows[virtualRow.index]}
-				{#if row?.kind === "system"}
-					<article
-						data-index={virtualRow.index}
-						use:measureTranscriptRow
-						class="message-row virtual-row system-row"
-						style={`transform: translate3d(0, ${virtualRow.start}px, 0);`}
-					>
+			<div
+				class="chat-thread-virtual-block"
+				style={`transform: translate3d(0, ${firstVirtualRowStart}px, 0); gap: ${transcriptRowGap}px;`}
+			>
+				{#each virtualRows as virtualRow (virtualRow.key)}
+					{@const row = transcriptRows[virtualRow.index]}
+					{#if row?.kind === "system"}
+						<article
+							data-index={virtualRow.index}
+							use:measureTranscriptRow
+							class="message-row virtual-row system-row"
+						>
 						<div class="message-bubble assistant-bubble system-bubble">
 							<details class="thinking-block system-prompt-block">
 								<summary>{target?.surface === "thread" ? "Handler system prompt" : "Surface system prompt metadata"}</summary>
 								<pre>{row.systemPrompt}</pre>
 							</details>
 						</div>
-					</article>
-				{:else if row?.kind === "semantic"}
-					<section
-						data-index={virtualRow.index}
-						use:measureTranscriptRow
-						class="transcript-semantic-stack virtual-row"
-						style={`transform: translate3d(0, ${virtualRow.start}px, 0);`}
-						aria-label="Structured transcript projection"
-					>
+						</article>
+					{:else if row?.kind === "semantic"}
+						<section
+							data-index={virtualRow.index}
+							use:measureTranscriptRow
+							class="transcript-semantic-stack virtual-row"
+							aria-label="Structured transcript projection"
+						>
 						{#if row.block.kind === "wait"}
 							<WaitingCard
 								context={`${row.block.summary} · resume ${row.block.resumeWhen} · since ${formatTimestamp(row.block.since)}`}
@@ -862,7 +769,6 @@
 						data-index={virtualRow.index}
 						use:measureTranscriptRow
 						class="message-row virtual-row user-row"
-						style={`transform: translate3d(0, ${virtualRow.start}px, 0);`}
 					>
 					<div
 						class={`message-bubble user-bubble ${isHandlerObjectiveMessage(message) ? "handler-objective-bubble" : ""} ${isEditingUserMessage(message) ? "editing-user-bubble" : ""}`.trim()}
@@ -973,7 +879,6 @@
 						data-index={virtualRow.index}
 						use:measureTranscriptRow
 						class="message-row virtual-row assistant-row"
-						style={`transform: translate3d(0, ${virtualRow.start}px, 0);`}
 					>
 					<div class="message-bubble assistant-bubble">
 						<header>
@@ -1075,13 +980,63 @@
 						</footer>
 						</div>
 					</article>
+				{:else if row?.kind === "streaming"}
+					{@const message = row.message}
+					<article
+						data-index={virtualRow.index}
+						use:measureTranscriptRow
+						class="message-row virtual-row assistant-row streaming-row"
+						aria-live="polite"
+					>
+						<div class="message-bubble assistant-bubble streaming">
+							<header>
+								<div>
+									<span>svvy</span>
+									<small>{message.provider} · {message.model}</small>
+								</div>
+							</header>
+
+							{#each message.content as block, blockIndex (`streaming:${blockIndex}`)}
+								{#if block.type === "text"}
+									<div class="message-text">
+										<AssistantMarkdown content={block.text} isFinished={false} />
+									</div>
+								{:else if block.type === "thinking"}
+									<details class="thinking-block">
+										<summary>Reasoning</summary>
+										<div class="thinking-markdown">
+											<AssistantMarkdown content={thinkingDisplayText(block)} isFinished={false} />
+										</div>
+									</details>
+								{:else if block.type === "toolCall"}
+									{@const params = parseArtifactsParams(block.arguments)}
+									{@const toolBody = executeTypescriptBody(block.name, block.arguments)}
+									<ToolCallCard
+										toolCall={{
+											id: `streaming-${blockIndex}`,
+											name: block.name,
+											status: "running",
+											params,
+											body: toolBody,
+										}}
+										onopen={onOpenArtifact}
+									/>
+								{/if}
+							{/each}
+							<footer class="assistant-message-footer streaming-footer">
+								<div class="assistant-message-actions" aria-label="Assistant message status">
+									<time>{formatTimestamp(message.timestamp)}</time>
+									<span class="tool-status tone-warning">Streaming</span>
+								</div>
+							</footer>
+						</div>
+					</article>
 				{:else if row?.kind === "message" && row.message.role === "toolResult"}
 					{@const message = row.message}
 					<article
 						data-index={virtualRow.index}
 						use:measureTranscriptRow
 						class="message-row virtual-row tool-row"
-						style={`transform: translate3d(0, ${virtualRow.start}px, 0);`}
 					>
 						<ToolCallCard
 							toolCall={{
@@ -1098,55 +1053,9 @@
 				{/if}
 			{/each}
 		</div>
-		{#if streamingAssistant}
-			{@const message = streamingAssistant}
-			<article class="message-row assistant-row streaming-row" aria-live="polite">
-				<div class="message-bubble assistant-bubble streaming">
-					<header>
-						<div>
-							<span>svvy</span>
-							<small>{message.provider} · {message.model}</small>
-						</div>
-					</header>
-
-					{#each message.content as block, blockIndex (`streaming:${blockIndex}`)}
-						{#if block.type === "text"}
-							<div class="message-text">
-								<AssistantMarkdown content={block.text} isFinished={false} />
-							</div>
-						{:else if block.type === "thinking"}
-							<details class="thinking-block">
-								<summary>Reasoning</summary>
-								<div class="thinking-markdown">
-									<AssistantMarkdown content={thinkingDisplayText(block)} isFinished={false} />
-								</div>
-							</details>
-						{:else if block.type === "toolCall"}
-							{@const params = parseArtifactsParams(block.arguments)}
-							{@const toolBody = executeTypescriptBody(block.name, block.arguments)}
-							<ToolCallCard
-								toolCall={{
-									id: `streaming-${blockIndex}`,
-									name: block.name,
-									status: "running",
-									params,
-									body: toolBody,
-								}}
-								onopen={onOpenArtifact}
-							/>
-						{/if}
-					{/each}
-					<footer class="assistant-message-footer streaming-footer">
-						<div class="assistant-message-actions" aria-label="Assistant message status">
-							<time>{formatTimestamp(message.timestamp)}</time>
-							<span class="tool-status tone-warning">Streaming</span>
-						</div>
-					</footer>
-				</div>
-			</article>
-		{/if}
 		</div>
 	</div>
+</div>
 
 <style>
 	.chat-transcript {
@@ -1172,15 +1081,20 @@
 		contain: layout paint size;
 	}
 
+	.chat-thread-virtual-block {
+		display: flex;
+		flex-direction: column;
+		width: 100%;
+		will-change: transform;
+	}
+
 	.message-row {
 		display: flex;
 		width: 100%;
 	}
 
 	.virtual-row {
-		position: absolute;
-		inset-inline: 0;
-		will-change: transform;
+		flex: 0 0 auto;
 	}
 
 	.user-row {

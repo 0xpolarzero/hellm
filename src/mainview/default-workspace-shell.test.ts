@@ -124,22 +124,49 @@ describe("default workspace renderer shell", () => {
     expect(panelHostSource).toContain("onRetryFailure=");
   });
 
-  it("renders the live streaming assistant outside virtualized transcript rows", async () => {
+  it("renders the live streaming assistant inside virtualized transcript rows", async () => {
     const transcriptSource = await readFile(
       new URL("./ChatTranscript.svelte", import.meta.url),
       "utf8",
     );
     const virtualListStart = transcriptSource.indexOf("{#each virtualRows as virtualRow");
-    const virtualListEnd = transcriptSource.indexOf("{#if streamingAssistant}");
+    const virtualListEnd = transcriptSource.indexOf(
+      '{:else if row?.kind === "message" && row.message.role === "toolResult"}',
+      virtualListStart,
+    );
     const streamingRowStart = transcriptSource.indexOf(
-      '<article class="message-row assistant-row streaming-row"',
+      'class="message-row virtual-row assistant-row streaming-row"',
     );
 
     expect(virtualListStart).toBeGreaterThanOrEqual(0);
     expect(virtualListEnd).toBeGreaterThan(virtualListStart);
-    expect(streamingRowStart).toBeGreaterThan(virtualListEnd);
-    expect(transcriptSource).not.toContain('kind: "streaming"');
-    expect(transcriptSource).toContain("scrollTranscriptToBottom({ animated: true });");
+    expect(streamingRowStart).toBeGreaterThan(virtualListStart);
+    expect(streamingRowStart).toBeLessThan(virtualListEnd);
+    expect(transcriptSource).toContain('kind: "streaming"');
+    expect(transcriptSource).toContain("streamingAssistant.timestamp");
+    expect(transcriptSource).not.toContain("{#if streamingAssistant}");
+    expect(transcriptSource).not.toContain("scrollTranscriptToBottom");
+  });
+
+  it("uses TanStack end anchoring and a translated virtual block for transcript scrolling", async () => {
+    const transcriptSource = await readFile(
+      new URL("./ChatTranscript.svelte", import.meta.url),
+      "utf8",
+    );
+
+    expect(transcriptSource).toContain('anchorTo: "end"');
+    expect(transcriptSource).toContain(
+      "scrollEndThreshold: TRANSCRIPT_STICK_TO_BOTTOM_THRESHOLD_PX",
+    );
+    expect(transcriptSource).toContain("followOnAppend: transcriptFollowBehavior()");
+    expect(transcriptSource).toContain("$transcriptVirtualizer.scrollToEnd");
+    expect(transcriptSource).toContain("getVirtualItemForOffset(scroller.scrollTop)");
+    expect(transcriptSource).toContain('class="chat-thread-virtual-block"');
+    expect(transcriptSource).toContain(
+      "style={`transform: translate3d(0, ${firstVirtualRowStart}px, 0); gap: ${transcriptRowGap}px;`}",
+    );
+    expect(transcriptSource).not.toContain("${virtualRow.start}px");
+    expect(transcriptSource).not.toContain("requestAnimationFrame");
   });
 
   it("renders a stop control instead of the send button while a surface is streaming", async () => {

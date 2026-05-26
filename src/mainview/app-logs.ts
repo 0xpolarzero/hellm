@@ -1,6 +1,7 @@
 import type {
   AppLogEntry,
   AppLogLevel,
+  AppLogReadModel,
   AppLogSource,
   AppLogSummary,
 } from "../shared/workspace-contract";
@@ -79,4 +80,60 @@ export function filterAppLogEntries(
       .toLowerCase()
       .includes(query);
   });
+}
+
+export type AppLogLiveMode = "live" | "frozen";
+
+export function mergeAppLogEntries(current: AppLogEntry[], incoming: AppLogEntry[]): AppLogEntry[] {
+  const bySeq = new Map<number, AppLogEntry>();
+  for (const entry of current) bySeq.set(entry.seq, entry);
+  for (const entry of incoming) bySeq.set(entry.seq, entry);
+  return [...bySeq.values()].toSorted((a, b) => a.seq - b.seq);
+}
+
+export function applyAppLogLiveUpdate({
+  current,
+  incomingEntries,
+  incomingSummary,
+  liveMode,
+  bottomPinned,
+  filters,
+  currentNewLogsWhileAway,
+  maxLoaded,
+}: {
+  current: AppLogReadModel;
+  incomingEntries: AppLogEntry[];
+  incomingSummary: AppLogSummary;
+  liveMode: AppLogLiveMode;
+  bottomPinned: boolean;
+  filters: { level: AppLogLevel | "all"; source: AppLogSource | "all"; query: string };
+  currentNewLogsWhileAway: number;
+  maxLoaded: number;
+}): {
+  readModel: AppLogReadModel;
+  matchingNewEntries: AppLogEntry[];
+  shouldFollowTail: boolean;
+  newLogsWhileAway: number;
+} {
+  const knownIds = new Set(current.entries.map((entry) => entry.id));
+  const appendedEntries = incomingEntries.filter((entry) => !knownIds.has(entry.id));
+  const matchingNewEntries = filterAppLogEntries(appendedEntries, filters);
+  const shouldAppendToViewport = liveMode === "live";
+  const shouldFollowTail = shouldAppendToViewport && bottomPinned;
+  const readModel = shouldAppendToViewport
+    ? {
+        entries: mergeAppLogEntries(current.entries, matchingNewEntries).slice(-maxLoaded),
+        summary: incomingSummary,
+      }
+    : { ...current, summary: incomingSummary };
+
+  return {
+    readModel,
+    matchingNewEntries,
+    shouldFollowTail,
+    newLogsWhileAway:
+      matchingNewEntries.length > 0 && !shouldFollowTail
+        ? currentNewLogsWhileAway + matchingNewEntries.length
+        : currentNewLogsWhileAway,
+  };
 }

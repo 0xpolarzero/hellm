@@ -16,12 +16,14 @@
     AppLogSource,
   } from "../shared/workspace-contract";
   import type { ChatRuntime } from "./chat-runtime";
+  import type { AppLogLiveMode } from "./app-logs";
   import {
-    deriveAppLogUpdatePolicy,
-    isAppLogViewportBottomPinned,
-    type AppLogLiveMode,
-  } from "./app-log-scroll";
-  import { APP_LOG_SOURCES, filterAppLogEntries, formatAppLogCount } from "./app-logs";
+    APP_LOG_SOURCES,
+    applyAppLogLiveUpdate,
+    filterAppLogEntries,
+    formatAppLogCount,
+    mergeAppLogEntries,
+  } from "./app-logs";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
   import Dialog from "./ui/Dialog.svelte";
@@ -69,6 +71,7 @@
   const LOG_COPY_LIMIT = 10_000;
   const COPY_ALL_WARNING_STORAGE_KEY = "svvy.appLogs.copyAllWarningDismissed";
   const LOG_ROW_ESTIMATE_PX = 76;
+  const APP_LOG_TAIL_THRESHOLD_PX = 40;
 
   const visibleEntries = $derived(
     filterAppLogEntries(readModel?.entries ?? [], {
@@ -84,9 +87,13 @@
     getItemKey: (index) => visibleEntries[index]?.seq ?? index,
     overscan: 12,
     gap: 8,
+    anchorTo: "end",
+    scrollEndThreshold: APP_LOG_TAIL_THRESHOLD_PX,
+    followOnAppend: false,
   });
   const virtualRows = $derived($virtualizer.getVirtualItems());
   const totalVirtualSize = $derived($virtualizer.getTotalSize());
+  const virtualBlockOffset = $derived(virtualRows[0]?.start ?? 0);
 
   function levelTone(level: AppLogLevel): "info" | "warning" | "danger" {
     if (level === "error") return "danger";
@@ -191,12 +198,9 @@
 
   function syncTailFollowState() {
     if (!listElement) return;
-    bottomPinned = isAppLogViewportBottomPinned({
-      scrollOffset: listElement.scrollTop,
-      totalSize: totalVirtualSize,
-      viewportSize: listElement.clientHeight,
-    });
-    if (bottomPinned) {
+    const instance = get(virtualizer);
+    bottomPinned = instance.isAtEnd(APP_LOG_TAIL_THRESHOLD_PX);
+    if (bottomPinned || instance.getDistanceFromEnd() <= 0) {
       newLogsWhileAway = 0;
     }
   }
@@ -224,10 +228,8 @@
       if (!listElement) return;
       bottomPinned = true;
       newLogsWhileAway = 0;
-      $virtualizer.scrollToIndex(Math.max(0, visibleEntries.length - 1), {
-        align: "end",
-        behavior: smooth && !prefersReducedMotion() ? "smooth" : "auto",
-      });
+      const behavior: ScrollBehavior = smooth && !prefersReducedMotion() ? "smooth" : "auto";
+      get(virtualizer).scrollToEnd({ behavior });
       if (markRead) {
         void markReadThroughLatest();
       }
@@ -239,7 +241,7 @@
       liveMode = "live";
       bottomPinned = true;
       newLogsWhileAway = 0;
-      void loadLogs({ forceTail: true });
+      void loadLogs({ forceTail: true, smoothTail: true });
       return;
     }
     liveMode = "frozen";
@@ -260,16 +262,17 @@
     }
   }
 
-  function restoreScrollOffsetFromBottom(bottomOffset: number) {
+  function restoreDistanceFromEnd(distanceFromEnd: number) {
     requestAnimationFrame(() => {
       if (!listElement) return;
-      listElement.scrollTop = Math.max(0, listElement.scrollHeight - bottomOffset);
+      const instance = get(virtualizer);
+      instance.scrollToOffset(Math.max(instance.getTotalSize() - instance.getSize() - distanceFromEnd, 0));
     });
   }
 
-  async function loadLogs(options: { forceTail?: boolean } = {}) {
+  async function loadLogs(options: { forceTail?: boolean; smoothTail?: boolean } = {}) {
     const shouldFollowTail = options.forceTail === undefined ? liveMode === "live" && bottomPinned : options.forceTail;
-    const bottomOffset = shouldFollowTail || !listElement ? 0 : totalVirtualSize - listElement.scrollTop;
+    const distanceFromEnd = shouldFollowTail || !listElement ? 0 : get(virtualizer).getDistanceFromEnd();
     loading = true;
     error = null;
     try {
@@ -282,9 +285,9 @@
       readModel = next;
       hasOlderLogs = next.entries.length >= LOG_LIST_LIMIT;
       if (shouldFollowTail) {
-        scrollToTail();
+        scrollToTail({ smooth: options.smoothTail });
       } else {
-        restoreScrollOffsetFromBottom(bottomOffset);
+        restoreDistanceFromEnd(distanceFromEnd);
         void markReadThroughLatest();
       }
     } catch (err) {
@@ -310,20 +313,11 @@
     return blocks.join("\n");
   }
 
-  function mergeLogEntries(current: AppLogEntry[], incoming: AppLogEntry[]): AppLogEntry[] {
-    const bySeq = new Map<number, AppLogEntry>();
-    for (const entry of current) bySeq.set(entry.seq, entry);
-    for (const entry of incoming) bySeq.set(entry.seq, entry);
-    return [...bySeq.values()].toSorted((a, b) => a.seq - b.seq);
-  }
-
   async function loadOlderLogs() {
     if (!readModel || loadingOlder || !hasOlderLogs || visibleEntries.length === 0) return;
     const firstSeq = readModel.entries[0]?.seq;
     if (!firstSeq) return;
     loadingOlder = true;
-    const previousTotalSize = totalVirtualSize;
-    const previousScrollTop = listElement?.scrollTop ?? 0;
     try {
       const older = await runtime.getAppLogs({
         limit: LOG_PAGE_LIMIT,
@@ -335,16 +329,9 @@
       hasOlderLogs = older.entries.length >= LOG_PAGE_LIMIT;
       if (older.entries.length === 0) return;
       readModel = {
-        entries: mergeLogEntries(readModel.entries, older.entries).slice(-LOG_MAX_LOADED),
+        entries: mergeAppLogEntries(readModel.entries, older.entries).slice(-LOG_MAX_LOADED),
         summary: older.summary,
       };
-      requestAnimationFrame(() => {
-        if (!listElement) return;
-        listElement.scrollTop = listElement.scrollTop + (totalVirtualSize - previousTotalSize);
-        if (listElement.scrollTop < previousScrollTop) {
-          listElement.scrollTop = previousScrollTop;
-        }
-      });
     } catch (err) {
       error = err instanceof Error ? err.message : "Unable to load older app logs.";
     } finally {
@@ -444,31 +431,18 @@
     void loadLogs({ forceTail: true });
     unsubscribeLogUpdate = runtime.subscribeAppLogUpdate((payload) => {
       if (!readModel) return;
-      const known = new Set(readModel.entries.map((entry) => entry.id));
-      const appendedEntries = payload.entries.filter((entry) => !known.has(entry.id));
-      const matchingEntries = filterAppLogEntries(appendedEntries, {
-        level: levelFilter,
-        source: sourceFilter,
-        query,
-      });
-      const policy = deriveAppLogUpdatePolicy({
+      const next = applyAppLogLiveUpdate({
+        current: readModel,
+        incomingEntries: payload.entries,
+        incomingSummary: payload.summary,
         liveMode,
         bottomPinned,
-        incomingCount: matchingEntries.length,
+        filters: { level: levelFilter, source: sourceFilter, query },
+        currentNewLogsWhileAway: newLogsWhileAway,
+        maxLoaded: LOG_MAX_LOADED,
       });
-      if (policy.appendToViewport) {
-        readModel = {
-          entries: mergeLogEntries(readModel.entries, matchingEntries).slice(-LOG_MAX_LOADED),
-          summary: payload.summary,
-        };
-      } else {
-        readModel = { ...readModel, summary: payload.summary };
-      }
-      if (policy.scrollToTail) {
-        scrollToTail();
-      } else if (policy.showJumpAffordance) {
-        newLogsWhileAway += matchingEntries.length;
-      }
+      readModel = next.readModel;
+      newLogsWhileAway = next.newLogsWhileAway;
     });
     unsubscribeRuntime = runtime.subscribe(() => {
       if (runtime.paneLayout.focusedPanelId === panelId) {
@@ -519,6 +493,9 @@
       count: visibleEntries.length,
       getScrollElement: () => listElement,
       getItemKey: (index) => visibleEntries[index]?.seq ?? index,
+      anchorTo: "end",
+      scrollEndThreshold: APP_LOG_TAIL_THRESHOLD_PX,
+      followOnAppend: liveMode === "live" && bottomPinned ? "auto" : false,
     });
   });
 
@@ -624,93 +601,94 @@
           <p class="logs-loading-older">Loading older logs...</p>
         {/if}
         <div class="logs-virtual-spacer" style={`height: ${totalVirtualSize}px;`}>
-        {#each virtualRows as row (row.key)}
-          {@const entry = visibleEntries[row.index]}
-          {#if entry}
-          <div
-            data-index={row.index}
-            use:measureLogRow
-            class:expanded={expandedIds.has(entry.id)}
-            class={`log-row level-${entry.level}`.trim()}
-            role="button"
-            tabindex="0"
-            aria-expanded={expandedIds.has(entry.id)}
-            style={`transform: translate3d(0, ${row.start}px, 0);`}
-            onclick={() => toggleLogRow(entry)}
-            onkeydown={(event) => handleLogRowKeydown(event, entry)}
-          >
-            <div class="row-main">
-              <span class="expand-indicator" aria-hidden="true">
-                {#if expandedIds.has(entry.id)}
-                  <ChevronDownIcon size={14} />
-                {:else}
-                  <ChevronRightIcon size={14} />
-                {/if}
-              </span>
-              <span class="row-copy">
-                <span class="row-title">
-                  <Badge tone={levelTone(entry.level)}>{entry.level}</Badge>
-                  <code>{entry.source}</code>
-                  <strong>{entry.message}</strong>
-                </span>
-                {#if relatedIds(entry).length > 0}
-                  <span class="related-chips">
-                    {#each relatedIds(entry) as related (`${entry.id}:${related.label}`)}
-                      {#if related.action}
-                        <button type="button" onclick={(event) => { event.stopPropagation(); void openRelated(entry, related); }}>
-                          <em>{related.label}</em><code>{related.value}</code>
-                        </button>
+          <div class="logs-virtual-block" style={`transform: translate3d(0, ${virtualBlockOffset}px, 0);`}>
+            {#each virtualRows as row (row.key)}
+              {@const entry = visibleEntries[row.index]}
+              {#if entry}
+                <div
+                  data-index={row.index}
+                  use:measureLogRow
+                  class:expanded={expandedIds.has(entry.id)}
+                  class={`log-row level-${entry.level}`.trim()}
+                  role="button"
+                  tabindex="0"
+                  aria-expanded={expandedIds.has(entry.id)}
+                  onclick={() => toggleLogRow(entry)}
+                  onkeydown={(event) => handleLogRowKeydown(event, entry)}
+                >
+                  <div class="row-main">
+                    <span class="expand-indicator" aria-hidden="true">
+                      {#if expandedIds.has(entry.id)}
+                        <ChevronDownIcon size={14} />
                       {:else}
-                        <span><em>{related.label}</em><code>{related.value}</code></span>
+                        <ChevronRightIcon size={14} />
                       {/if}
-                    {/each}
-                  </span>
-                {/if}
-              </span>
-              <span class="row-meta"><time>{formatTime(entry.createdAt)}</time><code>#{entry.seq}</code></span>
-            </div>
-            <Tooltip label="Copy log entry" side="left">
-              <Button
-                variant="ghost"
-                size="xs"
-                iconOnly
-                class="row-copy-button"
-                aria-label="Copy log entry"
-                onclick={(event) => {
-                  event.stopPropagation();
-                  void copyLogEntry(entry);
-                }}
-              >
-                {#if copiedTarget === entry.id}
-                  <CheckIcon aria-hidden="true" size={13} />
-                {:else}
-                  <CopyIcon aria-hidden="true" size={13} />
-                {/if}
-              </Button>
-            </Tooltip>
-            {#if expandedIds.has(entry.id)}
-              <div class="row-details">
-                <dl class="row-detail-facts">
-                  <dt>Sequence</dt><dd>#{entry.seq}</dd>
-                  <dt>Created</dt><dd>{entry.createdAt}</dd>
-                  {#each relatedIds(entry) as related (`expanded:${entry.id}:${related.label}`)}
-                    <dt>{related.label}</dt><dd><code>{related.value}</code></dd>
-                  {/each}
-                </dl>
-                {#if entry.details}
-                  <pre>{JSON.stringify(entry.details, null, 2)}</pre>
-                {/if}
-                {#if entry.error}
-                  <pre class="error-block">{JSON.stringify(entry.error, null, 2)}</pre>
-                {/if}
-                {#if !entry.details && !entry.error && relatedIds(entry).length === 0}
-                  <span>No extra details.</span>
-                {/if}
-              </div>
-            {/if}
+                    </span>
+                    <span class="row-copy">
+                      <span class="row-title">
+                        <Badge tone={levelTone(entry.level)}>{entry.level}</Badge>
+                        <code>{entry.source}</code>
+                        <strong>{entry.message}</strong>
+                      </span>
+                      {#if relatedIds(entry).length > 0}
+                        <span class="related-chips">
+                          {#each relatedIds(entry) as related (`${entry.id}:${related.label}`)}
+                            {#if related.action}
+                              <button type="button" onclick={(event) => { event.stopPropagation(); void openRelated(entry, related); }}>
+                                <em>{related.label}</em><code>{related.value}</code>
+                              </button>
+                            {:else}
+                              <span><em>{related.label}</em><code>{related.value}</code></span>
+                            {/if}
+                          {/each}
+                        </span>
+                      {/if}
+                    </span>
+                    <span class="row-meta"><time>{formatTime(entry.createdAt)}</time><code>#{entry.seq}</code></span>
+                  </div>
+                  <Tooltip label="Copy log entry" side="left">
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      iconOnly
+                      class="row-copy-button"
+                      aria-label="Copy log entry"
+                      onclick={(event) => {
+                        event.stopPropagation();
+                        void copyLogEntry(entry);
+                      }}
+                    >
+                      {#if copiedTarget === entry.id}
+                        <CheckIcon aria-hidden="true" size={13} />
+                      {:else}
+                        <CopyIcon aria-hidden="true" size={13} />
+                      {/if}
+                    </Button>
+                  </Tooltip>
+                  {#if expandedIds.has(entry.id)}
+                    <div class="row-details">
+                      <dl class="row-detail-facts">
+                        <dt>Sequence</dt><dd>#{entry.seq}</dd>
+                        <dt>Created</dt><dd>{entry.createdAt}</dd>
+                        {#each relatedIds(entry) as related (`expanded:${entry.id}:${related.label}`)}
+                          <dt>{related.label}</dt><dd><code>{related.value}</code></dd>
+                        {/each}
+                      </dl>
+                      {#if entry.details}
+                        <pre>{JSON.stringify(entry.details, null, 2)}</pre>
+                      {/if}
+                      {#if entry.error}
+                        <pre class="error-block">{JSON.stringify(entry.error, null, 2)}</pre>
+                      {/if}
+                      {#if !entry.details && !entry.error && relatedIds(entry).length === 0}
+                        <span>No extra details.</span>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+            {/each}
           </div>
-          {/if}
-        {/each}
         </div>
         {#if newLogsWhileAway > 0}
           <button type="button" class="new-logs-button" onclick={() => setLiveMode(true)}>
@@ -939,6 +917,14 @@
     min-height: 100%;
   }
 
+  .logs-virtual-block {
+    position: absolute;
+    top: 0;
+    inset-inline: 0;
+    display: grid;
+    gap: 8px;
+  }
+
   .logs-loading-older {
     position: sticky;
     top: 0;
@@ -954,9 +940,6 @@
   }
 
   .log-row {
-    position: absolute;
-    top: 0;
-    inset-inline: 0;
     box-sizing: border-box;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

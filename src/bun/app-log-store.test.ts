@@ -54,6 +54,27 @@ describe("app log store", () => {
     store.close();
   });
 
+  it("searches related ids consistently with renderer filtering", () => {
+    const store = createAppLogStore({ now: clock() });
+    store.append({ level: "info", source: "workspace", message: "plain" });
+    store.append({
+      level: "error",
+      source: "workflow.run",
+      message: "failed",
+      workspaceSessionId: "session-1",
+      surfacePiSessionId: "surface-1",
+      threadId: "thread-1",
+      workflowRunId: "run-1",
+      workflowTaskAttemptId: "task-1",
+      commandId: "cmd-1",
+    });
+
+    for (const query of ["session-1", "surface-1", "thread-1", "run-1", "task-1", "cmd-1"]) {
+      expect(store.query({ query }).entries.map((entry) => entry.seq)).toEqual([2]);
+    }
+    store.close();
+  });
+
   it("redacts secrets before persistence and live delivery", () => {
     const store = createAppLogStore({ now: clock() });
     const delivered: unknown[] = [];

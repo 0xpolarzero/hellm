@@ -280,6 +280,7 @@ Toolbar:
 Virtualized list behavior:
 
 - render the log row list with TanStack Virtual so retained histories can be browsed without mounting every row
+- use TanStack Virtual's native end anchoring for tail-following and explicit latest jumps, including `anchorTo: "end"` and `scrollToEnd`, rather than deriving product behavior from manual per-row scroll math
 - use a stable virtual item key derived from the log entry sequence number
 - support variable-height rows because expanded details, stack traces, JSON details, and related chips can change row height
 - remeasure rows after expansion, collapse, filtering, search changes, older-page loading, and live entry insertion
@@ -318,7 +319,7 @@ Live behavior:
 - if the user is at the bottom in `Live` mode, new entries keep the virtual list pinned to the live tail
 - if the user scrolls away from bottom in `Live` mode, new entries do not steal scroll and the pane shows the `New logs` affordance
 - if the user switches to `Frozen`, new entries never move the current viewport until the user explicitly resumes live tailing or activates `New logs`
-- activating `New logs` scrolls to the newest matching entry and returns the pane to tail-following `Live` behavior
+- activating `New logs` scrolls to the newest matching entry with smooth motion unless the user prefers reduced motion, in which case the jump is immediate, and returns the pane to tail-following `Live` behavior
 - opening or focusing the pane marks logs seen through the current latest sequence
 
 Empty states:
@@ -398,19 +399,19 @@ Empty states:
 
 When more detail exists elsewhere, logs should link to the durable inspector or artifact instead of duplicating it.
 
-## Implementation Plan
+## Implementation Contract
 
-1. Add shared contracts for `AppLogEntry`, `AppLogSummary`, `AppLogQuery`, `AppLogReadModel`, and `surface: "app-logs"`.
-2. Implement `src/bun/app-log-store.ts` with append, query, summary, seen-state, redaction, bounded retention, and live subscriptions.
-3. Instantiate the app logger in `src/bun/index.ts` and expose RPC handlers for `getAppLogs`, `getAppLogSummary`, and `markAppLogsSeen`.
-4. Wire logger live updates to `sendAppLogUpdate`.
-5. Route product runtime, renderer, and RPC log call sites through the app logger; keep any `electrobun-browser-tools` logging outside the production app-log contract.
-6. Add targeted logging to the required sources, starting with auth, namer/title generation, prompts, RPC errors, Smithers, saved workflow validation, direct tools, and artifacts.
-7. Add renderer app-log state to the chat runtime/bootstrap path.
-8. Add the sidebar `Logs` button with unread counts above `Workflows`.
-9. Add `AppLogsPane.svelte` and Dockview routing for the app logs target.
-10. Add tests for store append/query/summary/redaction, RPC methods, live update handling, sidebar unread badges, mark-read behavior, and pane filters.
-11. Update `docs/prd.md`, `docs/features.ts`, and `docs/progress.md` when implementation lands.
+The shipped app logs surface is made of:
+
+- shared `AppLogEntry`, `AppLogSummary`, `AppLogQuery`, `AppLogReadModel`, and `surface: "app-logs"` contracts
+- a Bun-side app log store with append, query, summary, seen-state, redaction, bounded retention, SQLite persistence, and live subscriptions
+- one app logger per backend workspace runtime, with renderer delivery through `sendAppLogUpdate`
+- RPC handlers for `getAppLogs`, `getAppLogSummary`, and `markAppLogsSeen`
+- production product call sites routed through the app logger, while `electrobun-browser-tools` remains outside the production observability contract
+- renderer app-log state in the chat runtime/bootstrap path
+- the sidebar `Logs` button with unread counts above `Workflows`
+- `AppLogsPane.svelte` and Dockview routing for the app logs target
+- a TanStack Virtual row list using stable sequence keys, variable-height measurement, older-page loading, native end anchoring, explicit smooth jump-to-latest with reduced-motion fallback, and Live/Frozen no-scroll-stealing semantics
 
 ## Testing Requirements
 

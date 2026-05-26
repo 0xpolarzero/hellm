@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import type { AppLogEntry } from "../shared/workspace-contract";
-import { deriveAppLogUpdatePolicy, isAppLogViewportBottomPinned } from "./app-log-scroll";
+import type { AppLogEntry, AppLogSummary } from "../shared/workspace-contract";
 import {
+  applyAppLogLiveUpdate,
   filterAppLogEntries,
   formatAppLogCount,
   formatAppLogUnreadTitle,
@@ -16,6 +16,16 @@ function entry(overrides: Partial<AppLogEntry>): AppLogEntry {
     level: "info",
     source: "workspace",
     message: "Workspace ready",
+    ...overrides,
+  };
+}
+
+function appLogSummary(overrides: Partial<AppLogSummary> = {}): AppLogSummary {
+  return {
+    latestSeq: 1,
+    seenSeq: 0,
+    unread: { total: 1, info: 1, warning: 0, error: 0 },
+    totals: { total: 1, info: 1, warning: 0, error: 0 },
     ...overrides,
   };
 }
@@ -96,33 +106,85 @@ describe("filterAppLogEntries", () => {
   });
 });
 
-describe("app log scroll policy", () => {
-  it("derives bottom-pinned viewport state independently from live mode", () => {
-    expect(
-      isAppLogViewportBottomPinned({ scrollOffset: 560, totalSize: 1000, viewportSize: 400 }),
-    ).toBe(true);
-    expect(
-      isAppLogViewportBottomPinned({ scrollOffset: 480, totalSize: 1000, viewportSize: 400 }),
-    ).toBe(false);
+describe("applyAppLogLiveUpdate", () => {
+  const currentEntry = entry({ id: "1", seq: 1, message: "Workspace ready" });
+  const nextEntry = entry({ id: "2", seq: 2, level: "warning", message: "Provider missing" });
+  const nextSummary = appLogSummary({
+    latestSeq: 2,
+    unread: { total: 2, info: 1, warning: 1, error: 0 },
+    totals: { total: 2, info: 1, warning: 1, error: 0 },
   });
 
-  it("appends live updates without forcing tail when the viewport is away from bottom", () => {
-    expect(
-      deriveAppLogUpdatePolicy({ liveMode: "live", bottomPinned: false, incomingCount: 3 }),
-    ).toEqual({
-      appendToViewport: true,
-      showJumpAffordance: true,
-      scrollToTail: false,
+  it("appends matching logs in Live mode without showing the New logs affordance while pinned at the end", () => {
+    const result = applyAppLogLiveUpdate({
+      current: { entries: [currentEntry], summary: appLogSummary() },
+      incomingEntries: [nextEntry],
+      incomingSummary: nextSummary,
+      liveMode: "live",
+      bottomPinned: true,
+      filters: { level: "all", source: "all", query: "" },
+      currentNewLogsWhileAway: 0,
+      maxLoaded: 2_000,
     });
+
+    expect(result.readModel.entries.map((log) => log.id)).toEqual(["1", "2"]);
+    expect(result.readModel.summary).toEqual(nextSummary);
+    expect(result.shouldFollowTail).toBe(true);
+    expect(result.newLogsWhileAway).toBe(0);
   });
 
-  it("keeps frozen viewport snapshots stable until live is explicitly resumed", () => {
-    expect(
-      deriveAppLogUpdatePolicy({ liveMode: "frozen", bottomPinned: true, incomingCount: 2 }),
-    ).toEqual({
-      appendToViewport: false,
-      showJumpAffordance: true,
-      scrollToTail: false,
+  it("keeps Live mode entries updating while the reader is away from the tail and counts the new logs", () => {
+    const result = applyAppLogLiveUpdate({
+      current: { entries: [currentEntry], summary: appLogSummary() },
+      incomingEntries: [nextEntry],
+      incomingSummary: nextSummary,
+      liveMode: "live",
+      bottomPinned: false,
+      filters: { level: "all", source: "all", query: "" },
+      currentNewLogsWhileAway: 3,
+      maxLoaded: 2_000,
     });
+
+    expect(result.readModel.entries.map((log) => log.id)).toEqual(["1", "2"]);
+    expect(result.shouldFollowTail).toBe(false);
+    expect(result.newLogsWhileAway).toBe(4);
+  });
+
+  it("freezes the visible entries while still refreshing summary and New logs count", () => {
+    const result = applyAppLogLiveUpdate({
+      current: { entries: [currentEntry], summary: appLogSummary() },
+      incomingEntries: [nextEntry],
+      incomingSummary: nextSummary,
+      liveMode: "frozen",
+      bottomPinned: true,
+      filters: { level: "all", source: "all", query: "" },
+      currentNewLogsWhileAway: 0,
+      maxLoaded: 2_000,
+    });
+
+    expect(result.readModel.entries).toEqual([currentEntry]);
+    expect(result.readModel.summary).toEqual(nextSummary);
+    expect(result.shouldFollowTail).toBe(false);
+    expect(result.newLogsWhileAway).toBe(1);
+  });
+
+  it("ignores duplicate and filtered-out update entries for viewport and New logs counts", () => {
+    const result = applyAppLogLiveUpdate({
+      current: { entries: [currentEntry], summary: appLogSummary() },
+      incomingEntries: [
+        currentEntry,
+        entry({ id: "3", seq: 3, level: "info", source: "workspace", message: "Background info" }),
+      ],
+      incomingSummary: nextSummary,
+      liveMode: "live",
+      bottomPinned: false,
+      filters: { level: "error", source: "all", query: "" },
+      currentNewLogsWhileAway: 5,
+      maxLoaded: 2_000,
+    });
+
+    expect(result.readModel.entries).toEqual([currentEntry]);
+    expect(result.matchingNewEntries).toEqual([]);
+    expect(result.newLogsWhileAway).toBe(5);
   });
 });

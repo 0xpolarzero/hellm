@@ -1,131 +1,54 @@
 import { describe, expect, it } from "bun:test";
 import {
-  deriveTranscriptScrollTopForViewportResize,
-  deriveTranscriptUserScrollState,
-  easeTranscriptScrollToBottom,
-  getTranscriptDistanceFromBottom,
-  shouldAdjustTranscriptScrollForMeasuredItem,
+  getTranscriptNativeScrollBehavior,
+  resolveTranscriptRestoreTarget,
 } from "./transcript-scroll";
 
 describe("transcript scroll policy", () => {
-  it("keeps auto-scroll enabled near the bottom without rewriting the current anchor", () => {
-    const state = deriveTranscriptUserScrollState({
-      scrollTop: 476,
-      scrollHeight: 900,
-      clientHeight: 400,
-      shouldVirtualize: true,
-      currentAnchorIndex: 14,
-      getIndexAtOffset: () => 99,
-    });
-
-    expect(state).toEqual({
-      stickToBottom: true,
-      autoScroll: true,
-      anchorIndex: 14,
-    });
+  it("uses native smooth scrolling only when animation is requested and motion is allowed", () => {
+    expect(getTranscriptNativeScrollBehavior({ animated: true, reducedMotion: false })).toBe(
+      "smooth",
+    );
+    expect(getTranscriptNativeScrollBehavior({ animated: true, reducedMotion: true })).toBe("auto");
+    expect(getTranscriptNativeScrollBehavior({ animated: false, reducedMotion: false })).toBe(
+      "auto",
+    );
   });
 
-  it("uses Codex-style bottom distance semantics for the pinned threshold", () => {
+  it("restores by transcript anchor id when the row still exists", () => {
+    const rows = [{ key: "one" }, { key: "two" }, { key: "three" }];
+
     expect(
-      getTranscriptDistanceFromBottom({
-        scrollTop: 476,
-        scrollHeight: 900,
-        clientHeight: 400,
+      resolveTranscriptRestoreTarget({
+        anchorId: "two",
+        offsetPx: 420,
+        rows,
+        getRowKey: (row) => row.key,
       }),
-    ).toBe(24);
-
-    expect(
-      deriveTranscriptUserScrollState({
-        scrollTop: 476,
-        scrollHeight: 900,
-        clientHeight: 400,
-        shouldVirtualize: true,
-        currentAnchorIndex: 14,
-        getIndexAtOffset: () => 99,
-      }).stickToBottom,
-    ).toBe(true);
-
-    expect(
-      deriveTranscriptUserScrollState({
-        scrollTop: 475,
-        scrollHeight: 900,
-        clientHeight: 400,
-        shouldVirtualize: true,
-        currentAnchorIndex: 14,
-        getIndexAtOffset: () => 99,
-      }).stickToBottom,
-    ).toBe(false);
+    ).toEqual({ kind: "anchor", index: 1 });
   });
 
-  it("captures a new anchor when the user scrolls away from the bottom", () => {
-    const state = deriveTranscriptUserScrollState({
-      scrollTop: 180,
-      scrollHeight: 900,
-      clientHeight: 400,
-      shouldVirtualize: true,
-      currentAnchorIndex: 14,
-      getIndexAtOffset: (offset) => Math.floor(offset / 12),
-    });
+  it("falls back to the raw offset when the anchor is absent", () => {
+    const rows = [{ key: "one" }];
 
-    expect(state).toEqual({
-      stickToBottom: false,
-      autoScroll: false,
-      anchorIndex: 15,
-    });
+    expect(
+      resolveTranscriptRestoreTarget({
+        anchorId: "missing",
+        offsetPx: 420,
+        rows,
+        getRowKey: (row) => row.key,
+      }),
+    ).toEqual({ kind: "offset", offsetPx: 420 });
   });
 
-  it("lets TanStack adjust scroll only for measured rows above the current anchor", () => {
+  it("clamps restored raw offsets to the scrollable range floor", () => {
     expect(
-      shouldAdjustTranscriptScrollForMeasuredItem({
-        index: 5,
-        anchorIndex: 18,
-        stickToBottom: false,
+      resolveTranscriptRestoreTarget({
+        anchorId: null,
+        offsetPx: -12,
+        rows: [],
+        getRowKey: (row: { key: string }) => row.key,
       }),
-    ).toBe(true);
-  });
-
-  it("ignores measurement churn at or below the anchor and while pinned to bottom", () => {
-    expect(
-      shouldAdjustTranscriptScrollForMeasuredItem({
-        index: 18,
-        anchorIndex: 18,
-        stickToBottom: false,
-      }),
-    ).toBe(false);
-
-    expect(
-      shouldAdjustTranscriptScrollForMeasuredItem({
-        index: 5,
-        anchorIndex: 18,
-        stickToBottom: true,
-      }),
-    ).toBe(false);
-  });
-
-  it("preserves bottom distance when the viewport resizes away from the bottom", () => {
-    expect(
-      deriveTranscriptScrollTopForViewportResize({
-        scrollTop: 320,
-        previousClientHeight: 500,
-        nextClientHeight: 440,
-        stickToBottom: false,
-      }),
-    ).toBe(380);
-
-    expect(
-      deriveTranscriptScrollTopForViewportResize({
-        scrollTop: 320,
-        previousClientHeight: 500,
-        nextClientHeight: 440,
-        stickToBottom: true,
-      }),
-    ).toBeNull();
-  });
-
-  it("uses a monotonic cubic ease-out for programmatic scroll-to-bottom motion", () => {
-    expect(easeTranscriptScrollToBottom(0)).toBe(0);
-    expect(easeTranscriptScrollToBottom(1)).toBe(1);
-    expect(easeTranscriptScrollToBottom(0.5)).toBeGreaterThan(0.5);
-    expect(easeTranscriptScrollToBottom(0.75)).toBeGreaterThan(easeTranscriptScrollToBottom(0.5));
+    ).toEqual({ kind: "offset", offsetPx: 0 });
   });
 });
