@@ -13,6 +13,11 @@
 This document is intentionally not finished. It is the durable working spec for the design thread.
 Future discussion should edit this document directly as decisions are refined.
 
+Related specs:
+
+- `docs/specs/extension-managing.spec.md` defines the Extension Managing extension and its
+  `svvyx extensions ...` lifecycle API.
+
 The current PRD and feature inventory still describe the older Context Library, direct-tool, and
 `execute_typescript api.*` model. This spec records the newer direction discussed in the session.
 When this direction is adopted for implementation, `docs/prd.md`, `docs/features.ts`,
@@ -780,7 +785,7 @@ shipped by `svvy`, non-deletable, resettable, and configurable per agent usage s
 | Filesystem | Native | `shell`, `apply_patch`, shell/filesystem instructions, `svvyx` access through shell | default loaded | default loaded | default loaded |
 | Code Mode | Native | `execute_typescript` with actor-scoped Incur `MemoryClient` over loaded extensions | default loaded | default loaded | default loaded |
 | Extension Loading | Native | `list_extensions`, `request_extension` | default loaded | default loaded | default loaded |
-| Extension Managing | Incur-backed shipped extension with native app bridge where needed | inspect, create, edit, build, reset, and revert extensions and agent extension selections | available | available | unavailable |
+| Extension Managing | Incur-backed shipped extension with native app bridge where needed | `svvyx extensions ...` lifecycle commands for inspect, create, build, usage state, reset, delete, and revert; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |
 | cx | Incur-backed or extension-backed shipped extension | codebase/product navigation and cx controls | available | available | available |
 | Smithers | Incur-backed shipped extension | workflow run/list/inspect/resume/signal/transcript controls | unavailable | default loaded | unavailable |
 | Web | Native/provider-backed or extension-backed shipped extension | web/search/fetch/browser-like research capability | default loaded | default loaded | default loaded |
@@ -805,6 +810,7 @@ semantic `git.*` or `github.*` model tool surface by default.
 
 Extension Managing combines the earlier separate "Extension Manager" and "Incur Extension
 Authoring" ideas. There is no separate Incur Authoring extension unless this gets split again later.
+Its detailed command surface is defined in `docs/specs/extension-managing.spec.md`.
 
 Project CI is kept as a named placeholder only. It should stay unavailable for all actor kinds until
 its value and surface are defined.
@@ -897,7 +903,7 @@ The app-modification surface should be an extension, not special ambient authori
 
 - extension inspection
 - extension creation
-- extension editing
+- extension file discovery for edits through native `apply_patch`
 - extension build
 - extension revert
 - agent profile extension selection
