@@ -43,16 +43,22 @@ File content changes use the normal coding-agent editing path:
 1. Run `svvyx extensions inspect <id> --json`.
 2. Read the returned file paths with ordinary shell tools.
 3. Edit the returned file paths with native `apply_patch`.
-4. Run `svvyx extensions build <id> --json` when validation or regeneration is required.
+4. Run `svvyx extensions build <id> --json` after the intended file-edit batch is complete.
+
+`svvy` must not automatically build after ordinary agent `apply_patch` edits. Agents often edit
+several extension files in sequence, and building after each patch would be noisy and wasteful.
+Instead, app-owned extension file changes mark the extension `buildRequired: true`, the UI shows a
+clear Build required indicator, and the Extension Managing instructions tell the agent to run
+`build` after it finishes the edit batch.
 
 Product-state changes use Extension Managing commands:
 
 - extension creation
-- extension build and activation
+- extension build
 - extension usage state changes
 - builtin reset
 - user-extension delete
-- product-state revert
+- extension change revert
 
 Extension Managing must not introduce custom `patch`, `write`, `set-instructions`, or
 content-returning commands. Native `apply_patch` is the patching tool.
@@ -77,7 +83,7 @@ Database or product-state storage includes:
 - extension registry records
 - origin: `builtin` or `user`
 - runtime kind
-- active revision
+- active revision as internal build status, not as a user-facing rollback surface
 - usage state per agent profile
 - build status
 - requirement status
@@ -98,6 +104,69 @@ User extensions are ordinary app-owned extension directories:
 
 - user extensions are deletable
 - user extensions are not resettable to shipped defaults
+- deletion moves the extension into app-managed trash so the delete change can be reverted
+
+`svvy` should not use git to implement extension revert. App-owned extension files may live outside a
+repository, and the product only needs local app-history reversibility. `svvy` records structured
+change records for lifecycle commands and records patch/preimage data for app-owned extension files
+touched by `apply_patch`. Those records are retained indefinitely for now.
+
+## Change History And Revert Contract
+
+Extension revert is intentionally narrow and obvious.
+
+Revert is exposed as a UI button on a reversible change card and as
+`svvyx extensions revert <change-id> --json`. The UI may also show the same reversible changes in
+extension change history, but app-managed trash does not need a standalone browser or management
+surface.
+
+Revertability:
+
+| Change kind | Revert behavior |
+| --- | --- |
+| Agent `apply_patch` touching app-owned extension files | Revert the whole recorded change, not individual files. |
+| `set-usage` | Restore the previous usage state for that extension/profile pair. |
+| `reset` | Restore the pre-reset files and usage/product state recorded by that reset change. |
+| `delete` | Restore the extension directory from app-managed trash and restore its registry state. |
+| `create` | No revert affordance; the UI may show Delete for the created extension. |
+| `build` | No user-facing rollback or activation command. Build status and active revision may be shown as indicators only. |
+| Dependency install | No rollback promise. Reverting source or manifest changes can make dependency requirements disappear for future builds, but package caches, lifecycle-script effects, and installed artifacts are not reverted. |
+| Secret entry, update, or removal | Not agent-readable and not part of Extension Managing revert. |
+| External shell side effects | Not reverted by Extension Managing. |
+
+File-level revert rules:
+
+- `svvy` records one reversible file-change card per successful `apply_patch` call that touches
+  app-owned extension files.
+- Source edits, instruction edits, and manifest/metadata edits are the same class: app-owned file
+  changes.
+- Revert is per change card. The UI does not need per-file revert inside a multi-file patch.
+- Revert must fail clearly if any target file has changed in a way that prevents exact patch/preimage
+  reversal. It must not attempt a fuzzy merge or best-effort repair.
+- A failed revert returns the conflicting paths and leaves files unchanged.
+- A successful file revert marks the extension `buildRequired: true` before the follow-up build
+  attempt.
+
+Build behavior:
+
+- Ordinary agent file edits do not auto-build.
+- A successful `revert` does auto-build once when the revert leaves the extension build-required.
+- Revert-triggered auto-build uses the same `build` implementation and dependency approval gate as a
+  normal explicit build.
+- If the auto-build needs dependency approval, it pauses with the normal dependency confirmation UI.
+- Revert-triggered build results must be surfaced as normal conversation/tool output so the agent can
+  observe the user action and the new extension state.
+
+Conversation-visible UI events:
+
+- When the user clicks a revert button, `svvy` records a visible product event in the owning
+  conversation, such as `User reverted extension file change chg_188 for linear.`
+- The subsequent build or dependency-confirmation result is shown as a normal tool/product output.
+- Revert must not be hidden as renderer-only state, because the active agent needs to know that the
+  extension files and generated surface may have changed.
+- If an agent directly runs `svvyx extensions revert <change-id> --json`, the command result and
+  revert-triggered build output are already visible tool output, so no synthetic user-event message is
+  needed.
 
 ## Command Namespace
 
@@ -355,7 +424,7 @@ Example output:
 
 ## `build`
 
-Use case: validate files, regenerate derived surfaces, and optionally activate the new revision.
+Use case: validate files, regenerate derived surfaces, and activate the new successful build.
 
 ```bash
 svvyx extensions build <id> --json
@@ -366,8 +435,11 @@ Parameters:
 | Parameter | Required | Description |
 | --- | --- | --- |
 | `<id>` | yes | Stable extension id. |
-| `--activate` | no | Boolean. Defaults to `true`. |
 | `--json` | no | Return machine-readable JSON. |
+
+Successful builds always activate the new generated surface for future extension resolution. There is
+no separate user-facing activation command and no user-facing build rollback command. The previous
+active revision may be returned as diagnostic/status metadata only.
 
 Prompt-only success example:
 
@@ -445,6 +517,10 @@ Dependency confirmation example:
 ```
 
 Failed builds must leave the previous active extension build untouched.
+
+When a build succeeds, `buildRequired` becomes `false`. When the build is blocked by dependency
+approval, fails validation, or fails during install/build, `buildRequired` remains `true` and the UI
+continues to show Build required.
 
 ## `set-usage`
 
@@ -528,6 +604,10 @@ Example output:
 }
 ```
 
+`reset` records a reversible command-level change. It does not auto-build by itself. If the reset
+changes files or generated-surface inputs, the extension remains Build required until the agent or
+user runs `svvyx extensions build <id> --json`.
+
 User-extension error:
 
 ```json
@@ -562,9 +642,14 @@ Example output:
   "ok": true,
   "changeId": "chg_175",
   "extensionId": "linear",
-  "deleted": true
+  "deleted": true,
+  "trashId": "trash_42"
 }
 ```
+
+Delete moves the extension into app-managed trash and records a reversible command-level change.
+Trash is reachable only through the delete change card or change history; the product does not need
+a standalone trash browser.
 
 Builtin error:
 
@@ -580,7 +665,7 @@ Builtin error:
 
 ## `revert`
 
-Use case: undo a product-state change made by Extension Managing.
+Use case: undo a reversible extension change.
 
 ```bash
 svvyx extensions revert <change-id> --json
@@ -590,10 +675,10 @@ Parameters:
 
 | Parameter | Required | Description |
 | --- | --- | --- |
-| `<change-id>` | yes | Previous Extension Managing change id. |
+| `<change-id>` | yes | Previous reversible Extension Managing or extension-file change id. |
 | `--json` | no | Return machine-readable JSON. |
 
-Example output:
+Usage revert example:
 
 ```json
 {
@@ -610,6 +695,107 @@ Example output:
     "after": {
       "state": "unavailable"
     }
+  }
+}
+```
+
+File-change revert example:
+
+```json
+{
+  "ok": true,
+  "revertedChangeId": "chg_188",
+  "changeId": "chg_210",
+  "result": {
+    "kind": "extension_files",
+    "extensionId": "linear",
+    "files": [
+      {
+        "path": "/Users/example/Library/Application Support/svvy/extensions/linear/source/index.ts",
+        "status": "reverted"
+      },
+      {
+        "path": "/Users/example/Library/Application Support/svvy/extensions/linear/instructions/full.md",
+        "status": "reverted"
+      }
+    ],
+    "buildRequired": true,
+    "autoBuild": {
+      "status": "success",
+      "activeRevision": "rev_046",
+      "surfaceHash": "sha256:77ab12..."
+    }
+  },
+  "conversationEvent": {
+    "message": "User reverted extension file change chg_188 for linear."
+  }
+}
+```
+
+Dependency approval during revert-triggered auto-build:
+
+```json
+{
+  "ok": true,
+  "revertedChangeId": "chg_188",
+  "changeId": "chg_210",
+  "result": {
+    "kind": "extension_files",
+    "extensionId": "linear",
+    "files": [
+      {
+        "path": "/Users/example/Library/Application Support/svvy/extensions/linear/source/index.ts",
+        "status": "reverted"
+      }
+    ],
+    "buildRequired": true,
+    "autoBuild": {
+      "status": "needs_user_confirmation",
+      "dependencyDiff": {
+        "added": [
+          {
+            "name": "@linear/sdk",
+            "version": "12.4.0"
+          }
+        ],
+        "removed": [],
+        "changed": []
+      },
+      "message": "Building this extension requires installing new dependencies. The user must confirm in the app UI."
+    }
+  }
+}
+```
+
+Delete revert example:
+
+```json
+{
+  "ok": true,
+  "revertedChangeId": "chg_175",
+  "changeId": "chg_211",
+  "result": {
+    "kind": "extension_delete",
+    "extensionId": "linear",
+    "restored": true,
+    "trashId": "trash_42",
+    "buildRequired": false,
+    "autoBuild": null
+  }
+}
+```
+
+Conflict error:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "REVERT_CONFLICT",
+    "message": "The change cannot be reverted because one or more files changed since it was recorded.",
+    "conflictingPaths": [
+      "/Users/example/Library/Application Support/svvy/extensions/linear/source/index.ts"
+    ]
   }
 }
 ```

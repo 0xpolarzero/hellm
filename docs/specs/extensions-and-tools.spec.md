@@ -351,7 +351,7 @@ Each extension detail view should include:
 - TypeScript API enablement control
 - dependency status
 - env/secrets requirement status
-- build/reload controls when source changed
+- Build required indicator and explicit build control when editable extension files changed
 - readonly generated command overview
 - readonly generated TypeScript API overview
 - readonly list of agent profiles using the extension and their usage state
@@ -359,9 +359,13 @@ Each extension detail view should include:
 - reset control for shipped extensions
 - delete control only for user-created extensions
 
-Agent-made extension edits should not be hidden. They should render as rich tool-use UI showing the
-files or fields changed, generated surface changes, build result, dependency changes, and a simple
-revert action where possible.
+Agent-made extension edits should not be hidden. Successful `apply_patch` calls touching app-owned
+extension files should render as rich tool-use UI showing the changed files, Build required state,
+and one revert action for the whole patch. `svvy` must not automatically build after ordinary agent
+file edits because an agent may edit several files in sequence; the agent should run the explicit
+Extension Managing build command after the edit batch is complete. When a user clicks Revert on a
+change card, `svvy` should restore that recorded change, emit a visible conversation event, and
+automatically attempt one follow-up build if the revert leaves the extension build-required.
 
 ## Extension Loading
 
@@ -676,18 +680,33 @@ leak outside the Smithers attempt that owns it.
 
 ### Product-State Mutations With Revert
 
-Actions that alter app state but are not shell commands should usually execute directly through the
-intended product tool, then show high-quality UI for understanding and reverting the change.
+Actions that alter Extension Managing state but are not shell commands should execute directly
+through the intended product tool, then show high-quality UI for understanding and reverting the
+change when the change has an exact inverse.
 
 Examples:
 
-- changing extension instructions
-- changing extension enablement
-- creating an extension
-- editing app-owned configuration that is safe to revert
+- changing extension instructions, source, or manifest files through `apply_patch`
+- changing extension usage through `svvyx extensions set-usage`
+- resetting a builtin extension through `svvyx extensions reset`
+- deleting a user extension through `svvyx extensions delete`
 
 Instead of stopping for user approval like many agent apps, `svvy` should visualize the tool use and
-offer simple revert where practical.
+offer simple revert for those exact changes.
+
+The revert contract is intentionally narrow:
+
+- file edits, including instruction edits, source edits, and manifest metadata edits, are reverted per
+  recorded `apply_patch` change; there is no separate custom edit/write surface
+- `set-usage`, `reset`, and `delete` are command-level revertable
+- `create` is not shown as revertable; the UI can show Delete for the created user extension
+- build activation is not a user-facing rollback surface; active revision is status/diagnostic
+  metadata only
+- app-managed extension trash exists only so a delete change can be reverted from its change card or
+  history
+- dependency installs, secret entry/update/removal, external shell side effects, and ordinary repo
+  file edits are not reverted by Extension Managing
+- `svvy` should use app-owned change records and patch/preimage data for extension revert, not git
 
 ### Action Classes
 
@@ -709,10 +728,12 @@ Working assignment:
 | `svvyx ...` invoked through general shell | Inherits shell policy. |
 | `apply_patch` | Direct inside the session workspace; auto-reviewed when it would write outside the session workspace; rejected when outside policy. |
 | `request_extension` | Direct native control when the extension is available; clear failure when unavailable. |
-| Extension/profile edits through Extension Manager | Directly done with rich visualization and revert. |
+| Extension file edits through `apply_patch` | Directly done with rich visualization, Build required indicator, and per-change revert; no auto-build after ordinary agent edits. |
+| Extension usage/reset/delete through Extension Managing | Directly done with rich visualization and command-level revert. |
+| Extension creation | Directly done with rich visualization and a Delete action, not a revert action. |
+| Extension revert | Directly done with one automatic follow-up build when the revert leaves the extension build-required; UI button reverts also emit a visible conversation event. |
 | Dependency install or dependency-changing build | Blocked pending explicit user confirmation. |
 | Secret entry or update | User-only UI action; never agent-readable. |
-| Safe app-state edits | Directly done with convenient revert where practical. |
 
 ## Dependency Lifecycle
 
@@ -949,8 +970,8 @@ The following are unresolved from the session and should be settled before imple
   available extension names and summaries for policy context, unavailable extension ids if needed
   for bypass detection, current loaded `svvyx` surface, cwd, command/action JSON, relevant
   read-only filesystem state, and recent conversation state.
-- Decide exactly how old extension revisions are retained, if at all, beyond the previous active
-  build needed for rollback after failed builds.
+- Decide retention and pruning for generated build artifacts after active revision changes. Extension
+  change/revert history itself is retained indefinitely for now and is not implemented with git.
 - Decide where runtime standards are configured after the Context pane is removed or absorbed.
 - Decide whether workspace-scoped extensions exist.
 - Decide whether user-authored and installed extensions are v1 behavior, or whether v1 is limited
