@@ -54,6 +54,9 @@ explicitly later.
 - Automatic session compaction as a special supervisor or workflow is separate future work.
 - Snippets, command-like macros, and user-invoked prompt macros are not part of this feature.
 - Incur MCP and Incur skills are not adopted as the runtime integration. `svvy` owns the bridge.
+- An `iron-proxy`-style egress boundary and credential proxy is deferred. It remains a possible
+  hardening improvement for secret-bearing network tools, but v1 assumes editable extension code is
+  trusted not to intentionally log or exfiltrate configured secret values.
 
 ## Core Terminology
 
@@ -204,6 +207,53 @@ A native `list_extensions` tool should let the agent inspect:
 `list_extensions` must not expose unavailable extensions or command details for available-but-not-
 loaded extensions.
 
+`list_extensions` also reports env requirement readiness for loaded and available extensions, using
+the same redacted status model as Extension Managing. It may show an env declaration's name,
+required flag, secret flag, short description, and status. It must never show the value, a preview,
+a hash, a keychain/account id, a storage path, a set/update timestamp, or any other value-correlating
+metadata.
+
+Example:
+
+```json
+{
+  "loaded": [
+    {
+      "id": "linear",
+      "title": "Linear",
+      "runtimeKind": "incur_cli",
+      "summary": "Linear issue and project workflow support.",
+      "env": [
+        {
+          "name": "LINEAR_API_KEY",
+          "required": true,
+          "secret": true,
+          "description": "Linear API key used by Linear commands.",
+          "status": "configured"
+        },
+        {
+          "name": "LINEAR_API_BASE_URL",
+          "required": false,
+          "secret": false,
+          "description": "Linear API base URL.",
+          "status": "defaulted"
+        }
+      ],
+      "runtimeReady": true
+    }
+  ],
+  "available": [
+    {
+      "id": "github",
+      "title": "GitHub",
+      "minimalInstructions": "Load this when the user asks for GitHub-specific workflow guidance.",
+      "env": [],
+      "runtimeReady": true
+    }
+  ]
+}
+```
+
 ### Shipped Extension
 
 A shipped extension is provided by `svvy` by default.
@@ -283,6 +333,12 @@ A successful build atomically replaces the extension's current build. The curren
 - dependency graph metadata
 - env requirements
 - content hashes
+
+Env requirements in build output are declaration metadata and readiness status only. Current build
+artifacts, generated docs, generated schemas, generated TypeScript declarations, aggregate cache
+blobs, and agent-facing build output must not contain env values, secret values, secret hashes,
+secret previews, secret storage identifiers, or value timestamps. Content hashes are internal
+activation/cache state and must not be used as secret fingerprints or displayed as env status.
 
 Builds write into `builds/extensions/<id>/staging/<build-run-id>/` while they are running. After a
 build validates successfully, `svvy` atomically replaces `builds/extensions/<id>/current/` with that
@@ -383,8 +439,8 @@ Ownership:
 - `package/package.json` is editable dependency request state.
 - `package/bun.lock` is inspectable lock state and is not an editing target for agents.
 - `trash/` stores deleted user extensions for Extension Managing revert.
-- `snapshots/` stores local-only user-named extension snapshots and their encrypted local secret
-  snapshot material where applicable.
+- `snapshots/` stores local-only user-named extension snapshots; secret payloads or local keychain
+  references are kept in non-agent-readable app secret storage, not as agent-inspectable files.
 
 Generated files, build outputs, `package/bun.lock`, `node_modules`, trash, and snapshots are
 separated from editable source. Agents may inspect those paths for traceability, but they are not
@@ -618,15 +674,38 @@ shell/CLI or `execute_typescript` calls in the same turn should be able to use t
 extension.
 
 Same-turn loading starts only after `request_extension` succeeds. If dependency approval, install,
-build, secret setup, or validation blocks the load, the extension remains available-but-not-loaded
-and contributes only its loading hint. A dependency-blocked `request_extension` creates or reuses the
-same durable approval request that an app-pane build would use for the same unresolved dependency
-identities. If the `request_extension` tool call is still pending on that approval, approval resumes
-the blocked install/build/load for that actor and returns the normal successful `request_extension`
-result after the extension is mounted. If no actor-scoped `request_extension` call is still pending,
-approval only records the dependency identities and resumes or unblocks app-level build work; it must
-not mount the extension into any actor session. A later actor that wants the extension must call
-`request_extension` again.
+build, missing required env, or validation blocks the load, the extension remains
+available-but-not-loaded and contributes only its loading hint. A dependency-blocked
+`request_extension` creates or reuses the same durable approval request that an app-pane build would
+use for the same unresolved dependency identities. If the `request_extension` tool call is still
+pending on that approval, approval resumes the blocked install/build/load for that actor and returns
+the normal successful `request_extension` result after the extension is mounted. If no actor-scoped
+`request_extension` call is still pending, approval only records the dependency identities and
+resumes or unblocks app-level build work; it must not mount the extension into any actor session. A
+later actor that wants the extension must call `request_extension` again.
+
+A missing required env value is not an approval request and cannot be resolved by the agent. The
+native load result must name only the missing env declarations and direct the user to configure them
+in the app UI:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "EXTENSION_ENV_MISSING",
+    "message": "Linear cannot be loaded because one required env value is missing.",
+    "extensionId": "linear",
+    "missingEnv": [
+      {
+        "name": "LINEAR_API_KEY",
+        "required": true,
+        "secret": true,
+        "description": "Linear API key used by Linear commands."
+      }
+    ]
+  }
+}
+```
 
 ## Incur And `svvyx`
 
@@ -971,7 +1050,7 @@ Working assignment:
 | Extension creation | Directly done with rich visualization and a Delete action, not a revert action. |
 | Extension revert | Directly done with one automatic follow-up build when the revert leaves the extension build-required; UI button reverts also emit a visible conversation event. |
 | Dependency install with unapproved exact dependency or trusted dependency identities | Blocked pending explicit user confirmation through a durable dependency approval request shared by relevant app-pane and conversation projections. |
-| Secret entry or update | User-only UI action; never agent-readable. |
+| Secret entry, update, or removal | User-only UI action; never agent-readable and never agent-writable. |
 
 ## Dependency Lifecycle
 
@@ -1091,37 +1170,328 @@ management is discussed.
 
 ## Secrets And Environment Variables
 
-The session resolved that `svvy` should manage extension secrets explicitly rather than leaving them
-to chat or plain files.
+The resolved v1 model is intentionally simple:
 
-Extensions declare env requirements:
+- extensions are app-global
+- env declarations are part of the app-global extension manifest/current build
+- env values are app-global per extension
+- each stored value is keyed by `(extensionId, envName)`
+- there is no `workspaceId`, `valueScope`, `defaultScope`, `source`, source list, or inherited-env
+  selection in v1
+- agents can observe declaration metadata and readiness status only
+- agents cannot read, write, update, delete, export, import, or snapshot raw secret values
+- `svvy` may inject raw secret values into trusted extension runtime processes in v1
+- raw secret injection is deliberately limited to the exact extension invocation that needs it
 
-- name
-- required or optional
-- secret or non-secret
-- description
-- allowed source, such as app secret store, workspace env, or inherited process env
+The v1 trust assumption is that editable extension code is trusted not to intentionally log,
+exfiltrate, or transform configured secret values. A future egress proxy can remove that assumption,
+but it is not a v1 requirement.
 
-The user enters secret values through `svvy` UI.
+### Env Declaration Schema
 
-Secret lifecycle:
+Editable extension manifests declare env requirements under `env`.
 
-1. Extension declares required and optional env vars.
-2. Extensions pane shows missing and configured values without revealing secret contents.
-3. User enters secret values in app UI.
-4. `svvy` stores secrets encrypted through the app secret store or OS keychain.
-5. When `svvyx` or the `execute_typescript` MemoryClient runs, `svvy` injects the required env vars
-   programmatically.
-6. Secret values never appear in prompts, generated docs, tool output, logs, artifacts, transcripts,
-   or agent-readable files.
-7. Known secret values are redacted from command output if they leak.
-8. Missing secrets return structured errors such as "`GITHUB_TOKEN` is missing", not requests to
-   paste tokens into chat.
+Each item has exactly these fields in v1:
 
-User-named extension snapshots are local-only in v1. They may include local encrypted secret material
-or local keychain-backed secret references only if that material never becomes agent-readable.
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `name` | yes | string | Environment variable name. Must be unique within this extension's manifest. |
+| `required` | yes | boolean | Whether the extension's runtime is unusable until a value is available. |
+| `secret` | yes | boolean | Whether the value is sensitive and must be encrypted, redacted, and hidden from agents. |
+| `description` | yes | string | User-facing explanation of what the value is for. |
+| `default` | no | string | Optional manifest default for non-secret env only. Forbidden when `secret: true`. |
+
+No other env declaration fields are accepted in v1. In particular:
+
+- no workspace-scoped env values
+- no per-agent, per-profile, per-session, or per-actor env values
+- no inherited shell environment selection
+- no `.env` file source
+- no source priority list
+- no broad categories such as `source`, `sources`, `valueScopes`, or `defaultScope`
+- no agent-editable secret value reference
+
+Example:
+
+```json
+{
+  "env": [
+    {
+      "name": "LINEAR_API_KEY",
+      "required": true,
+      "secret": true,
+      "description": "Linear API key used by Linear commands."
+    },
+    {
+      "name": "LINEAR_API_BASE_URL",
+      "required": false,
+      "secret": false,
+      "description": "Linear API base URL.",
+      "default": "https://api.linear.app"
+    }
+  ]
+}
+```
+
+Validation rules:
+
+- `name` must be a valid environment variable name for every supported runtime.
+- duplicate names inside one extension are invalid.
+- `default` is allowed only when `secret: false`.
+- a required non-secret env without `default` must be configured by the user before runtime use.
+- an optional env without value or default is omitted from runtime injection.
+- a manifest may change env declarations; stale stored values whose `envName` is no longer declared
+  remain app-managed secret state but are not injected, not shown to agents, and should be surfaced to
+  the user in the Extensions pane as removable orphaned values.
+
+### Value Storage
+
+The value key is exactly:
+
+```ts
+type ExtensionEnvValueKey = {
+  extensionId: string;
+  envName: string;
+};
+```
+
+This key is intentionally not just `envName`. Two extensions that declare `GITHUB_TOKEN` receive
+separate values unless the user copies the same value into both extension settings. `svvy` must not
+implicitly share, alias, deduplicate, or globally reuse secrets across extensions by name.
+
+Secret values:
+
+- are entered, updated, and removed only through app UI or another user-owned native settings flow
+- are stored encrypted through the app-managed local secret store, OS keychain, or equivalent
+  encrypted app storage
+- are never stored in extension source files, generated files, build output, aggregate caches,
+  snapshots readable by agents, prompt revisions, transcripts, tool results, artifacts, logs, or
+  shell history
+- are not exposed through `svvyx extensions ...`, `list_extensions`, generated prompt text, generated
+  command docs, generated TypeScript declarations, generated schemas, `svvyx --help`, or
+  `execute_typescript` declarations
+
+Non-secret values:
+
+- use the same `(extensionId, envName)` identity
+- may have a manifest default
+- may have an app-level user override
+- may be displayed to the user in the Extensions pane
+- should still be omitted from ordinary agent-facing status output unless the output explicitly needs
+  non-secret configuration detail; the default agent-facing shape is status, not value
+
+### Status Vocabulary
+
+Agent-visible status uses this closed vocabulary:
+
+| Status | Meaning |
+| --- | --- |
+| `configured` | A user-provided app value exists for this `(extensionId, envName)`. |
+| `defaulted` | No user value exists, but the non-secret manifest declaration has a `default`. |
+| `missing` | No value is available and the declaration is required. |
+| `optional_missing` | No value is available and the declaration is optional. |
+
+`configured` never implies that the agent can see, inspect, hash, compare, or copy the value.
+
+Example status block:
+
+```json
+{
+  "env": [
+    {
+      "name": "LINEAR_API_KEY",
+      "required": true,
+      "secret": true,
+      "description": "Linear API key used by Linear commands.",
+      "status": "configured"
+    },
+    {
+      "name": "LINEAR_API_BASE_URL",
+      "required": false,
+      "secret": false,
+      "description": "Linear API base URL.",
+      "status": "defaulted"
+    }
+  ],
+  "runtimeReady": true
+}
+```
+
+Forbidden status fields include:
+
+- `value`
+- `preview`
+- `maskedValue`
+- `lastFour`
+- `hash`
+- `fingerprint`
+- `keychainId`
+- `storagePath`
+- `createdAt`
+- `updatedAt`
+- `lastUsedAt`
+
+The UI may keep richer local metadata for human account management, but agent-facing tools and
+agent-readable generated files must not expose it.
+
+### Runtime Injection
+
+Runtime env injection is narrow and process-local.
+
+When a loaded extension command runs through actor-scoped `svvyx`, `svvy` builds an env map for that
+specific extension command process:
+
+1. start from the safe base process env required for the command runner
+2. add non-secret manifest defaults
+3. overlay app-level non-secret user values for that extension
+4. overlay app-managed secret values for that extension
+5. run the command
+6. discard the per-invocation env map
+
+When `execute_typescript` uses the actor-scoped Incur `MemoryClient`, the same extension-specific
+env map is supplied only to the invoked extension command. The broader `execute_typescript` snippet
+environment, pi runtime process, actor shell environment, and other loaded extensions must not
+receive that extension's secret values.
+
+Runtime injection rules:
+
+- raw secret values are never placed in the global pi process env
+- raw secret values are never placed in the default shell env for an actor
+- raw secret values are never placed in the default `execute_typescript` snippet env
+- one extension's env values are never injected into another extension's command process
+- available-but-not-loaded extensions receive no runtime env because they have no mounted runtime
+  surface
+- prompt-only extensions never receive runtime env
+- already emitted tool calls finish with the env map for the mounted tool set that produced them
+- if an env declaration changes after a session binding is created, the binding refresh must update
+  runtime readiness before the next extension invocation
+
+The safe base env may include ordinary process values required for execution, but it must not include
+extension secrets from app storage. If the host process itself has unrelated secret values in its
+environment, `svvy` should prefer a minimal allowlisted base env for extension commands so unrelated
+host secrets are not inherited accidentally.
+
+### Missing Values
+
+Build does not require env values. A build validates env declarations and generated surfaces, but it
+does not need to call the remote service or possess secrets.
+
+Missing required env values block runtime use, not source compilation. Specifically:
+
+- `svvyx extensions build <id> --json` may succeed while reporting `runtimeReady: false`.
+- `list_extensions` and `svvyx extensions inspect <id> --json` report missing/configured status.
+- `request_extension` fails with `EXTENSION_ENV_MISSING` when loading would mount an executable
+  extension with missing required env.
+- an already loaded extension command fails with `EXTENSION_ENV_MISSING` if a required value was
+  removed after the actor binding was created.
+- an optional missing value is omitted from the env map and must not block load or invocation.
+
+Missing-secret errors must never ask the user to paste a token into chat. The message should tell the
+user to configure the value in the Extensions pane or app settings.
+
+Runtime failure example:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "EXTENSION_ENV_MISSING",
+    "message": "Linear requires LINEAR_API_KEY. Configure it in the Extensions pane.",
+    "extensionId": "linear",
+    "missingEnv": [
+      {
+        "name": "LINEAR_API_KEY",
+        "required": true,
+        "secret": true,
+        "description": "Linear API key used by Linear commands."
+      }
+    ]
+  }
+}
+```
+
+### Redaction And Outputs
+
+`svvy` knows the app-managed secret values and must redact them if they appear in any app-visible or
+agent-visible output.
+
+Redaction applies to:
+
+- extension command stdout and stderr
+- `svvyx` JSON output
+- `execute_typescript` result text
+- command facts
+- app logs
+- error details
+- tool cards
+- generated artifacts
+- transcript text
+- generated prompt previews
+- generated command docs
+- generated TypeScript declarations
+- generated tool schemas
+- snapshot inspection output
+
+Redaction is a last-resort containment measure, not permission for extension code to print secrets.
+The intended v1 behavior is still that trusted extension code does not intentionally reveal them.
+
+Rules:
+
+- exact known secret values are replaced before persistence or agent display.
+- redaction replacement text is `[REDACTED:extension-env:<extensionId>:<envName>]`.
+- if the same secret value is configured for multiple extension env keys, redaction may use the first
+  matching key in deterministic extension id/name order; it must not reveal that multiple keys share
+  the same value.
+- redaction must run before writing command output to durable artifacts, logs, transcript rows, or
+  command-fact records.
+- output truncation must happen after redaction, not before, so a secret cannot survive because it
+  crossed a chunk boundary.
+- binary output that cannot be safely scanned is treated as untrusted; if produced by a
+  secret-bearing extension command, it must be stored only when the product has a binary-safe
+  redaction policy or else replaced with a clear redacted artifact placeholder.
+
+### What Agents Can Never Read Or Do
+
+Agents can never:
+
+- read raw secret values
+- request a reveal, preview, hash, fingerprint, or last-four display of a secret
+- set, update, delete, import, export, or copy secret values through tools
+- write secret values into extension source, manifest files, generated docs, prompt text, snapshots,
+  artifacts, or chat as a supported flow
+- choose the storage source for a secret
+- choose a workspace, session, actor, profile, or inherited shell scope for a v1 extension env value
+- ask `svvy` to inject one extension's env value into another extension
+- receive extension secrets through pi runtime env, global shell env, `execute_typescript` snippet
+  env, generated type declarations, generated schemas, or generated help text
+
+Agents may:
+
+- see that a declaration exists
+- see whether it is required
+- see whether it is secret
+- see the declaration description
+- see status from the closed vocabulary above
+- tell the user that a required value is missing and must be configured in the app UI
+
+### Snapshots
+
+User-named extension snapshots are local-only in v1. They may preserve extension secret state only by
+recording non-agent-readable app secret storage state outside the inspectable snapshot file tree.
+Snapshot files, Extension Managing command output, generated files, artifacts, and transcript output
+must not contain encrypted secret blobs, raw secret values, keychain item identifiers, or
+value-correlating secret metadata.
+
 Snapshot export, importing snapshots on another machine, portable passphrase-based secret restore,
-and cross-machine secret decryption are not product concerns and are unsupported.
+and cross-machine secret decryption are unsupported in v1.
+
+### Deferred Egress Proxy
+
+Research confirmed that `iron-proxy` can provide default-deny egress and boundary credential
+rewriting for untrusted workloads. That model is deferred in `docs/todo.md` and is not part of v1.
+
+The v1 spec therefore does not include egress declarations, credential proxy modes, proxy tokens,
+CA lifecycle, or network-policy enforcement for extension secrets.
 
 ## Extension Snapshots
 
@@ -1135,8 +1505,8 @@ Snapshot payload includes:
 - extension registry/config/settings
 - agent/profile extension usage states
 - package and lockfile state needed to reproduce exact dependency identities
-- encrypted local secret material or non-agent-readable local secret references, subject to the
-  secrets rules above
+- non-agent-readable links to app-managed local secret snapshot state, subject to the secrets rules
+  above
 
 Snapshot payload excludes:
 
@@ -1145,6 +1515,8 @@ Snapshot payload excludes:
 - generated extension docs, schemas, and TypeScript declarations
 - generated aggregate cache blobs
 - runtime build caches
+- agent-readable encrypted secret blobs, raw secret values, keychain item identifiers, and
+  value-correlating secret metadata
 
 Loading a snapshot is a user-first product action. It restores the snapshot's source/config/package
 state, then immediately requests build for affected extensions. The build path uses the normal

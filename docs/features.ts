@@ -42,6 +42,19 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     sourceSpecs: ["docs/prd.md", "docs/specs/ambient-agent-resources-baseline.spec.md"],
   },
   {
+    id: "extension-env-secrets",
+    name: "Extension Env And Secrets",
+    status: "in-progress",
+    summary:
+      "Defines app-global extension env declarations and app-managed values keyed by `(extensionId, envName)`, with user-only secret entry/update/removal, encrypted local secret storage, non-secret manifest defaults plus app-level overrides, status-only agent inspection through `list_extensions` and Extension Managing, build-time declaration validation separate from runtime readiness, process-local runtime injection into only the specific trusted extension command or MemoryClient invocation, and redaction across prompts, generated docs, tool output, logs, artifacts, transcripts, and snapshots while deferring egress-proxy credential boundaries.",
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/extensions-and-tools.spec.md",
+      "docs/specs/extension-managing.spec.md",
+      "docs/todo.md",
+    ],
+  },
+  {
     id: "artifacts-projection",
     name: "Artifacts Projection",
     status: "shipped",

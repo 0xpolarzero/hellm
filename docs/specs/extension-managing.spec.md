@@ -237,6 +237,10 @@ Aggregate surfaces use a real lightweight cache:
 Generated paths, aggregate cache paths, build paths, `package/bun.lock`, `node_modules`, trash, and
 snapshots are inspectable when useful, but they are not editable source.
 
+Inspectable snapshot paths must not contain raw secret values, agent-readable encrypted secret blobs,
+keychain item identifiers, or value-correlating secret metadata. Snapshot commands may report that
+secret state was preserved or restored, but only as coarse status.
+
 The single app-global Bun package project lives under `package/`. `package.json` is editable
 dependency request state. `bun.lock` is inspectable lock state and is not an editing target.
 `node_modules` is install output and is not part of extension snapshots.
@@ -353,6 +357,17 @@ Command outputs should return paths and state, not full file contents.
 Path outputs should be a flat map of relevant resources. They must not imply that every returned path
 is editable. Extension Managing instructions and app policy define which paths may be edited.
 
+Env requirement output must use the architecture-wide redacted status model from
+`docs/specs/extensions-and-tools.spec.md`. Agent-facing command output may show env name, required
+flag, secret flag, description, and status. It must not show env values, value previews, masked
+values, hashes, fingerprints, keychain ids, storage paths, created timestamps, updated timestamps, or
+last-used timestamps.
+
+Build and inspect output may show coarse current-surface and last-build status. It must not expose
+internal surface hashes, build timestamps, or generated aggregate cache keys as part of ordinary
+agent-facing JSON. Internal activation state may still store hashes and timestamps for cache
+validation, stale-surface detection, and diagnostics.
+
 ## `inspect`
 
 Use case: understand an extension and find the files to inspect or edit.
@@ -417,19 +432,17 @@ Prompt-only builtin example:
         }
       ],
       "env": [],
-      "dependencies": []
+      "dependencies": [],
+      "runtimeReady": true
     },
     "state": {
       "draftChanged": false,
       "buildRequired": false,
       "currentSurface": {
-        "status": "ready",
-        "surfaceHash": "sha256:6a2df8...",
-        "builtAt": "2026-06-01T11:12:03.000Z"
+        "status": "ready"
       },
       "lastBuild": {
-        "status": "success",
-        "finishedAt": "2026-06-01T11:12:03.000Z"
+        "status": "success"
       }
     }
   }
@@ -481,7 +494,22 @@ Incur-backed builtin example:
     ],
     "requirements": {
       "externalBinaries": [],
-      "env": [],
+      "env": [
+        {
+          "name": "SMITHERS_API_KEY",
+          "required": true,
+          "secret": true,
+          "description": "Smithers API key used by hosted workflow commands.",
+          "status": "missing"
+        },
+        {
+          "name": "SMITHERS_API_BASE_URL",
+          "required": false,
+          "secret": false,
+          "description": "Smithers API base URL.",
+          "status": "defaulted"
+        }
+      ],
       "dependencies": [
         {
           "kind": "dependency",
@@ -493,19 +521,17 @@ Incur-backed builtin example:
           "install": "installed"
         }
       ],
-      "trustedDependencies": []
+      "trustedDependencies": [],
+      "runtimeReady": false
     },
     "state": {
       "draftChanged": true,
       "buildRequired": true,
       "currentSurface": {
-        "status": "ready",
-        "surfaceHash": "sha256:91ad30...",
-        "builtAt": "2026-06-01T10:55:18.000Z"
+        "status": "ready"
       },
       "lastBuild": {
-        "status": "success",
-        "finishedAt": "2026-06-01T10:55:18.000Z"
+        "status": "success"
       }
     }
   }
@@ -611,6 +637,11 @@ to `builds/extensions/<id>/staging/<build-run-id>/` while it is running; after v
 `svvy` atomically replaces `builds/extensions/<id>/current/` with that staged output. Failed or
 blocked builds must not replace `current/`.
 
+Env values are not build inputs. A build validates env declarations and reports runtime readiness,
+but it must not fail only because a required env value is missing. Missing required env blocks
+extension load or invocation through the runtime surfaces, not source validation or generated-surface
+activation.
+
 Prompt-only success example:
 
 ```json
@@ -621,9 +652,11 @@ Prompt-only success example:
     "status": "success",
     "runtimeKind": "prompt_only",
     "activated": true,
-    "currentPath": "/Users/example/.config/svvy/extensions/builds/extensions/github/current",
-    "surfaceHash": "sha256:6a2df8...",
-    "finishedAt": "2026-06-01T11:12:03.000Z"
+    "currentPath": "/Users/example/.config/svvy/extensions/builds/extensions/github/current"
+  },
+  "requirements": {
+    "env": [],
+    "runtimeReady": true
   },
   "generated": {
     "commandDocs": null,
@@ -643,9 +676,26 @@ Incur-backed success example:
     "status": "success",
     "runtimeKind": "incur_cli",
     "activated": true,
-    "currentPath": "/Users/example/.config/svvy/extensions/builds/extensions/linear/current",
-    "surfaceHash": "sha256:91ad30...",
-    "finishedAt": "2026-06-01T11:21:09.000Z"
+    "currentPath": "/Users/example/.config/svvy/extensions/builds/extensions/linear/current"
+  },
+  "requirements": {
+    "env": [
+      {
+        "name": "LINEAR_API_KEY",
+        "required": true,
+        "secret": true,
+        "description": "Linear API key used by Linear commands.",
+        "status": "missing"
+      },
+      {
+        "name": "LINEAR_API_BASE_URL",
+        "required": false,
+        "secret": false,
+        "description": "Linear API base URL.",
+        "status": "defaulted"
+      }
+    ],
+    "runtimeReady": false
   },
   "commands": [
     {
@@ -1018,8 +1068,7 @@ File-change revert example:
     "autoBuild": {
       "status": "success",
       "currentPath": "/Users/example/.config/svvy/extensions/builds/extensions/linear/current",
-      "surfaceHash": "sha256:77ab12...",
-      "finishedAt": "2026-06-01T11:42:18.000Z"
+      "runtimeReady": true
     }
   },
   "conversationEvent": {
@@ -1125,8 +1174,8 @@ Snapshot payload includes:
 - extension registry/config/settings
 - agent/profile extension usage states
 - package and lockfile state needed to reproduce exact dependency identities
-- encrypted local secret material or non-agent-readable local secret references, subject to the
-  secret storage policy
+- non-agent-readable links to app-managed local secret snapshot state, subject to the secret storage
+  policy
 
 Snapshot payload excludes:
 
@@ -1135,6 +1184,8 @@ Snapshot payload excludes:
 - generated command docs, schemas, and TypeScript declarations
 - generated aggregate cache blobs
 - runtime build caches
+- agent-readable encrypted secret blobs, raw secret values, keychain item identifiers, and
+  value-correlating secret metadata
 
 Loading a snapshot restores source/config/package state and immediately requests builds for affected
 extensions. If dependency install is needed, the normal install-boundary dependency approval ledger is
@@ -1167,8 +1218,7 @@ Load success example:
       "extensionId": "linear",
       "status": "success",
       "currentPath": "/Users/example/.config/svvy/extensions/builds/extensions/linear/current",
-      "surfaceHash": "sha256:ca19...",
-      "finishedAt": "2026-06-01T12:03:11.000Z"
+      "runtimeReady": true
     }
   ],
   "surfaceImpact": {

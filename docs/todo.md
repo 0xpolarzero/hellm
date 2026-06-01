@@ -26,6 +26,16 @@ Later follow-up: implement the provider-neutral Ambient Agent Resources model fr
 
 Reference: `docs/codebase-audit-issue-research.md`, AUD-019.
 
+### Extension Secret Egress Proxy
+
+Status: deferred.
+
+Decision: do not require a proxy boundary for v1 extension secrets. Treat extension code as trusted not to intentionally log or exfiltrate configured secret values during the current product pass.
+
+Later follow-up: evaluate an `iron-proxy`-style egress and credential-injection boundary so extensions can make authenticated network calls without raw secrets entering the extension process environment.
+
+Reference: `docs/specs/extensions-and-tools.spec.md`.
+
 ## Not Decided Follow-Ups
 
 The "Source-Only Highlights Requiring Follow-Up" section in `docs/codebase-audit-issue-research.md` is not copied here because we have not reviewed those items one by one. They are preserved in the audit document as untriaged source-audit input, not as accepted follow-up work.
