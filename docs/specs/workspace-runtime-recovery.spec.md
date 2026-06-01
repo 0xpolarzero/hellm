@@ -85,6 +85,7 @@ The recovery coordinator owns or coordinates the following interruptible work po
 | Active prompt or turn on an orchestrator or handler surface | turn record, surface prompt lock state, pi session state when available | Reacquire the surface by `surfacePiSessionId`, inspect durable turn and prompt-lock state, and either mark an interrupted pre-accept attempt retryable or project the accepted/running turn as resumed. If pi cannot provide accepted-message idempotency or an acceptance receipt, recovery cannot guarantee exact-once prompt delivery for a crash at the send boundary. |
 | Queued `user_message` row | surface queue table keyed by `surfacePiSessionId` | Leave blocked `queued` rows ordered and visible. Reset stale `dispatching` rows to `queued` only when no accepted pi turn can be proven for that row. Claim the next row transactionally per surface after the surface lock is free, and when the recovered surface is idle, claim before publishing renderer-visible queued state. |
 | Queued `prompt_refresh` row | surface queue table | Deliver in queue order before later prompt-bearing items. Refresh the surface prompt binding, generated contracts, and runtime standards, then mark delivered. Do not create transcript or prompt-history content. |
+| Queued `extension_binding_refresh` row | surface queue table plus extension binding records | Deliver in queue order before later prompt-bearing items. Refresh the loaded/available extension binding, generated extension instructions, mounted `svvyx` surface, tool schemas, command docs, and TypeScript declarations, then mark delivered. Do not create transcript or prompt-history content. |
 | Queued `handler_handoff` row | orchestrator surface queue plus already-recorded handler command and handoff episode metadata | Keep the row ordered with other orchestrator queue work. Delivery creates at most one orchestrator reconciliation turn for an already-recorded durable handoff. Dismissal cancels only the notification row; it does not roll back the handoff episode or return a tool error to the handler. |
 | Initial handler auto-start | handler-thread record plus initial-start recovery work row plus surface queue row | Claim exactly one initial-start recovery row per `threadId`, ensure the matching `initial_handler_start` surface queue row exists, then let the shared queue runner start the handler's first pi turn from the raw objective only if no accepted initial turn exists. Preserve the handler surface identity and loaded context keys. |
 | Handoff notification delivery or dismissal | queue item, command record, handoff episode rows | Recover the notification row and already-recorded handoff episode together. A recorded handoff must have exactly one durable episode. Notification delivery has at most one orchestrator reconciliation turn. Notification dismissal must not alter the completed handler command or episode. |
@@ -233,7 +234,7 @@ Workspace runtime startup follows this order:
    - pending Project CI projection failures or retries.
 6. Recover surface work in per-surface order:
    - settle or mark interrupted active turn state;
-   - apply queued `prompt_refresh` control work in order;
+   - apply queued `prompt_refresh` and `extension_binding_refresh` control work in order;
    - deliver accepted `handler_handoff`, `user_message`, `initial_handler_start`, or `workflow_attention` rows as real pi inputs;
    - start initial handler turns only through their typed surface queue rows and only after their surface lock and context binding are recovered;
    - run title generation only when the target is not frozen and no higher-priority surface work owns that prompt resource.
@@ -267,7 +268,7 @@ The UI should expose that state as a recovery issue for the affected surface rat
 - Every recovery side effect has a durable owner scope and idempotency key.
 - Queue order is per `surfacePiSessionId` and survives restart.
 - A prompt-bearing queue item is marked delivered only after acceptance into the target pi surface is proven.
-- A `prompt_refresh` item is delivered before later prompt-bearing work in the same surface queue.
+- `prompt_refresh` and `extension_binding_refresh` items are delivered before later prompt-bearing work in the same surface queue.
 - Initial handler starts and workflow attention wake-ups are typed surface queue rows rather than direct prompt calls.
 - A handler initial auto-start runs at most once per handler thread unless the first attempt is proven not accepted.
 - A recorded handoff emits exactly one durable handoff episode for the handler command.
@@ -294,7 +295,7 @@ Unit tests should cover:
 
 - recovery work idempotency-key uniqueness and terminal-row behavior
 - stale claim expiration and transactional re-claim
-- per-surface queue ordering across `prompt_refresh`, `user_message`, `handler_handoff`, `initial_handler_start`, and `workflow_attention`
+- per-surface queue ordering across `prompt_refresh`, `extension_binding_refresh`, `user_message`, `handler_handoff`, `initial_handler_start`, and `workflow_attention`
 - owner lock exclusion for concurrent coordinators
 - deterministic seeding from durable facts without duplicate scheduler rows
 - conservative prompt delivery behavior when pi acceptance is unknown

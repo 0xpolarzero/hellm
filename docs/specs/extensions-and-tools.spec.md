@@ -266,11 +266,11 @@ It still uses the same usage states:
 
 Prompt-only extensions are useful for domain guidance that does not need executable tools.
 
-### Extension Built Revision
+### Extension Active Build
 
 Extension source edits create draft state.
 
-A successful build creates a new active built revision containing:
+A successful build creates new active build metadata containing:
 
 - manifest
 - full and minimal instructions
@@ -282,23 +282,143 @@ A successful build creates a new active built revision containing:
 - env requirements
 - content hashes
 
-Failed builds do not replace the previous active revision.
+Failed builds do not replace the previous active build.
+
+The active build id and hashes are internal state for atomic activation, stale detection, crash
+recovery, and diagnostics. They are not user-facing version history, not a rollback surface, and not
+something the agent should normally reason about. Product UI should show practical state such as
+`Ready`, `Build required`, `Needs dependency approval`, `Build failed`, and `Last built`, not raw
+build ids.
+
+### Extension Source Storage
+
+Extensions are app-global in v1. Workspace-local extensions do not exist in v1.
+
+The app-owned extension root is:
+
+```text
+~/.config/svvy/extensions/
+```
+
+This root is ordinary filesystem storage. Commands such as `svvyx extensions inspect <id> --json`
+return absolute paths under this root so agents can inspect them with shell tools and edit editable
+source files with `apply_patch`.
+
+Directory layout:
+
+```text
+~/.config/svvy/extensions/
+  sources/
+    user/<extension-id>/
+    builtin-overlays/<extension-id>/
+  generated/
+    extensions/<extension-id>/
+    aggregates/<aggregate-hash>/
+  builds/
+    extensions/<extension-id>/<build-id>/
+  package/
+    package.json
+    bun.lock
+    node_modules/
+  trash/<trash-id>/
+  snapshots/<snapshot-id>/
+```
+
+Ownership:
+
+- `sources/user/<id>/` contains editable user extension manifests, instructions, and source.
+- `sources/builtin-overlays/<id>/` contains editable overlay files for shipped builtin extensions.
+- shipped builtin defaults live in packaged app resources and are read-only.
+- `inspect` materializes builtin overlay files before returning editable paths, so normal shell
+  inspection and `apply_patch` work even when the user has not edited that builtin before.
+- `generated/extensions/<id>/` contains read-only generated command docs, TypeScript declarations,
+  and tool schemas for that extension.
+- `builds/extensions/<id>/<build-id>/` contains immutable internal build output for that extension.
+- `generated/aggregates/<aggregate-hash>/` contains cached actor/session aggregate surfaces derived
+  from loaded and available extension sets plus active build hashes.
+- `package/` is the single app-global Bun project used for extension dependency installation and
+  lockfile state.
+- `trash/` stores deleted user extensions for Extension Managing revert.
+- `snapshots/` stores user-named extension snapshots and their encrypted secret snapshot material
+  where applicable.
+
+Generated files and build outputs are separated from editable source. Agents may inspect generated
+paths for traceability, but generated and build paths are not editable source paths.
 
 ### Surface Binding
 
-At turn start, an actor surface resolves its agent profile, actor kind, extension usage states, and
-active extension revisions into one generated surface.
+Each session or workflow task-agent attempt stores a durable extension binding:
 
-An active turn keeps using the surface that existed when that turn started. Extensions must not swap
-under a running model turn.
+- actor kind
+- selected agent profile or task-agent config identity
+- loaded extension ids
+- available extension ids
+- active build hashes used for those extensions
+- aggregate hash for generated prompt text, command docs, tool schemas, and TypeScript declarations
 
-The next turn uses the latest successful active extension revisions unless the product later adopts
-old-revision pinning. The desired UX from the session is simple: use the latest successful build,
-avoid noisy warnings, and only warn when the visible generated instructions, docs, tool schemas, or
-types are stale relative to the surface that will be used.
+New sessions derive `loadedExtensions` and `availableExtensions` from the agent profile defaults or
+from explicit creation-time overrides. `request_extension` mutates only the current session binding by
+moving the requested extension from `availableExtensions` to `loadedExtensions`; it never mutates the
+global agent profile.
+
+The build unit is an extension. The aggregate generated surface is cached by actor kind, loaded
+extension set, available extension set, and active build hashes. It is not built per visual surface.
+Two sessions with the same resolved binding share the same aggregate cache. A session that loads an
+additional extension gets a different binding and aggregate hash.
+
+When an extension changes and a successful build activates:
+
+- the previous active build remains usable until the new build is complete and atomically activated
+- sessions whose loaded or available set contains that extension are marked stale
+- inactive sessions refresh through backend preflight before their next prompt-bearing work runs, not
+  when a pane is visually opened
+- active sessions receive a front-of-queue `extension_binding_refresh` control item for durable
+  recovery and apply the new binding at the next safe model boundary when the active pi run reaches
+  the `refreshRunContext` hook
+- already emitted tool calls finish against the tool set that produced them
+- no empty aggregate or missing `svvyx` surface may be exposed between builds
+
+`extension_binding_refresh` is the explicit surface-control work item for extension binding changes.
+It updates loaded/available extension binding, generated instructions, generated command docs,
+generated TypeScript declarations, tool schemas, and mounted `svvyx` runtime surfaces. It does not
+send text to pi, create transcript content, or write prompt history.
 
 If only internal implementation changed and the generated actor-facing surface did not, no stale
-prompt warning is needed.
+surface warning or refresh is needed.
+
+### Active Run Context Refresh
+
+The local pi reference shows that active pi runs snapshot `systemPrompt`, messages, and tools at run
+start. Steering and follow-up add user messages; they do not replace the run's system prompt or tool
+list. `transformContext` can transform messages only.
+
+The required pi patch is a small active-run context hook, named `refreshRunContext`:
+
+```ts
+type RunContextRefresh = {
+  systemPrompt?: string;
+  tools?: AgentTool[];
+};
+
+refreshRunContext?: (
+  context: AgentContext,
+  signal?: AbortSignal
+) => Promise<RunContextRefresh | undefined>;
+```
+
+pi must call this hook after pending steering messages are appended and before the next provider call
+is started. If the hook returns `systemPrompt` or `tools`, pi replaces the current run context before
+calling the model. Because pi also executes tool calls through the same current run context, the next
+assistant response and the tool calls it emits stay aligned.
+
+`svvy` uses this hook for orchestrator sessions, handler-thread sessions, and PI-backed workflow
+task-agent attempts. All three use `@mariozechner/pi-coding-agent` sessions. Workflow task agents
+are task-attempt-scoped rather than long-lived interactive surfaces, but they use the same active-run
+refresh mechanism.
+
+This hook is the correct mechanism for automatic instruction/tool updates during active work. It must
+not be modeled as a steering message such as "system prompt changed, keep working", because that
+would add transcript content and would not replace the run's actual system prompt or tools.
 
 ## Panes
 
@@ -395,6 +515,9 @@ that the agent configuration must be changed. It must not silently override unav
 
 It lets an actor request an extension that is available but not loaded.
 
+The load is current-session only. It updates the calling session's durable extension binding and
+does not change the agent profile's default-loaded, available, or unavailable states.
+
 On success, it should:
 
 - verify the extension is available for that actor
@@ -461,11 +584,16 @@ because that makes discovery and typed composition messy.
 ```text
 extension source CLI per extension
         -> build
-extension built revision
+extension active build
         -> per actor/profile resolution
 actor-scoped aggregate svvyx CLI
         -> shell usage and execute_typescript MemoryClient usage
 ```
+
+Smithers hot reload is not the primary extension refresh mechanism. It reloads workflow build
+functions for a running Smithers workflow so future workflow rendering or task attempts can pick up
+workflow source changes. App-global extension source, dependency, generated-surface, and session
+binding refresh are owned by `svvy`.
 
 ## `execute_typescript`
 
@@ -700,8 +828,9 @@ The revert contract is intentionally narrow:
   recorded `apply_patch` change; there is no separate custom edit/write surface
 - `set-usage`, `reset`, and `delete` are command-level revertable
 - `create` is not shown as revertable; the UI can show Delete for the created user extension
-- build activation is not a user-facing rollback surface; active revision is status/diagnostic
-  metadata only
+- build activation is not a user-facing rollback surface; active build metadata is internal only
+- runtime calls resolve the current active build at execution time, but already emitted tool calls
+  finish against the tool set that produced them
 - app-managed extension trash exists only so a delete change can be reverted from its change card or
   history
 - dependency installs, secret entry/update/removal, external shell side effects, and ordinary repo
@@ -729,36 +858,63 @@ Working assignment:
 | `apply_patch` | Direct inside the session workspace; auto-reviewed when it would write outside the session workspace; rejected when outside policy. |
 | `request_extension` | Direct native control when the extension is available; clear failure when unavailable. |
 | Extension file edits through `apply_patch` | Directly done with rich visualization, Build required indicator, and per-change revert; no auto-build after ordinary agent edits. |
+| User/product-triggered source or config changes | May immediately request a build; dependency approval is still checked only at install time. |
 | Extension usage/reset/delete through Extension Managing | Directly done with rich visualization and command-level revert. |
 | Extension creation | Directly done with rich visualization and a Delete action, not a revert action. |
 | Extension revert | Directly done with one automatic follow-up build when the revert leaves the extension build-required; UI button reverts also emit a visible conversation event. |
-| Dependency install or dependency-changing build | Blocked pending explicit user confirmation. |
+| Dependency install with unapproved exact dependency identities | Blocked pending explicit user confirmation. |
 | Secret entry or update | User-only UI action; never agent-readable. |
 
 ## Dependency Lifecycle
 
-Extensions live in an app-global extension project by default.
+Extensions live in the app-global extension project. Workspace-root extension storage is not adopted
+for v1.
 
-The session also mentioned a root `.svvy` extension project while thinking through dependency
-storage. The later preference was app-global because extensions are not inherently workspace
-opinionated. Treat workspace-root extension storage as unresolved, not adopted.
-
-The app should maintain package and lock metadata for extension builds.
+The app maintains one package project and lockfile for extension builds under
+`~/.config/svvy/extensions/package/`.
 
 Rules:
 
 - dependency versions must be exact
 - if a dependency spec is not exact, `svvy` may resolve the latest exact version but must ask the
   user before writing, installing, or building with it
-- dependency install never happens without explicit user confirmation
-- the UI must show added, removed, and changed dependencies before confirmation
+- dependency approval is checked at install time, not when files are edited
+- approval is keyed by exact dependency identity: package name, exact version, package manager or
+  resolved source, and integrity or resolution metadata when available
+- already-approved exact dependency identities do not require repeated approval
+- new package versions, changed package sources, or changed integrity/resolution metadata require
+  approval before install proceeds
+- dependency install proceeds without prompting only when every dependency identity that would be
+  installed has already been approved
+- the UI must show unapproved added or changed dependency identities before confirmation
 - the confirmation must explain that install may run package lifecycle scripts unless those scripts
   are disabled by the implementation
 - `svvy` tracks `package.json` hash, lockfile hash, and dependency graph diff
-- if the lockfile or dependency list changes outside `svvy`, the app asks the user to validate the
-  dependency state before using it
+- if the lockfile or dependency list changes outside `svvy`, the app validates the dependency diff
+  against the approval ledger and asks only for unapproved dependency identities before using it
 - failed install or build leaves the previous active extension build untouched
 - manual handling is allowed by opening the relevant package file in the external editor
+
+All source/config mutations feed the same build pipeline:
+
+```text
+files changed
+  -> build required
+  -> validate source, manifest, package metadata, and lockfile
+  -> maybe install
+  -> maybe ask approval for unapproved dependency identities
+  -> build
+  -> atomically activate only after success
+```
+
+The origin of the file change is irrelevant to dependency approval. Direct user edits, agent
+`apply_patch`, Extension Managing commands, and snapshot restore all use the same build/install
+approval rules. The only difference is scheduling: ordinary agent patch batches do not automatically
+request build, while user/product actions may request build immediately.
+
+The package and lockfile are durable dependency truth. They are not disposable generated artifacts.
+`node_modules`, compiled extension builds, aggregate generated outputs, and runtime caches are
+rebuildable artifacts and are not snapshot payload.
 
 The same dependency problem will later apply to TypeScript workflows. The session explicitly noted
 that the workflow design should borrow the extension dependency policy when workflow dependency
@@ -792,6 +948,43 @@ Secret lifecycle:
 7. Known secret values are redacted from command output if they leak.
 8. Missing secrets return structured errors such as "`GITHUB_TOKEN` is missing", not requests to
    paste tokens into chat.
+
+User-named extension snapshots may include secret material only if it remains fully encrypted or
+keychain-backed and never becomes agent-readable. Snapshot export or cross-machine restore needs a
+separate security decision before secret material can leave the local app trust boundary.
+
+## Extension Snapshots
+
+The Extensions surface keeps the useful preset behavior from the previous Context pane: users can
+save and load named snapshots of extension source and settings.
+
+Snapshot payload includes:
+
+- user extension source files and manifests
+- builtin overlay files
+- extension registry/config/settings
+- agent/profile extension usage states
+- package and lockfile state needed to reproduce exact dependencies
+- encrypted local secret material or non-agent-readable secret references, subject to the secrets
+  rules above
+
+Snapshot payload excludes:
+
+- `node_modules`
+- compiled extension build outputs
+- generated extension docs, schemas, and TypeScript declarations
+- generated aggregate surfaces
+- runtime build caches
+
+Loading a snapshot is a user-first product action. It restores the snapshot's source/config/package
+state, then immediately requests build for affected extensions. The build path uses the normal
+validate/install/approval/build/activate pipeline. If dependency approval is needed, loading pauses at
+that approval point; the previous active builds remain usable until the new builds succeed.
+
+Snapshot restore does not get special dependency rules. It changes files and package state, then the
+normal install boundary checks the approved dependency ledger. If a snapshot removes an extension
+that an existing session had loaded or available, that session drops the missing extension just as it
+would after extension deletion and then refreshes its binding.
 
 The key product improvement is that agents can use configured secrets without being able to read
 them. `svvy` also knows exactly which values to redact because they were entered through the app.
@@ -970,12 +1163,9 @@ The following are unresolved from the session and should be settled before imple
   available extension names and summaries for policy context, unavailable extension ids if needed
   for bypass detection, current loaded `svvyx` surface, cwd, command/action JSON, relevant
   read-only filesystem state, and recent conversation state.
-- Decide retention and pruning for generated build artifacts after active revision changes. Extension
+- Decide retention and pruning for generated build artifacts after active build changes. Extension
   change/revert history itself is retained indefinitely for now and is not implemented with git.
 - Decide where runtime standards are configured after the Context pane is removed or absorbed.
-- Decide whether workspace-scoped extensions exist.
-- Decide whether user-authored and installed extensions are v1 behavior, or whether v1 is limited
-  to first-party plus app-managed authoring.
 - Define the first real version of Project CI as an extension. It is currently a placeholder with no
   actor availability.
 - Decide the exact generated TypeScript contract once the local Incur fork API is verified.

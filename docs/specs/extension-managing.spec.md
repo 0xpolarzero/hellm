@@ -59,6 +59,7 @@ Product-state changes use Extension Managing commands:
 - builtin reset
 - user-extension delete
 - extension change revert
+- extension snapshot save/load/rename/delete when exposed to agents
 
 Extension Managing must not introduce custom `patch`, `write`, `set-instructions`, or
 content-returning commands. Native `apply_patch` is the patching tool.
@@ -66,6 +67,36 @@ content-returning commands. Native `apply_patch` is the patching tool.
 ## Storage Model
 
 Extension content that an agent may inspect or edit should be represented as ordinary files.
+
+The app-owned extension root is:
+
+```text
+~/.config/svvy/extensions/
+```
+
+Directory layout:
+
+```text
+~/.config/svvy/extensions/
+  sources/
+    user/<extension-id>/
+    builtin-overlays/<extension-id>/
+  generated/
+    extensions/<extension-id>/
+    aggregates/<aggregate-hash>/
+  builds/
+    extensions/<extension-id>/<build-id>/
+  package/
+    package.json
+    bun.lock
+    node_modules/
+  trash/<trash-id>/
+  snapshots/<snapshot-id>/
+```
+
+Workspace-local extensions do not exist in v1. Extension files are app-owned files, not workspace
+files. They are still normal filesystem paths so agents can inspect them through shell commands and
+edit editable paths through `apply_patch`.
 
 File-backed content includes:
 
@@ -83,11 +114,14 @@ Database or product-state storage includes:
 - extension registry records
 - origin: `builtin` or `user`
 - runtime kind
-- active revision as internal build status, not as a user-facing rollback surface
+- active build id and hashes as internal build status, not as a user-facing rollback surface
 - usage state per agent profile
+- per-session loaded and available extension bindings
 - build status
 - requirement status
+- dependency approval ledger
 - change/revert history
+- user-named snapshots
 
 If implementation stores editable data in a database, Extension Managing must still expose a
 materialized editable file path for any content an agent is expected to change. Agents should not
@@ -97,14 +131,26 @@ Builtin extensions have shipped defaults plus editable overlays:
 
 - builtin extensions are non-deletable
 - builtin extensions are resettable
-- edits materialize or update app-owned overlay files
+- shipped defaults live in packaged app resources and are read-only
+- edits materialize or update app-owned overlay files under `sources/builtin-overlays/<id>/`
+- `inspect` materializes builtin overlay files before returning editable paths so shell inspection and
+  `apply_patch` work normally
 - `reset` restores shipped defaults by removing or replacing the overlay for the selected scope
 
 User extensions are ordinary app-owned extension directories:
 
+- user extension source lives under `sources/user/<id>/`
 - user extensions are deletable
 - user extensions are not resettable to shipped defaults
 - deletion moves the extension into app-managed trash so the delete change can be reverted
+
+Generated extension files live under `generated/extensions/<id>/`. Aggregate actor/session surfaces
+live under `generated/aggregates/<aggregate-hash>/`. Internal immutable build output lives under
+`builds/extensions/<id>/<build-id>/`. These paths are inspectable when useful, but they are not
+editable source.
+
+The single app-global Bun package project lives under `package/`. Its `package.json` and `bun.lock`
+are durable dependency state. `node_modules` is install output and is not part of extension snapshots.
 
 `svvy` should not use git to implement extension revert. App-owned extension files may live outside a
 repository, and the product only needs local app-history reversibility. `svvy` records structured
@@ -129,7 +175,7 @@ Revertability:
 | `reset` | Restore the pre-reset files and usage/product state recorded by that reset change. |
 | `delete` | Restore the extension directory from app-managed trash and restore its registry state. |
 | `create` | No revert affordance; the UI may show Delete for the created extension. |
-| `build` | No user-facing rollback or activation command. Build status and active revision may be shown as indicators only. |
+| `build` | No user-facing rollback or activation command. Build status may be shown as indicators only; raw build ids/hashes are diagnostic/internal. |
 | Dependency install | No rollback promise. Reverting source or manifest changes can make dependency requirements disappear for future builds, but package caches, lifecycle-script effects, and installed artifacts are not reverted. |
 | Secret entry, update, or removal | Not agent-readable and not part of Extension Managing revert. |
 | External shell side effects | Not reverted by Extension Managing. |
@@ -150,12 +196,15 @@ File-level revert rules:
 Build behavior:
 
 - Ordinary agent file edits do not auto-build.
-- A successful `revert` does auto-build once when the revert leaves the extension build-required.
-- Revert-triggered auto-build uses the same `build` implementation and dependency approval gate as a
-  normal explicit build.
-- If the auto-build needs dependency approval, it pauses with the normal dependency confirmation UI.
-- Revert-triggered build results must be surfaced as normal conversation/tool output so the agent can
-  observe the user action and the new extension state.
+- User/product-triggered source or config changes may auto-build immediately after the action. This
+  includes revert, reset when it changes build inputs, and loading a snapshot.
+- Auto-builds use the same `build` implementation and dependency approval gate as a normal explicit
+  build.
+- If an auto-build needs dependency approval, it pauses with the normal dependency confirmation UI.
+- Auto-build results must be surfaced as normal conversation/tool output when the action occurred
+  during an agent-visible conversation, so the active agent can observe the new extension state.
+- Dependency approval is checked at install time, not based on whether the change came from
+  `apply_patch`, direct user editing, reset, revert, or snapshot restore.
 
 Conversation-visible UI events:
 
@@ -238,10 +287,10 @@ Prompt-only builtin example:
     "deletable": false,
     "typescriptApiEnabled": false,
     "paths": {
-      "root": "/Users/example/Library/Application Support/svvy/extensions/github",
-      "manifest": "/Users/example/Library/Application Support/svvy/extensions/github/manifest.json",
-      "instructionsFull": "/Users/example/Library/Application Support/svvy/extensions/github/instructions/full.md",
-      "instructionsMinimal": "/Users/example/Library/Application Support/svvy/extensions/github/instructions/minimal.md",
+      "root": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/github",
+      "manifest": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/github/manifest.json",
+      "instructionsFull": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/github/instructions/full.md",
+      "instructionsMinimal": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/github/instructions/minimal.md",
       "source": null,
       "generated": null
     },
@@ -271,9 +320,12 @@ Prompt-only builtin example:
       "dependencies": []
     },
     "state": {
-      "activeRevision": "rev_019",
       "draftChanged": false,
       "buildRequired": false,
+      "activeBuild": {
+        "status": "ready",
+        "surfaceHash": "sha256:6a2df8..."
+      },
       "lastBuild": {
         "status": "success",
         "finishedAt": "2026-06-01T11:12:03.000Z"
@@ -298,16 +350,16 @@ Incur-backed builtin example:
     "deletable": false,
     "typescriptApiEnabled": true,
     "paths": {
-      "root": "/Users/example/Library/Application Support/svvy/extensions/smithers",
-      "manifest": "/Users/example/Library/Application Support/svvy/extensions/smithers/manifest.json",
-      "instructionsFull": "/Users/example/Library/Application Support/svvy/extensions/smithers/instructions/full.md",
-      "instructionsMinimal": "/Users/example/Library/Application Support/svvy/extensions/smithers/instructions/minimal.md",
-      "source": "/Users/example/Library/Application Support/svvy/extensions/smithers/source",
+      "root": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers",
+      "manifest": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/manifest.json",
+      "instructionsFull": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full.md",
+      "instructionsMinimal": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/minimal.md",
+      "source": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/source",
       "generated": {
-        "root": "/Users/example/Library/Application Support/svvy/extensions/smithers/generated",
-        "commandDocs": "/Users/example/Library/Application Support/svvy/extensions/smithers/generated/commands.md",
-        "typescriptTypes": "/Users/example/Library/Application Support/svvy/extensions/smithers/generated/types.d.ts",
-        "toolSchemas": "/Users/example/Library/Application Support/svvy/extensions/smithers/generated/tool-schemas.json"
+        "root": "/Users/example/.config/svvy/extensions/generated/extensions/smithers",
+        "commandDocs": "/Users/example/.config/svvy/extensions/generated/extensions/smithers/commands.md",
+        "typescriptTypes": "/Users/example/.config/svvy/extensions/generated/extensions/smithers/types.d.ts",
+        "toolSchemas": "/Users/example/.config/svvy/extensions/generated/extensions/smithers/tool-schemas.json"
       }
     },
     "usage": [
@@ -336,9 +388,12 @@ Incur-backed builtin example:
       ]
     },
     "state": {
-      "activeRevision": "rev_044",
       "draftChanged": true,
       "buildRequired": true,
+      "activeBuild": {
+        "status": "ready",
+        "surfaceHash": "sha256:91ad30..."
+      },
       "lastBuild": {
         "status": "success",
         "finishedAt": "2026-06-01T10:55:18.000Z"
@@ -388,12 +443,12 @@ Example output:
     "deletable": true,
     "typescriptApiEnabled": true,
     "paths": {
-      "root": "/Users/example/Library/Application Support/svvy/extensions/linear",
-      "manifest": "/Users/example/Library/Application Support/svvy/extensions/linear/manifest.json",
-      "instructionsFull": "/Users/example/Library/Application Support/svvy/extensions/linear/instructions/full.md",
-      "instructionsMinimal": "/Users/example/Library/Application Support/svvy/extensions/linear/instructions/minimal.md",
-      "source": "/Users/example/Library/Application Support/svvy/extensions/linear/source",
-      "generated": "/Users/example/Library/Application Support/svvy/extensions/linear/generated"
+      "root": "/Users/example/.config/svvy/extensions/sources/user/linear",
+      "manifest": "/Users/example/.config/svvy/extensions/sources/user/linear/manifest.json",
+      "instructionsFull": "/Users/example/.config/svvy/extensions/sources/user/linear/instructions/full.md",
+      "instructionsMinimal": "/Users/example/.config/svvy/extensions/sources/user/linear/instructions/minimal.md",
+      "source": "/Users/example/.config/svvy/extensions/sources/user/linear/source",
+      "generated": "/Users/example/.config/svvy/extensions/generated/extensions/linear"
     },
     "usage": [
       {
@@ -410,9 +465,9 @@ Example output:
       }
     ],
     "state": {
-      "activeRevision": null,
       "draftChanged": true,
-      "buildRequired": true
+      "buildRequired": true,
+      "activeBuild": null
     }
   },
   "next": [
@@ -438,8 +493,8 @@ Parameters:
 | `--json` | no | Return machine-readable JSON. |
 
 Successful builds always activate the new generated surface for future extension resolution. There is
-no separate user-facing activation command and no user-facing build rollback command. The previous
-active revision may be returned as diagnostic/status metadata only.
+no separate user-facing activation command and no user-facing build rollback command. Raw active
+build ids and hashes are internal diagnostic metadata.
 
 Prompt-only success example:
 
@@ -451,8 +506,8 @@ Prompt-only success example:
     "status": "success",
     "runtimeKind": "prompt_only",
     "activated": true,
-    "previousActiveRevision": "rev_019",
-    "activeRevision": "rev_020",
+    "previousActiveBuildId": "build_019",
+    "activeBuildId": "build_020",
     "surfaceHash": "sha256:6a2df8..."
   },
   "generated": {
@@ -473,8 +528,8 @@ Incur-backed success example:
     "status": "success",
     "runtimeKind": "incur_cli",
     "activated": true,
-    "previousActiveRevision": null,
-    "activeRevision": "rev_001",
+    "previousActiveBuildId": null,
+    "activeBuildId": "build_001",
     "surfaceHash": "sha256:91ad30..."
   },
   "commands": [
@@ -488,9 +543,9 @@ Incur-backed success example:
     }
   ],
   "generated": {
-    "commandDocs": "/Users/example/Library/Application Support/svvy/extensions/linear/generated/commands.md",
-    "typescriptTypes": "/Users/example/Library/Application Support/svvy/extensions/linear/generated/types.d.ts",
-    "toolSchemas": "/Users/example/Library/Application Support/svvy/extensions/linear/generated/tool-schemas.json"
+    "commandDocs": "/Users/example/.config/svvy/extensions/generated/extensions/linear/commands.md",
+    "typescriptTypes": "/Users/example/.config/svvy/extensions/generated/extensions/linear/types.d.ts",
+    "toolSchemas": "/Users/example/.config/svvy/extensions/generated/extensions/linear/tool-schemas.json"
   }
 }
 ```
@@ -502,17 +557,16 @@ Dependency confirmation example:
   "ok": false,
   "status": "needs_user_confirmation",
   "extensionId": "linear",
-  "dependencyDiff": {
-    "added": [
-      {
-        "name": "@linear/sdk",
-        "version": "12.4.0"
-      }
-    ],
-    "removed": [],
-    "changed": []
-  },
-  "message": "Building this extension requires installing new dependencies. The user must confirm in the app UI."
+  "unapprovedDependencies": [
+    {
+      "name": "@linear/sdk",
+      "version": "12.4.0",
+      "packageManager": "bun",
+      "source": "npm",
+      "integrity": "sha512-..."
+    }
+  ],
+  "message": "Installing these exact dependencies requires user approval."
 }
 ```
 
@@ -521,6 +575,31 @@ Failed builds must leave the previous active extension build untouched.
 When a build succeeds, `buildRequired` becomes `false`. When the build is blocked by dependency
 approval, fails validation, or fails during install/build, `buildRequired` remains `true` and the UI
 continues to show Build required.
+
+Dependency approval rules:
+
+- approval is checked only at the install boundary
+- approval is keyed by exact dependency identity: package name, exact version, package manager or
+  resolved source, and integrity or resolution metadata when available
+- dependencies that have already been approved at the exact identity do not require repeated approval
+- new versions, changed sources, or changed integrity/resolution metadata require approval before
+  install proceeds
+- direct user edits, agent edits, reset, revert, delete restore, and snapshot restore all use the
+  same build/install approval pipeline
+- failed install or build leaves the previous active build and any existing mounted runtime surface
+  untouched
+
+The normal build pipeline is:
+
+```text
+files changed
+  -> build required
+  -> validate source, manifest, package metadata, and lockfile
+  -> maybe install
+  -> maybe ask approval for unapproved dependency identities
+  -> build
+  -> atomically activate only after success
+```
 
 ## `set-usage`
 
@@ -596,17 +675,18 @@ Example output:
   "scope": "instructions",
   "result": {
     "resetFiles": [
-      "/Users/example/Library/Application Support/svvy/extensions/github/instructions/full.md",
-      "/Users/example/Library/Application Support/svvy/extensions/github/instructions/minimal.md"
+      "/Users/example/.config/svvy/extensions/sources/builtin-overlays/github/instructions/full.md",
+      "/Users/example/.config/svvy/extensions/sources/builtin-overlays/github/instructions/minimal.md"
     ],
     "buildRequired": true
   }
 }
 ```
 
-`reset` records a reversible command-level change. It does not auto-build by itself. If the reset
-changes files or generated-surface inputs, the extension remains Build required until the agent or
-user runs `svvyx extensions build <id> --json`.
+`reset` records a reversible command-level change. When reset is triggered by the user or another
+product action and changes files or generated-surface inputs, it immediately requests the normal
+build pipeline. If the build needs dependency approval, it pauses at the install boundary. Ordinary
+agent file edits still do not auto-build.
 
 User-extension error:
 
@@ -711,18 +791,18 @@ File-change revert example:
     "extensionId": "linear",
     "files": [
       {
-        "path": "/Users/example/Library/Application Support/svvy/extensions/linear/source/index.ts",
+        "path": "/Users/example/.config/svvy/extensions/sources/user/linear/source/index.ts",
         "status": "reverted"
       },
       {
-        "path": "/Users/example/Library/Application Support/svvy/extensions/linear/instructions/full.md",
+        "path": "/Users/example/.config/svvy/extensions/sources/user/linear/instructions/full.md",
         "status": "reverted"
       }
     ],
     "buildRequired": true,
     "autoBuild": {
       "status": "success",
-      "activeRevision": "rev_046",
+      "activeBuildId": "build_046",
       "surfaceHash": "sha256:77ab12..."
     }
   },
@@ -744,24 +824,23 @@ Dependency approval during revert-triggered auto-build:
     "extensionId": "linear",
     "files": [
       {
-        "path": "/Users/example/Library/Application Support/svvy/extensions/linear/source/index.ts",
+        "path": "/Users/example/.config/svvy/extensions/sources/user/linear/source/index.ts",
         "status": "reverted"
       }
     ],
     "buildRequired": true,
     "autoBuild": {
       "status": "needs_user_confirmation",
-      "dependencyDiff": {
-        "added": [
-          {
-            "name": "@linear/sdk",
-            "version": "12.4.0"
-          }
-        ],
-        "removed": [],
-        "changed": []
-      },
-      "message": "Building this extension requires installing new dependencies. The user must confirm in the app UI."
+      "unapprovedDependencies": [
+        {
+          "name": "@linear/sdk",
+          "version": "12.4.0",
+          "packageManager": "bun",
+          "source": "npm",
+          "integrity": "sha512-..."
+        }
+      ],
+      "message": "Installing these exact dependencies requires user approval."
     }
   }
 }
@@ -794,16 +873,112 @@ Conflict error:
     "code": "REVERT_CONFLICT",
     "message": "The change cannot be reverted because one or more files changed since it was recorded.",
     "conflictingPaths": [
-      "/Users/example/Library/Application Support/svvy/extensions/linear/source/index.ts"
+      "/Users/example/.config/svvy/extensions/sources/user/linear/source/index.ts"
     ]
   }
 }
 ```
 
+## Snapshots
+
+Use case: save and restore named extension presets from the Extensions surface.
+
+Snapshot operations are user-first product actions. They may also be exposed through Extension
+Managing commands so an agent can inspect or apply them when the user asks, but snapshot content is
+not an agent-readable dump of secrets.
+
+Command shape:
+
+```bash
+svvyx extensions snapshots list --json
+svvyx extensions snapshots save --name "Linear tuned" --json
+svvyx extensions snapshots load <snapshot-id> --json
+svvyx extensions snapshots rename <snapshot-id> --name "Linear strict" --json
+svvyx extensions snapshots delete <snapshot-id> --json
+```
+
+Snapshot payload includes:
+
+- user extension source files and manifests
+- builtin overlay files
+- extension registry/config/settings
+- agent/profile extension usage states
+- package and lockfile state needed to reproduce exact dependencies
+- encrypted local secret material or non-agent-readable secret references, subject to the secret
+  storage policy
+
+Snapshot payload excludes:
+
+- `node_modules`
+- compiled extension build outputs
+- generated command docs, schemas, and TypeScript declarations
+- generated aggregate surfaces
+- runtime build caches
+
+Loading a snapshot restores source/config/package state and immediately requests builds for affected
+extensions. If dependency install is needed, the normal install-boundary dependency approval ledger is
+checked. If all dependency identities are already approved, install proceeds without prompting. If at
+least one dependency identity is unapproved, loading pauses for user approval before install/build
+continues.
+
+Loading a snapshot must leave previous active builds mounted until replacement builds succeed. If a
+snapshot removes an extension that an existing session had loaded or available, that session drops
+the missing extension exactly as it would after extension deletion and then receives an
+`extension_binding_refresh`.
+
+Load success example:
+
+```json
+{
+  "ok": true,
+  "snapshotId": "snap_2026_06_01_linear_tuned",
+  "restored": {
+    "extensions": ["linear", "github"],
+    "usageStates": 7,
+    "packageState": "restored"
+  },
+  "builds": [
+    {
+      "extensionId": "linear",
+      "status": "success",
+      "activeBuildId": "build_051",
+      "surfaceHash": "sha256:ca19..."
+    }
+  ],
+  "surfaceImpact": {
+    "queuedRefreshes": [
+      {
+        "surfacePiSessionId": "thread_8HD2",
+        "kind": "extension_binding_refresh",
+        "reason": "snapshot_loaded"
+      }
+    ]
+  }
+}
+```
+
+Load paused for dependency approval example:
+
+```json
+{
+  "ok": false,
+  "status": "needs_user_confirmation",
+  "snapshotId": "snap_2026_06_01_linear_tuned",
+  "unapprovedDependencies": [
+    {
+      "name": "@linear/sdk",
+      "version": "12.4.0",
+      "packageManager": "bun",
+      "source": "npm",
+      "integrity": "sha512-..."
+    }
+  ],
+  "message": "Installing these exact dependencies requires user approval."
+}
+```
+
 ## Open Questions
 
-- The exact app-owned extension directory layout is not yet finalized. The API contract is that
-  `inspect` returns canonical absolute paths and agents edit those paths with `apply_patch`.
 - The exact `manifest.json` schema is not yet finalized. It should be generated or documented from
   the implementation contract rather than maintained as loose prose.
 - The exact build artifact schema for generated command docs, TypeScript declarations, and tool
