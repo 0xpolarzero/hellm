@@ -76,7 +76,7 @@ The Extension Managing instructions define what may be edited:
 These paths must not be edited by agents:
 
 - `package/bun.lock`
-- generated command docs, generated TypeScript declarations, and generated tool schemas
+- generated TypeScript declarations
 - aggregate cache files
 - build output directories
 - `node_modules`
@@ -117,17 +117,15 @@ Directory layout:
       source/
   generated/
     extensions/<extension-id>/
-      commands.md
       types.d.ts
-      tool-schemas.json
     aggregates/
       index.sqlite
       blobs/<aggregate-cache-key>/
         manifest.json
         prompt.md
-        command-docs.md
+        svvyx-guidance.md
         commands.d.ts
-        tool-schemas.json
+        native-tool-schemas.json
   builds/
     extensions/<extension-id>/
       current/
@@ -164,7 +162,7 @@ Database or product-state storage includes:
 
 - extension registry records
 - origin: `builtin` or `user`
-- runtime kind
+- interface: `native_tool`, `svvyx`, or `instructions`
 - current build status and extension context fingerprints as internal activation state, not as a
   user-facing rollback surface
 - usage state per agent profile
@@ -203,12 +201,14 @@ User extensions are ordinary app-owned extension directories:
 - user extensions are not resettable to shipped defaults
 - deletion moves the extension into app-managed trash so the delete change can be reverted
 
-Generated extension files live under `generated/extensions/<id>/`. Generated agent context
-aggregates live in the disposable cache under `generated/aggregates/`. Current build output lives under
-`builds/extensions/<id>/current/`; `builds/extensions/<id>/staging/<build-run-id>/` exists only while
-a build is running and is atomically promoted over `current/` after a successful build. There is no
-preserved build-history directory, no user-facing build rollback, and no build-retention or pruning
-policy because only the current build is kept.
+Generated extension files live under `generated/extensions/<id>/`. In the normal agent-facing
+contract this directory contains generated TypeScript declarations when TypeScript API is enabled;
+generated command help is obtained from the loaded `svvyx` namespace itself. Generated agent context
+aggregates live in the disposable cache under `generated/aggregates/`. Current build output lives
+under `builds/extensions/<id>/current/`; `builds/extensions/<id>/staging/<build-run-id>/` exists only
+while a build is running and is atomically promoted over `current/` after a successful build. There
+is no preserved build-history directory, no user-facing build rollback, and no build-retention or
+pruning policy because only the current build is kept.
 
 Generated agent context aggregates use a real lightweight cache:
 
@@ -217,10 +217,10 @@ Generated agent context aggregates use a real lightweight cache:
   `availableExtensionIds`, `extensionContextFingerprints`, `agentContextFormatVersion`,
   `runtimeStandardsFingerprint`, `agentContextFingerprint`, `createdAt`, `lastUsedAt`, and
   `sizeBytes`
-- `generated/aggregates/blobs/<aggregate-cache-key>/` stores the generated prompt, command docs,
-  TypeScript declarations, tool schemas, and a blob manifest.
+- `generated/aggregates/blobs/<aggregate-cache-key>/` stores the generated prompt, loaded `svvyx`
+  command guidance, TypeScript declarations, native tool schemas, and a blob manifest.
 - each blob manifest stores the same cache key inputs plus per-file hashes for `prompt.md`,
-  `command-docs.md`, `commands.d.ts`, and `tool-schemas.json`
+  `svvyx-guidance.md`, `commands.d.ts`, and `native-tool-schemas.json`
 - the cache key is derived from resolved actor-facing inputs: actor kind, loaded extension ids,
   available extension ids, each extension's current extension context fingerprint, agent-context
   format version, and runtime standards fingerprint when runtime standards are part of the actor
@@ -334,7 +334,7 @@ svvyx extensions <command> ...
 This namespace exists only when the Extension Managing extension is loaded. It is separate from the
 native `list_extensions` tool:
 
-- `list_extensions` answers what the current actor has loaded or can request.
+- `list_extensions` answers what the current actor has loaded or can load.
 - `svvyx extensions ...` manages extension definitions and usage.
 
 ## Common Output Rules
@@ -373,9 +373,21 @@ values, hashes, fingerprints, keychain ids, storage paths, created timestamps, u
 last-used timestamps.
 
 Build and inspect output may show coarse current-context and last-build status. It must not expose
-internal fingerprints, build timestamps, or generated aggregate cache keys as part of ordinary
-agent-facing JSON. Internal activation state may still store fingerprints and timestamps for cache
-validation, agent-context drift detection, and diagnostics.
+internal fingerprints, internal content hashes, build timestamps, install timestamps, generated
+aggregate cache keys, or aggregate cache paths as part of ordinary agent-facing JSON. Internal
+activation state may still store fingerprints, hashes, and timestamps for cache validation,
+agent-context drift detection, and diagnostics.
+
+`inspect` is a loaded Extension Managing command, so it may show global agent/profile `usage` state
+for the inspected extension. That is different from native `list_extensions`, which is ordinary
+actor-local capability discovery and must omit unavailable extension details entirely.
+
+`inspect` and `list_extensions` must not expose ordinary agent-facing `commandDocs` or `toolSchemas`
+paths. For loaded `svvyx` extensions, command documentation is discovered through
+`svvyx <extension-id> --llms`, `svvyx <extension-id> --llms-full`, command `--help`, and command
+`--schema`. If implementation keeps internal generated docs or schema files for prompt assembly,
+validation, UI traceability, or cache mechanics, those paths are not part of the normal JSON
+contract.
 
 ## `inspect`
 
@@ -392,6 +404,103 @@ Parameters:
 | `<id>` | yes | Stable extension id. |
 | `--json` | no | Return machine-readable JSON. |
 
+JSON shape:
+
+```ts
+type InspectExtensionResult = {
+  ok: true;
+  extension: InspectExtension;
+};
+
+type InspectExtension = {
+  id: string;
+  origin: "builtin" | "user";
+  interface: "native_tool" | "svvyx" | "instructions";
+  title: string;
+  description: string;
+  resettable: boolean;
+  deletable: boolean;
+  typescriptApiEnabled: boolean;
+  paths: InspectExtensionPaths;
+  usage: ExtensionUsageState[];
+  requirements: InspectExtensionRequirements;
+  state: InspectExtensionState;
+};
+
+type InspectExtensionPaths = {
+  sourceRoot: string;
+  manifest: string;
+  instructionsFull: string;
+  instructionsMinimal: string;
+  extensionSource: string | null;
+  packageJson: string;
+  lockfile: string;
+  generatedRoot: string | null;
+  typescriptTypes: string | null;
+  buildCurrent: string | null;
+};
+
+type ExtensionUsageState = {
+  actorKind: "orchestrator" | "handler" | "workflow_agent";
+  state: "default_loaded" | "available" | "unavailable";
+};
+
+type InspectExtensionRequirements = {
+  externalBinaries: Array<{
+    name: string;
+    status: "available" | "missing" | "unknown";
+  }>;
+  env: Array<{
+    name: string;
+    required: boolean;
+    secret: boolean;
+    description: string;
+    status: "configured" | "missing" | "defaulted" | "optional_missing";
+  }>;
+  dependencies: ExtensionDependencyRequirement[];
+  trustedDependencies: ExtensionDependencyRequirement[];
+};
+
+type ExtensionDependencyRequirement = {
+  kind: "dependency" | "trusted_dependency";
+  name: string;
+  version: string;
+  packageManager: "bun";
+  source: "npm";
+  approval: "approved" | "needs_user_confirmation" | "unknown";
+  install: "installed" | "missing" | "unknown";
+};
+
+type InspectExtensionState = {
+  draftChanged: boolean;
+  buildRequired: boolean;
+  currentBuild: null | {
+    status: "ready" | "missing" | "invalid";
+  };
+  lastBuild?: {
+    status: "success" | "failed" | "blocked" | "never";
+  };
+  ready: boolean;
+  issues: ExtensionIssue[];
+};
+
+type ExtensionIssue = {
+  code:
+    | "EXTENSION_ENV_MISSING"
+    | "DEPENDENCY_APPROVAL_REQUIRED"
+    | "DEPENDENCY_MISSING"
+    | "BUILD_REQUIRED"
+    | "BUILD_FAILED"
+    | "NO_CURRENT_BUILD"
+    | "CURRENT_BUILD_INVALID";
+  message: string;
+};
+```
+
+`usage` is the global agent/profile usage configuration for the inspected extension. It is useful in
+Extension Managing because the command is a management surface. Native `list_extensions` must not
+return `usage`; it returns only the current actor's `state.binding`.
+
 Prompt-only builtin example:
 
 ```json
@@ -400,7 +509,7 @@ Prompt-only builtin example:
   "extension": {
     "id": "github",
     "origin": "builtin",
-    "runtimeKind": "prompt_only",
+    "interface": "instructions",
     "title": "GitHub",
     "description": "Guidance for using git remotes, GitHub, and the gh CLI.",
     "resettable": true,
@@ -415,8 +524,8 @@ Prompt-only builtin example:
       "packageJson": "/Users/example/.config/svvy/extensions/package/package.json",
       "lockfile": "/Users/example/.config/svvy/extensions/package/bun.lock",
       "generatedRoot": null,
-      "buildCurrent": "/Users/example/.config/svvy/extensions/builds/extensions/github/current",
-      "aggregateCacheRoot": "/Users/example/.config/svvy/extensions/generated/aggregates"
+      "typescriptTypes": null,
+      "buildCurrent": "/Users/example/.config/svvy/extensions/builds/extensions/github/current"
     },
     "usage": [
       {
@@ -436,23 +545,24 @@ Prompt-only builtin example:
       "externalBinaries": [
         {
           "name": "gh",
-          "status": "available",
-          "path": "/opt/homebrew/bin/gh"
+          "status": "available"
         }
       ],
       "env": [],
       "dependencies": [],
-      "runtimeReady": true
+      "trustedDependencies": []
     },
     "state": {
       "draftChanged": false,
       "buildRequired": false,
-      "currentSurface": {
+      "currentBuild": {
         "status": "ready"
       },
       "lastBuild": {
         "status": "success"
-      }
+      },
+      "ready": true,
+      "issues": []
     }
   }
 }
@@ -466,7 +576,7 @@ Incur-backed builtin example:
   "extension": {
     "id": "smithers",
     "origin": "builtin",
-    "runtimeKind": "incur_cli",
+    "interface": "svvyx",
     "title": "Smithers",
     "description": "Workflow supervision commands for handler threads.",
     "resettable": true,
@@ -481,11 +591,8 @@ Incur-backed builtin example:
       "packageJson": "/Users/example/.config/svvy/extensions/package/package.json",
       "lockfile": "/Users/example/.config/svvy/extensions/package/bun.lock",
       "generatedRoot": "/Users/example/.config/svvy/extensions/generated/extensions/smithers",
-      "commandDocs": "/Users/example/.config/svvy/extensions/generated/extensions/smithers/commands.md",
       "typescriptTypes": "/Users/example/.config/svvy/extensions/generated/extensions/smithers/types.d.ts",
-      "toolSchemas": "/Users/example/.config/svvy/extensions/generated/extensions/smithers/tool-schemas.json",
-      "buildCurrent": "/Users/example/.config/svvy/extensions/builds/extensions/smithers/current",
-      "aggregateCacheRoot": "/Users/example/.config/svvy/extensions/generated/aggregates"
+      "buildCurrent": "/Users/example/.config/svvy/extensions/builds/extensions/smithers/current"
     },
     "usage": [
       {
@@ -530,18 +637,28 @@ Incur-backed builtin example:
           "install": "installed"
         }
       ],
-      "trustedDependencies": [],
-      "runtimeReady": false
+      "trustedDependencies": []
     },
     "state": {
       "draftChanged": true,
       "buildRequired": true,
-      "currentSurface": {
+      "currentBuild": {
         "status": "ready"
       },
       "lastBuild": {
         "status": "success"
-      }
+      },
+      "ready": false,
+      "issues": [
+        {
+          "code": "EXTENSION_ENV_MISSING",
+          "message": "Smithers requires SMITHERS_API_KEY. Configure it in the Extensions pane."
+        },
+        {
+          "code": "BUILD_REQUIRED",
+          "message": "Smithers has source changes that must be built before a replacement context can activate."
+        }
+      ]
     }
   }
 }
@@ -556,7 +673,7 @@ svvyx extensions create \
   --id linear \
   --title "Linear" \
   --description "Linear issue and project workflow support." \
-  --runtime-kind incur_cli \
+  --interface svvyx \
   --typescript-api true \
   --json
 ```
@@ -568,7 +685,7 @@ Parameters:
 | `--id` | yes | Stable extension id. |
 | `--title` | yes | User-facing title. |
 | `--description` | yes | Short user-facing description. |
-| `--runtime-kind` | yes | `prompt_only` or `incur_cli`. |
+| `--interface` | yes | `instructions` or `svvyx`. `native_tool` is reserved for shipped app-owned extensions and cannot be created through Extension Managing. |
 | `--typescript-api` | no | Boolean. Defaults to `false`. |
 | `--json` | no | Return machine-readable JSON. |
 
@@ -580,7 +697,7 @@ Example output:
   "extension": {
     "id": "linear",
     "origin": "user",
-    "runtimeKind": "incur_cli",
+    "interface": "svvyx",
     "title": "Linear",
     "description": "Linear issue and project workflow support.",
     "resettable": false,
@@ -595,8 +712,8 @@ Example output:
       "packageJson": "/Users/example/.config/svvy/extensions/package/package.json",
       "lockfile": "/Users/example/.config/svvy/extensions/package/bun.lock",
       "generatedRoot": "/Users/example/.config/svvy/extensions/generated/extensions/linear",
-      "buildCurrent": "/Users/example/.config/svvy/extensions/builds/extensions/linear/current",
-      "aggregateCacheRoot": "/Users/example/.config/svvy/extensions/generated/aggregates"
+      "typescriptTypes": null,
+      "buildCurrent": "/Users/example/.config/svvy/extensions/builds/extensions/linear/current"
     },
     "usage": [
       {
@@ -615,7 +732,18 @@ Example output:
     "state": {
       "draftChanged": true,
       "buildRequired": true,
-      "currentSurface": null
+      "currentBuild": null,
+      "ready": false,
+      "issues": [
+        {
+          "code": "NO_CURRENT_BUILD",
+          "message": "Linear has not been built yet."
+        },
+        {
+          "code": "BUILD_REQUIRED",
+          "message": "Linear must be built before it can be loaded."
+        }
+      ]
     }
   },
   "next": [
@@ -646,9 +774,9 @@ to `builds/extensions/<id>/staging/<build-run-id>/` while it is running; after v
 `svvy` atomically replaces `builds/extensions/<id>/current/` with that staged output. Failed or
 blocked builds must not replace `current/`.
 
-Env values are not build inputs. A build validates env declarations and reports runtime readiness,
-but it must not fail only because a required env value is missing. Missing required env blocks
-extension load or invocation through the runtime command paths, not source validation or generated context
+Env values are not build inputs. A build validates env declarations and reports readiness, but it
+must not fail only because a required env value is missing. Missing required env blocks extension
+load or invocation through runtime command paths, not source validation or generated context
 activation.
 
 Prompt-only success example:
@@ -659,18 +787,17 @@ Prompt-only success example:
   "extensionId": "github",
   "build": {
     "status": "success",
-    "runtimeKind": "prompt_only",
+    "interface": "instructions",
     "activated": true,
     "currentPath": "/Users/example/.config/svvy/extensions/builds/extensions/github/current"
   },
   "requirements": {
-    "env": [],
-    "runtimeReady": true
+    "env": []
   },
+  "ready": true,
+  "issues": [],
   "generated": {
-    "commandDocs": null,
-    "typescriptTypes": null,
-    "toolSchemas": null
+    "typescriptTypes": null
   }
 }
 ```
@@ -683,7 +810,7 @@ Incur-backed success example:
   "extensionId": "linear",
   "build": {
     "status": "success",
-    "runtimeKind": "incur_cli",
+    "interface": "svvyx",
     "activated": true,
     "currentPath": "/Users/example/.config/svvy/extensions/builds/extensions/linear/current"
   },
@@ -703,9 +830,15 @@ Incur-backed success example:
         "description": "Linear API base URL.",
         "status": "defaulted"
       }
-    ],
-    "runtimeReady": false
+    ]
   },
+  "ready": false,
+  "issues": [
+    {
+      "code": "EXTENSION_ENV_MISSING",
+      "message": "Linear requires LINEAR_API_KEY. Configure it in the Extensions pane."
+    }
+  ],
   "commands": [
     {
       "name": "issues.list",
@@ -717,9 +850,7 @@ Incur-backed success example:
     }
   ],
   "generated": {
-    "commandDocs": "/Users/example/.config/svvy/extensions/generated/extensions/linear/commands.md",
-    "typescriptTypes": "/Users/example/.config/svvy/extensions/generated/extensions/linear/types.d.ts",
-    "toolSchemas": "/Users/example/.config/svvy/extensions/generated/extensions/linear/tool-schemas.json"
+    "typescriptTypes": "/Users/example/.config/svvy/extensions/generated/extensions/linear/types.d.ts"
   }
 }
 ```
@@ -1079,7 +1210,7 @@ File-change revert example:
     "autoBuild": {
       "status": "success",
       "currentPath": "/Users/example/.config/svvy/extensions/builds/extensions/linear/current",
-      "runtimeReady": true
+      "ready": true
     }
   },
   "conversationEvent": {
@@ -1192,7 +1323,7 @@ Snapshot payload excludes:
 
 - `node_modules`
 - current and staging compiled extension build outputs
-- generated command docs, schemas, and TypeScript declarations
+- generated TypeScript declarations
 - generated aggregate cache blobs
 - runtime build caches
 - agent-readable encrypted secret blobs, raw secret values, keychain item identifiers, and
@@ -1229,7 +1360,7 @@ Load success example:
       "extensionId": "linear",
       "status": "success",
       "currentPath": "/Users/example/.config/svvy/extensions/builds/extensions/linear/current",
-      "runtimeReady": true
+      "ready": true
     }
   ],
   "agentContextImpact": {
@@ -1272,5 +1403,4 @@ Load paused for dependency approval example:
 
 - The exact `manifest.json` schema is not yet finalized. It should be generated or documented from
   the implementation contract rather than maintained as loose prose.
-- The exact build artifact schema for generated command docs, TypeScript declarations, and tool
-  schemas depends on the final Incur public surface.
+- The exact generated TypeScript declaration shape depends on the final Incur public surface.

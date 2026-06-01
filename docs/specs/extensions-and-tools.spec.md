@@ -162,10 +162,9 @@ Each extension has:
 - description
 - full loaded instructions
 - minimal available instructions
-- optional Incur CLI source or native runtime binding
+- an agent-facing interface: `native_tool`, `svvyx`, or `instructions`
 - optional TypeScript API enablement
-- generated CLI/tool overview
-- generated TypeScript API overview
+- generated TypeScript API overview when TypeScript API is enabled
 - dependency and env requirements when relevant
 - readonly usage view showing which agents use it and whether each usage is default-loaded or
   available
@@ -187,7 +186,7 @@ For each agent profile and actor kind, an extension can be:
 
 - full instructions are included in the actor prompt
 - the extension is mounted in the actor-scoped `svvyx` CLI if it has commands
-- generated command docs are included
+- loaded `svvyx` command guidance is included when the extension exposes `svvyx` commands
 - generated TypeScript command types are included when TypeScript API is enabled
 - the runtime allows the actor to invoke that extension through the supported execution paths
 
@@ -197,69 +196,323 @@ For each agent profile and actor kind, an extension can be:
 - the minimal instructions explain when and why the extension should be loaded
 - the extension is not mounted in `svvyx`
 - the extension has no CLI presence
-- its command docs and TypeScript types are not included
-- the actor may request it through the explicit loading mechanism if the actor kind allows it
+- its `svvyx` command guidance and TypeScript types are not included
+- the actor may load it through the explicit loading mechanism if the actor kind allows it
 
 `unavailable` means:
 
 - no instructions are included
 - no awareness is included
-- the extension cannot be requested by `@extension` or `request_extension`
-- no generated CLI, docs, types, or runtime surface are exposed
+- the extension cannot be loaded by `@extension` or `load_extension`
+- no generated CLI, `svvyx` guidance, types, or runtime surface are exposed
 
 The prompt is advisory only. The runtime must enforce the same state. Generated prompt text and
 actual callable surfaces must match.
 
-A native `list_extensions` tool should let the agent inspect:
+### Extension Interface
 
-- currently loaded extensions and their loaded surface summaries
-- available extensions that can be requested and their minimal instructions
+`interface` is the agent-facing way to use an extension, not the implementation language or storage
+kind.
 
-`list_extensions` must not expose unavailable extensions or command details for available-but-not-
-loaded extensions.
+Allowed values:
 
-`list_extensions` also reports env requirement readiness for loaded and available extensions, using
-the same redacted status model as Extension Managing. It may show an env declaration's name,
-required flag, secret flag, short description, and status. It must never show the value, a preview,
-a hash, a keychain/account id, a storage path, a set/update timestamp, or any other value-correlating
-metadata.
+| Value | Meaning |
+| --- | --- |
+| `native_tool` | The extension contributes one or more native model tools that are already declared in the actor's native tool surface when loaded. |
+| `svvyx` | The extension contributes commands under the actor-scoped aggregate CLI as `svvyx <extension-id> ...` when loaded. |
+| `instructions` | The extension contributes prompt instructions only. It does not add native tools, `svvyx` commands, or TypeScript command types. |
+
+The old `runtimeKind` field is not part of agent-facing JSON. Implementation may still internally
+distinguish native code, Incur-backed source, or prompt-only storage, but agent-facing tools and
+commands report only `interface`.
+
+### `list_extensions`
+
+`list_extensions` is a native, read-only, actor-scoped tool. It is always scoped to the current
+session or workflow task-agent attempt. It is not `svvyx extensions list`, and it must not manage
+extension definitions, source files, usage settings, builds, resets, deletes, reverts, snapshots, or
+secret values.
+
+Input:
+
+```json
+{
+  "state": "loaded",
+  "extensionId": "smithers",
+  "query": "workflow"
+}
+```
+
+All input fields are optional.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `state` | `"loaded" | "available"` | Optional result subset. Omitted means return both loaded and available arrays. |
+| `extensionId` | string | Optional exact extension id filter over the actor-visible loaded and available extension sets. |
+| `query` | string | Optional case-insensitive substring search over actor-visible `id`, `title`, `description`, and available `minimalInstructions`. |
+
+`list_extensions` must not echo actor identity, session id, or filters in its result. The current
+actor is implicit in the tool binding. If an agent needs actor or runtime identity, it should use the
+appropriate runtime inspection tool rather than `list_extensions`.
+
+Result:
+
+```ts
+type ListExtensionsResult = {
+  ok: true;
+  loaded: LoadedExtensionForCurrentActor[];
+  available: AvailableExtensionForCurrentActor[];
+};
+```
+
+If `state` filters one side out, the omitted side is returned as an empty array. If `extensionId`
+names an extension that is unknown or unavailable to the current actor, both arrays are empty.
+Returning an empty result must not reveal whether the id is unknown, unavailable by actor kind,
+unavailable by profile, deleted, disabled, or hidden by policy.
+
+Loaded extension objects use the same top-level fields as `svvyx extensions inspect <id> --json`
+except `usage`, plus session-context state:
+
+```ts
+type LoadedExtensionForCurrentActor = {
+  id: string;
+  origin: "builtin" | "user";
+  interface: "native_tool" | "svvyx" | "instructions";
+  title: string;
+  description: string;
+  resettable: boolean;
+  deletable: boolean;
+  typescriptApiEnabled: boolean;
+  paths: ExtensionPathsForLoadedExtension;
+  requirements: ExtensionRequirements;
+  state: ExtensionStateForCurrentActor & { binding: "loaded" };
+};
+```
+
+Available extension objects intentionally expose less than loaded extensions:
+
+```ts
+type AvailableExtensionForCurrentActor = {
+  id: string;
+  origin: "builtin" | "user";
+  interface: "native_tool" | "svvyx" | "instructions";
+  title: string;
+  description: string;
+  resettable: boolean;
+  deletable: boolean;
+  typescriptApiEnabled: boolean;
+  minimalInstructions: string;
+  paths: {
+    instructionsMinimal: string;
+  };
+  requirements: ExtensionRequirements;
+  state: ExtensionStateForCurrentActor & { binding: "available" };
+};
+```
+
+Shared shapes used above:
+
+```ts
+type ExtensionPathsForLoadedExtension = {
+  sourceRoot: string;
+  manifest: string;
+  instructionsFull: string;
+  instructionsMinimal: string;
+  extensionSource: string | null;
+  packageJson: string;
+  lockfile: string;
+  generatedRoot: string | null;
+  typescriptTypes: string | null;
+  buildCurrent: string | null;
+};
+
+type ExtensionRequirements = {
+  externalBinaries: Array<{
+    name: string;
+    status: "available" | "missing" | "unknown";
+  }>;
+  env: Array<{
+    name: string;
+    required: boolean;
+    secret: boolean;
+    description: string;
+    status: "configured" | "missing" | "defaulted" | "optional_missing";
+  }>;
+  dependencies: ExtensionDependencyRequirement[];
+  trustedDependencies: ExtensionDependencyRequirement[];
+};
+
+type ExtensionDependencyRequirement = {
+  kind: "dependency" | "trusted_dependency";
+  name: string;
+  version: string;
+  packageManager: "bun";
+  source: "npm";
+  approval: "approved" | "needs_user_confirmation" | "unknown";
+  install: "installed" | "missing" | "unknown";
+};
+
+type ExtensionStateForCurrentActor = {
+  draftChanged: boolean;
+  buildRequired: boolean;
+  currentBuild: null | {
+    status: "ready" | "missing" | "invalid";
+  };
+  lastBuild?: {
+    status: "success" | "failed" | "blocked" | "never";
+  };
+  ready: boolean;
+  issues: ExtensionIssue[];
+};
+
+type ExtensionIssue = {
+  code:
+    | "EXTENSION_ENV_MISSING"
+    | "DEPENDENCY_APPROVAL_REQUIRED"
+    | "DEPENDENCY_MISSING"
+    | "BUILD_REQUIRED"
+    | "BUILD_FAILED"
+    | "NO_CURRENT_BUILD"
+    | "CURRENT_BUILD_INVALID";
+  message: string;
+};
+```
+
+`currentBuild.status` reports whether the current generated build for the extension is readable and
+structurally valid, not whether all runtime requirements are satisfied. `ready` is the final
+agent-actionable answer after combining build state, dependency/install state, env status, and the
+current actor binding. `lastBuild` may be omitted only when the implementation has no build attempt
+record yet; if present, it must be coarse status only and must not include timestamps or build ids.
+
+`state.binding` is session-contextual. It reports whether this exact actor session currently has the
+extension loaded or only available. It replaces global usage data for `list_extensions`; global
+agent/profile usage state belongs to Extension Managing `inspect`.
+
+`state.ready` is also session-contextual:
+
+- for `binding: "loaded"`, `ready: true` means the actor can use the loaded extension now
+- for `binding: "available"`, `ready: true` means `load_extension({ "extensionId": id })` is
+  expected to succeed without user/build/dependency/env intervention
+
+`state.ready: false` must be accompanied by one or more `state.issues` entries with concrete,
+agent-actionable messages. Missing required env values must direct the user to configure values in
+the app UI; they must not ask the user to paste a secret into chat.
+
+Loaded extension `paths` may include source/edit paths and generated TypeScript declaration paths
+because loaded extensions are already visible to the actor. Available extension `paths` must include
+only `instructionsMinimal`; this path is a pointer to the same minimal guidance that is already
+returned inline, not permission to inspect full instructions or edit the extension through
+`list_extensions`.
+
+`list_extensions` must never expose:
+
+- unavailable extension ids, titles, descriptions, minimal instructions, counts, or reasons
+- full instructions for available-but-not-loaded extensions
+- source/edit paths for available-but-not-loaded extensions other than `paths.instructionsMinimal`
+- generated TypeScript types for available-but-not-loaded extensions
+- command docs, command lists, command schemas, `--llms-full` output, or tool schemas for
+  available-but-not-loaded extensions
+- env values, previews, masked values, hashes, fingerprints, keychain ids, storage paths, or
+  timestamps
+- extension context fingerprints, generated agent context fingerprints, aggregate cache keys, build
+  ids, build timestamps, or staging paths
+
+Loaded `svvyx` extension command documentation is discovered through the loaded CLI itself, for
+example:
+
+```bash
+svvyx <extension-id> --llms
+svvyx <extension-id> --llms-full
+svvyx <extension-id> <command> --help
+svvyx <extension-id> <command> --schema
+```
+
+`list_extensions` and `svvyx extensions inspect` must not expose ordinary agent-facing
+`commandDocs` or `toolSchemas` file paths. If implementation keeps internal generated docs or schema
+files for prompt assembly, validation, UI traceability, or cache mechanics, those paths are not part
+of the normal agent-facing list/inspect JSON contract.
 
 Example:
 
 ```json
 {
+  "ok": true,
   "loaded": [
     {
-      "id": "linear",
-      "title": "Linear",
-      "runtimeKind": "incur_cli",
-      "summary": "Linear issue and project workflow support.",
-      "env": [
-        {
-          "name": "LINEAR_API_KEY",
-          "required": true,
-          "secret": true,
-          "description": "Linear API key used by Linear commands.",
-          "status": "configured"
+      "id": "smithers",
+      "origin": "builtin",
+      "interface": "svvyx",
+      "title": "Smithers",
+      "description": "Workflow supervision commands for handler threads.",
+      "resettable": true,
+      "deletable": false,
+      "typescriptApiEnabled": true,
+      "paths": {
+        "sourceRoot": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers",
+        "manifest": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/manifest.json",
+        "instructionsFull": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full.md",
+        "instructionsMinimal": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/minimal.md",
+        "extensionSource": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/source",
+        "packageJson": "/Users/example/.config/svvy/extensions/package/package.json",
+        "lockfile": "/Users/example/.config/svvy/extensions/package/bun.lock",
+        "generatedRoot": "/Users/example/.config/svvy/extensions/generated/extensions/smithers",
+        "typescriptTypes": "/Users/example/.config/svvy/extensions/generated/extensions/smithers/types.d.ts",
+        "buildCurrent": "/Users/example/.config/svvy/extensions/builds/extensions/smithers/current"
+      },
+      "requirements": {
+        "externalBinaries": [],
+        "env": [],
+        "dependencies": [],
+        "trustedDependencies": []
+      },
+      "state": {
+        "binding": "loaded",
+        "draftChanged": false,
+        "buildRequired": false,
+        "currentBuild": {
+          "status": "ready"
         },
-        {
-          "name": "LINEAR_API_BASE_URL",
-          "required": false,
-          "secret": false,
-          "description": "Linear API base URL.",
-          "status": "defaulted"
-        }
-      ],
-      "runtimeReady": true
+        "lastBuild": {
+          "status": "success"
+        },
+        "ready": true,
+        "issues": []
+      }
     }
   ],
   "available": [
     {
-      "id": "github",
-      "title": "GitHub",
-      "minimalInstructions": "Load this when the user asks for GitHub-specific workflow guidance.",
-      "env": [],
-      "runtimeReady": true
+      "id": "extension-managing",
+      "origin": "builtin",
+      "interface": "svvyx",
+      "title": "Extension Managing",
+      "description": "Manage extension definitions, builds, usage state, reset, delete, and revert.",
+      "resettable": true,
+      "deletable": false,
+      "typescriptApiEnabled": true,
+      "minimalInstructions": "Load this only when the user asks to inspect, create, edit, build, reset, delete, revert, or configure svvy extensions.",
+      "paths": {
+        "instructionsMinimal": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/extension-managing/instructions/minimal.md"
+      },
+      "requirements": {
+        "externalBinaries": [],
+        "env": [],
+        "dependencies": [],
+        "trustedDependencies": []
+      },
+      "state": {
+        "binding": "available",
+        "draftChanged": false,
+        "buildRequired": false,
+        "currentBuild": {
+          "status": "ready"
+        },
+        "lastBuild": {
+          "status": "success"
+        },
+        "ready": true,
+        "issues": []
+      }
     }
   ]
 }
@@ -281,18 +534,19 @@ Shipped extensions are:
 This supersedes the earlier "locked built-ins are non-editable" phrasing in the session. The latest
 resolution is: shipped built-ins are non-deletable and resettable, but their title, description,
 instructions, editable Incur source, and agent-level enablement can be customized through overlay
-files. Generated schemas, native runtime implementation, and app-owned bridge code remain read-only.
+files. Generated native tool schemas, native runtime implementation, and app-owned bridge code
+remain read-only.
 
-Shipped/default is one axis. Runtime implementation is another axis. A shipped extension can be
-native-runtime, Incur-backed, or prompt-only.
+Shipped/default is one axis. Agent-facing interface is another axis. A shipped extension can expose
+native tools, an actor-scoped `svvyx` namespace, or instructions only.
 
-### Native Runtime Extension
+### Native Tool Extension
 
-A native runtime extension is an extension whose executable behavior is implemented by `svvy`, pi,
-or another app-owned bridge rather than by editable Incur CLI source.
+A native tool extension is an extension whose executable behavior is implemented by `svvy`, pi, or
+another app-owned bridge and exposed as native model tools when loaded.
 
-Native runtime extensions are still represented as extensions for composition, instructions,
-profile selection, and generated preview.
+Native tool extensions still use `interface: "native_tool"` in agent-facing JSON and are represented
+as extensions for composition, instructions, profile selection, and generated preview.
 
 Native runtime/schema source is app-owned and not edited as Incur source.
 
@@ -315,11 +569,11 @@ still re-verify that this is the correct branch and that its API has not changed
 `svvy` does not expose Incur directly as MCP or as Incur skills. Incur is the source contract and
 execution framework for extension CLIs. `svvy` owns actor-scoped mounting, prompt generation,
 runtime policy, command facts, UI projection, dependency review, secret injection, and tool-use
-visualization.
+visualization. Incur-backed extensions use `interface: "svvyx"` in agent-facing JSON.
 
 ### Prompt-Only Extension
 
-A prompt-only extension has no CLI runtime.
+A prompt-only extension has no CLI runtime and uses `interface: "instructions"` in agent-facing JSON.
 
 It still uses the same usage states:
 
@@ -338,18 +592,18 @@ A successful build atomically replaces the extension's current build. The curren
 - manifest
 - full and minimal instructions
 - CLI entrypoint or native runtime binding metadata
-- generated command docs
-- generated command schemas
 - generated TypeScript command types when enabled
 - dependency graph metadata
 - env requirements
-- content hashes
+- internal content hashes stored in product state or non-agent-readable build metadata
 
 Env requirements in build output are declaration metadata and readiness status only. Current build
-artifacts, generated docs, generated schemas, generated TypeScript declarations, aggregate cache
-blobs, and agent-facing build output must not contain env values, secret values, secret hashes,
-secret previews, secret storage identifiers, or value timestamps. Content hashes are internal
-activation/cache state and must not be used as secret fingerprints or displayed as env status.
+artifacts, generated TypeScript declarations, aggregate cache blobs, and agent-facing build output
+must not contain env values, secret values, secret hashes, secret previews, secret storage
+identifiers, value timestamps, extension context fingerprints, generated agent context fingerprints,
+aggregate cache keys, build ids, build timestamps, install timestamps, or internal content hashes.
+Internal hashes are activation/cache state only; they must not be written into agent-readable
+build-current files, used as secret fingerprints, or displayed as env status.
 
 Builds write into `builds/extensions/<id>/staging/<build-run-id>/` while they are running. After a
 build validates successfully, `svvy` atomically replaces `builds/extensions/<id>/current/` with that
@@ -406,17 +660,15 @@ Directory layout:
       source/
   generated/
     extensions/<extension-id>/
-      commands.md
       types.d.ts
-      tool-schemas.json
     aggregates/
       index.sqlite
       blobs/<aggregate-cache-key>/
         manifest.json
         prompt.md
-        command-docs.md
+        svvyx-guidance.md
         commands.d.ts
-        tool-schemas.json
+        native-tool-schemas.json
   builds/
     extensions/<extension-id>/
       current/
@@ -439,8 +691,8 @@ Ownership:
 - shipped builtin defaults live in packaged app resources and are read-only.
 - `inspect` materializes builtin overlay files before returning editable paths, so normal shell
   inspection and `apply_patch` work even when the user has not edited that builtin before.
-- `generated/extensions/<id>/` contains read-only generated command docs, TypeScript declarations,
-  and tool schemas for that extension.
+- `generated/extensions/<id>/` contains read-only generated TypeScript declarations for that
+  extension when TypeScript API is enabled.
 - `builds/extensions/<id>/current/` contains the current built runtime surface for that extension.
 - `builds/extensions/<id>/staging/<build-run-id>/` is temporary output for a running build and is
   atomically promoted over `current/` only after success.
@@ -458,9 +710,10 @@ separated from editable source. Agents may inspect those paths for traceability,
 editing targets. Agents may edit extension source files, instruction files, manifest files, and the
 shared extension `package/package.json` through the normal shell plus `apply_patch` path.
 
-Generated schemas, native runtime implementation, and app-owned bridge code for shipped extensions
-are read-only. A shipped builtin can still be customized by editing its overlay title, description,
-instructions, and Incur source, and those overlay edits remain resettable to packaged defaults.
+Native runtime implementation, generated TypeScript declarations, internal native tool schemas, and
+app-owned bridge code for shipped extensions are read-only. A shipped builtin can still be
+customized by editing its overlay title, description, instructions, and Incur source, and those
+overlay edits remain resettable to packaged defaults.
 
 Generated agent context aggregates use a lightweight cache rather than ad hoc directories:
 
@@ -469,10 +722,10 @@ Generated agent context aggregates use a lightweight cache rather than ad hoc di
   `availableExtensionIds`, `extensionContextFingerprints`, `agentContextFormatVersion`,
   `runtimeStandardsFingerprint`, `agentContextFingerprint`, `createdAt`, `lastUsedAt`, and
   `sizeBytes`
-- `generated/aggregates/blobs/<aggregate-cache-key>/` stores the generated prompt, command docs,
-  TypeScript declarations, tool schemas, and a blob manifest.
+- `generated/aggregates/blobs/<aggregate-cache-key>/` stores the generated prompt, loaded `svvyx`
+  command guidance, TypeScript declarations, native tool schemas, and a blob manifest.
 - each blob manifest stores the same cache key inputs plus per-file hashes for `prompt.md`,
-  `command-docs.md`, `commands.d.ts`, and `tool-schemas.json`
+  `svvyx-guidance.md`, `commands.d.ts`, and `native-tool-schemas.json`
 - the cache key is derived from the resolved actor-facing inputs: actor kind, loaded extension ids,
   available extension ids, each extension's current extension context fingerprint, agent-context
   format version, and runtime standards fingerprint when runtime standards are part of the actor
@@ -497,12 +750,12 @@ Each session or workflow task-agent attempt stores a durable agent context bindi
 - loaded extension ids
 - available extension ids
 - current extension context fingerprints used for those extensions
-- aggregate cache key for generated prompt text, command docs, tool schemas, and TypeScript
-  declarations
+- aggregate cache key for generated prompt text, loaded `svvyx` command guidance, native tool
+  schemas, and TypeScript declarations
 - generated agent context fingerprint
 
 New sessions derive `loadedExtensions` and `availableExtensions` from the agent profile defaults or
-from explicit creation-time overrides. `request_extension` mutates only the current session binding by
+from explicit creation-time overrides. `load_extension` mutates only the current session binding by
 moving the requested extension from `availableExtensions` to `loadedExtensions`; it never mutates the
 global agent profile.
 
@@ -528,7 +781,7 @@ When an extension changes and a successful build activates:
 `agent_context_refresh` is the single explicit surface-control work item for generated agent context
 changes. It replaces the older split between prompt-only refresh work and extension-binding refresh
 work. It updates the bound base instructions, loaded and available extension binding, generated
-instructions, generated command docs, generated TypeScript declarations, native tool schemas,
+instructions, loaded `svvyx` command guidance, generated TypeScript declarations, native tool schemas,
 runtime standards, aggregate cache key, generated agent context fingerprint, and mounted `svvyx`
 command set. It does not send text to pi, create assistant- or user-authored transcript content, or
 write prompt history.
@@ -551,7 +804,7 @@ categories, such as:
 - available extension loading hints
 - extensions changed by id
 - native tool declarations
-- generated command docs
+- loaded `svvyx` command guidance
 - generated TypeScript declarations
 - runtime standards changed by file name
 
@@ -688,11 +941,11 @@ surface for that turn.
 If the extension is unavailable for that actor kind or profile, `svvy` must fail clearly and explain
 that the agent configuration must be changed. It must not silently override unavailable capability.
 
-### `request_extension`
+### `load_extension`
 
-`request_extension` is a native control tool.
+`load_extension` is a native control tool.
 
-It lets an actor request an extension that is available but not loaded.
+It lets an actor load an extension that is available but not loaded.
 
 The load is current-session only. It updates the calling session's durable extension binding and
 does not change the agent profile's default-loaded, available, or unavailable states.
@@ -705,26 +958,26 @@ On success, it should:
 - block for dependency approval before any dependency or trusted dependency install that requires it
 - mount the extension in the actor-scoped `svvyx` surface
 - update the TypeScript command surface for later `execute_typescript` calls in the same turn
-- return the full instructions and generated usage summary
+- return the full instructions and generated loaded-surface summary
 - update the calling session's generated agent context binding and generated agent context
   fingerprint
 - record an `Agent context updated` product event for the calling session, with details that the
-  extension was loaded by `request_extension`
+  extension was loaded by `load_extension`
 
-The session resolved that same-turn loading is desirable. After `request_extension` returns, later
+The session resolved that same-turn loading is desirable. After `load_extension` returns, later
 shell/CLI or `execute_typescript` calls in the same turn should be able to use the newly loaded
 extension.
 
-Same-turn loading starts only after `request_extension` succeeds. If dependency approval, install,
+Same-turn loading starts only after `load_extension` succeeds. If dependency approval, install,
 build, missing required env, or validation blocks the load, the extension remains
 available-but-not-loaded and contributes only its loading hint. A dependency-blocked
-`request_extension` creates or reuses the same durable approval request that an app-pane build would
-use for the same unresolved dependency identities. If the `request_extension` tool call is still
+`load_extension` creates or reuses the same durable approval request that an app-pane build would
+use for the same unresolved dependency identities. If the `load_extension` tool call is still
 pending on that approval, approval resumes the blocked install/build/load for that actor and returns
-the normal successful `request_extension` result after the extension is mounted. If no actor-scoped
-`request_extension` call is still pending, approval only records the dependency identities and
+the normal successful `load_extension` result after the extension is mounted. If no actor-scoped
+`load_extension` call is still pending, approval only records the dependency identities and
 resumes or unblocks app-level build work; it must not mount the extension into any actor session. A
-later actor that wants the extension must call `request_extension` again.
+later actor that wants the extension must call `load_extension` again.
 
 A missing required env value is not an approval request and cannot be resolved by the agent. The
 native load result must name only the missing env declarations and direct the user to configure them
@@ -780,7 +1033,7 @@ Rules:
 - command names need only be unique inside an extension namespace
 - `svvyx --help` shows only currently loaded extensions for the actor
 - `svvyx --help` is not an available-extension catalog
-- generated command docs include only currently loaded extensions
+- loaded `svvyx` command guidance includes only currently loaded extensions
 - generated `Commands` types include only currently loaded extensions
 - available-but-not-loaded extensions contribute only minimal loading guidance
 - unavailable extensions contribute nothing
@@ -871,7 +1124,7 @@ The resolved native direct tool set includes:
 - shell or a shell-backed execution substrate
 - `execute_typescript`
 - `apply_patch`
-- `request_extension`
+- `load_extension`
 - `list_extensions`
 - product control tools such as `thread_start`, `thread_resume`, `thread_handoff`, `wait`,
   `runtime_current`, `thread_current`, `thread_list`, and `thread_handoffs`
@@ -1085,7 +1338,7 @@ Working assignment:
 | General shell command | Codex-like approval-boundary policy; auto-review is the reviewer when approval is required. |
 | `svvyx ...` invoked through general shell | Inherits shell policy. |
 | `apply_patch` | Direct inside the session workspace or allowed extension editing paths; auto-reviewed when it would write outside those roots; rejected when outside policy. |
-| `request_extension` | Direct native control when the extension is available; clear failure when unavailable. |
+| `load_extension` | Direct native control when the extension is available; clear failure when unavailable. |
 | Extension file edits through `apply_patch` | Directly done with rich visualization, Build required indicator, and per-change revert; no auto-build after ordinary agent edits. |
 | User/product-triggered source or config changes | May immediately request a build; dependency approval is still checked only at install time. |
 | Extension usage/reset/delete through Extension Managing | Directly done with rich visualization and command-level revert. |
@@ -1309,9 +1562,9 @@ Secret values:
 - are never stored in extension source files, generated files, build output, aggregate caches,
   snapshots readable by agents, prompt revisions, transcripts, tool results, artifacts, logs, or
   shell history
-- are not exposed through `svvyx extensions ...`, `list_extensions`, generated prompt text, generated
-  command docs, generated TypeScript declarations, generated schemas, `svvyx --help`, or
-  `execute_typescript` declarations
+- are not exposed through `svvyx extensions ...`, `list_extensions`, generated prompt text, loaded
+  `svvyx` command guidance, generated TypeScript declarations, generated native tool schemas,
+  `svvyx --help`, or `execute_typescript` declarations
 
 Non-secret values:
 
@@ -1355,7 +1608,7 @@ Example status block:
       "status": "defaulted"
     }
   ],
-  "runtimeReady": true
+  "ready": true
 }
 ```
 
@@ -1406,7 +1659,7 @@ Runtime injection rules:
 - prompt-only extensions never receive runtime env
 - already emitted tool calls finish with the env map for the mounted tool set that produced them
 - if an env declaration changes after a session binding is created, the binding refresh must update
-  runtime readiness before the next extension invocation
+  ready state before the next extension invocation
 
 The safe base env may include ordinary process values required for execution, but it must not include
 extension secrets from app storage. If the host process itself has unrelated secret values in its
@@ -1420,9 +1673,9 @@ does not need to call the remote service or possess secrets.
 
 Missing required env values block runtime use, not source compilation. Specifically:
 
-- `svvyx extensions build <id> --json` may succeed while reporting `runtimeReady: false`.
+- `svvyx extensions build <id> --json` may succeed while reporting `ready: false`.
 - `list_extensions` and `svvyx extensions inspect <id> --json` report missing/configured status.
-- `request_extension` fails with `EXTENSION_ENV_MISSING` when loading would mount an executable
+- `load_extension` fails with `EXTENSION_ENV_MISSING` when loading would mount an executable
   extension with missing required env.
 - an already loaded extension command fails with `EXTENSION_ENV_MISSING` if a required value was
   removed after the actor binding was created.
@@ -1469,9 +1722,9 @@ Redaction applies to:
 - generated artifacts
 - transcript text
 - generated prompt previews
-- generated command docs
+- loaded `svvyx` command guidance
 - generated TypeScript declarations
-- generated tool schemas
+- generated native tool schemas
 - snapshot inspection output
 
 Redaction is a last-resort containment measure, not permission for extension code to print secrets.
@@ -1505,7 +1758,7 @@ Agents can never:
 - choose a workspace, session, actor, profile, or inherited shell scope for a v1 extension env value
 - ask `svvy` to inject one extension's env value into another extension
 - receive extension secrets through pi runtime env, global shell env, `execute_typescript` snippet
-  env, generated type declarations, generated schemas, or generated help text
+  env, generated type declarations, generated native tool schemas, or generated help text
 
 Agents may:
 
@@ -1583,11 +1836,11 @@ them. `svvy` also knows exactly which values to redact because they were entered
 This is the resolved built-in extension map from the discussion so far. "Built-in" here means
 shipped by `svvy`, non-deletable, resettable, and configurable per agent usage state.
 
-| Extension | Runtime kind | Included tools or surface | Orchestrator | Handler | Workflow agent |
+| Extension | Interface | Included tools or surface | Orchestrator | Handler | Workflow agent |
 | --- | --- | --- | --- | --- | --- |
 | Filesystem | Native | `shell`, `apply_patch`, shell/filesystem instructions, `svvyx` access through shell | default loaded | default loaded | default loaded |
 | Code Mode | Native | `execute_typescript` with actor-scoped Incur `MemoryClient` over loaded extensions | default loaded | default loaded | default loaded |
-| Extension Loading | Native | `list_extensions`, `request_extension` | default loaded | default loaded | default loaded |
+| Extension Loading | Native | `list_extensions`, `load_extension` | default loaded | default loaded | default loaded |
 | Extension Managing | Incur-backed shipped extension with native app bridge where needed | `svvyx extensions ...` lifecycle commands for inspect, create, build, usage state, reset, delete, and revert; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |
 | cx | Incur-backed or extension-backed shipped extension | codebase/product navigation and cx controls | available | available | available |
 | Smithers | Incur-backed shipped extension | workflow run/list/inspect/resume/signal/transcript controls | unavailable | default loaded | unavailable |
@@ -1696,7 +1949,7 @@ instructions. If trigger matching is ever added, it should produce structured me
 suggestion, not hidden prose stuffed into the prompt.
 
 Available extensions should include minimal instructions that explain when to load them. The model
-may then call `request_extension` when useful.
+may then call `load_extension` when useful.
 
 ## User And Agent App-Modification Tools
 
@@ -1726,7 +1979,7 @@ The generated view should include:
 - available extension minimal instructions
 - runtime standards that reached the actor
 - mounted `svvyx` extension list
-- generated command docs
+- loaded `svvyx` command guidance
 - generated TypeScript command types
 - native tool declarations
 - unavailable extensions omitted entirely
@@ -1741,7 +1994,7 @@ Each extension's current successful build has an internal extension context fing
 This fingerprint hashes only actor-facing extension contract data:
 
 - stable extension id
-- runtime kind
+- interface
 - title and description when those fields can appear in generated context, generated docs, or
   agent-facing command output
 - TypeScript API enabled flag
@@ -1750,11 +2003,11 @@ This fingerprint hashes only actor-facing extension contract data:
 - command manifest for executable extensions, including command ids, command paths, descriptions,
   aliases when exposed, argument schemas, option schemas, output schemas, examples, deprecation
   markers, and streaming markers
-- generated command docs bytes
+- loaded `svvyx` command guidance bytes
 - generated TypeScript declaration bytes when TypeScript API is enabled
-- generated tool schema bytes
+- generated native tool schema bytes
 - env declaration metadata that may be shown to the agent: env name, required flag, secret flag,
-  short description, defaulted/configured/missing status shape, and runtime readiness booleans
+  short description, defaulted/configured/missing status shape, and ready/issue status shape
 - extension-context fingerprint format version
 
 The extension context fingerprint must not include:
@@ -1799,9 +2052,9 @@ actor-scoped extension invocation:
 - native tool declarations visible to that actor, including names, descriptions, JSON schemas, and
   actor availability
 - mounted `svvyx` extension namespace list for loaded extensions
-- generated command docs included for loaded extensions
+- loaded `svvyx` command guidance included for loaded extensions
 - generated TypeScript declarations included for loaded extensions and `execute_typescript`
-- generated tool schema files included in the actor context
+- generated native tool schema files included in the actor context
 - runtime standards that reached the actor, including exact content, order, additions/removals, and
   visible source metadata when that metadata appears in generated context
 - agent-context fingerprint format version
@@ -1853,7 +2106,7 @@ Refresh timing is strict:
   cancels that refresh
 
 `agent_context_refresh` may only be enqueued for a ready generated context. If required extension
-builds or runtime readiness checks are blocked or failed, the existing context remains bound and the
+builds or ready-state checks are blocked or failed, the existing context remains bound and the
 blocker is reported through the build/readiness path instead.
 
 ### Queue And Event Behavior

@@ -46,7 +46,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Extension Env And Secrets",
     status: "in-progress",
     summary:
-      "Defines app-global extension env declarations and app-managed values keyed by `(extensionId, envName)`, with user-only secret entry/update/removal, encrypted local secret storage, non-secret manifest defaults plus app-level overrides, status-only agent inspection through `list_extensions` and Extension Managing, build-time declaration validation separate from runtime readiness, process-local runtime injection into only the specific trusted extension command or MemoryClient invocation, and redaction across prompts, generated docs, tool output, logs, artifacts, transcripts, and snapshots while deferring egress-proxy credential boundaries.",
+      "Defines app-global extension env declarations and app-managed values keyed by `(extensionId, envName)`, with user-only secret entry/update/removal, encrypted local secret storage, non-secret manifest defaults plus app-level overrides, status-only agent inspection through `list_extensions` and Extension Managing, build-time declaration validation separate from ready state, process-local runtime injection into only the specific trusted extension command or MemoryClient invocation, and redaction across prompts, generated docs, tool output, logs, artifacts, transcripts, and snapshots while deferring egress-proxy credential boundaries.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/extensions-and-tools.spec.md",
