@@ -214,11 +214,13 @@ Shipped extensions are:
 - non-deletable
 - resettable to shipped state
 - configurable per agent as default-loaded, available, or unavailable when the actor kind allows it
-- allowed to have editable instructions unless the runtime surface itself is generated and read-only
+- allowed to have editable title, description, instructions, and Incur source overlays when those
+  files exist
 
 This supersedes the earlier "locked built-ins are non-editable" phrasing in the session. The latest
-resolution is: shipped built-ins are non-deletable and resettable, but their instructions and
-agent-level enablement can be customized. Generated schemas and app runtime code remain read-only.
+resolution is: shipped built-ins are non-deletable and resettable, but their title, description,
+instructions, editable Incur source, and agent-level enablement can be customized through overlay
+files. Generated schemas, native runtime implementation, and app-owned bridge code remain read-only.
 
 Shipped/default is one axis. Runtime implementation is another axis. A shipped extension can be
 native-runtime, Incur-backed, or prompt-only.
@@ -266,11 +268,11 @@ It still uses the same usage states:
 
 Prompt-only extensions are useful for domain guidance that does not need executable tools.
 
-### Extension Active Build
+### Extension Current Build
 
 Extension source edits create draft state.
 
-A successful build creates new active build metadata containing:
+A successful build atomically replaces the extension's current build. The current build contains:
 
 - manifest
 - full and minimal instructions
@@ -282,17 +284,26 @@ A successful build creates new active build metadata containing:
 - env requirements
 - content hashes
 
-Failed builds do not replace the previous active build.
+Builds write into `builds/extensions/<id>/staging/<build-run-id>/` while they are running. After a
+build validates successfully, `svvy` atomically replaces `builds/extensions/<id>/current/` with that
+staged output. Failed, cancelled, or dependency-blocked builds do not replace `current/`; their
+staging output is discarded unless retained only long enough to surface diagnostics for that build
+attempt.
 
-The active build id and hashes are internal state for atomic activation, stale detection, crash
-recovery, and diagnostics. They are not user-facing version history, not a rollback surface, and not
-something the agent should normally reason about. Product UI should show practical state such as
-`Ready`, `Build required`, `Needs dependency approval`, `Build failed`, and `Last built`, not raw
-build ids.
+There is no preserved build history, no user-facing build id, no build rollback command, and no
+build-retention or pruning policy. `svvy` keeps only the current build plus any temporary staging
+build currently in progress. Product UI should show practical state such as `Ready`, `Build
+required`, `Needs dependency approval`, `Build failed`, and `Last built`.
 
 ### Extension Source Storage
 
 Extensions are app-global in v1. Workspace-local extensions do not exist in v1.
+
+This is an intentional `svvy` product boundary. pi supports global and project-local extension
+discovery through paths such as `~/.pi/agent/extensions/` and `.pi/extensions/`, and Smithers has its
+own project-local `.smithers/` workflow/runtime conventions. `svvy` v1 does not inherit those
+storage locations for extension source, generated aggregate cache, dependency state, or build output.
+pi and Smithers remain references for runtime behavior, not owners of `svvy` extension storage.
 
 The app-owned extension root is:
 
@@ -310,12 +321,34 @@ Directory layout:
 ~/.config/svvy/extensions/
   sources/
     user/<extension-id>/
+      manifest.json
+      instructions/
+        full.md
+        minimal.md
+      source/
     builtin-overlays/<extension-id>/
+      manifest.json
+      instructions/
+        full.md
+        minimal.md
+      source/
   generated/
     extensions/<extension-id>/
-    aggregates/<aggregate-hash>/
+      commands.md
+      types.d.ts
+      tool-schemas.json
+    aggregates/
+      index.sqlite
+      blobs/<aggregate-cache-key>/
+        manifest.json
+        prompt.md
+        command-docs.md
+        commands.d.ts
+        tool-schemas.json
   builds/
-    extensions/<extension-id>/<build-id>/
+    extensions/<extension-id>/
+      current/
+      staging/<build-run-id>/
   package/
     package.json
     bun.lock
@@ -327,23 +360,55 @@ Directory layout:
 Ownership:
 
 - `sources/user/<id>/` contains editable user extension manifests, instructions, and source.
-- `sources/builtin-overlays/<id>/` contains editable overlay files for shipped builtin extensions.
+- `sources/builtin-overlays/<id>/` contains editable overlay files for shipped builtin extension
+  title, description, instructions, and Incur source.
+- `source/` exists only for extensions with editable executable source; prompt-only extensions omit
+  it or return `source: null` from `inspect`.
 - shipped builtin defaults live in packaged app resources and are read-only.
 - `inspect` materializes builtin overlay files before returning editable paths, so normal shell
   inspection and `apply_patch` work even when the user has not edited that builtin before.
 - `generated/extensions/<id>/` contains read-only generated command docs, TypeScript declarations,
   and tool schemas for that extension.
-- `builds/extensions/<id>/<build-id>/` contains immutable internal build output for that extension.
-- `generated/aggregates/<aggregate-hash>/` contains cached actor/session aggregate surfaces derived
-  from loaded and available extension sets plus active build hashes.
+- `builds/extensions/<id>/current/` contains the current built runtime surface for that extension.
+- `builds/extensions/<id>/staging/<build-run-id>/` is temporary output for a running build and is
+  atomically promoted over `current/` only after success.
+- `generated/aggregates/` contains a real disposable cache for actor/session aggregate surfaces.
 - `package/` is the single app-global Bun project used for extension dependency installation and
   lockfile state.
 - `trash/` stores deleted user extensions for Extension Managing revert.
-- `snapshots/` stores user-named extension snapshots and their encrypted secret snapshot material
-  where applicable.
+- `snapshots/` stores local-only user-named extension snapshots and their encrypted local secret
+  snapshot material where applicable.
 
 Generated files and build outputs are separated from editable source. Agents may inspect generated
 paths for traceability, but generated and build paths are not editable source paths.
+
+Generated schemas, native runtime implementation, and app-owned bridge code for shipped extensions
+are read-only. A shipped builtin can still be customized by editing its overlay title, description,
+instructions, and Incur source, and those overlay edits remain resettable to packaged defaults.
+
+Aggregate surfaces use a lightweight cache rather than ad hoc directories:
+
+- `generated/aggregates/index.sqlite` stores cache metadata.
+- each index row stores at minimum `cacheKey`, `actorKind`, ordered `loadedExtensionIds`, ordered
+  `availableExtensionIds`, `extensionSurfaceHashes`, `generatedSurfaceVersion`,
+  `runtimeStandardsHash`, `createdAt`, `lastUsedAt`, and `sizeBytes`
+- `generated/aggregates/blobs/<aggregate-cache-key>/` stores the generated prompt, command docs,
+  TypeScript declarations, tool schemas, and a blob manifest.
+- each blob manifest stores the same cache key inputs plus per-file hashes for `prompt.md`,
+  `command-docs.md`, `commands.d.ts`, and `tool-schemas.json`
+- the cache key is derived from the resolved actor-facing inputs: actor kind, loaded extension ids,
+  available extension ids, each extension's current surface hash, generated-surface format version,
+  and runtime standards hash when runtime standards are part of the actor prompt
+- cache hits must verify the indexed blob exists and matches the blob manifest before use
+- cache misses or corrupt blobs regenerate into a temporary directory and atomically promote into
+  `blobs/<aggregate-cache-key>/`
+- session bindings store only the aggregate cache key and can regenerate the aggregate when the cache
+  entry is missing
+- aggregate cache deletion is always safe and must never be treated as deleting product history
+- aggregate pruning is based only on cache mechanics and must not encode product semantics; the v1
+  default cache budget is 256 MiB total under `generated/aggregates/blobs/`, with entries unused for
+  30 days eligible for eviction, and least-recently-used eviction applied when the byte budget is
+  exceeded
 
 ### Surface Binding
 
@@ -353,8 +418,9 @@ Each session or workflow task-agent attempt stores a durable extension binding:
 - selected agent profile or task-agent config identity
 - loaded extension ids
 - available extension ids
-- active build hashes used for those extensions
-- aggregate hash for generated prompt text, command docs, tool schemas, and TypeScript declarations
+- current surface hashes used for those extensions
+- aggregate cache key for generated prompt text, command docs, tool schemas, and TypeScript
+  declarations
 
 New sessions derive `loadedExtensions` and `availableExtensions` from the agent profile defaults or
 from explicit creation-time overrides. `request_extension` mutates only the current session binding by
@@ -362,13 +428,15 @@ moving the requested extension from `availableExtensions` to `loadedExtensions`;
 global agent profile.
 
 The build unit is an extension. The aggregate generated surface is cached by actor kind, loaded
-extension set, available extension set, and active build hashes. It is not built per visual surface.
-Two sessions with the same resolved binding share the same aggregate cache. A session that loads an
-additional extension gets a different binding and aggregate hash.
+extension set, available extension set, current surface hashes, generated-surface format version, and
+runtime standards hash. It is not built per visual surface. Two sessions with the same resolved
+binding share the same aggregate cache entry. A session that loads an additional extension gets a
+different binding and aggregate cache key.
 
 When an extension changes and a successful build activates:
 
-- the previous active build remains usable until the new build is complete and atomically activated
+- the current mounted extension surface remains usable until the staging build is complete and
+  atomically replaces `builds/extensions/<id>/current/`
 - sessions whose loaded or available set contains that extension are marked stale
 - inactive sessions refresh through backend preflight before their next prompt-bearing work runs, not
   when a pane is visually opened
@@ -467,7 +535,8 @@ Each extension detail view should include:
 - description
 - full loaded instructions textarea
 - minimal available instructions textarea
-- optional editable Incur CLI source for non-native extensions
+- optional editable Incur CLI source for Incur-backed user extensions and Incur-backed builtin
+  overlays
 - TypeScript API enablement control
 - dependency status
 - env/secrets requirement status
@@ -521,8 +590,8 @@ does not change the agent profile's default-loaded, available, or unavailable st
 On success, it should:
 
 - verify the extension is available for that actor
-- use the latest successful build if it is valid
-- build only if source changed or no active build exists
+- use the current successful build if it is valid
+- build only if source changed or no current build exists
 - block for dependency approval before any dependency install or build that requires it
 - mount the extension in the actor-scoped `svvyx` surface
 - update the TypeScript command surface for later `execute_typescript` calls in the same turn
@@ -584,7 +653,7 @@ because that makes discovery and typed composition messy.
 ```text
 extension source CLI per extension
         -> build
-extension active build
+extension current build
         -> per actor/profile resolution
 actor-scoped aggregate svvyx CLI
         -> shell usage and execute_typescript MemoryClient usage
@@ -717,6 +786,11 @@ Policy:
 
 - direct when every touched source path and move destination is inside the active session workspace
   or another explicit writable root
+- editable extension source paths returned by `svvyx extensions inspect <id> --json` are explicit
+  writable roots only under `~/.config/svvy/extensions/sources/user/<id>/` and
+  `~/.config/svvy/extensions/sources/builtin-overlays/<id>/`
+- generated extension outputs, aggregate cache blobs, build `current/` and `staging/` directories,
+  `package/node_modules/`, trash, snapshots, and packaged builtin defaults are not editable roots
 - auto-reviewed when a patch would write outside the active session workspace or explicit writable
   roots
 - rejected when the active policy forbids the required write escalation
@@ -828,9 +902,10 @@ The revert contract is intentionally narrow:
   recorded `apply_patch` change; there is no separate custom edit/write surface
 - `set-usage`, `reset`, and `delete` are command-level revertable
 - `create` is not shown as revertable; the UI can show Delete for the created user extension
-- build activation is not a user-facing rollback surface; active build metadata is internal only
-- runtime calls resolve the current active build at execution time, but already emitted tool calls
-  finish against the tool set that produced them
+- build activation is not a user-facing rollback surface; current build status and surface hashes are
+  internal activation state
+- runtime calls resolve the current build at execution time, but already emitted tool calls finish
+  against the mounted tool set that produced them
 - app-managed extension trash exists only so a delete change can be reverted from its change card or
   history
 - dependency installs, secret entry/update/removal, external shell side effects, and ordinary repo
@@ -855,7 +930,7 @@ Working assignment:
 | --- | --- |
 | General shell command | Codex-like approval-boundary policy; auto-review is the reviewer when approval is required. |
 | `svvyx ...` invoked through general shell | Inherits shell policy. |
-| `apply_patch` | Direct inside the session workspace; auto-reviewed when it would write outside the session workspace; rejected when outside policy. |
+| `apply_patch` | Direct inside the session workspace or editable extension source roots returned by `inspect`; auto-reviewed when it would write outside those roots; rejected when outside policy. |
 | `request_extension` | Direct native control when the extension is available; clear failure when unavailable. |
 | Extension file edits through `apply_patch` | Directly done with rich visualization, Build required indicator, and per-change revert; no auto-build after ordinary agent edits. |
 | User/product-triggered source or config changes | May immediately request a build; dependency approval is still checked only at install time. |
@@ -887,12 +962,20 @@ Rules:
 - dependency install proceeds without prompting only when every dependency identity that would be
   installed has already been approved
 - the UI must show unapproved added or changed dependency identities before confirmation
-- the confirmation must explain that install may run package lifecycle scripts unless those scripts
-  are disabled by the implementation
+- `svvy` uses Bun's default lifecycle-script behavior rather than inventing a separate script
+  sandbox for extension dependencies
+- Bun writes `bun.lock`, runs root project install and prepare scripts, does not execute arbitrary
+  installed-dependency lifecycle scripts by default, allows selected dependency scripts through
+  `trustedDependencies`, and has its own default trusted npm allowlist
+- non-npm dependency sources such as `file:`, `link:`, `git:`, and `github:` require explicit
+  `trustedDependencies` trust before their dependency lifecycle scripts run
+- any change to `trustedDependencies` is dependency state and must be surfaced in the same dependency
+  approval diff as added, removed, or changed package identities
 - `svvy` tracks `package.json` hash, lockfile hash, and dependency graph diff
 - if the lockfile or dependency list changes outside `svvy`, the app validates the dependency diff
   against the approval ledger and asks only for unapproved dependency identities before using it
-- failed install or build leaves the previous active extension build untouched
+- failed install or build leaves `builds/extensions/<id>/current/` and the current mounted extension
+  surface untouched
 - manual handling is allowed by opening the relevant package file in the external editor
 
 All source/config mutations feed the same build pipeline:
@@ -913,8 +996,10 @@ approval rules. The only difference is scheduling: ordinary agent patch batches 
 request build, while user/product actions may request build immediately.
 
 The package and lockfile are durable dependency truth. They are not disposable generated artifacts.
-`node_modules`, compiled extension builds, aggregate generated outputs, and runtime caches are
-rebuildable artifacts and are not snapshot payload.
+`node_modules`, temporary staging builds, generated extension outputs, aggregate cache blobs, and
+runtime caches are rebuildable artifacts and are not snapshot payload. The current build under
+`builds/extensions/<id>/current/` is also derived from source and package state; snapshots restore the
+source/package state and then rebuild rather than storing compiled build output.
 
 The same dependency problem will later apply to TypeScript workflows. The session explicitly noted
 that the workflow design should borrow the extension dependency policy when workflow dependency
@@ -949,9 +1034,10 @@ Secret lifecycle:
 8. Missing secrets return structured errors such as "`GITHUB_TOKEN` is missing", not requests to
    paste tokens into chat.
 
-User-named extension snapshots may include secret material only if it remains fully encrypted or
-keychain-backed and never becomes agent-readable. Snapshot export or cross-machine restore needs a
-separate security decision before secret material can leave the local app trust boundary.
+User-named extension snapshots are local-only in v1. They may include local encrypted secret material
+or local keychain-backed secret references only if that material never becomes agent-readable.
+Snapshot export, importing snapshots on another machine, portable passphrase-based secret restore,
+and cross-machine secret decryption are not product concerns and are unsupported.
 
 ## Extension Snapshots
 
@@ -965,21 +1051,22 @@ Snapshot payload includes:
 - extension registry/config/settings
 - agent/profile extension usage states
 - package and lockfile state needed to reproduce exact dependencies
-- encrypted local secret material or non-agent-readable secret references, subject to the secrets
-  rules above
+- encrypted local secret material or non-agent-readable local secret references, subject to the
+  secrets rules above
 
 Snapshot payload excludes:
 
 - `node_modules`
-- compiled extension build outputs
+- current and staging compiled extension build outputs
 - generated extension docs, schemas, and TypeScript declarations
-- generated aggregate surfaces
+- generated aggregate cache blobs
 - runtime build caches
 
 Loading a snapshot is a user-first product action. It restores the snapshot's source/config/package
 state, then immediately requests build for affected extensions. The build path uses the normal
 validate/install/approval/build/activate pipeline. If dependency approval is needed, loading pauses at
-that approval point; the previous active builds remain usable until the new builds succeed.
+that approval point; current mounted extension surfaces remain usable until the replacement builds
+succeed.
 
 Snapshot restore does not get special dependency rules. It changes files and package state, then the
 normal install boundary checks the approved dependency ledger. If a snapshot removes an extension
@@ -1163,16 +1250,10 @@ The following are unresolved from the session and should be settled before imple
   available extension names and summaries for policy context, unavailable extension ids if needed
   for bypass detection, current loaded `svvyx` surface, cwd, command/action JSON, relevant
   read-only filesystem state, and recent conversation state.
-- Decide retention and pruning for generated build artifacts after active build changes. Extension
-  change/revert history itself is retained indefinitely for now and is not implemented with git.
 - Decide where runtime standards are configured after the Context pane is removed or absorbed.
 - Define the first real version of Project CI as an extension. It is currently a placeholder with no
   actor availability.
 - Decide the exact generated TypeScript contract once the local Incur fork API is verified.
-- Decide the exact customization boundary for shipped extensions across title, description,
-  instructions, source, generated schemas, and runtime code.
-- Decide how dependency lifecycle scripts are disabled, sandboxed, or clearly warned about during
-  dependency confirmation.
 - Define exact naming and collision rules for extension ids and subcommand namespaces.
 - Define the exact generated prompt/tool/type hash model for stale surface detection.
 
