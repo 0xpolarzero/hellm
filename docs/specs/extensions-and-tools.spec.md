@@ -295,6 +295,11 @@ build-retention or pruning policy. `svvy` keeps only the current build plus any 
 build currently in progress. Product UI should show practical state such as `Ready`, `Build
 required`, `Needs dependency approval`, `Build failed`, and `Last built`.
 
+A dependency-blocked build is blocked on exact dependency identities or exact trusted dependency
+identities, not on package names alone. The existing current build and any already-mounted runtime
+surface stay usable until the replacement build succeeds. Rejection or failed install leaves
+`buildRequired: true` and does not mutate the current build.
+
 ### Extension Source Storage
 
 Extensions are app-global in v1. Workspace-local extensions do not exist in v1.
@@ -375,12 +380,16 @@ Ownership:
 - `generated/aggregates/` contains a real disposable cache for actor/session aggregate surfaces.
 - `package/` is the single app-global Bun project used for extension dependency installation and
   lockfile state.
+- `package/package.json` is editable dependency request state.
+- `package/bun.lock` is inspectable lock state and is not an editing target for agents.
 - `trash/` stores deleted user extensions for Extension Managing revert.
 - `snapshots/` stores local-only user-named extension snapshots and their encrypted local secret
   snapshot material where applicable.
 
-Generated files and build outputs are separated from editable source. Agents may inspect generated
-paths for traceability, but generated and build paths are not editable source paths.
+Generated files, build outputs, `package/bun.lock`, `node_modules`, trash, and snapshots are
+separated from editable source. Agents may inspect those paths for traceability, but they are not
+editing targets. Agents may edit extension source files, instruction files, manifest files, and the
+shared extension `package/package.json` through the normal shell plus `apply_patch` path.
 
 Generated schemas, native runtime implementation, and app-owned bridge code for shipped extensions
 are read-only. A shipped builtin can still be customized by editing its overlay title, description,
@@ -540,6 +549,7 @@ Each extension detail view should include:
 - TypeScript API enablement control
 - dependency status
 - env/secrets requirement status
+- pending dependency approval status when install/build is blocked
 - Build required indicator and explicit build control when editable extension files changed
 - readonly generated command overview
 - readonly generated TypeScript API overview
@@ -555,6 +565,12 @@ file edits because an agent may edit several files in sequence; the agent should
 Extension Managing build command after the edit batch is complete. When a user clicks Revert on a
 change card, `svvy` should restore that recorded change, emit a visible conversation event, and
 automatically attempt one follow-up build if the revert leaves the extension build-required.
+
+If startup, refresh, snapshot load, or another app-level operation needs dependency approval before a
+conversation owns the blocked build, the Extensions pane or shared app attention pane shows a
+standalone blocking item. If an agent-visible command such as `svvyx extensions build <id> --json`
+needs the same approval, the conversation shows a tool card for the same durable approval request.
+Approving or rejecting the request from either projection updates every other projection.
 
 ## Extension Loading
 
@@ -592,7 +608,7 @@ On success, it should:
 - verify the extension is available for that actor
 - use the current successful build if it is valid
 - build only if source changed or no current build exists
-- block for dependency approval before any dependency install or build that requires it
+- block for dependency approval before any dependency or trusted dependency install that requires it
 - mount the extension in the actor-scoped `svvyx` surface
 - update the TypeScript command surface for later `execute_typescript` calls in the same turn
 - return the full instructions and generated usage summary
@@ -603,7 +619,14 @@ extension.
 
 Same-turn loading starts only after `request_extension` succeeds. If dependency approval, install,
 build, secret setup, or validation blocks the load, the extension remains available-but-not-loaded
-and contributes only its loading hint.
+and contributes only its loading hint. A dependency-blocked `request_extension` creates or reuses the
+same durable approval request that an app-pane build would use for the same unresolved dependency
+identities. If the `request_extension` tool call is still pending on that approval, approval resumes
+the blocked install/build/load for that actor and returns the normal successful `request_extension`
+result after the extension is mounted. If no actor-scoped `request_extension` call is still pending,
+approval only records the dependency identities and resumes or unblocks app-level build work; it must
+not mount the extension into any actor session. A later actor that wants the extension must call
+`request_extension` again.
 
 ## Incur And `svvyx`
 
@@ -789,8 +812,12 @@ Policy:
 - editable extension source paths returned by `svvyx extensions inspect <id> --json` are explicit
   writable roots only under `~/.config/svvy/extensions/sources/user/<id>/` and
   `~/.config/svvy/extensions/sources/builtin-overlays/<id>/`
+- the exact shared dependency request file returned as `packageJson` by
+  `svvyx extensions inspect <id> --json` is an explicit writable file when an agent or user needs
+  to add, remove, or change a direct dependency or trusted dependency request
 - generated extension outputs, aggregate cache blobs, build `current/` and `staging/` directories,
-  `package/node_modules/`, trash, snapshots, and packaged builtin defaults are not editable roots
+  `package/bun.lock`, `package/node_modules/`, trash, snapshots, and packaged builtin defaults are
+  not editable roots
 - auto-reviewed when a patch would write outside the active session workspace or explicit writable
   roots
 - rejected when the active policy forbids the required write escalation
@@ -880,6 +907,12 @@ Approval state must stay scoped to the owning actor surface or workflow task att
 thread approval state must not leak into the orchestrator, and workflow task approval state must not
 leak outside the Smithers attempt that owns it.
 
+Dependency install approval is a separate product-state approval class. It is keyed to exact
+dependency identities and exact trusted dependency identities in the app-global extension package
+project, so the same pending request may be referenced by an app pane and by one or more
+conversation tool cards. Sharing that dependency approval record does not grant shell approval,
+runtime tool approval, or actor capability outside the blocked dependency install/build operation.
+
 ### Product-State Mutations With Revert
 
 Actions that alter Extension Managing state but are not shell commands should execute directly
@@ -930,14 +963,14 @@ Working assignment:
 | --- | --- |
 | General shell command | Codex-like approval-boundary policy; auto-review is the reviewer when approval is required. |
 | `svvyx ...` invoked through general shell | Inherits shell policy. |
-| `apply_patch` | Direct inside the session workspace or editable extension source roots returned by `inspect`; auto-reviewed when it would write outside those roots; rejected when outside policy. |
+| `apply_patch` | Direct inside the session workspace or allowed extension editing paths; auto-reviewed when it would write outside those roots; rejected when outside policy. |
 | `request_extension` | Direct native control when the extension is available; clear failure when unavailable. |
 | Extension file edits through `apply_patch` | Directly done with rich visualization, Build required indicator, and per-change revert; no auto-build after ordinary agent edits. |
 | User/product-triggered source or config changes | May immediately request a build; dependency approval is still checked only at install time. |
 | Extension usage/reset/delete through Extension Managing | Directly done with rich visualization and command-level revert. |
 | Extension creation | Directly done with rich visualization and a Delete action, not a revert action. |
 | Extension revert | Directly done with one automatic follow-up build when the revert leaves the extension build-required; UI button reverts also emit a visible conversation event. |
-| Dependency install with unapproved exact dependency identities | Blocked pending explicit user confirmation. |
+| Dependency install with unapproved exact dependency or trusted dependency identities | Blocked pending explicit user confirmation through a durable dependency approval request shared by relevant app-pane and conversation projections. |
 | Secret entry or update | User-only UI action; never agent-readable. |
 
 ## Dependency Lifecycle
@@ -950,33 +983,84 @@ The app maintains one package project and lockfile for extension builds under
 
 Rules:
 
-- dependency versions must be exact
-- if a dependency spec is not exact, `svvy` may resolve the latest exact version but must ask the
-  user before writing, installing, or building with it
 - dependency approval is checked at install time, not when files are edited
-- approval is keyed by exact dependency identity: package name, exact version, package manager or
-  resolved source, and integrity or resolution metadata when available
+- approval is always keyed by exact dependency identity, never by package name alone
+- an npm dependency identity is keyed by `kind: "dependency"`, package manager, source, package name,
+  exact version, and integrity or resolution metadata when available
+- a trusted lifecycle-script identity is keyed by `kind: "trusted_dependency"`, package manager,
+  source, package name, exact version, and integrity or resolution metadata when available
+- dependency specs must be exact before install or build can proceed
+- non-exact specs such as ranges, tags, `latest`, `^12.4.0`, or `~12.4.0` fail validation with a
+  clear error; `svvy` must not resolve them to latest, rewrite them automatically, install them, or
+  build with them
 - already-approved exact dependency identities do not require repeated approval
-- new package versions, changed package sources, or changed integrity/resolution metadata require
-  approval before install proceeds
-- dependency install proceeds without prompting only when every dependency identity that would be
-  installed has already been approved
-- the UI must show unapproved added or changed dependency identities before confirmation
-- `svvy` uses Bun's default lifecycle-script behavior rather than inventing a separate script
-  sandbox for extension dependencies
-- Bun writes `bun.lock`, runs root project install and prepare scripts, does not execute arbitrary
-  installed-dependency lifecycle scripts by default, allows selected dependency scripts through
-  `trustedDependencies`, and has its own default trusted npm allowlist
-- non-npm dependency sources such as `file:`, `link:`, `git:`, and `github:` require explicit
-  `trustedDependencies` trust before their dependency lifecycle scripts run
+- already-approved exact trusted dependency identities do not require repeated approval
+- new package versions, changed package sources, changed package manager identity, or changed
+  integrity/resolution metadata require approval before install proceeds
+- dependency install proceeds without prompting only when every dependency identity and trusted
+  dependency identity that would be installed or trusted has already been approved
+- the UI must show unapproved added or changed dependency identities and trusted dependency
+  identities before confirmation
+- extension installs must not rely on Bun's default trusted npm allowlist as product policy
+- dependency lifecycle scripts are disabled unless the exact trusted dependency identity has been
+  approved in `svvy`
+- root package lifecycle scripts are not an extension build mechanism; extension builds are driven by
+  `svvyx extensions build`, not by `package.json` lifecycle hooks
+- non-npm dependency sources such as `file:`, `link:`, `git:`, and `github:` must resolve to a
+  concrete source identity before install; lifecycle-script trust for those sources still requires
+  explicit trusted dependency approval before scripts can run
 - any change to `trustedDependencies` is dependency state and must be surfaced in the same dependency
-  approval diff as added, removed, or changed package identities
+  approval diff as added, removed, or changed trusted dependency identities
+- Bun's `trustedDependencies` package field is name-based, but `svvy` approval is not; `svvy` must
+  resolve each trusted package name to the exact trusted dependency identity before scripts can run
 - `svvy` tracks `package.json` hash, lockfile hash, and dependency graph diff
 - if the lockfile or dependency list changes outside `svvy`, the app validates the dependency diff
-  against the approval ledger and asks only for unapproved dependency identities before using it
+  against the approval ledger and asks only for unapproved dependency or trusted dependency identities
+  before using it
 - failed install or build leaves `builds/extensions/<id>/current/` and the current mounted extension
   surface untouched
-- manual handling is allowed by opening the relevant package file in the external editor
+- after any failed, interrupted, or externally modified install, the next startup, refresh, or build
+  must validate `package.json`, `bun.lock`, installed artifacts, and the approval ledger before using
+  that dependency state
+- `package/package.json` is editable request state and may be changed by users or agents
+- `package/bun.lock` is inspectable lock state and is not an editing target
+- manual dependency handling is allowed by opening the relevant package file in the external editor
+- approval covers the dependency identities the user is visibly installing or trusting; transitive
+  dependency tree entries may be displayed for inspection but are not remembered as approvals unless
+  they are also direct dependency or trusted dependency identities
+
+Dependency availability checks without install:
+
+- `inspect`, startup refresh, and extension refresh may read manifests, `package.json`, `bun.lock`,
+  `node_modules`, build state, and the approval ledger
+- these checks must not install packages, compile extension source, rewrite `package.json`, rewrite
+  `bun.lock`, resolve `latest`, or make network requests only to improve a status label
+- if status cannot be known without install or build, the status must be reported as a concrete
+  blocked or unknown state with the reason
+- missing installed artifacts are reported as `install: "missing"` and leave the current successful
+  build, if any, untouched until the build/install pipeline succeeds
+
+Dependency approval UX:
+
+- app-level startup, refresh, snapshot load, or build work shows dependency approval as a standalone
+  blocking item in the Extensions surface or shared app attention pane
+- agent-visible build or load work shows the same approval as a tool card requiring approval in the
+  owning conversation
+- both placements reference one durable approval request when they are blocked on the same unresolved
+  dependency identities
+- approving a request records the listed dependency and trusted dependency identities in the approval
+  ledger and updates every pane, conversation tool card, and blocked operation that references it
+- approval resumes blocked app-level build work and any still-pending conversation tool card whose
+  blocked operation is an install/build/load for the same approval request; it does not create a new
+  actor binding or mount an extension into a session unless that still-pending actor-scoped load is
+  the blocked operation being resumed
+- rejecting a request marks that pending request rejected, updates every referencing pane and
+  conversation tool card, leaves `buildRequired: true`, and leaves the current mounted surface
+  unchanged
+- rejection does not create a permanent deny rule; a later explicit build or refresh may create a new
+  approval request if the same unapproved identities are still required
+- unanswered approval requests remain pending and visible until approved, rejected, or made obsolete
+  by later source/package changes that no longer require the same identities
 
 All source/config mutations feed the same build pipeline:
 
@@ -984,8 +1068,8 @@ All source/config mutations feed the same build pipeline:
 files changed
   -> build required
   -> validate source, manifest, package metadata, and lockfile
+  -> maybe ask approval for unapproved dependency or trusted dependency identities
   -> maybe install
-  -> maybe ask approval for unapproved dependency identities
   -> build
   -> atomically activate only after success
 ```
@@ -995,7 +1079,7 @@ The origin of the file change is irrelevant to dependency approval. Direct user 
 approval rules. The only difference is scheduling: ordinary agent patch batches do not automatically
 request build, while user/product actions may request build immediately.
 
-The package and lockfile are durable dependency truth. They are not disposable generated artifacts.
+The package and lockfile are durable dependency state. They are not disposable generated artifacts.
 `node_modules`, temporary staging builds, generated extension outputs, aggregate cache blobs, and
 runtime caches are rebuildable artifacts and are not snapshot payload. The current build under
 `builds/extensions/<id>/current/` is also derived from source and package state; snapshots restore the
@@ -1050,7 +1134,7 @@ Snapshot payload includes:
 - builtin overlay files
 - extension registry/config/settings
 - agent/profile extension usage states
-- package and lockfile state needed to reproduce exact dependencies
+- package and lockfile state needed to reproduce exact dependency identities
 - encrypted local secret material or non-agent-readable local secret references, subject to the
   secrets rules above
 
@@ -1064,14 +1148,18 @@ Snapshot payload excludes:
 
 Loading a snapshot is a user-first product action. It restores the snapshot's source/config/package
 state, then immediately requests build for affected extensions. The build path uses the normal
-validate/install/approval/build/activate pipeline. If dependency approval is needed, loading pauses at
-that approval point; current mounted extension surfaces remain usable until the replacement builds
-succeed.
+validate/install/approval/build/activate pipeline. If dependency approval is needed, loading pauses on
+the shared durable dependency approval request for the exact dependency and trusted dependency
+identities. Current mounted extension surfaces remain usable until the replacement builds succeed.
+Approving the request records those identities and resumes the blocked install/build work. Rejecting
+the request leaves affected extensions build-required and leaves current mounted extension surfaces
+unchanged.
 
 Snapshot restore does not get special dependency rules. It changes files and package state, then the
-normal install boundary checks the approved dependency ledger. If a snapshot removes an extension
-that an existing session had loaded or available, that session drops the missing extension just as it
-would after extension deletion and then refreshes its binding.
+normal install boundary checks the approved dependency ledger. It must not resolve non-exact package
+specs to latest or silently accept unapproved trusted dependency identities. If a snapshot removes an
+extension that an existing session had loaded or available, that session drops the missing extension
+just as it would after extension deletion and then refreshes its binding.
 
 The key product improvement is that agents can use configured secrets without being able to read
 them. `svvy` also knows exactly which values to redact because they were entered through the app.
