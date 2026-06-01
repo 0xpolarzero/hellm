@@ -56,7 +56,7 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Treat optional prompt-context loading as explicit handler state through `thread_start` context keys and the top-level handler-only `request_context` tool, not as an `execute_typescript` API.
 - Drive durable facts from real runtime handlers and bridge events, not transcript heuristics.
 - Use one explicit surface-target identity model with `workspaceSessionId`, `surfacePiSessionId`, and `threadId` instead of overloading `session.id`.
-- Treat queued surface work as structured product state keyed by `surfacePiSessionId`. Queue items include user messages, orchestrator handler handoffs, and prompt-refresh control work.
+- Treat queued surface work as structured product state keyed by `surfacePiSessionId`. Queue items include user messages, orchestrator handler handoffs, and generated agent context refresh control work.
 - Emit workspace-level read-model updates independently from live surface transcript updates; the renderer should join durable workspace facts, live surface facts, and Dockview panel bindings locally instead of depending on one active-session payload.
 - Keep status derivation and workflow lifecycle projection write-driven; do not overlay `activePrompt`, parse transcript files, or perform read-side Smithers repair writes.
 - Future Smithers lifecycle projection beyond explicit tool-boundary snapshots should arrive through bridge events rather than speculative read-side reconciliation.

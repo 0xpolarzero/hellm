@@ -24,6 +24,17 @@ When this direction is adopted for implementation, `docs/prd.md`, `docs/features
 `docs/progress.md`, and the affected prompt, ambient-resource, and execute-typescript specs must be
 rewritten to match it.
 
+The generated-context terminology in this document is intentional:
+
+- **Agent context** means the exact generated prompt, runtime standards, native tool declarations,
+  loaded-extension command documentation, generated TypeScript declarations, and actor-scoped
+  `svvyx` command binding that one actor receives.
+- **Agent context fingerprint** means the canonical digest of that actor-facing generated context.
+- **Extension context fingerprint** means the canonical digest of one extension's actor-facing
+  current build output.
+- **Surface** should be reserved for an interactive product target, pane, or pi-backed session. It
+  must not be used as shorthand for generated prompt/tool/type content.
+
 ## Product Intent
 
 `svvy` should stop treating context packs, skills, tools, snippets, and generated prompt blocks as
@@ -39,7 +50,7 @@ The product should expose a first-class Extensions model:
 
 The goal is a conservative coding-agent tool model for ordinary coding work, close to Codex and
 other strong coding agents, while making `svvy` opinionated where it has product-specific leverage:
-actor-scoped capability composition, explicit generated surfaces, extension loading, extension
+actor-scoped capability composition, explicit generated agent contexts, extension loading, extension
 authoring, encrypted app-managed secrets, rich tool-use visualization, and reversible app-state
 changes.
 
@@ -433,7 +444,7 @@ Ownership:
 - `builds/extensions/<id>/current/` contains the current built runtime surface for that extension.
 - `builds/extensions/<id>/staging/<build-run-id>/` is temporary output for a running build and is
   atomically promoted over `current/` only after success.
-- `generated/aggregates/` contains a real disposable cache for actor/session aggregate surfaces.
+- `generated/aggregates/` contains a real disposable cache for generated agent contexts.
 - `package/` is the single app-global Bun project used for extension dependency installation and
   lockfile state.
 - `package/package.json` is editable dependency request state.
@@ -451,19 +462,21 @@ Generated schemas, native runtime implementation, and app-owned bridge code for 
 are read-only. A shipped builtin can still be customized by editing its overlay title, description,
 instructions, and Incur source, and those overlay edits remain resettable to packaged defaults.
 
-Aggregate surfaces use a lightweight cache rather than ad hoc directories:
+Generated agent context aggregates use a lightweight cache rather than ad hoc directories:
 
 - `generated/aggregates/index.sqlite` stores cache metadata.
 - each index row stores at minimum `cacheKey`, `actorKind`, ordered `loadedExtensionIds`, ordered
-  `availableExtensionIds`, `extensionSurfaceHashes`, `generatedSurfaceVersion`,
-  `runtimeStandardsHash`, `createdAt`, `lastUsedAt`, and `sizeBytes`
+  `availableExtensionIds`, `extensionContextFingerprints`, `agentContextFormatVersion`,
+  `runtimeStandardsFingerprint`, `agentContextFingerprint`, `createdAt`, `lastUsedAt`, and
+  `sizeBytes`
 - `generated/aggregates/blobs/<aggregate-cache-key>/` stores the generated prompt, command docs,
   TypeScript declarations, tool schemas, and a blob manifest.
 - each blob manifest stores the same cache key inputs plus per-file hashes for `prompt.md`,
   `command-docs.md`, `commands.d.ts`, and `tool-schemas.json`
 - the cache key is derived from the resolved actor-facing inputs: actor kind, loaded extension ids,
-  available extension ids, each extension's current surface hash, generated-surface format version,
-  and runtime standards hash when runtime standards are part of the actor prompt
+  available extension ids, each extension's current extension context fingerprint, agent-context
+  format version, and runtime standards fingerprint when runtime standards are part of the actor
+  prompt
 - cache hits must verify the indexed blob exists and matches the blob manifest before use
 - cache misses or corrupt blobs regenerate into a temporary directory and atomically promote into
   `blobs/<aggregate-cache-key>/`
@@ -475,49 +488,74 @@ Aggregate surfaces use a lightweight cache rather than ad hoc directories:
   30 days eligible for eviction, and least-recently-used eviction applied when the byte budget is
   exceeded
 
-### Surface Binding
+### Agent Context Binding
 
-Each session or workflow task-agent attempt stores a durable extension binding:
+Each session or workflow task-agent attempt stores a durable agent context binding:
 
 - actor kind
 - selected agent profile or task-agent config identity
 - loaded extension ids
 - available extension ids
-- current surface hashes used for those extensions
+- current extension context fingerprints used for those extensions
 - aggregate cache key for generated prompt text, command docs, tool schemas, and TypeScript
   declarations
+- generated agent context fingerprint
 
 New sessions derive `loadedExtensions` and `availableExtensions` from the agent profile defaults or
 from explicit creation-time overrides. `request_extension` mutates only the current session binding by
 moving the requested extension from `availableExtensions` to `loadedExtensions`; it never mutates the
 global agent profile.
 
-The build unit is an extension. The aggregate generated surface is cached by actor kind, loaded
-extension set, available extension set, current surface hashes, generated-surface format version, and
-runtime standards hash. It is not built per visual surface. Two sessions with the same resolved
-binding share the same aggregate cache entry. A session that loads an additional extension gets a
-different binding and aggregate cache key.
+The build unit is an extension. The generated agent context aggregate is cached by actor kind,
+loaded extension set, available extension set, current extension context fingerprints, agent-context
+format version, and runtime standards fingerprint. It is not built per visual pane. Two sessions with
+the same resolved binding share the same aggregate cache entry. A session that loads an additional
+extension gets a different binding, aggregate cache key, and generated agent context fingerprint.
 
 When an extension changes and a successful build activates:
 
-- the current mounted extension surface remains usable until the staging build is complete and
+- the current mounted extension command set remains usable until the staging build is complete and
   atomically replaces `builds/extensions/<id>/current/`
-- sessions whose loaded or available set contains that extension are marked stale
-- inactive sessions refresh through backend preflight before their next prompt-bearing work runs, not
-  when a pane is visually opened
-- active sessions receive a front-of-queue `extension_binding_refresh` control item for durable
-  recovery and apply the new binding at the next safe model boundary when the active pi run reaches
-  the `refreshRunContext` hook
+- sessions whose loaded or available set contains that extension enqueue `agent_context_refresh`
+  control work when the new generated agent context fingerprint differs from their bound fingerprint
+- inactive sessions apply the queued `agent_context_refresh` through backend preflight immediately
+  before their next prompt-bearing work runs, not when a pane is visually opened
+- active sessions show a queued `Update agent context` row and apply the new binding at the next
+  safe model boundary when the active pi run reaches the `refreshRunContext` hook
 - already emitted tool calls finish against the tool set that produced them
-- no empty aggregate or missing `svvyx` surface may be exposed between builds
+- no empty aggregate or missing `svvyx` command set may be exposed between builds
 
-`extension_binding_refresh` is the explicit surface-control work item for extension binding changes.
-It updates loaded/available extension binding, generated instructions, generated command docs,
-generated TypeScript declarations, tool schemas, and mounted `svvyx` runtime surfaces. It does not
-send text to pi, create transcript content, or write prompt history.
+`agent_context_refresh` is the single explicit surface-control work item for generated agent context
+changes. It replaces the older split between prompt-only refresh work and extension-binding refresh
+work. It updates the bound base instructions, loaded and available extension binding, generated
+instructions, generated command docs, generated TypeScript declarations, native tool schemas,
+runtime standards, aggregate cache key, generated agent context fingerprint, and mounted `svvyx`
+command set. It does not send text to pi, create assistant- or user-authored transcript content, or
+write prompt history.
 
-If only internal implementation changed and the generated actor-facing surface did not, no stale
-surface warning or refresh is needed.
+If only internal implementation changed and the generated actor-facing context did not, no agent
+context refresh is needed.
+
+When an existing session or task attempt applies an agent context refresh, `svvy` records a
+user-visible product event in that same session or thread:
+
+```text
+Agent context updated
+```
+
+The event is not model-authored transcript text. Its expanded details must list the actual changed
+categories, such as:
+
+- base instructions
+- loaded extension instructions
+- available extension loading hints
+- extensions changed by id
+- native tool declarations
+- generated command docs
+- generated TypeScript declarations
+- runtime standards changed by file name
+
+The event must not mention other sessions or threads that may also need or receive the same update.
 
 ### Active Run Context Refresh
 
@@ -668,6 +706,10 @@ On success, it should:
 - mount the extension in the actor-scoped `svvyx` surface
 - update the TypeScript command surface for later `execute_typescript` calls in the same turn
 - return the full instructions and generated usage summary
+- update the calling session's generated agent context binding and generated agent context
+  fingerprint
+- record an `Agent context updated` product event for the calling session, with details that the
+  extension was loaded by `request_extension`
 
 The session resolved that same-turn loading is desirable. After `request_extension` returns, later
 shell/CLI or `execute_typescript` calls in the same turn should be able to use the newly loaded
@@ -742,7 +784,7 @@ Rules:
 - generated `Commands` types include only currently loaded extensions
 - available-but-not-loaded extensions contribute only minimal loading guidance
 - unavailable extensions contribute nothing
-- prompt/type/tool hashes derive from the resolved actor surface
+- prompt/type/tool fingerprints derive from the resolved generated agent context
 
 The product should not build one global root CLI containing every extension, because that leaks
 unavailable capabilities through `--help`, docs, and types.
@@ -763,7 +805,7 @@ actor-scoped aggregate svvyx CLI
 
 Smithers hot reload is not the primary extension refresh mechanism. It reloads workflow build
 functions for a running Smithers workflow so future workflow rendering or task attempts can pick up
-workflow source changes. App-global extension source, dependency, generated-surface, and session
+workflow source changes. App-global extension source, dependency, generated agent context, and session
 binding refresh are owned by `svvy`.
 
 ## `execute_typescript`
@@ -1014,8 +1056,8 @@ The revert contract is intentionally narrow:
   recorded `apply_patch` change; there is no separate custom edit/write surface
 - `set-usage`, `reset`, and `delete` are command-level revertable
 - `create` is not shown as revertable; the UI can show Delete for the created user extension
-- build activation is not a user-facing rollback surface; current build status and surface hashes are
-  internal activation state
+- build activation is not a user-facing rollback surface; current build status and extension context
+  fingerprints are internal activation state
 - runtime calls resolve the current build at execution time, but already emitted tool calls finish
   against the mounted tool set that produced them
 - app-managed extension trash exists only so a delete change can be reverted from its change card or
@@ -1097,7 +1139,7 @@ Rules:
   against the approval ledger and asks only for unapproved dependency or trusted dependency identities
   before using it
 - failed install or build leaves `builds/extensions/<id>/current/` and the current mounted extension
-  surface untouched
+  command set untouched
 - after any failed, interrupted, or externally modified install, the next startup, refresh, or build
   must validate `package.json`, `bun.lock`, installed artifacts, and the approval ledger before using
   that dependency state
@@ -1134,7 +1176,7 @@ Dependency approval UX:
   actor binding or mount an extension into a session unless that still-pending actor-scoped load is
   the blocked operation being resumed
 - rejecting a request marks that pending request rejected, updates every referencing pane and
-  conversation tool card, leaves `buildRequired: true`, and leaves the current mounted surface
+  conversation tool card, leaves `buildRequired: true`, and leaves the current mounted command set
   unchanged
 - rejection does not create a permanent deny rule; a later explicit build or refresh may create a new
   approval request if the same unapproved identities are still required
@@ -1373,7 +1415,7 @@ host secrets are not inherited accidentally.
 
 ### Missing Values
 
-Build does not require env values. A build validates env declarations and generated surfaces, but it
+Build does not require env values. A build validates env declarations and generated extension context, but it
 does not need to call the remote service or possess secrets.
 
 Missing required env values block runtime use, not source compilation. Specifically:
@@ -1522,9 +1564,9 @@ Loading a snapshot is a user-first product action. It restores the snapshot's so
 state, then immediately requests build for affected extensions. The build path uses the normal
 validate/install/approval/build/activate pipeline. If dependency approval is needed, loading pauses on
 the shared durable dependency approval request for the exact dependency and trusted dependency
-identities. Current mounted extension surfaces remain usable until the replacement builds succeed.
+identities. Current mounted extension command sets remain usable until the replacement builds succeed.
 Approving the request records those identities and resumes the blocked install/build work. Rejecting
-the request leaves affected extensions build-required and leaves current mounted extension surfaces
+the request leaves affected extensions build-required and leaves current mounted extension command sets
 unchanged.
 
 Snapshot restore does not get special dependency rules. It changes files and package state, then the
@@ -1634,7 +1676,7 @@ The old "Context" concept becomes part of agent composition:
 
 - base instructions live on agent profiles
 - actor-specific generated context is visible from Agents
-- extension instructions and generated surfaces are visible from Extensions and linked from Agents
+- extension instructions and generated agent contexts are visible from Extensions and linked from Agents
 - available extensions provide minimal prompt hints instead of separate context-pack trigger prose
 
 Runtime standards such as `AGENTS.md` and `CLAUDE.md` still need a visible generated-context story.
@@ -1673,7 +1715,7 @@ This capability must not be default-loaded into ordinary coding agents unless th
 explicitly chooses that. It should usually be available so the agent can request it when the user
 asks to work on extensions or settings.
 
-## Generated Surface Invariants
+## Generated Agent Context Invariants
 
 For every actor turn, `svvy` must be able to show exactly what the agent received.
 
@@ -1689,8 +1731,172 @@ The generated view should include:
 - native tool declarations
 - unavailable extensions omitted entirely
 
-The generated surface is actor-specific. There is no universal `SvvyApi`, universal command list, or
-one-size-fits-all prompt.
+The generated agent context is actor-specific. There is no universal `SvvyApi`, universal command
+list, or one-size-fits-all prompt.
+
+### Extension Context Fingerprint
+
+Each extension's current successful build has an internal extension context fingerprint.
+
+This fingerprint hashes only actor-facing extension contract data:
+
+- stable extension id
+- runtime kind
+- title and description when those fields can appear in generated context, generated docs, or
+  agent-facing command output
+- TypeScript API enabled flag
+- full loaded instructions
+- minimal available instructions
+- command manifest for executable extensions, including command ids, command paths, descriptions,
+  aliases when exposed, argument schemas, option schemas, output schemas, examples, deprecation
+  markers, and streaming markers
+- generated command docs bytes
+- generated TypeScript declaration bytes when TypeScript API is enabled
+- generated tool schema bytes
+- env declaration metadata that may be shown to the agent: env name, required flag, secret flag,
+  short description, defaulted/configured/missing status shape, and runtime readiness booleans
+- extension-context fingerprint format version
+
+The extension context fingerprint must not include:
+
+- implementation source bytes when the generated actor-facing contract is unchanged
+- staging build output
+- failed build output
+- build ids
+- build timestamps
+- install timestamps
+- dependency install state when generated actor-facing output is unchanged
+- dependency cache paths
+- secret values
+- secret previews
+- secret hashes or fingerprints
+- keychain or account ids
+- storage paths
+- value-created, value-updated, or value-last-used timestamps
+- generated aggregate cache paths
+
+Build succeeds before context drift is evaluated. Missing required env values, dependency approvals,
+install failures, build validation failures, and startup rebuild failures are extension
+build/readiness states, not agent context update failures. They must not create failed
+`Update agent context` queue rows.
+
+### Agent Context Fingerprint
+
+Each bound session or workflow task-agent attempt stores one generated agent context fingerprint.
+
+The fingerprint hashes exactly the generated context that can affect the next model call or
+actor-scoped extension invocation:
+
+- actor kind
+- selected agent profile or task-agent config identity only when it affects generated context
+- exact resolved base instructions
+- ordered loaded extension ids
+- each loaded extension's current successful extension context fingerprint
+- exact loaded extension full instructions in generated order
+- ordered available extension ids
+- each available extension's current successful extension context fingerprint
+- exact available extension minimal instructions in generated order
+- native tool declarations visible to that actor, including names, descriptions, JSON schemas, and
+  actor availability
+- mounted `svvyx` extension namespace list for loaded extensions
+- generated command docs included for loaded extensions
+- generated TypeScript declarations included for loaded extensions and `execute_typescript`
+- generated tool schema files included in the actor context
+- runtime standards that reached the actor, including exact content, order, additions/removals, and
+  visible source metadata when that metadata appears in generated context
+- agent-context fingerprint format version
+
+The agent context fingerprint must not include:
+
+- provider
+- model
+- reasoning or thinking level
+- profile display name
+- profile display order
+- approval policy settings
+- visual pane state
+- transcript content
+- queued user messages
+- unbuilt draft extension source changes
+- failed or staging extension builds
+- build timestamps
+- install timestamps
+- dependency install state when generated context is unchanged
+- secret/env values or any value-correlating secret metadata
+- cache paths and volatile aggregate blob paths
+
+### Drift Detection And Automatic Update
+
+`svvy` detects generated agent context drift by comparing the bound session or task-attempt
+fingerprint with the current resolved fingerprint for that same actor and binding:
+
+```ts
+bound.agentContextFingerprint !== current.agentContextFingerprint
+```
+
+If they differ and no `agent_context_refresh` item is queued, claimed, or actively applying for that
+target, `svvy` enqueues `agent_context_refresh` automatically. The user is not asked to approve
+normal generated context drift, and ordinary drift does not show a manual update button.
+
+Refresh timing is strict:
+
+- if the target is idle, the update is durably enqueued and claimed before the next prompt-bearing
+  item runs; it may never appear as a visible queue row
+- if the target is active, the queue shows a special `Update agent context` row until the update is
+  claimed or applied
+- if the active pi run reaches `refreshRunContext` before the current turn settles, `svvy` applies
+  the ready generated context at that safe model boundary
+- if there is no active-run safe boundary before settlement, the queued update applies before the
+  next prompt-bearing item
+- already-issued tool calls finish against the agent context that produced them
+- no prompt-bearing item may pass a required queued agent context refresh unless the user explicitly
+  cancels that refresh
+
+`agent_context_refresh` may only be enqueued for a ready generated context. If required extension
+builds or runtime readiness checks are blocked or failed, the existing context remains bound and the
+blocker is reported through the build/readiness path instead.
+
+### Queue And Event Behavior
+
+The visible queue row label is:
+
+```text
+Update agent context
+```
+
+The row is a control item, not agent input. It is not editable, not steerable, and not restorable to
+the composer. It can be cancelled only while queued and unclaimed. Cancelling leaves the old agent
+context bound. If the context is still out of date and no refresh is queued, active, or applying, the
+surface shows a sticky affordance:
+
+```text
+Agent context is out of date
+```
+
+with a `Queue update` action.
+
+On success, `svvy` records a user-visible product event in the affected session or thread only:
+
+```text
+Agent context updated
+```
+
+Expanded details must identify what changed. They must not mention other sessions or threads that
+may also have pending or applied updates.
+
+If the update itself fails after a ready generated context exists, that is an internal product error.
+The affected session or thread records a user-only product event:
+
+```text
+Agent context update failed
+```
+
+The event details include a brief internal-error message and a stable log/error id. The available
+actions are `Retry` and `Cancel update`. `Retry` reclaims or re-enqueues the same context refresh for
+that target. `Cancel update` leaves the old context bound and exposes the sticky `Agent context is
+out of date` / `Queue update` affordance while drift still exists. The same failure also appends an
+app log entry. It must not be presented as an extension build failure, dependency approval, missing
+secret, or agent-fixable source problem.
 
 ## Open Research And Decisions
 
@@ -1715,7 +1921,7 @@ The following are unresolved from the session and should be settled before imple
   actor availability.
 - Decide the exact generated TypeScript contract once the local Incur fork API is verified.
 - Define exact naming and collision rules for extension ids and subcommand namespaces.
-- Define the exact generated prompt/tool/type hash model for stale surface detection.
+- Define the exact generated TypeScript contract once the local Incur fork API is verified.
 
 ## Product Docs That Must Change If Adopted
 

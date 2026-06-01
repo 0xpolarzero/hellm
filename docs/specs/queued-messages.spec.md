@@ -68,17 +68,29 @@ Local pi references:
 
 `svvy` treats ordinary composer submits as durable surface queue work. The visible queue row also exposes an explicit `Steer` action for the uncommon case where the user wants blocked queued text delivered through pi/Codex-style steering at the next safe boundary of the active turn.
 
-The queue is generic surface work, not only composer text. Every interactive surface accepts `user_message`, `prompt_refresh`, `extension_binding_refresh`, `initial_handler_start`, and `workflow_attention` queue items. The orchestrator additionally accepts `handler_handoff` notification items created after `thread_handoff` records a durable handoff episode. A `handler_handoff` item waits in the orchestrator queue with user messages and is delivered as orchestrator reconciliation input. Dismissing or deleting the notification cancels only the queue row; it does not roll back the durable handoff episode or return a tool error to the handler.
+The queue is generic surface work, not only composer text. Every interactive surface accepts
+`user_message`, `agent_context_refresh`, `initial_handler_start`, and `workflow_attention` queue
+items. The orchestrator additionally accepts `handler_handoff` notification items created after
+`thread_handoff` records a durable handoff episode. A `handler_handoff` item waits in the
+orchestrator queue with user messages and is delivered as orchestrator reconciliation input.
+Dismissing or deleting the notification cancels only the queue row; it does not roll back the
+durable handoff episode or return a tool error to the handler.
 
-A `prompt_refresh` item is a surface-local control item created by the stale-context warning's `Update system prompt` action. It is always written as durable surface queue work, even when the target surface is idle and has no queued work. When the surface lock is free, "immediate" means the row is durably enqueued and claimed by the shared queue runner before any renderer-visible queued state. A prompt refresh is ordered with the rest of the surface queue, but it is not sent to the agent and does not create transcript or prompt-history content. When delivered, it refreshes the surface's prompt binding to the latest Context Library, generated contracts, and runtime standards before later prompt-bearing queue items run.
+An `agent_context_refresh` item is a surface-local control item created automatically when the
+current generated agent context fingerprint differs from the context fingerprint bound to that
+surface or workflow task-agent attempt. It is always written as durable surface queue work, even
+when the target surface is idle and has no queued work. When the surface lock is free, "immediate"
+means the row is durably enqueued and claimed by the shared queue runner before any renderer-visible
+queued state. An agent context refresh is ordered with the rest of the surface queue, but it is not
+sent to the agent and does not create transcript or prompt-history content. When delivered, it
+refreshes the bound base instructions, loaded and available extension binding, generated extension
+instructions, runtime standards, mounted `svvyx` command set, native tool schemas, command docs, and
+TypeScript declarations before later prompt-bearing queue items run. Active runs may also apply the
+ready refreshed context at the next pi `refreshRunContext` boundary; the queued item remains the
+durable recovery and ordering record.
 
-An `extension_binding_refresh` item is a surface-local control item created when a loaded or available
-extension changes for that surface. It is ordered with the rest of the surface queue, does not send
-text to pi, does not create transcript content, and does not write prompt history. When delivered, it
-refreshes the session's loaded/available extension binding, generated extension instructions,
-mounted `svvyx` surface, tool schemas, command docs, and TypeScript declarations before later
-prompt-bearing queue items run. Active runs may also apply the refreshed binding at the next pi
-`refreshRunContext` boundary; the queued item remains the durable recovery and ordering record.
+Prompt edits, extension changes, generated docs/types changes, native tool schema changes, and
+runtime standards changes all use the same `agent_context_refresh` control item.
 
 When a user submits from a composer:
 
@@ -107,7 +119,8 @@ Required identity:
 - `surfacePiSessionId`
 - `threadId` when the target surface is a handler thread
 - `queuedItemId`
-- `kind`, currently `user_message`, `handler_handoff`, `prompt_refresh`, `extension_binding_refresh`, `initial_handler_start`, or `workflow_attention`
+- `kind`, currently `user_message`, `handler_handoff`, `agent_context_refresh`,
+  `initial_handler_start`, or `workflow_attention`
 - idempotency key for stable internal producers and recovery seeding
 
 The queue is ordered per `surfacePiSessionId`. Queue ordering is FIFO unless the user explicitly edits, removes, or reorders messages through future queue-management UI.
@@ -140,8 +153,8 @@ The durable record should keep:
 - item kind
 - submitted text exactly as sent for `user_message`
 - source thread, source command, handoff episode, title, summary, body, and episode kind for `handler_handoff`
-- requested prompt-library revision and request time for `prompt_refresh`
-- changed extension ids, requested aggregate hash, and request time for `extension_binding_refresh`
+- previous and requested generated agent context fingerprint, changed categories, changed extension
+  ids when applicable, and request time for `agent_context_refresh`
 - thread id and request time for `initial_handler_start`
 - workflow run, Smithers run, workflow id, summary, and reason for `workflow_attention`
 - composer attachments or mention-link serialized text according to their own specs
@@ -159,15 +172,28 @@ If the queue has at least one queued item:
 
 1. atomically claim the first `queued` item and mark it `dispatching`
 2. derive the action for that item kind
-3. for `prompt_refresh`, recreate or refresh the managed pi runtime binding behind the same product surface, mark the item delivered, and continue draining later items
-4. for `extension_binding_refresh`, refresh the surface extension binding and generated runtime surface behind the same product surface, mark the item delivered, and continue draining later items
-5. for `user_message`, `handler_handoff`, `initial_handler_start`, or `workflow_attention`, submit the derived text as the next real user message to that same pi surface; `handler_handoff` delivery reconciles an already-recorded durable episode
-6. create a normal turn record for prompt-bearing delivery
-7. mark prompt-bearing items `delivered` once pi accepts the queued item into the surface history
+3. for `agent_context_refresh`, recreate or refresh the managed pi runtime binding and
+   actor-scoped `svvyx` command binding behind the same product surface, record the
+   `Agent context updated` product event, mark the item delivered, and continue draining later items
+4. for `user_message`, `handler_handoff`, `initial_handler_start`, or `workflow_attention`, submit the derived text as the next real user message to that same pi surface; `handler_handoff` delivery reconciles an already-recorded durable episode
+5. create a normal turn record for prompt-bearing delivery
+6. mark prompt-bearing items `delivered` once pi accepts the queued item into the surface history
 
 If delivery fails before pi accepts the item, the item returns to the front of the durable `queued` list.
 
 If delivery starts and the resulting turn later fails, the queued item remains `delivered`; the turn failure belongs to the normal turn lifecycle.
+
+If `agent_context_refresh` fails after a ready generated agent context exists, the failure is an
+internal product error. The item stays visible as failed or blocking for that affected surface and a
+user-only product event is recorded:
+
+```text
+Agent context update failed
+```
+
+The event includes a stable app log/error id and actions `Retry` and `Cancel update`. It must not
+describe dependency approval, missing env, install failure, or extension build validation as context
+update failures; those states happen before a ready context refresh can be queued or applied.
 
 ## Cancellation And Restore
 
@@ -205,7 +231,7 @@ Projection should make clear:
 - whether the current surface is running, waiting, or ready
 - whether a message is queued for normal follow-up or has been selected for steering
 
-Queued rows render as a compact vertical list directly above attachment chips and the textarea only while they are blocked queue work, such as active-surface follow-ups or items behind earlier queue work. Rows use single-line ellipsized message text, centered controls, and dense workbench row sizing. Editable `user_message` rows expose drag reorder, `Steer`, edit, and delete. Editable `handler_handoff` rows expose drag reorder, `Steer`, and dismiss/delete; they do not expose text edit or restore-to-composer because their prompt is derived from durable handoff metadata at delivery time, and dismissal does not alter the recorded handoff. Editable `prompt_refresh` rows are labelled `Update instructions`, expose cancel, and omit edit, restore, and steer because they are control work rather than agent input. Editable `extension_binding_refresh` rows are labelled `Update extensions`, expose cancel when cancellation is safe, and omit edit, restore, and steer. Drag-hover reorder previews are local renderer state; the durable queue order changes only when the user drops a row into a final changed position. Locked `steering` rows remain in place but replace the controls with a status indicator and cannot be edited, deleted, dismissed, steered again, or reordered. `dispatching` rows are durable backend state and do not render as queue rows once claimed for pending or active surface work.
+Queued rows render as a compact vertical list directly above attachment chips and the textarea only while they are blocked queue work, such as active-surface follow-ups or items behind earlier queue work. Rows use single-line ellipsized message text, centered controls, and dense workbench row sizing. Editable `user_message` rows expose drag reorder, `Steer`, edit, and delete. Editable `handler_handoff` rows expose drag reorder, `Steer`, and dismiss/delete; they do not expose text edit or restore-to-composer because their prompt is derived from durable handoff metadata at delivery time, and dismissal does not alter the recorded handoff. Editable `agent_context_refresh` rows are labelled `Update agent context`, expose cancel while unclaimed, and omit edit, restore, and steer because they are control work rather than agent input. Drag-hover reorder previews are local renderer state; the durable queue order changes only when the user drops a row into a final changed position. Locked `steering` rows remain in place but replace the controls with a status indicator and cannot be edited, deleted, dismissed, steered again, or reordered. `dispatching` rows are durable backend state and do not render as queue rows once claimed for pending or active surface work.
 
 Sidebar rows may show a compact queued-count badge for an open surface, but queued messages do not change the row's lifecycle status to running or waiting by themselves.
 

@@ -272,10 +272,10 @@ Current product decisions for this section are specified in `docs/specs/queued-m
 - [ ] Project blocked queue items near the owning surface composer, including count, order, remove, restore-to-composer, delivery failure, and duplicated-panel consistency, while idle-surface items first appear as pending or active work after atomic claim.
 - [ ] Restore queued messages after app restart without transcript inference and resume delivery only after the owning surface runtime and prompt lock state are reconstructed.
 - [x] Claim queued messages atomically through one shared queue runner per `surfacePiSessionId` and prevent duplicated panes or tabs from starting duplicate backend queue drains. Commit(s): `45bdbe8b46`
-- [ ] Land idle-surface queue-manager claim before renderer-visible queued state so idle sends and idle prompt refreshes first appear as pending or active surface work.
+- [ ] Land idle-surface queue-manager claim before renderer-visible queued state so idle sends and idle agent context refreshes first appear as pending or active surface work.
 - [x] Keep queued-message drag reorder previews local until drop, persist only final changed order, and skip no-op durable reorder writes. Commit(s): `98c73ecbb6`
 - [x] Represent handler handoffs as durable episode records that schedule typed orchestrator reconciliation notifications; notification dismissal does not roll back the handoff or return a handler tool error. Commit(s): 7739c2c824
-- [x] Represent stale prompt refresh as typed surface queue work, apply it before later prompt-bearing items, and expose sticky queue/cancel UI. Commit(s): 61ba639d6a
+- [x] Represent generated agent context refresh as typed surface queue work, apply it before later prompt-bearing items, and expose queued, cancel, retry, and out-of-date recovery UI. Commit(s): 61ba639d6a
 - [x] Let committed user transcript messages enter composer edit mode with a visible selected-message indicator and a draft-replacement warning, then resend by moving the same pi surface back to the original message's parent state before continuing from the edited user message. Commit(s): `5378dcb`
 
 ## 14. Context Library And Context Packs
@@ -291,8 +291,8 @@ Current product decisions for this section are specified in `docs/specs/prompt-l
 - [x] Seed editable shipped instruction blocks for common, orchestrator, handler, and workflow task guidance, with actor filters, enable state, non-deletable builtin rows, app-global scope, and per-block reset behavior. Commit(s): `118fd39c9f`
 - [x] Seed editable shipped context packs for code navigation, Smithers routing, Smithers supervision, workflow task boundary, and Project CI, with default-loaded actor switches, enable state, non-deletable builtin rows, app-global scope, and per-block reset behavior. Commit(s): `118fd39c9f`
 - [x] Render actor aggregate recipes for orchestrator, handler, and workflow task-agent prompts, linking instruction and context-pack rows back to their editable blocks and showing generated rows as scrollable code previews with editor links to generated context files. Commit(s): `118fd39c9f`
-- [ ] Store user-named Context Library snapshots plus durable surface bindings with resolved prompt hashes and runtime standards hashes so historical sessions, handler threads, and workflow task-agent attempts remain inspectable after app restart.
-- [ ] Add stale-prompt diff and remaining action controls for existing orchestrator and handler-thread surfaces, including grouped semantic diff, raw text diff, and keep-current dismissal.
+- [ ] Store user-named Context Library snapshots plus durable generated agent context bindings and agent context fingerprints so historical sessions, handler threads, and workflow task-agent attempts remain inspectable after app restart.
+- [ ] Add automatic generated agent context update projection for existing orchestrator and handler-thread surfaces, including grouped semantic diff details on queued, applied, failed, cancelled, and out-of-date states.
 - [ ] Route `thread_start({ context })` and handler-side `request_context({ keys })` through requestable Context Library context packs while preserving durable loaded context keys on handler threads.
 
 ## 14A. Ambient Agent Resources
@@ -301,7 +301,7 @@ Current product decisions for this section are specified in `docs/specs/ambient-
 
 - [ ] Add provider-neutral Ambient Agent Resources settings that default behavior-changing coding-agent host resources off, preserve visible runtime standards, and let the user opt in by host, workspace, actor class, category, and source for extensions/packages, skills, prompt templates, commands, hooks, UI resources, provider/model adapters, credentials, and execution-policy resources.
 - [ ] Implement the pi adapter so orchestrator, handler-thread, and workflow task-agent loaders preserve `AGENTS.md`/`CLAUDE.md`, ignore `SYSTEM.md`/`APPEND_SYSTEM.md`, and load extensions, skills, prompt templates, themes, package resources, slash commands, hooks, provider adapters, and related settings only when enabled for the exact actor/category/source.
-- [ ] Reflect enabled ambient callable resources in actor-specific generated API declarations, enabled prompt-affecting resources in prompt previews and prompt freshness hashes, and enabled command resources in product command routing without hidden tools or invisible prompt mutation.
+- [ ] Reflect enabled ambient callable resources in actor-specific generated API declarations, enabled prompt-affecting resources in generated agent context previews and agent context fingerprints, and enabled command resources in product command routing without hidden tools or invisible prompt mutation.
 
 ## 15. Dedicated Workflow Inspector
 

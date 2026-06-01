@@ -332,7 +332,7 @@ The product should restore as much app and workspace UI state as is useful and s
 
 Restart restore is a product contract, not a best-effort UI convenience. On startup the app shell restores open workspace chrome tabs first. Each workspace tab then rebuilds restorable Dockview panel bindings from that tab's durable view-local UI state, opens referenced live surfaces and static inspector pane targets through the shared Bun workspace runtime for the tab's canonical cwd, and lets that runtime bootstrap Smithers supervision for tracked workflow runs owned by each restored workspace session. Duplicate same-cwd tabs restore separate layouts, opened panels, focus, scroll, and explicit static pane targets while sharing the same sessions, pi surfaces, queues, threads, workflow runs, app logs, and durable workspace read models. Pending handler attention remains Smithers-owned and is delivered through the same durable attention cursor used during live execution.
 
-Workspace-scoped restore, read-model, Context, Workflows, and settings requests must route by explicit `workspaceId`, not by whichever workspace tab is active after restart. A restored background workspace may continue workflow supervision, prompt freshness checks, queue draining, or workflow-library validation while another workspace is focused.
+Workspace-scoped restore, read-model, Context, Workflows, and settings requests must route by explicit `workspaceId`, not by whichever workspace tab is active after restart. A restored background workspace may continue workflow supervision, agent-context freshness checks, queue draining, or workflow-library validation while another workspace is focused.
 
 ### Restore Targets
 

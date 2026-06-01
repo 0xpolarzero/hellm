@@ -165,8 +165,8 @@ Database or product-state storage includes:
 - extension registry records
 - origin: `builtin` or `user`
 - runtime kind
-- current build status and surface hashes as internal activation state, not as a user-facing rollback
-  surface
+- current build status and extension context fingerprints as internal activation state, not as a
+  user-facing rollback surface
 - usage state per agent profile
 - per-session loaded and available extension bindings
 - build status
@@ -203,26 +203,28 @@ User extensions are ordinary app-owned extension directories:
 - user extensions are not resettable to shipped defaults
 - deletion moves the extension into app-managed trash so the delete change can be reverted
 
-Generated extension files live under `generated/extensions/<id>/`. Aggregate actor/session surfaces
-live in the disposable cache under `generated/aggregates/`. Current build output lives under
+Generated extension files live under `generated/extensions/<id>/`. Generated agent context
+aggregates live in the disposable cache under `generated/aggregates/`. Current build output lives under
 `builds/extensions/<id>/current/`; `builds/extensions/<id>/staging/<build-run-id>/` exists only while
 a build is running and is atomically promoted over `current/` after a successful build. There is no
 preserved build-history directory, no user-facing build rollback, and no build-retention or pruning
 policy because only the current build is kept.
 
-Aggregate surfaces use a real lightweight cache:
+Generated agent context aggregates use a real lightweight cache:
 
 - `generated/aggregates/index.sqlite` stores cache metadata.
 - each index row stores at minimum `cacheKey`, `actorKind`, ordered `loadedExtensionIds`, ordered
-  `availableExtensionIds`, `extensionSurfaceHashes`, `generatedSurfaceVersion`,
-  `runtimeStandardsHash`, `createdAt`, `lastUsedAt`, and `sizeBytes`
+  `availableExtensionIds`, `extensionContextFingerprints`, `agentContextFormatVersion`,
+  `runtimeStandardsFingerprint`, `agentContextFingerprint`, `createdAt`, `lastUsedAt`, and
+  `sizeBytes`
 - `generated/aggregates/blobs/<aggregate-cache-key>/` stores the generated prompt, command docs,
   TypeScript declarations, tool schemas, and a blob manifest.
 - each blob manifest stores the same cache key inputs plus per-file hashes for `prompt.md`,
   `command-docs.md`, `commands.d.ts`, and `tool-schemas.json`
 - the cache key is derived from resolved actor-facing inputs: actor kind, loaded extension ids,
-  available extension ids, each extension's current surface hash, generated-surface format version,
-  and runtime standards hash when runtime standards are part of the actor prompt
+  available extension ids, each extension's current extension context fingerprint, agent-context
+  format version, and runtime standards fingerprint when runtime standards are part of the actor
+  prompt
 - cache hits must validate the indexed blob exists and matches the blob manifest before use
 - cache misses or corrupt blobs regenerate into a temporary directory and atomically promote into
   `blobs/<aggregate-cache-key>/`
@@ -300,6 +302,13 @@ Build behavior:
   during an agent-visible conversation, so the active agent can observe the new extension state.
 - Dependency approval is checked at install time, not based on whether the change came from
   `apply_patch`, direct user editing, reset, revert, or snapshot restore.
+- Build, dependency approval, missing required env, install failure, validation failure, and startup
+  rebuild failure are build/readiness states. They happen before any `Update agent context` work is
+  queued. They must not create failed `agent_context_refresh` rows.
+- Only a successful ready generated agent context can enqueue or apply `agent_context_refresh`.
+- After a successful build changes an extension context fingerprint, affected sessions and workflow
+  task-agent attempts receive automatic `agent_context_refresh` work according to
+  `docs/specs/extensions-and-tools.spec.md` and `docs/specs/queued-messages.spec.md`.
 
 Conversation-visible UI events:
 
@@ -309,7 +318,7 @@ Conversation-visible UI events:
 - When a dependency approval is shared between an app pane and a conversation tool card, approving or
   rejecting it in either place updates the other projection of the same durable request.
 - Revert must not be hidden as renderer-only state, because the active agent needs to know that the
-  extension files and generated surface may have changed.
+  extension files and generated agent context may change after the follow-up build succeeds.
 - If an agent directly runs `svvyx extensions revert <change-id> --json`, the command result and
   revert-triggered build output are already visible tool output, so no synthetic user-event message is
   needed.
@@ -363,10 +372,10 @@ flag, secret flag, description, and status. It must not show env values, value p
 values, hashes, fingerprints, keychain ids, storage paths, created timestamps, updated timestamps, or
 last-used timestamps.
 
-Build and inspect output may show coarse current-surface and last-build status. It must not expose
-internal surface hashes, build timestamps, or generated aggregate cache keys as part of ordinary
-agent-facing JSON. Internal activation state may still store hashes and timestamps for cache
-validation, stale-surface detection, and diagnostics.
+Build and inspect output may show coarse current-context and last-build status. It must not expose
+internal fingerprints, build timestamps, or generated aggregate cache keys as part of ordinary
+agent-facing JSON. Internal activation state may still store fingerprints and timestamps for cache
+validation, agent-context drift detection, and diagnostics.
 
 ## `inspect`
 
@@ -618,7 +627,7 @@ Example output:
 
 ## `build`
 
-Use case: validate files, regenerate derived surfaces, and activate the new successful build.
+Use case: validate files, regenerate derived extension context, and activate the new successful build.
 
 ```bash
 svvyx extensions build <id> --json
@@ -631,7 +640,7 @@ Parameters:
 | `<id>` | yes | Stable extension id. |
 | `--json` | no | Return machine-readable JSON. |
 
-Successful builds always activate the new generated surface for future extension resolution. There is
+Successful builds always activate the new generated extension context for future extension resolution. There is
 no separate user-facing activation command and no user-facing build rollback command. A build writes
 to `builds/extensions/<id>/staging/<build-run-id>/` while it is running; after validation succeeds,
 `svvy` atomically replaces `builds/extensions/<id>/current/` with that staged output. Failed or
@@ -639,7 +648,7 @@ blocked builds must not replace `current/`.
 
 Env values are not build inputs. A build validates env declarations and reports runtime readiness,
 but it must not fail only because a required env value is missing. Missing required env blocks
-extension load or invocation through the runtime surfaces, not source validation or generated-surface
+extension load or invocation through the runtime command paths, not source validation or generated context
 activation.
 
 Prompt-only success example:
@@ -747,11 +756,11 @@ Dependency confirmation example:
 }
 ```
 
-Failed builds must leave the current mounted extension surface untouched. The failed staging
+Failed builds must leave the current mounted extension command set untouched. The failed staging
 directory is discarded unless retained only long enough to surface diagnostics for that build
 attempt; it is not a preserved build artifact or rollback target.
 
-Failed installs must leave the current mounted extension surface untouched. `package.json` remains as
+Failed installs must leave the current mounted extension command set untouched. `package.json` remains as
 the user's or agent's requested dependency state. `bun.lock` may have changed only if Bun reached the
 lockfile write step before failure; after any failed, interrupted, or externally modified install,
 the next startup, refresh, or build must validate `package.json`, `bun.lock`, installed artifacts,
@@ -785,7 +794,7 @@ Dependency identity and approval rules:
 - direct user edits, agent edits, reset, revert, delete restore, and snapshot restore all use the
   same build/install approval pipeline
 - failed install or build leaves `builds/extensions/<id>/current/` and any existing mounted runtime
-  surface untouched
+  command set untouched
 - extension installs must not rely on Bun's default trusted npm allowlist as product policy
 - dependency lifecycle scripts are disabled unless the exact `trusted_dependency` identity has been
   approved in `svvy`
@@ -830,7 +839,7 @@ Dependency approval UI:
   actor binding or mount an extension into a session unless that still-pending actor-scoped load is
   the blocked operation being resumed
 - rejecting a request marks that pending request rejected, updates every referencing pane and
-  conversation tool card, leaves `buildRequired: true`, and leaves the current mounted surface
+  conversation tool card, leaves `buildRequired: true`, and leaves the current mounted command set
   unchanged
 - rejection does not create a permanent deny rule; a later explicit build or refresh may create a new
   approval request if the same unapproved identities are still required
@@ -901,12 +910,14 @@ Example output:
   "after": {
     "state": "available"
   },
-  "surfaceImpact": {
+  "agentContextImpact": {
     "affectsNewTurns": true,
-    "currentlyRunningTurnsChanged": false,
-    "staleSurfaces": [
+    "activeRunsChangeAtNextSafeBoundary": true,
+    "queuedUpdates": [
       {
-        "surfaceId": "thread_8HD2",
+        "surfacePiSessionId": "thread_8HD2",
+        "kind": "agent_context_refresh",
+        "label": "Update agent context",
         "reason": "extension_usage_changed"
       }
     ]
@@ -949,7 +960,7 @@ Example output:
 ```
 
 `reset` records a reversible command-level change. When reset is triggered by the user or another
-product action and changes files or generated-surface inputs, it immediately requests the normal
+product action and changes files or generated context inputs, it immediately requests the normal
 build pipeline. If the build needs dependency approval, it creates or reuses the durable dependency
 approval request and pauses before install. Ordinary agent file edits still do not auto-build.
 
@@ -1194,13 +1205,13 @@ without prompting. If at least one dependency or trusted dependency identity is 
 creates or reuses the durable pending approval request for those identities and pauses before
 install/build continues. Approving the request records the listed identities and resumes the blocked
 snapshot build work. Rejecting it marks the snapshot load's build work blocked, leaves
-`buildRequired: true` for affected extensions, and leaves current mounted extension surfaces
+`buildRequired: true` for affected extensions, and leaves current mounted extension command sets
 unchanged.
 
-Loading a snapshot must leave current mounted extension surfaces in place until replacement builds
+Loading a snapshot must leave current mounted extension command sets in place until replacement builds
 succeed. If a snapshot removes an extension that an existing session had loaded or available, that
 session drops the missing extension exactly as it would after extension deletion and then receives an
-`extension_binding_refresh`.
+`agent_context_refresh`.
 
 Load success example:
 
@@ -1221,11 +1232,12 @@ Load success example:
       "runtimeReady": true
     }
   ],
-  "surfaceImpact": {
-    "queuedRefreshes": [
+  "agentContextImpact": {
+    "queuedUpdates": [
       {
         "surfacePiSessionId": "thread_8HD2",
-        "kind": "extension_binding_refresh",
+        "kind": "agent_context_refresh",
+        "label": "Update agent context",
         "reason": "snapshot_loaded"
       }
     ]

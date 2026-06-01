@@ -13,7 +13,9 @@
   - define the adopted context keys: `cx`, `smithers`, `web`, and `ci`
   - define provider-backed `web` as a default-loaded settings-derived context
 
-The user-facing Prompt Library surface, context-pack editing model, actor aggregate recipes, scope rules, reset behavior, prompt revisions, and stale-prompt warnings are defined in [Prompt Library Spec](./prompt-library.spec.md).
+The user-facing Prompt Library surface, context-pack editing model, actor aggregate recipes, scope
+rules, reset behavior, prompt revisions, and automatic generated agent context refresh behavior are
+defined in [Prompt Library Spec](./prompt-library.spec.md).
 
 ## Purpose
 

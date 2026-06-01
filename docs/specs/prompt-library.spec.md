@@ -13,7 +13,7 @@
   - define read-only runtime standards sources shown in Context
   - define app-global and workspace-scoped prompt blocks
   - define internal prompt revision binding and user-named snapshots
-  - define stale-prompt warnings, diffs, and update behavior
+  - define generated agent context drift detection and automatic update behavior
   - define the sidebar reference-pane order
 
 ## Purpose
@@ -26,7 +26,7 @@ The product model is:
 Context = editable Context Library + generated contracts + read-only runtime standards
 ```
 
-The user manages reusable prompt material in the editable Context Library. Actor prompts are aggregates assembled from that material plus generated tool or schema contracts. Pi-discovered runtime standards sources are shown in the same read-only generated-context area as generated prompt parts, but they are not edited, snapshotted, or rediscovered by svvy. New orchestrator sessions always use the latest context library revision and current runtime standards hashes. Existing sessions keep the revision and standards content they were created with until the user explicitly updates them. Raw revision counters are internal and are not shown as primary Context pane UI.
+The user manages reusable prompt material in the editable Context Library. Actor prompts are aggregates assembled from that material plus generated tool or schema contracts. Pi-discovered runtime standards sources are shown in the same read-only generated-context area as generated prompt parts, but they are not edited, snapshotted, or rediscovered by svvy. New orchestrator sessions always use the latest context library revision and current runtime standards fingerprints. Existing sessions bind to the exact generated agent context they received, then automatically refresh to the latest ready generated agent context at the next safe boundary when that context changes. Raw revision counters are internal and are not shown as primary Context pane UI.
 
 ## Product Principles
 
@@ -37,10 +37,15 @@ The user manages reusable prompt material in the editable Context Library. Actor
 - Generated prompt parts are visible inside actor recipes but are not edited as normal text blocks.
 - Runtime standards sources loaded by pi are visible as read-only generated-context material with file name, path, content, order, and an external-editor action.
 - Scope is explicit. Blocks are app-global by default, but each block can be limited to selected previously opened workspaces.
-- The app records exactly which prompt revision and runtime standards hashes each session, handler thread, and workflow task agent used.
+- The app records exactly which prompt revision, runtime standards fingerprints, and generated
+  agent context fingerprint each session, handler thread, and workflow task agent used.
 - The user can explicitly save named snapshots and restore them later without relying on autosave history.
-- The UI warns when an existing surface uses prompt material that differs from current settings.
-- Updating an existing surface to the latest prompt revision is deliberate and happens before a later turn, not silently in the middle of active work.
+- The UI shows generated agent context update work when an existing surface is waiting to apply
+  changed prompt material, generated contracts, extension context, or runtime standards.
+- Updating an existing surface to the latest ready generated agent context is automatic and happens
+  at the next safe boundary: before the next prompt-bearing turn when idle, or through pi's
+  `refreshRunContext` hook when active. Already-issued tool calls finish under the context that
+  produced them.
 
 ## Terminology
 
@@ -583,7 +588,7 @@ Instruction and context-pack names should appear as section headings in composed
 
 ## Internal Revisions And User Snapshots
 
-Every prompt-library save increments an internal revision number. The raw counter is not user-facing Context pane copy; it exists so surfaces can bind to the exact prompt state they used and so stale-prompt warnings can be computed.
+Every prompt-library save increments an internal revision number. The raw counter is not user-facing Context pane copy; it exists so surfaces can bind to the exact prompt state they used and so generated agent context drift can be computed.
 
 ```ts
 type PromptRevision = {
@@ -687,7 +692,10 @@ The optional `resolvedPromptTextArtifactId` allows later inspection without depe
 
 Workflow task-agent prompt configuration is an overlay, not a replacement. If a workflow task-agent config supplies a custom prompt, `svvy` appends it under a task-agent override section after the generated svvy workflow-task base prompt. The base prompt remains mandatory because it carries the task-local actor contract, generated callable API, Smithers ownership boundaries, and runtime standards binding.
 
-The task-attempt prompt binding is written to `workflowTaskAttempt.meta.promptBinding` when the task-local runtime first binds the exact Smithers attempt identity. That binding must be keyed by Smithers `(runId, nodeId, iteration, attempt)`, not by resume-handle recency or transcript inference.
+The task-attempt generated agent context binding is written to
+`workflowTaskAttempt.meta.agentContextBinding` when the task-local runtime first binds the exact
+Smithers attempt identity. That binding must be keyed by Smithers
+`(runId, nodeId, iteration, attempt)`, not by resume-handle recency or transcript inference.
 
 ## New orchestrator Invariant
 
@@ -705,63 +713,59 @@ Forking a session creates a new orchestrator session that uses the latest prompt
 
 ## Existing Surface Behavior
 
-Existing surfaces keep their bound prompt revision until the user updates them.
+Existing surfaces keep their currently bound generated agent context until a ready replacement
+generated agent context is applied through `agent_context_refresh`.
 
-The app must not silently mutate an existing surface's system prompt in the middle of active work.
+The app must not silently mutate an existing surface's system prompt in the middle of already-issued
+tool work. It may automatically apply a ready generated agent context at the next safe model
+boundary.
 
-`request_context` is the exception that changes future handler prompt inputs by explicit agent action. Loading optional context writes durable thread context keys and marks the live handler surface for prompt recreation before its next turn, so the next pi turn receives the newly loaded context through the real system-prompt channel.
+`request_context` changes future handler prompt inputs by explicit agent action. Loading optional
+context writes durable thread context keys and changes the generated agent context fingerprint for
+that handler. `svvy` then enqueues or applies `agent_context_refresh` through the same automatic
+path used for prompt-library edits, extension changes, generated contract changes, and runtime
+standards changes.
 
-When the current context library differs from the prompt binding on an existing surface, the top of that surface shows a compact warning:
+When the current ready generated agent context differs from the bound generated agent context on an
+existing surface, `svvy` automatically enqueues `agent_context_refresh`. If the surface is idle, the
+update is durably enqueued and claimed before the next prompt-bearing item runs. If the surface is
+active, the queue shows a special control row:
 
 ```text
-Context settings changed since this surface started.
+Update agent context
 ```
 
-Actions:
+The row is ordered with other surface queue work. It is not sent to pi, does not create
+model-authored transcript text, and does not write prompt history.
 
-- `View changes`
-- `Update system prompt`
-- `Keep current`
-
-The warning is shown for orchestrator sessions and handler-thread surfaces. Workflow task-agent attempt surfaces can show the same metadata in their inspector or summary because task attempts are not ordinary long-lived chat surfaces.
+Workflow task-agent attempts use the same generated agent context fingerprint model, but they may
+show queued or applied update metadata in their inspector or summary because task attempts are not
+ordinary long-lived chat surfaces.
 
 ## Difference Detection
 
-The product detects stale prompt state using two comparisons:
+The product detects out-of-date generated agent context using one resolved comparison:
 
 ```ts
-surface.promptRevisionId !== currentPromptRevisionId
+surface.agentContextFingerprint !== computeCurrentAgentContextFingerprint(actor, workspace)
 ```
 
-and:
+The generated agent context fingerprint includes:
 
-```ts
-surface.boundExternalSourceHashes !== currentExternalSourceHashes
-```
+- exact resolved prompt-library material for that actor
+- generated prompt parts and tool/schema contracts
+- loaded and available extension context fingerprints
+- runtime standards content, order, addition, and removal
+- generated-agent-context format version
 
-and:
+Prompt-library revision ids and runtime standards fingerprints remain useful internal inputs and
+diagnostics, but user-facing update behavior is based on the generated agent context fingerprint.
+There is no normal out-of-date warning or explicit user-clicked update button in the resolved
+Extensions design.
 
-```ts
-surface.resolvedPromptHash !== computeCurrentResolvedPromptHash(actor, workspace)
-```
+## View Changes And Update Details
 
-Revision or runtime standards hash mismatch produces:
-
-```text
-Context settings changed since this surface started.
-```
-
-Hash mismatch without revision mismatch produces:
-
-```text
-Prompt output differs from the current generated output.
-```
-
-The second case catches generated contract or runtime-derived changes that can alter the exact prompt without a user-edited prompt-library revision.
-
-## View Changes
-
-`View changes` opens a grouped prompt diff.
+The expanded details for a queued or applied agent context update show a grouped semantic diff.
 
 Default diff view is semantic:
 
@@ -799,30 +803,32 @@ The semantic diff should group changes by:
 - enabled or disabled state
 - actor inclusion/default-loaded changes
 
-## Update For Next Turn
+The raw generated text diff is available as a secondary diagnostic view.
 
-`Update system prompt` binds the surface to the latest prompt revision through the same durable
-surface queue used for user follow-up messages and handler handoffs.
+## Automatic Update
 
-The queued item kind is `prompt_refresh`.
+`agent_context_refresh` binds the surface to the latest ready generated agent context through the
+same durable surface queue used for user follow-up messages and handler handoffs.
 
-`prompt_refresh` is a surface-local control item:
+`agent_context_refresh` is a surface-local control item:
 
 - it belongs to one `surfacePiSessionId`
 - it is ordered with other surface queue items
 - it does not send text to pi
 - it does not create transcript content
 - it does not write prompt history
-- delivery means the prompt binding was applied
+- delivery means the generated agent context binding was applied
 
 Rules:
 
-- if the surface has an active prompt or existing queued work, the update is queued and applies in order after earlier active work completes
+- if the surface has active work or earlier queued work, the update is queued and applies in order
+  or at the next pi `refreshRunContext` safe boundary
 - if the surface is idle and has no queued work, the update is durably enqueued and atomically claimed before any transient queue row can render
-- if user messages or handler handoffs are already queued, `prompt_refresh` runs in its queue order before later prompt-bearing items
-- the next user turn or handler handoff delivered after the refresh uses the latest context library composition
+- if user messages or handler handoffs are already queued, `agent_context_refresh` runs in its queue order before later prompt-bearing items
+- the next user turn or handler handoff delivered after the refresh uses the latest generated agent context
 - the update records a structured lifecycle event
-- the UI warning clears after the binding update if the resolved prompt hash also matches
+- no prompt-bearing item may pass a required queued agent context refresh unless the user explicitly
+  cancels that refresh
 
 The visible surface identity, transcript, structured turns, thread state, workflow state, and queued
 items stay attached to the same `surfacePiSessionId`. If pi requires a fresh internal managed session
@@ -833,37 +839,59 @@ Lifecycle event:
 
 ```ts
 {
-  kind: "prompt.binding.updated";
+  kind: "agent_context.updated";
   surfacePiSessionId: string;
   actor: PromptActor;
   previousPromptRevisionId: string;
   nextPromptRevisionId: string;
-  previousResolvedPromptHash: string;
-  nextResolvedPromptHash: string;
+  previousAgentContextFingerprint: string;
+  nextAgentContextFingerprint: string;
+  changedCategories: Array<
+    | "base_instructions"
+    | "loaded_extension_instructions"
+    | "available_extension_instructions"
+    | "extension_commands"
+    | "native_tools"
+    | "generated_types"
+    | "runtime_standards"
+  >;
+  changedExtensionIds: string[];
+  changedRuntimeStandards: string[];
 }
 ```
 
-The event may render as collapsible metadata:
+The event renders as collapsible product metadata:
 
 ```text
-Context settings updated from rev A to rev B.
+Agent context updated
 ```
 
-While a `prompt_refresh` item is queued, the stale-context warning remains sticky at the top of the
-surface and changes its action from `Update system prompt` to `Cancel update`. The queue row label is
-`Update instructions`, because it applies when the queue runner reaches it rather than at some later
-turn after that. Cancelling the queued refresh leaves the stale binding intact and shows the warning
-again.
+The expanded details show what changed. They must not mention other sessions or threads that may
+also need or have applied a similar update.
 
-## Keep Current
+## Cancelled Or Failed Update
 
-`Keep current` dismisses the warning for the current revision mismatch until either:
+While an `agent_context_refresh` item is queued, the queue row label is `Update agent context`.
+Cancelling the queued update leaves the old generated agent context bound. If the current context is
+still out of date and no refresh is queued, active, or applying, the surface shows a sticky
+affordance:
 
-- the context library changes again
-- the surface is reopened
-- the user enables "always show prompt drift warnings"
+```text
+Agent context is out of date
+```
 
-Dismissal does not update the binding.
+with a `Queue update` action.
+
+If `agent_context_refresh` itself fails after a ready generated context exists, the failure is an
+internal product error. The affected surface records a user-only product event:
+
+```text
+Agent context update failed
+```
+
+The event includes a stable app log/error id and actions `Retry` and `Cancel update`. Build,
+dependency approval, missing env, install failure, validation failure, and startup rebuild failure
+are not agent-context update failures and must not create failed `Update agent context` rows.
 
 The product should preserve the ability to re-open the diff from surface metadata.
 
@@ -891,7 +919,7 @@ Prompt revisions are durable app state. They must survive app restart and must b
 
 ### Workspace Routing
 
-Context Library requests that evaluate or mutate workspace-affecting state must carry the target `workspaceId` explicitly. This includes instruction and context-pack edits, scope changes, actor aggregate reads, generated-context previews, runtime standards projection, snapshot creation and loading, prompt freshness checks, and system-prompt update actions when the result depends on workspace-scoped activation or workspace-derived generated parts.
+Context Library requests that evaluate or mutate workspace-affecting state must carry the target `workspaceId` explicitly. This includes instruction and context-pack edits, scope changes, actor aggregate reads, generated-context previews, runtime standards projection, snapshot creation and loading, agent-context freshness checks, and agent-context update actions when the result depends on workspace-scoped activation or workspace-derived generated parts.
 
 The backend must resolve these requests from the supplied `workspaceId`, not from the active workspace, focused tab, focused Dockview panel, or active runtime. A background handler or orchestrator surface may keep running in one workspace while another workspace is focused, so active workspace state is not a valid routing key.
 
@@ -955,9 +983,11 @@ When a surface prompt differs from current prompt settings, the transcript metad
 - Generated prompt parts are visible inside actor recipes.
 - Runtime standards sources are visible in the generated-context area, read-only, openable in the configured external editor, and not editable through the Context pane.
 - Pi `SYSTEM.md` and `APPEND_SYSTEM.md` files do not participate in svvy prompt composition.
-- New orchestrator sessions use the latest internal prompt revision.
-- Existing sessions warn when their effective bound prompt, runtime standards hashes, or resolved hash differs from current prompt settings.
-- Existing sessions update only through an explicit user action.
+- New orchestrator sessions use the latest ready generated agent context.
+- Existing sessions automatically queue or apply `agent_context_refresh` when their generated agent
+  context fingerprint differs from the current ready context.
+- Existing sessions expose a sticky `Agent context is out of date` / `Queue update` affordance only
+  after the user cancels a queued update while drift still exists.
 
 ## Implementation Phases
 
@@ -980,20 +1010,26 @@ When a surface prompt differs from current prompt settings, the transcript metad
 
 - Persist internal prompt revisions and user-named snapshots.
 - Add Context pane snapshot creation, loading, and rename controls.
-- Bind new orchestrator sessions, handler threads, and workflow task agents to the latest revision.
-- Store resolved prompt hashes and inspectable prompt text.
-- Store runtime standards hashes in prompt bindings.
-- Show stale-prompt warnings on existing surfaces.
+- Bind new orchestrator sessions, handler threads, and workflow task agents to the latest ready
+  generated agent context.
+- Store generated agent context fingerprints and inspectable prompt text.
+- Store runtime standards fingerprints in generated agent context bindings.
+- Show queued, cancelled, applied, and failed generated agent context update states on existing
+  surfaces.
 - Add grouped semantic diff and raw text diff.
-- Add system-prompt update.
+- Add automatic `agent_context_refresh` queue integration.
 
 ### Phase 4: Runtime Integration Completion
 
 - Route `thread_start({ context })` and `request_context` through requestable context packs.
 - Show requested context packs in handler-thread metadata.
-- Ensure provider, generated contract, and tool-declaration changes produce hash drift warnings when they alter exact prompt output.
-- Ensure runtime standards content, order, addition, and removal produce hash drift warnings when they alter exact prompt output.
-- Add representative unit and integration coverage for composition, scope filtering, runtime standards projection, revision binding, stale warning, reset, and actor aggregate projection.
+- Ensure generated contract and tool-declaration changes enqueue agent context refreshes when they
+  alter exact generated context output.
+- Ensure runtime standards content, order, addition, and removal enqueue agent context refreshes when
+  they alter exact generated context output.
+- Add representative unit and integration coverage for composition, scope filtering, runtime
+  standards projection, revision binding, automatic agent context refresh, reset, and actor aggregate
+  projection.
 
 ## Open Non-Goals
 

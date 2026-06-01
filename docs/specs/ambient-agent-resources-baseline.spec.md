@@ -222,9 +222,9 @@ The adopted prompt order is:
 Generated actor-specific prompt parts remain last so exact tool declarations and generated contracts
 stay close to the end of the system prompt.
 
-### Prompt Freshness
+### Agent Context Freshness
 
-Runtime standards participate in normal prompt freshness.
+Runtime standards participate in normal generated agent context freshness.
 
 Settings changes create a new prompt-library revision:
 
@@ -233,16 +233,17 @@ Settings changes create a new prompt-library revision:
 - runtime standard enabled state changes
 - runtime standard actor selection changes
 
-File changes can alter the resolved prompt hash even when no settings revision changed:
+File changes can alter the generated agent context fingerprint even when no settings revision changed:
 
 - file content changes
 - file appears
 - file disappears
 - file read status changes
 
-Existing surfaces keep their bound prompt until the user updates them. If current runtime standards
-or resolved prompt output differ from the surface binding, the normal stale-prompt warning and
-`prompt_refresh` flow applies.
+Existing surfaces store the generated agent context fingerprint they received. If current runtime
+standards or resolved generated context output differ from the bound generated agent context, the
+normal automatic `agent_context_refresh` flow applies. Runtime standards changes do not use a
+separate manual warning or update flow.
 
 ### Pi Runtime Standards Opt-Out
 
@@ -458,8 +459,8 @@ Baseline decision:
 - do not expose host slash-command execution to actors
 
 Snippets do nothing until the user inserts one. They are not default-loaded context, so they do not
-need actor toggles, global/workspace activation settings, prompt-library revisions, or stale-prompt
-warnings.
+need actor toggles, global/workspace activation settings, prompt-library revisions, or generated
+agent context refresh behavior.
 
 ### Discovery Sources
 
@@ -930,7 +931,8 @@ Pi-specific rule:
 
 - use only pi sessions created or explicitly adopted by `svvy`
 - do not import arbitrary pi session history from host session directories
-- do not let pi session state decide actor type, workspace ownership, tools, prompt bindings, or
+- do not let pi session state decide actor type, workspace ownership, tools, generated agent context
+  bindings, or
   workflow ownership
 
 Smithers-specific rule:
