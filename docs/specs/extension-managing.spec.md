@@ -21,7 +21,7 @@ Extension Managing is a shipped extension for managing extension definitions and
 It combines the earlier "Extension Manager" and "Incur Authoring" ideas. There is no separate Incur
 Authoring extension unless the product intentionally splits this capability later.
 
-Default availability:
+Default usage state:
 
 | Actor kind | State |
 | --- | --- |
@@ -32,7 +32,8 @@ Default availability:
 It is available rather than default-loaded for ordinary orchestrators and handlers because most
 coding work should not receive extension-authoring instructions and commands by default. An agent
 can request it when the user asks to inspect, create, edit, build, reset, delete, revert, or
-configure extensions.
+configure extensions. These are defaults, not actor-kind restrictions: an agent profile may be
+configured to make Extension Managing `default_loaded`, `available`, or `unavailable`.
 
 ## Ownership Boundary
 
@@ -452,7 +453,10 @@ type InspectExtensionPaths = {
 
 type ExtensionUsageState = {
   actorKind: "orchestrator" | "handler" | "workflow_agent";
+  agentProfile: string;
   state: "default_loaded" | "available" | "unavailable";
+  configurable: boolean;
+  fixedReason?: "app_native_control";
 };
 
 type InspectExtensionRequirements = {
@@ -576,16 +580,22 @@ Prompt-only shipped example:
     },
     "usage": [
       {
+        "agentProfile": "default-orchestrator",
         "actorKind": "orchestrator",
-        "state": "default_loaded"
+        "state": "default_loaded",
+        "configurable": true
       },
       {
+        "agentProfile": "threadHandler",
         "actorKind": "handler",
-        "state": "default_loaded"
+        "state": "default_loaded",
+        "configurable": true
       },
       {
+        "agentProfile": "reviewer",
         "actorKind": "workflow_agent",
-        "state": "available"
+        "state": "available",
+        "configurable": true
       }
     ],
     "requirements": {
@@ -676,16 +686,22 @@ Incur-backed shipped example:
     },
     "usage": [
       {
+        "agentProfile": "default-orchestrator",
         "actorKind": "orchestrator",
-        "state": "unavailable"
+        "state": "unavailable",
+        "configurable": true
       },
       {
+        "agentProfile": "threadHandler",
         "actorKind": "handler",
-        "state": "default_loaded"
+        "state": "default_loaded",
+        "configurable": true
       },
       {
+        "agentProfile": "reviewer",
         "actorKind": "workflow_agent",
-        "state": "unavailable"
+        "state": "unavailable",
+        "configurable": true
       }
     ],
     "requirements": {
@@ -799,16 +815,22 @@ Example output:
     },
     "usage": [
       {
+        "agentProfile": "default-orchestrator",
         "actorKind": "orchestrator",
-        "state": "available"
+        "state": "available",
+        "configurable": true
       },
       {
+        "agentProfile": "threadHandler",
         "actorKind": "handler",
-        "state": "available"
+        "state": "available",
+        "configurable": true
       },
       {
+        "agentProfile": "reviewer",
         "actorKind": "workflow_agent",
-        "state": "unavailable"
+        "state": "unavailable",
+        "configurable": true
       }
     ],
     "state": {
@@ -1097,6 +1119,21 @@ Validation errors use ordinary error output and do not create approval requests.
 ## `set-usage`
 
 Use case: change whether an extension is loaded, available, or unavailable for an agent profile.
+
+Any actor session with the Extension Managing extension loaded may change extension usage for any
+agent profile, not only the profile currently bound to that actor session. This is a profile
+management command. It mutates the target agent profile's persistent extension usage state and may
+enqueue `agent_context_refresh` work for existing sessions or task attempts that are bound to the
+affected profile and whose generated agent context fingerprint changes.
+
+`set-usage` must not mutate the calling session's current loaded/available binding directly. If the
+calling session is also affected by the profile change, it receives the same generated-context
+refresh path as any other affected session. Agents that want to load an available extension into the
+current binding use `load_extension`; agents that want to change profile defaults use
+`svvyx extensions set-usage`.
+
+Fixed app-native control extensions cannot be changed by `set-usage`. In v1, Extension Loading is
+fixed `default_loaded` and attempts to set it to any state must fail with a clear error.
 
 ```bash
 svvyx extensions set-usage \

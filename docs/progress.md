@@ -110,7 +110,7 @@ Current product decisions for this section are specified in `docs/specs/web-tool
 - [x] Build a POC one-task workflow under a handler thread that returns to the thread and then emits a handoff episode. Commit(s): `f8557d9`
 - [x] Let handler threads call the generated per-workflow Smithers run-launch surface through the Bun bridge for both new and resumed runs. Commit(s): `4674e67`
 - [x] Extend the Smithers-native supervision surface beyond the shipped Step 5 handler-thread/runtime coverage for blocker diagnosis, approvals, signals, cancellation, node detail, artifacts, transcripts, event history, frames, and DevTools inspection, focusing on the remaining operator-only and richer troubleshooting controls. Commit(s): `f8557d9`
-- [x] Define workflow task agents as a lower-level Smithers actor class distinct from orchestrator and handler-thread surfaces. Commit(s): `a02bd48`
+- [x] Define workflow task agents as a lower-level Smithers agent kind distinct from orchestrator and handler-thread surfaces. Commit(s): `a02bd48`
 - [x] Adopt PI-backed svvy workflow task agents with a dedicated task prompt, task-local prompt-only cx CLI guidance, direct tools, and `execute_typescript` for typed composition. Commit(s): `a02bd48`
 - [x] Keep Smithers workflow approval gates and hijack as Smithers runtime or operator controls around workflow task agents rather than exposing them as ordinary task-agent tools. Commit(s): `a02bd48`
 - [x] Build workflow task execution that runs the svvy workflow-task PI configuration with task-local prompt-only cx CLI guidance, direct tools, and code mode. Commit(s): `a02bd48`
@@ -234,15 +234,15 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Build a POC New orchestrator creation flow with profile-backed orchestrator selection. Commit(s): `8e19462`
 - [x] Persist the orchestrator profile snapshot and prompt selection used by created sessions. Commit(s): `8e19462`
 - [x] Persist per-session orchestrator profile overrides. Commit(s): `8e19462`
-- [x] Persist per-thread overrides for handler-thread agent profile settings when a delegated thread needs a specific model or reasoning level. Commit(s): `8e19462`
+- [ ] Persist handler creation-time extension-state overrides for delegated handler threads as partial overrides over the `threadHandler` profile.
 - [x] Keep the Agents sidebar pane between Logs and Extensions, with orchestrator profiles plus the `threadHandler` special profile owned there instead of in General settings. Commit(s): `2b97c46648`, `b714aa26f9`
 - [x] Drive the New orchestrator picker order, profile-specific command palette actions, and surface profile badges from Agents-pane orchestrator profile order. Commit(s): `2b97c46648`, `031510ba2b`
 - [x] Keep the default orchestrator profile locked, first, non-draggable, non-deletable, and editable for settings. Commit(s): `2b97c46648`, `b714aa26f9`
 - [x] Keep the `threadHandler` special profile available for delegated handler-thread surfaces. Commit(s): `2b97c46648`, `b714aa26f9`
 - [x] Show the current focused-surface agent profile summary in pane chrome. Commit(s): `8e19462`
 - [ ] Use TanStack Form for complex agent profile, provider key, and app-preference settings forms, including direct-save semantics, validation, dirty state, reset/cancel, pending submit state, async save errors, and pi-normalized provider/model/reasoning constraints.
-- [ ] Define future workflow-agent and extension-provided profile surfaces without coupling shipped product workflow runtime to repo-root `workflows/`.
-- [ ] Define future handler guidance for reusable workflow-agent components without coupling shipped product workflow runtime to repo-root `workflows/`.
+- [ ] Expose workflow-agent profiles in the Agents pane and keep extension-provided profile surfaces as future work without coupling shipped product workflow runtime to repo-root `workflows/`.
+- [ ] Define handler guidance for reusable workflow-agent components without coupling shipped product workflow runtime to repo-root `workflows/`.
 
 ## 12. Session Titles
 
@@ -288,8 +288,8 @@ Current product decisions for this section are specified in `docs/specs/queued-m
 
 Current product decisions for this section are specified in `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension-managing.spec.md`, `docs/specs/structured-session-state.spec.md`, `docs/specs/queued-messages.spec.md`, and `docs/specs/project-ci.spec.md`.
 
-- [x] Define shipped extensions for Filesystem, Execute TypeScript, Extension Loading, Extension Managing, cx, Smithers, Web, Git, GitHub, External Instructions, and Project CI with actor-specific usage states. Commit(s): `673837a`
-- [x] Load actor-specific Smithers extension guidance so orchestrators route workflow work, handlers supervise workflows, and workflow task agents keep the Smithers task boundary without receiving handler Smithers declarations. Commit(s): `673837a`
+- [x] Define shipped extensions for Filesystem, Execute TypeScript, Extension Loading, Extension Managing, cx, Smithers, Web, Git, GitHub, External Instructions, and Project CI with default usage states for each adopted agent family. Commit(s): `673837a`
+- [x] Load default Smithers extension guidance so orchestrators route workflow work, handlers supervise workflows, and workflow task agents keep the Smithers task boundary without loading handler Smithers declarations by default. Commit(s): `673837a`
 - [x] Define available extensions as the on-demand product-knowledge and capability layer for specialized handler work. Commit(s): `2a5dbbe`
 - [x] Render loaded and available extension bindings in surface metadata so users can see when extensions such as `project-ci` are active. Commit(s): `2a5dbbe`
 - [x] Store app-wide agent profiles, base instructions, extension usage selections, generated agent-context aggregate references, extension context fingerprints, and app-global extension activation metadata. Commit(s): `118fd39c9f`
@@ -305,8 +305,8 @@ Current product decisions for this section are specified in `docs/specs/extensio
 
 Current product decisions for this section are specified in `docs/specs/ambient-agent-resources-baseline.spec.md`.
 
-- [ ] Add provider-neutral Ambient Agent Resources settings that default behavior-changing coding-agent host resources off, preserve visible runtime standards, and let the user opt in by host, workspace, actor class, category, and source for extensions/packages, skills, prompt templates, commands, hooks, UI resources, provider/model adapters, credentials, and execution-policy resources.
-- [ ] Implement the pi adapter so orchestrator, handler-thread, and workflow task-agent loaders preserve `AGENTS.md`/`CLAUDE.md`, ignore `SYSTEM.md`/`APPEND_SYSTEM.md`, and load extensions, skills, prompt templates, themes, package resources, slash commands, hooks, provider adapters, and related settings only when enabled for the exact actor/category/source.
+- [ ] Add provider-neutral Ambient Agent Resources settings that default behavior-changing coding-agent host resources off, preserve visible runtime standards, and let the user opt in by host, workspace, target agent/profile configuration, category, and source for extensions/packages, skills, prompt templates, commands, hooks, UI resources, provider/model adapters, credentials, and execution-policy resources.
+- [ ] Implement the pi adapter so orchestrator, handler-thread, and workflow task-agent loaders preserve `AGENTS.md`/`CLAUDE.md`, ignore `SYSTEM.md`/`APPEND_SYSTEM.md`, and load extensions, skills, prompt templates, themes, package resources, slash commands, hooks, provider adapters, and related settings only when enabled for the exact target agent/profile configuration, category, and source.
 - [ ] Reflect enabled ambient callable resources in actor-specific generated API declarations, enabled prompt-affecting resources in generated agent context previews and agent context fingerprints, and enabled command resources in product command routing without hidden tools or invisible prompt mutation.
 
 ## 14B. Snippets Prompt Macros

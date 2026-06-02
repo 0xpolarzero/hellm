@@ -123,7 +123,7 @@ The `svvy`-owned part is:
 - There is no silent polling fallback for `svvy`-owned workflow supervision. Reconnect or bootstrap reads are explicit lifecycle writes, not background read-side repair.
 - One handler thread may supervise many workflow runs over its lifetime.
 - A handler thread may own concurrent active Smithers runs when they have different `workflowId` values; a second nonterminal run with the same `workflowId` requires explicit resolution before a fresh launch.
-- Workflow task agents are a lower-level actor class inside Smithers tasks, not another `svvy` interactive surface.
+- Workflow task agents are a lower-level agent kind inside Smithers tasks, not another `svvy` interactive surface.
 - `svvy` should derive active and latest workflow summaries from workflow-run records and recency rules rather than persisting a thread-level latest-workflow pointer.
 - Workflow attention must reacquire and target the owning handler surface by `surfacePiSessionId`, never a globally active surface or the currently focused Dockview panel.
 - `thread_start`, `thread_resume`, `thread_handoff`, and `wait` remain the only `svvy`-native control tools in this area.
@@ -289,12 +289,16 @@ The adopted direction is:
 - when a product workflow needs an adaptive coding agent, use a PI-backed workflow task agent by default
 - configure that task agent with a minimal `svvy` workflow-task system prompt rather than the orchestrator or handler-thread prompt
 - treat workflow-specific custom task prompts as overlays appended to the base workflow-task prompt; the base prompt only establishes task scope, task-local tools, and task-root locality
-- expose only prompt-only task-local cx CLI instructions, direct tools, and `execute_typescript` to
-  that actor
-- the default adopted task-agent capability set is task-local cx CLI guidance through
-  `exec_command`, direct tools, and `execute_typescript` for typed composition
+- configure workflow task-agent extensions from the selected workflow agent profile, then apply any
+  task invocation `extensions` object as a partial override over that profile
+- derive no extension states from the owning handler thread, the handler profile,
+  `thread_start` extension overrides, or handler handoff facts
+- the default adopted task-agent extension states load task-local cx CLI guidance through
+  `exec_command`, direct tools, Extension Loading, and `execute_typescript` for typed composition
 - project each Smithers task attempt into a `svvy` workflow-task-attempt UI row with exact Smithers identifiers and attach any `svvy` command or artifact projections to that row instead of leaving product navigation in a local ephemeral trace
-- do not expose `thread_start`, `thread_handoff`, `wait`, or `smithers_*` to workflow task agents or mention those unavailable controls in their base prompt
+- keep `thread_start`, `thread_handoff`, `wait`, and `smithers_*` out of the default workflow
+  task-agent profile and base prompt unless a user-configured profile intentionally changes their
+  extension usage state
 - do not load ambient pi built-in tools or workspace-discovered extension tools into the task agent runtime
 - execute the task agent and its task-local tools from Smithers' current task root or worktree, while leaving Smithers runtime DB ownership and `svvy` workflow projection workspace-scoped
 - run task-local shell, patch, network, and generated-client boundaries through the same `svvy`
@@ -355,12 +359,12 @@ The exact contract is:
 
 Actor-specific exposure is part of that contract:
 
-- the orchestrator prompt should know that handler threads can supervise workflows through `smithers_*`, but it should not receive the `smithers_*` generated tool schema in its own prompt
+- the default orchestrator prompt should know that handler threads can supervise workflows through `smithers_*`, but the default orchestrator generated context should not include the `smithers_*` generated tool schema
 - handler-thread prompts should receive the `smithers_*` schema because they are the delegated surfaces that actually supervise workflow execution
-- handler-thread prompts should not receive orchestrator-only tools such as `thread_start` in the default adopted model
-- workflow task agents should receive only their task-local cx CLI instructions, direct tools, and
-  `execute_typescript`, with no ambient pi built-ins or extension-provided callable tools beyond
-  that task-local set
+- handler-thread prompts should not include orchestrator-default tools such as `thread_start` in the default adopted model
+- default workflow task-agent profiles should load only task-local cx CLI instructions, direct tools,
+  Extension Loading, and `execute_typescript`, with no ambient pi built-ins or extension-provided
+  callable tools beyond that task-local set
 - awareness of another actor's capabilities belongs in compact instructional prose, not in leaked callable declarations for tools that actor cannot invoke
 
 The first adopted Smithers-native surface is:

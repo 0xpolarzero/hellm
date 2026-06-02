@@ -49,8 +49,8 @@ The baseline applies to every pi-backed `svvy` actor:
 - handler thread
 - workflow task agent
 
-No actor receives ambient host resources by default. If a future actor class is added, it inherits the
-same default-deny rule.
+No agent profile enables ambient host resources by default. If a future product agent family is
+added, its default profile starts from the same ambient-resource default-off rule.
 
 ## 1. External Instructions
 
@@ -509,8 +509,8 @@ palette actions, pane actions, sidebar actions, session actions, and explicit wo
 actions routed through `svvy` tools.
 
 Future support for host commands or hooks must be a separate first-class integration. It must show the
-source, lifecycle event, command text or handler identity, trust state, affected actor classes, and
-exact behavior surface before anything can run.
+source, lifecycle event, command text or handler identity, trust state, affected agent/profile
+configuration, and exact behavior surface before anything can run.
 
 ### Pi Commands And Hooks Opt-Out
 
@@ -629,7 +629,8 @@ Pi-specific rule:
   construction
 - consume pi's explicit built-in model registry and normalized runtime stream events as the provider
   capability source of truth
-- pass provider, model, reasoning, and actor defaults from `svvy` settings into pi session creation
+- pass provider, model, reasoning, agent-family defaults, and resolved extension binding from `svvy`
+  settings into pi session creation
   explicitly
 
 ## 10. Credentials And Auth State
@@ -726,7 +727,7 @@ Resolved `svvy` execution policy:
 - `full-access` maps to no approval boundary and disabled managed filesystem permissions
 - `networkAccess` defaults to true; when false, outbound network access is restricted and the shipped
   Web extension is disabled through normal extension binding
-- workflow task agents inherit this same execution policy for task-local shell, patch, network, and
+- workflow task agents use this same execution policy for task-local shell, patch, network, and
   generated-client boundaries, scoped to the owning Smithers task attempt
 
 Pi-specific rule:

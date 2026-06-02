@@ -92,11 +92,11 @@ request clearly needs CI authoring guidance from the first handler turn.
 
 An existing handler may load the same extension later with `load_extension({ extensionId: "project-ci" })`.
 
-Mechanically, this is the same handler-thread actor class used for other delegated work.
+Mechanically, this is the same handler-thread agent kind used for other delegated work.
 
 The difference is only the generated agent context binding for that handler.
 
-Ordinary orchestrator and handler sessions do not receive Project CI authoring guidance by default.
+Ordinary orchestrator and handler sessions do not load Project CI authoring guidance by default.
 
 The `project-ci` extension describes optional product knowledge and instructions.
 
@@ -123,11 +123,12 @@ The orchestrator knows only a lightweight routing fact:
 
 - `project-ci` is a handler-available shipped prompt-only extension for Project CI authoring.
 
-The orchestrator should not receive Smithers workflow tools directly.
+The orchestrator does not load Smithers workflow tools by default.
 
 The orchestrator should not author CI entries itself.
 
-The orchestrator should not receive handler-only Smithers workflow tools.
+The orchestrator should delegate Project CI workflow work to a handler instead of loading Smithers
+for ordinary CI routing.
 
 The orchestrator may use only `thread_start` extension overrides to preload Project CI authoring guidance for a new handler.
 
@@ -147,9 +148,10 @@ It receives Project CI extension instructions explaining how to:
 - validate saved workflow files after writes
 - run the CI entry and refine it until the result contract is valid
 
-A handler with `ci` context may write reusable CI assets under `.svvy/workflows/.../ci/`.
+A handler with the `project-ci` extension loaded may write reusable CI assets under
+`.svvy/workflows/.../ci/`.
 
-A handler with `ci` context may run Project CI entries through Smithers.
+A handler with the `project-ci` extension loaded may run Project CI entries through Smithers.
 
 The `project-ci` extension may be loaded in either of two ways:
 
@@ -172,7 +174,8 @@ Normal handler threads start without:
 
 - the CI authoring guide
 - repository-specific CI assumptions
-- knowledge of how to write CI entries beyond the existence of the `ci` context key
+- knowledge of how to write CI entries beyond the lightweight fact that `project-ci` can be loaded
+  when CI configuration or modification is needed
 
 If a normal handler only needs to run existing CI, it does not need the `project-ci` extension.
 
@@ -228,7 +231,8 @@ Additional CI entries are allowed when they represent distinct repeatable lanes,
 - `project_ci_release`
 - `project_ci_docs`
 
-Artifact workflows may still be used while a handler with `ci` context experiments:
+Artifact workflows may still be used while a handler with the `project-ci` extension loaded
+experiments:
 
 ```text
 .svvy/artifacts/workflows/<artifact_workflow_id>/
@@ -239,7 +243,8 @@ Artifact workflows may still be used while a handler with `ci` context experimen
   metadata.json
 ```
 
-Reusable Project CI configuration is not complete until a handler with `ci` context writes a saved CI entry under `.svvy/workflows/entries/ci/`.
+Reusable Project CI configuration is not complete until a handler with the `project-ci` extension
+loaded writes a saved CI entry under `.svvy/workflows/entries/ci/`.
 
 ## CI Entry Contract
 
@@ -559,7 +564,8 @@ An inspected handler thread should show CI detail only when that thread launched
 
 Project CI authoring guidance is loaded only through the optional `project-ci` extension.
 
-Normal handler prompts should only include this small rule:
+Normal handler prompts should only include this small rule through the minimal available
+`project-ci` loading hint:
 
 ```text
 If Project CI only needs to be run, discover configured CI entries with smithers_list_workflows filtered to productKind "project-ci" and run one through smithers_run_workflow. If Project CI needs to be configured or modified, call load_extension({ extensionId: "project-ci" }) before authoring CI assets.

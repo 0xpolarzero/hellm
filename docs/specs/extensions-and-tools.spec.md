@@ -43,7 +43,8 @@ The product should expose a first-class Extensions model:
 
 - Agents choose model, reasoning, base instructions, and extension composition.
 - Extensions define agent capabilities.
-- Actor kinds define hard runtime ceilings.
+- Actor kinds define the default agent family, default base behavior, and default extension usage
+  states for newly created agents of that kind.
 - Generated prompt text, generated CLI help, generated TypeScript types, and actual callable
   runtime surfaces are all derived from the same actor-scoped extension resolution.
 
@@ -78,7 +79,8 @@ A tool is a callable model-facing operation.
 In the extension architecture, a tool belongs to either:
 
 - a loaded extension
-- a small native control surface that the actor kind is allowed to call
+- a small app-owned native control surface such as extension loading, thread control, or runtime
+  inspection
 
 The word "tool" should not be used for plain prompt text, profile settings, or external
 instructions.
@@ -112,7 +114,7 @@ Snippets are not part of this spec. They must not secretly grant tools or change
 
 ### Actor Kind
 
-An actor kind is a hard runtime role and capability ceiling.
+An actor kind is the product/runtime family for an agent.
 
 Adopted actor kinds remain:
 
@@ -120,9 +122,16 @@ Adopted actor kinds remain:
 - handler thread
 - workflow task agent
 
-An actor kind is not an editable user preset. It determines the maximum set of controls the runtime
-may ever expose. A user profile cannot turn a workflow task agent into an orchestrator by selecting
-more extensions.
+An actor kind is not an editable user preset. It determines the default base prompt shape, default
+app behavior, and default extension usage states for newly created agents of that kind. It is not a
+second authorization layer over Extensions. After an agent exists, the agent's configured extension
+usage states are the source of truth for whether each extension is `default_loaded`, `available`, or
+`unavailable`, except for the non-configurable Extension Loading native control extension described
+below.
+
+`svvy` should not add hidden actor-kind compatibility or inheritance policy on top of extension
+usage state. If a loaded extension command cannot complete in the current runtime context, the tool
+call returns a normal actionable error and the agent handles that result.
 
 ### Agent Profile
 
@@ -199,11 +208,17 @@ extension. Workspace-scoped extensions remain a future decision.
 
 ### Extension Usage State
 
-For each agent profile and actor kind, an extension can be:
+For each agent profile, each extension can be:
 
 - `default_loaded`
 - `available`
 - `unavailable`
+
+The single exception is the shipped Extension Loading native control extension that provides
+`list_extensions` and `load_extension`. Extension Loading is always `default_loaded` for every
+agent profile, handler creation, and workflow task-agent invocation. It cannot be changed to
+`available` or `unavailable` by the Agents pane, Extension Managing, `thread_start` overrides,
+workflow task-agent component overrides, snapshots, or any other profile/configuration path.
 
 `default_loaded` means:
 
@@ -220,7 +235,7 @@ For each agent profile and actor kind, an extension can be:
 - the extension is not mounted in `svvyx`
 - the extension has no CLI presence
 - its `svvyx` command guidance and TypeScript types are not included
-- the actor may load it through the explicit loading mechanism if the actor kind allows it
+- the actor may load it through `load_extension`
 
 `unavailable` means:
 
@@ -290,8 +305,8 @@ type ListExtensionsResult = {
 
 If `state` filters one side out, the omitted side is returned as an empty array. If `extensionId`
 names an extension that is unknown or unavailable to the current actor, both arrays are empty.
-Returning an empty result must not reveal whether the id is unknown, unavailable by actor kind,
-unavailable by profile, deleted, disabled, or hidden by policy.
+Returning an empty result must not reveal whether the id is unknown, unavailable by profile or
+current binding, deleted, disabled, or hidden by policy.
 
 Loaded extension objects use the same top-level fields as `svvyx extensions inspect <id> --json`
 except `usage`, plus session-context state:
@@ -647,7 +662,8 @@ Shipped extensions are:
 - enabled by default where appropriate
 - non-deletable
 - resettable to shipped state
-- configurable per agent as default-loaded, available, or unavailable when the actor kind allows it
+- configurable per agent as default-loaded, available, or unavailable, except for non-configurable
+  Extension Loading
 - allowed to have editable title, description, instructions, and optional editable extension source
   overlays when those files exist
 
@@ -898,10 +914,13 @@ Each session or workflow task-agent attempt stores a durable agent context bindi
 - generated agent context fingerprint
 - bound time
 
-New sessions derive `loadedExtensions` and `availableExtensions` from the agent profile defaults or
-from explicit creation-time overrides. `load_extension` mutates only the current session binding by
-moving the requested extension from `availableExtensions` to `loadedExtensions`; it never mutates the
-global agent profile.
+New sessions and workflow task-agent attempts derive `loadedExtensions` and `availableExtensions`
+from their configured agent profile, then apply any explicit creation-time or invocation-time
+extension overrides as partial overrides. An override may set any configurable extension to
+`default_loaded`, `available`, or `unavailable`; omitted extensions keep the profile's configured
+state. Extension Loading remains fixed `default_loaded` and cannot be overridden. `load_extension`
+mutates only the current session or task-attempt binding by moving the requested extension from
+`availableExtensions` to `loadedExtensions`; it never mutates the global agent profile.
 
 The build unit is an extension. The generated agent context aggregate is cached by actor kind,
 loaded extension set, available extension set, current extension context fingerprints, agent-context
@@ -1010,7 +1029,7 @@ It should show:
 - profile name and description
 - orchestrator profiles
 - special profiles such as the handler-thread profile
-- future workflow task-agent profiles when exposed
+- workflow-agent profiles
 - locked actor kind
 - model selection
 - reasoning selection
@@ -1072,12 +1091,106 @@ Approving or rejecting the request from either projection updates every other pr
 
 ## Extension Loading
 
-Extensions enter a surface in two ways.
+Extensions enter an agent context in three ways:
+
+- profile defaults
+- explicit creation-time or invocation-time extension overrides
+- current-binding `load_extension`
+
+These paths all operate on extension usage state. They do not imply handler-to-task inheritance,
+handoff inheritance, actor-kind compatibility policy, or a hidden capability resolver.
 
 ### Agent Profile Defaults
 
 The persistent profile config decides default-loaded, available, and unavailable extension sets for
-new turns.
+new agents and new workflow task-agent attempts. Extension Loading is not part of this editable
+profile config; it is always loaded.
+
+### Creation-Time And Invocation-Time Overrides
+
+`thread_start` may include an optional `extensions` object. The object is a partial override over the
+configured `threadHandler` profile's extension usage states for the new handler thread.
+
+Input shape:
+
+```ts
+type ThreadStartInput = {
+  objective: string;
+  extensions?: Partial<Record<ExtensionId, "default_loaded" | "available" | "unavailable">>;
+};
+```
+
+Rules:
+
+- `objective` is required and is the raw delegated objective for the handler thread.
+- `extensions` is optional.
+- when omitted, the handler uses the configured `threadHandler` profile extension states
+- when provided, each listed extension id overrides that extension's state for this handler thread
+- omitted extension ids keep the `threadHandler` profile state
+- values may be `default_loaded`, `available`, or `unavailable`
+- Extension Loading cannot be overridden and remains `default_loaded`
+- the override is bound to the created handler thread and does not mutate the `threadHandler` profile
+- the override is applied before the handler's first turn and before generated prompt, tools, `svvyx`
+  guidance, TypeScript declarations, and fingerprints are created for that handler
+- there is no legacy `context` field, `context: ["ci"]` alias, `thread_start_ci`, `ci.start`, or
+  other product-specific handler-start variant
+- `thread_start` extension overrides do not affect workflow task agents launched by workflows under
+  that handler
+
+Example:
+
+```json
+{
+  "objective": "Configure Project CI for this repository",
+  "extensions": {
+    "project-ci": "default_loaded",
+    "github": "available"
+  }
+}
+```
+
+Success result:
+
+```json
+{
+  "ok": true,
+  "threadId": "thread_123",
+  "surfacePiSessionId": "pi_thread_123",
+  "title": "Configure Project CI",
+  "objective": "Configure Project CI for this repository",
+  "agentContextBinding": {
+    "actorKind": "handler-thread",
+    "selectedAgentProfileId": "threadHandler",
+    "loadedExtensionIds": [
+      "filesystem",
+      "execute-typescript",
+      "extension-loading",
+      "cx",
+      "smithers",
+      "web",
+      "git",
+      "github",
+      "external-instructions",
+      "project-ci"
+    ],
+    "availableExtensionIds": ["extension-managing"],
+    "overrides": {
+      "project-ci": "default_loaded",
+      "github": "available"
+    }
+  }
+}
+```
+
+The result should expose the bound extension facts as durable provenance for the created handler.
+These facts do not affect future workflow task-agent extension selection, future handlers, or the
+`threadHandler` profile.
+
+Workflow task-agent component calls may also include an optional `extensions` object. The object is a
+partial override over that workflow agent profile's configured extension usage states for that
+specific task-agent invocation. Omitted extension ids keep the workflow agent profile state; they do
+not become unavailable and they are not derived from the owning handler thread. Extension Loading
+remains `default_loaded`.
 
 ### `load_extension`
 
@@ -1087,6 +1200,10 @@ It lets an actor load an extension that is available but not loaded.
 
 The load is current-session only. It updates the calling session's durable extension binding and
 does not change the agent profile's default-loaded, available, or unavailable states.
+
+For workflow task agents, the same rule applies to the current task-attempt binding. Loading an
+available extension in a workflow task agent does not mutate the workflow agent profile, the workflow
+component source, the owning handler thread, or any other attempt.
 
 Input:
 
@@ -2914,11 +3031,12 @@ The product reason is straightforward:
 - prompt-only instructions are enough to express conservative coding-agent behavior and safety
   policy.
 
-Git is default-loaded for every adopted actor kind. GitHub is default-loaded for orchestrators and
-handler threads, and available for workflow task agents. Workflow task agents may load GitHub only
-when the task objective explicitly requires GitHub issues, pull requests, reviews, Actions, or other
-GitHub work. GitHub remains available, not unavailable, for workflow task agents so a task whose
-contract explicitly names GitHub can request it through the normal extension-loading path.
+Git is default-loaded in the default profile for every adopted agent family. GitHub is
+default-loaded in the default orchestrator and handler profiles, and available in the default
+workflow task-agent profile. Conservative workflow-agent behavior is to load GitHub for tasks whose
+objective explicitly requires GitHub issues, pull requests, reviews, Actions, or other GitHub work.
+GitHub remains available, not unavailable, in the default workflow task-agent profile so a task
+whose contract explicitly names GitHub can request it through the normal extension-loading path.
 
 Git and GitHub also participate in the app-managed trusted CLI dependency registry. The shipped
 records are:
@@ -3168,23 +3286,24 @@ Wrap-up behavior:
 Minimal available instructions for workflow task agents and custom available-only profiles:
 
 ```md
-Load GitHub only when the task objective explicitly requires GitHub issues, pull requests, review
+Load GitHub when the task objective explicitly requires GitHub issues, pull requests, review
 comments, Actions checks, or other GitHub work. Use ordinary `gh` commands through the shell; this
-extension adds no tools and should not be loaded for generic repository coding.
+extension adds no tools and is not useful for generic repository coding.
 ```
 
 ## Shipped Extension Set
 
-This is the resolved shipped extension map from the discussion so far. `category: "shipped"` means
-provided by `svvy`, non-deletable, resettable, and configurable per agent usage state. External
-instruction records use `category: "external_instruction"` and the same usage-state controls, but
-their source files are read-only external inputs.
+This is the resolved shipped extension default map from the discussion so far. `category: "shipped"`
+means provided by `svvy`, non-deletable, resettable, and configurable per agent usage state except
+for fixed app-native controls such as Extension Loading. External instruction records use
+`category: "external_instruction"` and the same usage-state controls, but their source files are
+read-only external inputs.
 
-| Extension | Category | Interface | Included tools or capability | Orchestrator | Handler | Workflow agent |
+| Extension | Category | Interface | Included tools or capability | Default orchestrator state | Default handler state | Default workflow-agent state |
 | --- | --- | --- | --- | --- | --- | --- |
 | Filesystem | shipped | native_tool | `exec_command`, `write_stdin`, `apply_patch`, Codex-like filesystem/shell instructions, and `svvyx` access through `exec_command` | default_loaded | default_loaded | default_loaded |
 | Execute TypeScript | shipped | native_tool | `execute_typescript` with generated `svvy` and loaded-extension clients as the preferred TypeScript interface | default_loaded | default_loaded | default_loaded |
-| Extension Loading | shipped | native_tool | `list_extensions`, `load_extension` | default_loaded | default_loaded | default_loaded |
+| Extension Loading | shipped | native_tool | `list_extensions`, `load_extension`; fixed app-native control, always default-loaded and not configurable | default_loaded | default_loaded | default_loaded |
 | Extension Managing | shipped | svvyx | `svvyx extensions ...` lifecycle commands for inspect, create, build, usage state, reset, delete, and revert; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |
 | cx | shipped | instructions | official cx CLI semantic code-navigation guidance through `exec_command`; no native `cx_*`, `svvyx cx`, generated TypeScript client, product navigation, or product-state controls | default_loaded | default_loaded | default_loaded |
 | Smithers | shipped | svvyx | workflow run/list/inspect/resume/signal/transcript controls | unavailable | default_loaded | unavailable |
@@ -3216,8 +3335,8 @@ Extension Managing combines the earlier separate "Extension Manager" and "Incur 
 Authoring" ideas. There is no separate Incur Authoring extension unless this gets split again later.
 Its detailed command surface is defined in `docs/specs/extension-managing.spec.md`.
 
-Project CI is a shipped prompt-only extension. It is available to orchestrators and handlers so
-`thread_start` can preload it for CI-authoring objectives and handlers can load it with
+Project CI is a shipped prompt-only extension. It is available by default to orchestrators and
+handlers so `thread_start` can preload it for CI-authoring objectives and handlers can load it with
 `load_extension({ extensionId: "project-ci" })` when CI definition work appears after delegation.
 Running existing Project CI workflow entries does not require loading this extension; the Smithers
 extension owns runtime workflow supervision.
@@ -3241,8 +3360,8 @@ Resolved model:
 - TypeScript workflows import and use that component to run that configured workflow agent.
 - When the component is used without extension overrides, it uses the workflow agent profile's
   configured extension settings.
-- The component should accept an optional extension override prop so a workflow step can replace the
-  workflow agent profile's configured extension settings for that invocation.
+- The component should accept an optional extension override prop so a workflow step can partially
+  override the workflow agent profile's configured extension settings for that invocation.
 - The workflow authoring extension must document this component model and the extension override
   API.
 
@@ -3253,7 +3372,7 @@ MyWorkflowAgent({
   prompt: "...",
   extensions: {
     filesystem: "default_loaded",
-    codeMode: "default_loaded",
+    "execute-typescript": "default_loaded",
     github: "available",
     web: "unavailable",
   },
@@ -3264,12 +3383,16 @@ Rules:
 
 - `extensions` is optional.
 - When omitted, the component uses the workflow agent profile's configured extension settings.
-- When provided, `extensions` replaces the workflow agent profile's extension settings entirely for
+- When provided, each listed extension id overrides that extension's configured profile state for
   that invocation.
+- Omitted extension ids keep the workflow agent profile's configured state for that invocation.
 - Object keys are generated, typed extension ids.
 - Values are typed extension usage states: `default_loaded`, `available`, or `unavailable`.
-- Any extension id omitted from the object is `unavailable` for that invocation.
 - The generated type must prevent unknown extension ids and invalid usage states.
+- The generated type must omit fixed app-native control extensions such as Extension Loading because
+  they are not configurable.
+- Workflow task-agent extension overrides are independent of the owning handler thread, handler
+  profile, handler `thread_start` override, and handler handoff facts.
 
 ## External Instructions
 
@@ -3539,7 +3662,7 @@ Resolved in the 2026-06-02 auto-review design pass:
   are excluded from reviewer context
 - user approval mode uses the same runtime policy as auto-review but blocks the exact tool call on a
   `svvy` pending approval record
-- workflow task agents inherit the same agent/tool runtime approval behavior as orchestrators and
+- workflow task agents use the same agent/tool runtime approval behavior as orchestrators and
   handlers, while Smithers approval components remain only for workflow-semantic approvals
 
 ## Related Product Docs

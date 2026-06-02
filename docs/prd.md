@@ -93,23 +93,23 @@ Before any target surface runs a turn through pi:
 - the submitted prompt body is the real new user message for that surface; `svvy` does not repair or advance a surface by flattening prior messages into role-labelled transcript prose
 - committed conversation history stays in pi's session history, while runtime, thread, handoff, and workflow state stays in structured state and targeted tools
 - the UI should project the active system prompt as expandable surface metadata rather than as inline transcript prose, and should warn when a surface is bound to an older prompt revision than current settings
-- each surface must receive only the generated tool declarations and SDK blocks that are callable from that surface
-- each surface may receive compact knowledge about what another surface can do, but it must not receive that other surface's full callable API block just for awareness
+- each surface must receive only the generated tool declarations and SDK blocks present in that surface's resolved extension binding and native runtime surface
+- each surface may receive compact knowledge about what another surface commonly does, but it must not receive that other surface's full callable API block just for awareness
 
-Ambient coding-agent resources are default-off unless explicitly enabled through `svvy` settings. This applies to pi resources such as extensions, skills, prompt templates, themes, packages, slash commands, hooks, provider adapters, credentials, and execution-policy settings, and to equivalent resources exposed by other coding-agent hosts. This default-off rule applies to imported or host-ambient resources, not to app-owned shipped extensions whose actor-specific default usage is explicitly defined in product specs. The current shipped prompt-only exceptions are Git, which is default-loaded for all adopted actor kinds, and GitHub, which is default-loaded for orchestrators and handler threads while remaining available for workflow task agents. `svvy` preserves plain external instruction files such as discovered `AGENTS.md` and `CLAUDE.md` as visible generated agent context through read-only extension records, but behavior-changing ambient resources must be enabled by category, source, host, workspace, and actor class before they can affect prompts, tools, commands, UI, provider behavior, auth, or execution policy. Enabled callable resources must still appear in the actor-specific generated API block for the exact actor that may call them.
+Ambient coding-agent resources are default-off unless explicitly enabled through `svvy` settings. This applies to pi resources such as extensions, skills, prompt templates, themes, packages, slash commands, hooks, provider adapters, credentials, and execution-policy settings, and to equivalent resources exposed by other coding-agent hosts. This default-off rule applies to imported or host-ambient resources, not to app-owned shipped extensions whose default usage is explicitly defined in product specs and profile settings. The current shipped prompt-only defaults are Git default-loaded for all adopted agent kinds and GitHub default-loaded for orchestrators and handler threads while available for workflow task agents. `svvy` preserves plain external instruction files such as discovered `AGENTS.md` and `CLAUDE.md` as visible generated agent context through read-only extension records, but behavior-changing ambient resources must be enabled by category, source, host, workspace, and target agent/profile configuration before they can affect prompts, tools, commands, UI, provider behavior, auth, or execution policy. Enabled callable resources must still appear in the resolved generated API block for the exact actor session or task attempt that may call them.
 
 Extension env values are app-managed per extension in v1. Secret values are keyed by `(extensionId, envName)`, entered only through user-owned app UI, stored encrypted by the app or OS keychain, injected only into the specific trusted extension runtime invocation that needs them, and never exposed to agents through prompts, generated docs, tool output, logs, artifacts, transcripts, global pi env, global shell env, or `execute_typescript` snippet env. Agent-facing extension inspection may report only declaration metadata and missing/configured readiness. Workspace-scoped extension env values and egress-proxy credential boundaries are not part of v1.
 
 Agents and Extensions are the user-facing source of reusable prompt material and capability composition. Agent profiles contain base instructions, actor kind, model/reasoning, and extension usage selections. Extensions contain shipped, user, and external_instruction records with full loaded instructions, minimal loading hints, generated previews, and category-specific reset/delete behavior. External instruction records show discovered files such as `AGENTS.md` and `CLAUDE.md` as read-only generated-context inputs with open-external-file controls. New orchestrator sessions, handler threads, and workflow task agents bind to the latest ready generated agent context. Existing surfaces store the generated agent context fingerprint they received and automatically update to the latest ready generated agent context at the next safe boundary when that fingerprint changes.
 
-The actor-specific capability split is:
+The default actor-specific generated context split is:
 
-- the orchestrator prompt knows that handler threads can supervise Smithers workflows, but it does not receive the `smithers_*` tool declarations; if it wants workflow action, it must delegate by calling `thread_start`
-- a handler-thread prompt receives `smithers_*`, `load_extension`, `list_extensions`, `thread_handoff`, `thread_current`, `wait`, direct tools, and `execute_typescript` for typed composition, but it does not receive `thread_start` in the default adopted model
+- the orchestrator prompt knows that handler threads can supervise Smithers workflows, but the default orchestrator extension state does not load the Smithers extension; if it wants workflow action, it normally delegates by calling `thread_start`
+- a handler-thread prompt receives `smithers_*`, `load_extension`, `list_extensions`, `thread_handoff`, `thread_current`, `wait`, direct tools, and `execute_typescript` for typed composition by default; `thread_start` is not part of the default adopted handler model
 - orchestrator and handler prompts receive `runtime_current`, `thread_list`, and `thread_handoffs` so runtime binding, delegated-thread state, and durable handoff episodes are read through focused tools instead of prompt stuffing
-- a workflow-task-agent prompt receives only task-local instructions and task-local callable declarations; in the default adopted model it receives task-local direct tools plus `execute_typescript`, and not `thread_start`, `thread_handoff`, `wait`, `load_extension`, Extension Managing, or `smithers_*`
-- a workflow-task-agent runtime must not load ambient pi built-in tools, extensions, skills, prompt templates, themes, commands, hooks, provider adapters, or equivalent host resources that would widen that callable or prompt surface beyond the explicit task-local contract unless the user enables that exact resource category and source for workflow task agents
-- if `svvy` later adopts nested delegation or additional actor classes, those capabilities must be added explicitly rather than leaked through one shared global prompt surface
+- a workflow-task-agent prompt receives task-local instructions and task-local callable declarations; in the default adopted workflow-agent profile it receives Extension Loading, task-local direct tools, and `execute_typescript`, while Smithers, Extension Managing, and broad handler/orchestrator controls are not default-loaded
+- a workflow-task-agent runtime must not load ambient pi built-in tools, extensions, skills, prompt templates, themes, commands, hooks, provider adapters, or equivalent host resources unless the user enables that exact resource category and source for workflow task agents
+- user-configured extension usage state remains the source of truth for loaded, available, and unavailable extensions; Extension Loading is the only fixed always-loaded extension control
 
 ### 3. Handler Threads Are The Delegation Unit
 
@@ -212,7 +212,7 @@ The adopted direction for task agents is:
 - run task-local shell, patch, network, and generated-client boundaries through the same `svvy`
   execution policy as orchestrators and handler threads, including managed sandboxing,
   `networkAccess`, and the configured approval mode, scoped to the exact Smithers task attempt
-- keep `thread_start`, `thread_handoff`, `wait`, and `smithers_*` out of the task-agent runtime and tool schema instead of teaching unavailable controls in prompt prose
+- keep `thread_start`, `thread_handoff`, `wait`, and `smithers_*` out of the default task-agent runtime and tool schema instead of describing absent controls in prompt prose
 - keep Smithers workflow approval and hijack as Smithers runtime or operator controls around the
   task, not as ordinary task-agent tools
 - execute the task agent and its task-local tool calls from Smithers' current task root, including the active worktree when the task is worktree-bound
@@ -243,7 +243,7 @@ Direct tools cover:
 - continuing long-running host commands through `write_stdin`
 - editing files through `apply_patch`
 - handler-owned discovery of workflow assets and workflow-authoring models
-- listing the currently callable actor-specific capability set
+- listing the currently bound callable capability set
 
 When a model needs several independent tool results, the prompt should tell it to issue those tool calls together so pi's parallel tool execution can run them concurrently. Sequential tool calls should be reserved for cases where the later call depends on the earlier result.
 
@@ -275,10 +275,10 @@ TypeScript composition and callable by the current actor. They are generated fro
 contracts as the runtime tools or extension commands. They do not preserve a broad hand-written
 helper surface for ordinary repository primitives.
 
-The orchestrator does not receive workflow discovery, Smithers runtime control, or any `workflow` or `smithers` namespace through `execute_typescript`. Workflow action from the orchestrator goes through `thread_start` into a handler thread.
+The default orchestrator generated TypeScript client does not include workflow discovery, Smithers runtime control, or any `workflow` or `smithers` namespace. Workflow action from the orchestrator normally goes through `thread_start` into a handler thread.
 
-Workflow task agents receive only task-local generated clients through `execute_typescript`. They do
-not receive workflow discovery, Smithers runtime control, or handler/orchestrator control clients.
+The default workflow task-agent generated TypeScript client includes only task-local clients. It does
+not include workflow discovery, Smithers runtime control, or handler/orchestrator control clients.
 
 File edits use `apply_patch`.
 
@@ -324,7 +324,7 @@ extension is disabled through normal extension binding, which means TinyFish pro
 included for orchestrators, handler threads, or workflow task agents.
 
 The orchestrator may provide handler creation-time extension overrides when the delegated objective
-should begin with a non-default extension already loaded:
+should begin with a non-default extension state:
 
 ```ts
 thread_start({
@@ -336,9 +336,12 @@ thread_start({
 ```
 
 That starts a normal handler thread with the default handler runtime shape and the requested extension
-binding before its first turn. The override is session-local and does not mutate the handler profile.
+binding before its first turn. The override is a partial override over the `threadHandler` profile:
+listed extensions take the supplied `default_loaded`, `available`, or `unavailable` state, omitted
+extensions keep the profile state, Extension Loading remains fixed `default_loaded`, and the override
+does not mutate the handler profile.
 
-There is no `thread_start_ci`, no `ci.start`, and no CI-specific orchestrator.
+There is no legacy `context: ["ci"]`, `thread_start_ci`, `ci.start`, or CI-specific orchestrator.
 
 Workflow supervision is different.
 
@@ -357,8 +360,8 @@ More precisely, this means:
 - when Smithers exposes only a server route or Gateway method, `svvy` may wrap it, but it should preserve Smithers' nouns and verbs instead of inventing a competing `workflow_*` vocabulary
 - product-specific additions are limited to app-runtime concerns such as implicit current-thread binding, workflow registry lookup, normalized error envelopes, and durable command-fact recording
 - `svvy` should expose only the subset of Smithers capabilities it actually wants the agent to use; unexposed Smithers surfaces remain operator-only or future work rather than getting renamed into parallel `svvy` APIs
-- the orchestrator should know that `smithers_*` exists as a handler-thread capability, but it should not receive the `smithers_*` generated API block in its own prompt
-- a handler thread should know that the orchestrator can delegate and reconcile handoffs, but it should not receive the orchestrator-only `thread_start` generated API block unless nested delegation is explicitly adopted
+- the default orchestrator context should know that `smithers_*` exists as a handler-thread workflow-supervision capability, but the Smithers extension is not default-loaded in ordinary orchestrator profiles
+- the default handler context should know that the orchestrator can delegate and reconcile handoffs, but `thread_start` is not part of the ordinary handler profile unless nested delegation is explicitly adopted as a product behavior
 - a workflow task agent should know only its task-local instructions and task-local tools; Smithers workflow approvals and hijack remain Smithers runtime behavior outside the task-agent tool block, while shell/sandbox approvals raised by task-local direct tools use the same `svvy` execution-permission flow as other actors
 
 The intended use of the native control subset is:
@@ -696,12 +699,13 @@ Context-pack keys describe reusable product knowledge loaded into actor prompts 
 
 The current handler objective, wait state, generated agent context binding, active workflow run ids, and latest handoff metadata are exposed to the handler through `thread_current`. The orchestrator and handlers inspect delegated thread rows through `thread_list`, and exact durable handoff episode bodies through `thread_handoffs`. These read tools do not include transcripts, workflow summaries, or Smithers internals; handlers use active workflow run ids with `smithers_*` tools when workflow details matter.
 
-Agent profiles describe the provider, model, reasoning level, base instructions, extension usage selections, and callable policy used by pi-backed product agents. The Agents pane is the product-owned profile surface. It appears in the sidebar between Logs and Extensions, and owns orchestrator profiles plus the special handler-thread profile rather than burying model behavior in general settings.
+Agent profiles describe the provider, model, reasoning level, base instructions, extension usage selections, and callable policy used by pi-backed product agents. The Agents pane is the product-owned profile surface. It appears in the sidebar between Logs and Extensions, and owns orchestrator profiles, the special handler-thread profile, and workflow-agent profiles rather than burying model behavior in general settings.
 
 The app owns these app-wide agent profile settings:
 
 - the default orchestrator profile for normal New orchestrator creation; it is locked, non-draggable, non-deletable, and always present in the picker
 - `threadHandler` for delegated handler-thread surfaces created by `thread_start`
+- workflow-agent profiles for Smithers task-agent attempts and generated workflow-agent components
 
 The app also owns internal title-naming settings for one-shot top-level session and handler-thread title generation, seeded to `openai-codex`/`gpt-5.4-mini` with low reasoning effort. Those settings are not exposed as a special Agents-pane profile.
 
@@ -709,11 +713,17 @@ User-created orchestrator profiles are ordered in the Agents pane. That order dr
 
 Session records persist the orchestrator profile selected at creation time, the profile snapshot that was active at creation time, and the generated agent context fingerprint used by the orchestrator surface. All top-level sessions are orchestrator sessions created through New orchestrator or equivalent command-palette prompt fallback.
 
-Handler threads use the `threadHandler` special profile unless `thread_start` declares a specific provider, model, reasoning level, or handler prompt suffix for the delegated objective. Extensions remain separate product knowledge and capability records; they do not carry model, reasoning, or prompt-selection settings.
+Handler threads use the `threadHandler` special profile. `thread_start` may pass creation-time
+extension overrides as a partial override over that profile's extension usage states. Extensions
+remain separate product knowledge and capability records; they do not carry model, reasoning, or
+prompt-selection settings.
 
-The Agents pane edits app-global agent profiles, including orchestrator profiles and `threadHandler`. General settings edit app-global model provider credentials, app appearance (`system`, `light`, or `dark` with `system` as the default), and the user's preferred external editor for opening workspace source files from read-only product surfaces. Provider rows use icon-only key, OAuth, and remove controls with explanatory tooltips; remove uses an inline single-confirm action. Web-specific TinyFish CLI auth is owned by TinyFish CLI commands such as `tinyfish auth login`, `tinyfish auth set`, and `tinyfish auth status`, not by `svvy` General settings. Extension definitions, extension instructions, external instruction controls, and generated context previews are edited or inspected in the Extensions pane rather than buried in general settings. Complex settings and configuration editors use TanStack Form for renderer form state where they need validation, dirty state, field-level errors, submit pending state, reset/cancel behavior, and async save errors, while Bun-side settings validation and normalization remain authoritative. Agent profile changes save directly from the setting control rather than through a separate save button. Agent model selection is a constrained picker over models from currently connected providers, and reasoning selection is constrained to the levels supported by the selected model, matching the interactive session controls rather than accepting freeform provider, model, or reasoning text. An orchestrator profile may either keep composer model and reasoning changes local to each session or let sessions using that profile save those composer changes back to the profile for future sessions. The source of truth for provider/model capability metadata is pi's normalized model registry and runtime APIs: `svvy` does not maintain separate provider-specific reasoning tables, Codex reasoning special cases, or request-shape mappings. Visible reasoning output is whatever pi normalizes into assistant `thinking` blocks; for providers such as OpenAI Codex this is a reasoning summary when the provider streams one, not raw chain-of-thought, and encrypted continuation-only reasoning with no visible summary must be labelled unavailable rather than redacted.
+The Agents pane edits app-global agent profiles, including orchestrator profiles, `threadHandler`, and workflow-agent profiles. General settings edit app-global model provider credentials, app appearance (`system`, `light`, or `dark` with `system` as the default), and the user's preferred external editor for opening workspace source files from read-only product surfaces. Provider rows use icon-only key, OAuth, and remove controls with explanatory tooltips; remove uses an inline single-confirm action. Web-specific TinyFish CLI auth is owned by TinyFish CLI commands such as `tinyfish auth login`, `tinyfish auth set`, and `tinyfish auth status`, not by `svvy` General settings. Extension definitions, extension instructions, external instruction controls, and generated context previews are edited or inspected in the Extensions pane rather than buried in general settings. Complex settings and configuration editors use TanStack Form for renderer form state where they need validation, dirty state, field-level errors, submit pending state, reset/cancel behavior, and async save errors, while Bun-side settings validation and normalization remain authoritative. Agent profile changes save directly from the setting control rather than through a separate save button. Agent model selection is a constrained picker over models from currently connected providers, and reasoning selection is constrained to the levels supported by the selected model, matching the interactive session controls rather than accepting freeform provider, model, or reasoning text. An orchestrator profile may either keep composer model and reasoning changes local to each session or let sessions using that profile save those composer changes back to the profile for future sessions. The source of truth for provider/model capability metadata is pi's normalized model registry and runtime APIs: `svvy` does not maintain separate provider-specific reasoning tables, Codex reasoning special cases, or request-shape mappings. Visible reasoning output is whatever pi normalizes into assistant `thinking` blocks; for providers such as OpenAI Codex this is a reasoning summary when the provider streams one, not raw chain-of-thought, and encrypted continuation-only reasoning with no visible summary must be labelled unavailable rather than redacted.
 
-Workflow-agent configuration under `.svvy/workflows/components/agents.ts` is future work owned by the Workflows library and packaged Smithers runtime direction. It remains an ordinary workspace saved-workflow component when adopted, must route by explicit `workspaceId`, and must not imply that repo-root `workflows/` is the shipped product workflow runtime.
+Workflow-agent profiles are app-global Agents-pane profiles. Packaged workflow-agent component files,
+when adopted under `.svvy/workflows/components/agents.ts`, are generated or saved Workflows-library
+assets that reference those profiles and must route by explicit `workspaceId`. They must not imply
+that repo-root `workflows/` is the shipped product workflow runtime.
 
 ### Agents And Extensions
 
@@ -725,7 +735,8 @@ Agents own:
 - actor kind
 - provider/model and reasoning defaults
 - base instructions
-- per-extension usage state: `default_loaded`, `available`, or `unavailable`
+- per-extension usage state: `default_loaded`, `available`, or `unavailable`, except fixed
+  app-native controls such as Extension Loading
 - generated context and generated runtime-surface previews for that profile
 
 Extensions own:
@@ -950,7 +961,7 @@ When the target surface is the main orchestrator:
 4. if delegated:
    - call `thread_start`
    - hand off the delegated objective to a handler thread
-   - include handler extension overrides such as loading `project-ci` only when the objective needs that product guidance from the first handler turn
+   - include handler extension-state overrides such as setting `project-ci` to `default_loaded` only when the objective needs that product guidance from the first handler turn
 5. when a handler thread explicitly hands control back, reconcile the typed handoff notification against durable state: thread durable state plus the latest handoff episode
 6. if later work belongs in the same delegated context, call `thread_resume` with the completed thread id and a new message instead of starting an unrelated replacement thread
 
