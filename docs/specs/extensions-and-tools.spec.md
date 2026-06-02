@@ -389,16 +389,22 @@ type ExtensionIssue = {
     | "BUILD_REQUIRED"
     | "BUILD_FAILED"
     | "NO_CURRENT_BUILD"
-    | "CURRENT_BUILD_INVALID";
+    | "CURRENT_BUILD_INVALID"
+    | "EXTERNAL_BINARY_MISSING"
+    | "EXTERNAL_BINARY_UNKNOWN"
+    | "EXTERNAL_CLI_AUTH_MISSING"
+    | "EXTERNAL_CLI_AUTH_INSUFFICIENT"
+    | "EXTERNAL_CLI_AUTH_UNKNOWN";
   message: string;
 };
 ```
 
 `currentBuild.status` reports whether the current generated build for the extension is readable and
 structurally valid, not whether all runtime requirements are satisfied. `ready` is the final
-agent-actionable answer after combining build state, dependency/install state, env status, and the
-current actor binding. `lastBuild` may be omitted only when the implementation has no build attempt
-record yet; if present, it must be coarse status only and must not include timestamps or build ids.
+agent-actionable answer after combining build state, dependency/install state, env status, required
+external binary status, known blocking external CLI auth status, and the current actor binding.
+`lastBuild` may be omitted only when the implementation has no build attempt record yet; if present,
+it must be coarse status only and must not include timestamps or build ids.
 
 `state.binding` is session-contextual. It reports whether this exact actor session currently has the
 extension loaded or only available. It replaces global usage data for `list_extensions`; global
@@ -413,6 +419,30 @@ agent/profile usage state belongs to Extension Managing `inspect`.
 `state.ready: false` must be accompanied by one or more `state.issues` entries with concrete,
 agent-actionable messages. Missing required env values must direct the user to configure values in
 the app UI; they must not ask the user to paste a secret into chat.
+
+`externalBinaries` reports only whether declared local command-line binaries are known to be present.
+It must not encode account authentication, OAuth state, token scopes, remote service reachability, or
+last-check timestamps. If an extension depends on a local CLI account state, such as GitHub CLI
+authentication for `gh`, that readiness is represented only through coarse `state.ready` and
+`state.issues` values when the app already knows the status. Do not add an `externalAuth`,
+`authStatus`, token-scope, account-name, username, or host credential field to the normal
+agent-facing requirements shape.
+
+For prompt-only instruction extensions, declared external binaries are advisory unless the extension
+explicitly says a binary is required before instructions can load. The shipped Git and GitHub
+extensions must still load their prompt guidance when `git`, `gh`, or `gh` auth is unknown. Unknown
+GitHub CLI auth must not make the prompt-only GitHub extension not ready. Known missing or
+insufficient `gh` auth may be shown as an issue when the app already knows it, but the agent-facing
+GitHub instructions still trigger install or auth guidance only after an actual `gh` command fails.
+Use `EXTERNAL_CLI_AUTH_UNKNOWN` only when auth uncertainty blocks a concrete extension runtime
+invocation; do not use it to block prompt-only GitHub guidance.
+
+Requirement freshness is intentionally bounded. Startup refresh, explicit extension refresh,
+`list_extensions`, and Extension Managing `inspect` may run cheap local checks for declared
+requirements. They must not install packages, mutate auth state, run `gh auth login`, contact remote
+services only to improve a label, or observe arbitrary failed agent shell commands to update
+extension readiness. If a requirement status cannot be known from a cheap local check, report
+`unknown` and include an actionable issue only when that uncertainty blocks readiness.
 
 Loaded extension `paths` may include source/edit paths and generated TypeScript declaration paths
 because loaded extensions are already visible to the actor. For `category: "external_instruction"`,
@@ -636,6 +666,7 @@ A successful build atomically replaces the extension's current build. The curren
 - generated TypeScript command types when enabled
 - dependency graph metadata
 - env requirements
+- external binary requirements
 - internal content hashes stored in product state or non-agent-readable build metadata
 
 Env requirements in build output are declaration metadata and readiness status only. Current build
@@ -1488,9 +1519,13 @@ Codex collapses a parsed command display to unknown when any parsed segment is u
 should borrow that conservative display behavior: mixed known/unknown shell pipelines must not show
 only the known part as if the full command was understood.
 
-Extension-scoped command visualization contributions for cx, git, Smithers, Extension Managing,
-TinyFish CLI commands, and other known command families are deferred in `docs/todo.md`. In v1,
-authoritative capture comes only from `svvy`-owned tool and command boundaries.
+Extension-scoped command visualization contributions for cx, git, GitHub CLI, Smithers, Extension
+Managing, TinyFish CLI commands, and other known command families are optional display
+improvements. If implemented, they must parse actual `exec_command` input and output at the command
+boundary. They must not rely on hidden assistant-authored Markdown directives such as
+`git-create-pr`, `git-push`, or similar milestone markers. A pull request creation fact is a GitHub
+CLI or API event, not a git operation. In v1, authoritative capture comes only from `svvy`-owned tool
+and command boundaries.
 
 ### Apply Patch Source And Policy
 
@@ -1685,6 +1720,11 @@ those, `svvy` records:
 unless that fact came through an owned boundary. Codex-style command parsing and extension-scoped
 visualization rules are display hints only. They may make the UI easier to scan, but they are not
 security policy, not approval evidence by themselves, and not revert provenance.
+
+Assistant-authored Markdown must not be treated as an authoritative action boundary for Git or
+GitHub work. `svvy` should not adopt Codex App-style hidden final-response directives for staging,
+committing, pushing, or pull request creation. The product can render those milestones from actual
+command records, parsed `git`/`gh` commands, GitHub API results, and observed workspace state instead.
 
 ### Product-State Mutations With Revert
 
@@ -2229,6 +2269,212 @@ just as it would after extension deletion and then refreshes its binding.
 The key product improvement is that agents can use configured secrets without being able to read
 them. `svvy` also knows exactly which values to redact because they were entered through the app.
 
+## Prompt-Only Git And GitHub Extensions
+
+Git and GitHub are shipped prompt-only extensions. They provide reusable coding-agent guidance for
+ordinary shell use of mature local CLIs. They must not introduce native model tools, `svvyx`
+commands, generated TypeScript clients, custom edit/write surfaces, custom staging APIs, or a
+parallel semantic `git.*` or `github.*` abstraction by default.
+
+The product reason is straightforward:
+
+- `git` and GitHub CLI already provide the operational surface agents need.
+- `exec_command` records command lifecycle, output, approvals, running sessions, and observed
+  workspace changes.
+- `apply_patch` remains the editing surface for file changes.
+- command parsing and command facts can support UI visualization without inventing a second API.
+- prompt-only instructions are enough to express conservative coding-agent behavior and safety
+  policy.
+
+Git is default-loaded for every adopted actor kind. GitHub is default-loaded for orchestrators and
+handler threads, and available for workflow task agents. Workflow task agents may load GitHub only
+when the task objective explicitly requires GitHub issues, pull requests, reviews, Actions, or other
+GitHub work. GitHub remains available, not unavailable, for workflow task agents so a task whose
+contract explicitly names GitHub can request it through the normal extension-loading path.
+
+### Git Extension
+
+Extension metadata:
+
+```json
+{
+  "id": "git",
+  "category": "shipped",
+  "interface": "instructions",
+  "title": "Git",
+  "description": "Conservative git CLI guidance for repository inspection, dirty worktrees, staging, commits, branches, and destructive-command safety.",
+  "typescriptApiEnabled": false,
+  "requirements": {
+    "externalBinaries": [{ "name": "git", "status": "unknown" }],
+    "env": [],
+    "dependencies": [],
+    "trustedDependencies": []
+  }
+}
+```
+
+Default usage:
+
+| Actor kind | State |
+| --- | --- |
+| Orchestrator | default_loaded |
+| Handler thread | default_loaded |
+| Workflow task agent | default_loaded |
+
+Full loaded instructions:
+
+```md
+# Git
+
+Use ordinary `git` commands through the shell for repository inspection and user-requested
+version-control work.
+
+Before changing git state, inspect scope with `git status -sb` and, when relevant, `git diff` plus
+`git diff --staged`.
+
+Dirty worktree rules:
+- You may be in a dirty worktree.
+- Never revert, overwrite, remove, stage, or commit changes you did not make unless the user
+  explicitly asks.
+- If unrelated changes exist, keep them separate. Use explicit pathspecs for staging and commits.
+- If changes in a file you need to edit overlap with user changes, inspect the file carefully and
+  preserve their work.
+
+Safe inspection commands include:
+- `git status -sb`
+- `git diff`
+- `git diff --staged`
+- `git log --oneline --decorate -n 20`
+- `git show <rev>`
+- `git branch --show-current`
+- `git remote -v`
+
+Do not run destructive git commands unless the user explicitly requested that exact operation or
+approved it after you explained the consequence. This includes:
+- `git reset --hard`
+- `git clean`
+- `git checkout -- <path>`
+- `git restore <path>` or `git restore .`
+- `git rebase`, `git merge`, or `git pull` when conflicts or history changes are plausible
+- force pushes except `--force-with-lease` after explicit approval
+
+Staging and commits:
+- Do not commit unless the user asks for a commit or a publish flow.
+- Stage only intended files. Prefer `git add <path>...`; use `git add -A` only when the whole
+  worktree is confirmed in scope.
+- Before committing, review `git diff --staged`.
+- Follow repository commit conventions when discoverable from instructions or recent history.
+- Use Conventional Commits when the repository or user requests it.
+- After a successful commit, report the commit hash and summarize what was committed.
+
+When a requested git operation is blocked by missing identity, auth, conflicts, detached HEAD,
+protected branch, or unrelated worktree changes, stop and explain the blocker with the exact command
+output summary.
+```
+
+Minimal available instructions are normally not shown because Git is default-loaded for all adopted
+actor kinds. If a custom profile makes Git only available, use:
+
+```md
+Load Git when the task requires repository inspection, staging, commits, branch work, history, or
+dirty-worktree reasoning. Use ordinary `git` commands through the shell; this extension adds no
+tools.
+```
+
+### GitHub Extension
+
+Extension metadata:
+
+```json
+{
+  "id": "github",
+  "category": "shipped",
+  "interface": "instructions",
+  "title": "GitHub",
+  "description": "Conservative GitHub CLI guidance for issues, pull requests, review comments, Actions checks, publishing, and PR wrap-up.",
+  "typescriptApiEnabled": false,
+  "requirements": {
+    "externalBinaries": [
+      { "name": "git", "status": "unknown" },
+      { "name": "gh", "status": "unknown" }
+    ],
+    "env": [],
+    "dependencies": [],
+    "trustedDependencies": []
+  }
+}
+```
+
+Default usage:
+
+| Actor kind | State |
+| --- | --- |
+| Orchestrator | default_loaded |
+| Handler thread | default_loaded |
+| Workflow task agent | available |
+
+Full loaded instructions:
+
+```md
+# GitHub
+
+Use the GitHub CLI `gh` through the shell for GitHub issue, pull request, review, and Actions
+workflows. Do not create GitHub-specific wrapper tools by default.
+
+Setup and auth:
+- Use `gh` directly when the task requires GitHub CLI behavior.
+- Do not run preflight availability or auth checks before ordinary `gh` use.
+- If a `gh` command fails because `gh` is missing, tell the user to install GitHub CLI from
+  https://cli.github.com/ or with a platform package manager such as `brew install gh`.
+- If a `gh` command fails because authentication or scopes are missing, ask the user to run
+  `gh auth login` and retry only after they confirm.
+
+PR and issue inspection:
+- Resolve the repo from local git when possible: `gh repo view --json nameWithOwner,defaultBranchRef`.
+- Resolve the current branch PR with `gh pr view --json number,url,title,headRefName,baseRefName,state`.
+- Inspect PRs with `gh pr view <pr> --json title,body,author,state,mergeable,reviewDecision,statusCheckRollup,files,commits,comments,reviews,url`.
+- Inspect issues with `gh issue view <issue> --json title,body,author,state,labels,comments,url`.
+
+PR creation and publishing:
+- Do not push or create a PR unless the user asks.
+- Before push or PR creation, inspect `git status -sb`, current branch, remote, and staged diff.
+- Push with tracking: `git push -u origin $(git branch --show-current)`.
+- Default to draft PRs unless the user explicitly asks for ready-for-review.
+- Prefer `gh pr create --draft --fill --head "$(git branch --show-current)"`; use `--base <branch>`
+  when requested or when the default branch is known.
+- Write multiline PR bodies to a temp file and pass `--body-file <path>`.
+
+Review comments and replies:
+- Do not post comments, resolve review threads, request reviews, approve, close, merge, or submit a
+  PR review unless the user explicitly asks for that write action.
+- Draft comment text locally first when the wording matters.
+- For review-thread work, prefer thread-aware reads via `gh api graphql` because flat comment
+  listings can miss resolved, outdated, or threaded state.
+- Separate actionable requested changes from approvals, duplicates, resolved threads, outdated
+  comments, and informational notes.
+- If comments conflict or are ambiguous, ask before editing or posting.
+
+CI and checks:
+- Use `gh pr checks <pr> --json name,state,bucket,link,startedAt,completedAt,workflow`.
+- For GitHub Actions failures, inspect runs with
+  `gh run view <run-id> --json name,workflowName,conclusion,status,url,event,headBranch,headSha` and
+  logs with `gh run view <run-id> --log`.
+- Treat external CI providers as report-only unless the user asks to investigate them.
+
+Wrap-up behavior:
+- For PR work, summarize branch, commit or commits, PR URL, checks run, unresolved review items, and
+  residual risk.
+- Never imply a GitHub write happened unless the command succeeded.
+```
+
+Minimal available instructions for workflow task agents and custom available-only profiles:
+
+```md
+Load GitHub only when the task objective explicitly requires GitHub issues, pull requests, review
+comments, Actions checks, or other GitHub work. Use ordinary `gh` commands through the shell; this
+extension adds no tools and should not be loaded for generic repository coding.
+```
+
 ## Shipped Extension Set
 
 This is the resolved shipped extension map from the discussion so far. `category: "shipped"` means
@@ -2245,25 +2491,28 @@ their source files are read-only external inputs.
 | cx | shipped | svvyx or native_tool | codebase/product navigation and cx controls | available | available | available |
 | Smithers | shipped | svvyx | workflow run/list/inspect/resume/signal/transcript controls | unavailable | default_loaded | unavailable |
 | Web | shipped | instructions | TinyFish CLI search/fetch/browser guidance through ordinary shell commands; no `svvy` Web tools, `svvyx web` commands, generated Web TypeScript clients, Web Provider settings, or `svvy`-owned TinyFish key storage | default_loaded | default_loaded | default_loaded |
-| Git | shipped | instructions | Git shell guidance; no wrapper CLI by default | default_loaded | default_loaded | default_loaded |
-| GitHub | shipped | instructions | GitHub/`gh` CLI guidance; no wrapper CLI by default | default_loaded | default_loaded | default_loaded |
+| Git | shipped | instructions | Git shell guidance for dirty worktrees, staging, commits, branch/history inspection, and destructive-command safety; no wrapper CLI or generated TypeScript client by default | default_loaded | default_loaded | default_loaded |
+| GitHub | shipped | instructions | GitHub/`gh` CLI guidance for issues, PRs, review comments, Actions, publishing, and wrap-up; no wrapper CLI or generated TypeScript client by default | default_loaded | default_loaded | available |
 | External Instructions | external_instruction | instructions | read-only external instruction files such as `AGENTS.md` and `CLAUDE.md`, surfaced with open-external-file controls | default_loaded | default_loaded | default_loaded |
 | Project CI | shipped | instructions | Project CI authoring guidance for defining and maintaining CI workflow lanes; no tools by default | available | available | unavailable |
 
-The Git and GitHub extensions should not wrap `git` or `gh` by default. Agents can use the ordinary
-shell and command help. The app should still check whether `git` and `gh` are available and show a
-simple checkmark or error in the Extensions UI for transparency.
+The Git and GitHub extensions must not wrap `git` or `gh` by default. Agents use ordinary shell
+commands and command help. App-owned startup, extension refresh, `list_extensions`, and Extension
+Managing `inspect` paths may refresh declared `externalBinaries` status for `git` and `gh`, and may
+report known CLI auth blockers through `state.ready` and `state.issues`. That app-owned status
+refresh is not an instruction for agents to run `gh --version`, `gh auth status`, or any other
+availability/auth preflight. The app must not add a separate auth-status field, run login flows,
+mutate credentials, or watch arbitrary failed agent shell commands to update extension readiness.
 
-The Git and GitHub prompt-only instructions should adapt:
+The Git and GitHub prompt-only instructions adapt:
 
 - Codex dirty-worktree and destructive-git safeguards from
   `docs/references/codex/codex-rs/core/gpt_5_codex_prompt.md` and
   `docs/references/codex/codex-rs/core/gpt_5_2_prompt.md`
-- pi GitHub CLI usage patterns from `docs/references/pi-mono/AGENTS.md`
-- pi PR/issue/wrap-up prompt patterns from `docs/references/pi-mono/.pi/prompts/`
+- GitHub CLI usage patterns from local Codex and pi-adjacent GitHub skill references
 
-These extensions should teach shell use of `git` and `gh`; they should not introduce a parallel
-semantic `git.*` or `github.*` model interface by default.
+These extensions teach shell use of `git` and `gh`; they do not introduce a parallel semantic
+`git.*` or `github.*` model interface by default.
 
 Extension Managing combines the earlier separate "Extension Manager" and "Incur Extension
 Authoring" ideas. There is no separate Incur Authoring extension unless this gets split again later.

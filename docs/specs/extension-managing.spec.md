@@ -502,7 +502,12 @@ type ExtensionIssue = {
     | "BUILD_REQUIRED"
     | "BUILD_FAILED"
     | "NO_CURRENT_BUILD"
-    | "CURRENT_BUILD_INVALID";
+    | "CURRENT_BUILD_INVALID"
+    | "EXTERNAL_BINARY_MISSING"
+    | "EXTERNAL_BINARY_UNKNOWN"
+    | "EXTERNAL_CLI_AUTH_MISSING"
+    | "EXTERNAL_CLI_AUTH_INSUFFICIENT"
+    | "EXTERNAL_CLI_AUTH_UNKNOWN";
   message: string;
 };
 ```
@@ -510,6 +515,21 @@ type ExtensionIssue = {
 `usage` is the global agent/profile usage configuration for the inspected extension. It is useful in
 Extension Managing because the command is a management surface. Native `list_extensions` must not
 return `usage`; it returns only the current actor's `state.binding`.
+
+Inspect uses the same requirement-readiness semantics as native `list_extensions`.
+`requirements.externalBinaries[].status` is limited to `"available"`, `"missing"`, or `"unknown"`
+for local binary presence. It must not encode CLI account authentication, OAuth state, token scopes,
+remote service reachability, timestamps, account names, usernames, or host credentials. Known CLI
+auth blockers, such as missing or insufficient GitHub CLI auth for `gh`, are represented only by
+coarse `state.ready: false` plus `state.issues` codes when the app already knows them. Extension
+Managing must not add a separate `externalAuth` or `authStatus` field, run login flows, mutate
+credentials, contact remotes only to improve status labels, or watch arbitrary failed agent shell
+commands to update inspect readiness.
+
+For prompt-only Git and GitHub, unknown `git`, `gh`, or `gh` auth status is advisory and must not
+block inspect readiness or generated prompt loading. Known status can be displayed through
+`requirements.externalBinaries` and `state.issues`, but the GitHub prompt still tells agents to
+offer install or auth guidance only after an actual `gh` command fails.
 
 Prompt-only shipped example:
 
@@ -521,7 +541,7 @@ Prompt-only shipped example:
     "category": "shipped",
     "interface": "instructions",
     "title": "GitHub",
-    "description": "Guidance for using git remotes, GitHub, and the gh CLI.",
+    "description": "Conservative GitHub CLI guidance for issues, pull requests, review comments, Actions checks, publishing, and PR wrap-up.",
     "resettable": true,
     "deletable": false,
     "typescriptApiEnabled": false,
@@ -549,11 +569,15 @@ Prompt-only shipped example:
       },
       {
         "actorKind": "workflow_agent",
-        "state": "default_loaded"
+        "state": "available"
       }
     ],
     "requirements": {
       "externalBinaries": [
+        {
+          "name": "git",
+          "status": "available"
+        },
         {
           "name": "gh",
           "status": "available"

@@ -272,6 +272,11 @@ every handler prompt.
 
 The Project CI authoring extension id is `project-ci`.
 
+Prompt-only Git guidance is default-loaded for all actor kinds because ordinary repository work
+usually needs git context. Prompt-only GitHub guidance is default-loaded for orchestrators and handler
+threads, and available for workflow task agents only when the task objective explicitly requires
+GitHub issues, pull requests, review comments, Actions, or other GitHub work.
+
 The orchestrator can preload an extension for a delegated objective:
 
 ```ts
