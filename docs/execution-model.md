@@ -144,7 +144,7 @@ This is shared surface behavior, not special logic for waiting threads only.
 The orchestrator typically chooses among:
 
 - direct reply
-- cx semantic navigation and direct tools
+- cx CLI guidance through `exec_command` plus direct tools
 - `execute_typescript`
 - `thread_start`
 - `wait`
@@ -160,7 +160,7 @@ Instead, it opens a handler thread for that delegated objective.
 Inside a handler thread, the normal choices are:
 
 - direct reply
-- cx semantic navigation and direct tools
+- cx CLI guidance through `exec_command` plus direct tools
 - `execute_typescript`
 - `thread_handoff`
 - `list_extensions` and `load_extension`
@@ -310,14 +310,14 @@ No runtime path infers CI from arbitrary workflow output, command names, logs, o
 ## Key Guarantees
 
 - Direct tools are the default coding-agent work surface.
-- cx semantic navigation is part of the generated capability set and is the preferred first step for supported code navigation when the cx extension is loaded.
+- cx prompt-only CLI guidance is part of generated actor context and is the preferred first step for supported code navigation when the cx extension is loaded; agents run official `cx` commands through `exec_command`.
 - ordinary repository inspection uses `exec_command` with shell tools such as `rg`, `sed`, `cat`, `ls`, `find`, `git show`, `nl`, and `wc`.
 - generated `execute_typescript` clients are derived from loaded native tools and loaded extensions; broad hand-written `api.read`, `api.bash`, and `api.workflow_*` helper families are not part of the resolved model.
 - `thread_start`, `load_extension`, `thread_handoff`, and `wait` remain `svvy`-native control tools.
 - workflow supervision should use Smithers-native bridge tools such as `smithers_run_workflow`, `smithers_get_run`, and `smithers_resolve_approval`.
 - the Smithers-native capability set targets product-runtime runnable workflows rather than the repo authoring workspace under `workflows/`.
 - capability declarations are actor-specific: the orchestrator gets only orchestrator-callable tools, and handler threads get only handler-callable tools.
-- workflow task agents are another actor class below handler threads and should receive only task-local cx tools, direct tools, and `execute_typescript`, with no ambient pi extension-tool leakage.
+- workflow task agents are another actor class below handler threads and should receive only task-local cx CLI instructions, direct tools, and `execute_typescript`, with no ambient pi extension-tool leakage.
 - runtime handlers and bridges write durable facts from real execution; agents do not mutate product state through arbitrary write tools.
 - child `api.*` calls remain nested command facts under a parent `execute_typescript` command.
 - tool-run summaries stay on command records and artifacts; ordinary handler replies do not emit episodes.

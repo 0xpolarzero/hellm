@@ -184,8 +184,8 @@ Shipped extensions have packaged defaults plus editable overlays:
 - shipped extensions are non-deletable
 - shipped extensions are resettable
 - shipped defaults live in packaged app resources and are read-only
-- shipped title, description, instructions, and Incur source are editable by materializing or updating
-  app-owned overlay files under `sources/builtin-overlays/<id>/`
+- shipped title, description, instructions, and optional editable extension source are editable by
+  materializing or updating app-owned overlay files under `sources/builtin-overlays/<id>/`
 - shipped generated files, native runtime implementation, and app-owned bridge code are read-only and
   cannot be edited through Extension Managing
 - `inspect` materializes shipped overlay files before returning editable paths so shell inspection and
@@ -468,7 +468,22 @@ type InspectExtensionRequirements = {
     status: "configured" | "missing" | "defaulted" | "optional_missing";
   }>;
   dependencies: ExtensionDependencyRequirement[];
+  trustedCliDependencies: TrustedCliDependencyRequirement[];
   trustedDependencies: ExtensionDependencyRequirement[];
+};
+
+type TrustedCliDependencyRequirement = {
+  id: string;
+  binary: string;
+  status: "available" | "missing" | "unknown";
+  detectedVersion: string | null;
+  install: {
+    package: string;
+    version: string;
+    source: "npm" | "cargo" | "github-release" | "git-scm-release" | "bundled_app_resource";
+    approval: "not_required_when_user_binary_exists" | "needs_user_confirmation" | "approved";
+    install: "installed" | "not_installed" | "unknown";
+  };
 };
 
 type ExtensionDependencyRequirement = {
@@ -528,8 +543,9 @@ commands to update inspect readiness.
 
 For prompt-only Git and GitHub, unknown `git`, `gh`, or `gh` auth status is advisory and must not
 block inspect readiness or generated prompt loading. Known status can be displayed through
-`requirements.externalBinaries` and `state.issues`, but the GitHub prompt still tells agents to
-offer install or auth guidance only after an actual `gh` command fails.
+`requirements.externalBinaries`, `requirements.trustedCliDependencies`, and `state.issues`, but the
+GitHub prompt still tells agents to report missing CLI binaries through the app-managed trusted CLI
+dependency flow and to offer auth guidance only after an actual `gh` command fails.
 
 Prompt-only shipped example:
 
@@ -585,6 +601,34 @@ Prompt-only shipped example:
       ],
       "env": [],
       "dependencies": [],
+      "trustedCliDependencies": [
+        {
+          "id": "git",
+          "binary": "git",
+          "status": "available",
+          "detectedVersion": "2.54.0",
+          "install": {
+            "package": "git",
+            "version": "2.54.0",
+            "source": "git-scm-release",
+            "approval": "not_required_when_user_binary_exists",
+            "install": "not_installed"
+          }
+        },
+        {
+          "id": "gh",
+          "binary": "gh",
+          "status": "available",
+          "detectedVersion": "2.93.0",
+          "install": {
+            "package": "gh",
+            "version": "2.93.0",
+            "source": "github-release",
+            "approval": "not_required_when_user_binary_exists",
+            "install": "not_installed"
+          }
+        }
+      ],
       "trustedDependencies": []
     },
     "state": {
@@ -673,6 +717,7 @@ Incur-backed shipped example:
           "install": "installed"
         }
       ],
+      "trustedCliDependencies": [],
       "trustedDependencies": []
     },
     "state": {

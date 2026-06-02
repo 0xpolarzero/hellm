@@ -914,7 +914,12 @@ Relevant code:
 
 ### AUD-020 - Workflow task-agent config, generated declarations, saved settings, and runtime behavior diverged
 
-**Disposition:** Fixed. `WorkflowTaskAgentConfig` now uses `reasoningEffort`, settings render workflow agents assignable to that contract, `cx_*` survives normalization, runtime task-agent registration filters the ordered task-tool registry by `config.toolSurface`, and task-agent projection binds by exact Smithers `(runId, nodeId, iteration, attempt)` identity.
+**Disposition:** Fixed, with the cx portion superseded by `docs/specs/cx-tools.spec.md`.
+`WorkflowTaskAgentConfig` now uses `reasoningEffort`, settings render workflow agents assignable to
+that contract, runtime task-agent registration filters the ordered task-tool registry by
+`config.toolSurface`, and task-agent projection binds by exact Smithers `(runId, nodeId, iteration,
+attempt)` identity. The earlier native `cx_*` normalization finding is obsolete: cx v1 is now a
+prompt-only direct CLI extension, not a generated or native task-tool family.
 
 **Impact:** High workflow authoring correctness issue when present.
 
@@ -922,7 +927,8 @@ Resolved drift:
 
 - Generated `WorkflowTaskAgentConfig` uses `reasoningEffort`.
 - Rendered workflow-agent settings use `reasoningEffort` and are assignable to `WorkflowTaskAgentConfig`.
-- Generated/default contracts include `cx_*`, and normalization preserves canonical `cx_*` tools.
+- Generated/default contracts exclude native `cx_*`; when the cx extension is loaded, it contributes
+  prompt-only official CLI guidance for use through `exec_command`.
 - Runtime task-agent creation registers exactly the ordered registry tools requested by `config.toolSurface`.
 - Task-agent projection no longer discovers Smithers attempts by resume handle or recency.
 
@@ -939,7 +945,7 @@ Relevant code:
 **Verification covered:**
 
 - Rendered workflow-agent settings are assignable to the generated `WorkflowTaskAgentConfig`.
-- `cx_*` survives normalization.
+- cx prompt-only CLI guidance appears in generated actor context without adding native `cx_*` tools.
 - A narrow `toolSurface` produces exactly that task-agent tool set.
 - The default task-agent surface includes the documented task-local direct tools and `execute_typescript`.
 - Duplicate or repeated pi resume handles cannot bind projection to the wrong Smithers attempt.

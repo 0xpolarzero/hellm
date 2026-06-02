@@ -4,7 +4,9 @@
 
 - Date: 2026-06-02
 - Status: resolved direction for `execute_typescript` under the Extensions architecture
-- Related spec: `docs/specs/extensions-and-tools.spec.md`
+- Related specs:
+  - `docs/specs/extensions-and-tools.spec.md`
+  - `docs/specs/cx-tools.spec.md`
 
 This spec replaces the older direct-tool helper model. `execute_typescript` is now a native
 extension capability.
@@ -47,6 +49,10 @@ Provider readiness is not a generic reason to expose generated clients. If a fut
 extension needs generated clients, that extension must still expose a concrete loaded runtime
 interface whose source contracts can generate the client. The shipped Web extension is prompt-only
 and therefore never contributes generated clients in Web v1.
+
+The shipped cx extension is also prompt-only and therefore never contributes generated clients in cx
+v1. `execute_typescript` must not expose `api.cx_*`, `svvy.cx.*`, `extensions.cx.*`, or another cx
+SDK. Agents use official `cx` CLI commands through `exec_command`.
 
 If an actor cannot call a capability through its normal generated runtime interface, it must not gain
 that capability through generated `execute_typescript` clients.

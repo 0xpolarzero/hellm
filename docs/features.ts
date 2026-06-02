@@ -92,16 +92,29 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Direct Tools And Execute TypeScript",
     status: "in-progress",
     summary:
-      "Provides Codex-like native filesystem tools as the default coding-agent work interface, with `exec_command`, `write_stdin`, and `apply_patch` carrying command lifecycle, long-running session, and patch facts; keeps `execute_typescript` as an actor-local TypeScript composition tool with generated svvy and loaded-extension clients as the preferred typed interface; preserves arbitrary TypeScript side effects as opaque unless they go through svvy-owned client boundaries; produces preflight typecheck or compile diagnostics when available, stores file-backed source artifacts for every attempt, and rolls generated-client child command facts under the parent.",
+      "Provides Codex-like native filesystem tools as the default coding-agent work interface, with `exec_command`, `write_stdin`, and `apply_patch` carrying command lifecycle, long-running session, and patch facts; keeps `execute_typescript` as an actor-local TypeScript composition tool with generated svvy and loaded-extension clients as the preferred typed interface while explicitly excluding cx generated clients in v1; preserves arbitrary TypeScript side effects as opaque unless they go through svvy-owned client boundaries; produces preflight typecheck or compile diagnostics when available, stores file-backed source artifacts for every attempt, and rolls generated-client child command facts under the parent.",
     sourceSpecs: ["docs/prd.md", "docs/specs/execute-typescript.spec.md"],
+  },
+  {
+    id: "trusted-cli-dependencies",
+    name: "Trusted CLI Dependencies",
+    status: "in-progress",
+    summary:
+      "Defines app-managed fixed-version CLI dependencies for shipped prompt-only extensions and ordinary coding-agent CLIs, with exact pinned records for `cx-cli@0.7.1`, `@tiny-fish/cli@0.1.6`, `git@2.54.0`, and `gh@2.93.0`; checks whether the user already has each binary before offering installation, routes missing-binary installation through the existing extension-style confirmation UI, rejects floating versions such as `latest`, and keeps agent instructions free of package-manager install commands.",
+    sourceSpecs: [
+      "docs/specs/extensions-and-tools.spec.md",
+      "docs/specs/cx-tools.spec.md",
+      "docs/specs/web-tools.spec.md",
+      "docs/specs/extension-managing.spec.md",
+    ],
   },
   {
     id: "web-tool-surface",
     name: "Prompt-Only TinyFish Web Extension",
     status: "in-progress",
     summary:
-      "Defines Web as a shipped default-loaded prompt-only extension that vendors TinyFish-owned `use-tinyfish` agent instructions, teaches agents to install and authenticate the official TinyFish CLI and use `tinyfish search query` plus `tinyfish fetch content get` through ordinary shell commands, explicitly omits `web_search`, `web_fetch`, `svvyx web`, generated Web TypeScript clients, Firecrawl, Web Provider settings, and svvy-owned TinyFish key storage, and tells agents to redirect large TinyFish JSON output to files when useful because the tested CLI writes search and fetch results to stdout by default.",
-    sourceSpecs: ["docs/specs/web-tools.spec.md"],
+      "Defines Web as a shipped default-loaded prompt-only extension that vendors TinyFish-owned `use-tinyfish` agent instructions, declares an app-managed trusted `tinyfish` CLI dependency, teaches agents to authenticate the official TinyFish CLI and use `tinyfish search query` plus `tinyfish fetch content get` through ordinary shell commands, explicitly omits `web_search`, `web_fetch`, `svvyx web`, generated Web TypeScript clients, Firecrawl, Web Provider settings, and svvy-owned TinyFish key storage, and tells agents to redirect large TinyFish JSON output to files when useful because the tested CLI writes search and fetch results to stdout by default.",
+    sourceSpecs: ["docs/specs/web-tools.spec.md", "docs/specs/extensions-and-tools.spec.md"],
   },
   {
     id: "handler-thread-surfaces",
@@ -116,12 +129,13 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Agents And Extensions Prompt Composition",
     status: "in-progress",
     summary:
-      "Reframes prompt composition around Agents and Extensions: agent profiles own base instructions, model/reasoning, actor kind, and per-extension usage states, while Extensions own shipped, user, and external_instruction capability records with loaded full instructions, available minimal loading hints, generated previews, reset/delete controls appropriate to category, and requirement readiness surfaced through `list_extensions` and Extension Managing inspection. Generated context previews show base instructions, loaded extension instructions, available loading hints, read-only external instruction files such as `AGENTS.md` and `CLAUDE.md` with open-external-file controls, native tool declarations, loaded svvyx guidance, and generated TypeScript client declarations; shipped prompt-only Git guidance is default-loaded for all actor kinds, shipped prompt-only GitHub guidance is default-loaded for orchestrators and handler threads and available for workflow task agents, both use ordinary `git` and `gh` shell commands without wrapper tools or generated clients, and new surfaces bind to the latest ready generated agent context while existing surfaces receive durable `Update agent context` work when their fingerprint differs.",
+      "Reframes prompt composition around Agents and Extensions: agent profiles own base instructions, model/reasoning, actor kind, and per-extension usage states, while Extensions own shipped, user, and external_instruction capability records with loaded full instructions, available minimal loading hints, generated previews, reset/delete controls appropriate to category, and requirement readiness surfaced through `list_extensions` and Extension Managing inspection. Generated context previews show base instructions, loaded extension instructions, available loading hints, read-only external instruction files such as `AGENTS.md` and `CLAUDE.md` with open-external-file controls, native tool declarations, loaded svvyx guidance, and generated TypeScript client declarations; shipped prompt-only cx guidance is default-loaded for all adopted actor kinds and teaches official `cx` CLI use through `exec_command`, shipped prompt-only Git guidance is default-loaded for all actor kinds, shipped prompt-only GitHub guidance is default-loaded for orchestrators and handler threads and available for workflow task agents, these prompt-only CLI extensions use ordinary shell commands without wrapper tools or generated clients, and new surfaces bind to the latest ready generated agent context while existing surfaces receive durable `Update agent context` work when their fingerprint differs.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/extensions-and-tools.spec.md",
       "docs/specs/extension-managing.spec.md",
       "docs/specs/web-tools.spec.md",
+      "docs/specs/cx-tools.spec.md",
       "docs/specs/project-ci.spec.md",
       "docs/specs/structured-session-state.spec.md",
     ],
@@ -139,7 +153,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workflow Task Agents",
     status: "in-progress",
     summary:
-      "Defines lower-level Smithers workflow task agents as a separate actor class beneath handler threads, using a PI-backed svvy task configuration with a task-local generated capability set including cx semantic navigation plus `execute_typescript`, prompt-only Git default-loaded, prompt-only GitHub available only for task objectives that explicitly require GitHub work, no ambient pi built-ins or extension-tool leakage, task-root or worktree execution aligned to the active Smithers attempt, first-class svvy workflow-task-attempt UI projection rows keyed by exact Smithers attempt identity before task-local tool calls run, Smithers-owned message-native retry and hijack continuation, live task-agent activity streaming, and svvy command/artifact/usage projections linked to the Smithers attempt, while keeping attempt lifecycle, approval, wait, output, transcript, and hijack execution facts in Smithers and outside ordinary task-agent tools.",
+      "Defines lower-level Smithers workflow task agents as a separate actor class beneath handler threads, using a PI-backed svvy task configuration with task-local prompt-only cx CLI guidance through `exec_command`, direct tools, and `execute_typescript`, prompt-only Git default-loaded, prompt-only GitHub available only for task objectives that explicitly require GitHub work, no ambient pi built-ins or extension-tool leakage, task-root or worktree execution aligned to the active Smithers attempt, first-class svvy workflow-task-attempt UI projection rows keyed by exact Smithers attempt identity before task-local tool calls run, Smithers-owned message-native retry and hijack continuation, live task-agent activity streaming, and svvy command/artifact/usage projections linked to the Smithers attempt, while keeping attempt lifecycle, approval, wait, output, transcript, and hijack execution facts in Smithers and outside ordinary task-agent tools.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/extensions-and-tools.spec.md",

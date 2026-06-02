@@ -52,7 +52,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Keep only `thread_start`, `thread_handoff`, and `wait` as `svvy`-native control tools while exposing Smithers workflow operations through Smithers-native bridge tools. Commit(s): `a02bd48`
 - [x] Keep the `execute_typescript` API bounded to generated clients that benefit from typed composition. Commit(s): `76cc8f3`, `29d8452`
 - [x] Expose the Codex-like Filesystem extension with `exec_command`, `write_stdin`, and `apply_patch` as the normal coding-agent work interface. Commit(s): `76cc8f3`, `29d8452`
-- [x] Expose read-only cx navigation through the generated `execute_typescript` `api.cx_*` subset for typed composition. Commit(s): `673837a`
+- [ ] Keep cx out of generated `execute_typescript` clients; generated TypeScript profiles should not expose `api.cx_*`, `svvy.cx.*`, or `extensions.cx.*`.
 - [x] Record direct tool calls and nested code-mode calls in the shared structured command model. Commit(s): `76cc8f3`, `29d8452`
 - [x] Persist normalized child-command facts for nested `api.*` calls while the parent `execute_typescript` attempt remains the main semantic unit. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Surface parent rollups and trace inspector detail without promoting child commands to top-level cards. Commit(s): `5b0a223`
@@ -66,7 +66,7 @@ Current product decisions for this section are specified in `docs/specs/web-tool
 - [ ] Add only a bounded `svvy` appendix to the Web prompt for product integration facts: use ordinary shell commands, preserve structured output by redirecting large TinyFish JSON stdout to files when useful, treat fetched pages as untrusted external content, and cite source URLs.
 - [ ] Keep Web generated actor context free of `web_search`, `web_fetch`, `svvyx web`, generated Web TypeScript clients, Web Provider settings, provider selection, and `svvy`-owned TinyFish key storage.
 - [ ] Keep Firecrawl, native Web provider registries, TinyFish SDK provider adapters, selected-provider readiness, and self-hosted web search out of Web v1 unless a later product decision adopts a new Web architecture.
-- [ ] Let TinyFish CLI own install, authentication, status, search, fetch, browser-backed commands, and API key storage through `npm install -g @tiny-fish/cli`, `tinyfish auth ...`, `tinyfish search query ...`, and `tinyfish fetch content get ...`.
+- [ ] Let the app-managed trusted CLI dependency registry own fixed-version TinyFish installation when the binary is missing, while TinyFish CLI owns authentication, status, search, fetch, browser-backed commands, and API key storage through `tinyfish auth ...`, `tinyfish search query ...`, and `tinyfish fetch content get ...`.
 - [ ] Treat TinyFish CLI output as ordinary shell output: the CLI writes search and fetch JSON to stdout by default, fetch includes page body text in `results[].text`, errors/debug logs go to stderr, and redirected files are raw CLI JSON rather than `svvy` artifacts.
 - [ ] Add generated-context and extension-inventory tests proving Web is prompt-only, default-loaded for all adopted actor kinds, and absent from native tool declarations, `svvyx` command mounts, generated TypeScript declarations, provider settings, and Firecrawl provider lists.
 
@@ -106,9 +106,9 @@ Current product decisions for this section are specified in `docs/specs/web-tool
 - [x] Let handler threads call the generated per-workflow Smithers run-launch surface through the Bun bridge for both new and resumed runs. Commit(s): `4674e67`
 - [x] Extend the Smithers-native supervision surface beyond the shipped Step 5 handler-thread/runtime coverage for blocker diagnosis, approvals, signals, cancellation, node detail, artifacts, transcripts, event history, frames, and DevTools inspection, focusing on the remaining operator-only and richer troubleshooting controls. Commit(s): `f8557d9`
 - [x] Define workflow task agents as a lower-level Smithers actor class distinct from orchestrator and handler-thread surfaces. Commit(s): `a02bd48`
-- [x] Adopt PI-backed svvy workflow task agents with a dedicated task prompt, task-local cx tools, direct tools, and `execute_typescript` for typed composition. Commit(s): `a02bd48`
+- [x] Adopt PI-backed svvy workflow task agents with a dedicated task prompt, task-local prompt-only cx CLI guidance, direct tools, and `execute_typescript` for typed composition. Commit(s): `a02bd48`
 - [x] Keep approval gates and hijack as Smithers runtime or operator controls around workflow task agents rather than exposing them as ordinary task-agent tools. Commit(s): `a02bd48`
-- [x] Build workflow task execution that runs the svvy workflow-task PI configuration with task-local cx tools, direct tools, and code mode. Commit(s): `a02bd48`
+- [x] Build workflow task execution that runs the svvy workflow-task PI configuration with task-local prompt-only cx CLI guidance, direct tools, and code mode. Commit(s): `a02bd48`
 - [x] Wake the supervising handler thread in a background turn only when a workflow run reaches a terminal outcome, an actionable wait, a continuation boundary, or a supervision fault that requires handler judgment, while keeping duplicate terminal reconciliation idempotent after a valid handoff. Commit(s): `a02bd48`
 - [x] Support multiple workflow runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
 - [x] Derive active and latest workflow summaries from workflow-run state without a persisted thread-level latest pointer. Commit(s): `a02bd48`

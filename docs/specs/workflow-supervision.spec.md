@@ -289,8 +289,10 @@ The adopted direction is:
 - when a product workflow needs an adaptive coding agent, use a PI-backed workflow task agent by default
 - configure that task agent with a minimal `svvy` workflow-task system prompt rather than the orchestrator or handler-thread prompt
 - treat workflow-specific custom task prompts as overlays appended to the base workflow-task prompt; the base prompt only establishes task scope, task-local tools, and task-root locality
-- expose only task-local cx tools, direct tools, and `execute_typescript` to that actor
-- the default adopted task-agent capability set is task-local cx semantic navigation, direct tools, and `execute_typescript` for typed composition
+- expose only prompt-only task-local cx CLI instructions, direct tools, and `execute_typescript` to
+  that actor
+- the default adopted task-agent capability set is task-local cx CLI guidance through
+  `exec_command`, direct tools, and `execute_typescript` for typed composition
 - project each Smithers task attempt into a `svvy` workflow-task-attempt UI row with exact Smithers identifiers and attach any `svvy` command or artifact projections to that row instead of leaving product navigation in a local ephemeral trace
 - do not expose `thread_start`, `thread_handoff`, `wait`, or `smithers_*` to workflow task agents or mention those unavailable controls in their base prompt
 - do not load ambient pi built-in tools or workspace-discovered extension tools into the task agent runtime
@@ -347,7 +349,9 @@ Actor-specific exposure is part of that contract:
 - the orchestrator prompt should know that handler threads can supervise workflows through `smithers_*`, but it should not receive the `smithers_*` generated tool schema in its own prompt
 - handler-thread prompts should receive the `smithers_*` schema because they are the delegated surfaces that actually supervise workflow execution
 - handler-thread prompts should not receive orchestrator-only tools such as `thread_start` in the default adopted model
-- workflow task agents should receive only their task-local cx tools, direct tools, and `execute_typescript`, with no ambient pi built-ins or extension-provided callable tools beyond that task-local set
+- workflow task agents should receive only their task-local cx CLI instructions, direct tools, and
+  `execute_typescript`, with no ambient pi built-ins or extension-provided callable tools beyond
+  that task-local set
 - awareness of another actor's capabilities belongs in compact instructional prose, not in leaked callable declarations for tools that actor cannot invoke
 
 The first adopted Smithers-native surface is:

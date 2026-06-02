@@ -7,6 +7,8 @@
 - Scope of this document:
   - define the extension and tool architecture for `svvy`
   - define the relationship between Agents, Extensions, actors, profiles, native tools, Incur CLIs, `svvyx`, `execute_typescript`, shell policy, dependencies, and secrets
+  - define the app-managed trusted CLI dependency registry used by shipped prompt-only CLI
+    extensions
   - define the rejected and deferred ideas that must not be folded into this feature without a new product decision
 
 This document is the source of truth for the resolved Extensions and native tool direction.
@@ -16,6 +18,10 @@ Related specs:
 
 - `docs/specs/extension-managing.spec.md` defines the Extension Managing extension and its
   `svvyx extensions ...` lifecycle API.
+- `docs/specs/cx-tools.spec.md` defines the shipped prompt-only cx extension and its direct CLI
+  boundary.
+- `docs/specs/web-tools.spec.md` defines the shipped prompt-only Web extension and TinyFish CLI
+  boundary.
 
 The generated-context terminology in this document is intentional:
 
@@ -57,6 +63,8 @@ These are not part of this spec unless reintroduced explicitly later.
 - Automatic session compaction as a special supervisor or workflow is separate future work.
 - Snippets, command-like macros, and user-invoked prompt macros are not part of this feature.
 - Incur MCP and Incur skills are not adopted as the runtime integration. `svvy` owns the bridge.
+- Native `cx_*` tools, `svvyx cx`, generated cx TypeScript clients, and an Incur wrapper for cx are
+  not adopted in v1. cx is a prompt-only direct CLI extension.
 - An `iron-proxy`-style egress boundary and credential proxy is deferred. It remains a possible
   hardening improvement for secret-bearing network tools, but v1 assumes editable extension code is
   trusted not to intentionally log or exfiltrate configured secret values.
@@ -145,8 +153,8 @@ Examples:
 - "Be concise and rigorous."
 
 The base prompt should not contain detailed guidance for shell, patching, Smithers, cx, web, CI,
-Incur, or any specific tool. Tool-specific instructions come from built-in or Incur-backed
-extensions.
+Incur, or any specific tool. Tool-specific instructions come from shipped, user, or external
+instruction extensions.
 
 ### Extension
 
@@ -167,6 +175,7 @@ Each extension has:
 - optional TypeScript API enablement
 - generated TypeScript API overview when TypeScript API is enabled
 - dependency and env requirements when relevant
+- trusted CLI dependency references when the extension teaches a direct external CLI
 - readonly usage view showing which agents use it and whether each usage is default-loaded or
   available
 - reset behavior when it is shipped by `svvy` or when it is an external instruction usage setting
@@ -347,6 +356,7 @@ type ExtensionRequirements = {
     name: string;
     status: "available" | "missing" | "unknown";
   }>;
+  trustedCliDependencies: TrustedCliDependencyRequirement[];
   env: Array<{
     name: string;
     required: boolean;
@@ -356,6 +366,25 @@ type ExtensionRequirements = {
   }>;
   dependencies: ExtensionDependencyRequirement[];
   trustedDependencies: ExtensionDependencyRequirement[];
+};
+
+type TrustedCliDependencyRequirement = {
+  id: string;
+  binary: string;
+  status: "available" | "missing" | "unknown";
+  detectedVersion: string | null;
+  install: {
+    package: string;
+    version: string;
+    source:
+      | "cargo"
+      | "npm"
+      | "github-release"
+      | "git-scm-release"
+      | "bundled_app_resource";
+    approval: "not_required_when_user_binary_exists" | "needs_user_confirmation" | "approved";
+    install: "installed" | "not_installed" | "unknown";
+  };
 };
 
 type ExtensionDependencyRequirement = {
@@ -428,12 +457,52 @@ authentication for `gh`, that readiness is represented only through coarse `stat
 `authStatus`, token-scope, account-name, username, or host credential field to the normal
 agent-facing requirements shape.
 
+`trustedCliDependencies` reports app-managed trusted CLI dependencies referenced by the extension.
+This is separate from extension build dependencies and from Bun's `trustedDependencies` package
+field. A trusted CLI dependency is a concrete binary that an extension teaches agents to use through
+ordinary shell commands. Each record must have an exact package, exact version, source kind, and
+binary name. Version ranges, floating tags such as `latest`, branch names, mutable URLs, and
+unpinned package-manager installs are not valid trusted CLI dependency records.
+
+Trusted CLI dependency status is local and bounded:
+
+- `status` reports whether the binary is available from the actor's command environment or from the
+  app-managed install location.
+- `detectedVersion` may be `null` when version detection is unavailable or too expensive.
+- a user-owned binary on PATH is usable even when its version differs from the app-managed install
+  version, unless a separate product policy later requires stricter validation for that dependency
+- when the binary is missing, `install` reports whether the exact app-managed dependency is already
+  installed or needs user confirmation
+- installing a trusted CLI dependency is user-confirmed app behavior, not an agent shell task
+
+For prompt-only direct CLI extensions, missing trusted CLI dependencies do not make the extension
+instructions unavailable. The generated prompt should still include the extension's instructions so
+the agent understands the intended capability. The app should surface missing trusted CLI dependency
+attention through its normal confirmation UI. Agents should not be instructed to run package-manager,
+curl, Homebrew, Cargo, npm, or GitHub release install commands for shipped trusted CLI dependencies.
+If a command fails because the binary is missing, the agent should report that the app-managed
+trusted CLI dependency is unavailable and ask the user to enable or install it through the app.
+
+The shipped trusted CLI dependency registry is:
+
+| Id | Binary | Package | Version | Source | Used by |
+| --- | --- | --- | --- | --- | --- |
+| `cx` | `cx` | `cx-cli` | `0.7.1` | `cargo` | cx prompt-only extension |
+| `tinyfish` | `tinyfish` | `@tiny-fish/cli` | `0.1.6` | `npm` | Web prompt-only extension |
+| `git` | `git` | `git` | `2.54.0` | `git-scm-release` | Git and GitHub prompt-only extensions |
+| `gh` | `gh` | `gh` | `2.93.0` | `github-release` | GitHub prompt-only extension |
+
+Registry entries are app-owned release decisions. Updating any `version`, `source`, package id, or
+binary name is a product change that must update this table, the owning extension spec, generated
+extension metadata tests, and any packaged installer logic together. The app must never silently
+substitute a newer trusted CLI dependency because a package manager reports a newer release.
+
 For prompt-only instruction extensions, declared external binaries are advisory unless the extension
 explicitly says a binary is required before instructions can load. The shipped Git and GitHub
 extensions must still load their prompt guidance when `git`, `gh`, or `gh` auth is unknown. Unknown
 GitHub CLI auth must not make the prompt-only GitHub extension not ready. Known missing or
 insufficient `gh` auth may be shown as an issue when the app already knows it, but the agent-facing
-GitHub instructions still trigger install or auth guidance only after an actual `gh` command fails.
+GitHub instructions still trigger auth guidance only after an actual `gh` command fails.
 Use `EXTERNAL_CLI_AUTH_UNKNOWN` only when auth uncertainty blocks a concrete extension runtime
 invocation; do not use it to block prompt-only GitHub guidance.
 
@@ -511,6 +580,7 @@ Example:
         "externalBinaries": [],
         "env": [],
         "dependencies": [],
+        "trustedCliDependencies": [],
         "trustedDependencies": []
       },
       "state": {
@@ -547,6 +617,7 @@ Example:
         "externalBinaries": [],
         "env": [],
         "dependencies": [],
+        "trustedCliDependencies": [],
         "trustedDependencies": []
       },
       "state": {
@@ -577,14 +648,13 @@ Shipped extensions are:
 - non-deletable
 - resettable to shipped state
 - configurable per agent as default-loaded, available, or unavailable when the actor kind allows it
-- allowed to have editable title, description, instructions, and Incur source overlays when those
-  files exist
+- allowed to have editable title, description, instructions, and optional editable extension source
+  overlays when those files exist
 
-This supersedes the earlier "locked built-ins are non-editable" phrasing in the session. The latest
-resolution is: shipped extensions are non-deletable and resettable, but their title, description,
-instructions, editable Incur source, and agent-level enablement can be customized through overlay
-files when those files exist. Generated native tool schemas, native runtime implementation,
-app-owned bridge code, and external instruction source files remain read-only.
+Shipped extensions are non-deletable and resettable, but their title, description, instructions,
+editable extension source, and agent-level enablement can be customized through overlay files when
+those files exist. Generated native tool schemas, native runtime implementation, app-owned bridge
+code, and external instruction source files remain read-only.
 
 Category is one axis. Agent-facing interface is another axis. A shipped extension can expose native
 tools, an actor-scoped `svvyx` namespace, or instructions only. External instruction records always
@@ -756,8 +826,8 @@ Directory layout:
 Ownership:
 
 - `sources/user/<id>/` contains editable user extension manifests, instructions, and source.
-- `sources/builtin-overlays/<id>/` contains editable overlay files for shipped extension
-  title, description, instructions, and Incur source.
+- `sources/builtin-overlays/<id>/` contains editable overlay files for shipped extension title,
+  description, instructions, and optional editable extension source.
 - `source/` exists only for extensions with editable executable source; prompt-only extensions omit
   it or return `source: null` from `inspect`.
 - shipped defaults live in packaged app resources and are read-only.
@@ -784,8 +854,8 @@ shared extension `package/package.json` through the normal shell plus `apply_pat
 
 Native runtime implementation, generated TypeScript declarations, internal native tool schemas, and
 app-owned bridge code for shipped extensions are read-only. A shipped extension can still be
-customized by editing its overlay title, description, instructions, and Incur source, and those
-overlay edits remain resettable to packaged defaults.
+customized by editing its overlay title, description, instructions, and optional editable extension
+source, and those overlay edits remain resettable to packaged defaults.
 
 Generated agent context aggregates use a lightweight cache rather than ad hoc directories:
 
@@ -970,8 +1040,7 @@ Each extension detail view should include:
 - description
 - full loaded instructions textarea
 - minimal available instructions textarea
-- optional editable Incur CLI source for Incur-backed user extensions and Incur-backed shipped
-  overlays
+- optional editable executable source for extensions that have source-backed `svvyx` builds
 - TypeScript API enablement control
 - dependency status
 - env/secrets requirement status
@@ -1106,6 +1175,7 @@ Example:
       "externalBinaries": [],
       "env": [],
       "dependencies": [],
+      "trustedCliDependencies": [],
       "trustedDependencies": []
     },
     "state": {
@@ -1299,7 +1369,7 @@ The design goal is:
   requirements through Guardian, which confirms blanket review is a separate stricter behavior from
   ordinary approval-boundary routing.
 
-### Current Proposed Split
+### Resolved Split
 
 The resolved native direct tool set includes:
 
@@ -1313,14 +1383,14 @@ The resolved native direct tool set includes:
   `runtime_current`, `thread_current`, `thread_list`, and `thread_handoffs`
 - artifact tools, because artifacts are `svvy` product state
 
-The latest session direction treats extension CLIs as actor-scoped `svvyx` commands available
-through `exec_command` and through generated TypeScript clients inside `execute_typescript`.
+`svvyx` extensions expose actor-scoped CLI commands through `exec_command` and may expose generated
+TypeScript clients inside `execute_typescript` when `typescriptApiEnabled` is true.
 
-The latest session direction treats these as intended Incur-backed or extension-backed capabilities
-unless later implementation research proves a better native route:
+Prompt-only direct CLI extensions do not expose `svvyx` commands or generated TypeScript clients.
+They contribute instructions for using the official external CLI through `exec_command`.
 
-- cx
-- Smithers controls
+Under the resolved shipped extension map, cx is prompt-only direct CLI guidance and Smithers controls
+are a shipped `svvyx` extension plus Smithers-native bridge tools where specified.
 
 ### Ordinary Filesystem Work
 
@@ -2292,6 +2362,33 @@ when the task objective explicitly requires GitHub issues, pull requests, review
 GitHub work. GitHub remains available, not unavailable, for workflow task agents so a task whose
 contract explicitly names GitHub can request it through the normal extension-loading path.
 
+Git and GitHub also participate in the app-managed trusted CLI dependency registry. The shipped
+records are:
+
+```ts
+const gitTrustedCliDependency = {
+  id: "git",
+  binary: "git",
+  package: "git",
+  version: "2.54.0",
+  source: "git-scm-release",
+  upstream: "https://git-scm.com/",
+};
+
+const ghTrustedCliDependency = {
+  id: "gh",
+  binary: "gh",
+  package: "gh",
+  version: "2.93.0",
+  source: "github-release",
+  upstream: "https://github.com/cli/cli",
+};
+```
+
+The same rule applies to every trusted CLI dependency: if the user already has the binary, use it;
+if the binary is missing, the app may offer to install exactly the pinned version through the normal
+confirmation UI; agents do not receive install commands.
+
 ### Git Extension
 
 Extension metadata:
@@ -2308,6 +2405,21 @@ Extension metadata:
     "externalBinaries": [{ "name": "git", "status": "unknown" }],
     "env": [],
     "dependencies": [],
+    "trustedCliDependencies": [
+      {
+        "id": "git",
+        "binary": "git",
+        "status": "unknown",
+        "detectedVersion": null,
+        "install": {
+          "package": "git",
+          "version": "2.54.0",
+          "source": "git-scm-release",
+          "approval": "not_required_when_user_binary_exists",
+          "install": "not_installed"
+        }
+      }
+    ],
     "trustedDependencies": []
   }
 }
@@ -2400,6 +2512,34 @@ Extension metadata:
     ],
     "env": [],
     "dependencies": [],
+    "trustedCliDependencies": [
+      {
+        "id": "git",
+        "binary": "git",
+        "status": "unknown",
+        "detectedVersion": null,
+        "install": {
+          "package": "git",
+          "version": "2.54.0",
+          "source": "git-scm-release",
+          "approval": "not_required_when_user_binary_exists",
+          "install": "not_installed"
+        }
+      },
+      {
+        "id": "gh",
+        "binary": "gh",
+        "status": "unknown",
+        "detectedVersion": null,
+        "install": {
+          "package": "gh",
+          "version": "2.93.0",
+          "source": "github-release",
+          "approval": "not_required_when_user_binary_exists",
+          "install": "not_installed"
+        }
+      }
+    ],
     "trustedDependencies": []
   }
 }
@@ -2424,8 +2564,8 @@ workflows. Do not create GitHub-specific wrapper tools by default.
 Setup and auth:
 - Use `gh` directly when the task requires GitHub CLI behavior.
 - Do not run preflight availability or auth checks before ordinary `gh` use.
-- If a `gh` command fails because `gh` is missing, tell the user to install GitHub CLI from
-  https://cli.github.com/ or with a platform package manager such as `brew install gh`.
+- If a `gh` command fails because `gh` is missing, report that the app-managed trusted CLI
+  dependency is unavailable and ask the user to enable or install it through the app.
 - If a `gh` command fails because authentication or scopes are missing, ask the user to run
   `gh auth login` and retry only after they confirm.
 
@@ -2488,7 +2628,7 @@ their source files are read-only external inputs.
 | Execute TypeScript | shipped | native_tool | `execute_typescript` with generated `svvy` and loaded-extension clients as the preferred TypeScript interface | default_loaded | default_loaded | default_loaded |
 | Extension Loading | shipped | native_tool | `list_extensions`, `load_extension` | default_loaded | default_loaded | default_loaded |
 | Extension Managing | shipped | svvyx | `svvyx extensions ...` lifecycle commands for inspect, create, build, usage state, reset, delete, and revert; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |
-| cx | shipped | svvyx or native_tool | codebase/product navigation and cx controls | available | available | available |
+| cx | shipped | instructions | official cx CLI semantic code-navigation guidance through `exec_command`; no native `cx_*`, `svvyx cx`, generated TypeScript client, product navigation, or product-state controls | default_loaded | default_loaded | default_loaded |
 | Smithers | shipped | svvyx | workflow run/list/inspect/resume/signal/transcript controls | unavailable | default_loaded | unavailable |
 | Web | shipped | instructions | TinyFish CLI search/fetch/browser guidance through ordinary shell commands; no `svvy` Web tools, `svvyx web` commands, generated Web TypeScript clients, Web Provider settings, or `svvy`-owned TinyFish key storage | default_loaded | default_loaded | default_loaded |
 | Git | shipped | instructions | Git shell guidance for dirty worktrees, staging, commits, branch/history inspection, and destructive-command safety; no wrapper CLI or generated TypeScript client by default | default_loaded | default_loaded | default_loaded |

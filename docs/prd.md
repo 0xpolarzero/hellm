@@ -229,7 +229,8 @@ Direct tools are the default coding-agent work surface for bounded repository wo
 
 Direct tools cover:
 
-- semantic code navigation through `cx_*`
+- semantic code navigation through the prompt-only `cx` CLI extension, using `exec_command` to run
+  official `cx` commands
 - file inspection and text search through `exec_command`
 - visual inspection of local image files through the image-capable file inspection path when enabled
 - inspecting repository and git state
@@ -242,23 +243,17 @@ Direct tools cover:
 
 When a model needs several independent tool results, the prompt should tell it to issue those tool calls together so pi's parallel tool execution can run them concurrently. Sequential tool calls should be reserved for cases where the later call depends on the earlier result.
 
-`cx_*` is the preferred code-navigation layer when the language is supported. The normal inspection ladder is:
+The prompt-only `cx` extension is the preferred code-navigation guidance when the language is
+supported. It does not add native `cx_*` tools, `svvyx cx`, or generated TypeScript clients. Agents
+run the official CLI through `exec_command`. The normal inspection ladder is:
 
 ```text
-cx_overview -> cx_symbols -> cx_definition / cx_references -> exec_command with rg/sed/cat/ls/find
+cx overview -> cx symbols -> cx definition / cx references -> exec_command with rg/sed/cat/ls/find
 ```
 
-The native `cx_*` surface includes:
-
-- `cx_overview`
-- `cx_symbols`
-- `cx_definition`
-- `cx_references`
-- `cx_lang_list`
-- `cx_lang_add`
-- `cx_lang_remove`
-- `cx_cache_path`
-- `cx_cache_clean`
+The shipped cx instructions are default-loaded for orchestrators, handler threads, and workflow task
+agents. If the `cx` binary is missing, `svvy` handles installation through the app-managed trusted
+CLI dependency confirmation flow; agents must not run package-manager install commands for cx.
 
 `execute_typescript` is available when typed control flow is the right unit of work.
 
