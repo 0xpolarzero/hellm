@@ -40,7 +40,7 @@ The product should optimize for:
 The naming rule is:
 
 - `workflow_*` is the handler's authoring-time discovery surface
-- `write` and `edit` are the handler's file-modification surface for saved workflow files
+- `apply_patch` is the handler's file-modification surface for saved workflow files
 - `smithers_*` is the handler's launch and supervision surface
 
 This split is intentional.
@@ -211,7 +211,8 @@ Normative example:
 
 For component assets, the same pattern applies with `@svvyAssetKind component`.
 
-The header is a compact index. Handlers read the file through the direct `read` tool when they need source context.
+The header is a compact index. Handlers inspect the file through `exec_command` when they need
+source context.
 
 ### MDX Prompt Frontmatter
 
@@ -267,12 +268,14 @@ The adopted handler-side workflow-authoring flow is:
 1. A handler thread decides that direct bounded work is not enough and a workflow is justified.
 2. The handler uses its injected generated workflow-authoring contract, guide, and examples first.
 3. The handler calls `workflow_list_assets` as needed.
-4. The handler reads promising saved definitions, prompts, or component files through ordinary file reads before relying on implementation details.
+4. The handler inspects promising saved definitions, prompts, or component files through
+   `exec_command` before relying on implementation details.
 5. The handler may use future packaged-app-safe workflow-agent components when that Workflows behavior is adopted.
 6. The handler optionally calls `workflow_list_models` when it must create or revise a task-agent configuration.
 7. The handler authors a short-lived artifact workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/`, including artifact-local task-agent configuration when needed.
 8. The handler calls `smithers_list_workflows`, inspects the artifact entry, and launches it through `smithers_run_workflow({ workflowId, input, runId? })`.
-9. If the user explicitly asks to keep reusable workflow files, the handler writes those files directly into `.svvy/workflows/...` through `write` or `edit`.
+9. If the user explicitly asks to keep reusable workflow files, the handler writes those files
+   directly into `.svvy/workflows/...` through `apply_patch`.
 10. The handler reads the returned validation feedback in structured command output and keeps editing until the final saved workflow state validates cleanly.
 
 ## Discovery Surface
@@ -285,7 +288,9 @@ Handlers discover reusable assets through:
 
 This is the primary discovery surface for saved and artifact authoring assets.
 
-The direct tool schema is the exact input and output contract for this method. The same shape is duplicated as `api.workflow_list_assets(...)` inside code mode.
+The direct tool schema is the exact input and output contract for this method. When the handler has
+a generated Code Mode client for workflow authoring, the generated client method must use the same
+contract.
 
 `workflow_list_assets` returns the enforced asset identity metadata plus a workspace-relative `path`.
 
@@ -312,7 +317,9 @@ Handlers use:
 
 - `workflow_list_models()`
 
-The direct tool schema is the exact result contract for model discovery. The same shape is duplicated as `api.workflow_list_models()` inside code mode.
+The direct tool schema is the exact result contract for model discovery. When the handler has a
+generated Code Mode client for workflow authoring, the generated client method must use the same
+contract.
 
 ### Runnable Workflow Discovery
 
@@ -334,7 +341,7 @@ Each returned runnable workflow entry includes the handler-visible launch contra
 This preserves the intended split:
 
 - `workflow_*` for authoring-time asset discovery
-- `write` and `edit` for saved-library writes
+- `apply_patch` for saved-library writes
 - `smithers_*` for launch and supervision
 
 ### Workflow Launch Surface
@@ -359,10 +366,12 @@ Where:
 
 Handlers write reusable saved workflow files through:
 
-- `write`
-- `edit`
+- `apply_patch` for exact file edits
+- `exec_command` for validation, generated inspection, and file-system checks
 
-The handler writes the final file contents directly into `.svvy/workflows/...`.
+The handler edits the final file contents under `.svvy/workflows/...` with `apply_patch`. `svvy`
+does not add a custom workflow write or edit surface when the normal Codex-like filesystem tools
+already solve the write path.
 
 ### Validation Feedback
 

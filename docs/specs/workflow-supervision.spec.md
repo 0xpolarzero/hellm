@@ -230,7 +230,7 @@ Smithers owns the task agent's:
 
 That projection should treat the Smithers task attempt as a real product row addressable from the UI, not as transcript-only internal noise. It is still not the execution attempt record of truth. Smithers owns the attempt identity, attempt lifecycle, retry state, output validation, approval waits, timer waits, usage, and task-agent transcript. `svvy` stores the Smithers attempt address plus product links and projection metadata so the handler, inspector, and UI can re-read Smithers detail by exact `runId`, `nodeId`, `iteration`, and `attempt`.
 
-`svvy` also stores svvy-owned generated agent context binding metadata on that projection row. `meta.agentContextBinding` records the workflow-task actor, bound Context Library revision, generated agent context fingerprint, runtime standards fingerprints, optional resolved prompt artifact id, and binding timestamp for the exact Smithers attempt. This is provenance for svvy's prompt channel, not a copy of Smithers execution state.
+`svvy` also stores svvy-owned generated agent context binding metadata on that projection row. `meta.agentContextBinding` records the workflow-task actor, bound Context Library revision, generated agent context fingerprint, external instruction fingerprints, optional resolved prompt artifact id, and binding timestamp for the exact Smithers attempt. This is provenance for svvy's prompt channel, not a copy of Smithers execution state.
 
 ### Handler Attention
 

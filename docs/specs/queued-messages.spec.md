@@ -84,13 +84,13 @@ means the row is durably enqueued and claimed by the shared queue runner before 
 queued state. An agent context refresh is ordered with the rest of the surface queue, but it is not
 sent to the agent and does not create transcript or prompt-history content. When delivered, it
 refreshes the bound base instructions, loaded and available extension binding, generated extension
-instructions, runtime standards, mounted `svvyx` command set, native tool schemas, command docs, and
-TypeScript declarations before later prompt-bearing queue items run. Active runs may also apply the
-ready refreshed context at the next pi `refreshRunContext` boundary; the queued item remains the
-durable recovery and ordering record.
+instructions, external instruction records, mounted `svvyx` command set, native tool schemas,
+command docs, and TypeScript declarations before later prompt-bearing queue items run. Active runs
+may also apply the ready refreshed context at the next pi `refreshRunContext` boundary; the queued
+item remains the durable recovery and ordering record.
 
 Prompt edits, extension changes, generated docs/types changes, native tool schema changes, and
-runtime standards changes all use the same `agent_context_refresh` control item.
+external instruction changes all use the same `agent_context_refresh` control item.
 
 When a user submits from a composer:
 

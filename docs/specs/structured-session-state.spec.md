@@ -51,7 +51,7 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Persist one top-level per-turn decision for every surface, with orchestrator routing decisions and handler supervision decisions sharing one field.
 - Treat every tool call as a `CommandRecord`.
 - Make native direct tools, including cx semantic navigation, the default coding-agent work surface.
-- Treat every top-level `execute_typescript` invocation as one parent command record and every nested `api.*` call as a child command record.
+- Treat every top-level `execute_typescript` invocation as one parent command record and every generated client call as a child command record.
 - Keep only a very small set of native control tools for thread spawning, optional prompt-context loading, explicit thread handoff, and wait; workflow control belongs on Smithers-native `smithers_*` bridge tools.
 - Treat optional prompt-context loading as explicit handler state through `thread_start` context keys and the top-level handler-only `request_context` tool, not as an `execute_typescript` API.
 - Drive durable facts from real runtime handlers and bridge events, not transcript heuristics.
@@ -155,16 +155,13 @@ type StructuredSessionState = {
     turnDecision:
       | "pending"
       | "reply"
-      | "read"
-      | "grep"
-      | "find"
-      | "ls"
-      | "edit"
-      | "write"
-      | "bash"
+      | "exec_command"
+      | "write_stdin"
+      | "apply_patch"
       | `cx.${string}`
       | `artifact_${string}`
-      | `workflow_${string}`
+      | "workflow_list_assets"
+      | "workflow_list_models"
       | "execute_typescript"
       | "clarify"
       | "thread_start"
@@ -724,10 +721,10 @@ The adopted visibility levels are:
 Use them this way:
 
 - low-level reads, searches, and workflow discovery calls are usually `trace`
-- material writes, artifact creation, bash commands, and failures usually roll up as `summary`
+- material writes, artifact creation, `exec_command` command executions, and failures usually roll up as `summary`
 - `thread_start`, `request_context`, `thread_handoff`, `wait`, and Smithers-mutating commands such as `smithers_run_workflow`, `smithers_resolve_approval`, `smithers_runs_cancel`, and `smithers_signals_send` are normally `surface`
 - read-only Smithers inspection commands are usually `summary` unless the UI chooses to surface a specific one directly
-- child `api.*` commands remain nested detail by default
+- child generated-client commands remain nested detail by default
 
 ### CommandRecord Executor
 

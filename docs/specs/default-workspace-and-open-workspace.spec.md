@@ -64,7 +64,7 @@ User workspaces keep the existing product meaning:
 - workflow runs
 - app logs
 - workspace read models
-- pi-discovered runtime standards
+- discovered external instruction records
 
 ### Workspace Tab
 

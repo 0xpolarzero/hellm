@@ -8,7 +8,7 @@
   - on a question can when clicked shrink the response and show the sbe one on the right with no brain icon; this way we can always accordion back to normal answer
 
 - research exactly what comes out from using pi (from what we're using);
-  - make sure we read AGENTS.md/CLAUDE.md/etc from repo, root
+  - make sure discovered AGENTS.md/CLAUDE.md/etc are represented as read-only external_instruction extension records
   - make sure we read stuff in .agents/, etc?
 
 - figure out reliable diff tracking for both the full session and individual threads; flat changed-file lists are not enough, so we need the right snapshot/checkpoint model and likely git-backed diffing semantics
@@ -25,7 +25,7 @@
 
 - use sandboxing separate from environment 
   - https://x.com/nicoalbanese10/status/2043745569278251112
-  - keep the initial `execute_typescript` implementation unsandboxed; sandboxing should be a later hardening layer around the same `execute_typescript` and `api.*` contract, not a different execution model
+  - keep the initial `execute_typescript` implementation unsandboxed; sandboxing should be a later hardening layer around the same `execute_typescript` and generated-client contract, not a different execution model
   - https://github.com/vercel-labs/open-agents
 
 - integration with jjhub/codeplane would make sense, for instance:
@@ -38,7 +38,7 @@
 
 - write javascript tools api in Effect internally
 
-- use jj instead of git inside api.*
+- use jj instead of git inside generated clients if a generated VCS client is ever adopted
 
 - handler-thread context mode needs an explicit design pass:
   - maybe a handler thread can be spawned either with fresh context (only the orchestrator handoff) or full context (a short-lived fork of the current session context/history)
@@ -102,3 +102,5 @@
 - we need first-class support for cross-session access, as in I have 5 agents working and I can open a new one and ask "who did x change" and it's easy for it to figure out
 
 - use codex automatic review as default instead of full approvals
+
+- have a main pain to see current active sessions as graph or tree, with title + first message and maybe ever-updating short overview of what's happening. It should show all sessions that have been active up to x minutes ago, with unread, wait and all kind of state shown. Show as graph for every orchestrator -> handlers -> workflows

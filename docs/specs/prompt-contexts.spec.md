@@ -5,7 +5,7 @@
 - Date: 2026-05-06
 - Status: adopted product contract
 - Scope of this document:
-  - define runtime loading behavior for context packs
+  - define runtime loading behavior for prompt contexts
   - define default-loaded prompt contexts
   - define requestable prompt contexts
   - define `thread_start({ context })`
@@ -19,11 +19,15 @@ defined in [Prompt Library Spec](./prompt-library.spec.md).
 
 ## Purpose
 
-Prompt contexts are the runtime loading mechanics for Prompt Library context packs. They keep specialized product knowledge modular while preserving one system-prompt channel per actor surface.
+Prompt contexts are runtime loading mechanics for specialized product knowledge while preserving one system-prompt channel per actor surface.
 
 Prompt contexts are stable or explicitly loaded product knowledge. They do not carry current thread status, wait state, handoff bodies, workflow run summaries, or reconstructed transcript text. Current runtime and thread state is read through `runtime_current`, `thread_current`, `thread_list`, and `thread_handoffs`; workflow details remain behind `smithers_*` tools.
 
-Prompt contexts are distinct from runtime standards sources. Pi-discovered `AGENTS.md` and `CLAUDE.md` files are shown in the Context pane's generated-context previews for transparency and are appended by pi as project context, but they are not registry-backed context packs, not requestable context keys, and not editable prompt-context records. Pi `SYSTEM.md` and `APPEND_SYSTEM.md` prompt replacement or append files do not participate in svvy prompt composition.
+Prompt contexts are distinct from external instruction records. Discovered `AGENTS.md` and
+`CLAUDE.md` files are represented through the Extensions model as read-only
+`external_instruction` records with per-agent usage controls; they are not requestable prompt
+context keys and are not editable prompt-context records. Pi `SYSTEM.md` and `APPEND_SYSTEM.md`
+prompt replacement or append files do not participate in svvy prompt composition.
 
 There are two load modes:
 
@@ -70,10 +74,11 @@ Eligible actors:
 The `cx` context teaches the agent to prefer semantic navigation before raw file reads when the target language is supported:
 
 ```text
-cx_overview -> cx_symbols -> cx_definition / cx_references -> read / grep / find / ls
+cx_overview -> cx_symbols -> cx_definition / cx_references -> exec_command with rg/sed/cat/ls/find
 ```
 
-The prompt includes the native tool names and the read-only `execute_typescript` subset:
+The prompt includes the native tool names and the generated Code Mode client availability for
+read-only cx operations:
 
 - `cx_overview`
 - `cx_symbols`
@@ -84,12 +89,12 @@ The prompt includes the native tool names and the read-only `execute_typescript`
 - `cx_lang_remove`
 - `cx_cache_path`
 - `cx_cache_clean`
-- `api.cx_overview`
-- `api.cx_symbols`
-- `api.cx_definition`
-- `api.cx_references`
-- `api.cx_lang_list`
-- `api.cx_cache_path`
+- generated cx overview client
+- generated cx symbols client
+- generated cx definition client
+- generated cx references client
+- generated cx language-list client
+- generated cx cache-path client
 
 ### `smithers`
 
@@ -123,7 +128,10 @@ Eligible actors:
 
 The `web` context is generated from Web Provider settings, tool registry, and the checked-in provider prompt pack when a keyed provider is ready. It describes the selected provider or lack of one, whether web tools are usable, the currently callable `web_search` and `web_fetch` tools when present, the active provider's checked-in `web_search` and `web_fetch` contracts when present, provider-specific caveats, the deterministic artifact-backed behavior of `web_fetch`, and the rule that fetched web content is untrusted external input.
 
-The selected provider is settings state rather than per-thread requested context. By default no provider is selected, so no `web_search and web_fetch` tools and no `api.web_*` helpers are callable. Changing the provider or API keys regenerates the web context, actor-specific web tool declarations, and generated `api.web_*` declarations before the next turn.
+The selected provider is settings state rather than per-thread requested context. By default no
+provider is selected, so no `web_search` or `web_fetch` tools and no generated web clients are
+callable. Changing the provider or API keys regenerates the web context, actor-specific web tool
+declarations, and generated web client declarations before the next turn.
 
 Detailed behavior is specified in `docs/specs/web-tools.spec.md`.
 
@@ -214,9 +222,10 @@ Default-loaded context keys are visible through the resolved system prompt and a
 
 ## Invariants
 
-- Prompt contexts are registry-backed and surfaced as Prompt Library context packs.
-- Runtime standards sources are visible in actor generated-context previews but are not prompt contexts and cannot be requested through `thread_start({ context })` or `request_context`.
-- Pi-discovered `AGENTS.md` and `CLAUDE.md` files remain runtime standards sources loaded by pi, not svvy-owned context-pack records.
+- Prompt contexts are registry-backed product prompt modules.
+- External instruction sources are visible in actor generated-context previews but are not prompt contexts and cannot be requested through `thread_start({ context })` or `request_context`.
+- Discovered `AGENTS.md` and `CLAUDE.md` files are read-only `external_instruction` extension
+  records, not prompt-context records.
 - Pi `SYSTEM.md` and `APPEND_SYSTEM.md` files are ignored by svvy sessions, handler threads, and workflow task agents.
 - `cx` is default-loaded for orchestrator, handler, and workflow task-agent prompts in the shipped library defaults.
 - `smithers` is default-loaded with actor-specific content through shipped library defaults.

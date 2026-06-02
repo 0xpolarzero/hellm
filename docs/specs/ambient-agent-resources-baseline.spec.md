@@ -5,7 +5,7 @@
 - Date: 2026-05-19
 - Status: working baseline for ambient agent resource handling
 - Scope of this document:
-  - define `svvy`-owned runtime standards discovery
+  - define `svvy`-owned external instruction discovery
   - define ignored native prompt replacement files
   - define disabled ambient callable capabilities
   - define disabled runtime extensions and packages
@@ -32,7 +32,7 @@ Host-discovered resources must not silently change what an actor sees, what tool
 commands exist, or what prompt text reaches the model. For the baseline, `svvy` keeps only the pieces
 we actually want:
 
-- `svvy` discovers and controls plain `AGENTS.md` and `CLAUDE.md` runtime standards.
+- `svvy` discovers and controls plain `AGENTS.md` and `CLAUDE.md` external instruction files.
 - `svvy` ignores native prompt replacement files.
 - `svvy` ignores ambient tools, extensions, packages, and skills.
 - `svvy` registers actor tools through its own product-owned tool registry.
@@ -53,9 +53,10 @@ The baseline applies to every pi-backed `svvy` actor:
 No actor receives ambient host resources by default. If a future actor class is added, it inherits the
 same default-deny rule.
 
-## 1. Runtime Standards
+## 1. External Instructions
 
-Runtime standards are the only ambient-looking prompt files that `svvy` supports in the baseline.
+External instructions are the only ambient-looking prompt files that `svvy` supports in the
+baseline.
 
 Supported filenames:
 
@@ -67,7 +68,7 @@ Context Packs. `svvy` controls only whether and where the file is used.
 
 ### Discovery Sources
 
-`svvy` discovers runtime standards from two source groups.
+`svvy` discovers external instructions from two source groups.
 
 #### Global Roots
 
@@ -125,7 +126,7 @@ file's enablement or actor selection, the persisted user choice wins.
 
 ### Ordering
 
-Runtime standards are composed in deterministic order:
+External instructions are composed in deterministic order:
 
 1. global-root files, ordered by configured root order
 2. workspace-chain files, ordered from filesystem root toward the workspace directory
@@ -133,20 +134,22 @@ Runtime standards are composed in deterministic order:
 
 This keeps broad instructions before more specific workspace instructions.
 
-### Context UI
+### Extensions UI
 
-The Context pane has a dedicated Runtime Standards category:
+External instructions appear in the Extensions pane as read-only records with category
+`external_instruction`:
 
 ```text
-Instructions
-Context Packs
-Runtime Standards
-Actors
+Extensions
+- shipped
+- user
+- external_instruction
 ```
 
-Runtime Standards is not folded into Instructions.
+`external_instruction` is its own category. It is not folded into shipped native built-ins, user
+extensions, editable instruction blocks, or context packs.
 
-Runtime Standards shows:
+Each external instruction row shows:
 
 - global root management
 - live discovered files for the selected workspace
@@ -159,17 +162,17 @@ Runtime Standards shows:
 - actor chips for orchestrator, handler, and workflow task agent
 - external-editor action
 
-Runtime standards do not support:
+External instructions do not support:
 
 - editing content inside `svvy`
 - renaming the file
 - deleting the file
-- shipped-block reset
+- content reset
 - `builtin` or `edited` badges used by editable prompt blocks
 
 ### Persistence
 
-Runtime standards persistence has two layers.
+External instruction persistence has two layers.
 
 App-global settings store:
 
@@ -191,14 +194,15 @@ workspace key + canonical file path
 They are visible and active only for that workspace. If the user wants an ancestor directory to behave
 as a global root across workspaces, they can add that directory to the global roots list explicitly.
 
-For each controlled file, `svvy` persists:
+For each controlled file, `svvy` persists the same per-agent usage controls used by other
+extensions:
 
 ```ts
-type RuntimeStandardActor = "orchestrator" | "handler" | "workflow-task";
+type ExternalInstructionActor = "orchestrator" | "handler" | "workflow-task";
 
-type RuntimeStandardControl = {
+type ExternalInstructionControl = {
   enabled: boolean;
-  actors: RuntimeStandardActor[];
+  actors: ExternalInstructionActor[];
 };
 ```
 
@@ -210,12 +214,12 @@ can be read again.
 
 ### Prompt Composition
 
-Only enabled, actor-selected, readable runtime standards are included.
+Only enabled, actor-selected, readable external instructions are included.
 
 The adopted prompt order is:
 
 1. enabled Instruction blocks
-2. enabled Runtime Standards
+2. enabled external_instruction records
 3. enabled Context Packs default-loaded for the actor
 4. generated actor-specific prompt parts
 
@@ -224,14 +228,14 @@ stay close to the end of the system prompt.
 
 ### Agent Context Freshness
 
-Runtime standards participate in normal generated agent context freshness.
+External instructions participate in normal generated agent context freshness.
 
 Settings changes create a new prompt-library revision:
 
 - root list changes
 - root enabled state changes
-- runtime standard enabled state changes
-- runtime standard actor selection changes
+- external instruction enabled state changes
+- external instruction actor selection changes
 
 File changes can alter the generated agent context fingerprint even when no settings revision changed:
 
@@ -240,17 +244,17 @@ File changes can alter the generated agent context fingerprint even when no sett
 - file disappears
 - file read status changes
 
-Existing surfaces store the generated agent context fingerprint they received. If current runtime
-standards or resolved generated context output differ from the bound generated agent context, the
-normal automatic `agent_context_refresh` flow applies. Runtime standards changes do not use a
+Existing surfaces store the generated agent context fingerprint they received. If current external
+instructions or resolved generated context output differ from the bound generated agent context, the
+normal automatic `agent_context_refresh` flow applies. External instruction changes do not use a
 separate manual warning or update flow.
 
-### Pi Runtime Standards Opt-Out
+### Pi Standards Opt-Out
 
 Pi currently has its own standards discovery. It checks `AGENTS.md` and `CLAUDE.md` through
 `getAgentsFiles()`, and its current helper chooses only the first matching candidate per directory.
 
-`svvy` does not use pi's standards as source of truth.
+`svvy` does not use pi's standards as source of truth for external instructions.
 
 For every pi-backed `svvy` actor, the pi resource loader must receive:
 
@@ -258,7 +262,7 @@ For every pi-backed `svvy` actor, the pi resource loader must receive:
 agentsFilesOverride: () => ({ agentsFiles: [] });
 ```
 
-Runtime standards reach the model only through the `svvy`-composed system prompt.
+External instructions reach the model only through the `svvy`-composed system prompt.
 
 ## 2. Native Prompt Replacement
 
@@ -295,9 +299,9 @@ Callable capabilities are functions the model can call.
 
 Examples:
 
-- `read_file`
-- `write_file`
-- `bash`
+- `exec_command`
+- `write_stdin`
+- `apply_patch`
 - `web_search`
 - `thread_start`
 - `smithers_run_workflow`
@@ -877,7 +881,7 @@ Baseline decision:
 - do not import host sandbox or approval settings
 - do not import host retry, timeout, network, shell, concurrency, or permission settings
 - do not let host hooks or extensions act as policy gates
-- do not let enabled Snippets, runtime standards, or future prompt assets change execution policy
+- do not let enabled Snippets, external instructions, or future prompt assets change execution policy
 
 Actor execution policy must come from `svvy` product settings, actor contracts, Smithers run
 configuration where applicable, and product-owned tool registries.
@@ -1039,10 +1043,10 @@ Required checks:
 
 ## Acceptance Criteria
 
-- Adding `AGENTS.md` and `CLAUDE.md` under a configured runtime-standards root shows both files, with
+- Adding `AGENTS.md` and `CLAUDE.md` under a configured external-instruction root shows both files, with
   only `AGENTS.md` enabled by default when both are in the same directory.
-- Adding `AGENTS.md` and `CLAUDE.md` in a workspace ancestor shows both files in Runtime Standards,
-  with controls persisted only for that workspace.
+- Adding `AGENTS.md` and `CLAUDE.md` in a workspace ancestor shows both files as
+  `external_instruction` extension records, with controls persisted only for that workspace.
 - Adding `.pi/SYSTEM.md` or `.pi/APPEND_SYSTEM.md` does not change any `svvy` actor prompt.
 - Adding a pi skill under global or project skill directories does not add skill metadata to any
   `svvy` actor prompt.

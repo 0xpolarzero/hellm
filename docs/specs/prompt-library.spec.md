@@ -10,7 +10,7 @@
   - define reusable context packs
   - define actor prompt recipes
   - define generated prompt parts inside actor recipes
-  - define read-only runtime standards sources shown in Context
+  - define read-only external instruction sources shown in generated prompt previews
   - define app-global and workspace-scoped prompt blocks
   - define internal prompt revision binding and user-named snapshots
   - define generated agent context drift detection and automatic update behavior
@@ -23,10 +23,18 @@
 The product model is:
 
 ```text
-Context = editable Context Library + generated contracts + read-only runtime standards
+Context = editable Context Library + generated contracts + read-only external_instruction records
 ```
 
-The user manages reusable prompt material in the editable Context Library. Actor prompts are aggregates assembled from that material plus generated tool or schema contracts. Pi-discovered runtime standards sources are shown in the same read-only generated-context area as generated prompt parts, but they are not edited, snapshotted, or rediscovered by svvy. New orchestrator sessions always use the latest context library revision and current runtime standards fingerprints. Existing sessions bind to the exact generated agent context they received, then automatically refresh to the latest ready generated agent context at the next safe boundary when that context changes. Raw revision counters are internal and are not shown as primary Context pane UI.
+The user manages reusable prompt material in the editable Context Library. Actor prompts are
+aggregates assembled from that material plus generated tool or schema contracts. Discovered
+external instruction files such as `AGENTS.md` and `CLAUDE.md` are represented as read-only
+`external_instruction` extension records and shown in generated prompt previews. They are not edited
+or snapshotted as Context Library records. New orchestrator sessions always use the latest context
+library revision and current external instruction fingerprints. Existing sessions bind to the exact
+generated agent context they received, then automatically refresh to the latest ready generated
+agent context at the next safe boundary when that context changes. Raw revision counters are
+internal and are not shown as primary Context pane UI.
 
 ## Product Principles
 
@@ -35,13 +43,14 @@ The user manages reusable prompt material in the editable Context Library. Actor
 - Instruction blocks and context packs are ordinary editable records with names, bodies, actor settings, enabled state, scope, custom-record delete actions, and reset behavior.
 - Shipped defaults are protected from deletion but not editing. Reset actions restore their shipped state.
 - Generated prompt parts are visible inside actor recipes but are not edited as normal text blocks.
-- Runtime standards sources loaded by pi are visible as read-only generated-context material with file name, path, content, order, and an external-editor action.
+- External instruction sources are visible as read-only generated-context material with file name,
+  path, content, order, and an external-editor action.
 - Scope is explicit. Blocks are app-global by default, but each block can be limited to selected previously opened workspaces.
-- The app records exactly which prompt revision, runtime standards fingerprints, and generated
+- The app records exactly which prompt revision, external instruction fingerprints, and generated
   agent context fingerprint each session, handler thread, and workflow task agent used.
 - The user can explicitly save named snapshots and restore them later without relying on autosave history.
 - The UI shows generated agent context update work when an existing surface is waiting to apply
-  changed prompt material, generated contracts, extension context, or runtime standards.
+  changed prompt material, generated contracts, extension context, or external instructions.
 - Updating an existing surface to the latest ready generated agent context is automatic and happens
   at the next safe boundary: before the next prompt-bearing turn when idle, or through pi's
   `refreshRunContext` hook when active. Already-issued tool calls finish under the context that
@@ -64,16 +73,21 @@ It contains:
 - enabled states
 - generated prompt-part references
 
-### Runtime Standards Source
+### External Instruction Source
 
-A read-only agent standards file discovered by pi's resource loader and appended to the actual agent prompt as project context.
+A read-only external instruction file discovered by `svvy` and included in the actual agent prompt
+through an `external_instruction` extension record.
 
-Adopted runtime standards sources:
+Adopted external instruction sources:
 
 - `AGENTS.md`
 - `CLAUDE.md`
 
-Runtime standards sources are not Context Library records. They are not user-editable from the Context pane, not saved in user-named Context snapshots, and not discovered through svvy's own file search. svvy asks pi's loaded resource state which standards files it found, displays the exact loaded content in the actor aggregate's generated-context area, stores the exact bound content and hash for each surface, and uses those hashes in prompt drift checks.
+External instruction sources are not Context Library records. They are read-only extension records
+with category `external_instruction`, not editable instruction blocks or context packs. `svvy`
+discovers the supported files, displays the exact loaded content in generated prompt previews,
+stores the exact bound content and hash for each surface, and uses those hashes in generated agent
+context drift checks. The Extensions pane owns their enablement and actor-selection controls.
 
 `svvy` does not use pi prompt replacement or append files. Pi `SYSTEM.md` and `APPEND_SYSTEM.md` files are ignored by svvy sessions, handler threads, and workflow task agents.
 
@@ -540,7 +554,9 @@ Rows have actions:
 
 - instruction row: open that instruction block in the right detail pane
 - context-pack row: open that context pack in the right detail pane
-- generated row: view the actual generated or runtime standards text in a scrollable code block, copy generated text when applicable, and open the generated context file or pi-discovered standards file in the configured editor
+- generated row: view the actual generated or external instruction text in a scrollable code block,
+  copy generated text when applicable, and open the generated context file or external instruction
+  file in the configured editor
 
 The Actors section supports:
 
@@ -580,11 +596,14 @@ The composition order is:
 1. enabled active instruction blocks ordered by stable library order
 2. enabled active context packs default-loaded for the actor ordered by stable library order
 3. generated actor-specific prompt parts ordered by product contract
-4. pi-discovered runtime standards sources appended by pi in its project-context order
+4. enabled actor-selected external_instruction records in their resolved extension order
 
 Stable library order is user-visible and reorderable after MVP. Until reorder UI exists, shipped defaults and creation order define the order.
 
-Instruction and context-pack names should appear as section headings in composed previews. The raw pi system prompt may omit extra UI-only provenance wrappers if the runtime needs a compact prompt, but the preview must preserve provenance. Runtime standards preview rows must reflect the exact content pi loaded, not an independently scanned approximation.
+Instruction and context-pack names should appear as section headings in composed previews. The raw
+pi system prompt may omit extra UI-only provenance wrappers if the runtime needs a compact prompt,
+but the preview must preserve provenance. External instruction preview rows must reflect the exact
+content `svvy` loaded into the generated agent context, not an independently scanned approximation.
 
 ## Internal Revisions And User Snapshots
 
@@ -686,11 +705,16 @@ type WorkflowTaskPromptBinding = {
 
 The `resolvedPromptHash` records the exact prompt text used at the binding point.
 
-`boundExternalSourceHashes` records the ordered runtime standards content hashes used at the binding point.
+`boundExternalSourceHashes` records the ordered external instruction content hashes used at the
+binding point.
 
 The optional `resolvedPromptTextArtifactId` allows later inspection without depending on reconstructing an old generated contract from current code. The implementation may store the prompt text in structured prompt-revision tables instead of an artifact, but the product must preserve enough information to display what was used.
 
-Workflow task-agent prompt configuration is an overlay, not a replacement. If a workflow task-agent config supplies a custom prompt, `svvy` appends it under a task-agent override section after the generated svvy workflow-task base prompt. The base prompt remains mandatory because it carries the task-local actor contract, generated callable API, Smithers ownership boundaries, and runtime standards binding.
+Workflow task-agent prompt configuration is an overlay, not a replacement. If a workflow task-agent
+config supplies a custom prompt, `svvy` appends it under a task-agent override section after the
+generated svvy workflow-task base prompt. The base prompt remains mandatory because it carries the
+task-local actor contract, generated callable API, Smithers ownership boundaries, and external
+instruction binding.
 
 The task-attempt generated agent context binding is written to
 `workflowTaskAttempt.meta.agentContextBinding` when the task-local runtime first binds the exact
@@ -724,7 +748,7 @@ boundary.
 context writes durable thread context keys and changes the generated agent context fingerprint for
 that handler. `svvy` then enqueues or applies `agent_context_refresh` through the same automatic
 path used for prompt-library edits, extension changes, generated contract changes, and runtime
-standards changes.
+external instruction changes.
 
 When the current ready generated agent context differs from the bound generated agent context on an
 existing surface, `svvy` automatically enqueues `agent_context_refresh`. If the surface is idle, the
@@ -755,10 +779,10 @@ The generated agent context fingerprint includes:
 - exact resolved prompt-library material for that actor
 - generated prompt parts and tool/schema contracts
 - loaded and available extension context fingerprints
-- runtime standards content, order, addition, and removal
+- external instruction content, order, addition, and removal
 - generated-agent-context format version
 
-Prompt-library revision ids and runtime standards fingerprints remain useful internal inputs and
+Prompt-library revision ids and external instruction fingerprints remain useful internal inputs and
 diagnostics, but user-facing update behavior is based on the generated agent context fingerprint.
 There is no normal out-of-date warning or explicit user-clicked update button in the resolved
 Extensions design.
@@ -785,7 +809,7 @@ Actors
 Generated
 - execute_typescript API declaration changed
 
-Runtime Standards
+External Instructions
 - AGENTS.md changed
 - CLAUDE.md removed
 ```
@@ -798,7 +822,7 @@ The semantic diff should group changes by:
 - context packs
 - actor recipe settings
 - generated prompt parts
-- runtime standards sources
+- external instruction sources
 - scope changes
 - enabled or disabled state
 - actor inclusion/default-loaded changes
@@ -853,10 +877,10 @@ Lifecycle event:
     | "extension_commands"
     | "native_tools"
     | "generated_types"
-    | "runtime_standards"
+    | "external_instructions"
   >;
   changedExtensionIds: string[];
-  changedRuntimeStandards: string[];
+  changedExternalInstructionIds: string[];
 }
 ```
 
@@ -919,7 +943,7 @@ Prompt revisions are durable app state. They must survive app restart and must b
 
 ### Workspace Routing
 
-Context Library requests that evaluate or mutate workspace-affecting state must carry the target `workspaceId` explicitly. This includes instruction and context-pack edits, scope changes, actor aggregate reads, generated-context previews, runtime standards projection, snapshot creation and loading, agent-context freshness checks, and agent-context update actions when the result depends on workspace-scoped activation or workspace-derived generated parts.
+Context Library requests that evaluate or mutate workspace-affecting state must carry the target `workspaceId` explicitly. This includes instruction and context-pack edits, scope changes, actor aggregate reads, generated-context previews, external instruction projection, snapshot creation and loading, agent-context freshness checks, and agent-context update actions when the result depends on workspace-scoped activation or workspace-derived generated parts.
 
 The backend must resolve these requests from the supplied `workspaceId`, not from the active workspace, focused tab, focused Dockview panel, or active runtime. A background handler or orchestrator surface may keep running in one workspace while another workspace is focused, so active workspace state is not a valid routing key.
 
@@ -981,7 +1005,8 @@ When a surface prompt differs from current prompt settings, the transcript metad
 - Workspace-scoped blocks remain visible even when inactive in the current workspace.
 - Actor aggregate views are recipes, not the primary editing surface.
 - Generated prompt parts are visible inside actor recipes.
-- Runtime standards sources are visible in the generated-context area, read-only, openable in the configured external editor, and not editable through the Context pane.
+- External instruction sources are visible in generated prompt previews, read-only, openable in the
+  configured external editor, and not editable through the Context pane.
 - Pi `SYSTEM.md` and `APPEND_SYSTEM.md` files do not participate in svvy prompt composition.
 - New orchestrator sessions use the latest ready generated agent context.
 - Existing sessions automatically queue or apply `agent_context_refresh` when their generated agent
@@ -996,7 +1021,7 @@ When a surface prompt differs from current prompt settings, the transcript metad
 - Keep the sidebar reference-pane order as Logs, Agents, Context, and Workflows.
 - Add the Context pane with `Instructions`, `Context Packs`, and `Actors`.
 - Project current hardcoded instruction and context material as structured builtin blocks.
-- Show generated prompt parts and pi-discovered runtime standards sources inside actor recipes.
+- Show generated prompt parts and external instruction sources inside actor recipes.
 
 ### Phase 2: Editable Library
 
@@ -1013,7 +1038,7 @@ When a surface prompt differs from current prompt settings, the transcript metad
 - Bind new orchestrator sessions, handler threads, and workflow task agents to the latest ready
   generated agent context.
 - Store generated agent context fingerprints and inspectable prompt text.
-- Store runtime standards fingerprints in generated agent context bindings.
+- Store external instruction fingerprints in generated agent context bindings.
 - Show queued, cancelled, applied, and failed generated agent context update states on existing
   surfaces.
 - Add grouped semantic diff and raw text diff.
@@ -1025,11 +1050,11 @@ When a surface prompt differs from current prompt settings, the transcript metad
 - Show requested context packs in handler-thread metadata.
 - Ensure generated contract and tool-declaration changes enqueue agent context refreshes when they
   alter exact generated context output.
-- Ensure runtime standards content, order, addition, and removal enqueue agent context refreshes when
+- Ensure external instruction content, order, addition, and removal enqueue agent context refreshes when
   they alter exact generated context output.
-- Add representative unit and integration coverage for composition, scope filtering, runtime
-  standards projection, revision binding, automatic agent context refresh, reset, and actor aggregate
-  projection.
+- Add representative unit and integration coverage for composition, scope filtering, external
+  instruction projection, revision binding, automatic agent context refresh, reset, and actor
+  aggregate projection.
 
 ## Open Non-Goals
 
@@ -1038,4 +1063,4 @@ When a surface prompt differs from current prompt settings, the transcript metad
 - A marketplace or sharing format for prompt packs is not required.
 - Prompt A/B testing is not required.
 - Prompt changes should not rewrite historical pi transcripts.
-- Runtime standards source editing is done in the workspace files, not inside the Context pane.
+- External instruction source editing is done in the workspace files, not inside the Context pane.

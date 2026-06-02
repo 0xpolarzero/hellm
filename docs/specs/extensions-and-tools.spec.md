@@ -10,23 +10,21 @@
   - define the relationship between Agents, Extensions, actors, profiles, native tools, Incur CLIs, `svvyx`, `execute_typescript`, shell policy, dependencies, and secrets
   - record rejected side ideas so they are not accidentally folded into this feature
 
-This document is intentionally not finished. It is the durable working spec for the design thread.
-Future discussion should edit this document directly as decisions are refined.
+This document is the durable working spec for the resolved Extensions and native tool direction.
+Related product docs must stay synchronized with this model as implementation proceeds.
 
 Related specs:
 
 - `docs/specs/extension-managing.spec.md` defines the Extension Managing extension and its
   `svvyx extensions ...` lifecycle API.
 
-The current PRD and feature inventory still describe the older Context Library, direct-tool, and
-`execute_typescript api.*` model. This spec records the newer direction discussed in the session.
-When this direction is adopted for implementation, `docs/prd.md`, `docs/features.ts`,
-`docs/progress.md`, and the affected prompt, ambient-resource, and execute-typescript specs must be
-rewritten to match it.
+The current PRD and feature inventory may still contain older Context Library and direct-tool
+phrasing. When those documents are touched, they must be rewritten toward this resolved model rather
+than preserving compatibility language for the older surface.
 
 The generated-context terminology in this document is intentional:
 
-- **Agent context** means the exact generated prompt, runtime standards, native tool declarations,
+- **Agent context** means the exact generated prompt, external instructions, native tool declarations,
   loaded-extension command documentation, generated TypeScript declarations, and actor-scoped
   `svvyx` command binding that one actor receives.
 - **Agent context fingerprint** means the canonical digest of that actor-facing generated context.
@@ -80,21 +78,29 @@ In the extension architecture, a tool belongs to either:
 - a loaded extension
 - a small native control surface that the actor kind is allowed to call
 
-The word "tool" should not be used for plain prompt text, profile settings, or runtime standards.
+The word "tool" should not be used for plain prompt text, profile settings, or external
+instructions.
 
 ### Instruction
 
 An instruction is prompt text.
 
 Instructions may live in an agent profile, a loaded extension, an available extension's minimal
-loading hint, or generated runtime standards. Instructions do not grant capability by themselves.
+loading hint, or an external instruction record. Instructions do not grant capability by themselves.
 
-### Runtime Standard
+### External Instruction
 
-A runtime standard is an external standards file such as `AGENTS.md` or `CLAUDE.md`.
+An external instruction is a read-only instruction source discovered outside `svvy` extension
+storage, such as a repository `AGENTS.md` file or `CLAUDE.md` file.
 
-Runtime standards are neither extensions nor editable prompt blocks, but they must still appear in
-the generated-context preview for the agent surface that receives them.
+External instructions appear in Extensions as `external_instruction` records. They use the same
+per-agent usage states as other extensions, but their content is not owned by `svvy`:
+
+- the UI may show the file content in generated-context previews
+- the UI may offer an `Open external file` action
+- agents cannot edit the file through Extension Managing
+- reset restores `svvy` usage/settings state only and never overwrites the external file
+- deletion is unavailable
 
 ### Snippet
 
@@ -158,6 +164,7 @@ replaces the fuzzy "context pack as skill as tool bundle" idea.
 Each extension has:
 
 - stable id
+- category: `shipped`, `user`, or `external_instruction`
 - title
 - description
 - full loaded instructions
@@ -168,11 +175,24 @@ Each extension has:
 - dependency and env requirements when relevant
 - readonly usage view showing which agents use it and whether each usage is default-loaded or
   available
-- reset behavior when it is shipped by `svvy`
+- reset behavior when it is shipped by `svvy` or when it is an external instruction usage setting
 
 Extensions are app-global by default. Workspace-specific capability should usually be modeled as an
 agent profile that selects a custom extension set, not as hidden workspace mutation of a global
 extension. Workspace-scoped extensions remain a future decision.
+
+`category` is the UI and agent-facing source category:
+
+| Category | Meaning |
+| --- | --- |
+| `shipped` | Provided by `svvy`, non-deletable, resettable to shipped settings or shipped overlay content. This includes native tool extensions, shipped `svvyx` extensions, and shipped prompt-only extensions. |
+| `user` | Created by the user, deletable, not resettable to shipped defaults. |
+| `external_instruction` | Discovered from an external file such as `AGENTS.md` or `CLAUDE.md`, read-only in `svvy`, non-deletable, and resettable only at the `svvy` usage/settings layer. |
+
+`category` is separate from `interface`. For example, Filesystem is
+`{ category: "shipped", interface: "native_tool" }`, Git is
+`{ category: "shipped", interface: "instructions" }`, and a discovered `AGENTS.md` record is
+`{ category: "external_instruction", interface: "instructions" }`.
 
 ### Extension Usage State
 
@@ -203,7 +223,7 @@ For each agent profile and actor kind, an extension can be:
 
 - no instructions are included
 - no awareness is included
-- the extension cannot be loaded by `@extension` or `load_extension`
+- the extension cannot be loaded by `load_extension`
 - no generated CLI, `svvyx` guidance, types, or runtime surface are exposed
 
 The prompt is advisory only. The runtime must enforce the same state. Generated prompt text and
@@ -276,7 +296,7 @@ except `usage`, plus session-context state:
 ```ts
 type LoadedExtensionForCurrentActor = {
   id: string;
-  origin: "builtin" | "user";
+  category: "shipped" | "user" | "external_instruction";
   interface: "native_tool" | "svvyx" | "instructions";
   title: string;
   description: string;
@@ -294,7 +314,7 @@ Available extension objects intentionally expose less than loaded extensions:
 ```ts
 type AvailableExtensionForCurrentActor = {
   id: string;
-  origin: "builtin" | "user";
+  category: "shipped" | "user" | "external_instruction";
   interface: "native_tool" | "svvyx" | "instructions";
   title: string;
   description: string;
@@ -303,7 +323,8 @@ type AvailableExtensionForCurrentActor = {
   typescriptApiEnabled: boolean;
   minimalInstructions: string;
   paths: {
-    instructionsMinimal: string;
+    instructionsMinimal: string | null;
+    externalInstructionFile: string | null;
   };
   requirements: ExtensionRequirements;
   state: ExtensionStateForCurrentActor & { binding: "available" };
@@ -314,13 +335,14 @@ Shared shapes used above:
 
 ```ts
 type ExtensionPathsForLoadedExtension = {
-  sourceRoot: string;
-  manifest: string;
-  instructionsFull: string;
-  instructionsMinimal: string;
+  sourceRoot: string | null;
+  manifest: string | null;
+  instructionsFull: string | null;
+  instructionsMinimal: string | null;
+  externalInstructionFile: string | null;
   extensionSource: string | null;
-  packageJson: string;
-  lockfile: string;
+  packageJson: string | null;
+  lockfile: string | null;
   generatedRoot: string | null;
   typescriptTypes: string | null;
   buildCurrent: string | null;
@@ -399,10 +421,11 @@ agent-actionable messages. Missing required env values must direct the user to c
 the app UI; they must not ask the user to paste a secret into chat.
 
 Loaded extension `paths` may include source/edit paths and generated TypeScript declaration paths
-because loaded extensions are already visible to the actor. Available extension `paths` must include
-only `instructionsMinimal`; this path is a pointer to the same minimal guidance that is already
-returned inline, not permission to inspect full instructions or edit the extension through
-`list_extensions`.
+because loaded extensions are already visible to the actor. For `category: "external_instruction"`,
+app-owned source paths are `null` and `externalInstructionFile` points at the read-only external
+file. Available extension `paths` must include only `instructionsMinimal` and
+`externalInstructionFile`; those paths are pointers to already visible minimal/source metadata, not
+permission to inspect full instructions or edit the extension through `list_extensions`.
 
 `list_extensions` must never expose:
 
@@ -440,7 +463,7 @@ Example:
   "loaded": [
     {
       "id": "smithers",
-      "origin": "builtin",
+      "category": "shipped",
       "interface": "svvyx",
       "title": "Smithers",
       "description": "Workflow supervision commands for handler threads.",
@@ -452,6 +475,7 @@ Example:
         "manifest": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/manifest.json",
         "instructionsFull": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full.md",
         "instructionsMinimal": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/minimal.md",
+        "externalInstructionFile": null,
         "extensionSource": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/source",
         "packageJson": "/Users/example/.config/svvy/extensions/package/package.json",
         "lockfile": "/Users/example/.config/svvy/extensions/package/bun.lock",
@@ -483,7 +507,7 @@ Example:
   "available": [
     {
       "id": "extension-managing",
-      "origin": "builtin",
+      "category": "shipped",
       "interface": "svvyx",
       "title": "Extension Managing",
       "description": "Manage extension definitions, builds, usage state, reset, delete, and revert.",
@@ -492,7 +516,8 @@ Example:
       "typescriptApiEnabled": true,
       "minimalInstructions": "Load this only when the user asks to inspect, create, edit, build, reset, delete, revert, or configure svvy extensions.",
       "paths": {
-        "instructionsMinimal": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/extension-managing/instructions/minimal.md"
+        "instructionsMinimal": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/extension-managing/instructions/minimal.md",
+        "externalInstructionFile": null
       },
       "requirements": {
         "externalBinaries": [],
@@ -532,13 +557,14 @@ Shipped extensions are:
   files exist
 
 This supersedes the earlier "locked built-ins are non-editable" phrasing in the session. The latest
-resolution is: shipped built-ins are non-deletable and resettable, but their title, description,
+resolution is: shipped extensions are non-deletable and resettable, but their title, description,
 instructions, editable Incur source, and agent-level enablement can be customized through overlay
-files. Generated native tool schemas, native runtime implementation, and app-owned bridge code
-remain read-only.
+files when those files exist. Generated native tool schemas, native runtime implementation,
+app-owned bridge code, and external instruction source files remain read-only.
 
-Shipped/default is one axis. Agent-facing interface is another axis. A shipped extension can expose
-native tools, an actor-scoped `svvyx` namespace, or instructions only.
+Category is one axis. Agent-facing interface is another axis. A shipped extension can expose native
+tools, an actor-scoped `svvyx` namespace, or instructions only. External instruction records always
+use `category: "external_instruction"` and `interface: "instructions"`.
 
 ### Native Tool Extension
 
@@ -571,7 +597,7 @@ execution framework for extension CLIs. `svvy` owns actor-scoped mounting, promp
 runtime policy, command facts, UI projection, dependency review, secret injection, and tool-use
 visualization. Incur-backed extensions use `interface: "svvyx"` in agent-facing JSON.
 
-### Prompt-Only Extension
+### Prompt-Only And External Instruction Extensions
 
 A prompt-only extension has no CLI runtime and uses `interface: "instructions"` in agent-facing JSON.
 
@@ -582,6 +608,27 @@ It still uses the same usage states:
 - nothing when unavailable
 
 Prompt-only extensions are useful for domain guidance that does not need executable tools.
+
+External instructions are prompt-only extension records whose source content lives outside `svvy`
+extension storage. Examples include repository `AGENTS.md`, `CLAUDE.md`, and future plain external
+instruction files discovered from supported hosts.
+
+Rules:
+
+- external instructions use `category: "external_instruction"` and `interface: "instructions"`
+- the same `default_loaded`, `available`, and `unavailable` usage states apply per agent profile
+- when default-loaded, exact external file content is included in the generated prompt in the
+  configured order
+- when available, only minimal source/availability guidance is included; the full external file
+  content is not included until loaded
+- when unavailable, the actor receives no prompt awareness of that external instruction
+- content is read-only from `svvy`; editing happens by opening the external file in the configured
+  editor or by ordinary user repository editing outside Extension Managing
+- Extension Managing must not return external instruction files as editable extension source paths
+- reset restores `svvy` usage/settings and any shipped metadata overlay for the external instruction
+  record, not the external file content
+- external instruction records are non-deletable by Extension Managing; disabling them uses the
+  normal per-agent `unavailable` state
 
 ### Extension Current Build
 
@@ -684,13 +731,13 @@ Directory layout:
 Ownership:
 
 - `sources/user/<id>/` contains editable user extension manifests, instructions, and source.
-- `sources/builtin-overlays/<id>/` contains editable overlay files for shipped builtin extension
+- `sources/builtin-overlays/<id>/` contains editable overlay files for shipped extension
   title, description, instructions, and Incur source.
 - `source/` exists only for extensions with editable executable source; prompt-only extensions omit
   it or return `source: null` from `inspect`.
-- shipped builtin defaults live in packaged app resources and are read-only.
-- `inspect` materializes builtin overlay files before returning editable paths, so normal shell
-  inspection and `apply_patch` work even when the user has not edited that builtin before.
+- shipped defaults live in packaged app resources and are read-only.
+- `inspect` materializes shipped overlay files before returning editable paths, so normal shell
+  inspection and `apply_patch` work even when the user has not edited that shipped extension before.
 - `generated/extensions/<id>/` contains read-only generated TypeScript declarations for that
   extension when TypeScript API is enabled.
 - `builds/extensions/<id>/current/` contains the current built runtime surface for that extension.
@@ -711,7 +758,7 @@ editing targets. Agents may edit extension source files, instruction files, mani
 shared extension `package/package.json` through the normal shell plus `apply_patch` path.
 
 Native runtime implementation, generated TypeScript declarations, internal native tool schemas, and
-app-owned bridge code for shipped extensions are read-only. A shipped builtin can still be
+app-owned bridge code for shipped extensions are read-only. A shipped extension can still be
 customized by editing its overlay title, description, instructions, and Incur source, and those
 overlay edits remain resettable to packaged defaults.
 
@@ -720,7 +767,7 @@ Generated agent context aggregates use a lightweight cache rather than ad hoc di
 - `generated/aggregates/index.sqlite` stores cache metadata.
 - each index row stores at minimum `cacheKey`, `actorKind`, ordered `loadedExtensionIds`, ordered
   `availableExtensionIds`, `extensionContextFingerprints`, `agentContextFormatVersion`,
-  `runtimeStandardsFingerprint`, `agentContextFingerprint`, `createdAt`, `lastUsedAt`, and
+  `externalInstructionsFingerprint`, `agentContextFingerprint`, `createdAt`, `lastUsedAt`, and
   `sizeBytes`
 - `generated/aggregates/blobs/<aggregate-cache-key>/` stores the generated prompt, loaded `svvyx`
   command guidance, TypeScript declarations, native tool schemas, and a blob manifest.
@@ -728,8 +775,8 @@ Generated agent context aggregates use a lightweight cache rather than ad hoc di
   `svvyx-guidance.md`, `commands.d.ts`, and `native-tool-schemas.json`
 - the cache key is derived from the resolved actor-facing inputs: actor kind, loaded extension ids,
   available extension ids, each extension's current extension context fingerprint, agent-context
-  format version, and runtime standards fingerprint when runtime standards are part of the actor
-  prompt
+  format version, and external-instruction fingerprint when external instructions are part of the
+  actor prompt
 - cache hits must verify the indexed blob exists and matches the blob manifest before use
 - cache misses or corrupt blobs regenerate into a temporary directory and atomically promote into
   `blobs/<aggregate-cache-key>/`
@@ -761,9 +808,10 @@ global agent profile.
 
 The build unit is an extension. The generated agent context aggregate is cached by actor kind,
 loaded extension set, available extension set, current extension context fingerprints, agent-context
-format version, and runtime standards fingerprint. It is not built per visual pane. Two sessions with
-the same resolved binding share the same aggregate cache entry. A session that loads an additional
-extension gets a different binding, aggregate cache key, and generated agent context fingerprint.
+format version, and external-instruction fingerprint. It is not built per visual pane. Two sessions
+with the same resolved binding share the same aggregate cache entry. A session that loads an
+additional extension gets a different binding, aggregate cache key, and generated agent context
+fingerprint.
 
 When an extension changes and a successful build activates:
 
@@ -782,7 +830,7 @@ When an extension changes and a successful build activates:
 changes. It replaces the older split between prompt-only refresh work and extension-binding refresh
 work. It updates the bound base instructions, loaded and available extension binding, generated
 instructions, loaded `svvyx` command guidance, generated TypeScript declarations, native tool schemas,
-runtime standards, aggregate cache key, generated agent context fingerprint, and mounted `svvyx`
+external instructions, aggregate cache key, generated agent context fingerprint, and mounted `svvyx`
 command set. It does not send text to pi, create assistant- or user-authored transcript content, or
 write prompt history.
 
@@ -806,7 +854,7 @@ categories, such as:
 - native tool declarations
 - loaded `svvyx` command guidance
 - generated TypeScript declarations
-- runtime standards changed by file name
+- external instructions changed by file name
 
 The event must not mention other sessions or threads that may also need or receive the same update.
 
@@ -891,7 +939,7 @@ Each extension detail view should include:
 - description
 - full loaded instructions textarea
 - minimal available instructions textarea
-- optional editable Incur CLI source for Incur-backed user extensions and Incur-backed builtin
+- optional editable Incur CLI source for Incur-backed user extensions and Incur-backed shipped
   overlays
 - TypeScript API enablement control
 - dependency status
@@ -921,25 +969,12 @@ Approving or rejecting the request from either projection updates every other pr
 
 ## Extension Loading
 
-Extensions can enter a surface in three ways.
+Extensions enter a surface in two ways.
 
 ### Agent Profile Defaults
 
 The persistent profile config decides default-loaded, available, and unavailable extension sets for
 new turns.
-
-### Direct `@extension` Mention
-
-The user can mention an available extension directly.
-
-When a prompt contains an explicit extension mention, `svvy` should load that extension before the
-model call for that user message when the extension is available for that actor.
-
-The model should then see the full loaded extension instructions and the updated generated runtime
-surface for that turn.
-
-If the extension is unavailable for that actor kind or profile, `svvy` must fail clearly and explain
-that the agent configuration must be changed. It must not silently override unavailable capability.
 
 ### `load_extension`
 
@@ -950,34 +985,139 @@ It lets an actor load an extension that is available but not loaded.
 The load is current-session only. It updates the calling session's durable extension binding and
 does not change the agent profile's default-loaded, available, or unavailable states.
 
-On success, it should:
+Input:
+
+```json
+{
+  "extensionId": "smithers"
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `extensionId` | string | Required exact id of an extension that is currently available to this actor. |
+
+`load_extension` is not a build, install, dependency-approval, env-entry, or management command. It
+must only load an extension that is already ready for this actor. If the extension is not ready,
+`load_extension` fails with actionable issues and leaves the actor binding unchanged. The agent can
+then load Extension Managing, run `svvyx extensions inspect <id> --json`, run a build, or ask the
+user to configure missing env values as appropriate.
+
+On success, `load_extension` must:
 
 - verify the extension is available for that actor
-- use the current successful build if it is valid
-- build only if source changed or no current build exists
-- block for dependency approval before any dependency or trusted dependency install that requires it
+- verify the current successful build is valid when the extension has a build
+- verify dependency/install/env readiness for runtime use
 - mount the extension in the actor-scoped `svvyx` surface
-- update the TypeScript command surface for later `execute_typescript` calls in the same turn
-- return the full instructions and generated loaded-surface summary
+- update the generated TypeScript client declarations for later `execute_typescript` calls in the
+  same turn
+- return the full instructions and the same loaded extension object shape used by `list_extensions`
 - update the calling session's generated agent context binding and generated agent context
   fingerprint
 - record an `Agent context updated` product event for the calling session, with details that the
   extension was loaded by `load_extension`
 
-The session resolved that same-turn loading is desirable. After `load_extension` returns, later
-shell/CLI or `execute_typescript` calls in the same turn should be able to use the newly loaded
-extension.
+Same-turn loading is mandatory. After `load_extension` returns `ok: true`, later tool calls in the
+same user turn may use the newly loaded native tools, `svvyx` namespace, full instructions, and
+generated TypeScript clients. `svvy` must refresh the current actor's tool declarations and generated
+context before the next model call in that same turn; it must not defer successful loads to a later
+turn.
 
-Same-turn loading starts only after `load_extension` succeeds. If dependency approval, install,
-build, missing required env, or validation blocks the load, the extension remains
-available-but-not-loaded and contributes only its loading hint. A dependency-blocked
-`load_extension` creates or reuses the same durable approval request that an app-pane build would
-use for the same unresolved dependency identities. If the `load_extension` tool call is still
-pending on that approval, approval resumes the blocked install/build/load for that actor and returns
-the normal successful `load_extension` result after the extension is mounted. If no actor-scoped
-`load_extension` call is still pending, approval only records the dependency identities and
-resumes or unblocks app-level build work; it must not mount the extension into any actor session. A
-later actor that wants the extension must call `load_extension` again.
+Success result:
+
+```ts
+type LoadExtensionResult = {
+  ok: true;
+  extension: LoadedExtensionForCurrentActor & {
+    instructions: string;
+  };
+};
+```
+
+The `extension` object uses the same fields and redaction rules as a loaded entry from
+`list_extensions`. The additional `instructions` field contains the full loaded instructions that
+are now part of the actor context. `load_extension` must not return custom `added`, `guidance`,
+`svvyxNamespaces`, `codeModeTypes`, or similar one-off buckets. Command details remain discoverable
+through the loaded extension's own CLI or generated client documentation.
+
+Example:
+
+```json
+{
+  "ok": true,
+  "extension": {
+    "id": "smithers",
+    "category": "shipped",
+    "interface": "svvyx",
+    "title": "Smithers",
+    "description": "Workflow supervision commands for handler threads.",
+    "resettable": true,
+    "deletable": false,
+    "typescriptApiEnabled": true,
+    "instructions": "Full loaded Smithers instructions...",
+    "paths": {
+      "sourceRoot": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers",
+      "manifest": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/manifest.json",
+      "instructionsFull": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full.md",
+      "instructionsMinimal": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/minimal.md",
+      "externalInstructionFile": null,
+      "extensionSource": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/source",
+      "packageJson": "/Users/example/.config/svvy/extensions/package/package.json",
+      "lockfile": "/Users/example/.config/svvy/extensions/package/bun.lock",
+      "generatedRoot": "/Users/example/.config/svvy/extensions/generated/extensions/smithers",
+      "typescriptTypes": "/Users/example/.config/svvy/extensions/generated/extensions/smithers/types.d.ts",
+      "buildCurrent": "/Users/example/.config/svvy/extensions/builds/extensions/smithers/current"
+    },
+    "requirements": {
+      "externalBinaries": [],
+      "env": [],
+      "dependencies": [],
+      "trustedDependencies": []
+    },
+    "state": {
+      "binding": "loaded",
+      "draftChanged": false,
+      "buildRequired": false,
+      "currentBuild": {
+        "status": "ready"
+      },
+      "lastBuild": {
+        "status": "success"
+      },
+      "ready": true,
+      "issues": []
+    }
+  }
+}
+```
+
+Failure result:
+
+```ts
+type LoadExtensionErrorResult = {
+  ok: false;
+  error: {
+    code:
+      | "EXTENSION_NOT_AVAILABLE"
+      | "EXTENSION_NOT_READY"
+      | "EXTENSION_ENV_MISSING"
+      | "DEPENDENCY_APPROVAL_REQUIRED"
+      | "DEPENDENCY_MISSING"
+      | "BUILD_REQUIRED"
+      | "BUILD_FAILED"
+      | "NO_CURRENT_BUILD"
+      | "CURRENT_BUILD_INVALID";
+    message: string;
+    extensionId: string;
+    issues?: ExtensionIssue[];
+    missingEnv?: ExtensionRequirements["env"];
+  };
+};
+```
+
+If dependency approval, dependency install, build, missing required env, or validation would be
+needed before runtime use, `load_extension` returns `ok: false`. It must not create dependency
+approval requests, run install, run build, mutate the actor binding, or mount a partial extension.
 
 A missing required env value is not an approval request and cannot be resolved by the agent. The
 native load result must name only the missing env declarations and direct the user to configure them
@@ -1012,10 +1152,11 @@ Incur provides:
 - command schemas
 - generated docs
 - generated `Commands` types
-- typed client use through `MemoryClient`
+- typed client inputs for generated `svvy` and extension clients when useful
 
 Incur does not itself give the model tools. The model can use an Incur command only through a
-runtime path that `svvy` exposes, such as shell, a narrower CLI runner, or `execute_typescript`.
+runtime path that `svvy` exposes, such as `exec_command`, a narrower CLI runner, or
+`execute_typescript`.
 
 ### Actor-Scoped Aggregate CLI
 
@@ -1053,7 +1194,7 @@ extension source CLI per extension
 extension current build
         -> per actor/profile resolution
 actor-scoped aggregate svvyx CLI
-        -> shell usage and execute_typescript MemoryClient usage
+        -> exec_command usage and generated execute_typescript client usage
 ```
 
 Smithers hot reload is not the primary extension refresh mechanism. It reloads workflow build
@@ -1063,29 +1204,35 @@ binding refresh are owned by `svvy`.
 
 ## `execute_typescript`
 
-The session's desired direction replaces the current hand-built `api.*` surface.
+`execute_typescript` remains a native direct tool for actor-local TypeScript composition.
 
-`execute_typescript` remains a native direct tool, but inside the snippet the agent should receive:
+The resolved model is:
 
-- a preconfigured actor-scoped Incur `MemoryClient`
-- generated `Commands` types for the currently loaded aggregate `svvyx` CLI
-- minimal Incur client usage instructions
-- no separate hand-built `api.*` object for normal extension commands
-
-The exact injected names are not decided. The intended shape is:
-
-- one provided client with `svvy` defaults already applied
-- access to the actor-scoped command type surface
-- access to relevant Incur client or command types when needed
-- room for the agent to pass per-call options or create a different client over the same loaded CLI
-  when the Incur API supports that cleanly
+- the snippet may run ordinary TypeScript
+- generated `svvy` and loaded-extension clients are the preferred way to call `svvy` capabilities
+  from TypeScript
+- generated clients are actor-scoped and extension-scoped
+- generated clients expose only capabilities that are currently loaded and allowed for the actor
+- no broad hand-written helper surface for ordinary repository primitives is part of the final
+  spec
+- no legacy duplicated helper family for read/search/list/bash/edit/write should be preserved
+- arbitrary TypeScript side effects that do not go through generated clients are treated as opaque
+  process behavior for UI capture and policy
 
 The TypeScript API is controlled per extension. If an extension has TypeScript API disabled, it can
-still be callable through `svvyx` when loaded, but its generated `Commands` types and client helpers
-are not included in code mode.
+still be callable through `svvyx` when loaded, but generated TypeScript client helpers for that
+extension are not included in `execute_typescript`.
 
-The session noted that Incur's generated command types are useful for both CLI documentation and
-TypeScript client usage. Implementation must verify the exact Incur API shape from the local fork.
+Generated clients should be built from the same source contracts as the loaded extension runtime:
+
+- native tool schemas for loaded native tool extensions
+- `svvyx`/Incur command schemas for loaded `svvyx` extensions
+- provider web contracts for loaded provider-backed web extensions
+- app-owned control contracts for loaded native control tools
+
+Implementation may use Incur's typed client machinery where it is the best source contract for an
+extension CLI. That is an implementation detail; the agent-facing contract is generated
+actor-scoped TypeScript clients, not an exposed generic Incur client requirement.
 
 ## Native Tool Classification
 
@@ -1121,7 +1268,8 @@ The design goal is:
 
 The resolved native direct tool set includes:
 
-- shell or a shell-backed execution substrate
+- `exec_command`
+- `write_stdin`
 - `execute_typescript`
 - `apply_patch`
 - `load_extension`
@@ -1131,7 +1279,7 @@ The resolved native direct tool set includes:
 - artifact tools, because artifacts are `svvy` product state
 
 The latest session direction treats extension CLIs as actor-scoped `svvyx` commands available
-through shell and through the Incur `MemoryClient` inside `execute_typescript`.
+through `exec_command` and through generated TypeScript clients inside `execute_typescript`.
 
 The latest session direction treats these as intended Incur-backed or extension-backed capabilities
 unless later implementation research proves a better native route:
@@ -1148,6 +1296,18 @@ General `read`, `grep`, `find`, `ls`, `edit`, and `write` are not part of the re
 model-visible tool set. If any are added later, they need a concrete product reason beyond ordinary
 repo work.
 
+The Filesystem native extension exposes exactly the Codex-like command/edit primitives:
+
+- `exec_command` starts a command in a PTY or non-PTY process and returns output, exit status, or a
+  `session_id` for a still-running process
+- `write_stdin` sends bytes to an existing running `exec_command` session or polls it for more
+  output
+- `apply_patch` applies structured file edits through Codex's freeform patch grammar
+
+There is no separate model-facing tool named `shell`, `bash`, `read`, `write`, `edit`, `grep`,
+`find`, or `ls` in this resolved surface. The user-facing and agent-facing command execution tool is
+`exec_command`.
+
 The Filesystem extension instructions should be adapted from:
 
 - `docs/references/codex/codex-rs/core/gpt_5_2_prompt.md`
@@ -1160,9 +1320,173 @@ Relevant source-backed rules:
 - use ordinary shell tools for file inspection
 - set the shell tool working directory instead of relying on `cd`
 - parallelize independent reads, searches, and listings through separate tool calls where possible
+- use `write_stdin` only for processes that returned a `session_id`
+- use `apply_patch` for file edits instead of creating custom write/edit APIs
 
 `svvy` should not copy pi's native `read`, `grep`, `find`, and `ls` preference for this feature,
 because this extension map intentionally follows Codex's shell-first model.
+
+### `exec_command` Source And Lifecycle
+
+`exec_command` should borrow Codex's unified exec shape and prompt guidance.
+
+Tool name:
+
+```text
+exec_command
+```
+
+Description:
+
+```text
+Runs a command in a PTY, returning output or a session ID for ongoing interaction.
+```
+
+Input:
+
+```ts
+type ExecCommandInput = {
+  cmd: string;
+  workdir?: string;
+  shell?: string;
+  tty?: boolean;
+  login?: boolean;
+  yield_time_ms?: number;
+  max_output_tokens?: number;
+  sandbox_permissions?: "use_default" | "require_escalated" | "with_additional_permissions";
+  additional_permissions?: {
+    network?: { enabled: boolean };
+    file_system?: {
+      read?: string[];
+      write?: string[];
+    };
+  };
+  justification?: string;
+  prefix_rule?: string[];
+};
+```
+
+Parameter rules:
+
+- `cmd` is required.
+- `workdir` defaults to the current turn cwd.
+- `shell` defaults to the user's default shell.
+- `tty` defaults to `false`; `true` allocates an interactive PTY.
+- `login` is included only when the runtime supports shell login mode.
+- `yield_time_ms` controls how long the tool waits before yielding output.
+- `max_output_tokens` controls the response output budget.
+- `sandbox_permissions` uses Codex's vocabulary, but `svvy` does not expose a separate
+  user-facing `sandbox_mode` setting.
+- `justification` is meaningful only with `sandbox_permissions: "require_escalated"` and should be a
+  short user-facing approval question.
+- `prefix_rule` is meaningful only with `sandbox_permissions: "require_escalated"` and proposes a
+  reusable approved command prefix such as `["npm", "run", "dev"]`.
+- `additional_permissions` is meaningful only with `sandbox_permissions:
+  "with_additional_permissions"` and requests scoped filesystem or network permission without
+  requesting fully unsandboxed execution.
+
+Result shape:
+
+```ts
+type ExecCommandResult = {
+  chunk_id?: string;
+  wall_time_seconds: number;
+  exit_code?: number | null;
+  session_id?: number;
+  original_token_count?: number;
+  output: string;
+};
+```
+
+Lifecycle:
+
+- short-lived commands return output and `exit_code`; they do not return `session_id`
+- commands still running after the yield window return current output plus `session_id`
+- `session_id` is the model-facing name for the stored process id
+- the process can outlive the first tool call
+- the UI must show a running command card for live sessions and include a user Kill control
+- killing a running command sends the runtime's normal termination signal and records the
+  termination as command lifecycle output
+- already-running sessions stay scoped to the owning actor surface or workflow task attempt
+- unknown or already-cleaned-up `session_id` values return a clear error
+
+Codex details worth preserving unless implementation constraints force a change:
+
+- `yield_time_ms` defaults to `10000`
+- `max_output_tokens` defaults to `10000`
+- output is capped around 1 MiB before model-response truncation
+- initial `exec_command` yield waits are clamped between a small minimum and a maximum around 30s
+- `write_stdin` empty polls wait longer than non-empty writes
+- output is streamed to UI events and also returned as a bounded tool response snapshot
+- long-running process entries are pruned by a bounded process manager, preferring old exited
+  processes before live recent ones
+- Codex uses a maximum of 64 remembered unified exec processes; `svvy` should use the same number
+  unless implementation testing shows it is too high for local resource use
+
+### `write_stdin`
+
+`write_stdin` is only for continuing an `exec_command` session that returned `session_id`.
+
+Tool name:
+
+```text
+write_stdin
+```
+
+Description:
+
+```text
+Writes characters to an existing unified exec session and returns recent output.
+```
+
+Input:
+
+```ts
+type WriteStdinInput = {
+  session_id: number;
+  chars?: string;
+  yield_time_ms?: number;
+  max_output_tokens?: number;
+};
+```
+
+Rules:
+
+- `session_id` is required.
+- `chars` defaults to the empty string.
+- empty `chars` means poll for recent output.
+- non-empty `chars` writes those bytes to the process stdin, then collects recent output.
+- non-empty writes are valid only for TTY sessions; non-TTY sessions return a stdin-closed error.
+- Ctrl-C is sent as `"\u0003"`.
+- `write_stdin` is not a second shell and cannot start a new process.
+- `yield_time_ms` defaults to `250` before runtime clamping.
+- empty polls are clamped to at least `5000ms`.
+- non-empty writes are capped around `30000ms`.
+
+Result shape is the same as `exec_command`.
+
+### Shell Action Visualization
+
+Codex-style command parsing is UI visualization, not authoritative side-effect capture.
+
+`svvy` should parse common shell commands to display likely actions, such as:
+
+- `cat`, `sed -n`, `head`, `tail`, and `nl` as likely file reads
+- `rg` and `grep` as searches
+- `ls`, `find`, and `tree` as listings
+
+These parsed actions are best-effort display hints. They must not be used as security truth,
+approval truth, exact read tracking, or revert provenance. Arbitrary shell commands, scripts,
+package managers, build systems, and child processes remain opaque except for command lifecycle,
+output, approvals, running-session state, and observed workspace changes after the fact.
+
+Codex collapses a parsed command display to unknown when any parsed segment is unknown. `svvy`
+should borrow that conservative display behavior: mixed known/unknown shell pipelines must not show
+only the known part as if the full command was understood.
+
+Extension-scoped command visualization contributions for cx, git, Smithers, Extension Managing,
+provider web commands, and other known command families are deferred in `docs/todo.md`. In v1,
+authoritative capture comes only from `svvy`-owned tool and command boundaries.
 
 ### Apply Patch Source And Policy
 
@@ -1190,7 +1514,7 @@ Policy:
   `svvyx extensions inspect <id> --json` is an explicit writable file when an agent or user needs
   to add, remove, or change a direct dependency or trusted dependency request
 - generated extension outputs, aggregate cache blobs, build `current/` and `staging/` directories,
-  `package/bun.lock`, `package/node_modules/`, trash, snapshots, and packaged builtin defaults are
+  `package/bun.lock`, `package/node_modules/`, trash, snapshots, and packaged shipped defaults are
   not editable roots
 - auto-reviewed when a patch would write outside the active session workspace or explicit writable
   roots
@@ -1226,8 +1550,8 @@ sandbox. The practical boundary is:
 
 ## Execution Policy
 
-The resolved policy direction is that `svvy` should use the same approval-boundary policy shape as
-Codex, with auto-review as the only reviewer for actions that require approval.
+The resolved policy direction is that `svvy` should use Codex's approval-boundary pattern, with
+`auto_review` as the only implemented reviewer for actions that require approval.
 
 ### Codex Reference Facts
 
@@ -1237,9 +1561,8 @@ Local Codex reference audit found:
   a broad family of model-visible read/write/edit tools, even though the Codex app also has
   filesystem RPCs for app-server behavior.
 - Codex separates "which actions require approval" from "who reviews the approval."
-- Codex `ApprovalsReviewer` can be `user`, `auto_review`, or `guardian_subagent`. Its generated
-  documentation says `auto_review` routes approval requests to a carefully prompted subagent that
-  gathers context and applies a risk-based decision framework.
+- Codex `ApprovalsReviewer` can be `user`, `auto_review`, or `guardian_subagent`, but `svvy` v1
+  implements only `auto_review` as a product reviewer.
 - Codex `AskForApproval` has multiple policies: `untrusted`, `on-failure`, `on-request`,
   granular approval switches, and `never`.
 - Codex Guardian review action types include command, execve, applyPatch, networkAccess,
@@ -1270,6 +1593,29 @@ those approval requests.
 
 `svvy` should follow that shape instead of inventing a blanket "review every shell command" policy.
 
+There is no user-facing `sandbox_mode` setting in this spec. The agent and user do not choose among
+`read-only`, `workspace-write`, or `danger-full-access` modes. Runtime guardrails may still exist
+internally, and relevant tools may accept Codex-like `sandbox_permissions`, but the product settings
+surface exposes approval/review behavior rather than a separate sandbox-mode concept.
+
+`sandbox_permissions` is a per-action request:
+
+- `use_default` means run under the current normal runtime guardrails.
+- `require_escalated` means request approval to run outside the normal guardrails.
+- `with_additional_permissions` means request scoped extra filesystem or network permissions without
+  asking for fully unrestricted execution.
+
+`justification` and `prefix_rule` are valid only for `require_escalated`. `prefix_rule` proposes a
+reusable command-prefix approval and must be narrow enough to be safe. Destructive commands must not
+receive persistent prefix rules.
+
+`with_additional_permissions` uses the same approval-boundary flow as `require_escalated`: policy
+classifies the request as skipped, approval-required, or forbidden; if approval is required,
+`auto_review` is the reviewer. Approval grants only the requested scoped permissions for the
+configured approval scope. It must not imply a reusable command-prefix approval, must not bypass the
+normal runtime guardrails entirely, and must not mount unavailable extensions or expose new prompt
+capabilities.
+
 The `svvy` implementation should model direct-tool execution around Codex's
 `ExecApprovalRequirement` shape:
 
@@ -1281,11 +1627,61 @@ Approval state must stay scoped to the owning actor surface or workflow task att
 thread approval state must not leak into the orchestrator, and workflow task approval state must not
 leak outside the Smithers attempt that owns it.
 
+`auto_review` runs only at approval boundaries unless a later spec explicitly adopts a stricter
+review mode. It is not a guarantee that every command is reviewed. If auto-review times out, fails
+to produce parseable output, or otherwise fails, the approval request fails closed.
+
+The reviewer implementation should borrow Codex Guardian's containment posture:
+
+- the reviewer receives a bounded description of the planned action and relevant context
+- the reviewer does not receive write tools
+- the reviewer runs with read-only product access needed for risk evaluation
+- the reviewer cannot approve by mutating state directly; it returns a decision to the owning
+  approval flow
+- `guardian_subagent` is not a product-facing reviewer name in `svvy`
+- `strict_auto_review` is not part of v1; if adopted later, it must be specified as a separate
+  stricter mode, not conflated with ordinary `auto_review`
+
 Dependency install approval is a separate product-state approval class. It is keyed to exact
 dependency identities and exact trusted dependency identities in the app-global extension package
 project, so the same pending request may be referenced by an app pane and by one or more
 conversation tool cards. Sharing that dependency approval record does not grant shell approval,
 runtime tool approval, or actor capability outside the blocked dependency install/build operation.
+
+### Action Capture And UI Truth
+
+`svvy` distinguishes authoritative capture from inferred visualization.
+
+Authoritative capture comes from boundaries `svvy` owns:
+
+- native tool calls such as `exec_command`, `write_stdin`, `apply_patch`, `list_extensions`, and
+  `load_extension`
+- app-owned control tools such as handler/thread/runtime controls
+- loaded extension invocations through actor-scoped `svvyx`
+- generated TypeScript client calls that invoke `svvy` or loaded extension commands
+- provider-backed web tools and their artifact outputs
+- Extension Managing lifecycle commands
+- dependency approval records
+- generated agent context refresh records
+- `apply_patch` file-change records and exact extension-file revert preimages
+
+Arbitrary shell and arbitrary TypeScript side effects are not authoritative capture surfaces. For
+those, `svvy` records:
+
+- command or snippet source
+- cwd or task root
+- owning actor surface or task attempt
+- lifecycle status
+- output chunks and bounded result output
+- exit code or termination
+- approvals and approval decisions
+- running `session_id` when applicable
+- observed workspace changes after the fact when the workspace state can be compared
+
+`svvy` must not claim exact arbitrary reads, writes, network requests, or child process behavior
+unless that fact came through an owned boundary. Codex-style command parsing and extension-scoped
+visualization rules are display hints only. They may make the UI easier to scan, but they are not
+security policy, not approval evidence by themselves, and not revert provenance.
 
 ### Product-State Mutations With Revert
 
@@ -1297,7 +1693,7 @@ Examples:
 
 - changing extension instructions, source, or manifest files through `apply_patch`
 - changing extension usage through `svvyx extensions set-usage`
-- resetting a builtin extension through `svvyx extensions reset`
+- resetting a shipped extension through `svvyx extensions reset`
 - deleting a user extension through `svvyx extensions delete`
 
 Instead of stopping for user approval like many agent apps, `svvy` should visualize the tool use and
@@ -1335,10 +1731,11 @@ Working assignment:
 
 | Operation | Policy class |
 | --- | --- |
-| General shell command | Codex-like approval-boundary policy; auto-review is the reviewer when approval is required. |
-| `svvyx ...` invoked through general shell | Inherits shell policy. |
+| `exec_command` | Codex-like approval-boundary policy; auto-review is the reviewer when approval is required. |
+| `write_stdin` | Continues an existing running `exec_command` session; inherits the owning session/process policy and records lifecycle output. |
+| `svvyx ...` invoked through `exec_command` | Inherits `exec_command` policy. |
 | `apply_patch` | Direct inside the session workspace or allowed extension editing paths; auto-reviewed when it would write outside those roots; rejected when outside policy. |
-| `load_extension` | Direct native control when the extension is available; clear failure when unavailable. |
+| `load_extension` | Direct native control only when the extension is available and ready; clear failure when unavailable or not ready. It does not build, install, request dependency approval, or mutate the binding on failure. |
 | Extension file edits through `apply_patch` | Directly done with rich visualization, Build required indicator, and per-change revert; no auto-build after ordinary agent edits. |
 | User/product-triggered source or config changes | May immediately request a build; dependency approval is still checked only at install time. |
 | Extension usage/reset/delete through Extension Managing | Directly done with rich visualization and command-level revert. |
@@ -1418,16 +1815,15 @@ Dependency approval UX:
 
 - app-level startup, refresh, snapshot load, or build work shows dependency approval as a standalone
   blocking item in the Extensions surface or shared app attention pane
-- agent-visible build or load work shows the same approval as a tool card requiring approval in the
-  owning conversation
+- agent-visible build work shows the same approval as a tool card requiring approval in the owning
+  conversation
 - both placements reference one durable approval request when they are blocked on the same unresolved
   dependency identities
 - approving a request records the listed dependency and trusted dependency identities in the approval
   ledger and updates every pane, conversation tool card, and blocked operation that references it
 - approval resumes blocked app-level build work and any still-pending conversation tool card whose
-  blocked operation is an install/build/load for the same approval request; it does not create a new
-  actor binding or mount an extension into a session unless that still-pending actor-scoped load is
-  the blocked operation being resumed
+  blocked operation is an install/build for the same approval request; it does not create a new
+  actor binding or mount an extension into a session
 - rejecting a request marks that pending request rejected, updates every referencing pane and
   conversation tool card, leaves `buildRequired: true`, and leaves the current mounted command set
   unchanged
@@ -1643,9 +2039,9 @@ specific extension command process:
 5. run the command
 6. discard the per-invocation env map
 
-When `execute_typescript` uses the actor-scoped Incur `MemoryClient`, the same extension-specific
-env map is supplied only to the invoked extension command. The broader `execute_typescript` snippet
-environment, pi runtime process, actor shell environment, and other loaded extensions must not
+When `execute_typescript` uses a generated loaded-extension client, the same extension-specific env
+map is supplied only to the invoked extension command. The broader `execute_typescript` snippet
+environment, pi runtime process, actor command environment, and other loaded extensions must not
 receive that extension's secret values.
 
 Runtime injection rules:
@@ -1796,7 +2192,7 @@ save and load named snapshots of extension source and settings.
 Snapshot payload includes:
 
 - user extension source files and manifests
-- builtin overlay files
+- shipped overlay files
 - extension registry/config/settings
 - agent/profile extension usage states
 - package and lockfile state needed to reproduce exact dependency identities
@@ -1831,23 +2227,26 @@ just as it would after extension deletion and then refreshes its binding.
 The key product improvement is that agents can use configured secrets without being able to read
 them. `svvy` also knows exactly which values to redact because they were entered through the app.
 
-## Built-In Extension Set
+## Shipped Extension Set
 
-This is the resolved built-in extension map from the discussion so far. "Built-in" here means
-shipped by `svvy`, non-deletable, resettable, and configurable per agent usage state.
+This is the resolved shipped extension map from the discussion so far. `category: "shipped"` means
+provided by `svvy`, non-deletable, resettable, and configurable per agent usage state. External
+instruction records use `category: "external_instruction"` and the same usage-state controls, but
+their source files are read-only external inputs.
 
-| Extension | Interface | Included tools or surface | Orchestrator | Handler | Workflow agent |
-| --- | --- | --- | --- | --- | --- |
-| Filesystem | Native | `shell`, `apply_patch`, shell/filesystem instructions, `svvyx` access through shell | default loaded | default loaded | default loaded |
-| Code Mode | Native | `execute_typescript` with actor-scoped Incur `MemoryClient` over loaded extensions | default loaded | default loaded | default loaded |
-| Extension Loading | Native | `list_extensions`, `load_extension` | default loaded | default loaded | default loaded |
-| Extension Managing | Incur-backed shipped extension with native app bridge where needed | `svvyx extensions ...` lifecycle commands for inspect, create, build, usage state, reset, delete, and revert; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |
-| cx | Incur-backed or extension-backed shipped extension | codebase/product navigation and cx controls | available | available | available |
-| Smithers | Incur-backed shipped extension | workflow run/list/inspect/resume/signal/transcript controls | unavailable | default loaded | unavailable |
-| Web | Native/provider-backed or extension-backed shipped extension | web/search/fetch/browser-like research capability | default loaded | default loaded | default loaded |
-| Git | Prompt-only shipped extension | Git shell guidance; no wrapper CLI by default | default loaded | default loaded | default loaded |
-| GitHub | Prompt-only shipped extension | GitHub/`gh` CLI guidance; no wrapper CLI by default | default loaded | default loaded | default loaded |
-| Project CI | Empty todo extension for now | No tools or prompt content yet | unavailable | unavailable | unavailable |
+| Extension | Category | Interface | Included tools or surface | Orchestrator | Handler | Workflow agent |
+| --- | --- | --- | --- | --- | --- | --- |
+| Filesystem | shipped | native_tool | `exec_command`, `write_stdin`, `apply_patch`, Codex-like filesystem/shell instructions, and `svvyx` access through `exec_command` | default_loaded | default_loaded | default_loaded |
+| Code Mode | shipped | native_tool | `execute_typescript` with generated `svvy` and loaded-extension clients as the preferred TypeScript surface | default_loaded | default_loaded | default_loaded |
+| Extension Loading | shipped | native_tool | `list_extensions`, `load_extension` | default_loaded | default_loaded | default_loaded |
+| Extension Managing | shipped | svvyx | `svvyx extensions ...` lifecycle commands for inspect, create, build, usage state, reset, delete, and revert; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |
+| cx | shipped | svvyx or native_tool | codebase/product navigation and cx controls | available | available | available |
+| Smithers | shipped | svvyx | workflow run/list/inspect/resume/signal/transcript controls | unavailable | default_loaded | unavailable |
+| Web | shipped | native_tool or svvyx | provider-backed web search/fetch/research capability when a provider is ready | default_loaded | default_loaded | default_loaded |
+| Git | shipped | instructions | Git shell guidance; no wrapper CLI by default | default_loaded | default_loaded | default_loaded |
+| GitHub | shipped | instructions | GitHub/`gh` CLI guidance; no wrapper CLI by default | default_loaded | default_loaded | default_loaded |
+| External Instructions | external_instruction | instructions | read-only external instruction files such as `AGENTS.md` and `CLAUDE.md`, surfaced with open-external-file controls | default_loaded | default_loaded | default_loaded |
+| Project CI | shipped | instructions | Empty todo extension for now; no tools or prompt content yet | unavailable | unavailable | unavailable |
 
 The Git and GitHub extensions should not wrap `git` or `gh` by default. Agents can use the ordinary
 shell and command help. The app should still check whether `git` and `gh` are available and show a
@@ -1920,7 +2319,7 @@ Rules:
 - Any extension id omitted from the object is `unavailable` for that invocation.
 - The generated type must prevent unknown extension ids and invalid usage states.
 
-## Context Packs And Runtime Standards
+## Context Packs And External Instructions
 
 The session direction is to remove standalone Context Packs as a product concept or absorb them into
 extensions.
@@ -1932,19 +2331,34 @@ The old "Context" concept becomes part of agent composition:
 - extension instructions and generated agent contexts are visible from Extensions and linked from Agents
 - available extensions provide minimal prompt hints instead of separate context-pack trigger prose
 
-Runtime standards such as `AGENTS.md` and `CLAUDE.md` still need a visible generated-context story.
-The session stated that the Agents pane should show a readonly list of generated material that made
-it into the agent context, including generated runtime standards.
+External instruction files such as `AGENTS.md` and `CLAUDE.md` are represented as
+`category: "external_instruction"` extension records.
 
-This conflicts with the current Context pane specs, where runtime standards are shown in Context.
-The final implementation spec must reconcile where runtime standards are configured, previewed, and
-scoped.
+Rules:
 
-## Direct Mentions And Triggering
+- they appear in Extensions under a distinct External Instructions category, not as shipped
+  extensions and not as user extensions
+- they use the same per-agent `default_loaded`, `available`, and `unavailable` controls as all other
+  extensions
+- they are prompt-only and always use `interface: "instructions"`
+- their source files are read-only in `svvy`
+- the extension detail view shows path, discovered source, inclusion order, current content, and an
+  `Open external file` action
+- reset affects only `svvy` usage/settings and any `svvy` metadata overlay; it must not overwrite,
+  truncate, regenerate, or delete the external file
+- generated-context previews show the exact external instruction content that reached the actor
+- generated-context fingerprints include exact content, source metadata visible to the actor, and
+  ordering
+- external file changes detected outside `svvy` update readiness/fingerprints through the same
+  generated context refresh pipeline as extension changes
 
-Direct `@extension` mention is adopted as explicit user intent.
+## Triggering
 
-Fuzzy trigger words were discussed early, but they should not mutate the user message with hidden
+Direct `@extension` mention is not part of the adopted loading mechanism in this spec. The adopted
+agent-side loading mechanism is `load_extension`; the adopted user-side mechanism is per-agent
+extension usage configuration.
+
+Fuzzy trigger words were discussed early, but they must not mutate the user message with hidden
 instructions. If trigger matching is ever added, it should produce structured metadata or a visible
 suggestion, not hidden prose stuffed into the prompt.
 
@@ -1977,10 +2391,10 @@ The generated view should include:
 - base instructions
 - loaded extension full instructions
 - available extension minimal instructions
-- runtime standards that reached the actor
+- external instructions that reached the actor
 - mounted `svvyx` extension list
 - loaded `svvyx` command guidance
-- generated TypeScript command types
+- generated TypeScript declarations for `svvy` and loaded-extension clients
 - native tool declarations
 - unavailable extensions omitted entirely
 
@@ -2004,7 +2418,7 @@ This fingerprint hashes only actor-facing extension contract data:
   aliases when exposed, argument schemas, option schemas, output schemas, examples, deprecation
   markers, and streaming markers
 - loaded `svvyx` command guidance bytes
-- generated TypeScript declaration bytes when TypeScript API is enabled
+- generated TypeScript client declaration bytes when TypeScript API is enabled
 - generated native tool schema bytes
 - env declaration metadata that may be shown to the agent: env name, required flag, secret flag,
   short description, defaulted/configured/missing status shape, and ready/issue status shape
@@ -2053,10 +2467,11 @@ actor-scoped extension invocation:
   actor availability
 - mounted `svvyx` extension namespace list for loaded extensions
 - loaded `svvyx` command guidance included for loaded extensions
-- generated TypeScript declarations included for loaded extensions and `execute_typescript`
+- generated TypeScript declarations included for `execute_typescript`, `svvy` clients, and loaded
+  extension clients
 - generated native tool schema files included in the actor context
-- runtime standards that reached the actor, including exact content, order, additions/removals, and
-  visible source metadata when that metadata appears in generated context
+- external instructions that reached the actor, including exact content, order, additions/removals,
+  and visible source metadata when that metadata appears in generated context
 - agent-context fingerprint format version
 
 The agent context fingerprint must not include:
@@ -2159,26 +2574,21 @@ The following are unresolved from the session and should be settled before imple
   prompts, even though the local reference already shows approval-boundary semantics rather than
   blanket shell review.
 - Define the exact local version of Codex-like approval-boundary semantics for shell.
-- Define how far `svvy` should extend auto-review beyond shell for MCP or extension bridge calls,
-  network access, hooks, and permission-like flows.
-- Decide whether general shell is exposed to every actor kind or only to actor kinds/profiles that
-  explicitly select it.
-- Decide which non-shell native tools participate in auto-review versus rich revert-only UI or
-  hybrid policy.
+- Define how far `svvy` should extend auto-review beyond `exec_command` and `apply_patch` for
+  extension bridge calls, provider network access, hooks, and permission-like flows.
 - Define what information the auto-reviewer receives: actor kind, agent profile, loaded extensions,
   available extension names and summaries for policy context, unavailable extension ids if needed
   for bypass detection, current loaded `svvyx` surface, cwd, command/action JSON, relevant
   read-only filesystem state, and recent conversation state.
-- Decide where runtime standards are configured after the Context pane is removed or absorbed.
 - Define the first real version of Project CI as an extension. It is currently a placeholder with no
   actor availability.
-- Decide the exact generated TypeScript contract once the local Incur fork API is verified.
+- Define the exact generated TypeScript client contract once the local Incur fork API and native
+  client-generation strategy are verified.
 - Define exact naming and collision rules for extension ids and subcommand namespaces.
-- Define the exact generated TypeScript contract once the local Incur fork API is verified.
 
-## Product Docs That Must Change If Adopted
+## Product Docs That Must Stay In Sync
 
-Adopting this spec materially changes current source-of-truth docs.
+This spec materially changes source-of-truth docs that still contain older vocabulary.
 
 Required updates include:
 
@@ -2191,8 +2601,8 @@ Required updates include:
   Extensions.
 - `docs/specs/ambient-agent-resources-baseline.spec.md`: reconcile ambient-resource default-off
   policy with explicit extension installation and enablement.
-- `docs/specs/execute-typescript.spec.md`: replace hand-built `api.*` with the Incur
-  `MemoryClient` direction if adopted.
+- `docs/specs/execute-typescript.spec.md`: replace the older direct-tool helper API with ordinary
+  TypeScript plus generated `svvy` and loaded-extension clients.
 - `docs/specs/project-ci.spec.md`: clarify Project CI as an extension/domain layer over Smithers.
 - `docs/specs/workflow-library.spec.md`: later reuse the extension dependency policy for workflow
   TypeScript dependencies.

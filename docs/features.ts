@@ -30,7 +30,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "True System Prompt Channel",
     status: "in-progress",
     summary:
-      "Loads svvy's orchestrator, handler-thread, and workflow task-agent instructions through pi's real `systemPrompt` channel from the bound generated agent context, ignores pi `SYSTEM.md` and `APPEND_SYSTEM.md` prompt replacement or append files, preserves pi-discovered `AGENTS.md` and `CLAUDE.md` runtime standards in the prompt path, sends new user input as real pi user messages without flattened transcript reconstruction or hidden durable state prose, slices generated capability declarations by actor so each surface sees only its own callable API, renders the active system prompt as expandable surface metadata instead of inline transcript text, fingerprints the exact generated agent context each surface received, and automatically applies ready agent context updates through durable `agent_context_refresh` queue work before later prompt-bearing turns or at the next safe active-run boundary.",
+      "Loads svvy's orchestrator, handler-thread, and workflow task-agent instructions through pi's real `systemPrompt` channel from the bound generated agent context, ignores pi `SYSTEM.md` and `APPEND_SYSTEM.md` prompt replacement or append files, preserves discovered `AGENTS.md` and `CLAUDE.md` files as read-only `external_instruction` extension records in the prompt path, sends new user input as real pi user messages without flattened transcript reconstruction or hidden durable state prose, slices generated capability declarations by actor so each surface sees only its own callable API, renders the active system prompt as expandable surface metadata instead of inline transcript text, fingerprints the exact generated agent context each surface received, and automatically applies ready agent context updates through durable `agent_context_refresh` queue work before later prompt-bearing turns or at the next safe active-run boundary.",
     sourceSpecs: ["docs/prd.md", "docs/specs/prompt-library.spec.md"],
   },
   {
@@ -38,7 +38,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Ambient Agent Resources",
     status: "in-progress",
     summary:
-      "Defines provider-neutral ambient coding-agent resource categories for callable capabilities, executable extensions and packages, skills, prompt templates, commands, hooks, UI resources, provider/model adapters, credentials, execution policy, and runtime state; preserves plain runtime standards such as `AGENTS.md` and `CLAUDE.md` as visible prompt context while keeping behavior-changing ambient resources disabled by default; and requires users to opt in by settings-scoped host, workspace, actor class, category, and source before those resources can affect prompts, generated API declarations, command routing, UI, provider/auth behavior, or execution policy.",
+      "Defines provider-neutral ambient coding-agent resource categories for callable capabilities, executable extensions and packages, skills, prompt templates, commands, hooks, UI resources, provider/model adapters, credentials, execution policy, and runtime state; preserves plain external instruction files such as `AGENTS.md` and `CLAUDE.md` as visible prompt context through read-only extension records while keeping behavior-changing ambient resources disabled by default; and requires users to opt in by settings-scoped host, workspace, actor class, category, and source before those resources can affect prompts, generated API declarations, command routing, UI, provider/auth behavior, or execution policy.",
     sourceSpecs: ["docs/prd.md", "docs/specs/ambient-agent-resources-baseline.spec.md"],
   },
   {
@@ -46,7 +46,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Extension Env And Secrets",
     status: "in-progress",
     summary:
-      "Defines app-global extension env declarations and app-managed values keyed by `(extensionId, envName)`, with user-only secret entry/update/removal, encrypted local secret storage, non-secret manifest defaults plus app-level overrides, status-only agent inspection through `list_extensions` and Extension Managing, build-time declaration validation separate from ready state, process-local runtime injection into only the specific trusted extension command or MemoryClient invocation, and redaction across prompts, generated docs, tool output, logs, artifacts, transcripts, and snapshots while deferring egress-proxy credential boundaries.",
+      "Defines app-global extension env declarations and app-managed values keyed by `(extensionId, envName)`, with user-only secret entry/update/removal, encrypted local secret storage, non-secret manifest defaults plus app-level overrides, status-only agent inspection through `list_extensions` and Extension Managing, build-time declaration validation separate from ready state, process-local runtime injection into only the specific trusted extension command or generated extension-client invocation, and redaction across prompts, generated docs, tool output, logs, artifacts, transcripts, and snapshots while deferring egress-proxy credential boundaries.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/extensions-and-tools.spec.md",
@@ -79,7 +79,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Direct Tools And Execute Typescript",
     status: "in-progress",
     summary:
-      "Provides native direct tools as the default coding-agent work surface, with svvy recording around semantic cx navigation, text and image reads, searches, edits, writes, bash commands, artifacts, actor-owned workflow discovery, provider-backed web search and fetch when a keyed provider is ready, and actor-local tool-surface inspection through `list_tools`; explicitly teaches agents to issue independent tool calls together so pi can run them in parallel; keeps execute_typescript as an actor-local typed composition tool with a generated JSDoc-rich declaration for read/search/bash/artifact APIs, handler-only workflow discovery helpers, optional provider-shaped web helpers when ready, and read-only api.cx_* calls embedded in the system prompt, while keeping workflow and Smithers control out of orchestrator code mode, keeping task-agent code mode task-local, producing preflight typecheck or compile diagnostics, storing file-backed snippet artifacts for every attempt, and rolling up nested child command facts under the parent.",
+      "Provides Codex-like native filesystem tools as the default coding-agent work surface, with `exec_command`, `write_stdin`, and `apply_patch` carrying command lifecycle, long-running session, and patch facts; keeps execute_typescript as an actor-local TypeScript composition tool with generated svvy and loaded-extension clients as the preferred typed surface; preserves arbitrary TypeScript side effects as opaque unless they go through svvy-owned client boundaries; produces preflight typecheck or compile diagnostics when available, stores file-backed snippet artifacts for every attempt, and rolls generated-client child command facts under the parent.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/execute-typescript.spec.md",
@@ -91,7 +91,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Provider-Backed Web Tools",
     status: "shipped",
     summary:
-      "Lets users choose TinyFish or Firecrawl as the active keyed web provider in settings, store provider API keys there, expose provider-shaped `web_search` and deterministic artifact-backed `web_fetch` tools plus generated `api.web_*` composition helpers only when the selected provider is ready, use TinyFish's official TypeScript SDK for TinyFish Search and Fetch contracts and runtime calls, regenerate prompt context and tool declarations cleanly on provider changes, and keep the default product state web-disabled with no no-key Local fallback.",
+      "Lets users choose TinyFish or Firecrawl as the active keyed web provider in settings, store provider API keys there, expose provider-shaped `web_search` and deterministic artifact-backed `web_fetch` tools plus generated web clients only when the selected provider is ready, use TinyFish's official TypeScript SDK for TinyFish Search and Fetch contracts and runtime calls, regenerate prompt context and tool declarations cleanly on provider changes, and keep the default product state web-disabled with no no-key Local fallback.",
     sourceSpecs: ["docs/specs/web-tools.spec.md"],
   },
   {
@@ -104,10 +104,10 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
   },
   {
     id: "prompt-library",
-    name: "Context Library And Context Packs",
+    name: "Agents And Extensions Prompt Composition",
     status: "in-progress",
     summary:
-      "Provides a dedicated Context pane below Agents where reusable instruction blocks and context packs are editable with debounced text autosave, immediate control persistence for row-level enabled checkboxes, actor checkbox chips, and scope controls below actor inclusion, disabled-detail warnings, custom-block deletion with inline confirmation, per-block resettable with inline confirmation, app-global by default, optionally scoped through a retained-selection multi-select combobox over previously opened workspace cwd keys, filterable by actor and state, assembled through actor aggregate recipes for orchestrator, handler, and workflow task-agent prompts, and routed through explicit `workspaceId` for workspace-affecting reads, writes, generated-context previews, snapshots, actor aggregates, and agent-context freshness checks rather than the active workspace; renders generated prompt parts and pi-discovered `AGENTS.md`/`CLAUDE.md` runtime standards as read-only scrollable generated-context previews with external-editor links, path, content, and order; seeds the library with the current common, orchestrator, handler, workflow-task, cx, Smithers, web, and Project CI guidance as normal editable but non-deletable builtins whose muted badges change from `builtin` to `edited` when their content or state differs from the shipped snapshot; hides raw revision counters while exposing explicit user-named snapshots with timestamp defaults, snapshot loading, snapshot rename controls, and a combobox current-state label when the current Context content does not match a saved snapshot; binds new orchestrator sessions, handler threads, and workflow task-agent attempts to the latest ready generated agent context; and automatically queues `Update agent context` work for existing surfaces when their generated agent context fingerprint differs from the current ready context.",
+      "Reframes prompt composition around Agents and Extensions: agent profiles own base instructions, model/reasoning, actor kind, and per-extension usage states, while Extensions own shipped, user, and external_instruction capability records with loaded full instructions, available minimal loading hints, generated previews, and reset/delete controls appropriate to category. Generated context previews show base instructions, loaded extension instructions, available loading hints, read-only external instruction files such as `AGENTS.md` and `CLAUDE.md` with open-external-file controls, native tool declarations, loaded svvyx guidance, and generated TypeScript client declarations; new surfaces bind to the latest ready generated agent context and existing surfaces receive durable `Update agent context` work when their fingerprint differs.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/prompt-library.spec.md",
@@ -158,7 +158,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workspace Workflows Library",
     status: "shipped",
     summary:
-      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, exposes minimal asset index metadata from required JSDoc and MDX frontmatter, reserves workflow-agent component conventions for future packaged-app-safe Workflows behavior rather than repo-root `workflows/` runtime state, supports optional product metadata and result schemas on entries such as Project CI, lets handlers list asset paths through `workflow_list_assets` and read saved asset source through direct file tools, validates writes under `.svvy/workflows/...` automatically through structured tool output, and presents a read-only Workflows surface with source previews, diagnostics, deletion controls, and open-in-editor handoff to the user's configured external editor, with all workspace-affecting Workflows operations routed by explicit `workspaceId` instead of active workspace state.",
+      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, exposes minimal asset index metadata from required JSDoc and MDX frontmatter, reserves workflow-agent component conventions for future packaged-app-safe Workflows behavior rather than repo-root `workflows/` runtime state, supports optional product metadata and result schemas on entries such as Project CI, lets handlers list asset paths through `workflow_list_assets` and inspect saved asset source through `exec_command`, validates `apply_patch` writes under `.svvy/workflows/...` automatically through structured tool output, and presents a read-only Workflows surface with source previews, diagnostics, deletion controls, and open-in-editor handoff to the user's configured external editor, with all workspace-affecting Workflows operations routed by explicit `workspaceId` instead of active workspace state.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
   },
   {
@@ -273,7 +273,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Turn And Command State",
     status: "in-progress",
     summary:
-      "Tracks every turn on the orchestrator surface and handler thread surfaces, including each turn's top-level turn decision, plus every tool call including execute_typescript snippets and nested api.* child command facts, as durable state with lifecycle status, ownership, linkage, attempts, and trace-versus-surface visibility.",
+      "Tracks every turn on the orchestrator surface and handler thread surfaces, including each turn's top-level turn decision, plus every tool call including execute_typescript snippets and generated-client child command facts, as durable state with lifecycle status, ownership, linkage, attempts, and trace-versus-surface visibility.",
     sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
   },
   {

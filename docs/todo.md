@@ -10,9 +10,12 @@ It is not a general backlog and it does not include source-only audit addendum n
 
 Status: deferred.
 
-Decision: no sandboxing for now. Treat `execute_typescript` and bash as trusted local coding-agent capabilities during the current product pass.
+Decision: no sandboxing for now. Treat `execute_typescript` and host command execution through
+`exec_command` as trusted local coding-agent capabilities during the current product pass.
 
-Later follow-up: design one shared host-execution confinement model that covers both `execute_typescript` and bash if/when `svvy` needs to treat agent code or shell commands as untrusted.
+Later follow-up: design one shared host-execution confinement model that covers both
+`execute_typescript` and `exec_command` if/when `svvy` needs to treat agent code or shell commands
+as untrusted.
 
 Reference: `docs/codebase-audit-issue-research.md`, AUD-001.
 
@@ -33,6 +36,16 @@ Status: deferred.
 Decision: do not require a proxy boundary for v1 extension secrets. Treat extension code as trusted not to intentionally log or exfiltrate configured secret values during the current product pass.
 
 Later follow-up: evaluate an `iron-proxy`-style egress and credential-injection boundary so extensions can make authenticated network calls without raw secrets entering the extension process environment.
+
+Reference: `docs/specs/extensions-and-tools.spec.md`.
+
+### Extension-Scoped Command Visualization
+
+Status: deferred.
+
+Decision: authoritative action capture comes from svvy-owned tool and command boundaries. Arbitrary shell commands and arbitrary TypeScript side effects remain opaque except for process lifecycle, output, approvals, running-session state, and observed workspace changes after the fact.
+
+Later follow-up: improve UI visualization with Codex-style best-effort command parsing. Shipped extensions can contribute internal visualization rules for the commands or CLIs they own, such as cx, git, Smithers, Extension Managing, provider web commands, and other non-arbitrary command families. Enable an extension's visualization contributions only when that extension is enabled for the session, and present parsed shell actions as display hints rather than syscall-level truth.
 
 Reference: `docs/specs/extensions-and-tools.spec.md`.
 

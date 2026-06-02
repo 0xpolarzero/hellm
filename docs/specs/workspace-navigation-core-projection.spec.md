@@ -208,8 +208,8 @@ The app should create artifact records in these cases:
 
 1. Automatically, for mandatory runtime evidence such as every submitted `execute_typescript` snippet.
 2. Automatically, when a runtime needs to retain a large stdout, stderr, diagnostics, trace, screenshot, workflow export, or other execution payload that is too bulky for command facts or transcript text.
-3. Explicitly, through `api.artifact_* tools`, when an agent creates a durable byproduct that should be inspectable later but should not normally live in the repository.
-4. Explicitly, through `api.artifact_attach_file(...)`, when an existing generated file should be retained as evidence without treating that file as a normal workspace deliverable.
+3. Explicitly, through generated artifact clients, when an agent creates a durable byproduct that should be inspectable later but should not normally live in the repository.
+4. Explicitly, through a generated artifact attach-file client, when an existing generated file should be retained as evidence without treating that file as a normal workspace deliverable.
 
 The app should not create artifact records for:
 
