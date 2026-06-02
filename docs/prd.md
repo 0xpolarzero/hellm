@@ -209,8 +209,12 @@ The adopted direction for task agents is:
 - use a PI-backed workflow task agent by default when a workflow task needs an adaptive coding agent
 - give that task agent a minimal `svvy` workflow-task system prompt rather than the orchestrator or handler-thread prompt
 - expose a task-local generated capability set plus `execute_typescript` for typed composition
+- run task-local shell, patch, network, and generated-client boundaries through the same `svvy`
+  execution policy as orchestrators and handler threads, including managed sandboxing,
+  `networkAccess`, and the configured approval mode, scoped to the exact Smithers task attempt
 - keep `thread_start`, `thread_handoff`, `wait`, and `smithers_*` out of the task-agent runtime and tool schema instead of teaching unavailable controls in prompt prose
-- keep human approval and hijack as Smithers runtime or operator controls around the task, not as ordinary task-agent tools
+- keep Smithers workflow approval and hijack as Smithers runtime or operator controls around the
+  task, not as ordinary task-agent tools
 - execute the task agent and its task-local tool calls from Smithers' current task root, including the active worktree when the task is worktree-bound
 - keep the workflow runtime DB, run ownership, and structured projection workspace-scoped even when the task itself executes in a worktree
 - bind the workflow-task-attempt record before any task-local tool call runs by the exact Smithers task-attempt identity `(runId, nodeId, iteration, attempt)` supplied by the current Smithers context; do not use resume-handle lookup, heuristic recency scans, transcript inference, or multi-stage fallback chains to discover ownership
@@ -315,6 +319,10 @@ official TinyFish CLI through ordinary shell commands. It does not add `web_sear
 install, auth, search, fetch, browser-backed research, and command output behavior. `svvy` only owns
 whether the Web instructions are included in the actor's generated agent context.
 
+The execution setting `networkAccess` defaults to true. When `networkAccess` is false, the Web
+extension is disabled through normal extension binding, which means TinyFish prompt guidance is not
+included for orchestrators, handler threads, or workflow task agents.
+
 The orchestrator may provide handler creation-time extension overrides when the delegated objective
 should begin with a non-default extension already loaded:
 
@@ -351,7 +359,7 @@ More precisely, this means:
 - `svvy` should expose only the subset of Smithers capabilities it actually wants the agent to use; unexposed Smithers surfaces remain operator-only or future work rather than getting renamed into parallel `svvy` APIs
 - the orchestrator should know that `smithers_*` exists as a handler-thread capability, but it should not receive the `smithers_*` generated API block in its own prompt
 - a handler thread should know that the orchestrator can delegate and reconcile handoffs, but it should not receive the orchestrator-only `thread_start` generated API block unless nested delegation is explicitly adopted
-- a workflow task agent should know only its task-local instructions and task-local tools; approvals and hijack remain Smithers runtime behavior outside the task-agent tool block
+- a workflow task agent should know only its task-local instructions and task-local tools; Smithers workflow approvals and hijack remain Smithers runtime behavior outside the task-agent tool block, while shell/sandbox approvals raised by task-local direct tools use the same `svvy` execution-permission flow as other actors
 
 The intended use of the native control subset is:
 
@@ -457,17 +465,23 @@ In practice that means:
 - repeatable structure is pushed into saved definitions, prompts, components, saved runnable entries, and `execute_typescript` instead of repeatedly re-derived in prose
 - raw model reasoning is reserved for ambiguity, synthesis, prioritization, and recovery
 
-### 12. Auto-Reviewed Approval Boundaries
+### 12. Codex-Like Execution Policy
 
-`svvy` uses Codex-like approval boundaries with automatic review by default.
+`svvy` uses Codex-like approval boundaries with automatic review by default, plus explicit user and
+full-access modes.
 
 In practice that means:
 
 - normal trusted local coding work proceeds without turning every command into a user approval prompt
-- actions that cross a configured approval boundary are reviewed by `auto_review`
+- all `exec_command`, `svvyx ...`, and `apply_patch` boundary decisions are enforced by the runtime, not by model memory
+- `approvalMode: "auto-review"` routes approval-boundary requests to the automatic reviewer
+- `approvalMode: "user"` blocks the exact tool call on an actor-local user approval request
+- `approvalMode: "full-access"` disables the approval boundary and managed filesystem sandbox
+- macOS managed sandboxing uses `/usr/bin/sandbox-exec` with packaged Codex-derived Seatbelt policy generation
+- `networkAccess` defaults to true; disabling it restricts network access and disables the Web extension
 - dependency installation remains an explicit user-confirmation flow because it can download and execute third-party code
 - ambiguity is handled through clarification and waiting states when the agent needs user intent, not through hidden approval gates
-- delegated handler threads may pause for missing information or resumable waiting conditions, but not for product-level approval requests
+- delegated handler threads and workflow task agents may pause on actor-local execution-permission approvals only when `approvalMode` is `user`; Smithers workflow approvals remain Smithers workflow state
 
 ## Product Ownership Boundaries
 

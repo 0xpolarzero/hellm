@@ -202,15 +202,25 @@ The adopted direction is:
 - use a PI-backed workflow task agent by default when a workflow task needs an adaptive agent
 - give that workflow task agent a minimal `svvy` workflow-task prompt rather than the orchestrator or handler-thread prompt
 - expose task-local direct tools plus `execute_typescript` for typed composition
+- run task-local shell, patch, network, and generated-client boundaries through the same `svvy`
+  execution policy as orchestrators and handler threads, including Codex-like macOS sandboxing,
+  `networkAccess`, and approval modes, scoped to the exact Smithers task attempt
 - do not expose `thread_start`, `thread_handoff`, `wait`, or `smithers_*` to workflow task agents or mention those unavailable controls in their base prompt
 - do not load ambient pi built-in tools or workspace-discovered extension tools into workflow task agents
 - execute workflow task agents from Smithers' current task root or worktree rather than from the workspace runtime DB root
 - preserve structured message history, step boundaries, and usage across retries and hijack handoff instead of flattening task-agent continuation into plain text
 
-Approvals and hijack are not ordinary task-agent tools:
+Smithers workflow approvals and hijack are not ordinary task-agent tools:
 
-- approval belongs to Smithers workflow controls such as approval nodes or task approval gates
+- workflow approval belongs to Smithers workflow controls such as approval nodes or task
+  approval gates
 - hijack belongs to Smithers runtime or operator controls around the underlying task agent session
+
+Shell, filesystem, network, and generated-client permission approvals raised by a workflow task
+agent's direct tools are different. Those use the same `svvy` execution-permission flow as
+orchestrator and handler-thread direct tools, scoped to the exact Smithers task attempt that owns the
+blocked call. They must not be routed through Smithers workflow approval tools such as
+`smithers_list_pending_approvals` or `smithers_resolve_approval`.
 
 ### 5. Workflow State Returns To The Handler Thread, Not The Orchestrator
 

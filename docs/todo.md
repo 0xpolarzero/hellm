@@ -8,14 +8,16 @@ It is not a general backlog and it does not include source-only audit addendum n
 
 ### AUD-001 - Host Execution Sandboxing
 
-Status: deferred.
+Status: adopted in resolved execution-policy design.
 
-Decision: no sandboxing for now. Treat `execute_typescript` and host command execution through
-`exec_command` as trusted local coding-agent capabilities during the current product pass.
+Decision: host command execution through `exec_command`, `svvyx ...` through `exec_command`,
+`apply_patch`, and workflow task-agent direct tools use the Codex-like execution policy defined in
+`docs/specs/extensions-and-tools.spec.md`: macOS managed sandboxing through `/usr/bin/sandbox-exec`
+with vendored or ported Codex Seatbelt policy generation, default-on `networkAccess`, and approval
+modes `auto-review`, `user`, and `full-access`.
 
-Later follow-up: design one shared host-execution confinement model that covers both
-`execute_typescript` and `exec_command` if/when `svvy` needs to treat agent code or shell commands
-as untrusted.
+Later follow-up: implement the shared runtime policy and decide the exact confinement strategy for
+arbitrary `execute_typescript` snippets that do not go through generated `svvy` or extension clients.
 
 Reference: `docs/codebase-audit-issue-research.md`, AUD-001.
 

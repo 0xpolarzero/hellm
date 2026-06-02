@@ -1058,6 +1058,13 @@ Dependency approval UI:
 - unanswered approval requests remain pending and visible until approved, rejected, or made obsolete
   by later source/package changes that no longer require the same identities
 
+Dependency approval is not the Codex-like shell approval path. It is a product-state approval ledger
+for exact dependency and trusted dependency identities. It must not be sent to the auto-reviewer as a
+generic policy fact, must not grant shell approval, must not grant a command-prefix rule, and must not
+mount or load an extension by itself. If an agent runs `svvyx extensions build <id> --json` and that
+build reaches dependency approval, the command result references the durable dependency approval
+request; the blocked install/build resumes only after that dependency request is approved.
+
 The normal build pipeline is:
 
 ```text
@@ -1419,6 +1426,10 @@ install/build continues. Approving the request records the listed identities and
 snapshot build work. Rejecting it marks the snapshot load's build work blocked, leaves
 `buildRequired: true` for affected extensions, and leaves current mounted extension command sets
 unchanged.
+
+Snapshot dependency approvals follow the same separation as build dependency approvals: they are not
+auto-review/user shell approvals, do not enter ordinary auto-review payloads, and do not affect
+runtime approval state for `exec_command`, `apply_patch`, `svvyx`, or workflow task-agent tool calls.
 
 Loading a snapshot must leave current mounted extension command sets in place until replacement builds
 succeed. If a snapshot removes an extension that an existing session had loaded or available, that

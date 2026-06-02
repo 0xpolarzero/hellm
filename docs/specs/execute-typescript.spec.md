@@ -69,10 +69,16 @@ Generated `svvy` and loaded-extension clients are the preferred surface because 
 - extension env injection only for the invoked extension command
 - redaction before output is persisted or shown to the model
 
+Generated client calls that invoke `svvy`-owned command, patch, network, extension, or product
+boundaries must use the same runtime policy as the underlying capability. For example, a generated
+client call that starts an `exec_command` or applies a patch still goes through the same Codex-like
+approval classification, sandboxing, and action capture as a direct tool call.
+
 Arbitrary TypeScript side effects that do not go through generated clients are opaque. `svvy` should
-record the submitted source, lifecycle, console output, return value, thrown error, and any observed workspace
-changes after the fact, but it must not claim exact reads, writes, network requests, or child process
-behavior for arbitrary host-side TypeScript.
+record the submitted source, lifecycle, console output, return value, thrown error, and any observed
+workspace changes after the fact, but it must not claim exact reads, writes, network requests, child
+process behavior, or Codex-style sandbox approval facts for arbitrary host-side TypeScript unless a
+future implementation routes those effects through an owned runtime boundary.
 
 ## Input
 

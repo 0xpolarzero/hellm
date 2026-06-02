@@ -938,6 +938,13 @@ Common cases are:
 - workflow-owned timer waits
 - other external dependencies
 
+`svvy` execution-permission approvals are distinct from Smithers workflow approvals. A shell,
+`apply_patch`, network, or sandbox approval raised by `exec_command`/direct-tool runtime is owned by
+the exact orchestrator surface, handler thread, or workflow task-agent attempt that made the tool
+call. A Smithers approval wait is owned by Smithers run/node state. These two approval sources may
+both project as waiting in the UI, but their records, resolution APIs, and cache scopes must not be
+merged.
+
 Rules:
 
 - set `thread.status = "waiting"`
@@ -958,6 +965,12 @@ Use it when:
 
 - the orchestrator surface
 - or one handler thread
+
+If the blocked owner is a workflow task-agent attempt, `session.wait` must still route through the
+owning handler thread and include enough Smithers attempt identity for the UI to highlight the exact
+task attempt. Approving or denying that execution-permission request resumes or aborts only that
+blocked tool call; it must not resolve Smithers workflow approval nodes and must not affect other
+actor sessions.
 
 ## Derived Read Model
 

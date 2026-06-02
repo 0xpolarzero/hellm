@@ -297,6 +297,11 @@ The adopted direction is:
 - do not expose `thread_start`, `thread_handoff`, `wait`, or `smithers_*` to workflow task agents or mention those unavailable controls in their base prompt
 - do not load ambient pi built-in tools or workspace-discovered extension tools into the task agent runtime
 - execute the task agent and its task-local tools from Smithers' current task root or worktree, while leaving Smithers runtime DB ownership and `svvy` workflow projection workspace-scoped
+- run task-local shell, patch, network, and generated-client boundaries through the same `svvy`
+  agent/runtime execution path used by orchestrators and handler threads, including Codex-like macOS
+  sandboxing, `networkAccess`, and approval modes `auto-review`, `user`, and `full-access`
+- scope any approval raised by a shell, `apply_patch`, network, or generated-client boundary to the
+  exact workflow task attempt identified by Smithers run and attempt identity
 - preserve structured message arrays, step boundaries, and usage across retries, schema repair prompts, and hijack handoff instead of flattening continuation state into plain transcript prose
 - stream live assistant deltas and tool updates so heartbeat freshness and UI activity reflect real task-agent progress rather than only terminal text
 
@@ -314,10 +319,14 @@ But it is a different actor contract because the host and lifecycle are differen
 
 Smithers runtime controls around task agents stay outside the task-agent capability set:
 
-- approval belongs to Smithers approval nodes or task approval gates such as `<Approval>` or `needsApproval`
+- workflow approval belongs to Smithers approval nodes or task approval gates such as `<Approval>` or `needsApproval`
 - hijack belongs to Smithers runtime or operator controls that reopen the underlying task-agent session
 
-`svvy` should treat approvals and hijack as workflow-supervision state and operator surfaces around a run, not as ordinary callable tools for the task agent itself.
+`svvy` should treat Smithers approvals and hijack as workflow-supervision state and operator surfaces
+around a run, not as ordinary callable tools for the task agent itself. Shell/sandbox approval
+requests raised by task-local direct tools are different: they are `svvy` execution-permission
+requests, not Smithers workflow approvals, and must not be routed through Smithers
+`list_pending_approvals`, `resolve_approval`, or workflow `Approval` components.
 
 ## Smithers Capability Set
 

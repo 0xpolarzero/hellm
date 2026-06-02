@@ -708,6 +708,27 @@ Adding a host config file must not silently change whether shell commands are al
 is enabled, whether approvals are required, which directories are writable, which tools can run, or
 which commands are blocked.
 
+Resolved `svvy` execution policy:
+
+- normal direct tool execution uses the Codex-like `exec_command`, `write_stdin`, and `apply_patch`
+  surface defined in `docs/specs/extensions-and-tools.spec.md`
+- on macOS, managed filesystem sandboxing uses `/usr/bin/sandbox-exec` with vendored or ported Codex
+  Seatbelt policy generation and SBPL templates packaged with the app
+- the default managed filesystem policy follows Codex workspace-write semantics: broad reads, writes
+  to workspace roots and configured writable roots, writes to `/tmp` and `$TMPDIR` unless excluded,
+  and protected metadata carveouts such as `.git`, `.agents`, and `.codex`
+- the user-facing execution settings are `approvalMode` and `networkAccess`, not imported host
+  sandbox modes
+- `approvalMode` is `auto-review`, `user`, or `full-access`
+- `auto-review` and `user` both use Codex-like runtime classification and sandboxing; they differ only
+  in whether approval-boundary requests are resolved by the reviewer model or by a pending user
+  approval
+- `full-access` maps to no approval boundary and disabled managed filesystem permissions
+- `networkAccess` defaults to true; when false, outbound network access is restricted and the shipped
+  Web extension is disabled through normal extension binding
+- workflow task agents inherit this same execution policy for task-local shell, patch, network, and
+  generated-client boundaries, scoped to the owning Smithers task attempt
+
 Pi-specific rule:
 
 - ignore pi shell, retry, compaction, message-delivery, approval, and UI/runtime policy settings for

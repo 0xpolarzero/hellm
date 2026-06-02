@@ -34,7 +34,7 @@ The resolved Web v1 model is:
 - `web` is a shipped extension.
 - `web` uses `interface: "instructions"`.
 - `web` is prompt-only.
-- `web` is default-loaded for eligible actors.
+- `web` is default-loaded for eligible actors only while `networkAccess` is enabled.
 - `web` teaches agents to use the official TinyFish CLI directly through ordinary shell commands.
 - `svvy` does not expose `web_search`, `web_fetch`, `svvyx web`, `api.web_*`, or `svvy.web.*`.
 - `svvy` does not own Web provider selection, Web provider readiness, Web provider API keys, Web
@@ -63,12 +63,17 @@ Default usage:
 
 | Actor kind | State |
 | --- | --- |
-| Orchestrator | `default_loaded` |
-| Handler thread | `default_loaded` |
-| Workflow task agent | `default_loaded` |
+| Orchestrator | `default_loaded` when `networkAccess` is true; `unavailable` when false |
+| Handler thread | `default_loaded` when `networkAccess` is true; `unavailable` when false |
+| Workflow task agent | `default_loaded` when `networkAccess` is true; `unavailable` when false |
 
 The Web extension being default-loaded means the generated actor prompt includes the loaded Web
 instructions. It does not mean any additional model-callable tool is registered.
+
+`networkAccess` defaults to true in the execution settings defined by
+`docs/specs/extensions-and-tools.spec.md`. When a user disables network access, the Web extension is
+disabled through the same extension usage-state and generated-context path as any other unavailable
+extension. Disabled Web contributes no TinyFish prompt guidance.
 
 ## Instruction Source
 
@@ -324,9 +329,9 @@ The Web extension instructions must tell agents:
 TinyFish's own public-web request validation and browser behavior are provider-owned behavior. `svvy`
 does not claim to enforce a separate Web URL policy in v1.
 
-If `svvy` later adopts a true network egress policy for shell commands, TinyFish CLI calls must obey
-that same shell/network policy. That policy would be part of the shell/execution boundary, not a Web
-extension-specific native-tool boundary.
+TinyFish CLI calls obey the resolved shell/network policy from
+`docs/specs/extensions-and-tools.spec.md`. That policy is part of the shared execution boundary, not a
+Web extension-specific native-tool boundary.
 
 ## What `svvy` Does Not Expose In Web v1
 
@@ -424,8 +429,10 @@ confirmation flow, not through agent-run install instructions.
 Required doc/extension tests:
 
 - Web is represented as `category: "shipped"` and `interface: "instructions"`.
-- Web is default-loaded for orchestrator, handler-thread, and workflow task-agent actors.
-- Generated actor context includes the vendored TinyFish Web instructions.
+- Web is default-loaded for orchestrator, handler-thread, and workflow task-agent actors when
+  `networkAccess` is true.
+- Web is unavailable and absent from generated actor context when `networkAccess` is false.
+- Generated actor context includes the vendored TinyFish Web instructions only when Web is loaded.
 - Generated actor context does not include `web_search` or `web_fetch` tool declarations.
 - Generated actor context does not include `svvyx web` guidance.
 - Generated `execute_typescript` declarations do not include Web clients.
@@ -458,7 +465,8 @@ key.
 
 - Web v1 is a prompt-only shipped extension.
 - Web v1 is TinyFish-only.
-- Web v1 is default-loaded for eligible actors.
+- Web v1 is default-loaded for eligible actors only when `networkAccess` is true.
+- Web v1 is disabled and contributes no prompt guidance when `networkAccess` is false.
 - Web v1 teaches the official TinyFish CLI.
 - Web v1 does not expose `web_search`.
 - Web v1 does not expose `web_fetch`.
