@@ -168,7 +168,7 @@ The default workspace supports:
 - Extensions pane
 - Logs pane
 - Settings
-- provider auth and web provider settings
+- app-global provider auth and product settings
 - agent profiles
 - command palette
 - quick-open placeholder

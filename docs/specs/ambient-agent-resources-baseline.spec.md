@@ -302,7 +302,6 @@ Examples:
 - `exec_command`
 - `write_stdin`
 - `apply_patch`
-- `web_search`
 - `thread_start`
 - `smithers_run_workflow`
 - `execute_typescript`

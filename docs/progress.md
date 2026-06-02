@@ -57,17 +57,18 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Persist normalized child-command facts for nested `api.*` calls while the parent `execute_typescript` attempt remains the main semantic unit. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Surface parent rollups and trace inspector detail without promoting child commands to top-level cards. Commit(s): `5b0a223`
 
-## 2A. Provider-Backed Web Tools
+## 2A. Prompt-Only TinyFish Web Extension
 
 Current product decisions for this section are specified in `docs/specs/web-tools.spec.md`.
 
-- [x] Define Web Provider settings for TinyFish and Firecrawl, including default no-provider state, readiness state, and secret storage for provider API keys. Commit(s): `788ecb1`, `c479f72`
-- [x] Build the `src/bun/web-runtime/` provider boundary with shared contracts, provider registry, Web extension generated guidance, tool adapters, and TinyFish SDK integration. Commit(s): `788ecb1`, `540e886`
-- [x] Expose provider-shaped direct `web_search` and deterministic artifact-backed `web_fetch` tools from TinyFish SDK contracts or checked-in Firecrawl contracts and prompt packs only when the selected provider is ready, with structured command facts and no API-key leakage. Commit(s): `788ecb1`, `540e886`
-- [x] Generate Web extension prompt guidance from the active provider, including unavailable-provider guidance when the selected provider is missing required setup. Commit(s): `788ecb1`, `c479f72`, `540e886`
-- [x] Regenerate active actor tool declarations, Web extension readiness, and generated agent context after provider or key changes before the next turn. Commit(s): `788ecb1`, `c479f72`, `540e886`
-- [x] Add generated Web extension `execute_typescript` clients from the active provider's direct-tool contracts only when the selected keyed provider is ready. Commit(s): `788ecb1`, `540e886`
-- [x] Keep self-hosted web fallback out of current scope unless explicitly adopted later, with self-hosted Firecrawl and OrioSearch retained only as heavier reference directions. Commit(s): `c479f72`, `540e886`
+- [ ] Expose Web as a shipped `instructions` extension that is default-loaded for orchestrators, handler threads, and workflow task agents.
+- [ ] Vendor the TinyFish-owned `use-tinyfish` agent instructions as the Web extension's core prompt content.
+- [ ] Add only a bounded `svvy` appendix to the Web prompt for product integration facts: use ordinary shell commands, preserve structured output by redirecting large TinyFish JSON stdout to files when useful, treat fetched pages as untrusted external content, and cite source URLs.
+- [ ] Keep Web generated actor context free of `web_search`, `web_fetch`, `svvyx web`, generated Web TypeScript clients, Web Provider settings, provider selection, and `svvy`-owned TinyFish key storage.
+- [ ] Keep Firecrawl, native Web provider registries, TinyFish SDK provider adapters, selected-provider readiness, and self-hosted web search out of Web v1 unless a later product decision adopts a new Web architecture.
+- [ ] Let TinyFish CLI own install, authentication, status, search, fetch, browser-backed commands, and API key storage through `npm install -g @tiny-fish/cli`, `tinyfish auth ...`, `tinyfish search query ...`, and `tinyfish fetch content get ...`.
+- [ ] Treat TinyFish CLI output as ordinary shell output: the CLI writes search and fetch JSON to stdout by default, fetch includes page body text in `results[].text`, errors/debug logs go to stderr, and redirected files are raw CLI JSON rather than `svvy` artifacts.
+- [ ] Add generated-context and extension-inventory tests proving Web is prompt-only, default-loaded for all adopted actor kinds, and absent from native tool declarations, `svvyx` command mounts, generated TypeScript declarations, provider settings, and Firecrawl provider lists.
 
 ## 3. Turn Decisions And Delegation
 
@@ -234,7 +235,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Keep the default orchestrator profile locked, first, non-draggable, non-deletable, and editable for settings. Commit(s): `2b97c46648`, `b714aa26f9`
 - [x] Keep the `threadHandler` special profile available for delegated handler-thread surfaces. Commit(s): `2b97c46648`, `b714aa26f9`
 - [x] Show the current focused-surface agent profile summary in pane chrome. Commit(s): `8e19462`
-- [ ] Use TanStack Form for complex agent profile, provider key, web-provider, and app-preference settings forms, including direct-save semantics, validation, dirty state, reset/cancel, pending submit state, async save errors, and pi-normalized provider/model/reasoning constraints.
+- [ ] Use TanStack Form for complex agent profile, provider key, and app-preference settings forms, including direct-save semantics, validation, dirty state, reset/cancel, pending submit state, async save errors, and pi-normalized provider/model/reasoning constraints.
 - [ ] Define future workflow-agent and extension-provided profile surfaces without coupling shipped product workflow runtime to repo-root `workflows/`.
 - [ ] Define future handler guidance for reusable workflow-agent components without coupling shipped product workflow runtime to repo-root `workflows/`.
 

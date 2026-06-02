@@ -349,13 +349,19 @@ Relevant code:
 
 **Confidence:** Low as a product issue. The code path exists, but the risk argument and intended artifact semantics need a better justification before implementation.
 
-### AUD-005 - Redaction is app-log-specific and does not cover command, tool, artifact, and web records
+### AUD-005 - Redaction is app-log-specific and does not cover command, tool, artifact, and obsolete provider-backed web records
 
 **Disposition:** Not accepted as a product issue for now. `svvy` redacts app logs because logs are designed to be copied and shared for support/debugging. Other durable records, such as commands, tool inputs/results, snippets, artifacts, and web outputs, are local product state whose value often depends on preserving exact content. A broad shared redaction policy would be unreliable and could corrupt the records users expect the app to retain.
 
+**Web note:** The provider-backed Web implementation referenced below is obsolete under
+`docs/specs/web-tools.spec.md`. Web v1 is prompt-only TinyFish CLI guidance and does not define
+`svvy`-owned Web fetch artifacts or Web provider output persistence. The Web-specific part of this
+audit entry is historical evidence only unless a later product decision adopts a new native or
+provider-backed Web surface.
+
 **Impact:** Accepted only for app logs. Broader persistence redaction is not currently required.
 
-**Precise issue:** The app has an app-log redactor, but command summaries, command facts, tool execution records, `execute_typescript` snippets/logs/errors, artifact content, and web fetch outputs are not consistently passed through a shared sensitive-data policy before persistence or display.
+**Precise issue:** The app has an app-log redactor, but command summaries, command facts, tool execution records, `execute_typescript` snippets/logs/errors, artifact content, and older provider-backed web fetch outputs are not consistently passed through a shared sensitive-data policy before persistence or display.
 
 Relevant code:
 
@@ -364,7 +370,8 @@ Relevant code:
 - `src/bun/tool-execution-command-tracker.ts`: stores raw generic tool args/results.
 - `src/bun/execute-typescript-tool.ts`: records snippets, logs, errors, and facts.
 - `src/bun/svvy-direct-tools.ts`: writes artifact text/json content.
-- `src/bun/web-runtime/providers/shared.ts`: writes web bodies/metadata without the app-log redactor.
+- `src/bun/web-runtime/providers/shared.ts`: older provider-backed Web path that wrote web
+  bodies/metadata without the app-log redactor; obsolete under Web v1.
 
 **Why this was not accepted:** Users can paste API keys, bearer tokens, provider responses, auth headers, or private data into commands and tool calls. Those values can land in SQLite, artifact files, inspectors, previews, and exports. That is expected local app state unless the surface is specifically designed for sharing. App logs are the sharing-oriented surface and should stay redacted; applying heuristic redaction everywhere else is not reliable enough to justify the data loss.
 
@@ -476,7 +483,8 @@ Relevant code:
 - Prompt-library reads, writes, snapshots, generated entries, and external sources route through the requested `workspaceId`.
 - Workflow-agent component sync writes to the requested workspace, not the active workspace.
 - For Workflows library reads, deletes, open-in-editor, validation refreshes, and save-shortcut routing, assert the requested workspace is used even when another workspace is focused.
-- For app-global settings such as provider credentials, web provider selection, app appearance, external editor, and app-wide session-agent defaults, assert no active-workspace runtime lookup is required.
+- For app-global settings such as model provider credentials, app appearance, external editor, and
+  app-wide session-agent defaults, assert no active-workspace runtime lookup is required.
 - Renderer tests proving scoped calls retain workspace id.
 
 **Documentation impact:** PRD, feature inventory, Agents/Extensions prompt composition spec, workflow-library spec, multi-session runtime spec, and progress docs state the explicit `workspaceId` routing contract and the app-global versus workspace-affecting settings split.
@@ -1436,16 +1444,22 @@ Relevant code:
 
 This issue groups smaller findings that were still independently actionable. They should be tracked as separate fix tasks even though they were grouped by the audit agents.
 
-#### AUD-034A - Private URL guard is syntactic and incomplete
+#### AUD-034A - Obsolete provider-backed Web private URL guard is syntactic and incomplete
 
-**Impact:** Medium security issue for web fetch providers.
+**Disposition:** Obsolete for Web v1. `docs/specs/web-tools.spec.md` defines Web as prompt-only
+TinyFish CLI guidance, with TinyFish calls governed as ordinary shell/network execution rather than
+a `svvy` native Web provider. This finding is historical evidence for the retired provider-backed
+Web implementation and should only become active again if a later product decision adopts a native
+or provider-backed Web fetch surface.
 
-**Precise issue:** `web_fetch` is supposed to reject local files, private app URLs, localhost, private network, and non-web targets. Current validation is mostly syntactic and test coverage only clearly covers `127.0.0.1`.
+**Impact:** Medium security issue only for the obsolete provider-backed web fetch providers.
+
+**Precise issue:** In the obsolete provider-backed Web design, `web_fetch` was supposed to reject local files, private app URLs, localhost, private network, and non-web targets. Current validation is mostly syntactic and test coverage only clearly covers `127.0.0.1`.
 
 Relevant code:
 
-- `src/bun/web-runtime/providers/shared.ts`: URL guard helper.
-- TinyFish/Firecrawl provider paths that call the shared guard.
+- `src/bun/web-runtime/providers/shared.ts`: obsolete provider-backed Web URL guard helper.
+- TinyFish/Firecrawl provider paths that call the shared guard; obsolete under Web v1.
 
 Confirmed gaps to cover:
 

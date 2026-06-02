@@ -45,7 +45,7 @@ Status: deferred.
 
 Decision: authoritative action capture comes from svvy-owned tool and command boundaries. Arbitrary shell commands and arbitrary TypeScript side effects remain opaque except for process lifecycle, output, approvals, running-session state, and observed workspace changes after the fact.
 
-Later follow-up: improve UI visualization with Codex-style best-effort command parsing. Shipped extensions can contribute internal visualization rules for the commands or CLIs they own, such as cx, git, Smithers, Extension Managing, provider web commands, and other non-arbitrary command families. Enable an extension's visualization contributions only when that extension is enabled for the session, and present parsed shell actions as display hints rather than syscall-level truth.
+Later follow-up: improve UI visualization with Codex-style best-effort command parsing. Shipped extensions can contribute internal visualization rules for the commands or CLIs they own, such as cx, git, Smithers, Extension Managing, TinyFish CLI commands, and other non-arbitrary command families. Enable an extension's visualization contributions only when that extension is enabled for the session, and present parsed shell actions as display hints rather than syscall-level truth.
 
 Reference: `docs/specs/extensions-and-tools.spec.md`.
 

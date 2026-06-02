@@ -22,7 +22,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Provider Auth And Settings",
     status: "shipped",
     summary:
-      "Manages app-global provider keys, OAuth-backed access, web provider selection, icon-only provider key/OAuth/remove controls with tooltip explanations and inline remove confirmation, and a General settings surface for app appearance (`system`, `light`, or `dark`) and the user's preferred external editor with backend-authoritative persistence, while leaving pi-backed agent profile configuration to the Agents pane and keeping workspace-affecting operations on explicit `workspaceId`-routed requests.",
+      "Manages app-global model provider keys, OAuth-backed access, icon-only provider key/OAuth/remove controls with tooltip explanations and inline remove confirmation, and a General settings surface for app appearance (`system`, `light`, or `dark`) and the user's preferred external editor with backend-authoritative persistence, while leaving pi-backed agent profile configuration to the Agents pane, Web-specific TinyFish CLI auth to TinyFish CLI commands, and workspace-affecting operations on explicit `workspaceId`-routed requests.",
     sourceSpecs: ["docs/prd.md"],
   },
   {
@@ -93,18 +93,14 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     status: "in-progress",
     summary:
       "Provides Codex-like native filesystem tools as the default coding-agent work interface, with `exec_command`, `write_stdin`, and `apply_patch` carrying command lifecycle, long-running session, and patch facts; keeps `execute_typescript` as an actor-local TypeScript composition tool with generated svvy and loaded-extension clients as the preferred typed interface; preserves arbitrary TypeScript side effects as opaque unless they go through svvy-owned client boundaries; produces preflight typecheck or compile diagnostics when available, stores file-backed source artifacts for every attempt, and rolls generated-client child command facts under the parent.",
-    sourceSpecs: [
-      "docs/prd.md",
-      "docs/specs/execute-typescript.spec.md",
-      "docs/specs/web-tools.spec.md",
-    ],
+    sourceSpecs: ["docs/prd.md", "docs/specs/execute-typescript.spec.md"],
   },
   {
     id: "web-tool-surface",
-    name: "Provider-Backed Web Extension",
-    status: "shipped",
+    name: "Prompt-Only TinyFish Web Extension",
+    status: "in-progress",
     summary:
-      "Lets users choose TinyFish or Firecrawl as the active keyed web provider in settings, store provider API keys there, expose provider-shaped `web_search` and deterministic artifact-backed `web_fetch` tools plus generated web clients only when the selected provider is ready, use TinyFish's official TypeScript SDK for TinyFish Search and Fetch contracts and runtime calls, regenerate the Web extension's generated agent context and native tool declarations cleanly on provider changes, and keep the default product state web-disabled with no no-key Local fallback.",
+      "Defines Web as a shipped default-loaded prompt-only extension that vendors TinyFish-owned `use-tinyfish` agent instructions, teaches agents to install and authenticate the official TinyFish CLI and use `tinyfish search query` plus `tinyfish fetch content get` through ordinary shell commands, explicitly omits `web_search`, `web_fetch`, `svvyx web`, generated Web TypeScript clients, Firecrawl, Web Provider settings, and svvy-owned TinyFish key storage, and tells agents to redirect large TinyFish JSON output to files when useful because the tested CLI writes search and fetch results to stdout by default.",
     sourceSpecs: ["docs/specs/web-tools.spec.md"],
   },
   {

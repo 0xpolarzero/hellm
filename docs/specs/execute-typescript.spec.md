@@ -40,9 +40,13 @@ loaded extension set and native tool set:
 
 - loaded native tool extensions may contribute generated clients
 - loaded `svvyx` extensions may contribute generated clients when TypeScript API is enabled
-- loaded provider-backed extensions may contribute generated clients when their provider is ready
 - available-but-not-loaded extensions contribute no generated client
 - unavailable extensions contribute no generated client and no awareness
+
+Provider readiness is not a generic reason to expose generated clients. If a future provider-backed
+extension needs generated clients, that extension must still expose a concrete loaded runtime
+interface whose source contracts can generate the client. The shipped Web extension is prompt-only
+and therefore never contributes generated clients in Web v1.
 
 If an actor cannot call a capability through its normal generated runtime interface, it must not gain
 that capability through generated `execute_typescript` clients.
@@ -116,7 +120,7 @@ These old duplicated helper families are removed:
 - edit/write helpers
 - artifact helpers as a hand-written namespace
 - workflow discovery helpers as a hand-written namespace
-- provider web helpers as a hand-written namespace
+- web helpers as a hand-written namespace
 
 When an equivalent operation is useful from TypeScript, it must come from a generated `svvy` or
 loaded-extension client backed by the same source contract as the actual runtime capability. Do not
@@ -173,18 +177,6 @@ The UI should roll child command facts into a readable parent summary while pres
 inspectability.
 
 ## Examples
-
-Example using a generated provider client:
-
-```ts
-const result = await svvy.web.search({ query: "TypeScript satisfies operator official docs" });
-const topResults = result.items.slice(0, 3);
-
-return {
-  count: topResults.length,
-  urls: topResults.map((item) => item.url),
-};
-```
 
 Example using a loaded extension client:
 

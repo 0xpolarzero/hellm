@@ -237,7 +237,6 @@ Direct tools cover:
 - running bounded host commands through `exec_command`
 - continuing long-running host commands through `write_stdin`
 - editing files through `apply_patch`
-- provider-backed web search and web fetch through the active keyed web provider when configured
 - handler-owned discovery of workflow assets and workflow-authoring models
 - listing the currently callable actor-specific capability set
 
@@ -313,11 +312,13 @@ TypeScript declarations, and generated agent context binding, and records an `Ag
 product event. It does not build extensions, request dependency approval, configure env values, or
 mutate agent profile defaults.
 
-Provider-backed web context is different from optional context.
+Prompt-only Web guidance is different from a native Web tool surface.
 
-Provider-backed Web is an extension whose readiness and generated tool declarations come from the
-selected keyed provider settings. Provider setting changes regenerate the Web extension's generated
-agent context and callable tool declarations.
+The shipped Web extension is a default-loaded prompt-only extension that teaches agents to use the
+official TinyFish CLI through ordinary shell commands. It does not add `web_search`, `web_fetch`,
+`svvyx web`, generated Web TypeScript clients, or app-owned Web Provider settings. TinyFish owns CLI
+install, auth, search, fetch, browser-backed research, and command output behavior. `svvy` only owns
+whether the Web instructions are included in the actor's generated agent context.
 
 The orchestrator may provide handler creation-time extension overrides when the delegated objective
 should begin with a non-default extension already loaded:
@@ -701,7 +702,7 @@ Session records persist the orchestrator profile selected at creation time, the 
 
 Handler threads use the `threadHandler` special profile unless `thread_start` declares a specific provider, model, reasoning level, or handler prompt suffix for the delegated objective. Extensions remain separate product knowledge and capability records; they do not carry model, reasoning, or prompt-selection settings.
 
-The Agents pane edits app-global agent profiles, including orchestrator profiles and `threadHandler`. General settings edit app-global provider credentials, app-global web provider preferences, app appearance (`system`, `light`, or `dark` with `system` as the default), and the user's preferred external editor for opening workspace source files from read-only product surfaces. Provider rows use icon-only key, OAuth, and remove controls with explanatory tooltips; remove uses an inline single-confirm action. Extension definitions, extension instructions, external instruction controls, and generated context previews are edited or inspected in the Extensions pane rather than buried in general settings. Complex settings and configuration editors use TanStack Form for renderer form state where they need validation, dirty state, field-level errors, submit pending state, reset/cancel behavior, and async save errors, while Bun-side settings validation and normalization remain authoritative. Agent profile changes save directly from the setting control rather than through a separate save button. Agent model selection is a constrained picker over models from currently connected providers, and reasoning selection is constrained to the levels supported by the selected model, matching the interactive session controls rather than accepting freeform provider, model, or reasoning text. An orchestrator profile may either keep composer model and reasoning changes local to each session or let sessions using that profile save those composer changes back to the profile for future sessions. The source of truth for provider/model capability metadata is pi's normalized model registry and runtime APIs: `svvy` does not maintain separate provider-specific reasoning tables, Codex reasoning special cases, or request-shape mappings. Visible reasoning output is whatever pi normalizes into assistant `thinking` blocks; for providers such as OpenAI Codex this is a reasoning summary when the provider streams one, not raw chain-of-thought, and encrypted continuation-only reasoning with no visible summary must be labelled unavailable rather than redacted.
+The Agents pane edits app-global agent profiles, including orchestrator profiles and `threadHandler`. General settings edit app-global model provider credentials, app appearance (`system`, `light`, or `dark` with `system` as the default), and the user's preferred external editor for opening workspace source files from read-only product surfaces. Provider rows use icon-only key, OAuth, and remove controls with explanatory tooltips; remove uses an inline single-confirm action. Web-specific TinyFish CLI auth is owned by TinyFish CLI commands such as `tinyfish auth login`, `tinyfish auth set`, and `tinyfish auth status`, not by `svvy` General settings. Extension definitions, extension instructions, external instruction controls, and generated context previews are edited or inspected in the Extensions pane rather than buried in general settings. Complex settings and configuration editors use TanStack Form for renderer form state where they need validation, dirty state, field-level errors, submit pending state, reset/cancel behavior, and async save errors, while Bun-side settings validation and normalization remain authoritative. Agent profile changes save directly from the setting control rather than through a separate save button. Agent model selection is a constrained picker over models from currently connected providers, and reasoning selection is constrained to the levels supported by the selected model, matching the interactive session controls rather than accepting freeform provider, model, or reasoning text. An orchestrator profile may either keep composer model and reasoning changes local to each session or let sessions using that profile save those composer changes back to the profile for future sessions. The source of truth for provider/model capability metadata is pi's normalized model registry and runtime APIs: `svvy` does not maintain separate provider-specific reasoning tables, Codex reasoning special cases, or request-shape mappings. Visible reasoning output is whatever pi normalizes into assistant `thinking` blocks; for providers such as OpenAI Codex this is a reasoning summary when the provider streams one, not raw chain-of-thought, and encrypted continuation-only reasoning with no visible summary must be labelled unavailable rather than redacted.
 
 Workflow-agent configuration under `.svvy/workflows/components/agents.ts` is future work owned by the Workflows library and packaged Smithers runtime direction. It remains an ordinary workspace saved-workflow component when adopted, must route by explicit `workspaceId`, and must not imply that repo-root `workflows/` is the shipped product workflow runtime.
 

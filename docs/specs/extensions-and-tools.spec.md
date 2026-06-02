@@ -1229,8 +1229,10 @@ Generated clients should be built from the same source contracts as the loaded e
 
 - native tool schemas for loaded native tool extensions
 - `svvyx`/Incur command schemas for loaded `svvyx` extensions
-- provider web contracts for loaded provider-backed web extensions
 - app-owned control contracts for loaded native control tools
+
+Prompt-only extensions do not contribute generated TypeScript clients. In particular, the shipped
+Web extension is prompt-only TinyFish CLI guidance and does not expose generated Web clients.
 
 Implementation may use Incur's typed client machinery where it is the best source contract for an
 extension CLI. That is an implementation detail; the agent-facing contract is generated
@@ -1487,7 +1489,7 @@ should borrow that conservative display behavior: mixed known/unknown shell pipe
 only the known part as if the full command was understood.
 
 Extension-scoped command visualization contributions for cx, git, Smithers, Extension Managing,
-provider web commands, and other known command families are deferred in `docs/todo.md`. In v1,
+TinyFish CLI commands, and other known command families are deferred in `docs/todo.md`. In v1,
 authoritative capture comes only from `svvy`-owned tool and command boundaries.
 
 ### Apply Patch Source And Policy
@@ -1661,7 +1663,6 @@ Authoritative capture comes from boundaries `svvy` owns:
 - app-owned control tools such as handler/thread/runtime controls
 - loaded extension invocations through actor-scoped `svvyx`
 - generated TypeScript client calls that invoke `svvy` or loaded extension commands
-- provider-backed web tools and their artifact outputs
 - Extension Managing lifecycle commands
 - dependency approval records
 - generated agent context refresh records
@@ -2243,7 +2244,7 @@ their source files are read-only external inputs.
 | Extension Managing | shipped | svvyx | `svvyx extensions ...` lifecycle commands for inspect, create, build, usage state, reset, delete, and revert; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |
 | cx | shipped | svvyx or native_tool | codebase/product navigation and cx controls | available | available | available |
 | Smithers | shipped | svvyx | workflow run/list/inspect/resume/signal/transcript controls | unavailable | default_loaded | unavailable |
-| Web | shipped | native_tool or svvyx | provider-backed web search/fetch/research capability when a provider is ready | default_loaded | default_loaded | default_loaded |
+| Web | shipped | instructions | TinyFish CLI search/fetch/browser guidance through ordinary shell commands; no `svvy` Web tools, `svvyx web` commands, generated Web TypeScript clients, Web Provider settings, or `svvy`-owned TinyFish key storage | default_loaded | default_loaded | default_loaded |
 | Git | shipped | instructions | Git shell guidance; no wrapper CLI by default | default_loaded | default_loaded | default_loaded |
 | GitHub | shipped | instructions | GitHub/`gh` CLI guidance; no wrapper CLI by default | default_loaded | default_loaded | default_loaded |
 | External Instructions | external_instruction | instructions | read-only external instruction files such as `AGENTS.md` and `CLAUDE.md`, surfaced with open-external-file controls | default_loaded | default_loaded | default_loaded |

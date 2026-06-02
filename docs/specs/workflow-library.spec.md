@@ -441,7 +441,10 @@ The Workflows library surface must not block on an in-app source editor. In-app 
 
 The Workflows library is workspace-owned state. Reads, source previews, validation refreshes, delete actions, open-in-editor actions, artifact workflow grouping, save-shortcut routing, and future workflow-agent component operations must carry explicit `workspaceId`. The backend must never infer the target workspace from the active workspace, focused tab, focused panel, or active runtime, because Workflows library operations can be issued for a background workspace while another workspace is focused.
 
-App-global settings such as provider credentials, web-provider selection, app appearance, preferred external editor, and app-wide agent profiles remain separate. Only settings that read or write workspace workflow files, generated workflow diagnostics, or workflow-library projection belong on the workspace-scoped lane.
+App-global settings such as model provider credentials, app appearance, preferred external editor,
+and app-wide agent profiles remain separate. Only settings that read or write workspace workflow
+files, generated workflow diagnostics, or workflow-library projection belong on the workspace-scoped
+lane.
 
 ## Handler Guidance
 
