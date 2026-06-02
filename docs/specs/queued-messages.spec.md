@@ -84,8 +84,8 @@ means the row is durably enqueued and claimed by the shared queue runner before 
 queued state. An agent context refresh is ordered with the rest of the surface queue, but it is not
 sent to the agent and does not create transcript or prompt-history content. When delivered, it
 refreshes the bound base instructions, loaded and available extension binding, generated extension
-instructions, external instruction records, mounted `svvyx` command set, native tool schemas,
-command docs, and TypeScript declarations before later prompt-bearing queue items run. Active runs
+instructions, external instruction records, mounted `svvyx` command set, native tool schemas, loaded
+`svvyx` command guidance, and TypeScript declarations before later prompt-bearing queue items run. Active runs
 may also apply the ready refreshed context at the next pi `refreshRunContext` boundary; the queued
 item remains the durable recovery and ordering record.
 

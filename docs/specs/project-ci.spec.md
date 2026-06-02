@@ -9,10 +9,10 @@
   - define how CI assets live inside the existing Smithers saved workflow library
   - define the CI runnable-entry contract
   - define when CI state is recorded
-  - define how handler threads load CI authoring context only when needed
+  - define how handler threads load the Project CI authoring extension only when needed
   - define how Project CI is configured organically through normal handler work rather than a setup launcher
 
-Prompt context mechanics are defined in [Prompt Contexts Spec](./prompt-contexts.spec.md).
+Extension loading mechanics are defined in [Extensions And Tools Spec](./extensions-and-tools.spec.md).
 
 ## Naming
 
@@ -23,7 +23,7 @@ Use these terms consistently:
 - **Project CI**: the dedicated product lane for configuring and running the repository's repeatable confidence checks.
 - **CI lane**: the product projection for Project CI status, configured entries, latest run, check results, and linked workflow artifacts.
 - **CI status surface**: the UI surface or panel that renders the CI lane. It may route user requests into normal handler threads, but it is not a separate setup launcher or runtime.
-- **CI prompt context**: the optional context loaded by `thread_start({ context: ["ci"] })` or by a handler calling `request_context({ keys: ["ci"] })`.
+- **Project CI extension**: the shipped prompt-only extension loaded by `thread_start` extension overrides or by a handler calling `load_extension({ extensionId: "project-ci" })`.
 - **CI entry**: a normal Smithers runnable saved workflow entry that declares `productKind = "project-ci"`.
 - **CI run**: one `svvy` product projection row for a Smithers workflow run launched from a CI entry.
 - **CI check result**: one structured check inside a CI run, such as typecheck, test, lint, build, integration, or manual check.
@@ -55,7 +55,7 @@ That means:
 - no custom `svvy` CI component that agents must import into every workflow
 - no fake default CI that claims the project passed without running real checks
 - no CI authoring prompt injected into normal handler threads
-- normal handler-thread execution with the `ci` prompt context loaded when CI authoring knowledge is needed
+- normal handler-thread execution with the `project-ci` extension loaded when CI authoring knowledge is needed
 
 ## Non-Goals
 
@@ -68,7 +68,7 @@ Project CI does not:
 - infer test, lint, build, or manual outcomes from logs
 - scaffold a passing placeholder command such as `echo ok`
 - require every repository to have `test`, `lint`, `typecheck`, or `build` scripts
-- preload CI authoring context into every normal handler thread
+- preload Project CI authoring guidance into every normal handler thread
 - treat one-off user-requested commands as durable Project CI unless they run through a declared CI entry
 
 ## Product Shape
@@ -87,19 +87,20 @@ The UI must not require or imply a separate Project CI setup wizard, setup launc
 
 When the user asks to configure Project CI from chat or from the CI status surface, that request is handled as ordinary handler-thread work.
 
-The orchestrator may start a normal handler thread with `context: ["ci"]` when the request clearly needs CI authoring context from the first handler turn.
+The orchestrator may start a normal handler thread with the `project-ci` extension loaded when the
+request clearly needs CI authoring guidance from the first handler turn.
 
-An existing handler may load the same context later with `request_context({ keys: ["ci"] })`.
+An existing handler may load the same extension later with `load_extension({ extensionId: "project-ci" })`.
 
 Mechanically, this is the same handler-thread actor class used for other delegated work.
 
-The difference is only the loaded context keys.
+The difference is only the generated agent context binding for that handler.
 
-Ordinary orchestrator and handler sessions do not receive the `ci` prompt context by default.
+Ordinary orchestrator and handler sessions do not receive Project CI authoring guidance by default.
 
-The `ci` prompt context describes optional product knowledge and instructions.
+The `project-ci` extension describes optional product knowledge and instructions.
 
-Project CI uses normal handler-thread execution plus that prompt context when configuration or modification is needed.
+Project CI uses normal handler-thread execution plus that extension when configuration or modification is needed.
 
 ## Actor Responsibilities
 
@@ -114,29 +115,29 @@ There is also no special CI-specific `thread_start` tool.
 The orchestrator may:
 
 - tell the user whether Project CI is configured
-- start or reuse a normal handler thread with `context: ["ci"]` when the user asks to configure checks and the next handler turn clearly needs CI authoring context
+- start or reuse a normal handler thread with the `project-ci` extension loaded when the user asks to configure checks and the next handler turn clearly needs CI authoring guidance
 - delegate implementation work to normal handler threads
 - reconcile handoffs that include CI state
 
 The orchestrator knows only a lightweight routing fact:
 
-- `ci` is an available requestable context-pack key for Project CI authoring.
+- `project-ci` is a handler-available shipped prompt-only extension for Project CI authoring.
 
 The orchestrator should not receive Smithers workflow tools directly.
 
 The orchestrator should not author CI entries itself.
 
-The orchestrator should not receive `request_context`.
+The orchestrator should not receive handler-only Smithers workflow tools.
 
-`request_context` is a handler-only tool.
+The orchestrator may use only `thread_start` extension overrides to preload Project CI authoring guidance for a new handler.
 
-### Handler With `ci` Context
+### Handler With `project-ci` Loaded
 
-A handler thread that has loaded the `ci` prompt context owns Project CI configuration work.
+A handler thread that has loaded the `project-ci` extension owns Project CI configuration work.
 
 It is still a normal handler thread.
 
-It receives `ci` context explaining how to:
+It receives Project CI extension instructions explaining how to:
 
 - inspect the repository for likely checks
 - inspect `package.json`, lockfiles, task runners, existing CI files, Makefiles, README docs, and test config
@@ -150,12 +151,12 @@ A handler with `ci` context may write reusable CI assets under `.svvy/workflows/
 
 A handler with `ci` context may run Project CI entries through Smithers.
 
-The `ci` context may be loaded in either of two ways:
+The `project-ci` extension may be loaded in either of two ways:
 
-- the orchestrator starts the handler with `thread_start({ objective, context: ["ci"] })`
-- an existing handler calls `request_context({ keys: ["ci"] })`
+- the orchestrator starts the handler with `thread_start({ objective, extensions: { "project-ci": "default_loaded" } })`
+- an existing handler calls `load_extension({ extensionId: "project-ci" })`
 
-Loading the same context key more than once is idempotent.
+Loading the same extension more than once is idempotent.
 
 ### Normal Handler Threads
 
@@ -165,7 +166,7 @@ Normal handler threads may:
 - run a configured CI entry with `smithers_run_workflow`
 - inspect CI run state and artifacts
 - mention CI status in a handoff when relevant
-- call `request_context({ keys: ["ci"] })` if they need to configure or modify Project CI
+- call `load_extension({ extensionId: "project-ci" })` if they need to configure or modify Project CI
 
 Normal handler threads start without:
 
@@ -173,18 +174,18 @@ Normal handler threads start without:
 - repository-specific CI assumptions
 - knowledge of how to write CI entries beyond the existence of the `ci` context key
 
-If a normal handler only needs to run existing CI, it does not need the `ci` prompt context.
+If a normal handler only needs to run existing CI, it does not need the `project-ci` extension.
 
 If a normal handler needs to configure or modify Project CI, it should first call:
 
 ```ts
-request_context({ keys: ["ci"] });
+load_extension({ extensionId: "project-ci" });
 ```
 
 If a normal handler wants confidence checks and no CI entry exists, it should either:
 
 - ask the user to configure Project CI
-- call `request_context({ keys: ["ci"] })` when the current thread should configure it
+- call `load_extension({ extensionId: "project-ci" })` when the current thread should configure it
 - run explicitly user-provided commands as ordinary commands, not as Project CI records
 
 ## Storage Layout
@@ -513,9 +514,9 @@ An inspected handler thread should show CI detail only when that thread launched
 ### Configuring CI From A User Request
 
 1. User asks in chat, or from the CI status surface, to configure Project CI.
-2. If the request clearly needs CI authoring from the first delegated turn, the orchestrator starts a normal handler thread with `context: ["ci"]`.
-3. If the request arrives in an existing normal handler thread, that handler calls `request_context({ keys: ["ci"] })` before authoring CI assets.
-4. The handler runs with the default handler runtime shape plus the `ci` prompt context.
+2. If the request clearly needs CI authoring from the first delegated turn, the orchestrator starts a normal handler thread with the `project-ci` extension loaded.
+3. If the request arrives in an existing normal handler thread, that handler calls `load_extension({ extensionId: "project-ci" })` before authoring CI assets.
+4. The handler runs with the default handler runtime shape plus the `project-ci` extension instructions.
 5. The handler inspects repository facts through `execute_typescript`.
 6. The handler sees `package.json` with `test` and `typecheck`, but no `lint`.
 7. The handler asks whether lint should be part of Project CI or omitted.
@@ -550,27 +551,28 @@ An inspected handler thread should show CI detail only when that thread launched
 2. The handler calls `smithers_list_workflows({ productKind: "project-ci" })`.
 3. No entries are returned.
 4. The handler asks the user whether to configure Project CI or run explicit one-off commands.
-5. If the current thread should configure Project CI, the handler calls `request_context({ keys: ["ci"] })`.
-6. After the `ci` prompt context is loaded, the same handler may author the Project CI saved entry.
+5. If the current thread should configure Project CI, the handler calls `load_extension({ extensionId: "project-ci" })`.
+6. After the `project-ci` extension is loaded, the same handler may author the Project CI saved entry.
 7. If the user gives explicit commands instead, those commands run as ordinary command records and artifacts, not Project CI state.
 
-## Context Boundaries
+## Extension Boundaries
 
-The CI authoring context is loaded only through the optional `ci` prompt context.
+Project CI authoring guidance is loaded only through the optional `project-ci` extension.
 
 Normal handler prompts should only include this small rule:
 
 ```text
-If Project CI only needs to be run, discover configured CI entries with smithers_list_workflows filtered to productKind "project-ci" and run one through smithers_run_workflow. If Project CI needs to be configured or modified, call request_context({ keys: ["ci"] }) before authoring CI assets.
+If Project CI only needs to be run, discover configured CI entries with smithers_list_workflows filtered to productKind "project-ci" and run one through smithers_run_workflow. If Project CI needs to be configured or modified, call load_extension({ extensionId: "project-ci" }) before authoring CI assets.
 ```
 
 That rule is intentionally short.
 
 It tells normal handlers how to request the missing context instead of teaching them how to build CI entries by default.
 
-`request_context` is a top-level handler tool.
+`load_extension` is a native control tool.
 
-It is not exposed through `execute_typescript` because it changes the handler's loaded prompt context rather than doing repository work.
+It is not exposed through `execute_typescript` because it changes the handler's loaded extension
+binding and generated agent context rather than doing repository work.
 
 ## Relationship To Workflow Library
 
@@ -612,9 +614,9 @@ It points back to them.
 - CI entries are normal Smithers runnable entries.
 - CI entries live in the saved workflow library when reusable.
 - CI configuration is ordinary handler-thread work, not a dedicated setup launcher or runtime.
-- CI authoring context is isolated to the optional `ci` prompt context.
-- Normal handler threads may run configured CI entries without loading the `ci` prompt context.
-- Normal handler threads may configure or modify Project CI after loading the `ci` prompt context with `request_context`.
+- CI authoring guidance is isolated to the optional `project-ci` extension.
+- Normal handler threads may run configured CI entries without loading the `project-ci` extension.
+- Normal handler threads may configure or modify Project CI after loading the `project-ci` extension with `load_extension`.
 - No runtime path parses arbitrary workflow logs, node outputs, or final prose to infer CI.
 - No fake passing Project CI entry is scaffolded by default.
 - No generic verification table or event kind is used for Project CI.

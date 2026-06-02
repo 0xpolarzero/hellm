@@ -33,7 +33,7 @@ For `svvy`, the strongest direction is:
 - run workflow task agents inside explicit sandbox configurations
 - distinguish local low-latency trusted work from remote autonomous untrusted work
 - treat repo config, workflow assets, hooks, MCP servers, and workspace settings as part of the execution layer, not as passive metadata
-- combine a code-first tool surface such as `execute_typescript` with a real sandbox runtime and a host-side policy gate, rather than treating any one layer as the whole solution
+- combine a code-first typed interface such as `execute_typescript` with a real sandbox runtime and a host-side policy gate, rather than treating any one layer as the whole solution
 
 ## What "Sandboxing" Means in Practice
 
@@ -765,8 +765,8 @@ Suggested classes:
 
 The best current combination is not one product or one open-source repo. It is a layered stack:
 
-1. agent-facing work surface
-   - use `execute_typescript` / Code Mode or an equivalent code-first typed tool surface
+1. agent-facing work interface
+   - use `execute_typescript` or an equivalent code-first typed interface
 2. sandbox control plane
    - use a platform that manages lifecycle, files, commands, policy, and observability
    - OpenSandbox is a strong reference shape here
@@ -851,7 +851,7 @@ The ideal product flow looks like this:
 4. the repo enters that sandbox through an explicit mode:
    - direct local mount for trusted low-latency cases
    - copy-in / diff-out or worktree sync for autonomous cases
-5. inside the sandbox, the task agent works through a typed work surface such as `execute_typescript`
+5. inside the sandbox, the task agent works through a typed work interface such as `execute_typescript`
 6. host policy mediates the dangerous edges:
    - network access
    - secret injection
@@ -872,6 +872,10 @@ The mental model is:
 2. Prefer per-run or per-thread credentials with narrow scopes and short lifetimes.
 3. Prefer brokered outbound auth where possible.
 4. Distinguish model-provider auth from tool-provider auth from git auth.
+
+The current extension design uses app-managed env values injected only into the specific trusted
+extension command or generated extension-client invocation. It deliberately defers egress proxying,
+per-run proxy tokens, and network-policy enforcement for extension secrets.
 
 ### Recommended trust model for repo assets
 

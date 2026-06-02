@@ -40,7 +40,12 @@ type ThreadRecord = {
   objective: string;
   status: "running" | "waiting" | "completed" | "failed" | "cancelled";
   wait: WaitState | null;
-  loadedContextKeys: string[];
+  agentContextBinding: {
+    loadedExtensionIds: string[];
+    availableExtensionIds: string[];
+    aggregateCacheKey: string;
+    agentContextFingerprint: string;
+  };
   worktree?: string;
   latestWorkflowRunId: string | null;
   startedAt: string;
@@ -247,7 +252,12 @@ const state: StructuredSessionState = {
         "Own the delegated design task and supervise workflow selection, pause, resume, and final synthesis.",
       status: "completed",
       wait: null,
-      loadedContextKeys: [],
+      agentContextBinding: {
+        loadedExtensionIds: ["filesystem", "execute-typescript", "extension-loading", "smithers"],
+        availableExtensionIds: ["cx", "extension-managing", "project-ci", "web"],
+        aggregateCacheKey: "handler-default@poc",
+        agentContextFingerprint: "agent-context-handler-default@poc",
+      },
       latestWorkflowRunId: "run-2",
       startedAt: now("09:02"),
       updatedAt: now("09:20"),
@@ -313,14 +323,14 @@ const state: StructuredSessionState = {
       threadId: "thread-1",
       workflowRunId: "run-1",
       parentCommandId: null,
-      toolName: "smithers_run_workflow.authored_design_workflow",
+      toolName: "smithers_run_workflow",
       executor: "handler",
       visibility: "surface",
       status: "waiting",
       attempts: 1,
       title: "Start workflow run",
       summary: "Started the first workflow run for the delegated design objective.",
-      facts: { smithersRunId: "smithers-run-101" },
+      facts: { workflowId: "authored_design_workflow", smithersRunId: "smithers-run-101" },
       error: null,
       startedAt: now("09:03"),
       updatedAt: now("09:11"),
@@ -333,7 +343,7 @@ const state: StructuredSessionState = {
       threadId: "thread-1",
       workflowRunId: "run-2",
       parentCommandId: null,
-      toolName: "smithers_run_workflow.authored_design_workflow_v2",
+      toolName: "smithers_run_workflow",
       executor: "handler",
       visibility: "surface",
       status: "succeeded",
@@ -341,7 +351,7 @@ const state: StructuredSessionState = {
       title: "Start repaired workflow run",
       summary:
         "Started the repaired workflow run after clarification and completed the delegated objective.",
-      facts: { smithersRunId: "smithers-run-102" },
+      facts: { workflowId: "authored_design_workflow_v2", smithersRunId: "smithers-run-102" },
       error: null,
       startedAt: now("09:14"),
       updatedAt: now("09:20"),

@@ -230,7 +230,7 @@ Smithers owns the task agent's:
 
 That projection should treat the Smithers task attempt as a real product row addressable from the UI, not as transcript-only internal noise. It is still not the execution attempt record of truth. Smithers owns the attempt identity, attempt lifecycle, retry state, output validation, approval waits, timer waits, usage, and task-agent transcript. `svvy` stores the Smithers attempt address plus product links and projection metadata so the handler, inspector, and UI can re-read Smithers detail by exact `runId`, `nodeId`, `iteration`, and `attempt`.
 
-`svvy` also stores svvy-owned generated agent context binding metadata on that projection row. `meta.agentContextBinding` records the workflow-task actor, bound Context Library revision, generated agent context fingerprint, external instruction fingerprints, optional resolved prompt artifact id, and binding timestamp for the exact Smithers attempt. This is provenance for svvy's prompt channel, not a copy of Smithers execution state.
+`svvy` also stores svvy-owned generated agent context binding metadata on that projection row. `meta.agentContextBinding` records the workflow-task actor, loaded and available extension ids, generated agent context fingerprint, external instruction fingerprints, optional resolved prompt artifact id, and binding timestamp for the exact Smithers attempt. This is provenance for svvy's prompt channel, not a copy of Smithers execution state.
 
 ### Handler Attention
 
@@ -290,7 +290,7 @@ The adopted direction is:
 - configure that task agent with a minimal `svvy` workflow-task system prompt rather than the orchestrator or handler-thread prompt
 - treat workflow-specific custom task prompts as overlays appended to the base workflow-task prompt; the base prompt only establishes task scope, task-local tools, and task-root locality
 - expose only task-local cx tools, direct tools, and `execute_typescript` to that actor
-- the default adopted task-agent tool surface is task-local cx semantic navigation, direct tools, and code mode for typed composition
+- the default adopted task-agent capability set is task-local cx semantic navigation, direct tools, and `execute_typescript` for typed composition
 - project each Smithers task attempt into a `svvy` workflow-task-attempt UI row with exact Smithers identifiers and attach any `svvy` command or artifact projections to that row instead of leaving product navigation in a local ephemeral trace
 - do not expose `thread_start`, `thread_handoff`, `wait`, or `smithers_*` to workflow task agents or mention those unavailable controls in their base prompt
 - do not load ambient pi built-in tools or workspace-discovered extension tools into the task agent runtime
@@ -310,14 +310,14 @@ But it is a different actor contract because the host and lifecycle are differen
 - orchestrator and handler threads are pi sessions hosted by `svvy`
 - workflow task agents are task-scoped agents hosted by Smithers
 
-Smithers runtime controls around task agents stay outside the task-agent tool surface:
+Smithers runtime controls around task agents stay outside the task-agent capability set:
 
 - approval belongs to Smithers approval nodes or task approval gates such as `<Approval>` or `needsApproval`
 - hijack belongs to Smithers runtime or operator controls that reopen the underlying task-agent session
 
 `svvy` should treat approvals and hijack as workflow-supervision state and operator surfaces around a run, not as ordinary callable tools for the task agent itself.
 
-## Smithers Tool Surface
+## Smithers Capability Set
 
 `svvy` should not define a parallel `workflow_*` API.
 

@@ -48,7 +48,7 @@ Always read [ui.prd.md](ui.prd.md) before implementing any item in this roadmap,
 - [x] Consolidate button, icon button, badge, input, textarea, dialog, and surface primitives around the ported Replit artifact token system. `a868fe6`
 - [x] Add dense row, section header, Dockview panel header, toolbar, divider, keyboard hint, empty state, error state, and loading state primitives. `a868fe6`
 - [x] Add reusable status badge primitives for session, thread, workflow-run, command, Project CI, provider auth, and wait states. `a868fe6`
-- [x] Add reusable metadata chip primitives for model, reasoning, worktree, prompt context, Dockview panel location, artifact type, and command kind. `a868fe6`
+- [x] Add reusable metadata chip primitives for model, reasoning, worktree, generated agent context, Dockview panel location, artifact type, and command kind. `a868fe6`
 - [x] Add resize-handle, panel-focus, hover, active, disabled, and keyboard-focus styling primitives. `a868fe6`
 - [x] Verify primitive contrast, focus visibility, hit targets, and text overflow across desktop and narrow viewport sizes. `a868fe6`
 
@@ -83,11 +83,11 @@ Always read [ui.prd.md](ui.prd.md) before implementing any item in this roadmap,
 
 ## 7. Handler Threads And Delegation Projection
 
-- [x] Render handler-thread summaries with objective, title, lifecycle state, wait state, loaded context keys, latest handoff, latest workflow-run summary, and related artifacts.
+- [x] Render handler-thread summaries with objective, title, lifecycle state, wait state, loaded extension ids, generated agent context binding, latest handoff, latest workflow-run summary, and related artifacts.
 - [x] Render handler-active, workflow-active, waiting, troubleshooting, and completed states with distinct but restrained visual semantics.
 - [x] Render direct handler-thread surfaces with the same transcript and composer quality as orchestrator surfaces.
 - [x] Normalize Replit artifact "subagent" visual vocabulary into handler-thread and workflow task-agent labels before porting delegation surfaces.
-- [x] Render thread metadata so users can inspect active system prompt, model, reasoning, worktree, prompt contexts, and workflow ownership.
+- [x] Render thread metadata so users can inspect active system prompt, model, reasoning, worktree, loaded extensions, generated agent context, and workflow ownership.
 - [x] Preserve direct user messaging into handler threads before and after handoff, and keep completed threads available for explicit orchestrator re-engagement through `thread_resume`.
 - [x] Verify workflow attention routes back to the owning handler surface rather than the currently focused panel.
 

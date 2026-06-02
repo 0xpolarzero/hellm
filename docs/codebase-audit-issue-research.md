@@ -48,8 +48,8 @@ For each issue, record:
 | AUD-017 | P1 | Prompt freshness is detected but not enforced before the next pi turn | `209c` | Fixed |
 | AUD-018 | P1 | Session mode changes and new-session creation can use raw or double-wrapped system prompts | `1291`, `3eed` | Fixed |
 | AUD-019 | P1 | Orchestrator and handler surfaces can inherit ambient pi extension tools beyond the actor contract | `34a6` | Adopted |
-| AUD-020 | P1 | Workflow task-agent authoring contract, generated agent config, and runtime tool surface can diverge | `209c`, `2a4e`, `1291` | Fixed |
-| AUD-021 | P2 | Workflow task agents and `request_context` do not fully match prompt/context binding semantics | `2a4e` | Fixed |
+| AUD-020 | P1 | Workflow task-agent authoring contract, generated agent config, and runtime capability set can diverge | `209c`, `2a4e`, `1291` | Fixed |
+| AUD-021 | P2 | Workflow task agents and extension loading do not fully match generated agent context binding semantics | `2a4e` | Fixed |
 | AUD-022 | P1 | Dockview chat panels miss semantic transcript blocks and artifact/path callbacks | `34a6`, `2a4e`, `1291` | Fixed |
 | AUD-023 | P2 | Artifact/static inspector panes remain focus-global instead of surface-owned | `3eed`, `209c` | Fixed |
 | AUD-024 | P1 | Restart recovery can leave in-flight prompts, pending messages, running turns, or initial handler starts stale | `2a4e`, `34a6`, `209c` | Partially implemented |
@@ -84,7 +84,7 @@ The five source audits used slightly different scoring scales, but the combined 
 The source audits repeatedly called out these intentional product directions:
 
 - Keep pi as the interactive runtime/session substrate. Do not introduce a standalone shell, alternate TUI loop, or svvy-owned terminal runtime.
-- Keep the orchestrator/handler/task-agent actor split. Fix leaks rather than flattening all actors into one global tool surface.
+- Keep the orchestrator/handler/task-agent actor split. Fix leaks rather than flattening all actors into one global capability set.
 - Keep Smithers as the workflow execution/runtime surface. Do not replace Smithers-native control with a parallel `workflow_*` control abstraction.
 - Keep repo-root `workflows/` as an authoring workspace, not the shipped runtime or registry.
 - Keep structured session state as the product read model. The issue is scoping, recovery, and read-model efficiency, not the existence of structured state.
@@ -235,39 +235,39 @@ Do not rely on deleting globals from the current realm, prompt text, TypeScript 
 
 **Impact:** Critical capability-boundary issue. Actors that should not receive workflow discovery or Smithers control can reach workflow APIs from code mode.
 
-**Current contract:** `execute_typescript` is actor-local. The orchestrator receives code mode for bounded local composition, but it does not receive workflow discovery, Smithers runtime control, or any `workflow` or `smithers` namespace through code mode; it delegates workflow action by calling `thread_start`. Handler threads receive the workflow and Smithers composition surface defined by the product contract: direct `workflow_*` discovery tools, handler-only `api.workflow_*` helpers for typed composition over workflow assets and authoring models, and direct `smithers_*` tools for runtime supervision. Workflow task agents receive only task-local direct-tool APIs through code mode and do not receive workflow discovery, Smithers supervision, handler/orchestrator control, or `api.workflow_*`.
+**Current contract:** `execute_typescript` is actor-local. The orchestrator receives `execute_typescript` for bounded local composition, but it does not receive workflow discovery, Smithers runtime control, or any loaded-extension client absent from its actor binding; it delegates workflow action by calling `thread_start`. Handler threads receive the workflow and Smithers capability set defined by the product contract: loaded Workflows extension generated clients for typed composition over workflow assets and authoring models, and direct `smithers_*` tools for runtime supervision. Workflow task agents receive only task-local direct-tool APIs through `execute_typescript` and do not receive workflow discovery, Smithers supervision, handler/orchestrator control, or handler-only extension clients.
 
-**Precise issue:** The top-level tool surface is actor-scoped, but the generated `execute_typescript` SDK and runtime API are not.
+**Precise issue:** The top-level capability set is actor-scoped, but the generated `execute_typescript` SDK and runtime API were not.
 
 Relevant code:
 
-- `src/bun/session-catalog.ts`: direct workflow tools are withheld from the orchestrator top-level surface and added for handler surfaces.
+- `src/bun/session-catalog.ts`: workflow capabilities are withheld from the orchestrator top-level capability set and added for handler surfaces.
 - `src/bun/default-system-prompt.ts`: builds one execute TypeScript SDK for all actors.
-- `src/bun/execute-typescript-api-contract.ts`: always includes `api.workflow_*`.
+- `src/bun/execute-typescript-api-contract.ts`: included workflow helpers in every actor declaration.
 - `src/bun/execute-typescript-tool.ts`: always registers workflow tools inside code mode.
 
-The audit probe confirmed an orchestrator-context `runExecuteTypescript` call can invoke `api.workflow_list_assets`.
+The audit probe confirmed an orchestrator-context `runExecuteTypescript` call could invoke workflow discovery through the old generated helper API.
 
-**Why this matters:** The product contract separates orchestrator, handler, and task-agent powers. Handler agents may discover workflow assets through handler-owned workflow APIs and supervise Smithers through direct `smithers_*` tools. Orchestrators and task agents should only see the surfaces explicitly granted to them. Code mode currently bypasses that separation and turns a handler-only workflow discovery namespace into a universal API.
+**Why this matters:** The product contract separates orchestrator, handler, and task-agent powers. Handler agents may discover workflow assets through handler-owned generated extension clients and supervise Smithers through direct `smithers_*` tools. Orchestrators and task agents should only see the capabilities explicitly granted to them. `execute_typescript` must not bypass that separation.
 
 **Best fix:** Make `execute_typescript` actor-aware at both declaration time and runtime.
 
 1. Define an explicit capability profile for each actor type.
 2. Pass that profile into `buildExecuteTypescriptApiDeclaration`.
 3. Pass the same profile into `createExecuteTypescriptTool`, `runExecuteTypescript`, and `createExecuteTypescriptApi`.
-4. Only generate `api.workflow_*` declarations for handler contexts.
-5. Do not generate any `api.smithers` code-mode namespace; handlers supervise Smithers through direct `smithers_*` tools.
+4. Only generate loaded-extension declarations for actor contexts that have that extension loaded.
+5. Do not generate any broad Smithers helper namespace; handlers supervise Smithers through direct `smithers_*` tools and the loaded Smithers extension contract.
 6. Reject runtime calls whose namespace is absent from the actor capability profile, even if malicious code constructs the call dynamically.
 
 The declaration and runtime guard must use the same source of truth. Declaration-only filtering would still be bypassable through dynamic JavaScript.
 
 **Verification required:**
 
-- Prompt/declaration tests proving `api.workflow_*` is absent for orchestrators and workflow task agents.
-- Prompt/declaration tests proving `api.workflow_*` is present for handlers.
-- Prompt/declaration tests proving no actor receives `api.smithers`.
+- Prompt/declaration tests proving handler-only workflow clients are absent for orchestrators and workflow task agents.
+- Prompt/declaration tests proving workflow clients are present for handlers when the Workflows extension is loaded.
+- Prompt/declaration tests proving no actor receives a broad Smithers helper namespace.
 - Runtime tests proving dynamic access to blocked namespaces fails.
-- Runtime tests proving handler workflow discovery calls still work through direct tools and handler-only `api.workflow_*`.
+- Runtime tests proving handler workflow discovery calls still work through loaded generated extension clients.
 
 **Documentation impact:** Update the execute TypeScript spec if it currently describes one universal SDK. The actor-scoped contract should be explicit.
 
@@ -455,7 +455,7 @@ Relevant product surfaces:
 
 Relevant code:
 
-- `src/shared/workspace-contract.ts`: requires `workspaceId` on workspace-affecting prompt-library and settings requests.
+- `src/shared/workspace-contract.ts`: requires `workspaceId` on workspace-affecting Agents/Extensions and settings requests.
 - `src/mainview/Settings.svelte`: passes the active workspace tab id into workspace-affecting settings calls instead of relying on backend focus.
 - `src/bun/index.ts`: routes workspace-affecting handlers through `getWorkspaceRuntime(input)` rather than `getActiveRuntime()`.
 - `src/bun/workspace-rpc-routing.ts`: centralizes request-based runtime lookup and workspace-id stripping.
@@ -479,7 +479,7 @@ Relevant code:
 - For app-global settings such as provider credentials, web provider selection, app appearance, external editor, and app-wide session-agent defaults, assert no active-workspace runtime lookup is required.
 - Renderer tests proving scoped calls retain workspace id.
 
-**Documentation impact:** PRD, feature inventory, prompt-library spec, workflow-library spec, multi-session runtime spec, and progress docs state the explicit `workspaceId` routing contract and the app-global versus workspace-affecting settings split.
+**Documentation impact:** PRD, feature inventory, Agents/Extensions prompt composition spec, workflow-library spec, multi-session runtime spec, and progress docs state the explicit `workspaceId` routing contract and the app-global versus workspace-affecting settings split.
 
 **Confidence:** High.
 
@@ -540,7 +540,7 @@ Relevant code:
 - Existing explicit same-run resume and restart reattach tests continue to pass with explicit run ids.
 - Prompt/tool-description tests assert the handler-facing contract text.
 
-**Documentation impact:** `docs/prd.md`, `docs/features.ts`, `docs/specs/workflow-supervision.spec.md`, handler prompt context, and tool descriptions now state the explicit resume rule.
+**Documentation impact:** `docs/prd.md`, `docs/features.ts`, `docs/specs/workflow-supervision.spec.md`, handler generated agent context, and tool descriptions now state the explicit resume rule.
 
 **Confidence:** High.
 
@@ -796,7 +796,7 @@ Better change:
 
 ### AUD-017 - Prompt freshness is detected but not enforceably applied
 
-**Disposition:** Fixed. Stale prompt updates are now explicit surface work. The sticky stale-context warning applies immediately when the surface is idle and has no queued work; otherwise it creates a `prompt_refresh` queue item labelled `Update instructions`, the row is visible and cancellable, and the shared surface queue runner applies the fresh prompt binding before later user messages or handler handoffs run.
+**Disposition:** Fixed. Generated agent context updates are explicit surface work. The sticky stale-generated-context warning applies immediately when the surface is idle and has no queued work; otherwise it creates an `agent_context_refresh` queue item labelled `Update agent context`, the row is visible and cancellable, and the shared surface queue runner applies the fresh generated agent context binding before later user messages or handler handoffs run.
 
 **Impact:** High prompt correctness issue.
 
@@ -810,16 +810,16 @@ Relevant code:
 - `src/bun/session-catalog.ts`: managed session recreation does not use prompt drift as a recreation/update trigger.
 - No complete update API was found for applying the fresh binding to an existing surface.
 
-**Why this matters:** Users can see that a session prompt is stale, choose or expect freshness, and still send the next turn with the old prompt. This breaks prompt-library, runtime standards, generated tool/schema blocks, and actor instruction updates.
+**Why this matters:** Users can see that a session generated agent context is stale, choose or expect freshness, and still send the next turn with the old binding. This breaks runtime standards, generated tool/schema blocks, loaded extension guidance, and actor instruction updates.
 
 **Implemented resolution:**
 
-1. Added `prompt_refresh` as a typed surface queue item alongside `user_message` and `handler_handoff`.
-2. Added a backend `queuePromptRefresh` action used by the stale-context warning.
-3. The queue runner claims `prompt_refresh`, rebuilds the actor prompt from backend source of truth, recreates/rebinds the managed pi session behind the same product surface, marks the item delivered, and continues draining later queued work.
-4. Normal sends respect existing queued surface work, so a direct send cannot jump ahead of a queued prompt refresh.
-5. Prompt-library changes emit open-surface snapshots so stale status updates without reopening the pane.
-6. The renderer shows a sticky stale-context strip with `Update system prompt`, switches to `Cancel update` while the refresh item is queued, and renders the queued context update as a visible cancellable `Update instructions` row.
+1. Added `agent_context_refresh` as a typed surface queue item alongside `user_message` and `handler_handoff`.
+2. Added a backend queue action used by the stale-generated-context warning.
+3. The queue runner claims `agent_context_refresh`, rebuilds generated agent context from backend source of truth, refreshes or rebinds the managed pi session behind the same product surface, marks the item delivered, and continues draining later queued work.
+4. Normal sends respect existing queued surface work, so a direct send cannot jump ahead of a queued agent context refresh.
+5. Agent and extension changes emit open-surface snapshots so stale status updates without reopening the pane.
+6. The renderer shows a sticky stale-generated-context strip with `Update agent context`, switches to `Cancel update` while the refresh item is queued, and renders the queued context update as a visible cancellable `Update agent context` row.
 
 **Verification required:**
 
@@ -835,7 +835,7 @@ Relevant code:
 
 ### AUD-018 - New-session and mode-switch prompt composition can double-wrap or bypass generated prompts
 
-**Disposition:** Fixed. Session defaults now carry raw session-agent settings instead of a prebuilt system prompt, and new-session creation, session mode switching, surface opening, and prompt dispatch no longer accept caller-provided resolved prompt text as a composition input. The catalog composes the final orchestrator system prompt exactly once from Context Library state plus the selected raw session-agent settings.
+**Disposition:** Fixed. Session defaults now carry raw agent-profile settings instead of a prebuilt system prompt, and new-session creation, session mode switching, surface opening, and prompt dispatch no longer accept caller-provided resolved prompt text as a composition input. The catalog composes the final orchestrator generated agent context exactly once from Agents/Extensions state plus the selected raw agent-profile settings.
 
 **Impact:** High agent behavior issue.
 
@@ -883,13 +883,13 @@ Relevant code:
 - `src/bun/workflow-task-agent.ts`: task agents already pass `noExtensions: true` and have regression coverage, but still need the broader default-off policy for skills, prompt templates, themes, and equivalent future host resources.
 - pi reference behavior: default resource loading can discover `.pi/extensions`, `.pi/skills`, `.agents/skills`, `.pi/prompts`, `.pi/themes`, package resources, global agent-dir resources, and settings-provided resource paths.
 
-**Why this matters:** The actor contract says svvy actors receive the generated callable API and prompt context selected by svvy, not arbitrary ambient host resources. Ambient resource leakage weakens capability isolation and makes behavior dependent on local user/workspace/global host files.
+**Why this matters:** The actor contract says svvy actors receive the generated capability set and generated agent context selected by svvy, not arbitrary ambient host resources. Ambient resource leakage weakens capability isolation and makes behavior dependent on local user/workspace/global host files.
 
 **Best fix:**
 
 1. Add provider-neutral Ambient Agent Resources settings with all behavior-changing ambient resource categories disabled by default.
-2. Preserve pi-discovered `AGENTS.md` and `CLAUDE.md` runtime standards as visible prompt context, with source paths and hashes.
-3. Continue ignoring pi `SYSTEM.md` and `APPEND_SYSTEM.md` prompt replacement/append files in favor of svvy's Context Library and generated prompt parts.
+2. Preserve pi-discovered `AGENTS.md` and `CLAUDE.md` runtime standards as visible `external_instruction` extension records, with source paths and hashes.
+3. Continue ignoring pi `SYSTEM.md` and `APPEND_SYSTEM.md` prompt replacement/append files in favor of svvy's generated agent context.
 4. For pi, pass `noExtensions`, `noSkills`, `noPromptTemplates`, and `noThemes` by default for orchestrator, handler-thread, and workflow task-agent loaders, then opt in only the enabled category/source/actor set through explicit loader paths or filters.
 5. Keep generated actor-specific declarations as the only way callable ambient resources become visible to an actor.
 
@@ -906,7 +906,7 @@ Relevant code:
 
 ### AUD-020 - Workflow task-agent config, generated declarations, saved settings, and runtime behavior diverged
 
-**Disposition:** Fixed. `WorkflowTaskAgentConfig` now uses `reasoningEffort`, settings render workflow agents assignable to that contract, `cx_*` survives normalization, runtime task-agent registration filters the ordered task-tool registry by `config.toolSurface` with `list_tools` added as the required framework tool, and task-agent projection binds by exact Smithers `(runId, nodeId, iteration, attempt)` identity.
+**Disposition:** Fixed. `WorkflowTaskAgentConfig` now uses `reasoningEffort`, settings render workflow agents assignable to that contract, `cx_*` survives normalization, runtime task-agent registration filters the ordered task-tool registry by `config.toolSurface`, and task-agent projection binds by exact Smithers `(runId, nodeId, iteration, attempt)` identity.
 
 **Impact:** High workflow authoring correctness issue when present.
 
@@ -915,7 +915,7 @@ Resolved drift:
 - Generated `WorkflowTaskAgentConfig` uses `reasoningEffort`.
 - Rendered workflow-agent settings use `reasoningEffort` and are assignable to `WorkflowTaskAgentConfig`.
 - Generated/default contracts include `cx_*`, and normalization preserves canonical `cx_*` tools.
-- Runtime task-agent creation registers exactly the ordered registry tools requested by `config.toolSurface`, plus `list_tools`.
+- Runtime task-agent creation registers exactly the ordered registry tools requested by `config.toolSurface`.
 - Task-agent projection no longer discovers Smithers attempts by resume handle or recency.
 
 Relevant code:
@@ -932,47 +932,47 @@ Relevant code:
 
 - Rendered workflow-agent settings are assignable to the generated `WorkflowTaskAgentConfig`.
 - `cx_*` survives normalization.
-- A narrow `toolSurface` produces exactly that task-agent tool set plus `list_tools`.
+- A narrow `toolSurface` produces exactly that task-agent tool set.
 - The default task-agent surface includes the documented task-local direct tools and `execute_typescript`.
 - Duplicate or repeated pi resume handles cannot bind projection to the wrong Smithers attempt.
 
 **Confidence:** High.
 
-### AUD-021 - Task-agent prompts and `request_context` prompt binding are not durable enough
+### AUD-021 - Task-agent prompts and extension-loading context binding are not durable enough
 
 **Impact:** High prompt and provenance correctness issue.
 
-**Precise issue:** Custom workflow task-agent prompts can replace the svvy workflow-task base prompt instead of layering on top of it. Task attempts store prompt text/model/resume metadata but not enough binding metadata to prove which prompt-library revision, standards hash, or resolved prompt hash was used. Handler `request_context` state is durable, but active pi sessions are not guaranteed to be recreated or updated so the newly requested context is present on the next turn.
+**Precise issue:** Custom workflow task-agent prompts can replace the svvy workflow-task base prompt instead of layering on top of it. Task attempts store prompt text/model/resume metadata but not enough binding metadata to prove which generated agent context fingerprint, external instruction fingerprint, or resolved prompt artifact was used. Handler loaded-extension state is durable, but active pi sessions are not guaranteed to be recreated or updated so the newly loaded extension guidance is present on the next turn.
 
 Relevant code:
 
 - `src/bun/workflow-task-agent.ts`: custom config system prompt can replace the generated base task prompt.
-- `src/bun/structured-session-state.ts`: task attempt prompt metadata lacks revision/hash/source binding fields.
-- `src/bun/request-context-tool.ts`: records requested context.
-- `src/bun/session-catalog.ts`: rebuilds resolved prompts, but retained managed sessions are recreated for actor/provider/model/recreate flags, not loaded context changes.
+- `src/bun/structured-session-state.ts`: task attempt prompt metadata lacks fingerprint/source binding fields.
+- `src/bun/load-extension-tool.ts`: records loaded extension changes.
+- `src/bun/session-catalog.ts`: rebuilds resolved prompts, but retained managed sessions are recreated for actor/provider/model/recreate flags, not loaded extension changes.
 
-**Why this matters:** Workflow task agents can lose svvy's task contract and API instructions. Task-attempt records are not audit-grade enough to reconstruct the exact prompt provenance. Handler-requested context, including Project CI context, may be recorded in state but absent from the live pi prompt used for the next turn.
+**Why this matters:** Workflow task agents can lose svvy's task contract and API instructions. Task-attempt records are not audit-grade enough to reconstruct the exact generated agent context provenance. Handler-loaded extension guidance, including Project CI guidance, may be recorded in state but absent from the live pi prompt used for the next turn.
 
 **Best fix:**
 
 1. Treat workflow task-agent custom prompts as overlays appended to the svvy workflow-task base prompt unless an explicit product decision says full replacement is allowed.
-2. Persist prompt binding metadata on task attempts: prompt source ids, revision ids, standards hashes, resolved prompt hash, and any generated artifact/schema ids.
-3. When `request_context` changes loaded context, mark the managed handler surface as needing prompt update before the next turn.
-4. Recreate or update the live pi session before dispatching the next handler prompt when loaded context changed.
+2. Persist generated agent context binding metadata on task attempts: loaded extension ids, external instruction fingerprints, generated agent context fingerprint, resolved prompt artifact id, and any generated artifact/schema ids.
+3. When `load_extension` changes loaded extension state, mark the managed handler surface as needing generated agent context refresh before the next turn.
+4. Recreate or update the live pi session before dispatching the next handler prompt when loaded extensions changed.
 5. Avoid recency-based task-attempt lookup where exact run/node/iteration/attempt identity is available.
 
 **Verification required:**
 
 - Custom task prompt still includes the base workflow-task instructions and API contract.
 - Task attempts persist prompt binding metadata at creation.
-- `request_context(["ci"])` causes the next handler prompt sent to pi to include CI context.
+- `load_extension({ extensionId: "project-ci" })` causes the next handler prompt sent to pi to include Project CI extension guidance.
 - Duplicate or repeated task-agent resume handles do not bind to the wrong attempt.
 
 **Documentation impact:** Update workflow task-agent prompt semantics and task-attempt provenance specs.
 
-**Disposition:** Fixed. Workflow task-agent custom prompts now append under a workflow-task override section while preserving the minimal svvy workflow-task base prompt and generated callable contract. The base prompt defines task scope and task-root locality without teaching unavailable handler, orchestrator, or Smithers controls. Task-local command bootstrap writes `meta.promptBinding` onto the exact workflow-task-attempt projection keyed by Smithers `(runId, nodeId, iteration, attempt)`, including prompt revision id, resolved prompt hash, runtime standards hashes, and binding timestamp. Handler-side `request_context` now marks the retained managed handler surface for prompt recreation before its next turn, so newly loaded context reaches pi through the system-prompt channel instead of only being stored durably.
+**Disposition:** Fixed. Workflow task-agent custom prompts now append under a workflow-task override section while preserving the minimal svvy workflow-task base prompt and generated callable contract. The base prompt defines task scope and task-root locality without teaching unavailable handler, orchestrator, or Smithers controls. Task-local command bootstrap writes `meta.agentContextBinding` onto the exact workflow-task-attempt projection keyed by Smithers `(runId, nodeId, iteration, attempt)`, including loaded extension ids, generated agent context fingerprint, external instruction fingerprints, resolved prompt artifact id, and binding timestamp. Handler-side `load_extension` now marks the retained managed handler surface for generated agent context refresh before its next turn, so newly loaded extension guidance reaches pi through the system-prompt channel instead of only being stored durably.
 
-**Verified by:** `bun test src/bun/request-context-tool.test.ts src/bun/smithers-runtime/workflow-task-agent.test.ts`.
+**Verified by:** `bun test src/bun/load-extension-tool.test.ts src/bun/smithers-runtime/workflow-task-agent.test.ts`.
 
 **Confidence:** High. The fixed path is covered by focused request-context and workflow task-agent tests.
 
@@ -1382,7 +1382,7 @@ Relevant files:
 
 **Impact:** High agent-tool correctness and upgradeability issue.
 
-**Disposition:** Fixed. The handler-facing Smithers tool surface now delegates native Smithers operations through a Smithers adapter, keeps native Smithers shapes for approvals, node detail, artifacts, transcript, events, run watching, and DevTools streaming, and task-attempt binding uses exact Smithers task-attempt identity.
+**Disposition:** Fixed. The handler-facing Smithers capability set now delegates native Smithers operations through a Smithers adapter, keeps native Smithers shapes for approvals, node detail, artifacts, transcript, events, run watching, and DevTools streaming, and task-attempt binding uses exact Smithers task-attempt identity.
 
 **Precise issue:** The shipped Smithers-facing tools did not mirror the native Smithers tool schemas documented in the full Smithers reference. Some svvy schemas required fields Smithers treats as optional filters, renamed fields, omitted structured fields, or returned non-native shapes. Task-attempt binding also used recency lookup by resume handle rather than exact current run/node/attempt identity.
 
@@ -1423,9 +1423,9 @@ Relevant code:
 
 **Verification covered:**
 
-- `src/bun/smithers-tools.test.ts` covers the native `resolve_approval` schema and Smithers tool registration surface.
+- `src/bun/smithers-tools.test.ts` covers the native `resolve_approval` schema and Smithers tool registration contract.
 - `src/bun/smithers-runtime/manager.test.ts` covers native adapter delegation for approvals and read operations.
-- `src/bun/smithers-runtime/workflow-task-agent.test.ts` covers exact task-agent tool surface and exact resume-session matching.
+- `src/bun/smithers-runtime/workflow-task-agent.test.ts` covers exact task-agent capability set and exact resume-session matching.
 - `src/bun/structured-session-state.test.ts` covers exact Smithers task-attempt identity uniqueness.
 
 **Documentation impact:** No PRD change if aligning with the current PRD. Update generated tool declarations and any svvy Smithers specs. If svvy intentionally keeps custom shapes, the PRD/features must be rewritten, but that conflicts with current instructions.

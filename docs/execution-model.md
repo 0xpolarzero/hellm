@@ -44,11 +44,12 @@ flowchart TD
         Decide["Surface decides next action"]
     end
 
-    subgraph Tools["Tool Surface"]
+    subgraph Tools["Generated Capability Set"]
         DirectTools["PI-backed direct tools"]
         Generic["execute_typescript"]
         ThreadStart["thread_start"]
-        RequestContext["request_context"]
+        ListExtensions["list_extensions"]
+        LoadExtension["load_extension"]
         ThreadHandoff["thread_handoff"]
         SmithersTools["Smithers-native workflow tools (`smithers_*`)"]
         Wait["wait"]
@@ -58,15 +59,13 @@ flowchart TD
     subgraph GenericExec["Generic Execution"]
         Compile["Compile or typecheck snippet against api.* types"]
         Run["Run valid TypeScript program"]
-        Api["Injected api.* SDK"]
-        ApiRead["api.read / api.grep / api.find / api.ls"]
-        ApiBash["api.bash"]
-        ApiArtifact["api.artifact_* tools"]
-        ApiWorkflow["api.workflow_*"]
+        Api["Injected generated TypeScript clients"]
+        ApiSvvy["generated svvy clients"]
+        ApiExtensions["generated loaded-extension clients"]
     end
 
     subgraph Runtime["Runtime Handlers"]
-        RuntimeHandler["svvy runtime handles execute_typescript, thread_start, request_context, thread_handoff, and wait"]
+        RuntimeHandler["svvy runtime handles execute_typescript, thread_start, load_extension, thread_handoff, and wait"]
         SmithersBridge["Bun-owned Smithers bridge handles Smithers-native workflow tools"]
         ResumeHandler["Runtime resumes the supervising handler thread when a workflow run changes state"]
     end
@@ -75,7 +74,7 @@ flowchart TD
         Commands["Record commands and parent-child linkage"]
         Events["Append lifecycle events"]
         Artifacts["Persist file-backed artifacts and SQLite metadata"]
-        State["Update turns, commands, threads, loaded optional prompt context keys, workflow runs, CI run/check result records, artifacts, wait state, and any episodes emitted by thread_handoff"]
+        State["Update turns, commands, threads, generated agent context bindings, workflow runs, CI run/check result records, artifacts, wait state, and any episodes emitted by thread_handoff"]
     end
 
     subgraph ReadModels["Read Models"]
@@ -92,7 +91,8 @@ flowchart TD
 
     Decide --> Generic
     Decide --> ThreadStart
-    Decide --> RequestContext
+    Decide --> ListExtensions
+    Decide --> LoadExtension
     Decide --> ThreadHandoff
     Decide --> SmithersTools
     Decide --> Wait
@@ -101,14 +101,13 @@ flowchart TD
     Generic --> Compile
     Compile --> Run
     Run --> Api
-    Api --> ApiRead
-    Api --> ApiBash
-    Api --> ApiArtifact
-    Api --> ApiWorkflow
+    Api --> ApiSvvy
+    Api --> ApiExtensions
     Api --> RuntimeHandler
 
     ThreadStart --> RuntimeHandler
-    RequestContext --> RuntimeHandler
+    ListExtensions --> RuntimeHandler
+    LoadExtension --> RuntimeHandler
     ThreadHandoff --> RuntimeHandler
     SmithersTools --> SmithersBridge
     Wait --> RuntimeHandler
@@ -164,12 +163,17 @@ Inside a handler thread, the normal choices are:
 - cx semantic navigation and direct tools
 - `execute_typescript`
 - `thread_handoff`
+- `list_extensions` and `load_extension`
+- `workflow_list_models` when authoring a fresh workflow task-agent configuration
 - Smithers-native workflow tools such as `smithers_list_workflows`, `smithers_run_workflow`, `smithers_get_run`, `smithers_explain_run`, and `smithers_resolve_approval`
 - `wait`
 
-The workflow tool surface should mirror Smithers semantics rather than a svvy-defined `workflow_*` alias layer. Runnable entry discovery belongs to `smithers_list_workflows({ workflowId? })`, which returns each entry's `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `launchInputSchema`. Fresh launch and explicit resume belong to the stable `smithers_run_workflow({ workflowId, input, runId? })` tool, with `input` validated against the workflow's real TypeScript or Zod launch schema rather than handwritten prompt prose or repo inspection. Supplying `runId` resumes exactly that run; omitting `runId` requests a fresh launch, never silently resumes, and is rejected when the same handler already owns a nonterminal run with the same `workflowId`. Different `workflowId` values can run concurrently under one handler thread. Those Smithers-native commands are supervision helpers inside the handler-thread lifecycle, not evidence that the repo-root `workflows/` authoring package is the shipped product runtime.
+The workflow runtime capability set should mirror Smithers semantics rather than a svvy-defined `workflow_*` alias layer. Runnable entry discovery belongs to `smithers_list_workflows({ workflowId? })`, which returns each entry's `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `launchInputSchema`. Fresh launch and explicit resume belong to the stable `smithers_run_workflow({ workflowId, input, runId? })` tool, with `input` validated against the workflow's real TypeScript or Zod launch schema rather than handwritten prompt prose or repo inspection. Supplying `runId` resumes exactly that run; omitting `runId` requests a fresh launch, never silently resumes, and is rejected when the same handler already owns a nonterminal run with the same `workflowId`. Different `workflowId` values can run concurrently under one handler thread. `workflow_list_models` is the narrow authoring-time exception for provider/model/reasoning discovery; it does not launch, inspect, resume, or supervise workflows. Smithers-native commands are supervision helpers inside the handler-thread lifecycle, not evidence that the repo-root `workflows/` authoring package is the shipped product runtime.
 
-The agent does not get raw Smithers internals or direct CLI access. It gets `svvy`-registered `smithers_*` tools that call the Bun-owned Smithers bridge.
+The agent does not get raw Smithers internals, a raw Smithers HTTP client, a raw Smithers MCP server,
+or raw Smithers CLI access. It gets `svvy`-registered `smithers_*` tools and, when the Smithers
+extension is loaded, actor-scoped `svvyx smithers ...` commands that call the Bun-owned Smithers
+bridge.
 
 The handler-thread prompt may know that the orchestrator can delegate and reconcile work, but it should not receive orchestrator-only tool declarations such as `thread_start` unless nested delegation is explicitly adopted later.
 
@@ -261,28 +265,32 @@ The difference is where the wait lives:
 - orchestrator wait lives in the main orchestrator surface
 - delegated clarification usually lives in the handler thread surface
 
-### 8. Optional Prompt Context Uses `request_context`
+### 8. Optional Capability Loading Uses Extensions
 
-Optional product knowledge should be loaded as optional prompt context instead of being injected into every handler prompt.
+Optional product knowledge should be loaded as available extensions instead of being injected into
+every handler prompt.
 
-The first adopted context key is `ci`.
+The Project CI authoring extension id is `project-ci`.
 
-The orchestrator can preload context for a delegated objective:
+The orchestrator can preload an extension for a delegated objective:
 
 ```ts
 thread_start({
   objective: "Define Project CI checks for this repository",
-  context: ["ci"],
+  extensions: {
+    "project-ci": "default_loaded",
+  },
 });
 ```
 
-A handler can load context later:
+A handler can load the extension later:
 
 ```ts
-request_context({ keys: ["ci"] });
+load_extension({ extensionId: "project-ci" });
 ```
 
-`request_context` is a top-level handler tool, not part of the `execute_typescript` `api.*` SDK.
+`load_extension` is a native control tool, not part of the `execute_typescript` generated client
+surface.
 
 ### 9. Project CI Is A Dedicated Workflow Lane
 
@@ -297,12 +305,12 @@ No runtime path infers CI from arbitrary workflow output, command names, logs, o
 ## Key Guarantees
 
 - Direct tools are the default coding-agent work surface.
-- cx semantic navigation is part of the native direct-tool surface and is the preferred first step for supported code navigation.
-- `api.bash` duplicates the direct `bash` tool inside `execute_typescript` when typed composition needs shell-backed inspection.
-- `api.cx_overview`, `api.cx_symbols`, `api.cx_definition`, `api.cx_references`, `api.cx_lang_list`, and `api.cx_cache_path` duplicate the read-only cx subset inside `execute_typescript`.
-- `thread_start`, `thread_handoff`, and `wait` remain `svvy`-native control tools.
+- cx semantic navigation is part of the generated capability set and is the preferred first step for supported code navigation when the cx extension is loaded.
+- ordinary repository inspection uses `exec_command` with shell tools such as `rg`, `sed`, `cat`, `ls`, `find`, `git show`, `nl`, and `wc`.
+- generated `execute_typescript` clients are derived from loaded native tools and loaded extensions; broad hand-written `api.read`, `api.bash`, and `api.workflow_*` helper families are not part of the resolved model.
+- `thread_start`, `load_extension`, `thread_handoff`, and `wait` remain `svvy`-native control tools.
 - workflow supervision should use Smithers-native bridge tools such as `smithers_run_workflow`, `smithers_get_run`, and `smithers_resolve_approval`.
-- the Smithers-native tool surface targets product-runtime runnable workflows rather than the repo authoring workspace under `workflows/`.
+- the Smithers-native capability set targets product-runtime runnable workflows rather than the repo authoring workspace under `workflows/`.
 - capability declarations are actor-specific: the orchestrator gets only orchestrator-callable tools, and handler threads get only handler-callable tools.
 - workflow task agents are another actor class below handler threads and should receive only task-local cx tools, direct tools, and `execute_typescript`, with no ambient pi extension-tool leakage.
 - runtime handlers and bridges write durable facts from real execution; agents do not mutate product state through arbitrary write tools.

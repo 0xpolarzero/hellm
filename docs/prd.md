@@ -96,7 +96,7 @@ Before any target surface runs a turn through pi:
 - each surface must receive only the generated tool declarations and SDK blocks that are callable from that surface
 - each surface may receive compact knowledge about what another surface can do, but it must not receive that other surface's full callable API block just for awareness
 
-Ambient coding-agent resources are default-off unless explicitly enabled through `svvy` settings. This applies to pi resources such as extensions, skills, prompt templates, themes, packages, slash commands, hooks, provider adapters, credentials, and execution-policy settings, and to equivalent resources exposed by other coding-agent hosts. `svvy` preserves plain external instruction files such as discovered `AGENTS.md` and `CLAUDE.md` as visible prompt context through read-only extension records, but behavior-changing ambient resources must be enabled by category, source, host, workspace, and actor class before they can affect prompts, tools, commands, UI, provider behavior, auth, or execution policy. Enabled callable resources must still appear in the actor-specific generated API block for the exact actor that may call them.
+Ambient coding-agent resources are default-off unless explicitly enabled through `svvy` settings. This applies to pi resources such as extensions, skills, prompt templates, themes, packages, slash commands, hooks, provider adapters, credentials, and execution-policy settings, and to equivalent resources exposed by other coding-agent hosts. `svvy` preserves plain external instruction files such as discovered `AGENTS.md` and `CLAUDE.md` as visible generated agent context through read-only extension records, but behavior-changing ambient resources must be enabled by category, source, host, workspace, and actor class before they can affect prompts, tools, commands, UI, provider behavior, auth, or execution policy. Enabled callable resources must still appear in the actor-specific generated API block for the exact actor that may call them.
 
 Extension env values are app-managed per extension in v1. Secret values are keyed by `(extensionId, envName)`, entered only through user-owned app UI, stored encrypted by the app or OS keychain, injected only into the specific trusted extension runtime invocation that needs them, and never exposed to agents through prompts, generated docs, tool output, logs, artifacts, transcripts, global pi env, global shell env, or `execute_typescript` snippet env. Agent-facing extension inspection may report only declaration metadata and missing/configured readiness. Workspace-scoped extension env values and egress-proxy credential boundaries are not part of v1.
 
@@ -105,9 +105,9 @@ Agents and Extensions are the user-facing source of reusable prompt material and
 The actor-specific capability split is:
 
 - the orchestrator prompt knows that handler threads can supervise Smithers workflows, but it does not receive the `smithers_*` tool declarations; if it wants workflow action, it must delegate by calling `thread_start`
-- a handler-thread prompt receives `smithers_*`, `request_context`, `thread_handoff`, `thread_current`, `wait`, direct tools, and `execute_typescript` for typed composition, but it does not receive `thread_start` in the default adopted model
+- a handler-thread prompt receives `smithers_*`, `load_extension`, `list_extensions`, `thread_handoff`, `thread_current`, `wait`, direct tools, and `execute_typescript` for typed composition, but it does not receive `thread_start` in the default adopted model
 - orchestrator and handler prompts receive `runtime_current`, `thread_list`, and `thread_handoffs` so runtime binding, delegated-thread state, and durable handoff episodes are read through focused tools instead of prompt stuffing
-- a workflow-task-agent prompt receives only task-local instructions and task-local callable declarations; in the default adopted model it receives task-local direct tools plus `execute_typescript`, and not `thread_start`, `thread_handoff`, `wait`, or `smithers_*`
+- a workflow-task-agent prompt receives only task-local instructions and task-local callable declarations; in the default adopted model it receives task-local direct tools plus `execute_typescript`, and not `thread_start`, `thread_handoff`, `wait`, `load_extension`, Extension Managing, or `smithers_*`
 - a workflow-task-agent runtime must not load ambient pi built-in tools, extensions, skills, prompt templates, themes, commands, hooks, provider adapters, or equivalent host resources that would widen that callable or prompt surface beyond the explicit task-local contract unless the user enables that exact resource category and source for workflow task agents
 - if `svvy` later adopts nested delegation or additional actor classes, those capabilities must be added explicitly rather than leaked through one shared global prompt surface
 
@@ -208,7 +208,7 @@ The adopted direction for task agents is:
 
 - use a PI-backed workflow task agent by default when a workflow task needs an adaptive coding agent
 - give that task agent a minimal `svvy` workflow-task system prompt rather than the orchestrator or handler-thread prompt
-- expose a task-local direct-tool surface plus `execute_typescript` for typed composition
+- expose a task-local generated capability set plus `execute_typescript` for typed composition
 - keep `thread_start`, `thread_handoff`, `wait`, and `smithers_*` out of the task-agent runtime and tool schema instead of teaching unavailable controls in prompt prose
 - keep human approval and hijack as Smithers runtime or operator controls around the task, not as ordinary task-agent tools
 - execute the task agent and its task-local tool calls from Smithers' current task root, including the active worktree when the task is worktree-bound
@@ -239,7 +239,7 @@ Direct tools cover:
 - editing files through `apply_patch`
 - provider-backed web search and web fetch through the active keyed web provider when configured
 - handler-owned discovery of workflow assets and workflow-authoring models
-- listing the currently callable actor-specific tool surface
+- listing the currently callable actor-specific capability set
 
 When a model needs several independent tool results, the prompt should tell it to issue those tool calls together so pi's parallel tool execution can run them concurrently. Sequential tool calls should be reserved for cases where the later call depends on the earlier result.
 
@@ -290,44 +290,49 @@ Structured diagnostics must be produced, and invalid snippets must not run.
 
 ### 7. Native Control Tools Stay Small And Explicit
 
-Some actions are not ordinary generic work because they change product-level control flow or requested context-pack state.
+Some actions are not ordinary generic work because they change product-level control flow or the
+current actor's generated extension binding.
 
 Those actions stay as `svvy`-native control tools:
 
 - `thread_start`
-- `request_context`
+- `load_extension`
+- `list_extensions`
 - `thread_handoff`
 - `wait`
 
 These are still tool calls.
 
-`request_context` is handler-only.
+`list_extensions` is a native read-only actor-local inspection tool. It reports only the current
+actor's loaded and available extension records and never exposes unavailable extension details,
+secret values, generated context fingerprints, aggregate cache keys, or global profile usage state.
 
-It loads optional typed prompt context into the current handler thread when that handler needs product knowledge that is not always loaded.
-
-It is not part of the `execute_typescript` generated client surface because it changes the handler's
-prompt context rather than performing bounded repository work.
-
-The optional context key is:
-
-- `ci`
+`load_extension` is a native control tool. It loads an available, ready extension into the current
+actor session, refreshes the same-turn tool declarations, mounted `svvyx` namespace, generated
+TypeScript declarations, and generated agent context binding, and records an `Agent context updated`
+product event. It does not build extensions, request dependency approval, configure env values, or
+mutate agent profile defaults.
 
 Provider-backed web context is different from optional context.
 
-The active web provider context is always loaded for orchestrator, handler-thread, and workflow task-agent prompts when web tools are configured, when the selected provider is unavailable, or when no provider is selected and the agent needs to know that web is disabled by default. It is regenerated from settings and tool registrations rather than loaded through `thread_start({ context })` or `request_context`.
+Provider-backed Web is an extension whose readiness and generated tool declarations come from the
+selected keyed provider settings. Provider setting changes regenerate the Web extension's generated
+agent context and callable tool declarations.
 
-The orchestrator does not receive `request_context`.
-
-Instead, the orchestrator knows the small list of available context keys and may pass them when starting a handler thread:
+The orchestrator may provide handler creation-time extension overrides when the delegated objective
+should begin with a non-default extension already loaded:
 
 ```ts
 thread_start({
   objective: "Define Project CI checks for this repository",
-  context: ["ci"],
+  extensions: {
+    "project-ci": "default_loaded",
+  },
 });
 ```
 
-That starts a normal handler thread with the default handler runtime shape and the requested context pack loaded before its first turn.
+That starts a normal handler thread with the default handler runtime shape and the requested extension
+binding before its first turn. The override is session-local and does not mutate the handler profile.
 
 There is no `thread_start_ci`, no `ci.start`, and no CI-specific orchestrator.
 
@@ -337,7 +342,7 @@ Workflow supervision is different.
 
 Instead, the shipped app should register Smithers-native semantic tools through the Bun-owned bridge, using Smithers' own operation names where the docs already define them and Smithers' own nouns and verbs for the remaining adopted bridge surfaces.
 
-That Smithers-native tool surface is a product runtime API over configured saved and artifact Smithers workflow entries, not a thin wrapper around the repo authoring workspace under `workflows/`.
+That Smithers-native capability set is a product runtime API over configured saved and artifact Smithers workflow entries, not a thin wrapper around the repo authoring workspace under `workflows/`.
 
 More precisely, this means:
 
@@ -356,8 +361,8 @@ The intended use of the native control subset is:
 
 - the orchestrator normally uses `thread_start` to open a delegated handler thread
 - the orchestrator uses `thread_resume` when a completed handler thread already has the right delegated context for follow-up work on the same objective
-- the orchestrator may pass `context: ["ci"]` to `thread_start` when the delegated objective clearly needs Project CI authoring context
-- a handler thread may call `request_context({ keys: ["ci"] })` when it later discovers that Project CI configuration or modification is required
+- the orchestrator may pass a `project-ci` extension override to `thread_start` when the delegated objective clearly needs Project CI authoring guidance from the first handler turn
+- a handler thread may call `load_extension({ extensionId: "project-ci" })` when it later discovers that Project CI configuration or modification is required
 - a handler thread uses `thread_handoff` to transfer back to the orchestrator only after no running or waiting workflow run still belongs to that span; the tool call succeeds when `svvy` records the durable handoff episode and marks the current objective span complete
 - after a durable handoff is recorded, `svvy` creates a typed orchestrator queue item so the orchestrator can reconcile the recorded handoff in surface-queue order; cancelling or deleting that notification does not roll back the handoff episode or return a tool error to the handler
 - a handler thread normally uses Smithers-native bridge tools such as `smithers_list_workflows`, `smithers_run_workflow`, `smithers_get_run`, `smithers_explain_run`, `smithers_list_pending_approvals`, `smithers_resolve_approval`, `smithers_get_node_detail`, `smithers_list_artifacts`, and `smithers_get_run_events` to supervise Smithers execution
@@ -371,9 +376,10 @@ Project CI is a dedicated product status and result lane over normal Smithers ru
 
 The lane is a projection and UI concept, not a setup launcher, CI-specific orchestrator, or custom CI execution surface.
 
-CI authoring knowledge is delivered through the optional `ci` prompt context.
+CI authoring knowledge is delivered through the optional `project-ci` extension.
 
-It may be preloaded by `thread_start({ context: ["ci"] })` or loaded later by a handler through `request_context({ keys: ["ci"] })`.
+It may be preloaded by `thread_start` extension overrides or loaded later by a handler through
+`load_extension({ extensionId: "project-ci" })`.
 
 ### 8. Sessions Contain Many Interactive Surfaces
 
@@ -568,7 +574,7 @@ Session navigation metadata is part of durable workspace state.
 
 The adopted navigation model is deliberately small:
 
-- pinned sessions, regular Sessions, and archived sessions appear as three fixed sidebar groups between the orchestrator actions and Logs, Agents, Context, and Workflows
+- pinned sessions, regular Sessions, and archived sessions appear as three fixed sidebar groups between the orchestrator actions and Logs, Agents, Extensions, and Workflows
 - each group is collapsible, independently scrollable, vertically resizable, and persists its collapsed state and size per workspace
 - archived sessions move into one Archived group, and Archived is collapsed by default
 - the Archived group is the only archive-style grouping
@@ -672,15 +678,15 @@ Each handler thread should have:
 - an objective
 - its own direct conversation history
 - durable lifecycle status
-- loaded context-pack keys, when specialized product context has been preloaded or requested
+- loaded and available extension ids, when specialized product guidance or capability has been preloaded or loaded during the session
 - zero or more workflow runs
 - zero or more handoff episodes
 
 Context-pack keys describe reusable product knowledge loaded into actor prompts by default or requested on demand, such as `Project CI`.
 
-The current handler objective, wait state, loaded context-pack keys, active workflow run ids, and latest handoff metadata are exposed to the handler through `thread_current`. The orchestrator and handlers inspect delegated thread rows through `thread_list`, and exact durable handoff episode bodies through `thread_handoffs`. These read tools do not include transcripts, workflow summaries, or Smithers internals; handlers use active workflow run ids with `smithers_*` tools when workflow details matter.
+The current handler objective, wait state, generated agent context binding, active workflow run ids, and latest handoff metadata are exposed to the handler through `thread_current`. The orchestrator and handlers inspect delegated thread rows through `thread_list`, and exact durable handoff episode bodies through `thread_handoffs`. These read tools do not include transcripts, workflow summaries, or Smithers internals; handlers use active workflow run ids with `smithers_*` tools when workflow details matter.
 
-Agent profiles describe the provider, model, reasoning level, prompt selection, and callable surface policy used by pi-backed product agents. The Agents pane is the product-owned profile surface. It appears in the sidebar between Logs and Context, and owns orchestrator profiles plus the special handler-thread profile rather than burying model behavior in general settings.
+Agent profiles describe the provider, model, reasoning level, base instructions, extension usage selections, and callable policy used by pi-backed product agents. The Agents pane is the product-owned profile surface. It appears in the sidebar between Logs and Extensions, and owns orchestrator profiles plus the special handler-thread profile rather than burying model behavior in general settings.
 
 The app owns these app-wide agent profile settings:
 
@@ -752,7 +758,7 @@ The delegated workflow library has three layers:
 2. workspace-saved reusable workflow assets under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and launchable saved entries under `.svvy/workflows/entries/`
 3. short-lived authored artifact workflows under `.svvy/artifacts/workflows/`
 
-The generated workflow-authoring contract is the handler-visible source of truth for runnable entry modules, product lane metadata, grouped asset refs, `createRunnableEntry(...)`, and workflow task agents. The curated guide teaches the Smithers render/task/output model, artifact layout, saved library layout, validation loop, and `AgentLike` task usage without restating generated Code Mode client or workflow contract shapes in prose.
+The generated workflow-authoring contract is the handler-visible source of truth for runnable entry modules, product lane metadata, grouped asset refs, `createRunnableEntry(...)`, and workflow task agents. The curated guide teaches the Smithers render/task/output model, artifact layout, saved library layout, validation loop, and `AgentLike` task usage without restating generated `execute_typescript` client or workflow contract shapes in prose.
 
 Saved workflow assets are reusable source assets.
 
@@ -874,11 +880,11 @@ The runtime must not parse arbitrary workflow logs, node outputs, final prose, o
 
 The product must not ship, auto-create, or scaffold a fake passing CI entry for repositories that have not configured real checks.
 
-CI authoring context belongs only to handler threads that load the optional `ci` prompt context.
+CI authoring guidance belongs only to handler threads that load the optional `project-ci` extension.
 
 Normal handler threads may discover and run configured CI entries without that pack.
 
-If a normal handler needs to configure or modify Project CI, it should call `request_context({ keys: ["ci"] })` rather than relying on default prompt knowledge.
+If a normal handler needs to configure or modify Project CI, it should call `load_extension({ extensionId: "project-ci" })` rather than relying on default prompt knowledge.
 
 There is no required Project CI setup wizard or launcher.
 
@@ -934,7 +940,7 @@ When the target surface is the main orchestrator:
 4. if delegated:
    - call `thread_start`
    - hand off the delegated objective to a handler thread
-   - include requestable context-pack keys such as `context: ["ci"]` only when the objective needs that product context from the first handler turn
+   - include handler extension overrides such as loading `project-ci` only when the objective needs that product guidance from the first handler turn
 5. when a handler thread explicitly hands control back, reconcile the typed handoff notification against durable state: thread durable state plus the latest handoff episode
 6. if later work belongs in the same delegated context, call `thread_resume` with the completed thread id and a new message instead of starting an unrelated replacement thread
 
@@ -946,7 +952,7 @@ When the target surface is a handler thread:
 2. decide and persist whether to:
    - reply directly inside the thread
    - use `execute_typescript`
-   - request optional product context through `request_context`
+   - request optional product guidance or capability through `load_extension`
    - reuse a saved runnable entry
    - author a short-lived artifact workflow, often by importing saved definitions, prompts, and components
    - inspect workflow state through Smithers-native bridge tools such as `smithers_get_run`, `smithers_explain_run`, `smithers_get_node_detail`, and `smithers_get_run_events`

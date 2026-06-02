@@ -209,7 +209,7 @@ If no pane currently owns that handler surface, the runtime may acquire a tempor
 
 The adopted runtime contract is split into workspace-scoped reads and surface-scoped reads or mutations.
 
-Workspace routing is explicit. A workspace-scoped request must carry `workspaceId` and resolve the target runtime from that id. It must not route through the active workspace, active runtime, focused Dockview panel, or current tab. Background orchestrator, handler, workflow, prompt-library, and settings work can continue while the user focuses another workspace, so the focused workspace is view state only.
+Workspace routing is explicit. A workspace-scoped request must carry `workspaceId` and resolve the target runtime from that id. It must not route through the active workspace, active runtime, focused Dockview panel, or current tab. Background orchestrator, handler, workflow, generated agent-context projection, and settings work can continue while the user focuses another workspace, so the focused workspace is view state only.
 
 ### Workspace-Scoped Operations
 
@@ -222,13 +222,13 @@ Examples:
 - inspect a command
 - inspect workflow summaries
 - update session title metadata
-- read or edit Context Library state and generated prompt context for a target workspace
+- read or edit Agents/Extensions settings and generated agent-context projections for a target workspace
 - inspect, validate, delete, or open saved workflow-library assets for a target workspace
 - manage future workflow-agent component settings for a target workspace when that packaged-app-safe Workflows behavior is adopted
 
 These operations target `workspaceId` plus any narrower id they need, such as `workspaceSessionId`, `threadId`, `workflowRunId`, or asset path. They must work whether or not the relevant surfaces are currently open.
 
-App-global settings are not workspace-scoped operations. Provider credentials, app-wide provider preferences, app appearance, preferred external editor, and app-wide agent profiles may be served by app-global settings APIs. Any setting that reads or writes workspace files, workspace prompt projection, generated context, or workflow-library state must use the workspace-scoped lane instead.
+App-global settings are not workspace-scoped operations. Provider credentials, app-wide provider preferences, app appearance, preferred external editor, app-wide agent profiles, and app-global extension definitions may be served by app-global settings APIs. Any setting or projection that reads or writes workspace files, external instruction projections, generated agent context for a workspace, or workflow-library state must use the workspace-scoped lane instead.
 
 ### Surface-Scoped Operations
 

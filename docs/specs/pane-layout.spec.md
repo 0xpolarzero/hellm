@@ -771,7 +771,7 @@ Compact handler-thread cards should show:
 
 - thread title or objective
 - status
-- loaded context keys when present
+- loaded extension ids or generated agent context summary when present
 - latest handoff summary when present
 - active or latest workflow-run summary when present
 - blocked reason when waiting

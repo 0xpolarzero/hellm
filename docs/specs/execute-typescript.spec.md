@@ -3,11 +3,11 @@
 ## Status
 
 - Date: 2026-06-02
-- Status: resolved direction for Code Mode under the Extensions architecture
+- Status: resolved direction for `execute_typescript` under the Extensions architecture
 - Related spec: `docs/specs/extensions-and-tools.spec.md`
 
-This spec replaces the older direct-tool helper model. Code Mode is now a native extension surface
-whose model-facing tool is `execute_typescript`.
+This spec replaces the older direct-tool helper model. `execute_typescript` is now a native
+extension capability.
 
 ## Product Contract
 
@@ -29,14 +29,14 @@ Ordinary one-shot repository work should use the Filesystem native extension:
 - continue long-running processes with `write_stdin`
 - edit files with `apply_patch`
 
-Code Mode does not replace `exec_command`, `write_stdin`, or `apply_patch`.
+`execute_typescript` does not replace `exec_command`, `write_stdin`, or `apply_patch`.
 
 ## Authority
 
 `execute_typescript` does not widen actor authority.
 
-The generated TypeScript clients exposed to a snippet are derived from the current actor's loaded
-extension set and native tool set:
+The generated TypeScript clients exposed to a submitted program are derived from the current actor's
+loaded extension set and native tool set:
 
 - loaded native tool extensions may contribute generated clients
 - loaded `svvyx` extensions may contribute generated clients when TypeScript API is enabled
@@ -44,12 +44,12 @@ extension set and native tool set:
 - available-but-not-loaded extensions contribute no generated client
 - unavailable extensions contribute no generated client and no awareness
 
-If an actor cannot call a capability through its normal generated runtime surface, it must not gain
-that capability through generated Code Mode clients.
+If an actor cannot call a capability through its normal generated runtime interface, it must not gain
+that capability through generated `execute_typescript` clients.
 
 ## TypeScript Runtime
 
-The snippet may run ordinary TypeScript.
+The submitted program may run ordinary TypeScript.
 
 Generated `svvy` and loaded-extension clients are the preferred surface because they provide:
 
@@ -60,7 +60,7 @@ Generated `svvy` and loaded-extension clients are the preferred surface because 
 - redaction before output is persisted or shown to the model
 
 Arbitrary TypeScript side effects that do not go through generated clients are opaque. `svvy` should
-record the snippet, lifecycle, console output, return value, thrown error, and any observed workspace
+record the submitted source, lifecycle, console output, return value, thrown error, and any observed workspace
 changes after the fact, but it must not claim exact reads, writes, network requests, or child process
 behavior for arbitrary host-side TypeScript.
 
@@ -72,12 +72,12 @@ type ExecuteTypescriptInput = {
 };
 ```
 
-The submitted snippet is stored as an artifact for the attempt before execution.
+The submitted TypeScript source is stored as an artifact for the attempt before execution.
 
 ## Generated Declarations
 
-The actor receives one generated declaration block for Code Mode. The exact names are implementation
-contracts, but the structure must stay actor-scoped:
+The actor receives one generated declaration block for `execute_typescript`. The exact names are
+implementation contracts, but the structure must stay actor-scoped:
 
 ```ts
 declare const svvy: SvvyClient;
@@ -100,8 +100,8 @@ interface SvvyConsole {
 }
 ```
 
-The generated declaration is the prompt contract. Handwritten prose can explain when to use Code
-Mode, but it must not redefine the interface.
+The generated declaration is the prompt contract. Handwritten prose can explain when to use
+`execute_typescript`, but it must not redefine the interface.
 
 ## Removed Surfaces
 
@@ -120,7 +120,7 @@ These old duplicated helper families are removed:
 
 When an equivalent operation is useful from TypeScript, it must come from a generated `svvy` or
 loaded-extension client backed by the same source contract as the actual runtime capability. Do not
-keep a second manually maintained helper API beside the generated client surface.
+keep a second manually maintained helper API beside the generated client interface.
 
 ## Runtime Rules
 
@@ -131,13 +131,13 @@ keep a second manually maintained helper API beside the generated client surface
 - Console logs are bounded and recorded as command output or artifacts according to size.
 - Secret redaction runs before logs, outputs, artifacts, command facts, or transcript text are
   persisted.
-- Extension secrets are never injected into the broad snippet environment.
+- Extension secrets are never injected into the broad TypeScript execution environment.
 - Extension env values are injected only into the exact generated client command invocation that
   belongs to that extension.
 - Already emitted generated-client calls finish against the loaded tool/client set that produced
   them.
 - If `load_extension` succeeds earlier in the same turn, the next model call in that same turn sees
-  refreshed Code Mode declarations including the newly loaded extension.
+  refreshed `execute_typescript` declarations including the newly loaded extension.
 
 ## Recording
 
@@ -147,8 +147,8 @@ The parent record includes:
 
 - owning turn or workflow task attempt
 - actor kind
-- generated context fingerprint used for the snippet
-- submitted snippet artifact id
+- generated context fingerprint used for the submitted program
+- submitted TypeScript source artifact id
 - lifecycle status
 - bounded console output
 - return value summary when serializable
@@ -214,7 +214,7 @@ The agent receives:
 
 - the `execute_typescript` tool declaration
 - generated TypeScript declarations for the current actor
-- concise usage guidance saying Code Mode is for TypeScript composition, not one-shot repository
+- concise usage guidance saying `execute_typescript` is for TypeScript composition, not one-shot repository
   inspection or file edits
 - loaded-extension client documentation only for loaded extensions that expose TypeScript API
 

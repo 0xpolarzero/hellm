@@ -349,9 +349,9 @@ Tests should cover:
 - missing target rendering after restart
 - no file read on send
 - no folder expansion on send
-- no prompt context-target injection for orchestrator or handler-thread surfaces
+- no generated agent context-target injection for orchestrator or handler-thread surfaces
 
-The most important regression test is that sending a mention does not cause special agent-side context injection.
+The most important regression test is that sending a mention does not alter generated agent context.
 
 ## Progress Mapping
 

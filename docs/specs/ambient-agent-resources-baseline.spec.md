@@ -10,7 +10,7 @@
   - define disabled ambient callable capabilities
   - define disabled runtime extensions and packages
   - define disabled ambient skills
-  - define product-owned Snippets as user-invoked prompt macros
+  - explicitly defer prompt macros and snippets
   - define disabled ambient commands and hooks
   - define host UI and interaction resources as unsupported
   - define provider and model adapters as app-owned
@@ -20,9 +20,9 @@
   - define the pi opt-outs needed for orchestrator, handler-thread, and workflow task-agent surfaces
 
 This is the narrow baseline. It intentionally does not design general settings UI for extensions,
-skills, packages, host plugins, MCP imports, provider adapters, credentials, themes, or execution
-policy. It supports Snippets only as explicit user-invoked prompt macros, not as host-owned runtime
-commands. Other integrations can become separate first-class integrations later if there is demand.
+skills, packages, host plugins, MCP imports, provider adapters, credentials, themes, prompt macros,
+or execution policy. Other integrations can become separate first-class integrations later if there
+is demand.
 
 ## Product Intent
 
@@ -36,8 +36,7 @@ we actually want:
 - `svvy` ignores native prompt replacement files.
 - `svvy` ignores ambient tools, extensions, packages, and skills.
 - `svvy` registers actor tools through its own product-owned tool registry.
-- `svvy` discovers supported prompt macro files as Snippets, but expands them itself only when the
-  user inserts one.
+- `svvy` does not discover or expand host prompt macros in this design.
 
 The goal is not a large permission system. The goal is a small, deterministic surface that does not
 surprise us.
@@ -63,8 +62,8 @@ Supported filenames:
 - `AGENTS.md`
 - `CLAUDE.md`
 
-They are external read-only Markdown files. They are not editable `svvy` instruction blocks and not
-Context Packs. `svvy` controls only whether and where the file is used.
+They are external read-only Markdown files. They are not editable `svvy` base instructions or
+managed extension source. `svvy` controls only whether and where the file is used.
 
 ### Discovery Sources
 
@@ -147,7 +146,7 @@ Extensions
 ```
 
 `external_instruction` is its own category. It is not folded into shipped native built-ins, user
-extensions, editable instruction blocks, or context packs.
+extensions, editable base instructions, or prompt-only shipped extensions.
 
 Each external instruction row shows:
 
@@ -206,31 +205,32 @@ type ExternalInstructionControl = {
 };
 ```
 
-The file content itself is not copied into editable prompt-library state. `svvy` reads live content
-from disk for previews and prompt composition, and computes a content hash.
+The file content itself is not copied into editable extension or agent-profile state. `svvy` reads
+live content from disk for previews and generated agent context composition, and computes a content
+hash.
 
 Unreadable files remain visible with a read error and are excluded from prompt composition until they
 can be read again.
 
-### Prompt Composition
+### Agent Context Composition
 
 Only enabled, actor-selected, readable external instructions are included.
 
-The adopted prompt order is:
+The adopted generated agent context order is:
 
-1. enabled Instruction blocks
+1. selected base instructions
 2. enabled external_instruction records
-3. enabled Context Packs default-loaded for the actor
-4. generated actor-specific prompt parts
+3. loaded extension instructions and command guidance
+4. generated actor-specific tool declarations and TypeScript declarations
 
-Generated actor-specific prompt parts remain last so exact tool declarations and generated contracts
+Generated actor-specific declarations remain last so exact tool declarations and generated contracts
 stay close to the end of the system prompt.
 
 ### Agent Context Freshness
 
 External instructions participate in normal generated agent context freshness.
 
-Settings changes create a new prompt-library revision:
+Settings changes create a new generated agent context fingerprint:
 
 - root list changes
 - root enabled state changes
@@ -267,7 +267,7 @@ External instructions reach the model only through the `svvy`-composed system pr
 ## 2. Native Prompt Replacement
 
 Native prompt replacement means host-specific files that replace or append the system prompt outside
-`svvy`'s Context model.
+`svvy`'s generated agent context model.
 
 For pi, this includes:
 
@@ -328,7 +328,7 @@ Generated tool declarations must match the actual actor tool registry.
 Pi risk:
 
 - pi extensions can register tools and commands
-- pi default tools can exist if selected through pi's normal tool surface
+- pi default tools can exist if selected through pi's normal tool declaration path
 
 Baseline pi rule:
 
@@ -421,7 +421,7 @@ Baseline decision:
 - do not add skill descriptions to prompts
 - do not register `/skill:name` commands
 - do not execute or suggest skill scripts
-- do not import skills into Context automatically
+- do not import skills into Extensions or generated agent context automatically
 
 Future support should be explicit, likely as an import or enable flow that shows the source path and
 exact included files.
@@ -445,193 +445,19 @@ additionalSkillPaths: [],
 Since pi slash-command lists include loaded skills, keeping `getSkills().skills` empty also prevents
 skill commands from being exposed.
 
-## 6. Snippets
+## 6. Prompt Macros And Snippets
 
-Snippets are reusable prompt macros.
+Snippets are product-owned prompt macros specified in `docs/specs/snippets.spec.md`.
 
-They are called commands or slash commands by some host tools, but `svvy` treats them as prompt text,
-not as runtime commands, tools, skills, hooks, or permission grants.
+They are not part of the Extensions capability model. They do not grant tools, mount commands, change
+generated declarations, or alter generated agent context.
 
 Baseline decision:
 
-- support Snippets as a first-class `svvy` pane below Context
-- discover known Markdown prompt macro files from supported hosts
-- show discovered Snippets as read-only external files
-- allow `svvy`-owned Snippets to be created, edited, renamed, and deleted in the Snippets pane
-- insert Snippets explicitly from the composer through `@` fuzzy matching
-- expand Snippets through `svvy`, not through pi, Claude, Codex, or another host runtime
-- do not expose host slash-command execution to actors
-
-Snippets do nothing until the user inserts one. They are not default-loaded context, so they do not
-need actor toggles, global/workspace activation settings, prompt-library revisions, or generated
-agent context refresh behavior.
-
-### Discovery Sources
-
-`svvy` discovers external Snippets from prompt macro formats that are already simple Markdown files.
-
-Claude command files:
-
-- user commands: `~/.claude/commands/**/*.md`
-- workspace commands: `<workspace>/.claude/commands/**/*.md`
-
-Claude command directories are recursive because Claude uses subdirectories for organization and
-namespace display.
-
-Pi prompt template files:
-
-- user templates: `~/.pi/agent/prompts/*.md`
-- workspace templates: `<workspace>/.pi/prompts/*.md`
-
-Pi prompt-template directory discovery is non-recursive. `svvy` must not scan arbitrary nested
-directories under a pi `prompts` directory unless a later explicit integration adds that behavior.
-
-Codex baseline:
-
-- do not discover Codex skills as Snippets
-- do not parse `SKILL.md` as a Snippet source
-- do not reinterpret Codex plugins, skill bundles, or generated skill commands as Snippets
-
-If Codex exposes a supported standalone Markdown prompt-snippet or custom-command path that is not a
-skill, plugin, or executable package surface, it can be added to this Snippets discovery list later.
-Until then, there is no Codex-specific external Snippet path in the baseline.
-
-### Discovered Versus Managed Snippets
-
-Discovered Snippets are external files:
-
-- read-only inside `svvy`
-- opened through the configured external editor
-- never duplicated automatically into editable `svvy` Snippets
-- not deleted, renamed, or rewritten by `svvy`
-- refreshed from live file content
-
-Managed Snippets are product-owned records:
-
-- created in the Snippets pane
-- edited in the Snippets pane
-- renamed in the Snippets pane
-- deleted in the Snippets pane
-- stored by `svvy`
-
-There is no clone or "make editable copy" flow in the baseline. If a user wants an editable version of
-an external Snippet, they can create a separate managed Snippet manually.
-
-### Snippets Pane
-
-The app sidebar adds a Snippets pane below Context.
-
-The pane shows:
-
-- managed Snippets
-- discovered Claude command files
-- discovered pi prompt-template files
-- source badge: `svvy`, `Claude`, or `pi`
-- title
-- description when available
-- argument hint when available
-- absolute path for discovered Snippets
-- read-only live preview for discovered Snippets
-- editor for managed Snippets
-- open-external-editor action for discovered Snippets
-
-The pane does not show:
-
-- actor enablement controls
-- global/workspace scope controls
-- permission controls
-- tool grants
-- package or plugin controls
-- skill import controls
-
-### Format
-
-Snippets are Markdown with optional YAML frontmatter.
-
-Supported metadata:
-
-- `description`: short picker and pane description
-- `argument-hint`: user-facing hint for expected arguments
-
-Behavior-changing metadata is ignored:
-
-- `allowed-tools` does not grant tools
-- `model` does not change model selection
-- `disable-model-invocation` does not create host command behavior
-- package/plugin metadata does not affect discovery or execution
-
-Supported placeholders:
-
-- `$1`, `$2`, and higher positional arguments
-- `$@`
-- `$ARGUMENTS`
-- `${@:N}`
-- `${@:N:L}`
-
-Unsupported host command behavior:
-
-- no Claude bash pre-execution from `!` command syntax
-- no MCP prompt discovery as Snippets
-- no plugin-provided commands
-- no extension-provided commands
-- no skill commands
-- no host command execution during expansion
-
-Unsupported behavior is not emulated. `svvy` treats the Markdown body as prompt text and substitutes
-only supported argument placeholders.
-
-### Composer UX
-
-The composer `@` picker searches files, folders, and Snippets together in one fuzzy result list.
-
-Snippet results are not placed in a separate picker mode. They use different visual treatment so the
-user can distinguish them while still getting the best overall fuzzy match:
-
-- Snippet icon
-- source badge
-- description or argument hint
-- path subtitle for discovered Snippets
-
-Accepting a Snippet inserts a structured inline mention into the composer. The composer displays the
-mention chip, not the full expanded Markdown body.
-
-If the Snippet has arguments, the mention exposes inline argument fields:
-
-- `Tab` moves to the next field
-- `Enter` accepts the current field and moves forward when another field exists
-- final `Enter` returns focus to normal composer text entry
-- the mention visibly shows the supplied arguments
-
-The same argument flow applies when the user types a full Snippet mention and commits it with a
-space.
-
-Each Snippet chip has a small expand action. Expanding replaces the chip with the resolved Snippet
-text directly in the composer so the user can edit the generated prompt text before sending.
-
-### Sent Prompt Behavior
-
-When the user sends a message containing a Snippet mention, `svvy` resolves the mention before the
-message reaches pi.
-
-The agent receives the expanded prompt text inline.
-
-`svvy` does not wrap expanded Snippet content in XML or provenance markers by default. Existing tools
-normally expand custom commands into prompt text rather than adding explicit source wrappers, and
-wrappers would add noise to the model-facing prompt.
-
-Provenance stays in product metadata:
-
-- transcript chips can show which Snippet was used
-- transcript chips can expand to show the resolved content
-- durable message metadata can store the Snippet id, source, path, content hash, and arguments
-- the agent-facing prompt remains clean text
-
-If a user expands the chip before sending, the structured mention is removed and the message is just
-ordinary edited text.
-
-### Host Runtime Opt-Out
-
-Host runtime expansion stays disabled.
+- keep host prompt-template and command runtimes disabled
+- let `svvy` own any Snippet discovery, editing, insertion, argument substitution, and expansion
+- do not let prompt-macro metadata grant tools, commands, hooks, model selection, provider behavior,
+  generated declarations, generated agent context, execution policy, or UI behavior
 
 For pi-backed actors:
 
@@ -641,12 +467,8 @@ For pi-backed actors:
 - submit user text with pi prompt-template and slash-command expansion disabled when that option is
   available
 
-This means pi prompt-template files can be discovered by `svvy` as read-only Snippets, but pi itself
-does not load them, list them as commands, or expand them.
-
-Claude and Codex runtimes are not invoked for Snippet discovery or expansion. `svvy` reads supported
-Markdown files directly and owns the UI, argument substitution, transcript projection, and final
-prompt text.
+Claude and Codex runtimes are not invoked for prompt macro discovery or expansion. `svvy` reads
+supported Markdown files directly when the Snippets feature is implemented.
 
 ## 7. Commands And Hooks
 
@@ -655,10 +477,8 @@ Commands are runtime actions registered by a host or extension.
 Hooks are automatic lifecycle handlers that run before, during, or after agent events such as prompt
 submission, tool calls, session start, compaction, provider requests, or shutdown.
 
-They are different from Snippets:
-
-- Snippets are explicit prompt macros inserted by the user.
-- Commands and hooks can execute code, route work, mutate input, block operations, modify tool
+They are different from prompt macros, which are deferred in this design. Commands and hooks can
+execute code, route work, mutate input, block operations, modify tool
   arguments, modify tool results, inject context, or change UI/runtime behavior.
 
 Examples:
@@ -679,15 +499,15 @@ Baseline decision:
 - do not execute host slash commands
 - do not run host lifecycle hooks
 - do not let hooks transform user input
-- do not let hooks add hidden prompt context
+- do not let hooks add hidden generated agent context
 - do not let hooks mutate tool arguments or tool results
 - do not let hooks approve, block, or reroute `svvy` tool calls
 - do not let hook metadata grant tools, permissions, provider behavior, UI behavior, or execution
   policy
 
 `svvy` product commands remain allowed because they are product-owned. Examples include command
-palette actions, pane actions, sidebar actions, session actions, Snippet insertion, and explicit
-workflow or Smithers actions routed through `svvy` tools.
+palette actions, pane actions, sidebar actions, session actions, and explicit workflow or Smithers
+actions routed through `svvy` tools.
 
 Future support for host commands or hooks must be a separate first-class integration. It must show the
 source, lifecycle event, command text or handler identity, trust state, affected actor classes, and
@@ -720,15 +540,14 @@ command path.
 
 ### Claude And Codex Commands And Hooks Opt-Out
 
-`svvy` may read Claude command Markdown files as Snippets, but it must not invoke Claude Code's
+`svvy` does not read Claude command Markdown files as prompt macros and must not invoke Claude Code's
 command runtime.
 
 `svvy` must not load or execute Claude or Codex hook configuration. This includes command hooks,
 prompt hooks, agent hooks, plugin hooks, managed hook layers, and any hook state or trust records from
 host config.
 
-Reading a Markdown command file for Snippet display is allowed only because the file is treated as
-plain prompt text. Reading hook configuration is not part of the baseline.
+Reading hook configuration is not part of the baseline.
 
 ## 8. UI And Interaction Resources
 
@@ -881,7 +700,7 @@ Baseline decision:
 - do not import host sandbox or approval settings
 - do not import host retry, timeout, network, shell, concurrency, or permission settings
 - do not let host hooks or extensions act as policy gates
-- do not let enabled Snippets, external instructions, or future prompt assets change execution policy
+- do not let external instructions or future prompt assets change execution policy
 
 Actor execution policy must come from `svvy` product settings, actor contracts, Smithers run
 configuration where applicable, and product-owned tool registries.
@@ -996,8 +815,7 @@ Required checks:
 - no actor surface calls `extendResources()` with ambient paths
 - generated prompt previews and generated tool declarations come from `svvy` state, not pi resource
   discovery
-- composer sends already-resolved Snippet text to pi with host prompt-template and slash-command
-  expansion disabled
+- composer sends user text to pi with host prompt-template and slash-command expansion disabled
 - Snippets discovery reads supported Markdown files directly and does not use pi's prompt-template
   registry as the source of truth
 - no host commands or lifecycle hooks are loaded, listed, trusted, or executed
@@ -1019,7 +837,7 @@ Required checks:
 - Do not auto-load pi, Codex, Claude, or MCP skills.
 - Do not auto-load pi extensions or packages.
 - Do not let host runtimes auto-load or expand prompt templates.
-- Do not discover Codex skills as Snippets.
+- Do not discover Codex skills as prompt macros.
 - Do not execute Claude command bash preambles.
 - Do not auto-load themes.
 - Do not support host UI resources, host themes, host keybindings, host widgets, host renderers, or
@@ -1054,23 +872,16 @@ Required checks:
 - Adding a pi extension does not add tools, commands, hooks, or UI behavior to any `svvy` actor.
 - Adding a pi package does not add extensions, skills, prompts, themes, tools, commands, hooks, or UI
   behavior to any `svvy` actor.
-- Adding pi prompt templates does not add prompt text or slash commands to any `svvy` actor by
-  itself.
-- Adding a pi prompt template under a supported prompt-template path shows a read-only Snippet that
-  can be inserted explicitly from the `@` picker.
-- Adding a Claude command under a supported command path shows a read-only Snippet that can be
-  inserted explicitly from the `@` picker.
-- A discovered Snippet is not duplicated into an editable `svvy` Snippet automatically.
-- A Snippet appears in the same fuzzy `@` result list as files and folders, with distinct visual
-  treatment but no separate picker mode.
-- Sending a Snippet mention expands its Markdown into clean prompt text before pi receives the user
-  message.
-- Sent Snippet metadata is stored for product transcript display, but no XML or provenance wrapper is
-  added to the agent-facing prompt text by default.
-- Snippet frontmatter such as `allowed-tools` and `model` does not grant tools or change actor model
-  selection.
+- Adding pi prompt templates does not add prompt text, slash commands, or generated agent context to
+  any `svvy` actor by itself.
+- Adding a Claude command under a supported command path does not add a command or generated agent
+  context to any `svvy` actor.
+- Supported pi prompt templates and Claude command Markdown files may appear as read-only Snippets
+  only through the product-owned Snippets discovery path.
+- Prompt macro metadata such as `allowed-tools` and `model` does not grant tools or change actor
+  model selection.
 - Claude bash pre-execution syntax, MCP prompts, plugin commands, extension commands, and skill
-  commands are not executed or emulated as Snippets.
+  commands are not executed or emulated as prompt macros.
 - Adding a pi extension command does not add a command to any `svvy` command surface.
 - Adding a pi extension event handler does not transform prompts, intercept tools, mutate results, or
   change UI/runtime behavior.

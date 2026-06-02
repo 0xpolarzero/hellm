@@ -164,8 +164,8 @@ The default workspace supports:
 
 - creating New orchestrator sessions
 - prompt fallback from the command palette
-- Context pane
 - Agents pane
+- Extensions pane
 - Logs pane
 - Settings
 - provider auth and web provider settings
@@ -544,13 +544,17 @@ They show logs for the default workspace runtime. They do not become app-global 
 
 When a user workspace is opened in the current tab, the tab switches to that workspace's logs stream because the visual tab now points at a different workspace runtime.
 
-### Context
+### Extensions
 
-Context is enabled in the default workspace.
+Extensions are enabled in the default workspace.
 
-The Context Library remains app-owned settings with workspace-scoped activation rules, but current implementation may route reads through the active workspace runtime. This spec does not require moving Context to a separate global runtime before default-workspace launch because the default workspace provides a valid `workspaceId` for those operations.
+Agent profiles and extension definitions are app-owned settings. Extensions are app-global in v1,
+while generated agent-context previews and external-instruction projections may need a workspace
+runtime for workspace-specific files. This spec does not require moving those projections to a
+separate global runtime before default-workspace launch because the default workspace provides a
+valid `workspaceId` for operations that need one.
 
-Future work may still normalize Context storage to app-global state, but default-workspace launch removes the need for a disabled Context row in the startup state.
+Default-workspace launch removes the need for a disabled Extensions row in the startup state.
 
 ### Workflows
 
@@ -576,7 +580,7 @@ Menu and shortcut actions resolve as follows:
 - `New orchestrator`: active tab's current workspace, including default workspace
 - `Logs`: active tab's current workspace logs
 - `Agents`: app-global agent profiles, evaluated from the active tab's workspace context when workspace-scoped projections are needed
-- `Context`: active tab's current workspace-routed Context view
+- `Extensions`: app-global extension records with workspace-routed generated agent-context projections when needed
 - `Workflows`: active tab's current workspace workflows
 
 ### Running Work

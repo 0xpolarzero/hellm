@@ -44,14 +44,14 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Build a POC `execute_typescript` runtime with compile or typecheck-before-run diagnostics and the adopted TypeScript input/output contract. Commit(s): `76cc8f3`, `b41e5e6`
 - [x] Expose a minimal `execute_typescript` tool with the adopted input/output contract and injected `api.*` surface. Commit(s): `76cc8f3`
 - [x] Persist each attempted snippet as a file-backed artifact before execution, with SQLite metadata and path indexing. Commit(s): `76cc8f3`, `fff54d7`
-- [x] Generate the typed `api.*` declaration for the code-mode subset of direct tools. Commit(s): `76cc8f3`, `29d8452`
-- [ ] Generate and enforce actor-specific `execute_typescript` capability profiles so orchestrators do not receive workflow or Smithers control through code mode, handler threads receive the workflow discovery composition surface defined by their product contract, and workflow task agents receive only task-local code-mode APIs.
+- [x] Generate the typed declaration for the `execute_typescript` subset of direct tools. Commit(s): `76cc8f3`, `29d8452`
+- [ ] Generate and enforce actor-specific `execute_typescript` capability profiles so orchestrators do not receive workflow or Smithers control through generated TypeScript clients, handler threads receive only clients for their loaded extensions, and workflow task agents receive only task-local generated clients.
 - [x] Run a simple composed scripted task through `execute_typescript`. Commit(s): `76cc8f3`
 - [x] Build a POC artifact and tracing pipeline for code-mode execution. Commit(s): `76cc8f3`
 - [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Keep only `thread_start`, `thread_handoff`, and `wait` as `svvy`-native control tools while exposing Smithers workflow operations through Smithers-native bridge tools. Commit(s): `a02bd48`
-- [x] Keep the code-mode API bounded to duplicated direct tools that benefit from typed composition. Commit(s): `76cc8f3`, `29d8452`
-- [x] Expose native cx semantic navigation plus PI-backed file, search, edit, write, and bash tools as the normal coding-agent work surface. Commit(s): `76cc8f3`, `29d8452`
+- [x] Keep the `execute_typescript` API bounded to generated clients that benefit from typed composition. Commit(s): `76cc8f3`, `29d8452`
+- [x] Expose the Codex-like Filesystem extension with `exec_command`, `write_stdin`, and `apply_patch` as the normal coding-agent work interface. Commit(s): `76cc8f3`, `29d8452`
 - [x] Expose read-only cx navigation through the generated `execute_typescript` `api.cx_*` subset for typed composition. Commit(s): `673837a`
 - [x] Record direct tool calls and nested code-mode calls in the shared structured command model. Commit(s): `76cc8f3`, `29d8452`
 - [x] Persist normalized child-command facts for nested `api.*` calls while the parent `execute_typescript` attempt remains the main semantic unit. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
@@ -62,11 +62,11 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 Current product decisions for this section are specified in `docs/specs/web-tools.spec.md`.
 
 - [x] Define Web Provider settings for TinyFish and Firecrawl, including default no-provider state, readiness state, and secret storage for provider API keys. Commit(s): `788ecb1`, `c479f72`
-- [x] Build the `src/bun/web-runtime/` provider boundary with shared contracts, provider registry, prompt-context generation, tool adapters, and TinyFish SDK integration. Commit(s): `788ecb1`, `540e886`
+- [x] Build the `src/bun/web-runtime/` provider boundary with shared contracts, provider registry, Web extension generated guidance, tool adapters, and TinyFish SDK integration. Commit(s): `788ecb1`, `540e886`
 - [x] Expose provider-shaped direct `web_search` and deterministic artifact-backed `web_fetch` tools from TinyFish SDK contracts or checked-in Firecrawl contracts and prompt packs only when the selected provider is ready, with structured command facts and no API-key leakage. Commit(s): `788ecb1`, `540e886`
-- [x] Generate always-loaded web prompt context from the active provider, including unavailable-provider guidance when the selected provider is missing required setup. Commit(s): `788ecb1`, `c479f72`, `540e886`
-- [x] Regenerate active actor tool declarations, `list_tools` output, and web prompt context after provider or key changes before the next turn. Commit(s): `788ecb1`, `c479f72`, `540e886`
-- [x] Add generated `execute_typescript` `api.web_search` and artifact-backed `api.web_fetch` helpers from the active provider's direct-tool contracts only when the selected keyed provider is ready. Commit(s): `788ecb1`, `540e886`
+- [x] Generate Web extension prompt guidance from the active provider, including unavailable-provider guidance when the selected provider is missing required setup. Commit(s): `788ecb1`, `c479f72`, `540e886`
+- [x] Regenerate active actor tool declarations, Web extension readiness, and generated agent context after provider or key changes before the next turn. Commit(s): `788ecb1`, `c479f72`, `540e886`
+- [x] Add generated Web extension `execute_typescript` clients from the active provider's direct-tool contracts only when the selected keyed provider is ready. Commit(s): `788ecb1`, `540e886`
 - [x] Keep self-hosted web fallback out of current scope unless explicitly adopted later, with self-hosted Firecrawl and OrioSearch retained only as heavier reference directions. Commit(s): `c479f72`, `540e886`
 
 ## 3. Turn Decisions And Delegation
@@ -125,8 +125,8 @@ Current product decisions for this section are specified in `docs/specs/web-tool
 - [x] Persist every authored short-lived workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/` with `definitions/`, `prompts/`, `components/`, `entries/`, and `metadata.json`. Commit(s): `dc1da8c`
 - [x] Define the saved workflow library layout under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and `.svvy/workflows/entries/`. Commit(s): `37afcb3`, `4515233`
 - [x] Define the discovery metadata contract compiled from JSDoc headers in `ts` or `tsx` files and frontmatter in `mdx` prompt files. Commit(s): `37afcb3`, `4515233`
-- [x] Expose handler-owned `workflow_list_assets` directly and duplicate it as handler-only `api.workflow_list_assets(...)` for code-mode composition. Commit(s): `4515233`
-- [x] Expose handler-owned `workflow_list_models` directly and duplicate it as handler-only `api.workflow_list_models()` for code-mode composition. Commit(s): `4515233`
+- [x] Expose saved workflow asset metadata through the Workflows library read model and handler-readable file paths. Commit(s): `4515233`
+- [x] Expose workflow-agent model choices, provider readiness, and supported reasoning values through the handler-only `workflow_list_models` authoring tool backed by pi-normalized model metadata. Commit(s): `4515233`
 - [x] Build a POC saved definition plus saved entry that are reused by a new short-lived artifact entry with different prompts or config bound at authoring time. Commit(s): `37afcb3`
 - [x] Keep authored workflows artifact-only by default until the handler explicitly writes reusable files into `.svvy/workflows/`. Commit(s): `0b2d1ff`
 - [x] Run automatic saved-workflow validation after direct `write` or `edit` operations under `.svvy/workflows/...`, surfacing diagnostics through structured command records. Commit(s): `0b2d1ff`
@@ -135,10 +135,10 @@ Current product decisions for this section are specified in `docs/specs/web-tool
 
 ## 7. Project CI Lane
 
-- [x] Build a POC prompt context registry with `ci` as the first key. Commit(s): `2a5dbbe`
-- [x] Add the handler-only `request_context({ keys })` tool and persist loaded context keys on handler threads. Commit(s): `2a5dbbe`
-- [x] Extend `thread_start` so the orchestrator can preload requestable context with `context: ["ci"]`. Commit(s): `2a5dbbe`
-- [x] Make Project CI configuration happen organically through normal handler-thread work, with `context: ["ci"]` preloaded for first-turn CI authoring or requested later through `request_context({ keys: ["ci"] })`, instead of a setup launcher or CI-specific runtime. Commit(s): `2a5dbbe`
+- [x] Model Project CI authoring guidance as the handler-available shipped `project-ci` extension. Commit(s): `2a5dbbe`
+- [x] Use `load_extension({ extensionId: "project-ci" })` for handler-side Project CI authoring guidance and store the resulting generated agent context binding. Commit(s): `2a5dbbe`
+- [x] Extend `thread_start` so the orchestrator can create a handler with `project-ci` loaded through extension overrides. Commit(s): `2a5dbbe`
+- [x] Make Project CI configuration happen organically through normal handler-thread work, with the `project-ci` extension loaded when CI authoring guidance is needed, instead of a setup launcher or CI-specific runtime. Commit(s): `2a5dbbe`
 - [x] Define the conventional Project CI saved-workflow layout under `.svvy/workflows/{definitions,prompts,components,entries}/ci/`, without implying a shipped or auto-created default CI entry. Commit(s): `2a5dbbe`
 - [x] Extend runnable workflow entry discovery with optional `productKind` and `resultSchema` metadata. Commit(s): `2a5dbbe`
 - [x] Validate a saved Project CI entry under the conventional `.svvy/workflows/entries/ci/project-ci.tsx` path that declares `productKind = "project-ci"` and returns output that validates against its declared CI result schema. Commit(s): `2a5dbbe`
@@ -147,7 +147,7 @@ Current product decisions for this section are specified in `docs/specs/web-tool
 - [x] Treat invalid CI result output as a CI workflow troubleshooting state instead of parsing logs, node outputs, final prose, or command names. Commit(s): `2a5dbbe`
 - [x] Derive Project CI run/check read models through idempotent reconciliation over durable Smithers result facts and durable `svvy` workflow ownership facts, with terminal events, monitor reconnect, and app restart recovery all triggering the same derivation instead of relying on process-local terminal output memory or copied svvy output fields. Commit(s): a82abd62bc
 - [x] Record missing durable Smithers terminal result output for a declared Project CI entry as a durable svvy projection failure or troubleshooting state instead of silently skipping CI projection. Commit(s): a82abd62bc
-- [x] Let normal handler threads discover and run configured Project CI entries without loading the `ci` prompt context, while using `request_context({ keys: ["ci"] })` before configuring or modifying CI. Commit(s): `2a5dbbe`
+- [x] Let normal handler threads discover and run configured Project CI entries without loading the `project-ci` extension, while using `load_extension({ extensionId: "project-ci" })` before configuring or modifying CI. Commit(s): `2a5dbbe`
 - [x] Render `not configured`, `configured`, `running`, `passed`, `failed`, `blocked`, and `cancelled` Project CI states in a dedicated CI status surface or panel. Commit(s): `ee850fd`
 - [x] Surface the latest Project CI outcome as routing input for orchestrator and handler decisions without making CI a native control tool. Commit(s): `2a5dbbe`
 
@@ -174,7 +174,7 @@ Current product decisions for this section are specified in `docs/specs/workspac
 - [x] Render the latest Project CI summary block for the focused surface or inspected thread. Commit(s): `3855fe4`
 - [x] Restore focused panel, panel-to-surface bindings, and inspector selection after restart. Commit(s): `3855fe4`
 - [ ] Keep open workspaces as left-aligned, horizontally scrollable, draggable app-chrome tabs with durable user-defined tab order, compact icon controls, >0-only colored status count badges, a svvy-owned default workspace runtime when no user workspace tabs restore, exactly one `Open Workspace` pane as each new default workspace tab's first surface, current-tab `Open Workspace`, `New Tab` as a new default workspace tab with no durable layout slots, and `Open Workspace in New Tab` as picker-backed user workspace tab creation; duplicate same-cwd tabs are separate chrome views over the same backend workspace runtime, session catalog, durable workspace state, live surface registry, queues, threads, workflow runs, app logs, and durable layout slots keyed by `(workspaceId, layoutId)`, while each tab stores only its selected active layout id.
-- [ ] Route all workspace-scoped backend requests and renderer sync events through explicit `workspaceId` instead of process-global cwd, active workspace, focused tab, or active runtime; keep app-global settings on separate app-global APIs, and require explicit `workspaceId` for workspace-affecting settings plus Context and Workflows library operations.
+- [ ] Route all workspace-scoped backend requests and renderer sync events through explicit `workspaceId` instead of process-global cwd, active workspace, focused tab, or active runtime; keep app-global settings on separate app-global APIs, and require explicit `workspaceId` for workspace-affecting settings plus generated agent-context projections and Workflows library operations.
 
 ## 9. Command Palette And Quick Open
 
@@ -221,7 +221,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 ## 11. Agents Pane And Agent Profiles
 
 - [x] Define the stored shape for pi-backed agent profile settings used by orchestrator and handler surfaces. Commit(s): `8e19462`
-- [x] Keep agent profiles separate from requestable context packs so Project CI uses normal handler-thread execution plus `context: ["ci"]`. Commit(s): `2a5dbbe`
+- [x] Keep agent profiles separate from session-local extension loading so Project CI uses normal handler-thread execution plus the handler-available `project-ci` extension. Commit(s): `2a5dbbe`
 - [x] Seed initial app-wide values for the default orchestrator profile, the `threadHandler` profile, and internal title-naming settings. Commit(s): `8e19462`, `354db28`
 - [x] Build a POC settings model for editing app-wide agent profile defaults. Commit(s): `8e19462`
 - [x] Persist app-wide agent profile settings. Commit(s): `8e19462`
@@ -229,7 +229,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Persist the orchestrator profile snapshot and prompt selection used by created sessions. Commit(s): `8e19462`
 - [x] Persist per-session orchestrator profile overrides. Commit(s): `8e19462`
 - [x] Persist per-thread overrides for handler-thread agent profile settings when a delegated thread needs a specific model or reasoning level. Commit(s): `8e19462`
-- [x] Keep the Agents sidebar pane between Logs and Context, with orchestrator profiles plus the `threadHandler` special profile owned there instead of in General settings. Commit(s): `2b97c46648`, `b714aa26f9`
+- [x] Keep the Agents sidebar pane between Logs and Extensions, with orchestrator profiles plus the `threadHandler` special profile owned there instead of in General settings. Commit(s): `2b97c46648`, `b714aa26f9`
 - [x] Drive the New orchestrator picker order, profile-specific command palette actions, and surface profile badges from Agents-pane orchestrator profile order. Commit(s): `2b97c46648`, `031510ba2b`
 - [x] Keep the default orchestrator profile locked, first, non-draggable, non-deletable, and editable for settings. Commit(s): `2b97c46648`, `b714aa26f9`
 - [x] Keep the `threadHandler` special profile available for delegated handler-thread surfaces. Commit(s): `2b97c46648`, `b714aa26f9`
@@ -278,22 +278,22 @@ Current product decisions for this section are specified in `docs/specs/queued-m
 - [x] Represent generated agent context refresh as typed surface queue work, apply it before later prompt-bearing items, and expose queued, cancel, retry, and out-of-date recovery UI. Commit(s): 61ba639d6a
 - [x] Let committed user transcript messages enter composer edit mode with a visible selected-message indicator and a draft-replacement warning, then resend by moving the same pi surface back to the original message's parent state before continuing from the edited user message. Commit(s): `5378dcb`
 
-## 14. Context Library And Context Packs
+## 14. Agents, Extensions, And Generated Agent Context
 
-Current product decisions for this section are specified in `docs/specs/prompt-library.spec.md` and `docs/specs/prompt-contexts.spec.md`.
+Current product decisions for this section are specified in `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension-managing.spec.md`, `docs/specs/structured-session-state.spec.md`, `docs/specs/queued-messages.spec.md`, and `docs/specs/project-ci.spec.md`.
 
-- [x] Define always-loaded cx and Smithers prompt context plus optional handler-only `ci` prompt context. Commit(s): `673837a`
-- [x] Load actor-specific Smithers prompt context so orchestrators route workflow work, handlers supervise workflows, and workflow task agents keep the Smithers task boundary. Commit(s): `673837a`
-- [x] Define requestable prompt context as the on-demand product-knowledge layer for specialized handler work. Commit(s): `2a5dbbe`
-- [x] Render loaded requested context keys in thread metadata so users can see when context such as `ci` is active. Commit(s): `2a5dbbe`
-- [x] Store app-wide Context Library instruction blocks, context packs, actor recipe settings, generated prompt-part references, internal revision counters, and app-global/workspace-scoped activation metadata. Commit(s): `118fd39c9f`
-- [x] Add a `Context` sidebar surface below `Agents`, with `Instructions`, `Context Packs`, and `Actors` sections that manage reusable prompt material rather than exposing one raw system-prompt textarea. Commit(s): `118fd39c9f`
-- [x] Seed editable shipped instruction blocks for common, orchestrator, handler, and workflow task guidance, with actor filters, enable state, non-deletable builtin rows, app-global scope, and per-block reset behavior. Commit(s): `118fd39c9f`
-- [x] Seed editable shipped context packs for code navigation, Smithers routing, Smithers supervision, workflow task boundary, and Project CI, with default-loaded actor switches, enable state, non-deletable builtin rows, app-global scope, and per-block reset behavior. Commit(s): `118fd39c9f`
-- [x] Render actor aggregate recipes for orchestrator, handler, and workflow task-agent prompts, linking instruction and context-pack rows back to their editable blocks and showing generated rows as scrollable code previews with editor links to generated context files. Commit(s): `118fd39c9f`
-- [ ] Store user-named Context Library snapshots plus durable generated agent context bindings and agent context fingerprints so historical sessions, handler threads, and workflow task-agent attempts remain inspectable after app restart.
+- [x] Define shipped extensions for Filesystem, Execute TypeScript, Extension Loading, Extension Managing, cx, Smithers, Web, Git, GitHub, External Instructions, and Project CI with actor-specific usage states. Commit(s): `673837a`
+- [x] Load actor-specific Smithers extension guidance so orchestrators route workflow work, handlers supervise workflows, and workflow task agents keep the Smithers task boundary without receiving handler Smithers declarations. Commit(s): `673837a`
+- [x] Define available extensions as the on-demand product-knowledge and capability layer for specialized handler work. Commit(s): `2a5dbbe`
+- [x] Render loaded and available extension bindings in surface metadata so users can see when extensions such as `project-ci` are active. Commit(s): `2a5dbbe`
+- [x] Store app-wide agent profiles, base instructions, extension usage selections, generated agent-context aggregate references, extension context fingerprints, and app-global extension activation metadata. Commit(s): `118fd39c9f`
+- [x] Add an `Extensions` sidebar surface below `Agents`, with shipped, user, and external-instruction records that manage reusable prompt material and capabilities rather than exposing one raw system-prompt textarea. Commit(s): `118fd39c9f`
+- [x] Seed editable shipped base instructions for common, orchestrator, handler, and workflow task guidance inside agent profiles, with profile-level reset behavior where product settings allow it. Commit(s): `118fd39c9f`
+- [x] Seed shipped extension records for code navigation, Smithers routing, Smithers supervision, workflow task boundary, Web, and Project CI, with per-agent usage states, non-deletable shipped rows, app-global scope, and extension reset behavior. Commit(s): `118fd39c9f`
+- [x] Render generated agent-context previews for orchestrator, handler, and workflow task-agent actors, linking loaded and available extension rows back to their extension records and showing generated prompt, `svvyx` guidance, native schemas, and TypeScript declaration previews. Commit(s): `118fd39c9f`
+- [ ] Store user-named Extension Managing snapshots plus durable generated agent context bindings and agent context fingerprints so historical sessions, handler threads, and workflow task-agent attempts remain inspectable after app restart.
 - [ ] Add automatic generated agent context update projection for existing orchestrator and handler-thread surfaces, including grouped semantic diff details on queued, applied, failed, cancelled, and out-of-date states.
-- [ ] Route `thread_start({ context })` and handler-side `request_context({ keys })` through requestable Context Library context packs while preserving durable loaded context keys on handler threads.
+- [ ] Route `thread_start` extension overrides and handler-side `load_extension` through generated agent context bindings while preserving durable loaded and available extension ids on each affected surface.
 
 ## 14A. Ambient Agent Resources
 
@@ -302,6 +302,15 @@ Current product decisions for this section are specified in `docs/specs/ambient-
 - [ ] Add provider-neutral Ambient Agent Resources settings that default behavior-changing coding-agent host resources off, preserve visible runtime standards, and let the user opt in by host, workspace, actor class, category, and source for extensions/packages, skills, prompt templates, commands, hooks, UI resources, provider/model adapters, credentials, and execution-policy resources.
 - [ ] Implement the pi adapter so orchestrator, handler-thread, and workflow task-agent loaders preserve `AGENTS.md`/`CLAUDE.md`, ignore `SYSTEM.md`/`APPEND_SYSTEM.md`, and load extensions, skills, prompt templates, themes, package resources, slash commands, hooks, provider adapters, and related settings only when enabled for the exact actor/category/source.
 - [ ] Reflect enabled ambient callable resources in actor-specific generated API declarations, enabled prompt-affecting resources in generated agent context previews and agent context fingerprints, and enabled command resources in product command routing without hidden tools or invisible prompt mutation.
+
+## 14B. Snippets Prompt Macros
+
+Current product decisions for this section are specified in `docs/specs/snippets.spec.md`.
+
+- [ ] Add the Snippets pane with managed `svvy` snippets, read-only discovered Markdown snippets, source badges, previews, open-external-editor actions, and managed snippet create/edit/rename/delete controls.
+- [ ] Add composer `@` picker Snippet results with argument fields, mention chips, explicit expand-to-text behavior, and clean prompt-text expansion before sending to pi.
+- [ ] Persist sent Snippet provenance in product metadata while keeping the agent-facing message as ordinary prompt text.
+- [ ] Keep pi, Claude, Codex, plugin, MCP, and host slash-command expansion disabled so Snippets never grant tools, alter generated agent context, mount commands, or change execution policy.
 
 ## 15. Dedicated Workflow Inspector
 

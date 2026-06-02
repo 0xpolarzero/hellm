@@ -5,7 +5,8 @@
  * - saved reusable assets live under `.svvy/workflows/{definitions,prompts,components}`
  * - runnable saved entries live under `.svvy/workflows/entries`
  * - artifact workflows live under `.svvy/artifacts/workflows/<id>/{...,entries,metadata.json}`
- * - `workflow_list_assets(...)` and `workflow_list_models()` are authoring-time discovery APIs inside `execute_typescript`
+ * - the loaded Workflows extension generated client provides authoring-time asset discovery
+ * - `workflow_list_models()` exposes pi-normalized provider/model/reasoning choices for fresh task-agent authoring
  * - `smithers_list_workflows` is reserved for runnable entries and lists both saved and artifact entries
  * - launch goes through a minimal bridge-shaped `smithers_*` seam rather than a trace-local helper
  * - runnable entries publish explicit grouped asset refs instead of relying on inferred import graphs
@@ -63,7 +64,6 @@ type RunnableWorkflowEntry = {
   label: string;
   summary: string;
   sourceScope: AssetScope;
-  launchToolName: `smithers_run_workflow_${string}`;
   launchInputSchema: Record<string, unknown>;
   entryPath: string;
   assetPaths: string[];
@@ -504,7 +504,6 @@ async function listRunnableWorkflows(workspaceRoot: string): Promise<RunnableWor
       label,
       summary,
       sourceScope,
-      launchToolName: `smithers_run_workflow.${workflowId}` as const,
       launchInputSchema: z.toJSONSchema(launchSchema as any, { io: "input" }) as Record<
         string,
         unknown
@@ -1189,7 +1188,7 @@ async function runSavedEntryScenario(workspaceRoot: string): Promise<ScenarioRes
     args: { purpose: "inspect the saved runnable entry and its declared assets before launch" },
     childCalls: [
       {
-        toolName: "api.read",
+        toolName: "exec_command",
         args: { paths: [savedEntry.entryPath, ...savedEntry.assetPaths] },
         result: {
           files: [savedEntry.entryPath, ...savedEntry.assetPaths],
@@ -1205,7 +1204,7 @@ async function runSavedEntryScenario(workspaceRoot: string): Promise<ScenarioRes
     objective: "Fix the OAuth callback bug",
   });
   trace.push({
-    toolName: savedEntry.launchToolName,
+    toolName: "smithers_run_workflow",
     args: {
       objective: "Fix the OAuth callback bug",
     },
@@ -1243,7 +1242,7 @@ async function runArtifactAuthoringScenario(
     args: { purpose: "discover saved definitions before reading promising files" },
     childCalls: [
       {
-        toolName: "workflow_list_assets",
+        toolName: "extensions.workflows.listAssets",
         args: { kind: "definition", scope: "saved" },
         result: summarizeAssets(definitionAssets),
       },
@@ -1260,7 +1259,7 @@ async function runArtifactAuthoringScenario(
     args: { purpose: "discover saved prompts before reading promising files" },
     childCalls: [
       {
-        toolName: "workflow_list_assets",
+        toolName: "extensions.workflows.listAssets",
         args: { kind: "prompt", scope: "saved" },
         result: summarizeAssets(promptAssets),
       },
@@ -1277,7 +1276,7 @@ async function runArtifactAuthoringScenario(
     args: { purpose: "discover saved components before reading promising files" },
     childCalls: [
       {
-        toolName: "workflow_list_assets",
+        toolName: "extensions.workflows.listAssets",
         args: { kind: "component", scope: "saved" },
         result: summarizeAssets(savedComponents),
       },
@@ -1290,7 +1289,7 @@ async function runArtifactAuthoringScenario(
     args: { purpose: "inspect the reusable saved assets before authoring" },
     childCalls: [
       {
-        toolName: "api.read",
+        toolName: "exec_command",
         args: { paths: [seed.definitionPath, seed.promptPath, seed.componentPath, seed.entryPath] },
         result: {
           files: [seed.definitionPath, seed.promptPath, seed.componentPath, seed.entryPath],
@@ -1389,7 +1388,7 @@ async function runArtifactAuthoringScenario(
     },
     childCalls: [
       {
-        toolName: "workflow_list_assets",
+        toolName: "extensions.workflows.listAssets",
         args: { kind: "component", scope: "both" },
         result: summarizeAssets(allComponents),
       },
@@ -1417,7 +1416,7 @@ async function runArtifactAuthoringScenario(
     args: { purpose: "inspect the artifact entry and its declared assets before launch" },
     childCalls: [
       {
-        toolName: "api.read",
+        toolName: "exec_command",
         args: { paths: [artifactEntry.entryPath, ...artifactEntry.assetPaths] },
         result: { files: [artifactEntry.entryPath, ...artifactEntry.assetPaths] },
       },
@@ -1429,7 +1428,7 @@ async function runArtifactAuthoringScenario(
     objective: "Fix the OAuth callback bug",
   });
   trace.push({
-    toolName: artifactEntry.launchToolName,
+    toolName: "smithers_run_workflow",
     args: {
       objective: "Fix the OAuth callback bug",
     },
@@ -1471,7 +1470,7 @@ async function runExplicitSaveScenario(
     args: { purpose: "inspect the reusable artifact files selected for explicit save" },
     childCalls: [
       {
-        toolName: "api.read",
+        toolName: "exec_command",
         args: { paths: [artifact.promptPath, artifact.componentPath, artifact.entryPath] },
         result: { files: [artifact.promptPath, artifact.componentPath, artifact.entryPath] },
       },
@@ -1530,7 +1529,7 @@ async function runExplicitSaveScenario(
     },
     childCalls: [
       {
-        toolName: "workflow_list_assets",
+        toolName: "extensions.workflows.listAssets",
         args: { scope: "saved", pathPrefix: ".svvy/workflows/" },
         result: summarizeAssets(savedAssets),
       },
@@ -1558,7 +1557,7 @@ async function runExplicitSaveScenario(
     args: { purpose: "inspect the saved entry and its declared assets before relaunch" },
     childCalls: [
       {
-        toolName: "api.read",
+        toolName: "exec_command",
         args: { paths: [savedEntry.entryPath, ...savedEntry.assetPaths] },
         result: { files: [savedEntry.entryPath, ...savedEntry.assetPaths] },
       },
@@ -1570,7 +1569,7 @@ async function runExplicitSaveScenario(
     objective: "Fix the OAuth callback bug",
   });
   trace.push({
-    toolName: savedEntry.launchToolName,
+    toolName: "smithers_run_workflow",
     args: {
       objective: "Fix the OAuth callback bug",
     },

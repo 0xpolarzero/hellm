@@ -2,25 +2,20 @@
 
 ## Status
 
-- Date: 2026-05-31
-- Status: working product spec from session `019e4bb1-5117-73c3-94b0-372f1905b2ea`
+- Date: 2026-06-02
+- Status: authoritative product spec
 - Scope of this document:
-  - define the extension and tool architecture discussed in that session
-  - preserve user-pointed decisions and unresolved questions from the discussion
+  - define the extension and tool architecture for `svvy`
   - define the relationship between Agents, Extensions, actors, profiles, native tools, Incur CLIs, `svvyx`, `execute_typescript`, shell policy, dependencies, and secrets
-  - record rejected side ideas so they are not accidentally folded into this feature
+  - define the rejected and deferred ideas that must not be folded into this feature without a new product decision
 
-This document is the durable working spec for the resolved Extensions and native tool direction.
-Related product docs must stay synchronized with this model as implementation proceeds.
+This document is the source of truth for the resolved Extensions and native tool direction.
+Related product docs must stay synchronized with this model.
 
 Related specs:
 
 - `docs/specs/extension-managing.spec.md` defines the Extension Managing extension and its
   `svvyx extensions ...` lifecycle API.
-
-The current PRD and feature inventory may still contain older Context Library and direct-tool
-phrasing. When those documents are touched, they must be rewritten toward this resolved model rather
-than preserving compatibility language for the older surface.
 
 The generated-context terminology in this document is intentional:
 
@@ -35,8 +30,8 @@ The generated-context terminology in this document is intentional:
 
 ## Product Intent
 
-`svvy` should stop treating context packs, skills, tools, snippets, and generated prompt blocks as
-separate fuzzy concepts.
+`svvy` exposes reusable agent guidance and callable capability through explicit product-owned
+models.
 
 The product should expose a first-class Extensions model:
 
@@ -52,14 +47,13 @@ actor-scoped capability composition, explicit generated agent contexts, extensio
 authoring, encrypted app-managed secrets, rich tool-use visualization, and reversible app-state
 changes.
 
-## Explicitly Rejected Or Deferred Ideas From The Session
+## Explicitly Rejected Or Deferred Ideas
 
-The session started with several broader ideas. These are not part of this spec unless reintroduced
-explicitly later.
+These are not part of this spec unless reintroduced explicitly later.
 
-- A separate always-on router or manager agent above the orchestrator is not adopted here.
+- A separate always-on router or manager agent above the orchestrator is not adopted.
 - A Smithers-heavy architecture where Smithers owns all session, subagent, router, and projection
-  state is not adopted here.
+  state is not adopted.
 - Automatic session compaction as a special supervisor or workflow is separate future work.
 - Snippets, command-like macros, and user-invoked prompt macros are not part of this feature.
 - Incur MCP and Incur skills are not adopted as the runtime integration. `svvy` owns the bridge.
@@ -158,8 +152,8 @@ extensions.
 
 An extension is a packaged agent capability.
 
-An extension can be prompt-only, or it can include executable tools. It is the product unit that
-replaces the fuzzy "context pack as skill as tool bundle" idea.
+An extension can be prompt-only, or it can include executable tools. It is the product unit for
+reusable agent capability.
 
 Each extension has:
 
@@ -238,7 +232,7 @@ Allowed values:
 
 | Value | Meaning |
 | --- | --- |
-| `native_tool` | The extension contributes one or more native model tools that are already declared in the actor's native tool surface when loaded. |
+| `native_tool` | The extension contributes one or more native model tools that are already declared in the actor's native tool declarations when loaded. |
 | `svvyx` | The extension contributes commands under the actor-scoped aggregate CLI as `svvyx <extension-id> ...` when loaded. |
 | `instructions` | The extension contributes prompt instructions only. It does not add native tools, `svvyx` commands, or TypeScript command types. |
 
@@ -799,7 +793,9 @@ Each session or workflow task-agent attempt stores a durable agent context bindi
 - current extension context fingerprints used for those extensions
 - aggregate cache key for generated prompt text, loaded `svvyx` command guidance, native tool
   schemas, and TypeScript declarations
+- external instruction fingerprint when external instructions reached the actor
 - generated agent context fingerprint
+- bound time
 
 New sessions derive `loadedExtensions` and `availableExtensions` from the agent profile defaults or
 from explicit creation-time overrides. `load_extension` mutates only the current session binding by
@@ -827,8 +823,7 @@ When an extension changes and a successful build activates:
 - no empty aggregate or missing `svvyx` command set may be exposed between builds
 
 `agent_context_refresh` is the single explicit surface-control work item for generated agent context
-changes. It replaces the older split between prompt-only refresh work and extension-binding refresh
-work. It updates the bound base instructions, loaded and available extension binding, generated
+changes. It updates the bound base instructions, loaded and available extension binding, generated
 instructions, loaded `svvyx` command guidance, generated TypeScript declarations, native tool schemas,
 external instructions, aggregate cache key, generated agent context fingerprint, and mounted `svvyx`
 command set. It does not send text to pi, create assistant- or user-authored transcript content, or
@@ -894,15 +889,16 @@ would add transcript content and would not replace the run's actual system promp
 
 ## Panes
 
-The session's later direction is two configuration panes:
+The sidebar reference-pane order is:
 
 ```text
+Logs
 Agents
 Extensions
+Workflows
 ```
 
-This conflicts with the current PRD's `Agents`, `Context`, and `Workflows` sidebar model. The final
-sidebar and pane plan must be reconciled before implementation.
+`Agents` and `Extensions` are the two configuration panes for this feature.
 
 ### Agents Pane
 
@@ -910,9 +906,11 @@ The Agents pane owns agent profiles and actor composition.
 
 It should show:
 
+- profile name and description
 - orchestrator profiles
 - special profiles such as the handler-thread profile
 - future workflow task-agent profiles when exposed
+- locked actor kind
 - model selection
 - reasoning selection
 - base instructions
@@ -935,6 +933,8 @@ The Extensions pane owns capability definitions.
 
 Each extension detail view should include:
 
+- category: shipped, user, or external_instruction
+- interface: native_tool, svvyx, or instructions
 - title
 - description
 - full loaded instructions textarea
@@ -952,6 +952,9 @@ Each extension detail view should include:
 - links back to the relevant Agent pane rows
 - reset control for shipped extensions
 - delete control only for user-created extensions
+
+For `external_instruction` records, the detail view may show loaded file content and an
+open-external-file action, but it must not offer content editing, deletion, or content reset.
 
 Agent-made extension edits should not be hidden. Successful `apply_patch` calls touching app-owned
 extension files should render as rich tool-use UI showing the changed files, Build required state,
@@ -1215,7 +1218,6 @@ The resolved model is:
 - generated clients expose only capabilities that are currently loaded and allowed for the actor
 - no broad hand-written helper surface for ordinary repository primitives is part of the final
   spec
-- no legacy duplicated helper family for read/search/list/bash/edit/write should be preserved
 - arbitrary TypeScript side effects that do not go through generated clients are treated as opaque
   process behavior for UI capture and policy
 
@@ -2186,8 +2188,7 @@ CA lifecycle, or network-policy enforcement for extension secrets.
 
 ## Extension Snapshots
 
-The Extensions surface keeps the useful preset behavior from the previous Context pane: users can
-save and load named snapshots of extension source and settings.
+The Extensions pane lets users save and load named snapshots of extension source and settings.
 
 Snapshot payload includes:
 
@@ -2234,10 +2235,10 @@ provided by `svvy`, non-deletable, resettable, and configurable per agent usage 
 instruction records use `category: "external_instruction"` and the same usage-state controls, but
 their source files are read-only external inputs.
 
-| Extension | Category | Interface | Included tools or surface | Orchestrator | Handler | Workflow agent |
+| Extension | Category | Interface | Included tools or capability | Orchestrator | Handler | Workflow agent |
 | --- | --- | --- | --- | --- | --- | --- |
 | Filesystem | shipped | native_tool | `exec_command`, `write_stdin`, `apply_patch`, Codex-like filesystem/shell instructions, and `svvyx` access through `exec_command` | default_loaded | default_loaded | default_loaded |
-| Code Mode | shipped | native_tool | `execute_typescript` with generated `svvy` and loaded-extension clients as the preferred TypeScript surface | default_loaded | default_loaded | default_loaded |
+| Execute TypeScript | shipped | native_tool | `execute_typescript` with generated `svvy` and loaded-extension clients as the preferred TypeScript interface | default_loaded | default_loaded | default_loaded |
 | Extension Loading | shipped | native_tool | `list_extensions`, `load_extension` | default_loaded | default_loaded | default_loaded |
 | Extension Managing | shipped | svvyx | `svvyx extensions ...` lifecycle commands for inspect, create, build, usage state, reset, delete, and revert; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |
 | cx | shipped | svvyx or native_tool | codebase/product navigation and cx controls | available | available | available |
@@ -2246,7 +2247,7 @@ their source files are read-only external inputs.
 | Git | shipped | instructions | Git shell guidance; no wrapper CLI by default | default_loaded | default_loaded | default_loaded |
 | GitHub | shipped | instructions | GitHub/`gh` CLI guidance; no wrapper CLI by default | default_loaded | default_loaded | default_loaded |
 | External Instructions | external_instruction | instructions | read-only external instruction files such as `AGENTS.md` and `CLAUDE.md`, surfaced with open-external-file controls | default_loaded | default_loaded | default_loaded |
-| Project CI | shipped | instructions | Empty todo extension for now; no tools or prompt content yet | unavailable | unavailable | unavailable |
+| Project CI | shipped | instructions | Project CI authoring guidance for defining and maintaining CI workflow lanes; no tools by default | available | available | unavailable |
 
 The Git and GitHub extensions should not wrap `git` or `gh` by default. Agents can use the ordinary
 shell and command help. The app should still check whether `git` and `gh` are available and show a
@@ -2261,14 +2262,17 @@ The Git and GitHub prompt-only instructions should adapt:
 - pi PR/issue/wrap-up prompt patterns from `docs/references/pi-mono/.pi/prompts/`
 
 These extensions should teach shell use of `git` and `gh`; they should not introduce a parallel
-semantic `git.*` or `github.*` model tool surface by default.
+semantic `git.*` or `github.*` model interface by default.
 
 Extension Managing combines the earlier separate "Extension Manager" and "Incur Extension
 Authoring" ideas. There is no separate Incur Authoring extension unless this gets split again later.
 Its detailed command surface is defined in `docs/specs/extension-managing.spec.md`.
 
-Project CI is kept as a named placeholder only. It should stay unavailable for all actor kinds until
-its value and surface are defined.
+Project CI is a shipped prompt-only extension. It is available to orchestrators and handlers so
+`thread_start` can preload it for CI-authoring objectives and handlers can load it with
+`load_extension({ extensionId: "project-ci" })` when CI definition work appears after delegation.
+Running existing Project CI workflow entries does not require loading this extension; the Smithers
+extension owns runtime workflow supervision.
 
 ## Workflow Agent Extension Model
 
@@ -2319,17 +2323,12 @@ Rules:
 - Any extension id omitted from the object is `unavailable` for that invocation.
 - The generated type must prevent unknown extension ids and invalid usage states.
 
-## Context Packs And External Instructions
-
-The session direction is to remove standalone Context Packs as a product concept or absorb them into
-extensions.
-
-The old "Context" concept becomes part of agent composition:
+## External Instructions
 
 - base instructions live on agent profiles
 - actor-specific generated context is visible from Agents
 - extension instructions and generated agent contexts are visible from Extensions and linked from Agents
-- available extensions provide minimal prompt hints instead of separate context-pack trigger prose
+- available extensions provide minimal prompt hints for session-local loading decisions
 
 External instruction files such as `AGENTS.md` and `CLAUDE.md` are represented as
 `category: "external_instruction"` extension records.
@@ -2586,23 +2585,15 @@ The following are unresolved from the session and should be settled before imple
   client-generation strategy are verified.
 - Define exact naming and collision rules for extension ids and subcommand namespaces.
 
-## Product Docs That Must Stay In Sync
+## Related Product Docs
 
-This spec materially changes source-of-truth docs that still contain older vocabulary.
+Related source-of-truth docs are:
 
-Required updates include:
-
-- `docs/prd.md`: replace Context Library and hand-built direct-tool framing with Agents plus
-  Extensions where appropriate.
-- `docs/features.ts`: add or revise feature inventory entries for Extensions, actor-scoped `svvyx`,
-  extension-managed `execute_typescript`, extension secrets, and auto-review execution policy.
-- `docs/progress.md`: add POC and implementation roadmap items before production work.
-- `docs/specs/prompt-library.spec.md`: either retire, split, or rewrite around Agents and
-  Extensions.
-- `docs/specs/ambient-agent-resources-baseline.spec.md`: reconcile ambient-resource default-off
-  policy with explicit extension installation and enablement.
-- `docs/specs/execute-typescript.spec.md`: replace the older direct-tool helper API with ordinary
-  TypeScript plus generated `svvy` and loaded-extension clients.
-- `docs/specs/project-ci.spec.md`: clarify Project CI as an extension/domain layer over Smithers.
-- `docs/specs/workflow-library.spec.md`: later reuse the extension dependency policy for workflow
-  TypeScript dependencies.
+- `docs/prd.md`
+- `docs/features.ts`
+- `docs/progress.md`
+- `docs/specs/extension-managing.spec.md`
+- `docs/specs/ambient-agent-resources-baseline.spec.md`
+- `docs/specs/execute-typescript.spec.md`
+- `docs/specs/project-ci.spec.md`
+- `docs/specs/workflow-library.spec.md`
