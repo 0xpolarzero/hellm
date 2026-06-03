@@ -401,7 +401,8 @@ The app does restore durable prompt-lock projection from opened surface snapshot
 
 - `docs/specs/multi-session-support.spec.md` defines the state-layer split, live surface ownership, and Dockview panel indirection.
 - `docs/specs/pane-layout.spec.md` defines the expanded Dockview layout, panel placement, duplicate-panel behavior, and detailed restart restore rules for Section 10.
-- `docs/specs/structured-session-state.spec.md` defines canonical session, thread, workflow-run, command, CI, artifact, and wait records.
+- `docs/specs/structured-session-state.spec.md` defines canonical session, thread, workflow-run,
+  command, request-user-input, CI, artifact, and wait records.
 - `docs/specs/project-ci.spec.md` defines Project CI record creation and result semantics.
 - `docs/specs/workflow-library.spec.md` defines workflow library storage, but Workflows library browsing is intentionally deferred from this Section 8 scope.
 

@@ -34,7 +34,9 @@ This spec does not claim that the runtime implementation already satisfies the d
 - App-global shell restore may open zero, one, or many visual tabs. That app-global restore only decides which workspace runtimes should be acquired.
 - Backend recovery starts after the workspace runtime opens its durable workspace stores and before it claims new surface work.
 - UI restore is a consumer of recovered backend state. The renderer restores stable Dockview layout and panel bindings, then receives normal workspace snapshots and events from backend projection. It does not own restart recovery for product work.
-- Recovery is backend-first. Durable state, Smithers projection, prompt locks, queues, title jobs, handler starts, thread report notifications, report requests, and wait state are recovered before the UI decides that a surface is idle and user-ready.
+- Recovery is backend-first. Durable state, Smithers projection, prompt locks, queues, title jobs,
+  handler starts, thread report notifications, report requests, request-user-input records, and wait
+  state are recovered before the UI decides that a surface is idle and user-ready.
 - Recovery uses transactional claims over durable work rows. Process-local flags, renderer focus, and panel identity never decide whether backend work resumes.
 - Smithers execution facts stay in Smithers. Recovery re-reads Smithers durable state by Smithers identifiers, reconnects monitors or cursors, and projects only `svvy` product facts.
 - `svvy` does not create a parallel `workflow_*` recovery abstraction. Workflow recovery uses Smithers-native identifiers and Smithers-native operation names where agent or bridge surfaces are involved.
@@ -64,6 +66,7 @@ These are owned by the acquired workspace runtime:
 - initial handler auto-starts
 - thread report notification delivery and dismissal
 - report request delivery
+- pending request-user-input questions, blocking request timers, and nonblocking answer queue items
 - wait state
 - title generation jobs for workspace sessions and handler threads
 - Smithers workflow-run bindings and monitor reconnect

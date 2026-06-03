@@ -131,7 +131,9 @@ The `svvy`-owned part is:
 - Workflow task agents are a lower-level agent kind inside Smithers tasks, not another `svvy` interactive surface.
 - `svvy` should derive active and latest workflow summaries from workflow-run records and recency rules rather than persisting a thread-level latest-workflow pointer.
 - Workflow attention must reacquire and target the owning handler surface by `surfacePiSessionId`, never a globally active surface or the currently focused Dockview panel.
-- `thread_start`, `thread_resume`, `thread_request_report`, `thread_report`, and `wait` remain the only `svvy`-native thread or wait control tools in this area.
+- `thread_start`, `thread_resume`, `thread_request_report`, `thread_report`, and
+  `request_user_input` remain the only `svvy`-native thread or user-clarification control tools in
+  this area.
 - Agent-facing workflow supervision should use Smithers-native semantic tools exposed through the Bun bridge rather than a svvy-defined `workflow_*` abstraction.
 - Shipped product runtime must not depend on repo-root `workflows/`, repo-relative Smithers binaries, or nearest-db path walking.
 - Runnable saved entries should live under `.svvy/workflows/entries/`, while artifact entries should live under `.svvy/artifacts/workflows/<artifact_workflow_id>/entries/`, and neither should depend on the repo authoring workspace.
@@ -140,7 +142,7 @@ The `svvy`-owned part is:
 - `thread_report` returns control by durably recording the conclusion episode and current objective conclusion, then scheduling a typed `thread_report` item in the orchestrator surface queue. Notification delivery is ordered through the orchestrator queue, but it does not determine whether the report succeeded.
 - `thread_report` without `outcome` records an intermediate update episode without concluding the objective.
 - `thread_resume` lets the orchestrator explicitly re-engage a concluded handler objective for follow-up work in the same delegated context; Smithers run decisions remain inside that handler thread.
-- If a handler thread opens a workflow run for its current objective, that thread stays responsible until the objective concludes through `thread_report` with `outcome`; waits, approvals, resumes, and repairs stay inside the handler lifecycle.
+- If a handler thread opens a workflow run for its current objective, that thread stays responsible until the objective concludes through `thread_report` with `outcome`; user clarification, workflow waits, approvals, resumes, and repairs stay inside the handler lifecycle.
 - Workflow-task-attempt projection is write-driven from the current Smithers attempt identity and explicit runtime handlers. When a task-local tool needs the attempt before handler-side projection has landed, the bootstrap path uses the exact Smithers task-attempt identity `(runId, nodeId, iteration, attempt)` from the current task context, not a resume-handle lookup, heuristic scan, or fallback chain.
 
 ## Core Concepts
@@ -265,7 +267,7 @@ The adopted flow is:
 8. When Smithers task attempts exist under that run, `svvy` projects workflow-task-attempt UI rows keyed by `runId`, `nodeId`, `iteration`, and `attempt`, plus `svvy` product links to related commands and artifacts. The authoritative attempt status, output, approval, wait, retry, usage, and transcript details are re-read from Smithers by those exact identifiers.
 9. The Bun side emits explicit workspace updates and surface updates whenever those durable projections change visible workspace state or the live handler surface state.
 10. If the workflow reaches a state that needs another handler decision, `svvy` opens a synthetic background turn on that same handler thread.
-11. The handler thread uses `thread_current` to identify active workflow run ids, uses Smithers-native tools for detailed workflow state, and decides whether to inspect, repair, resume, ask the user, emit an update with `thread_report`, or conclude with `thread_report` and `outcome`.
+11. The handler thread uses `thread_current` to identify active workflow run ids, uses Smithers-native tools for detailed workflow state, and decides whether to inspect, repair, resume, ask the user through `request_user_input`, emit an update with `thread_report`, or conclude with `thread_report` and `outcome`.
 12. If the orchestrator later needs more help from a concluded handler objective, it uses `thread_resume` to queue a new handler-surface message instead of directly controlling Smithers.
 
 ## Shipped App Integration
@@ -302,7 +304,8 @@ The adopted direction is:
 - the default adopted task-agent extension states load task-local cx CLI guidance through
   `exec_command`, direct tools, Extension Loading, and `execute_typescript` for typed composition
 - project each Smithers task attempt into a `svvy` workflow-task-attempt UI row with exact Smithers identifiers and attach any `svvy` command or artifact projections to that row instead of leaving product navigation in a local ephemeral trace
-- keep `thread_start`, `thread_report`, `thread_request_report`, `thread_episodes`, `wait`, and `smithers_*` out of the default workflow
+- keep `thread_start`, `thread_report`, `thread_request_report`, `thread_episodes`,
+  `request_user_input`, and `smithers_*` out of the default workflow
   task-agent profile and base prompt unless a user-configured profile intentionally changes their
   extension usage state
 - do not load ambient pi built-in tools or workspace-discovered extension tools into the task agent runtime
@@ -717,7 +720,9 @@ In practice that means:
 
 - `thread_report` with `outcome` should first reconcile the thread-owned workflow state against Smithers' durable run state so a just-finished run is not mistaken for a still-active one
 - no active supervised run should remain attached to the objective when a conclusion episode is emitted
-- a failed or cancelled workflow run is not by itself a valid conclusion condition; it must first be repaired, turned into an explicit wait, or closed by an explicit user-directed decision
+- a failed or cancelled workflow run is not by itself a valid conclusion condition; it must first be
+  repaired, held in real workflow or surface attention state, clarified with the user through
+  `request_user_input`, or closed by an explicit user-directed decision
 - if the handler truly needs to end supervision before the workflow succeeds, it must explicitly cancel or otherwise terminalize that workflow run first; `svvy` must not silently leave a live workflow running behind a concluded objective
 - historical workflow runs remain inspectable after conclusion
 - a later `thread_resume` on the same thread may start another workflow run for a new active objective under that thread

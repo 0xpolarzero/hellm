@@ -297,7 +297,7 @@ After a command record exists:
 - terminal facts must be written to the `CommandRecord`
 - output deltas may be compacted into bounded command facts, file-backed artifacts, or both
 - child command linkage must be durable
-- approval and wait state must be recoverable from structured state
+- approval, request-user-input, and wait state must be recoverable from structured state
 
 If the app restarts while the model is still streaming a tool argument and the tool was never
 accepted by the runtime, the partial preview may be lost. The transcript should then show no durable
@@ -475,21 +475,26 @@ Extension Loading tools behave as follows:
 because build or dependency work is required, the card should show the readiness failure and point to
 the relevant Extension Managing command path.
 
-## Wait And Runtime Inspection Projection
+## Request User Input And Runtime Inspection Projection
 
 `runtime_current` is a final-only read tool. It should render from the returned structured runtime
 binding state and must not create a command record unless a future concrete API spec changes that
 rule.
 
-`wait` is a native control surface but its concrete schema remains underspecified in current docs.
-When specified, it must use the same model:
+`request_user_input` is the shipped native user-clarification surface. Its concrete API is defined
+in `docs/specs/extension/request-user-input.extension.spec.md`.
 
-- argument projection for owner, wait kind, reason, and resume condition
-- durable wait-start and wait-clear state in structured session state
-- final command facts for the created or cleared wait
+Projection behavior:
 
-Until the concrete `wait` API is specified, implementations must not invent per-renderer wait
-projection semantics that bypass structured state.
+- argument projection for question titles, question text, options, recommended defaults, and
+  freeform default answers
+- disabled side-panel draft rendering while tool arguments stream
+- durable request and question records only after final arguments validate
+- immediate final command facts for nonblocking mode's default answers
+- `waiting` command status plus surface wait projection for blocking mode while the tool waits on
+  user input or timeout
+- final command facts for the resolved answer set
+- later nonblocking user answers projected through durable `request_user_input_answer` queue items
 
 ## Workflow Authoring Projection
 
@@ -585,7 +590,7 @@ Classification meanings:
 | `thread_list` | final | Final read result. |
 | `thread_episodes` | final | Final read result. |
 | `runtime_current` | final, underspecified | Final read result once concrete schema is adopted. |
-| `wait` | both, underspecified | Argument preview plus durable wait state once concrete schema is adopted. |
+| `request_user_input` | both | Question/default preview, durable request records, nonblocking default result or blocking wait state, final answer facts, and later answer queue projection when applicable. |
 | `workflow_list_models` | final | Loading state plus model/provider readiness result. |
 | Artifacts callable API | underspecified | Future artifact-write tools must use argument projection for large contents. |
 | `svvyx ...` | via `exec_command` | Command-family projection over shell output; no separate tool. |

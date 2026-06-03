@@ -81,6 +81,13 @@ orchestrator queue with user messages and is delivered as orchestrator reconcili
 Dismissing or deleting the notification cancels only the queue row; it does not roll back the
 durable episode or return a tool error to the handler.
 
+Interactive orchestrator and handler-thread surfaces also accept `request_user_input_answer` items
+created when the user answers a nonblocking `request_user_input` request after the originating tool
+call already returned its default answer. These items are prompt-bearing user steering for the same
+surface that created the original request. They are not ordinary composer messages, and they must be
+routed by generated request/question ids back to the original request record instead of by display
+text or currently focused panel.
+
 An `agent_context_refresh` item is a surface-local control item created automatically when the
 current generated agent context fingerprint differs from the context fingerprint bound to that
 surface or workflow task-agent attempt. It is always written as durable surface queue work, even
@@ -125,7 +132,7 @@ Required identity:
 - `threadId` when the target surface is a handler thread
 - `queuedItemId`
 - `kind`, currently `user_message`, `thread_report`, `report_request`, `agent_context_refresh`,
-  `initial_handler_start`, or `workflow_attention`
+  `initial_handler_start`, `workflow_attention`, or `request_user_input_answer`
 - idempotency key for stable internal producers and recovery seeding
 
 The queue is ordered per `surfacePiSessionId`. Queue ordering is FIFO unless the user explicitly edits, removes, or reorders messages through future queue-management UI.
@@ -164,6 +171,8 @@ The durable record should keep:
   ids when applicable, and request time for `agent_context_refresh`
 - thread id and request time for `initial_handler_start`
 - workflow run, Smithers run, workflow id, summary, and reason for `workflow_attention`
+- source request id, source question id, original default answer, user answer, and answer delivery
+  mode for `request_user_input_answer`
 - composer attachments or mention-link serialized text according to their own specs
 - creation, update, delivery, and cancellation timestamps
 - source panel id for diagnostics only, not for ownership
@@ -182,16 +191,27 @@ If the queue has at least one queued item:
 3. for `agent_context_refresh`, recreate or refresh the managed pi runtime binding and generated
    actor context behind the same product surface, record the `Agent context updated` product event,
    mark the item delivered, and continue draining later items
-4. for `user_message`, `thread_report`, `report_request`, `initial_handler_start`, or
-   `workflow_attention`, submit the derived text as the next real user message to that same pi
-   surface; `thread_report` delivery reconciles an already-recorded durable episode, and
-   `report_request` delivery asks the handler to answer with `thread_report({ requestId, ... })`
+4. for `user_message`, `thread_report`, `report_request`, `initial_handler_start`,
+   `workflow_attention`, or `request_user_input_answer`, submit the derived text as the next real
+   user message to that same pi surface; `thread_report` delivery reconciles an already-recorded
+   durable episode, `report_request` delivery asks the handler to answer with
+   `thread_report({ requestId, ... })`, and `request_user_input_answer` delivery supplies the
+   original question, the answer the agent used by default, and the user's later answer
 5. create a normal turn record for prompt-bearing delivery
 6. mark prompt-bearing items `delivered` once pi accepts the queued item into the surface history
 
 If delivery fails before pi accepts the item, the item returns to the front of the durable `queued` list.
 
 If delivery starts and the resulting turn later fails, the queued item remains `delivered`; the turn failure belongs to the normal turn lifecycle.
+
+`request_user_input_answer` ordering:
+
+- answer items outrank ordinary `user_message` rows
+- answer items do not bypass earlier required `agent_context_refresh` rows
+- answer items with `delivery: "steer"` use the existing durable queue steering status and delivery
+  path; they do not use a separate pi-only steering fast path
+- answer items with `delivery: "after_turn"` wait for the active turn to settle and then deliver as
+  normal prompt-bearing queue work
 
 If `agent_context_refresh` fails after a ready generated agent context exists, the failure is an
 internal product error. The item stays visible as failed or blocking for that affected surface and a

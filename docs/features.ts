@@ -122,6 +122,19 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     ],
   },
   {
+    id: "request-user-input",
+    name: "Request User Input Extension",
+    status: "in-progress",
+    summary:
+      "Defines Request User Input as a shipped native dual-variant extension for orchestrator and handler-thread user clarification, exposing one `request_user_input` tool whose active nonblocking or blocking variant controls loaded instructions, schema descriptions, and runtime behavior; requires agent-authored question titles, one to three questions, Codex-like two to three choice options with exactly one `recommended: true` or a freeform `defaultAnswer`; generates request/question/option ids internally; shows answerable questions in a side panel; defaults to nonblocking behavior that immediately returns the recommended/default answer and later delivers user answers through highest-priority durable queue work; supports blocking behavior with a default-enabled five-minute timeout that falls back to the default answer; and keeps tool results free of mode, timer, UI availability, and internal id fields.",
+    sourceSpecs: [
+      "docs/specs/extension/request-user-input.extension.spec.md",
+      "docs/specs/queued-messages.spec.md",
+      "docs/specs/live-tool-projection.spec.md",
+      "docs/specs/extensions-and-tools.spec.md",
+    ],
+  },
+  {
     id: "trusted-cli-dependencies",
     name: "Trusted CLI Dependencies",
     status: "in-progress",
@@ -334,7 +347,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workspace Runtime Recovery Coordinator",
     status: "in-progress",
     summary:
-      "Defines one backend-owned recovery coordinator per acquired workspace runtime, with duplicate same-cwd tabs sharing recovery state, app-wide auth/preferences kept outside workspace recovery, Smithers durable-state bootstrap before surface work, durable scheduler records with transactional claims and idempotency keys for prompts, queues, initial handler starts, thread report notifications, report requests, waits, title jobs, workflow attention, Project CI projection, and recovery observability, while renderer layout restore remains only a consumer of backend snapshots.",
+      "Defines one backend-owned recovery coordinator per acquired workspace runtime, with duplicate same-cwd tabs sharing recovery state, app-wide auth/preferences kept outside workspace recovery, Smithers durable-state bootstrap before surface work, durable scheduler records with transactional claims and idempotency keys for prompts, queues, initial handler starts, thread report notifications, report requests, request-user-input records and answer queue items, waits, title jobs, workflow attention, Project CI projection, and recovery observability, while renderer layout restore remains only a consumer of backend snapshots.",
     sourceSpecs: ["docs/specs/workspace-runtime-recovery.spec.md"],
   },
   {
@@ -353,7 +366,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Turn And Command State",
     status: "in-progress",
     summary:
-      "Tracks every turn on the orchestrator surface and handler thread surfaces, including each turn's top-level turn decision, plus every tool call including execute_typescript snippets and generated-client child command facts, as durable state with lifecycle status, ownership, linkage, attempts, trace-versus-surface visibility, and ordered command projection events for output, progress, patch/file-change snapshots, approvals, waits, child links, workspace diff updates, and terminal facts.",
+      "Tracks every turn on the orchestrator surface and handler thread surfaces, including each turn's top-level turn decision, plus every tool call including execute_typescript snippets, request_user_input calls, and generated-client child command facts, as durable state with lifecycle status, ownership, linkage, attempts, trace-versus-surface visibility, and ordered command projection events for output, progress, patch/file-change snapshots, approvals, request-user-input waiting, generic waits, child links, workspace diff updates, and terminal facts.",
     sourceSpecs: [
       "docs/specs/structured-session-state.spec.md",
       "docs/specs/live-tool-projection.spec.md",
@@ -409,11 +422,14 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
   },
   {
     id: "session-wait-state",
-    name: "Session And Thread Wait State",
+    name: "Session Wait And User Input State",
     status: "in-progress",
     summary:
-      "Represents handler-owned blocking conditions and Smithers-derived workflow attention explicitly through surface-local wait or attention state and whole-session frontier state, preserving the product meaning of user input, approval, signal, timer, or other external dependency while leaving the authoritative Smithers wait, approval, signal, and timer records in Smithers and re-reading them by Smithers id when detail is needed.",
-    sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
+      "Represents handler-owned blocking conditions, request-user-input clarification records, and Smithers-derived workflow attention explicitly through surface-local request/wait or attention state and whole-session frontier state, preserving the product meaning of user input, approval, signal, timer, or other external dependency while requiring user clarification waits to point at real request-user-input records and leaving the authoritative Smithers wait, approval, signal, and timer records in Smithers for re-read by Smithers id.",
+    sourceSpecs: [
+      "docs/specs/structured-session-state.spec.md",
+      "docs/specs/extension/request-user-input.extension.spec.md",
+    ],
   },
   {
     id: "session-summary-read-models",

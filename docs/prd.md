@@ -115,8 +115,11 @@ Agents and Extensions are the user-facing source of reusable prompt material and
 The default actor-specific generated context split is:
 
 - the orchestrator prompt knows that handler threads can supervise Smithers workflows, but the default orchestrator extension state does not load the Smithers extension; if it wants workflow action, it normally delegates by calling `thread_start`
-- a handler-thread prompt receives `smithers_*`, `load_extension`, `list_extensions`, `thread_current`, `thread_report`, `thread_episodes`, `wait`, direct tools, and `execute_typescript` for typed composition by default; `thread_start` is not part of the default adopted handler model
-- the orchestrator prompt receives `runtime_current`, `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`, and `thread_request_report` so runtime binding, delegated-thread state, durable episodes, and handler status requests are handled through focused tools instead of prompt stuffing
+- a handler-thread prompt receives `smithers_*`, `load_extension`, `list_extensions`, `request_user_input`, `thread_current`, `thread_report`, `thread_episodes`, direct tools, and `execute_typescript` for typed composition by default; `thread_start` is not part of the default adopted handler model
+- the orchestrator prompt receives `request_user_input`, `runtime_current`, `thread_start`,
+  `thread_resume`, `thread_list`, `thread_episodes`, and `thread_request_report` so user
+  clarification, runtime binding, delegated-thread state, durable episodes, and handler status
+  requests are handled through focused tools instead of prompt stuffing
 - a workflow-task-agent prompt receives task-local instructions and task-local callable declarations; in the default adopted workflow-agent profile it receives Extension Loading, task-local direct tools, and `execute_typescript`, while Smithers, Extension Managing, and broad handler/orchestrator controls are not default-loaded
 - a workflow-task-agent runtime must not load ambient pi built-in tools, extensions, skills, prompt templates, themes, commands, hooks, provider adapters, or equivalent host resources unless the user enables that exact resource category and source for workflow task agents
 - user-configured extension usage state remains the source of truth for loaded, available, and unavailable extensions; Extension Loading is the only fixed always-loaded extension control
@@ -225,7 +228,7 @@ The adopted direction for task agents is:
 - run task-local shell, patch, network, and generated-client boundaries through the same `svvy`
   execution policy as orchestrators and handler threads, including managed sandboxing,
   `networkAccess`, and the configured approval mode, scoped to the exact Smithers task attempt
-- keep `thread_start`, `thread_report`, `thread_request_report`, `thread_episodes`, `wait`, and `smithers_*` out of the default task-agent runtime and tool schema instead of describing absent controls in prompt prose
+- keep `thread_start`, `thread_report`, `thread_request_report`, `thread_episodes`, `request_user_input`, and `smithers_*` out of the default task-agent runtime and tool schema instead of describing absent controls in prompt prose
 - keep Smithers workflow approval and hijack as Smithers runtime or operator controls around the
   task, not as ordinary task-agent tools
 - execute the task agent and its task-local tool calls from Smithers' current task root, including the active worktree when the task is worktree-bound
@@ -320,14 +323,14 @@ Those actions stay as `svvy`-native control tools:
 - `thread_report`
 - `thread_list`
 - `thread_episodes`
-- `wait`
+- `request_user_input`
 
 These are still tool calls.
 
 Native control tools use the same live projection model as direct coding tools. Tool cards appear
-when the tool name is known, large freeform arguments such as thread objectives and reports may
-stream into previews, and final thread ids, report request ids, episode ids, loaded extension ids,
-wait state, and errors come from runtime command facts.
+when the tool name is known, large freeform arguments such as thread objectives, reports, and user
+input questions may stream into previews, and final thread ids, report request ids, episode ids,
+loaded extension ids, request-input answers, wait state, and errors come from runtime command facts.
 
 The concrete thread-control and thread-inspection APIs are defined in
 `docs/specs/extension/thread-managing.extension.spec.md`.
@@ -392,7 +395,7 @@ The intended use of the native control subset is:
 - a handler thread uses `thread_report` with `outcome` to conclude the current objective only after no active workflow run still belongs to that objective; the tool call succeeds when `svvy` records the durable conclusion episode and marks the current objective concluded
 - after a durable episode is recorded, `svvy` creates a typed orchestrator queue item so the orchestrator can reconcile the recorded episode in surface-queue order; cancelling or deleting that notification does not roll back the episode or return a tool error to the handler
 - a handler thread normally uses Smithers-native bridge tools such as `smithers_list_workflows`, `smithers_run_workflow`, `smithers_get_run`, `smithers_explain_run`, `smithers_list_pending_approvals`, `smithers_resolve_approval`, `smithers_get_node_detail`, `smithers_list_artifacts`, and `smithers_get_run_events` to supervise Smithers execution
-- any interactive surface may use `wait` when it needs user or external input
+- any interactive orchestrator or handler-thread surface may use `request_user_input` when it needs user clarification and can provide an explicit default answer
 
 `smithers_list_workflows` is the runnable-entry discovery surface and should expose each entry's `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `launchInputSchema`. Handlers launch or explicitly resume through the stable `smithers_run_workflow({ workflowId, input, runId? })` tool: supplied `runId` resumes exactly that run, omitted `runId` requests a fresh launch, omitted `runId` is rejected when the same handler already owns a nonterminal run with the same `workflowId`, and different `workflowId` values can run concurrently under one handler.
 
@@ -1006,8 +1009,8 @@ When the target surface is a handler thread:
    - inspect workflow state through Smithers-native bridge tools such as `smithers_get_run`, `smithers_explain_run`, `smithers_get_node_detail`, and `smithers_get_run_events`
    - resume an existing paused workflow run through the Smithers bridge when Smithers still considers that run resumable
    - start a replacement workflow run
-   - ask the user for clarification
-   - enter wait
+   - ask the user for clarification through `request_user_input`
+   - enter a runtime waiting state because of blocking request input, workflow attention, approval, signal, timer, or another external dependency
    - emit an important intermediate update with `thread_report`
    - conclude the current objective with `thread_report` and `outcome`
 3. run or resume workflow execution as needed
@@ -1034,13 +1037,18 @@ Two common cases matter:
 
 In the adopted delegated model:
 
+- if an orchestrator or handler thread needs clarification, it uses `request_user_input`
+- the default `request_user_input` variant is nonblocking: the agent supplies a recommended/default answer, the tool immediately returns that default, and later user answers are delivered through the owning surface queue with priority over ordinary user messages
+- the user may switch the shipped Request User Input extension into blocking mode; in that variant the same tool waits until the user answers or the five-minute default timer supplies the default answer
 - if a handler thread needs clarification, it asks inside that thread
 - the user's reply goes back to that same thread surface
 - the orchestrator does not need to intermediate that clarification by default
 
 There is no separate "wait episode" for delegated handler threads.
 
-The wait belongs in surface and workflow-run state until the handler thread eventually emits another update or conclusion episode.
+Blocking request input, execution approvals, external dependencies, and workflow attention may still
+project as waiting state. The wait belongs in surface and workflow-run state until runnable work
+resumes or the handler thread eventually emits another update or conclusion episode.
 
 ### Failures And Recovery
 

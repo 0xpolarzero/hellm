@@ -29,7 +29,8 @@ This spec defines the adopted steady-state architecture for that behavior.
 ## Adopted Direction
 
 - Keep pi session files as the durable source of transcript history for orchestrator and handler-thread surfaces.
-- Keep `svvy` structured state as the durable source of workspace, thread, workflow, command, episode, artifact, Project CI, and wait facts.
+- Keep `svvy` structured state as the durable source of workspace, thread, workflow, command,
+  request-user-input, episode, artifact, Project CI, and wait facts.
 - Manage live interactive surfaces separately from durable workspace state.
 - Key each live surface runtime by `surfacePiSessionId`.
 - Give each live surface its own prompt lock, model state, reasoning state, cancellation state, and transcript snapshot.
@@ -57,6 +58,7 @@ It owns:
 - thread summaries and inspectors
 - workflow-run summaries and inspectors
 - command summaries and inspectors
+- request-user-input request summaries and side-panel projection
 - artifact metadata
 - Project CI metadata
 - wait and status read models

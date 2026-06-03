@@ -35,7 +35,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Persist workflow-run records with run id, workflow name, workflow source, runnable entry path plus saved-entry linkage when relevant, status, summary, and timestamps. Commit(s): `8f0e4ec`
 - [x] Persist artifact references independently from transcript parsing at thread, workflow-run, and command scope. Commit(s): `fff54d7`
 - [x] Persist ordered update and conclusion episode records each time a handler thread reports to the orchestrator, while preserving earlier episodes for later follow-up turns. Commit(s): `d323012`
-- [x] Persist session wait state as a frontier-level summary derived from surface, workflow, and session wait projection. Commit(s): `fff54d7`, `f53c9b8`, `43a26cb`
+- [x] Persist session wait state as a frontier-level summary derived from surface, workflow, request-user-input, and session wait projection. Commit(s): `fff54d7`, `f53c9b8`, `43a26cb`
 - [x] Drive structured session state only from explicit runtime producers or tool events. Commit(s): `fff54d7`, `59fc34e`, `43a26cb`
 - [x] Reconstruct workspace and session summaries from structured state on app load. Commit(s): `b510857`, `fff54d7`
 - [ ] Build a POC Codex-like live tool projection stream for one surface, covering tool item start,
@@ -56,7 +56,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Run a simple composed scripted task through `execute_typescript`. Commit(s): `76cc8f3`
 - [x] Build a POC artifact and tracing pipeline for code-mode execution. Commit(s): `76cc8f3`
 - [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
-- [x] Keep thread orchestration, thread handling, extension loading, and `wait` as small `svvy`-native control surfaces while exposing Smithers workflow operations through Smithers-native bridge tools. Commit(s): `a02bd48`
+- [x] Keep thread orchestration, thread handling, extension loading, and request-user-input as small `svvy`-native control surfaces while exposing Smithers workflow operations through Smithers-native bridge tools. Commit(s): `a02bd48`
 - [x] Keep the `execute_typescript` API bounded to generated clients that benefit from typed composition. Commit(s): `76cc8f3`, `29d8452`
 - [x] Expose Codex-like Shell and Apply Patch extensions, with `exec_command`, `write_stdin`, and `apply_patch` as the normal coding-agent work interface. Commit(s): `76cc8f3`, `29d8452`
 - [ ] Keep cx out of generated `execute_typescript` clients; generated TypeScript profiles should not expose `api.cx_*`, `svvy.cx.*`, or `extensions.cx.*`.
@@ -96,7 +96,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Build a POC handler-thread spawn flow with objective handoff and a dedicated backing pi session. Commit(s): `f53c9b8`
 - [x] Persist handler-thread objective state separately from handler activity, workflow activity, waits, and repair context, without flattening workflow failure or cancellation into thread objective conclusion. Commit(s): `f53c9b8`, `fdaf460`, `a02bd48`
 - [x] Let handler threads receive direct user messages through the same surface model as the orchestrator. Commit(s): `f53c9b8`
-- [x] Make handler-thread wait and resume happen inside the thread itself instead of bouncing through the orchestrator by default. Commit(s): `f53c9b8`
+- [x] Make handler-thread clarification, waiting, and resume happen inside the thread itself instead of bouncing through the orchestrator by default. Commit(s): `f53c9b8`
 - [x] Keep handed-back handler threads directly interactive for follow-up chat without forcing a new thread. Commit(s): `ba5c3f0`
 - [x] Let a concluded handler objective move back to active through explicit orchestrator re-engagement with `thread_resume`, preserving handler and workflow activity as derived facts. Commit(s): `f53c9b8`, `a02bd48`
 - [x] Preserve earlier thread episodes when the same thread later returns control again. Commit(s): `d323012`
@@ -349,7 +349,7 @@ Current product decisions for workspace-runtime restart and crash recovery are s
 
 - [x] Build a POC restart or resume flow that restores multiple open surfaces and panel bindings from durable state. Commit(s): `7f84f06`
 - [ ] Complete one workspace-runtime recovery coordinator with durable scheduler records, transactional claims, Smithers-first projection bootstrap, per-surface queue, thread report notification, and report request recovery, typed queued initial handler starts, typed queued workflow-attention wake-ups, title job recovery, Project CI projection recovery, and backend-owned recovery events/logs; the scheduler and coordinator are in place, with remaining work focused on full app-log projection and broader restart integration coverage.
-- [x] Restore pending clarification and waiting state after app restart. Commit(s): `7f84f06`
+- [x] Restore pending request-user-input clarification and waiting state after app restart. Commit(s): `7f84f06`
 - [x] Restore active workflow-run state after app restart. Commit(s): `7f84f06`
 - [x] Restore pending handler attention queues and per-surface prompt-lock state after app restart. Commit(s): `7f84f06`
 - [x] Add integration tests that exercise the real pi-backed runtime seam for direct work. Commit(s): `b0ee858`

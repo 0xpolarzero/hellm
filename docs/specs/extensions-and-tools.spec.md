@@ -263,9 +263,10 @@ Example `base-orchestrator/instructions/full/010-orchestrator.md`:
 ```md
 This surface is the orchestrator.
 
-Choose one top-level route per turn: reply directly, ask for clarification, use direct tools, use
-execute_typescript for typed composition, delegate with thread_start, request a handler update with
-thread_request_report, resume a concluded handler objective with thread_resume, or enter wait.
+Choose one top-level route per turn: reply directly, ask for clarification with
+request_user_input, use direct tools, use execute_typescript for typed composition, delegate with
+thread_start, request a handler update with thread_request_report, or resume a concluded handler
+objective with thread_resume.
 
 The orchestrator delegates objectives into handler threads. It does not directly supervise Smithers
 workflow runs.
@@ -282,10 +283,10 @@ Example `base-handler/instructions/full/010-handler.md`:
 ```md
 This surface is a delegated handler thread.
 
-Choose one top-level route per turn: reply directly, ask for clarification, use direct tools, use
-execute_typescript for typed composition, supervise workflows through smithers_* tools, enter wait,
-emit an important update with thread_report, or conclude the objective with thread_report and
-outcome.
+Choose one top-level route per turn: reply directly, ask for clarification with
+request_user_input, use direct tools, use execute_typescript for typed composition, supervise
+workflows through smithers_* tools, emit an important update with thread_report, or conclude the
+objective with thread_report and outcome.
 
 Ordinary replies inside a handler thread do not close it or emit durable episodes.
 
@@ -1907,7 +1908,7 @@ The resolved native direct tool set includes:
 - `load_extension`
 - `list_extensions`
 - product control tools such as `thread_start`, `thread_resume`, `thread_request_report`,
-  `thread_report`, `thread_episodes`, `wait`, `runtime_current`, `thread_current`, and
+  `thread_report`, `thread_episodes`, `request_user_input`, `runtime_current`, `thread_current`, and
   `thread_list`
 - artifact tools, because artifacts are `svvy` product state
 
@@ -2728,7 +2729,7 @@ shell metacharacters, `svvyx ...` usage, redirection, and substitutions are not 
 `mcp_tool_call` remains a Codex Guardian action type, but it is not part of the resolved `svvy` v1
 payload unless `svvy` later exposes model-callable MCP tools that need approval routing. Native
 product control tools such as `load_extension`, `list_extensions`, `thread_start`, `thread_resume`,
-`thread_request_report`, `thread_report`, `thread_episodes`, `wait`, and Smithers bridge tools are not auto-reviewed merely because they are tools. They execute
+`thread_request_report`, `thread_report`, `thread_episodes`, `request_user_input`, and Smithers bridge tools are not auto-reviewed merely because they are tools. They execute
 according to their own product contracts unless a future spec defines a specific approval boundary
 for one of them.
 
@@ -3736,13 +3737,14 @@ read-only external inputs.
 | Extension | Category | Interface | Included tools or capability | Default orchestrator state | Default handler state | Default workflow-agent state |
 | --- | --- | --- | --- | --- | --- | --- |
 | Base: Common svvy Conduct (`base-common`) | shipped | instructions | Shared tool-agnostic svvy conduct and repository-work behavior; no tools, `svvyx` commands, or TypeScript clients | default_loaded | default_loaded | default_loaded |
-| Base: Orchestrator (`base-orchestrator`) | shipped | instructions | Orchestrator role instructions for strategy, routing, delegation, handler resume, wait, and final decisions | default_loaded | unavailable | unavailable |
+| Base: Orchestrator (`base-orchestrator`) | shipped | instructions | Orchestrator role instructions for strategy, routing, delegation, handler resume, user clarification, and final decisions | default_loaded | unavailable | unavailable |
 | Base: Handler Thread (`base-handler`) | shipped | instructions | Handler-thread role instructions for delegated objective ownership, workflow supervision boundary, waits, reporting, and conclusions | unavailable | default_loaded | unavailable |
 | Base: Workflow Task Agent (`base-workflow-task`) | shipped | instructions | Smithers task-attempt role instructions for task-local coding-agent work under workflow runtime ownership | unavailable | unavailable | default_loaded |
 | Shell | shipped | native_tool | `exec_command`, `write_stdin`, Codex-like shell instructions, and `svvyx` access through `exec_command` | default_loaded | default_loaded | default_loaded |
 | Apply Patch | shipped | native_tool | `apply_patch` with Codex-like structured patch instructions for repository and allowed extension file edits | default_loaded | default_loaded | default_loaded |
 | Execute TypeScript | shipped | native_tool | `execute_typescript` with generated `svvy` and loaded-extension clients as the preferred TypeScript interface | default_loaded | default_loaded | default_loaded |
 | Extension Loading | shipped | native_tool | `list_extensions`, `load_extension`; fixed app-native control, always default-loaded and not configurable | default_loaded | default_loaded | default_loaded |
+| Request User Input (`request-user-input`) | shipped | native_tool | `request_user_input`; one visible dual-variant extension whose active nonblocking or blocking variant controls the loaded instructions, tool schema descriptions, and runtime behavior | default_loaded | default_loaded | unavailable |
 | Thread Orchestration (`thread-orchestration`) | shipped | native_tool | Orchestrator-only handler-thread controls: `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`, and `thread_request_report`; concrete API is defined in `docs/specs/extension/thread-managing.extension.spec.md` | default_loaded | unavailable | unavailable |
 | Thread Handling (`thread-handling`) | shipped | native_tool | Handler-only thread controls: `thread_current`, `thread_report`, and `thread_episodes`; concrete API is defined in `docs/specs/extension/thread-managing.extension.spec.md` | unavailable | default_loaded | unavailable |
 | Extension Managing | shipped | svvyx | `svvyx extensions ...` lifecycle commands for inspect, create, full-instruction file add/remove/rename/reorder, build, usage state, reset, delete, revert, and snapshots; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |

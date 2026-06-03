@@ -774,7 +774,8 @@ Compact handler-thread cards should show:
 - loaded extension ids or generated agent context summary when present
 - latest thread episode summary when present
 - active or latest workflow-run summary when present
-- blocked reason when waiting
+- blocked reason when waiting, including a pending request-user-input title when the handler is
+  blocked by a blocking user clarification request
 - actions to open the handler thread in a chosen Dockview target
 - optional drag affordance that opens or duplicates the handler thread through Dockview external DnD
 

@@ -51,7 +51,8 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Keep `pi` as the canonical transcript and runtime substrate for the main orchestrator surface and delegated handler thread surfaces.
 - Keep Smithers as the canonical workflow execution substrate.
 - Add `svvy`-owned structured product state above those substrates.
-- Model turns, handler threads, workflow runs, workflow task attempts, commands, episodes, artifacts, Project CI, and waits explicitly.
+- Model turns, handler threads, workflow runs, workflow task attempts, commands, request-user-input
+  records, episodes, artifacts, Project CI, and waits explicitly.
 - Persist agent profile choices separately from generated agent context binding state: app-wide orchestrator profiles, the special `threadHandler` profile, workflow-agent profiles, per-session selected orchestrator profile snapshots, loaded and available extension ids, handler creation-time extension overrides, workflow task-agent invocation extension overrides, plus internal title-naming settings are structured settings facts, not transcript text. TanStack Form is renderer form state for editing these facts; durable truth remains the structured settings records normalized by Bun-side settings code. Provider/model capability checks, including reasoning availability, supported reasoning levels, context windows, output limits, and image input support, come from pi's normalized `Model` metadata and session thinking APIs rather than `svvy`-owned provider-specific tables. Transcript rendering treats assistant `thinking` blocks as pi-normalized reasoning display content; if a block carries encrypted continuation state but no visible text, the UI labels the summary as unavailable instead of presenting it as redacted reasoning.
 - Model top-level session auto-title generation as explicit durable state driven by the first real user turn start, with pending/running/completed/failed title-generation status, manual-rename freeze state, and a rename lock while generation is pending or running. The configured internal title-naming prompt owns the title-generation instruction; the one-shot prompt body carries only the first user message context being titled, without a second naming instruction or extracted keyword list. The namer runs concurrently with the orchestrator's first turn: neither surface waits for the other to finish.
 - Persist one top-level per-turn decision for every surface, with orchestrator routing decisions and handler supervision decisions sharing one field.
@@ -61,11 +62,13 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
   authoritative recovery source.
 - Make native direct tools plus prompt-only cx CLI guidance the default coding-agent work surface.
 - Treat every top-level `execute_typescript` invocation as one parent command record and every generated client call as a child command record.
-- Keep only a very small set of native control tools for thread spawning, handler reporting, session-local extension loading, explicit objective conclusion, and wait; workflow control belongs on Smithers-native `smithers_*` bridge tools.
+- Keep only a very small set of native control tools for thread spawning, handler reporting,
+  session-local extension loading, explicit objective conclusion, and request-user-input; workflow
+  control belongs on Smithers-native `smithers_*` bridge tools.
 - Treat optional extension loading as generated agent context binding state through `thread_start` extension overrides, workflow task-agent invocation overrides, and the native `load_extension` tool, not as an `execute_typescript` API.
 - Drive durable facts from real runtime handlers and bridge events, not transcript heuristics.
 - Use one explicit surface-target identity model with `workspaceSessionId`, `surfacePiSessionId`, and `threadId` instead of overloading `session.id`.
-- Treat queued surface work as structured product state keyed by `surfacePiSessionId`. Queue items include user messages, report requests, thread report notifications, and generated agent context refresh control work.
+- Treat queued surface work as structured product state keyed by `surfacePiSessionId`. Queue items include user messages, report requests, thread report notifications, nonblocking request-user-input answer delivery, and generated agent context refresh control work.
 - Emit workspace-level read-model updates independently from live surface transcript updates; the renderer should join durable workspace facts, live surface facts, and Dockview panel bindings locally instead of depending on one active-session payload.
 - Keep status derivation and workflow lifecycle projection write-driven; do not overlay `activePrompt`, parse transcript files, or perform read-side Smithers repair writes.
 - Future Smithers lifecycle projection beyond explicit tool-boundary snapshots should arrive through bridge events rather than speculative read-side reconciliation.
@@ -126,6 +129,7 @@ Smithers remains canonical for:
 - episodes, including handler-thread update and conclusion episodes
 - Project CI run and CI check result records
 - artifacts and artifact indexes
+- request-user-input request, question, and answer records
 - session summary read models and selectors
 - wait state and lifecycle selectors
 
@@ -177,7 +181,7 @@ type StructuredSessionState = {
       | "thread_request_report"
       | "load_extension"
       | "thread_report"
-      | "wait"
+      | "request_user_input"
       | `smithers_${string}`;
     status: "running" | "waiting" | "completed" | "failed";
     startedAt: string;
@@ -644,7 +648,7 @@ Use `turnDecision` this way:
 
 - `pending` is allowed only between turn creation and the moment the surface chooses how to proceed
 - orchestrator turns persist session-level routing decisions such as `reply`, `execute_typescript`, `clarify`, or `thread_start`
-- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `load_extension`, `workflow_list_models`, `smithers_run_workflow`, `smithers_get_run`, `smithers_resolve_approval`, `thread_report`, or `wait`
+- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `request_user_input`, `load_extension`, `workflow_list_models`, `smithers_run_workflow`, `smithers_get_run`, `smithers_resolve_approval`, or `thread_report`
 - this symmetry is intentional even though only orchestrator turns own session-level routing
 - the turn decision is the top-level classification of the turn, not a replacement for command records
 - linkage to spawned threads, workflow runs, artifacts, and episodes still belongs in their own records plus linked commands
@@ -840,7 +844,10 @@ Use them this way:
 
 - low-level reads, searches, and workflow discovery calls are usually `trace`
 - material writes, artifact creation, `exec_command` command executions, and failures usually roll up as `summary`
-- `thread_start`, `thread_resume`, `thread_request_report`, `thread_report`, `load_extension`, `wait`, and Smithers-mutating commands such as `smithers_run_workflow`, `smithers_resolve_approval`, `smithers_runs_cancel`, and `smithers_signals_send` are normally `surface`
+- `thread_start`, `thread_resume`, `thread_request_report`, `thread_report`, `load_extension`,
+  `request_user_input`, and Smithers-mutating commands such as `smithers_run_workflow`,
+  `smithers_resolve_approval`, `smithers_runs_cancel`, and `smithers_signals_send` are normally
+  `surface`
 - read-only Smithers inspection commands are usually `summary` unless the UI chooses to surface a specific one directly
 - child generated-client commands remain nested detail by default
 
@@ -1036,6 +1043,10 @@ The precise list may grow, but the first adopted set is:
 - `ciRun.recorded`
 - `ciCheckResult.recorded`
 - `artifact.created`
+- `requestUserInput.created`
+- `requestUserInput.answered`
+- `requestUserInput.completed`
+- `requestUserInput.cancelled`
 - `session.wait.started`
 - `session.wait.cleared`
 
@@ -1052,7 +1063,7 @@ needs to record why the owning surface cannot make progress.
 
 Common cases are:
 
-- handler-owned user clarification
+- a blocking `request_user_input` call waiting on user clarification
 - other external dependencies
 
 Use Smithers workflow wait state for workflow-owned approval waits, signal waits, timer waits, and
@@ -1072,6 +1083,8 @@ Rules:
 - keep `thread.objectiveState` unchanged
 - record the blocked condition on the owning surface, session frontier, workflow run, or Smithers
   wait record as appropriate
+- for user clarification, record a real request-user-input request and question record; do not store
+  a generic user wait without the request identity
 - do not create a wait episode
 - clear the wait projection when runnable work resumes for that owner
 
@@ -1094,6 +1107,10 @@ owning handler thread and include enough Smithers attempt identity for the UI to
 task attempt. Approving or denying that execution-permission request resumes or aborts only that
 blocked tool call; it must not resolve Smithers workflow approval nodes and must not affect other
 actor sessions.
+
+If the blocked owner is a blocking `request_user_input` call, `session.wait` must include the
+generated request id and route answer submission to the exact owning `surfacePiSessionId`, turn, and
+command. It must not route by title, question text, focused panel, or active workspace tab.
 
 ## Derived Read Model
 
@@ -1219,7 +1236,8 @@ The implementation must enforce these invariants:
 - a conclusion episode may be created only when a thread has an active objective, owns no active workflow runs, and explicitly calls `thread_report` with `outcome`
 - an update episode may be created for an active or concluded objective by calling `thread_report` without `outcome`
 - a pending report request may be resolved only by a successful `thread_report` carrying that request id
-- a thread may be waiting only on real blocked conditions such as user input, approval, signal, timer, or external dependency, not on a fake wait episode
+- a thread may be waiting only on real blocked conditions such as a blocking request-user-input
+  record, approval, signal, timer, or external dependency, not on a fake wait episode
 - `session.wait` must be cleared when runnable work exists again
 - a turn must end in exactly one of: `completed`, `failed`, or `waiting`
 - a workflow-task command must attach to an existing workflow-task-attempt record identified from explicit runtime state or the current Smithers task-attempt identity, not from resume handles or best-effort fallback behavior
