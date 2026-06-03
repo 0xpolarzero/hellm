@@ -104,3 +104,7 @@
 - use codex automatic review as default instead of full approvals
 
 - have a main pain to see current active sessions as graph or tree, with title + first message and maybe ever-updating short overview of what's happening. It should show all sessions that have been active up to x minutes ago, with unread, wait and all kind of state shown. Show as graph for every orchestrator -> handlers -> workflows
+  - need to nail session visualization i.e. a convenient and intuitive way to recognize session, e.g. colors, size on (i) size of first user message (ii) context used/left (iii) complexity or kind of task (iv) tags for regognizable words in the message
+  - maybe have naming agent have context on all these sessions to be able to name them/update caption based on overall context
+  - opportunity to nail the file viewer as well by showing a graph-kind view with functions and stuff in relation to each other
+  - filesystem as infinite canvas as well where you see all files being edited, by which session, direct view of where the attention of an agent is, highlight and attention brought to user, etc

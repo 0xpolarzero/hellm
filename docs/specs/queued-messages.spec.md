@@ -6,8 +6,9 @@
 - Status: adopted product direction for durable surface queue work
 - Scope: composer sends and surface-control work that target orchestrator or handler-thread surfaces
 
-Thread Managing tools that create or consume queue work, including `thread_resume` and
-`thread_handoff`, are defined in `docs/specs/extension/thread-managing.extension.spec.md`.
+Thread tools that create or consume queue work, including `thread_resume`,
+`thread_request_report`, and `thread_report`, are defined in
+`docs/specs/extension/thread-managing.extension.spec.md`.
 
 ## Purpose
 
@@ -73,11 +74,12 @@ Local pi references:
 
 The queue is generic surface work, not only composer text. Every interactive surface accepts
 `user_message`, `agent_context_refresh`, `initial_handler_start`, and `workflow_attention` queue
-items. The orchestrator additionally accepts `handler_handoff` notification items created after
-`thread_handoff` records a durable handoff episode. A `handler_handoff` item waits in the
+items. Handler surfaces additionally accept `report_request` items created by
+`thread_request_report`. The orchestrator additionally accepts `thread_report` notification items
+created after `thread_report` records a durable episode. A `thread_report` item waits in the
 orchestrator queue with user messages and is delivered as orchestrator reconciliation input.
 Dismissing or deleting the notification cancels only the queue row; it does not roll back the
-durable handoff episode or return a tool error to the handler.
+durable episode or return a tool error to the handler.
 
 An `agent_context_refresh` item is a surface-local control item created automatically when the
 current generated agent context fingerprint differs from the context fingerprint bound to that
@@ -122,7 +124,7 @@ Required identity:
 - `surfacePiSessionId`
 - `threadId` when the target surface is a handler thread
 - `queuedItemId`
-- `kind`, currently `user_message`, `handler_handoff`, `agent_context_refresh`,
+- `kind`, currently `user_message`, `thread_report`, `report_request`, `agent_context_refresh`,
   `initial_handler_start`, or `workflow_attention`
 - idempotency key for stable internal producers and recovery seeding
 
@@ -155,7 +157,9 @@ The durable record should keep:
 
 - item kind
 - submitted text exactly as sent for `user_message`
-- source thread, source command, handoff episode, title, summary, body, and episode kind for `handler_handoff`
+- source thread, source command, episode id, title, summary, body, episode kind, and conclusion
+  outcome for `thread_report`
+- source thread, report request id, request text, and request time for `report_request`
 - previous and requested generated agent context fingerprint, changed categories, changed extension
   ids when applicable, and request time for `agent_context_refresh`
 - thread id and request time for `initial_handler_start`
@@ -178,7 +182,10 @@ If the queue has at least one queued item:
 3. for `agent_context_refresh`, recreate or refresh the managed pi runtime binding and generated
    actor context behind the same product surface, record the `Agent context updated` product event,
    mark the item delivered, and continue draining later items
-4. for `user_message`, `handler_handoff`, `initial_handler_start`, or `workflow_attention`, submit the derived text as the next real user message to that same pi surface; `handler_handoff` delivery reconciles an already-recorded durable episode
+4. for `user_message`, `thread_report`, `report_request`, `initial_handler_start`, or
+   `workflow_attention`, submit the derived text as the next real user message to that same pi
+   surface; `thread_report` delivery reconciles an already-recorded durable episode, and
+   `report_request` delivery asks the handler to answer with `thread_report({ requestId, ... })`
 5. create a normal turn record for prompt-bearing delivery
 6. mark prompt-bearing items `delivered` once pi accepts the queued item into the surface history
 
@@ -234,7 +241,7 @@ Projection should make clear:
 - whether the current surface is running, waiting, or ready
 - whether a message is queued for normal follow-up or has been selected for steering
 
-Queued rows render as a compact vertical list directly above attachment chips and the textarea only while they are blocked queue work, such as active-surface follow-ups or items behind earlier queue work. Rows use single-line ellipsized message text, centered controls, and dense workbench row sizing. Editable `user_message` rows expose drag reorder, `Steer`, edit, and delete. Editable `handler_handoff` rows expose drag reorder, `Steer`, and dismiss/delete; they do not expose text edit or restore-to-composer because their prompt is derived from durable handoff metadata at delivery time, and dismissal does not alter the recorded handoff. Editable `agent_context_refresh` rows are labelled `Update agent context`, expose cancel while unclaimed, and omit edit, restore, and steer because they are control work rather than agent input. Drag-hover reorder previews are local renderer state; the durable queue order changes only when the user drops a row into a final changed position. Locked `steering` rows remain in place but replace the controls with a status indicator and cannot be edited, deleted, dismissed, steered again, or reordered. `dispatching` rows are durable backend state and do not render as queue rows once claimed for pending or active surface work.
+Queued rows render as a compact vertical list directly above attachment chips and the textarea only while they are blocked queue work, such as active-surface follow-ups or items behind earlier queue work. Rows use single-line ellipsized message text, centered controls, and dense workbench row sizing. Editable `user_message` rows expose drag reorder, `Steer`, edit, and delete. Editable `thread_report` and `report_request` rows expose drag reorder, `Steer`, and dismiss/delete; they do not expose text edit or restore-to-composer because their prompt is derived from durable product metadata at delivery time, and dismissal does not alter the recorded episode or report request. Editable `agent_context_refresh` rows are labelled `Update agent context`, expose cancel while unclaimed, and omit edit, restore, and steer because they are control work rather than agent input. Drag-hover reorder previews are local renderer state; the durable queue order changes only when the user drops a row into a final changed position. Locked `steering` rows remain in place but replace the controls with a status indicator and cannot be edited, deleted, dismissed, steered again, or reordered. `dispatching` rows are durable backend state and do not render as queue rows once claimed for pending or active surface work.
 
 Sidebar rows may show a compact queued-count badge for an open surface, but queued messages do not change the row's lifecycle status to running or waiting by themselves.
 

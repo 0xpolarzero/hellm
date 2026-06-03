@@ -119,7 +119,7 @@ The orchestrator may:
 - tell the user whether Project CI is configured
 - start or reuse a normal handler thread with the `project-ci` extension loaded when the user asks to configure checks and the next handler turn clearly needs CI authoring guidance
 - delegate implementation work to normal handler threads
-- reconcile handoffs that include CI state
+- reconcile thread episodes that include CI state
 
 The orchestrator knows only a lightweight routing fact:
 
@@ -171,7 +171,7 @@ Normal handler threads may:
 - discover configured CI entries with `smithers_list_workflows`
 - run a configured CI entry with `smithers_run_workflow`
 - inspect CI run state and artifacts
-- mention CI status in a handoff when relevant
+- mention CI status in a thread report when relevant
 - call `load_extension({ extensionId: "project-ci" })` if they need to configure or modify Project CI
 
 Normal handler threads start without:
@@ -552,7 +552,7 @@ An inspected handler thread should show CI detail only when that thread launched
 5. The handler calls `smithers_list_workflows({ productKind: "project-ci" })`.
 6. If a CI entry exists, the handler calls `smithers_run_workflow({ workflowId: "project_ci", input: { scope: "fast", reason: "post-implementation" } })`.
 7. The runtime records CI state only if the terminal output validates against the CI result schema.
-8. The handler includes the CI outcome in its handoff.
+8. The handler includes the CI outcome in its thread report.
 
 ### No CI Configured
 

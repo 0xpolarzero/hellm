@@ -240,7 +240,7 @@ Thread and workflow-run surfaces should show linked artifact records before fall
 
 ### Thread Artifact Block
 
-A handler-thread surface should show a compact Artifacts block near the thread metadata and latest handoff area.
+A handler-thread surface should show a compact Artifacts block near the thread metadata and latest episode area.
 
 The block should include artifacts linked directly to the thread plus artifacts linked to workflow runs owned by that thread.
 

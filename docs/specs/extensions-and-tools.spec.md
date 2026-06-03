@@ -28,9 +28,10 @@ Related specs:
   `svvyx extensions ...` lifecycle API.
 - `docs/specs/extension/svvyx-incur-runtime.spec.md` defines the internal runtime contract for
   building and invoking Incur-backed `svvyx` extensions through the stable `svvyx` dispatcher.
-- `docs/specs/extension/thread-managing.extension.spec.md` defines the Thread Managing native control surface and the
-  concrete `thread_start`, `thread_resume`, `thread_handoff`, `thread_current`, `thread_list`, and
-  `thread_handoffs` APIs.
+- `docs/specs/extension/thread-managing.extension.spec.md` defines the shared native
+  implementation behind the Thread Orchestration and Thread Handling extension records and the
+  concrete `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`,
+  `thread_request_report`, `thread_current`, and `thread_report` APIs.
 - `docs/specs/extension/cx.extension.spec.md` defines the shipped prompt-only cx extension and its direct CLI
   boundary.
 - `docs/specs/extension/web.extension.spec.md` defines the shipped prompt-only Web extension and TinyFish CLI
@@ -211,7 +212,7 @@ Adopted ids:
 | --- | --- | --- |
 | `base-common` | Base: Common svvy Conduct | Tool-agnostic conduct shared by all adopted actor kinds. |
 | `base-orchestrator` | Base: Orchestrator | Strategy, routing, delegation, and final-user-response behavior. |
-| `base-handler` | Base: Handler Thread | Delegated objective ownership, workflow supervision boundary, and handoff behavior. |
+| `base-handler` | Base: Handler Thread | Delegated objective ownership, workflow supervision boundary, reporting, and conclusion behavior. |
 | `base-workflow-task` | Base: Workflow Task Agent | Task-attempt-local coding-agent behavior under Smithers ownership. |
 
 Example shipped source layout:
@@ -260,8 +261,8 @@ Example `base-orchestrator/instructions/full/010-orchestrator.md`:
 This surface is the orchestrator.
 
 Choose one top-level route per turn: reply directly, ask for clarification, use direct tools, use
-execute_typescript for typed composition, delegate with thread_start, resume a completed handler with
-thread_resume, or enter wait.
+execute_typescript for typed composition, delegate with thread_start, request a handler update with
+thread_request_report, resume a concluded handler objective with thread_resume, or enter wait.
 
 The orchestrator delegates objectives into handler threads. It does not directly supervise Smithers
 workflow runs.
@@ -269,7 +270,7 @@ workflow runs.
 Handler threads can supervise workflows through smithers_* tools, but those tool declarations are
 not callable from this surface.
 
-Use thread_list and thread_handoffs before thread_resume when an existing completed handler thread
+Use thread_list and thread_episodes before thread_resume when an existing concluded handler thread
 may already have the right context for follow-up work.
 ```
 
@@ -280,15 +281,17 @@ This surface is a delegated handler thread.
 
 Choose one top-level route per turn: reply directly, ask for clarification, use direct tools, use
 execute_typescript for typed composition, supervise workflows through smithers_* tools, enter wait,
-or return control with thread_handoff.
+emit an important update with thread_report, or conclude the objective with thread_report and
+outcome.
 
-Ordinary replies inside a handler thread do not close it or emit handoff episodes.
+Ordinary replies inside a handler thread do not close it or emit durable episodes.
 
-Use thread_handoff only when the current objective span is ready to hand control back to the
+Use thread_report without outcome for intermediate updates that the orchestrator should reconcile.
+Use thread_report with outcome only when the current objective is ready to hand control back to the
 orchestrator with durable state.
 
-Workflow waits, approvals, and resumes stay inside this handler thread. Do not call thread_handoff
-while a supervised workflow on this thread is still running or waiting.
+Workflow waits, approvals, and resumes stay inside this handler thread. Do not call thread_report
+with outcome while this thread still owns active workflow runs.
 ```
 
 Example `base-workflow-task/instructions/full/010-workflow-task.md`:
@@ -1374,7 +1377,7 @@ Extensions enter an agent context in three ways:
 - current-binding `load_extension`
 
 These paths all operate on extension usage state. They do not imply handler-to-task inheritance,
-handoff inheritance, actor-kind compatibility policy, or a hidden capability resolver.
+thread-report inheritance, actor-kind compatibility policy, or a hidden capability resolver.
 
 ### Agent Profile Defaults
 
@@ -1395,7 +1398,8 @@ const defaultOrchestratorProfile = {
     shell: "default_loaded",
     "apply-patch": "default_loaded",
     "execute-typescript": "default_loaded",
-    "thread-managing": "default_loaded",
+    "thread-orchestration": "default_loaded",
+    "thread-handling": "unavailable",
     smithers: "unavailable",
     cx: "default_loaded",
     git: "default_loaded",
@@ -1415,7 +1419,8 @@ const threadHandlerProfile = {
     shell: "default_loaded",
     "apply-patch": "default_loaded",
     "execute-typescript": "default_loaded",
-    "thread-managing": "default_loaded",
+    "thread-orchestration": "unavailable",
+    "thread-handling": "default_loaded",
     smithers: "default_loaded",
     cx: "default_loaded",
     git: "default_loaded",
@@ -1435,7 +1440,8 @@ const defaultWorkflowAgentProfile = {
     shell: "default_loaded",
     "apply-patch": "default_loaded",
     "execute-typescript": "default_loaded",
-    "thread-managing": "unavailable",
+    "thread-orchestration": "unavailable",
+    "thread-handling": "unavailable",
     smithers: "unavailable",
     cx: "default_loaded",
     git: "default_loaded",
@@ -1502,7 +1508,7 @@ This surface is the orchestrator.
 ## Loaded Extension: Shell
 ...
 
-## Loaded Extension: Thread Managing
+## Loaded Extension: Thread Orchestration
 ...
 
 ## Available Extension: Project CI
@@ -1519,6 +1525,9 @@ Generated handler prompt skeleton:
 ## Loaded Extension: Base: Handler Thread
 
 This surface is a delegated handler thread.
+...
+
+## Loaded Extension: Thread Handling
 ...
 
 ## Loaded Extension: Smithers
@@ -1894,8 +1903,9 @@ The resolved native direct tool set includes:
 - `apply_patch`
 - `load_extension`
 - `list_extensions`
-- product control tools such as `thread_start`, `thread_resume`, `thread_handoff`, `wait`,
-  `runtime_current`, `thread_current`, `thread_list`, and `thread_handoffs`
+- product control tools such as `thread_start`, `thread_resume`, `thread_request_report`,
+  `thread_report`, `thread_episodes`, `wait`, `runtime_current`, `thread_current`, and
+  `thread_list`
 - artifact tools, because artifacts are `svvy` product state
 
 `svvyx` extensions expose stable dispatcher shell commands through `exec_command` and may expose
@@ -2696,7 +2706,7 @@ shell metacharacters, `svvyx ...` usage, redirection, and substitutions are not 
 `mcp_tool_call` remains a Codex Guardian action type, but it is not part of the resolved `svvy` v1
 payload unless `svvy` later exposes model-callable MCP tools that need approval routing. Native
 product control tools such as `load_extension`, `list_extensions`, `thread_start`, `thread_resume`,
-`thread_handoff`, `wait`, and Smithers bridge tools are not auto-reviewed merely because they are tools. They execute
+`thread_request_report`, `thread_report`, `thread_episodes`, `wait`, and Smithers bridge tools are not auto-reviewed merely because they are tools. They execute
 according to their own product contracts unless a future spec defines a specific approval boundary
 for one of them.
 
@@ -3705,13 +3715,14 @@ read-only external inputs.
 | --- | --- | --- | --- | --- | --- | --- |
 | Base: Common svvy Conduct (`base-common`) | shipped | instructions | Shared tool-agnostic svvy conduct and repository-work behavior; no tools, `svvyx` commands, or TypeScript clients | default_loaded | default_loaded | default_loaded |
 | Base: Orchestrator (`base-orchestrator`) | shipped | instructions | Orchestrator role instructions for strategy, routing, delegation, handler resume, wait, and final decisions | default_loaded | unavailable | unavailable |
-| Base: Handler Thread (`base-handler`) | shipped | instructions | Handler-thread role instructions for delegated objective ownership, workflow supervision boundary, waits, and handoffs | unavailable | default_loaded | unavailable |
+| Base: Handler Thread (`base-handler`) | shipped | instructions | Handler-thread role instructions for delegated objective ownership, workflow supervision boundary, waits, reporting, and conclusions | unavailable | default_loaded | unavailable |
 | Base: Workflow Task Agent (`base-workflow-task`) | shipped | instructions | Smithers task-attempt role instructions for task-local coding-agent work under workflow runtime ownership | unavailable | unavailable | default_loaded |
 | Shell | shipped | native_tool | `exec_command`, `write_stdin`, Codex-like shell instructions, and `svvyx` access through `exec_command` | default_loaded | default_loaded | default_loaded |
 | Apply Patch | shipped | native_tool | `apply_patch` with Codex-like structured patch instructions for repository and allowed extension file edits | default_loaded | default_loaded | default_loaded |
 | Execute TypeScript | shipped | native_tool | `execute_typescript` with generated `svvy` and loaded-extension clients as the preferred TypeScript interface | default_loaded | default_loaded | default_loaded |
 | Extension Loading | shipped | native_tool | `list_extensions`, `load_extension`; fixed app-native control, always default-loaded and not configurable | default_loaded | default_loaded | default_loaded |
-| Thread Managing | shipped | native_tool | Actor-scoped handler-thread controls and inspection tools; concrete API is defined in `docs/specs/extension/thread-managing.extension.spec.md` | default_loaded | default_loaded | unavailable |
+| Thread Orchestration (`thread-orchestration`) | shipped | native_tool | Orchestrator-only handler-thread controls: `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`, and `thread_request_report`; concrete API is defined in `docs/specs/extension/thread-managing.extension.spec.md` | default_loaded | unavailable | unavailable |
+| Thread Handling (`thread-handling`) | shipped | native_tool | Handler-only thread controls: `thread_current`, `thread_report`, and `thread_episodes`; concrete API is defined in `docs/specs/extension/thread-managing.extension.spec.md` | unavailable | default_loaded | unavailable |
 | Extension Managing | shipped | svvyx | `svvyx extensions ...` lifecycle commands for inspect, create, full-instruction file add/remove/rename/reorder, build, usage state, reset, delete, revert, and snapshots; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |
 | cx | shipped | instructions | official cx CLI semantic code-navigation guidance through `exec_command`; no native `cx_*`, `svvyx cx`, generated TypeScript client, product navigation, or product-state controls | default_loaded | default_loaded | default_loaded |
 | Smithers | shipped | native_tool | `smithers_*` workflow run/list/inspect/resume/signal/transcript controls backed by the Bun-owned Smithers bridge | unavailable | default_loaded | unavailable |
@@ -3809,7 +3820,7 @@ Rules:
 - The generated type must omit fixed app-native control extensions such as Extension Loading because
   they are not configurable.
 - Workflow task-agent extension overrides are independent of the owning handler thread, handler
-  profile, handler `thread_start` override, and handler handoff facts.
+  profile, handler `thread_start` override, and handler report or episode facts.
 
 ## External Instructions
 

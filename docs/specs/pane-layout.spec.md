@@ -772,7 +772,7 @@ Compact handler-thread cards should show:
 - thread title or objective
 - status
 - loaded extension ids or generated agent context summary when present
-- latest handoff summary when present
+- latest thread episode summary when present
 - active or latest workflow-run summary when present
 - blocked reason when waiting
 - actions to open the handler thread in a chosen Dockview target

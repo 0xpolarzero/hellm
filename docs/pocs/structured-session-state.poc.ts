@@ -92,7 +92,7 @@ type CommandRecord = {
 type EpisodeRecord = {
   id: string;
   threadId: string;
-  // Provenance only: a command may be the thread_handoff action or the most relevant underlying work command,
+  // Provenance only: a command may be the thread_report action or the most relevant underlying work command,
   // but commands still keep their own summaries and do not emit episodes themselves.
   sourceCommandId: string | null;
   title: string;

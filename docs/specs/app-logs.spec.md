@@ -341,7 +341,7 @@ Empty states:
 - model or reasoning changed for a surface
 - prompt requested, started, finished, cancelled
 - title generation queued, started, completed
-- handler thread created, opened, handoff emitted
+- handler thread created, opened, episode emitted
 - Smithers runtime initialized
 - workflow registry scanned
 - workflow run launched, resumed, completed, cancelled

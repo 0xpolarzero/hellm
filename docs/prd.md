@@ -91,7 +91,7 @@ Before any target surface runs a turn through pi:
 - `svvy` must compose that surface's actor prompt from the current generated agent context and load the resulting instructions through pi's real `systemPrompt` channel
 - `svvy` must ignore pi prompt replacement and append files such as `.pi/SYSTEM.md` and `APPEND_SYSTEM.md`, while preserving discovered `AGENTS.md` and `CLAUDE.md` files as read-only `external_instruction` extension records in the actual prompt path
 - the submitted prompt body is the real new user message for that surface; `svvy` does not repair or advance a surface by flattening prior messages into role-labelled transcript prose
-- committed conversation history stays in pi's session history, while runtime, thread, handoff, and workflow state stays in structured state and targeted tools
+- committed conversation history stays in pi's session history, while runtime, thread, episode, report-request, and workflow state stays in structured state and targeted tools
 - the UI should project the active system prompt as expandable surface metadata rather than as inline transcript prose, and should warn when a surface is bound to an older prompt revision than current settings
 - each surface must receive only the generated tool declarations and SDK blocks present in that surface's resolved extension binding and native runtime surface
 - each surface may receive compact knowledge about what another surface commonly does, but it must not receive that other surface's full callable API block just for awareness
@@ -105,8 +105,8 @@ Agents and Extensions are the user-facing source of reusable prompt material and
 The default actor-specific generated context split is:
 
 - the orchestrator prompt knows that handler threads can supervise Smithers workflows, but the default orchestrator extension state does not load the Smithers extension; if it wants workflow action, it normally delegates by calling `thread_start`
-- a handler-thread prompt receives `smithers_*`, `load_extension`, `list_extensions`, `thread_handoff`, `thread_current`, `wait`, direct tools, and `execute_typescript` for typed composition by default; `thread_start` is not part of the default adopted handler model
-- orchestrator and handler prompts receive `runtime_current`, `thread_list`, and `thread_handoffs` so runtime binding, delegated-thread state, and durable handoff episodes are read through focused tools instead of prompt stuffing
+- a handler-thread prompt receives `smithers_*`, `load_extension`, `list_extensions`, `thread_current`, `thread_report`, `thread_episodes`, `wait`, direct tools, and `execute_typescript` for typed composition by default; `thread_start` is not part of the default adopted handler model
+- the orchestrator prompt receives `runtime_current`, `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`, and `thread_request_report` so runtime binding, delegated-thread state, durable episodes, and handler status requests are handled through focused tools instead of prompt stuffing
 - a workflow-task-agent prompt receives task-local instructions and task-local callable declarations; in the default adopted workflow-agent profile it receives Extension Loading, task-local direct tools, and `execute_typescript`, while Smithers, Extension Managing, and broad handler/orchestrator controls are not default-loaded
 - a workflow-task-agent runtime must not load ambient pi built-in tools, extensions, skills, prompt templates, themes, commands, hooks, provider adapters, or equivalent host resources unless the user enables that exact resource category and source for workflow task agents
 - user-configured extension usage state remains the source of truth for loaded, available, and unavailable extensions; Extension Loading is the only fixed always-loaded extension control
@@ -184,7 +184,7 @@ That means:
 - workflow waits, approvals, retries, repairs, and resumptions stay inside that same handler thread instead of escaping back to the orchestrator
 - the handler thread receives control back when a workflow run reaches a terminal outcome or another actionable attention state
 - the handler thread may repair inputs, inspect workflow state, edit the workflow, start a replacement run, resume when the same run is still resumable, or ask the user for clarification
-- the handler thread may call `thread_handoff` only after its current supervised workflow state is terminal or explicitly cancelled; a running or waiting workflow run may not be orphaned under a completed thread
+- the handler thread may call `thread_report` with an `outcome` only after its current supervised workflow state is terminal or explicitly cancelled; an active workflow run may not be orphaned under a concluded objective
 - the orchestrator does not sit in the middle of every workflow pause, retry, or repair step
 
 A handler thread may launch more than one workflow run over its lifetime.
@@ -212,7 +212,7 @@ The adopted direction for task agents is:
 - run task-local shell, patch, network, and generated-client boundaries through the same `svvy`
   execution policy as orchestrators and handler threads, including managed sandboxing,
   `networkAccess`, and the configured approval mode, scoped to the exact Smithers task attempt
-- keep `thread_start`, `thread_handoff`, `wait`, and `smithers_*` out of the default task-agent runtime and tool schema instead of describing absent controls in prompt prose
+- keep `thread_start`, `thread_report`, `thread_request_report`, `thread_episodes`, `wait`, and `smithers_*` out of the default task-agent runtime and tool schema instead of describing absent controls in prompt prose
 - keep Smithers workflow approval and hijack as Smithers runtime or operator controls around the
   task, not as ordinary task-agent tools
 - execute the task agent and its task-local tool calls from Smithers' current task root, including the active worktree when the task is worktree-bound
@@ -295,12 +295,13 @@ Those actions stay as `svvy`-native control tools:
 
 - `thread_start`
 - `thread_resume`
+- `thread_request_report`
 - `load_extension`
 - `list_extensions`
-- `thread_handoff`
 - `thread_current`
+- `thread_report`
 - `thread_list`
-- `thread_handoffs`
+- `thread_episodes`
 - `wait`
 
 These are still tool calls.
@@ -354,17 +355,19 @@ More precisely, this means:
 - product-specific additions are limited to app-runtime concerns such as implicit current-thread binding, workflow registry lookup, normalized error envelopes, and durable command-fact recording
 - `svvy` should expose only the subset of Smithers capabilities it actually wants the agent to use; unexposed Smithers surfaces remain operator-only or future work rather than getting renamed into parallel `svvy` APIs
 - the default orchestrator context should know that `smithers_*` exists as a handler-thread workflow-supervision capability, but the Smithers extension is not default-loaded in ordinary orchestrator profiles
-- the default handler context should know that the orchestrator can delegate and reconcile handoffs, but `thread_start` is not part of the ordinary handler profile unless nested delegation is explicitly adopted as a product behavior
+- the default handler context should know that the orchestrator can delegate and reconcile thread episodes, but `thread_start` is not part of the ordinary handler profile unless nested delegation is explicitly adopted as a product behavior
 - a workflow task agent should know only its task-local instructions and task-local tools; Smithers workflow approvals and hijack remain Smithers runtime behavior outside the task-agent tool block, while shell/sandbox approvals raised by task-local direct tools use the same `svvy` execution-permission flow as other actors
 
 The intended use of the native control subset is:
 
 - the orchestrator normally uses `thread_start` to open a delegated handler thread
-- the orchestrator uses `thread_resume` when a completed handler thread already has the right delegated context for follow-up work on the same objective
+- the orchestrator uses `thread_resume` when a handler thread whose current objective is concluded already has the right delegated context for follow-up work
 - the orchestrator may pass a `project-ci` extension override to `thread_start` when the delegated objective clearly needs Project CI authoring guidance from the first handler turn
 - a handler thread may call `load_extension({ extensionId: "project-ci" })` when it later discovers that Project CI configuration or modification is required
-- a handler thread uses `thread_handoff` to transfer back to the orchestrator only after no running or waiting workflow run still belongs to that span; the tool call succeeds when `svvy` records the durable handoff episode and marks the current objective span complete
-- after a durable handoff is recorded, `svvy` creates a typed orchestrator queue item so the orchestrator can reconcile the recorded handoff in surface-queue order; cancelling or deleting that notification does not roll back the handoff episode or return a tool error to the handler
+- the orchestrator uses `thread_request_report` when it needs an explicit update episode from a handler without resuming or replacing that handler's objective
+- a handler thread uses `thread_report` without `outcome` to emit an intermediate update episode when it has important information for the orchestrator
+- a handler thread uses `thread_report` with `outcome` to conclude the current objective only after no active workflow run still belongs to that objective; the tool call succeeds when `svvy` records the durable conclusion episode and marks the current objective concluded
+- after a durable episode is recorded, `svvy` creates a typed orchestrator queue item so the orchestrator can reconcile the recorded episode in surface-queue order; cancelling or deleting that notification does not roll back the episode or return a tool error to the handler
 - a handler thread normally uses Smithers-native bridge tools such as `smithers_list_workflows`, `smithers_run_workflow`, `smithers_get_run`, `smithers_explain_run`, `smithers_list_pending_approvals`, `smithers_resolve_approval`, `smithers_get_node_detail`, `smithers_list_artifacts`, and `smithers_get_run_events` to supervise Smithers execution
 - any interactive surface may use `wait` when it needs user or external input
 
@@ -407,7 +410,7 @@ The difference is responsibility, not UI class:
 - the orchestrator owns strategy
 - a handler thread owns one delegated objective
 
-### 9. Handoff Episodes And Persistent Thread Surfaces
+### 9. Thread Episodes And Persistent Handler Surfaces
 
 Episodes are the main reusable semantic outputs.
 
@@ -415,12 +418,13 @@ In the adopted delegated model:
 
 - a handler thread may run through many internal workflow runs
 - a handler thread may wait, resume, rerun, and repair internally
-- ordinary handler-thread replies stay inside the thread and do not emit handoff episodes
+- ordinary handler-thread replies stay inside the thread and do not emit durable episodes unless the handler calls `thread_report`
+- a handler thread may emit an intermediate update episode with `thread_report` without concluding the current objective
 - a handler thread may be idle between turns while still remaining open, owned, and ready for direct follow-up
-- a handler thread returns control to the orchestrator by explicitly calling `thread_handoff`, which marks the current objective span terminal and emits a handoff episode only after the thread no longer owns a running or waiting workflow run for that span
+- a handler thread returns control to the orchestrator by explicitly calling `thread_report` with an `outcome`, which marks the current objective concluded and emits a conclusion episode only after the thread no longer owns active workflow runs for that objective
 - the thread surface remains open for later inspection, direct follow-up chat, and resumed work on that same objective
 
-That handoff is the thread's terminal durable state plus the latest handoff episode it emits.
+That lifecycle boundary is the thread's concluded objective state plus the conclusion episode it emits.
 
 Tool calls may still produce command summaries, traces, and artifacts.
 
@@ -440,9 +444,9 @@ The machine-readable lifecycle state that drives routing and supervision belongs
 The orchestrator should normally reason from:
 
 - the handler thread objective
-- the thread's terminal durable state
+- the thread's objective state
 - durable workflow-run state
-- the latest handoff episode emitted by that thread
+- the latest episode emitted by that thread
 
 It must still be able to inspect the underlying handler thread, artifacts, and command traces when needed.
 
@@ -591,7 +595,7 @@ The adopted navigation model is deliberately small:
 - session rows expose a context menu with Mark as Unread, Pin or Unpin, Rename, and Archive or Unarchive actions while keeping normal row selection as the primary navigation behavior
 - each top-level session row represents the orchestrator layer only; child handler and workflow state must not make the session row appear running, waiting, or broken
 - delegated handler threads appear as nested rows under their parent session, and workflow runs appear as nested rows under their owning handler thread
-- sidebar subtitles are row-local relevance signals: orchestrator rows show orchestrator-local waits, commands, turns, or explicit handoff summaries; handler rows show handler-local waits and active workflow supervision; workflow rows show workflow-local running and waiting state; workflow troubleshooting is muted because it is handler-owned repair work, while `error` is reserved for row-local unrecoverable state that needs user action
+- sidebar subtitles are row-local relevance signals: orchestrator rows show orchestrator-local waits, commands, turns, or explicit thread episode summaries; handler rows show handler-local waits and active workflow supervision; workflow rows show workflow-local running and waiting state; workflow troubleshooting is muted because it is handler-owned repair work, while `error` is reserved for row-local unrecoverable state that needs user action
 
 ### Surface Identity
 
@@ -630,7 +634,7 @@ request. A surface may keep streaming with zero, one, or many attached panels, a
 mid-stream renders the committed transcript, pending user message, and current assistant stream from
 the surface snapshot.
 
-Queued surface work is structured product state, not committed transcript history until a prompt-bearing item is delivered as the next real user message for the same `surfacePiSessionId`. If the user submits from a composer while the target surface is idle, `svvy` still durably enqueues the message, but the queue manager atomically claims it before publishing renderer-visible queued state, so the first visible state is pending or active work. If the target surface is already running, `svvy` queues that message for the same surface, keeps the active turn undisturbed, and starts the next normal turn only after the current turn settles or is cancelled. Ordinary composer submit is queue-managed delivery; the explicit queued-row `Steer` action is the separate control for pi/Codex-style steering at the next safe active-turn boundary. A steered row remains visible in a locked state until pi accepts it into the active turn or `svvy` restores it after rejection. Handler handoffs and agent-context refresh control work use the same surface queue so they are ordered with user messages. An `agent_context_refresh` row labelled `Update agent context` updates the surface's generated agent context binding before later prompt-bearing items run, without creating transcript content or prompt history. Queued work survives panel changes and duplicated panel views because it belongs to the surface, not to a Dockview panel.
+Queued surface work is structured product state, not committed transcript history until a prompt-bearing item is delivered as the next real user message for the same `surfacePiSessionId`. If the user submits from a composer while the target surface is idle, `svvy` still durably enqueues the message, but the queue manager atomically claims it before publishing renderer-visible queued state, so the first visible state is pending or active work. If the target surface is already running, `svvy` queues that message for the same surface, keeps the active turn undisturbed, and starts the next normal turn only after the current turn settles or is cancelled. Ordinary composer submit is queue-managed delivery; the explicit queued-row `Steer` action is the separate control for pi/Codex-style steering at the next safe active-turn boundary. A steered row remains visible in a locked state until pi accepts it into the active turn or `svvy` restores it after rejection. Thread report notifications, report requests, and agent-context refresh control work use the same surface queue so they are ordered with user messages. An `agent_context_refresh` row labelled `Update agent context` updates the surface's generated agent context binding before later prompt-bearing items run, without creating transcript content or prompt history. Queued work survives panel changes and duplicated panel views because it belongs to the surface, not to a Dockview panel.
 
 ### Dockview Panel And Layout State
 
@@ -663,7 +667,7 @@ It is responsible for:
 - understanding the user's objective
 - deciding whether local action is enough or a handler thread should be spawned
 - tracking which delegated objectives exist
-- receiving handoffs from handler threads when they return control
+- receiving thread episodes from handler threads when they report updates or return control
 - deciding what to say next in the main conversation
 
 ### Handler Thread
@@ -676,21 +680,21 @@ It owns:
 - the workflow selection or authoring path for that objective
 - the internal clarification loop for that objective
 - workflow run supervision
-- zero or more handoffs returned to the orchestrator over that thread's lifetime
+- zero or more update or conclusion episodes emitted to the orchestrator over that thread's lifetime
 
 Each handler thread should have:
 
 - a title
 - an objective
 - its own direct conversation history
-- durable lifecycle status
+- durable objective state
 - loaded and available extension ids, when specialized product guidance or capability has been preloaded or loaded during the session
 - zero or more workflow runs
-- zero or more handoff episodes
+- zero or more thread episodes
 
 Available extension ids describe reusable product knowledge loaded into actor prompts by default or requested on demand, such as `project-ci`.
 
-The current handler objective, wait state, generated agent context binding, active workflow run ids, and latest handoff metadata are exposed to the handler through `thread_current`. The orchestrator and handlers inspect delegated thread rows through `thread_list`, and exact durable handoff episode bodies through `thread_handoffs`. These read tools do not include transcripts, workflow summaries, or Smithers internals; handlers use active workflow run ids with `smithers_*` tools when workflow details matter.
+The current handler objective, active workflow run ids, pending report requests, and latest episode summary are exposed to the handler through `thread_current`. The orchestrator inspects delegated thread rows through `thread_list`, requests handler updates through `thread_request_report`, and reads exact durable episode bodies through `thread_episodes`. Handlers can also read their own durable episodes through `thread_episodes`. These read tools do not include transcripts, workflow summaries, or Smithers internals; handlers use active workflow run ids with `smithers_*` tools when workflow details matter.
 
 Agent profiles describe the provider, model, reasoning level, extension usage selections, and callable policy used by pi-backed product agents. Base role instructions are selected through shipped `base-*` instruction extensions rather than stored as profile-local prompt blobs. The Agents pane is the product-owned profile surface. It appears in the sidebar between Logs and Extensions, and owns orchestrator profiles, the special handler-thread profile, and workflow-agent profiles rather than burying model behavior in general settings.
 
@@ -834,14 +838,16 @@ Each turn should also persist that surface's top-level turn decision so session-
 
 An episode is the durable semantic output reused later by the orchestrator or shown to the user.
 
-For delegated handler threads, a handoff episode should capture:
+For delegated handler threads, a thread episode should capture:
 
 - the delegated objective
 - what was concluded or delivered
 - what mattered semantically
 - enough detail for the orchestrator to continue without reopening full logs by default
 
-It is created when the handler thread explicitly calls `thread_handoff`.
+It is created when the handler thread explicitly calls `thread_report`. Calling `thread_report`
+without `outcome` creates an intermediate update episode. Calling it with `outcome` creates a
+conclusion episode and concludes the current objective.
 
 Artifacts and detailed traces do not need to be flattened into the episode body.
 
@@ -957,10 +963,11 @@ When the target surface is the main orchestrator:
    - or ask for clarification
 4. if delegated:
    - call `thread_start`
-   - hand off the delegated objective to a handler thread
+   - delegate the objective to a handler thread
    - include handler extension-state overrides such as setting `project-ci` to `default_loaded` only when the objective needs that product guidance from the first handler turn
-5. when a handler thread explicitly hands control back, reconcile the typed handoff notification against durable state: thread durable state plus the latest handoff episode
-6. if later work belongs in the same delegated context, call `thread_resume` with the completed thread id and a new message instead of starting an unrelated replacement thread
+5. when a handler thread emits an episode, reconcile the typed `thread_report` notification against durable state: thread durable state plus the latest episode
+6. if the orchestrator needs status while the handler remains active or interactable, call `thread_request_report` and reconcile the resulting episode when the handler answers
+7. if later work belongs in the same delegated context after the objective is concluded, call `thread_resume` with the thread id and a new objective instead of starting an unrelated replacement thread
 
 ### Handler Thread Loop
 
@@ -978,23 +985,24 @@ When the target surface is a handler thread:
    - start a replacement workflow run
    - ask the user for clarification
    - enter wait
-   - hand control back with `thread_handoff`
+   - emit an important intermediate update with `thread_report`
+   - conclude the current objective with `thread_report` and `outcome`
 3. run or resume workflow execution as needed
 4. regain control when the workflow run reaches a terminal outcome or another actionable attention state
 5. continue supervising until the objective is truly finished
-6. when appropriate, return control to the orchestrator by explicitly calling `thread_handoff`
+6. when appropriate, return control to the orchestrator by explicitly calling `thread_report` with `outcome`
 
-When `thread_handoff` succeeds, the handoff has crossed the clear ownership boundary because the durable handoff episode and completed objective span have been recorded. The orchestrator receives a typed notification in its ordered surface queue and should reconcile that recorded state in a fresh orchestrator turn. If the orchestrator is already active, the notification waits in the same ordered surface queue as user follow-up messages.
+When conclusion through `thread_report` succeeds, the ownership boundary has crossed because the durable conclusion episode and concluded objective state have been recorded. The orchestrator receives a typed `thread_report` notification in its ordered surface queue and should reconcile that recorded state in a fresh orchestrator turn. Intermediate update episodes use the same notification path without concluding the objective. If the orchestrator is already active, the notification waits in the same ordered surface queue as user follow-up messages.
 
 If a thread already handed control back earlier:
 
 - a direct follow-up question may be answered inside that same thread without reopening the orchestrator loop
-- explicit orchestrator re-engagement through `thread_resume` may move the completed thread back to an active running state for a new objective span
-- a later return to the orchestrator should produce another handoff episode
+- explicit orchestrator re-engagement through `thread_resume` may move the concluded thread back to an active objective state for a new objective span
+- a later return to the orchestrator should produce another conclusion episode
 
 ### Clarification And Waiting
 
-Waiting is a lifecycle status, not a separate product subsystem.
+Waiting is local surface or workflow state, not a thread-control API status.
 
 Two common cases matter:
 
@@ -1009,7 +1017,7 @@ In the adopted delegated model:
 
 There is no separate "wait episode" for delegated handler threads.
 
-The wait belongs in thread and workflow-run state until the handler thread eventually reaches another handoff point.
+The wait belongs in surface and workflow-run state until the handler thread eventually emits another update or conclusion episode.
 
 ### Failures And Recovery
 
@@ -1018,9 +1026,9 @@ Workflow failure does not immediately return control to the orchestrator unless 
 The intended behavior is:
 
 - a workflow run fails or is cancelled
-- the handler thread enters troubleshooting
+- the handler thread works through repair locally
 - the handler thread may inspect artifacts, inspect workflow state through Smithers-native bridge tools, edit the workflow, repair inputs, start a replacement run, resume only when Smithers resume preconditions still hold, ask the user, or explicitly close the objective
-- only the handler thread's handoff is returned to the orchestrator: terminal thread state plus the latest handoff episode
+- only explicit handler reports are returned to the orchestrator by default: update episodes or a conclusion episode plus concluded objective state
 
 Duplicate observation of the same terminal workflow state is legitimate during final stream flushes or later bootstrap or reconnect control-plane reads.
 
@@ -1046,7 +1054,7 @@ Pinned, Sessions, and Archived use the same accordion header treatment. Each gro
 
 Archiving is reversible and non-destructive. It must not delete durable session, thread, workflow-run, episode, artifact, or transcript data.
 
-Session sidebar state is layered. A handler thread in `waiting`, `running-workflow`, or `troubleshooting` does not automatically change the parent session row's status or subtitle. A workflow run in `running`, `waiting`, `failed`, or `cancelled` does not automatically change the owning handler's parent session row. `troubleshooting` means the handler is working through workflow repair locally and is rendered as muted workflow state, not as parent-session error. `error` is reserved for row-local unrecoverable state that needs user action. The orchestrator row updates from explicit orchestrator-owned state and explicit handoff/reconciliation events such as `thread_handoff`.
+Session sidebar state is layered. Handler-local waits, active handler turns, and active workflow supervision do not automatically change the parent session row's status or subtitle. A workflow run in `running`, `waiting`, `failed`, or `cancelled` does not automatically change the owning handler's parent session row. Workflow repair is handler-owned local work, not parent-session error. `error` is reserved for row-local unrecoverable state that needs user action. The orchestrator row updates from explicit orchestrator-owned state and explicit `thread_report` reconciliation events.
 
 Active row subtitles blink only for agent or workflow work that is currently running, not for waiting or error rows. If a row is doing agent work but has no useful subtitle to surface, it shows only a compact blinking ellipsis. Rows that are open in Dockview use local border/background treatment instead of a text badge, and that treatment follows the row's waiting or error tone. Open orchestrator and handler rows also show a compact context-budget rail along the bottom of the row.
 
@@ -1128,7 +1136,7 @@ It should not restore transient menus or popovers, unsaved inline edits outside 
 
 Composer draft text and chip-only attachments are durable surface state rather than transient UI restore state. They are saved live against the owning `surfacePiSessionId`, survive closing the surface and restarting the app, and clear only when submitted or explicitly emptied.
 
-Backend recovery is separate from workspace shell UI restore. Each acquired workspace runtime owns one durable recovery coordinator for that workspace's sessions, pi surfaces, queues, initial handler starts, handoff notification delivery, waits, title jobs, Smithers monitor reconnect, workflow attention, Project CI projection, and recovery observability. The coordinator uses durable owner scopes, idempotency keys, and transactional claims rather than active workspace, focused tab, focused panel, process cwd, or renderer state. App-global startup and workspace-tab restore decide which runtimes exist; they do not drain workspace queues or repair workspace product work directly.
+Backend recovery is separate from workspace shell UI restore. Each acquired workspace runtime owns one durable recovery coordinator for that workspace's sessions, pi surfaces, queues, initial handler starts, thread report notification delivery, report requests, waits, title jobs, Smithers monitor reconnect, workflow attention, Project CI projection, and recovery observability. The coordinator uses durable owner scopes, idempotency keys, and transactional claims rather than active workspace, focused tab, focused panel, process cwd, or renderer state. App-global startup and workspace-tab restore decide which runtimes exist; they do not drain workspace queues or repair workspace product work directly.
 
 ## Workflow Inspection
 

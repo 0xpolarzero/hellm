@@ -262,7 +262,7 @@ Production command palette behavior already maps to `src/mainview/CommandPalette
 | `mockSubagents` | Implementer/reviewer/explorer rows with token counts and model labels | Workflow task-attempt summaries, handler thread activity, command rollups. Do not create a generic product "subagent" entity |
 | `mockWorkflowRun` | One running `auth-refactor-ci` run with `run_j4k2m9`, 3/8 steps, current step `run-tests` | Workflow-run records projected from Smithers bridge state |
 | `mockWorkflowNodes` and `mockWorkflowEdges` | Fixed graph nodes with absolute `x`/`y`, type/status/objective/latestOutput, SVG edge dependencies | Smithers workflow inspector tree and event snapshots. Graph coordinates are non-portable |
-| `mockEpisodes` | One verified auth middleware episode with artifact links | Durable episode records, especially handler `thread_handoff` episodes |
+| `mockEpisodes` | One verified auth middleware episode with artifact links | Durable episode records, especially handler `thread_report` episodes |
 | `mockVerification` and `mockVerificationFailed` | Build/test/lint summaries, counts, snippets, artifacts | Project CI lane when declared by CI entries, or explicit command/verification read models. Do not infer from arbitrary transcript text |
 | `mockArtifacts` | Eight artifacts across three sessions with fake names, sizes, ages, types, and thread IDs | Durable artifact metadata/indexes and artifact preview APIs |
 | `mockRuntimeProfiles` | Orchestrator, Dumb, Explorer, Implementer, Reviewer, Workflow-writer, Namer profiles with Claude/OpenAI model names and cost metadata | Session-agent settings and workflow-agent settings. Production model lists come from connected providers |

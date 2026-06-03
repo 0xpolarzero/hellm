@@ -32,7 +32,7 @@ This document defines:
 - the ownership boundaries for those concepts
 - the shape of the reference POC and its intended SQLite-backed implementation
 
-The concrete Thread Managing native tool APIs that read and write this state are defined in
+The concrete Thread Orchestration and Thread Handling native tool APIs that read and write this state are defined in
 `docs/specs/extension/thread-managing.extension.spec.md`.
 
 ## Reference Rule
@@ -55,11 +55,11 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Treat every tool call as a `CommandRecord`.
 - Make native direct tools plus prompt-only cx CLI guidance the default coding-agent work surface.
 - Treat every top-level `execute_typescript` invocation as one parent command record and every generated client call as a child command record.
-- Keep only a very small set of native control tools for thread spawning, session-local extension loading, explicit thread handoff, and wait; workflow control belongs on Smithers-native `smithers_*` bridge tools.
+- Keep only a very small set of native control tools for thread spawning, handler reporting, session-local extension loading, explicit objective conclusion, and wait; workflow control belongs on Smithers-native `smithers_*` bridge tools.
 - Treat optional extension loading as generated agent context binding state through `thread_start` extension overrides, workflow task-agent invocation overrides, and the native `load_extension` tool, not as an `execute_typescript` API.
 - Drive durable facts from real runtime handlers and bridge events, not transcript heuristics.
 - Use one explicit surface-target identity model with `workspaceSessionId`, `surfacePiSessionId`, and `threadId` instead of overloading `session.id`.
-- Treat queued surface work as structured product state keyed by `surfacePiSessionId`. Queue items include user messages, orchestrator handler handoffs, and generated agent context refresh control work.
+- Treat queued surface work as structured product state keyed by `surfacePiSessionId`. Queue items include user messages, report requests, thread report notifications, and generated agent context refresh control work.
 - Emit workspace-level read-model updates independently from live surface transcript updates; the renderer should join durable workspace facts, live surface facts, and Dockview panel bindings locally instead of depending on one active-session payload.
 - Keep status derivation and workflow lifecycle projection write-driven; do not overlay `activePrompt`, parse transcript files, or perform read-side Smithers repair writes.
 - Future Smithers lifecycle projection beyond explicit tool-boundary snapshots should arrive through bridge events rather than speculative read-side reconciliation.
@@ -67,10 +67,10 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Project workflow task attempts as first-class durable records keyed by Smithers `runId` plus `nodeId`, `iteration`, and `attempt`, while keeping their full transcript canonical in Smithers and their inspectable task-agent transcript, command, and artifact projection in `svvy`.
 - Create or update workflow-task-attempt records from the exact Smithers task-attempt identity before task-local commands run. The only bootstrap path for task-local command binding is the current Smithers context's `(runId, nodeId, iteration, attempt)` tuple; do not use resume handles, heuristic recency scans, transcript inference, or multi-stage fallback chains.
 - Keep thread state about handler ownership and attention, not as a lossy proxy for raw workflow outcome.
-- Preserve raw Smithers workflow status, wait kind, heartbeat freshness, cursor metadata, and lineage instead of flattening them into generic thread status.
+- Preserve raw Smithers workflow status, wait kind, heartbeat freshness, cursor metadata, and lineage instead of flattening them into generic thread objective state.
 - Derive active and latest workflow selectors from workflow-run state and recency rules rather than persisting a thread-level latest-workflow pointer.
 - Treat a handler thread as one delegated objective that may supervise many workflow runs over its lifetime.
-- Treat handler-thread episodes as durable handoff summaries that are emitted explicitly through `thread_handoff` whenever a thread gives control back to the orchestrator.
+- Treat handler-thread episodes as durable semantic reports emitted explicitly through `thread_report`; reports with `outcome` conclude the current objective and give control back to the orchestrator.
 - Do not model internal workflow pauses as separate episodes.
 - Use selectors and metadata-first read models instead of making the UI reconstruct state from storage details or transcripts.
 - Keep Dockview layout state, panel focus, and panel-to-surface bindings out of structured session state; those are UI layout concerns layered on top of durable workspace state and live surface state.
@@ -117,7 +117,7 @@ Smithers remains canonical for:
 - workflow-task-attempt records projected into the session model
 - generated agent context bindings and session-local extension bindings
 - command records
-- episodes, including handler-thread handoff episodes
+- episodes, including handler-thread update and conclusion episodes
 - Project CI run and CI check result records
 - artifacts and artifact indexes
 - session summary read models and selectors
@@ -168,8 +168,9 @@ type StructuredSessionState = {
       | "clarify"
       | "thread_start"
       | "thread_resume"
+      | "thread_request_report"
       | "load_extension"
-      | "thread_handoff"
+      | "thread_report"
       | "wait"
       | `smithers_${string}`;
     status: "running" | "waiting" | "completed" | "failed";
@@ -184,14 +185,7 @@ type StructuredSessionState = {
     surfacePiSessionId: string;
     title: string;
     objective: string;
-    status: "idle" | "running-handler" | "running-workflow" | "waiting" | "troubleshooting" | "completed";
-    wait: null | {
-      owner: "handler" | "workflow";
-      kind: "user" | "external" | "approval" | "signal" | "timer";
-      reason: string;
-      resumeWhen: string;
-      since: string;
-    };
+    objectiveState: "active" | "concluded";
     agentContextBinding: {
       actorKind: "orchestrator" | "handler-thread" | "workflow-task-agent";
       selectedAgentProfileId: string | null;
@@ -206,7 +200,18 @@ type StructuredSessionState = {
     worktree?: string;
     startedAt: string;
     updatedAt: string;
-    finishedAt: string | null;
+    concludedAt: string | null;
+  }>;
+
+  reportRequests: Array<{
+    id: string;
+    threadId: string;
+    sourceCommandId: string;
+    request: string;
+    status: "pending" | "resolved" | "cancelled";
+    resolvedEpisodeId: string | null;
+    createdAt: string;
+    resolvedAt: string | null;
   }>;
 
   workflowRuns: Array<{
@@ -300,6 +305,9 @@ type StructuredSessionState = {
     id: string;
     threadId: string;
     sourceCommandId: string | null;
+    requestId: string | null;
+    kind: "update" | "conclusion";
+    outcome: "succeeded" | "failed" | "cancelled" | null;
     title: string;
     summary: string;
     body: string;
@@ -442,9 +450,10 @@ They exist because the product needs a durable answer to:
 
 - which delegated objectives exist
 - which pi-backed interactive surface owns each objective
-- whether the handler is actively working, a workflow is actively running, the objective is waiting, the thread is troubleshooting, or the current span is completed
+- whether the current objective is active or concluded
 - which generated agent context binding and loaded extension ids are attached to that handler thread
-- which workflow run is currently active or most recent under that thread
+- which workflow runs are active or recent under that thread, derived from workflow-run records
+- which report requests are pending or resolved under that thread
 
 A thread is not itself a workflow run.
 
@@ -483,17 +492,23 @@ Episodes are the durable semantic outputs reused later by the orchestrator and s
 
 In the delegated model, the most important invariant is:
 
-- a handler thread may emit many handoff episodes over time
-- each handoff episode marks one moment where that thread returned control to the orchestrator
+- a handler thread may emit many update or conclusion episodes over time
+- each update episode marks important handler-authored information for orchestrator reconciliation
+- each conclusion episode marks one moment where that thread returned control to the orchestrator
 
 Waiting inside a handler thread does not create a wait episode.
 
-A handoff episode is created when that delegated objective reaches a terminal state for the current active work span, the handler thread explicitly calls `thread_handoff`, and `svvy` durably records the episode plus completed span. The resulting typed orchestrator queue item is a reconciliation notification for already-recorded state. Cancelling or deleting that notification does not roll back the episode and does not return a tool error to the handler.
+A thread episode is created when the handler thread explicitly calls `thread_report`. If the report
+omits `outcome`, `svvy` records an update episode and leaves the objective state unchanged. If the
+report supplies `outcome`, `svvy` records a conclusion episode and changes the current objective
+from `active` to `concluded`. The resulting typed orchestrator queue item is a reconciliation
+notification for already-recorded state. Cancelling or deleting that notification does not roll back
+the episode and does not return a tool error to the handler.
 
-The terminal handoff back to the orchestrator is:
+The terminal report back to the orchestrator is:
 
-- the thread's terminal durable state
-- the latest handoff episode emitted by that thread
+- the thread's concluded objective state
+- the latest conclusion episode emitted by that thread
 
 ### Project CI
 
@@ -592,7 +607,7 @@ Use `turnDecision` this way:
 
 - `pending` is allowed only between turn creation and the moment the surface chooses how to proceed
 - orchestrator turns persist session-level routing decisions such as `reply`, `execute_typescript`, `clarify`, or `thread_start`
-- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `load_extension`, `workflow_list_models`, `smithers_run_workflow`, `smithers_get_run`, `smithers_resolve_approval`, `thread_handoff`, or `wait`
+- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `load_extension`, `workflow_list_models`, `smithers_run_workflow`, `smithers_get_run`, `smithers_resolve_approval`, `thread_report`, or `wait`
 - this symmetry is intentional even though only orchestrator turns own session-level routing
 - the turn decision is the top-level classification of the turn, not a replacement for command records
 - linkage to spawned threads, workflow runs, artifacts, and episodes still belongs in their own records plus linked commands
@@ -608,36 +623,53 @@ Use `turnDecision` this way:
 | `surfacePiSessionId` | Links the thread to the backing pi conversation surface.                                                                   |
 | `title`              | Compact human-readable label. Defaults to the objective at creation, then may be generated by the configured namer from the objective. |
 | `objective`          | Durable statement of what this thread owns, supplied by `thread_start`.                                                     |
-| `status`             | Captures handler-attention state for the delegated objective.                                                              |
-| `wait`               | Captures blocked-state details for the thread itself, including whether the wait is handler-owned or workflow-owned.       |
+| `objectiveState`     | Captures only whether the current delegated objective is `active` or `concluded`.                                          |
 | `agentContextBinding` | Records the generated agent context binding for this handler thread, including loaded extension ids, available extension ids, aggregate cache key, and generated agent context fingerprint. |
 | `worktree`           | Records the bound worktree when relevant.                                                                                  |
 | `startedAt`          | Orders thread creation.                                                                                                    |
 | `updatedAt`          | Enables recency-based selectors.                                                                                           |
-| `finishedAt`         | Marks when the current active work span most recently became completed. Clear it if later work resumes in the same thread. |
+| `concludedAt`        | Marks when the current objective most recently became concluded. Clear it when `thread_resume` activates a new objective in the same thread. |
 
-### Thread Status Semantics
+### Thread Objective State Semantics
 
-Use thread status this way:
+Use thread objective state this way:
 
-- `running-handler` while the handler is actively reasoning or issuing tools and no live workflow run currently owns forward progress
-- `running-workflow` while a Smithers workflow run is actively executing and the handler is idle but still owns the delegated objective
-- `idle` while the handler owns an open delegated objective but has no active handler turn, active workflow run, durable wait, troubleshooting state, or terminal handoff
-- `waiting` when the delegated objective is durably blocked on user, approval, signal, timer, or other external input and no troubleshooting is required yet
-- `troubleshooting` when a workflow failed, was cancelled, continued into new lineage, or lost reliable supervision and the handler must inspect or repair before deciding what to do next
-- `completed` when the delegated objective reached an explicit terminal handoff point, `thread_handoff` durably recorded a handoff episode, and no running or waiting workflow run still belongs to that active span
+- `active` while the handler still owns the current delegated objective
+- `concluded` after `thread_report` with `outcome` durably records a conclusion episode for the
+  current objective
 
-These statuses describe the objective state, not whether the thread surface can still receive direct messages.
+This state describes objective lifecycle only, not whether the thread surface can still receive
+direct messages and not whether handler or workflow work is currently running.
 
-Waiting is not terminal for the objective state.
+Handler activity is derived from turn records. Workflow activity, waiting, failure, cancellation,
+and repair context are derived from workflow-run records and Smithers state. UI row subtitles may
+project those derived facts, but they are not a thread-control API status.
 
-A completed thread surface remains directly interactive after handoff.
+A concluded thread surface remains directly interactive after conclusion.
 
-A follow-up chat turn may leave thread status unchanged.
+A follow-up chat turn may leave `objectiveState` unchanged.
 
-A direct follow-up work turn or explicit orchestrator `thread_resume` may move a completed thread back to `running-handler` or `running-workflow`, preserving earlier handoff episodes as durable history.
+Explicit orchestrator `thread_resume` may move a concluded thread back to `active` for a new
+objective, preserving earlier episodes as durable history.
 
-If the same terminal workflow snapshot is replayed after handoff during final reconciliation or recovery, the thread remains `completed` because that replay does not start a new active span.
+If the same terminal workflow snapshot is replayed after conclusion during final reconciliation or
+recovery, the thread remains `concluded` because that replay does not start a new objective.
+
+## Report Request Model
+
+Report-request records exist because the orchestrator can ask a handler for an explicit update
+without resuming or replacing the handler objective.
+
+They answer:
+
+- which orchestrator request text was delivered to the handler
+- which handler thread owns the answer
+- whether the request is still pending, was resolved by an episode, or was cancelled
+- which episode resolved the request
+
+Report requests are created by `thread_request_report`. The durable request is recorded before the
+handler `report_request` queue item is created. A successful `thread_report` with the matching
+`requestId` records the episode and marks the request `resolved` in the same product transaction.
 
 ## Workflow Run Model
 
@@ -679,7 +711,7 @@ Map Smithers run status into `svvy` this way:
 
 Do not confuse workflow-run termination with thread termination.
 
-A thread may survive several workflow runs before it emits a handoff episode, and it may later supervise more runs after a follow-up turn reactivates work on the same objective.
+A thread may survive several workflow runs before it emits a conclusion episode, and it may later supervise more runs after `thread_resume` activates a new objective in the same thread.
 
 When a workflow run is `continued`, selector logic should follow `activeDescendantRunId` to find the currently active execution.
 
@@ -735,7 +767,7 @@ Use them this way:
 
 - low-level reads, searches, and workflow discovery calls are usually `trace`
 - material writes, artifact creation, `exec_command` command executions, and failures usually roll up as `summary`
-- `thread_start`, `thread_resume`, `load_extension`, `thread_handoff`, `wait`, and Smithers-mutating commands such as `smithers_run_workflow`, `smithers_resolve_approval`, `smithers_runs_cancel`, and `smithers_signals_send` are normally `surface`
+- `thread_start`, `thread_resume`, `thread_request_report`, `thread_report`, `load_extension`, `wait`, and Smithers-mutating commands such as `smithers_run_workflow`, `smithers_resolve_approval`, `smithers_runs_cancel`, and `smithers_signals_send` are normally `surface`
 - read-only Smithers inspection commands are usually `summary` unless the UI chooses to surface a specific one directly
 - child generated-client commands remain nested detail by default
 
@@ -779,8 +811,11 @@ Instead:
 | Field             | Why it exists                                                                                                                      |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `id`              | Stable episode handle.                                                                                                             |
-| `threadId`        | Links the episode to the thread that authored that handoff point.                                                                  |
+| `threadId`        | Links the episode to the thread that authored the report.                                                                          |
 | `sourceCommandId` | Optional provenance link to the most relevant command when that linkage matters. It does not mean the command emitted the episode. |
+| `requestId`       | Optional link to the report request resolved by this episode.                                                                      |
+| `kind`            | `update` for intermediate reports; `conclusion` for reports that conclude the current objective.                                  |
+| `outcome`         | `succeeded`, `failed`, or `cancelled` for conclusion episodes; `null` for update episodes.                                        |
 | `title`           | Compact label for lists and cards.                                                                                                 |
 | `summary`         | Short durable digest.                                                                                                              |
 | `body`            | The reusable semantic content.                                                                                                     |
@@ -795,16 +830,18 @@ They are not the main machine-readable routing contract.
 The machine-readable routing and lifecycle contract belongs in:
 
 - turn decision
-- thread status
-- thread wait state
+- thread objective state
+- report-request state
 - workflow-run state
 - command facts
 
-For handler threads, an episode is the semantic half of a handoff back to the orchestrator.
+For handler threads, an episode is the semantic report sent back to the orchestrator.
 
-The control-plane half is the thread's current terminal durable state plus its durable links to workflow runs, commands, artifacts, and waits.
+The control-plane half is the thread's current objective state plus its durable links to workflow
+runs, commands, artifacts, report requests, and waits.
 
-Handler-thread episodes are ordered durable handoff points produced by explicit `thread_handoff` calls, not a promise that the thread surface becomes unreadable or unaddressable afterward.
+Handler-thread episodes are ordered durable reports produced by explicit `thread_report` calls, not
+a promise that the thread surface becomes unreadable or unaddressable afterward.
 
 Commands, including `execute_typescript`, may produce their own summaries and artifacts.
 
@@ -933,17 +970,22 @@ The precise list may grow, but the first adopted set is:
 
 Waiting is a shared lifecycle concept, not a separate execution subsystem.
 
-### Thread Wait
+### Surface And Workflow Waits
 
-Use `thread.wait` when the delegated objective is durably blocked and the thread needs to record why.
+Waiting does not mutate thread objective state and does not create a thread-status value.
+
+Use surface-local wait projection when an orchestrator or handler turn is blocked and the product
+needs to record why the owning surface cannot make progress.
 
 Common cases are:
 
 - handler-owned user clarification
-- workflow-owned approval waits
-- workflow-owned signal waits
-- workflow-owned timer waits
 - other external dependencies
+
+Use Smithers workflow wait state for workflow-owned approval waits, signal waits, timer waits, and
+other workflow-blocking conditions. `svvy` may project those waits into workspace navigation and
+handler attention, but the authoritative workflow wait stays in Smithers and the `svvy`
+workflow-run projection.
 
 `svvy` execution-permission approvals are distinct from Smithers workflow approvals. A shell,
 `apply_patch`, network, or sandbox approval raised by `exec_command`/direct-tool runtime is owned by
@@ -954,10 +996,11 @@ merged.
 
 Rules:
 
-- set `thread.status = "waiting"`
-- populate `thread.wait`
+- keep `thread.objectiveState` unchanged
+- record the blocked condition on the owning surface, session frontier, workflow run, or Smithers
+  wait record as appropriate
 - do not create a wait episode
-- clear `thread.wait` when runnable work resumes in that thread
+- clear the wait projection when runnable work resumes for that owner
 
 ### Session Wait
 
@@ -1029,9 +1072,9 @@ A currently open surface may still render live transcript streaming locally, but
 The main session UI should primarily read:
 
 - handler threads
-- thread status and wait state
+- thread objective state and pending report requests
 - latest workflow-run state per thread
-- latest handoff episodes and episode history
+- latest thread episodes and episode history
 - artifacts
 - Project CI summaries
 
@@ -1048,6 +1091,7 @@ The real implementation should store session-scoped rows for:
 - `agent_context_binding`
 - `workflow_run`
 - `command`
+- `report_request`
 - `episode`
 - `ci_run`
 - `ci_check_result`
@@ -1060,7 +1104,8 @@ Recommended implementation rules:
 - `thread.surface_pi_session_id` should be unique
 - generated agent context binding rows should preserve one current binding per `surface_pi_session_id`, external instruction fingerprints when external instructions reached the actor, bound time, and historical binding events for inspection
 - `workflow_run.smithers_run_id` should be unique
-- `episode.thread_id` should be indexed for ordered lookups; it should not be unique because a thread may hand control back more than once over its lifetime
+- `report_request.thread_id` should be indexed for pending request lookup, and `report_request.resolved_episode_id` should link to the episode that answered it
+- `episode.thread_id` should be indexed for ordered lookups; it should not be unique because a thread may emit more than one update or conclusion episode over its lifetime
 - artifact tables should preserve path indexes for file-backed lookups
 
 ## Responsibility Split
@@ -1068,14 +1113,14 @@ Recommended implementation rules:
 Write responsibility is:
 
 - ordinary orchestrator-turn writes, including turn decisions, and root command writes belong to the `svvy` runtime
-- Thread Managing write-tool contracts, including `thread_start`, `thread_resume`, and `thread_handoff`, are defined in `docs/specs/extension/thread-managing.extension.spec.md`
+- Thread write-tool contracts, including `thread_start`, `thread_resume`, `thread_request_report`, and `thread_report`, are defined in `docs/specs/extension/thread-managing.extension.spec.md`
 - handler-thread turn writes, including turn decisions, and command writes belong to the `svvy` runtime over pi thread surfaces
 - `load_extension` updates the current actor's loaded and available extension binding, is idempotent when the extension is already loaded, and refreshes generated agent context before the next model call
 - workflow-run writes belong to the Smithers bridge
 - workflow-task-attempt projection stores svvy-owned product metadata such as `meta.promptBinding` on the exact Smithers attempt address while leaving Smithers-owned run, node, attempt, retry, wait, output, usage, and transcript facts in Smithers durable state
 - Project CI writes belong to the runtime or bridge path that handles terminal Smithers runs from entries declaring `productKind = "project-ci"` and validates their terminal output against the declared CI result schema
 - wait writes belong to the `svvy` runtime
-- runtime-state read tools (`runtime_current`, `thread_current`, `thread_list`, and `thread_handoffs`) read durable structured state and the active prompt runtime binding without creating command records or writing lifecycle facts; concrete thread read-tool contracts are defined in `docs/specs/extension/thread-managing.extension.spec.md`
+- runtime-state read tools (`runtime_current`, `thread_current`, `thread_list`, and `thread_episodes`) read durable structured state and the active prompt runtime binding without creating command records or writing lifecycle facts; concrete thread read-tool contracts are defined in `docs/specs/extension/thread-managing.extension.spec.md`
 
 No runtime component may synthesize `turnDecision`, thread, workflow-run, Project CI, or wait facts from transcript prose after the fact.
 
@@ -1096,9 +1141,11 @@ The implementation must enforce these invariants:
 - `load_extension` may only load extensions available and ready for the current actor binding
 - a thread may have many workflow runs over time
 - a handler thread may wait and resume many times
-- a handler thread remains message-addressable after handing control back
-- a completed thread may later return to `running-handler` or `running-workflow`
-- a new handoff episode may be created only when a thread reaches another terminal objective state and explicitly calls `thread_handoff`
+- a handler thread remains message-addressable after concluding an objective
+- a concluded thread may later return to `active` only through `thread_resume`
+- a conclusion episode may be created only when a thread has an active objective, owns no active workflow runs, and explicitly calls `thread_report` with `outcome`
+- an update episode may be created for an active or concluded objective by calling `thread_report` without `outcome`
+- a pending report request may be resolved only by a successful `thread_report` carrying that request id
 - a thread may be waiting only on real blocked conditions such as user input, approval, signal, timer, or external dependency, not on a fake wait episode
 - `session.wait` must be cleared when runnable work exists again
 - a turn must end in exactly one of: `completed`, `failed`, or `waiting`

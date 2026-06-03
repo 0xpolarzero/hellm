@@ -47,7 +47,7 @@ flowchart TD
     subgraph Tools["Generated Capability Set"]
         DirectTools["PI-backed direct tools"]
         Generic["execute_typescript"]
-        ThreadManaging["Thread Managing native controls"]
+        ThreadControls["Thread Orchestration / Thread Handling native controls"]
         ListExtensions["list_extensions"]
         LoadExtension["load_extension"]
         SmithersTools["Smithers-native workflow tools (`smithers_*`)"]
@@ -64,7 +64,7 @@ flowchart TD
     end
 
     subgraph Runtime["Runtime Handlers"]
-        RuntimeHandler["svvy runtime handles execute_typescript, Thread Managing controls, load_extension, and wait"]
+        RuntimeHandler["svvy runtime handles execute_typescript, thread controls, load_extension, and wait"]
         SmithersBridge["Bun-owned Smithers bridge handles Smithers-native workflow tools"]
         ResumeHandler["Runtime resumes the supervising handler thread when a workflow run changes state"]
     end
@@ -73,7 +73,7 @@ flowchart TD
         Commands["Record commands and parent-child linkage"]
         Events["Append lifecycle events"]
         Artifacts["Persist file-backed artifacts and SQLite metadata"]
-        State["Update turns, commands, threads, generated agent context bindings, workflow runs, CI run/check result records, artifacts, wait state, and any episodes emitted by thread_handoff"]
+        State["Update turns, commands, threads, report requests, generated agent context bindings, workflow runs, CI run/check result records, artifacts, wait state, and any episodes emitted by thread_report"]
     end
 
     subgraph ReadModels["Read Models"]
@@ -89,7 +89,7 @@ flowchart TD
     OpenTurn --> Decide
 
     Decide --> Generic
-    Decide --> ThreadManaging
+    Decide --> ThreadControls
     Decide --> ListExtensions
     Decide --> LoadExtension
     Decide --> SmithersTools
@@ -103,7 +103,7 @@ flowchart TD
     Api --> ApiExtensions
     Api --> RuntimeHandler
 
-    ThreadManaging --> RuntimeHandler
+    ThreadControls --> RuntimeHandler
     ListExtensions --> RuntimeHandler
     LoadExtension --> RuntimeHandler
     SmithersTools --> SmithersBridge
@@ -143,8 +143,8 @@ The orchestrator typically chooses among:
 - direct reply
 - cx CLI guidance through `exec_command` plus direct tools
 - `execute_typescript`
-- `thread_start`
-- `thread_resume` for completed handler-thread follow-up
+- Thread Orchestration tools: `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`,
+  and `thread_request_report`
 - `wait`
 
 It normally does **not** supervise every workflow pause, rerun, and repair step itself.
@@ -160,7 +160,9 @@ Inside a handler thread, the normal choices are:
 - direct reply
 - cx CLI guidance through `exec_command` plus direct tools
 - `execute_typescript`
-- `thread_handoff`
+- `thread_current`
+- `thread_report`
+- `thread_episodes`
 - `list_extensions` and `load_extension`
 - `workflow_list_models` when authoring a fresh workflow task-agent configuration
 - Smithers-native workflow tools such as `smithers_list_workflows`, `smithers_run_workflow`, `smithers_get_run`, `smithers_explain_run`, and `smithers_resolve_approval`
@@ -182,7 +184,8 @@ The handler thread may:
 - rerun after repair
 - resume after clarification
 - stay in normal multi-turn chat for ordinary replies
-- call `thread_handoff` when it wants to return control to the orchestrator with a durable episode
+- call `thread_report` without `outcome` when it wants to emit an important intermediate update to the orchestrator
+- call `thread_report` with `outcome` when it wants to conclude the current objective and return control to the orchestrator with a durable conclusion episode
 
 ### 4. Workflow Task Agents Are Lower-Level Workers
 
@@ -202,7 +205,7 @@ The adopted direction is:
 - run task-local shell, patch, network, and generated-client boundaries through the same `svvy`
   execution policy as orchestrators and handler threads, including Codex-like macOS sandboxing,
   `networkAccess`, and approval modes, scoped to the exact Smithers task attempt
-- do not expose `thread_start`, `thread_handoff`, `wait`, or `smithers_*` to workflow task agents or mention those unavailable controls in their base prompt
+- do not expose `thread_start`, `thread_report`, `thread_request_report`, `thread_episodes`, `wait`, or `smithers_*` to workflow task agents or mention those unavailable controls in their base prompt
 - do not load ambient pi built-in tools or workspace-discovered extension tools into workflow task agents
 - execute workflow task agents from Smithers' current task root or worktree rather than from the workspace runtime DB root
 - preserve structured message history, step boundaries, and usage across retries and hijack handoff instead of flattening task-agent continuation into plain text
@@ -233,11 +236,11 @@ After a handler thread launches or resumes a Smithers run through the Bun bridge
 
 The handler thread then decides what to do next.
 
-The orchestrator only receives delegated handoff results when the handler thread explicitly emits them through `thread_handoff`.
+The orchestrator receives delegated thread results only when the handler thread explicitly emits them through `thread_report`, or when the orchestrator asks for an update with `thread_request_report` and the handler answers with `thread_report`.
 
-When that happens, `thread_handoff` first records the durable handoff episode and closes the current objective span. The runtime then queues a typed orchestrator notification to reconcile the latest durable handoff instead of waiting for another user-authored orchestrator message.
+When that happens, `thread_report` first records the durable episode, optionally resolves a report request, and optionally concludes the current objective. The runtime then queues a typed orchestrator notification to reconcile the latest durable episode instead of waiting for another user-authored orchestrator message.
 
-### 6. Explicit Handoff Episodes
+### 6. Explicit Thread Episodes
 
 The supervising handler thread may manage:
 
@@ -248,13 +251,19 @@ The supervising handler thread may manage:
 
 Ordinary replies inside the thread do not emit episodes and do not close the delegated objective.
 
-When the handler thread wants to hand control back, it calls `thread_handoff`.
+When the handler thread wants to give the orchestrator an important update, it calls `thread_report`
+without `outcome`.
 
-Each `thread_handoff` emits one ordered handoff episode and marks the current objective span terminal, while the thread surface itself stays interactive for later follow-up.
+When the handler thread wants to hand control back, it calls `thread_report` with `outcome`.
 
-If the orchestrator later needs more help from the same delegated context, it should use `thread_resume` to re-engage the completed handler thread for a new active span instead of creating an unrelated replacement thread by default.
+Each `thread_report` emits one ordered episode. Reports with `outcome` also mark the current
+objective concluded, while the thread surface itself stays interactive for later follow-up.
 
-That explicit handoff is the default reconciliation unit.
+If the orchestrator later needs more help from the same delegated context, it should use
+`thread_resume` to re-engage the concluded handler objective with a new objective instead of
+creating an unrelated replacement thread by default.
+
+That explicit episode is the default reconciliation unit.
 
 ### 7. Waiting Is A Lifecycle Status
 
@@ -287,7 +296,7 @@ GitHub issues, pull requests, review comments, Actions, or other GitHub work.
 The orchestrator can preload an extension for a delegated objective:
 
 Use `thread_start.extensions` to apply creation-time handler extension overrides. The exact
-`thread_start` API lives in `docs/specs/extension/thread-managing.extension.spec.md`.
+Thread Orchestration and Thread Handling APIs live in `docs/specs/extension/thread-managing.extension.spec.md`.
 
 A handler can load the extension later:
 
@@ -314,7 +323,7 @@ No runtime path infers CI from arbitrary workflow output, command names, logs, o
 - cx prompt-only CLI guidance is part of generated actor context and is the preferred first step for supported code navigation when the cx extension is loaded; agents run official `cx` commands through `exec_command`.
 - ordinary repository inspection uses `exec_command` with shell tools such as `rg`, `sed`, `cat`, `ls`, `find`, `git show`, `nl`, and `wc`.
 - generated `execute_typescript` clients are derived from loaded native tools and loaded extensions; broad hand-written `api.read`, `api.bash`, and `api.workflow_*` helper families are not part of the resolved model.
-- Thread Managing controls, `load_extension`, and `wait` remain `svvy`-native control tools.
+- Thread Orchestration controls, Thread Handling controls, `load_extension`, and `wait` remain `svvy`-native control tools.
 - workflow supervision should use Smithers-native bridge tools such as `smithers_run_workflow`, `smithers_get_run`, and `smithers_resolve_approval`.
 - the Smithers-native capability set targets product-runtime runnable workflows rather than the repo authoring workspace under `workflows/`.
 - capability declarations are actor-specific: the orchestrator gets only orchestrator-callable tools, and handler threads get only handler-callable tools.
