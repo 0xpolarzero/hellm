@@ -62,10 +62,10 @@ models.
 
 The product should expose a first-class Extensions model:
 
-- Agents choose model, reasoning, base instructions, and extension composition.
+- Agents choose model, reasoning, and extension composition.
 - Extensions define agent capabilities.
-- Actor kinds define the default agent family, default base behavior, and default extension usage
-  states for newly created agents of that kind.
+- Actor kinds define the default agent family and default extension usage states for newly created
+  agents of that kind, including which shipped base-instruction extension is default-loaded.
 - Generated prompt text, generated CLI help, generated TypeScript types, and actual callable
   runtime surfaces are all derived from the same actor-scoped extension resolution.
 
@@ -164,7 +164,6 @@ It contains:
 - actor kind
 - provider/model choice
 - reasoning level
-- customizable base instructions
 - extension usage selections
 - generated context and generated runtime-surface previews
 
@@ -173,7 +172,10 @@ locked field.
 
 ### Base Instructions
 
-Base instructions are role-level and tool-agnostic.
+Base instructions are role-level and tool-agnostic. In the adopted model they are not stored as
+profile-local prompt blobs and they are not generated through `PromptLibrary` instruction blocks or
+context packs. They are ordinary shipped `instructions` extensions selected by agent profile usage
+state.
 
 Examples:
 
@@ -185,6 +187,171 @@ Examples:
 The base prompt should not contain detailed guidance for shell, patching, Smithers, cx, web, CI,
 Incur, or any specific tool. Tool-specific instructions come from shipped, user, or external
 instruction extensions.
+
+### Base Actor Instruction Extensions
+
+`svvy` ships builtin instruction-only extensions for the role-level prompts that used to be embedded
+inside `src/bun/default-system-prompt.ts`.
+
+They are normal Extensions rows:
+
+- they use `category: "shipped"` and `interface: "instructions"`
+- they have ordered full instruction files under `instructions/full/*.md`
+- they have no native tools, `svvyx` commands, generated TypeScript clients, dependencies, env, or
+  runtime invocation
+- they are visible in the Extensions pane exactly like Git, GitHub, cx, or Web
+- their details do not expose a special actor selector; actor usage is shown only in the readonly
+  "used by agents" view and configured from agent profiles
+- reset restores shipped files or removes shipped overlays using normal shipped-extension reset
+  behavior
+
+Adopted ids:
+
+| Extension id | Title | Default purpose |
+| --- | --- | --- |
+| `base-common` | Base: Common svvy Conduct | Tool-agnostic conduct shared by all adopted actor kinds. |
+| `base-orchestrator` | Base: Orchestrator | Strategy, routing, delegation, and final-user-response behavior. |
+| `base-handler` | Base: Handler Thread | Delegated objective ownership, workflow supervision boundary, and handoff behavior. |
+| `base-workflow-task` | Base: Workflow Task Agent | Task-attempt-local coding-agent behavior under Smithers ownership. |
+
+Example shipped source layout:
+
+```text
+extensions/sources/shipped/base-common/
+  manifest.json
+  instructions/full/010-common.md
+  instructions/minimal.md
+
+extensions/sources/shipped/base-orchestrator/
+  manifest.json
+  instructions/full/010-orchestrator.md
+  instructions/minimal.md
+
+extensions/sources/shipped/base-handler/
+  manifest.json
+  instructions/full/010-handler.md
+  instructions/minimal.md
+
+extensions/sources/shipped/base-workflow-task/
+  manifest.json
+  instructions/full/010-workflow-task.md
+  instructions/minimal.md
+```
+
+Example `base-orchestrator` manifest:
+
+```json
+{
+  "id": "base-orchestrator",
+  "title": "Base: Orchestrator",
+  "description": "Role-level strategy, routing, delegation, and final decision instructions for orchestrator agents.",
+  "category": "shipped",
+  "interface": "instructions",
+  "typescriptApiEnabled": false,
+  "env": [],
+  "dependencies": [],
+  "trustedCliDependencies": []
+}
+```
+
+Example `base-orchestrator/instructions/full/010-orchestrator.md`:
+
+```md
+This surface is the orchestrator.
+
+Choose one top-level route per turn: reply directly, ask for clarification, use direct tools, use
+execute_typescript for typed composition, delegate with thread_start, resume a completed handler with
+thread_resume, or enter wait.
+
+The orchestrator delegates objectives into handler threads. It does not directly supervise Smithers
+workflow runs.
+
+Handler threads can supervise workflows through smithers_* tools, but those tool declarations are
+not callable from this surface.
+
+Use thread_list and thread_handoffs before thread_resume when an existing completed handler thread
+may already have the right context for follow-up work.
+```
+
+Example `base-handler/instructions/full/010-handler.md`:
+
+```md
+This surface is a delegated handler thread.
+
+Choose one top-level route per turn: reply directly, ask for clarification, use direct tools, use
+execute_typescript for typed composition, supervise workflows through smithers_* tools, enter wait,
+or return control with thread_handoff.
+
+Ordinary replies inside a handler thread do not close it or emit handoff episodes.
+
+Use thread_handoff only when the current objective span is ready to hand control back to the
+orchestrator with durable state.
+
+Workflow waits, approvals, and resumes stay inside this handler thread. Do not call thread_handoff
+while a supervised workflow on this thread is still running or waiting.
+```
+
+Example `base-workflow-task/instructions/full/010-workflow-task.md`:
+
+```md
+You are a task-scoped coding agent running inside one Smithers workflow task attempt.
+
+Use the available task-local tools to complete the task described by the workflow.
+
+Work only within the task root or worktree provided by the workflow runtime.
+
+Smithers owns this task attempt's lifecycle, retries, validation, approval gates, and workflow state.
+```
+
+Example `base-common/instructions/full/010-common.md`:
+
+```md
+You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.
+
+Everything you do is a tool call inside one shared execution model.
+
+Inspect repository facts before making structural assumptions, and prefer existing project patterns
+over new abstractions.
+
+Keep edits narrowly scoped to the requested behavior. Avoid unrelated refactors, renames, formatting
+churn, or metadata changes unless they are required to finish safely.
+
+Treat the worktree as shared user state. Do not revert, overwrite, rename, clean up, or otherwise
+erase changes you did not make unless the user explicitly asks.
+```
+
+Minimal instructions for base extensions should be short because these extensions are normally
+default-loaded in exactly the profiles that need them. Example:
+
+```md
+Load only when this actor profile intentionally needs the shipped orchestrator role instructions.
+This extension adds no tools.
+```
+
+The default generated context for a new orchestrator profile therefore includes loaded extension
+blocks rather than a special base-instructions section:
+
+```md
+## Loaded Extension: Base: Common svvy Conduct
+
+You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.
+...
+
+## Loaded Extension: Base: Orchestrator
+
+This surface is the orchestrator.
+...
+
+## Loaded Extension: Shell
+...
+
+## Loaded Extension: Apply Patch
+...
+```
+
+No separate `Base instructions` prompt section is generated. If the UI wants to summarize "base
+instructions" in an agent preview, it is a label over these loaded `base-*` extensions, not another
+editable prompt source.
 
 ### Extension
 
@@ -199,7 +366,7 @@ Each extension has:
 - category: `shipped`, `user`, or `external_instruction`
 - title
 - description
-- full loaded instructions
+- ordered full loaded instruction source files that generate one loaded instruction block
 - minimal available instructions
 - an agent-facing interface: `native_tool`, `svvyx`, or `instructions`
 - optional TypeScript API enablement
@@ -209,6 +376,20 @@ Each extension has:
 - readonly usage view showing which agents use it and whether each usage is default-loaded or
   available
 - reset behavior when it is shipped by `svvy` or when it is an external instruction usage setting
+
+Extension ids in v1 must:
+
+- match `/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/`
+- be globally unique across shipped, user, and external_instruction records
+- not contain `.`, `_`, `/`, whitespace, uppercase characters, shell metacharacters, or Unicode
+  confusables
+- not start with `svvy`, `svvyx`, `thread`, `runtime`, `extension`, or `extensions` unless the id
+  is reserved by a shipped app-owned extension
+- remain stable after creation; display names change through `title`, not by renaming ids
+
+`svvyx` command namespaces are derived directly from extension ids. A user extension cannot be
+created with an id that collides with a shipped extension, deleted extension still in trash, pending
+snapshot restore target, native control namespace, or other app-reserved command namespace.
 
 Extensions are app-global by default. Workspace-specific capability should usually be modeled as an
 agent profile that selects a custom extension set, not as hidden workspace mutation of a global
@@ -284,6 +465,45 @@ Allowed values:
 The old `runtimeKind` field is not part of agent-facing JSON. Implementation may still internally
 distinguish native code, Incur-backed source, or prompt-only storage, but agent-facing tools and
 commands report only `interface`.
+
+### Extension Instruction Files
+
+Full loaded instructions are source-authored as an ordered set of Markdown files:
+
+```text
+instructions/full/*.md
+```
+
+Minimal available instructions remain one Markdown file:
+
+```text
+instructions/minimal.md
+```
+
+The multi-file full-instruction model is a source-editing and UI convenience. It is not a new prompt
+shape. The actor receives one loaded instruction block per loaded extension, produced by
+concatenating the ordered full instruction source files.
+
+Ordering is deterministic:
+
+- full instruction files are ordered lexicographically by filename
+- shipped defaults and generated skeletons should use zero-padded numeric prefixes, such as
+  `010-overview.md`
+- duplicate filenames cannot exist in one directory on the target filesystem and therefore cannot be
+  part of a valid source set
+- non-Markdown files under `instructions/full/` are ignored by prompt generation and should be
+  treated as validation warnings when they look accidental
+- missing files referenced by any future manifest metadata are build errors; the v1 source of truth
+  is the directory listing, not a hand-maintained manifest list
+
+Generated prompt boundaries must be traceable but must not change content semantics. The app may
+insert stable internal source-boundary headings or metadata while generating previews, but the loaded
+instruction text returned to the model is still one extension instruction block.
+
+Generated previews are read-only projections of the built actor-facing prompt, tool, command, and
+type contract. Source edits happen only through extension source files, instruction files, manifest
+files, and allowed shared extension package files. The UI must not create hidden prompt text outside
+those files and generated contracts.
 
 ### `list_extensions`
 
@@ -376,7 +596,8 @@ Shared shapes used above:
 type ExtensionPathsForLoadedExtension = {
   sourceRoot: string | null;
   manifest: string | null;
-  instructionsFull: string | null;
+  instructionsFull: ExtensionInstructionFile[];
+  instructionsFullDir: string | null;
   instructionsMinimal: string | null;
   externalInstructionFile: string | null;
   extensionSource: string | null;
@@ -385,6 +606,11 @@ type ExtensionPathsForLoadedExtension = {
   generatedRoot: string | null;
   typescriptTypes: string | null;
   buildCurrent: string | null;
+};
+
+type ExtensionInstructionFile = {
+  name: string;
+  path: string;
 };
 
 type ExtensionRequirements = {
@@ -596,13 +822,19 @@ Example:
       "interface": "svvyx",
       "title": "Linear",
       "description": "Linear issue and project workflow support.",
-      "resettable": true,
+      "resettable": false,
       "deletable": true,
       "typescriptApiEnabled": true,
       "paths": {
         "sourceRoot": "/Users/example/.config/svvy/extensions/sources/user/linear",
         "manifest": "/Users/example/.config/svvy/extensions/sources/user/linear/manifest.json",
-        "instructionsFull": "/Users/example/.config/svvy/extensions/sources/user/linear/instructions/full.md",
+        "instructionsFull": [
+          {
+            "name": "010-linear.md",
+            "path": "/Users/example/.config/svvy/extensions/sources/user/linear/instructions/full/010-linear.md"
+          }
+        ],
+        "instructionsFullDir": "/Users/example/.config/svvy/extensions/sources/user/linear/instructions/full",
         "instructionsMinimal": "/Users/example/.config/svvy/extensions/sources/user/linear/instructions/minimal.md",
         "externalInstructionFile": null,
         "extensionSource": "/Users/example/.config/svvy/extensions/sources/user/linear/source",
@@ -711,35 +943,27 @@ Native runtime/schema source is app-owned and not edited as Incur source.
 
 An Incur-backed extension defines executable tools as a `wevm/incur` CLI.
 
-The relevant local reference from the session is the checked-out fork at:
-
-- `/Users/polarzero/code/wevm/incur`
-- `/Users/polarzero/code/wevm/incur/SKILL.md`
-- `/Users/polarzero/code/wevm/incur/skills/incur-typescript-client/SKILL.md`
-
-The session referenced a branch that exposes the TypeScript client surface needed by `svvy`. The app
-must verify the exact branch and APIs before implementation.
-
-The branch observed during the session audit was `typed-client-public-surface`; implementation must
-still re-verify that this is the correct branch and that its API has not changed.
-
 `svvy` does not expose Incur directly as MCP or as Incur skills. Incur is the source contract and
 execution framework for extension CLIs. Incur-backed extensions use `interface: "svvyx"` in
 agent-facing JSON.
 
 The internal runtime contract for Incur-backed extensions is defined in
-`docs/specs/extension/svvyx-incur-runtime.spec.md`. In short:
+`docs/specs/extension/svvyx-incur-runtime.spec.md`. The author-facing contract is intentionally
+smaller:
 
 - the extension source entry default-exports an Incur CLI object
 - extension source entries must not self-serve with top-level `cli.serve()`
 - `svvyx` is one stable app-owned shell dispatcher with command shape
   `svvyx <extension-id> <extension-command> ...`
-- the dispatcher resolves the extension's current successful build, imports the default Incur CLI,
-  and calls `cli.serve(extensionArgv, { env, stdout, exit })`
 - app-managed extension env is provided through Incur's explicit env source and must be read through
   Incur `c.env`, not direct `process.env`
 - loaded/available/unavailable extension state controls generated prompt guidance and generated
   TypeScript clients, not whether a shell command can be guessed
+
+Dispatcher import, serving, stdout, exit, sandbox, command-fact, and generated-client plumbing are
+internal `svvy` runtime behavior. Agent-facing Extension Managing instructions may mention only the
+default export rule, the no-top-level-`cli.serve()` rule, the `svvyx <extension-id> ...` invocation
+shape, and the `c.env` env access rule.
 
 ### Prompt-Only And External Instruction Extensions
 
@@ -841,13 +1065,17 @@ Directory layout:
     user/<extension-id>/
       manifest.json
       instructions/
-        full.md
+        full/
+          010-overview.md
+          020-domain-guide.md
         minimal.md
       source/
     builtin-overlays/<extension-id>/
       manifest.json
       instructions/
-        full.md
+        full/
+          010-overview.md
+          020-domain-guide.md
         minimal.md
       source/
   generated/
@@ -878,6 +1106,10 @@ Ownership:
 - `sources/user/<id>/` contains editable user extension manifests, instructions, and source.
 - `sources/builtin-overlays/<id>/` contains editable overlay files for shipped extension title,
   description, instructions, and optional editable extension source.
+- `instructions/full/*.md` contains ordered full loaded instruction source files. The generated
+  actor prompt receives their concatenated content as one loaded extension instruction block.
+- `instructions/minimal.md` contains the single minimal loading hint used while the extension is
+  available but not loaded.
 - `source/` exists only for extensions with editable executable source; prompt-only extensions omit
   it or return `source: null` from `inspect`.
 - shipped defaults live in packaged app resources and are read-only.
@@ -977,10 +1209,11 @@ When an extension changes and a successful build activates:
 - no empty aggregate or missing loaded `svvyx` guidance may be exposed between builds
 
 `agent_context_refresh` is the single explicit surface-control work item for generated agent context
-changes. It updates the bound base instructions, loaded and available extension binding, generated
-instructions, loaded `svvyx` command guidance, generated TypeScript declarations, native tool schemas,
-external instructions, aggregate cache key, and generated agent context fingerprint. It does not send
-text to pi, create assistant- or user-authored transcript content, or write prompt history.
+changes. It updates the loaded and available extension binding, including loaded base-instruction
+extensions, generated instructions, loaded `svvyx` command guidance, generated TypeScript
+declarations, native tool schemas, external instructions, aggregate cache key, and generated agent
+context fingerprint. It does not send text to pi, create assistant- or user-authored transcript
+content, or write prompt history.
 
 If only internal implementation changed and the generated actor-facing context did not, no agent
 context refresh is needed.
@@ -996,6 +1229,7 @@ The event is not model-authored transcript text. Its expanded details must list 
 categories, such as:
 
 - base instructions
+- base instruction extensions
 - loaded extension instructions
 - available extension loading hints
 - extensions changed by id
@@ -1066,7 +1300,8 @@ It should show:
 - locked actor kind
 - model selection
 - reasoning selection
-- base instructions
+- default-loaded base instruction extensions such as `base-common` and the actor-specific base
+  extension
 - extension selections
 - extension state badges
 - generated context/runtime preview for the selected agent
@@ -1090,8 +1325,10 @@ Each extension detail view should include:
 - interface: native_tool, svvyx, or instructions
 - title
 - description
-- full loaded instructions textarea
-- minimal available instructions textarea
+- ordered full loaded instruction file list and editor panes
+- optional combined full loaded instruction preview; if present, this is a projection of the ordered
+  source files and not a separate editable prompt source
+- minimal available instructions editor for `instructions/minimal.md`
 - optional editable executable source for extensions that have source-backed `svvyx` builds
 - TypeScript API enablement control
 - dependency status
@@ -1107,6 +1344,13 @@ Each extension detail view should include:
 
 For `external_instruction` records, the detail view may show loaded file content and an
 open-external-file action, but it must not offer content editing, deletion, or content reset.
+
+UI editor saves for app-owned extension files are ordinary file-backed source changes. A save from
+an Extensions pane editor must write the same app-owned source path returned by Extension Managing
+`inspect`, record preimage/change data for a reversible change card, mark `buildRequired` when the
+file affects generated context or runtime build output, and use the same reset/revert/build pipeline
+as agent `apply_patch` edits. The UI must not store hidden prompt text outside extension source
+files and generated contracts.
 
 Agent-made extension edits should not be hidden. Successful `apply_patch` calls touching app-owned
 extension files should render as rich tool-use UI showing the changed files, Build required state,
@@ -1138,6 +1382,80 @@ handoff inheritance, actor-kind compatibility policy, or a hidden capability res
 The persistent profile config decides default-loaded, available, and unavailable extension sets for
 new agents and new workflow task-agent attempts. Extension Loading is not part of this editable
 profile config; it is always loaded.
+
+The shipped default profiles select base role behavior by extension usage state. Example defaults:
+
+```ts
+const defaultOrchestratorProfile = {
+  actorKind: "orchestrator",
+  extensions: {
+    "base-common": "default_loaded",
+    "base-orchestrator": "default_loaded",
+    "base-handler": "unavailable",
+    "base-workflow-task": "unavailable",
+    shell: "default_loaded",
+    "apply-patch": "default_loaded",
+    "execute-typescript": "default_loaded",
+    "thread-managing": "default_loaded",
+    smithers: "unavailable",
+    cx: "default_loaded",
+    git: "default_loaded",
+    github: "default_loaded",
+    web: "default_loaded",
+    "project-ci": "available"
+  }
+};
+
+const threadHandlerProfile = {
+  actorKind: "handler",
+  extensions: {
+    "base-common": "default_loaded",
+    "base-orchestrator": "unavailable",
+    "base-handler": "default_loaded",
+    "base-workflow-task": "unavailable",
+    shell: "default_loaded",
+    "apply-patch": "default_loaded",
+    "execute-typescript": "default_loaded",
+    "thread-managing": "default_loaded",
+    smithers: "default_loaded",
+    cx: "default_loaded",
+    git: "default_loaded",
+    github: "default_loaded",
+    web: "default_loaded",
+    "project-ci": "available"
+  }
+};
+
+const defaultWorkflowAgentProfile = {
+  actorKind: "workflow-task",
+  extensions: {
+    "base-common": "default_loaded",
+    "base-orchestrator": "unavailable",
+    "base-handler": "unavailable",
+    "base-workflow-task": "default_loaded",
+    shell: "default_loaded",
+    "apply-patch": "default_loaded",
+    "execute-typescript": "default_loaded",
+    "thread-managing": "unavailable",
+    smithers: "unavailable",
+    cx: "default_loaded",
+    git: "default_loaded",
+    github: "available",
+    web: "default_loaded",
+    "project-ci": "unavailable"
+  }
+};
+```
+
+`web: "default_loaded"` above means "default-loaded while `networkAccess` is true"; when
+`networkAccess` is false, Web is unavailable through the normal extension binding.
+
+Actor-specific base extensions are not a hidden runtime authorization layer. The extension registry
+does not special-case them beyond their shipped defaults and normal reset behavior. If a user-created
+profile intentionally changes these usage states, the generated context follows that profile like
+any other extension selection. The default shipped profiles should keep exactly `base-common` plus
+one actor-specific base extension loaded so newly created agents begin with the relevant role
+instructions without requiring PromptLibrary or context-pack composition.
 
 ### Creation-Time And Invocation-Time Overrides
 
@@ -1214,15 +1532,18 @@ type LoadExtensionResult = {
   ok: true;
   extension: LoadedExtensionForCurrentActor & {
     instructions: string;
+    instructionFiles: ExtensionInstructionFile[];
   };
 };
 ```
 
 The `extension` object uses the same fields and redaction rules as a loaded entry from
 `list_extensions`. The additional `instructions` field contains the full loaded instructions that
-are now part of the actor context. `load_extension` must not return custom `added`, `guidance`,
-`svvyxNamespaces`, `codeModeTypes`, or similar one-off buckets. Command details remain discoverable
-through the loaded extension's own CLI or generated client documentation.
+are now part of the actor context. `instructionFiles` records the ordered source files used to build
+that string for traceability; it does not mean the model receives an array-valued instruction.
+`load_extension` must not return custom `added`, `guidance`, `svvyxNamespaces`, `codeModeTypes`, or
+similar one-off buckets. Command details remain discoverable through the loaded extension's own CLI
+or generated client documentation.
 
 Example:
 
@@ -1239,10 +1560,22 @@ Example:
     "deletable": false,
     "typescriptApiEnabled": true,
     "instructions": "Full loaded Smithers instructions...",
+    "instructionFiles": [
+      {
+        "name": "010-smithers.md",
+        "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers.md"
+      }
+    ],
     "paths": {
       "sourceRoot": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers",
       "manifest": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/manifest.json",
-      "instructionsFull": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full.md",
+      "instructionsFull": [
+        {
+          "name": "010-smithers.md",
+          "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers.md"
+        }
+      ],
+      "instructionsFullDir": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full",
       "instructionsMinimal": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/minimal.md",
       "externalInstructionFile": null,
       "extensionSource": null,
@@ -2797,7 +3130,8 @@ that specific extension invocation:
 2. add non-secret manifest defaults
 3. overlay app-level non-secret user values for that extension
 4. overlay app-managed secret values for that extension
-5. pass the env source to Incur through `cli.serve(extensionArgv, { env })`
+5. pass the env source to the internal Incur invocation path defined in
+   `docs/specs/extension/svvyx-incur-runtime.spec.md`
 6. discard the per-invocation env source
 
 The invoked extension must read these values through Incur `c.env`. Direct `process.env` reads do
@@ -2833,10 +3167,11 @@ does not need to call the remote service or possess secrets.
 
 Missing required env values block runtime use, not source compilation. Specifically:
 
-- `svvyx extensions build <id> --json` may succeed while reporting `ready: false`.
+- `svvyx extensions build <id> --json` may succeed while reporting `contextReady: true` and
+  `runtimeReady: false`.
 - `list_extensions` and `svvyx extensions inspect <id> --json` report missing/configured status.
-- `load_extension` fails with `EXTENSION_ENV_MISSING` when it would expose generated command
-  guidance or generated clients for an executable extension with missing required env.
+- `load_extension` fails with `EXTENSION_ENV_MISSING` before changing the current actor binding when
+  the target available extension has missing required env.
 - an already loaded extension command fails with `EXTENSION_ENV_MISSING` if a required value was
   removed after the actor binding was created.
 - an optional missing value is omitted from the env map and must not block load or invocation.
@@ -3276,12 +3611,16 @@ read-only external inputs.
 
 | Extension | Category | Interface | Included tools or capability | Default orchestrator state | Default handler state | Default workflow-agent state |
 | --- | --- | --- | --- | --- | --- | --- |
+| Base: Common svvy Conduct (`base-common`) | shipped | instructions | Shared tool-agnostic svvy conduct and repository-work behavior; no tools, `svvyx` commands, or TypeScript clients | default_loaded | default_loaded | default_loaded |
+| Base: Orchestrator (`base-orchestrator`) | shipped | instructions | Orchestrator role instructions for strategy, routing, delegation, handler resume, wait, and final decisions | default_loaded | unavailable | unavailable |
+| Base: Handler Thread (`base-handler`) | shipped | instructions | Handler-thread role instructions for delegated objective ownership, workflow supervision boundary, waits, and handoffs | unavailable | default_loaded | unavailable |
+| Base: Workflow Task Agent (`base-workflow-task`) | shipped | instructions | Smithers task-attempt role instructions for task-local coding-agent work under workflow runtime ownership | unavailable | unavailable | default_loaded |
 | Shell | shipped | native_tool | `exec_command`, `write_stdin`, Codex-like shell instructions, and `svvyx` access through `exec_command` | default_loaded | default_loaded | default_loaded |
 | Apply Patch | shipped | native_tool | `apply_patch` with Codex-like structured patch instructions for repository and allowed extension file edits | default_loaded | default_loaded | default_loaded |
 | Execute TypeScript | shipped | native_tool | `execute_typescript` with generated `svvy` and loaded-extension clients as the preferred TypeScript interface | default_loaded | default_loaded | default_loaded |
 | Extension Loading | shipped | native_tool | `list_extensions`, `load_extension`; fixed app-native control, always default-loaded and not configurable | default_loaded | default_loaded | default_loaded |
 | Thread Managing | shipped | native_tool | Actor-scoped handler-thread controls and inspection tools; concrete API is defined in `docs/specs/extension/thread-managing.extension.spec.md` | default_loaded | default_loaded | unavailable |
-| Extension Managing | shipped | svvyx | `svvyx extensions ...` lifecycle commands for inspect, create, build, usage state, reset, delete, and revert; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |
+| Extension Managing | shipped | svvyx | `svvyx extensions ...` lifecycle commands for inspect, create, full-instruction file add/remove/rename/reorder, build, usage state, reset, delete, revert, and snapshots; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |
 | cx | shipped | instructions | official cx CLI semantic code-navigation guidance through `exec_command`; no native `cx_*`, `svvyx cx`, generated TypeScript client, product navigation, or product-state controls | default_loaded | default_loaded | default_loaded |
 | Smithers | shipped | native_tool | `smithers_*` workflow run/list/inspect/resume/signal/transcript controls backed by the Bun-owned Smithers bridge | unavailable | default_loaded | unavailable |
 | Web | shipped | instructions | TinyFish CLI search/fetch/browser guidance through ordinary shell commands; no `svvy` Web tools, `svvyx web` commands, generated Web TypeScript clients, Web Provider settings, or `svvy`-owned TinyFish key storage; default-loaded only while `networkAccess` is true | default_loaded when network is enabled, otherwise unavailable | default_loaded when network is enabled, otherwise unavailable | default_loaded when network is enabled, otherwise unavailable |
@@ -3309,10 +3648,12 @@ The Git and GitHub prompt-only instructions adapt:
 These extensions teach shell use of `git` and `gh`; they do not introduce a parallel semantic
 `git.*` or `github.*` model interface by default.
 
-Extension Managing owns extension lifecycle and source-editing commands. Authoring-facing Incur
-guidance belongs to the Extension Managing instruction layer, while the internal `svvyx` runtime
-plumbing is defined separately in `docs/specs/extension/svvyx-incur-runtime.spec.md`. Its detailed
-command surface is defined in `docs/specs/extension/extension-managing.extension.spec.md`.
+Extension Managing owns extension lifecycle, source discovery, build, usage-state, reset, delete,
+revert, snapshot, and full-instruction source-file lifecycle commands. Content edits still use
+ordinary shell inspection plus native `apply_patch`. Authoring-facing Incur guidance belongs to the
+Extension Managing instruction layer, while the internal `svvyx` runtime plumbing is defined
+separately in `docs/specs/extension/svvyx-incur-runtime.spec.md`. Its detailed command surface is
+defined in `docs/specs/extension/extension-managing.extension.spec.md`.
 
 Project CI is a shipped prompt-only extension. It is available by default to orchestrators and
 handlers so `thread_start` can preload it for CI-authoring objectives and handlers can load it with
@@ -3380,7 +3721,8 @@ Rules:
 
 ## External Instructions
 
-- base instructions live on agent profiles
+- base instructions live in shipped `base-*` instruction extensions
+- agent profiles select default-loaded base and capability extensions
 - actor-specific generated context is visible from Agents
 - extension instructions and generated agent contexts are visible from Extensions and linked from Agents
 - available extensions provide minimal prompt hints for session-local loading decisions
@@ -3442,7 +3784,8 @@ For every actor turn, `svvy` must be able to show exactly what the agent receive
 
 The generated view should include:
 
-- base instructions
+- loaded base instruction extensions such as `base-common` and the actor-specific `base-*`
+  extension
 - loaded extension full instructions
 - available extension minimal instructions
 - external instructions that reached the actor
@@ -3466,7 +3809,7 @@ This fingerprint hashes only actor-facing extension contract data:
 - title and description when those fields can appear in generated context, generated docs, or
   agent-facing command output
 - TypeScript API enabled flag
-- full loaded instructions
+- ordered full loaded instruction source file names, content, and generated concatenation boundaries
 - minimal available instructions
 - command manifest for executable extensions, including command ids, command paths, descriptions,
   aliases when exposed, argument schemas, option schemas, output schemas, examples, deprecation
@@ -3510,7 +3853,6 @@ actor-scoped extension invocation:
 
 - actor kind
 - selected agent profile or task-agent config identity only when it affects generated context
-- exact resolved base instructions
 - ordered loaded extension ids
 - each loaded extension's current successful extension context fingerprint
 - exact loaded extension full instructions in generated order
@@ -3567,15 +3909,21 @@ Refresh timing is strict:
 - if the target is active, the queue shows a special `Update agent context` row until the update is
   claimed or applied
 - if the active pi run reaches `refreshRunContext` before the current turn settles, `svvy` applies
-  the ready generated context at that safe model boundary
+  the context-ready generated context at that safe model boundary
 - if there is no active-run safe boundary before settlement, the queued update applies before the
   next prompt-bearing item
 - already-issued tool calls finish against the agent context that produced them
 - no prompt-bearing item may pass a required queued agent context refresh unless the user explicitly
   cancels that refresh
 
-`agent_context_refresh` may only be enqueued for a ready generated context. If required extension
-builds or ready-state checks are blocked or failed, the existing context remains bound and the
+`agent_context_refresh` may only be enqueued for a context-ready generated context: all source,
+instruction, manifest, command-doc, command-schema, native-tool-schema, and TypeScript declaration
+inputs needed for prompt/tool/type generation must have built successfully. Runtime readiness is a
+separate condition. Missing required env values or other invocation-only blockers may make an
+extension `runtimeReady: false` while still allowing a successful context-ready build to update
+fingerprints and generated context; the actor then sees updated guidance/readiness issues, but
+runtime invocation or `load_extension` fails until the blocker is resolved. If required extension
+builds or context-ready checks are blocked or failed, the existing context remains bound and the
 blocker is reported through the build/readiness path instead.
 
 ### Queue And Event Behavior
@@ -3606,7 +3954,8 @@ Agent context updated
 Expanded details must identify what changed. They must not mention other sessions or threads that
 may also have pending or applied updates.
 
-If the update itself fails after a ready generated context exists, that is an internal product error.
+If the update itself fails after a context-ready generated context exists, that is an internal
+product error.
 The affected session or thread records a user-only product event:
 
 ```text
@@ -3620,15 +3969,19 @@ out of date` / `Queue update` affordance while drift still exists. The same fail
 app log entry. It must not be presented as an extension build failure, dependency approval, missing
 secret, or agent-fixable source problem.
 
-## Open Research And Decisions
+## Draft Extension Specs
 
-The following remain unresolved and should be settled before implementation:
+The shared extension architecture in this document is resolved. Some individual extension specs are
+still draft extension contracts and must be completed in their own files before their model-callable
+surface is implemented:
 
-- Define the first real version of Project CI as an extension. It is currently a placeholder with no
-  actor availability.
-- Define the exact generated TypeScript client contract once the local Incur fork API and native
-  client-generation strategy are verified.
-- Define exact naming and collision rules for extension ids and subcommand namespaces.
+- `docs/specs/extension/project-ci.extension.spec.md`
+- `docs/specs/extension/artifacts.extension.spec.md`
+- draft portions of `docs/specs/extension/smithers.extension.spec.md`
+
+Generated `execute_typescript` declaration names and import shape are owned by
+`docs/specs/extension/execute-typescript.extension.spec.md`: actors receive one generated declaration
+block, and handwritten extension prose must not redefine that interface.
 
 Resolved in the 2026-06-02 auto-review design pass:
 

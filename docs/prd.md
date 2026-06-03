@@ -100,7 +100,7 @@ Ambient coding-agent resources are default-off unless explicitly enabled through
 
 Extension env values are app-managed per extension in v1. Secret values are keyed by `(extensionId, envName)`, entered only through user-owned app UI, stored encrypted by the app or OS keychain, injected only into the specific trusted extension runtime invocation that needs them, and never exposed to agents through prompts, generated docs, tool output, logs, artifacts, transcripts, global pi env, global shell env, or `execute_typescript` snippet env. Agent-facing extension inspection may report only declaration metadata and missing/configured readiness. Workspace-scoped extension env values and egress-proxy credential boundaries are not part of v1.
 
-Agents and Extensions are the user-facing source of reusable prompt material and capability composition. Agent profiles contain base instructions, actor kind, model/reasoning, and extension usage selections. Extensions contain shipped, user, and external_instruction records with full loaded instructions, minimal loading hints, generated previews, and category-specific reset/delete behavior. External instruction records show discovered files such as `AGENTS.md` and `CLAUDE.md` as read-only generated-context inputs with open-external-file controls. New orchestrator sessions, handler threads, and workflow task agents bind to the latest ready generated agent context. Existing surfaces store the generated agent context fingerprint they received and automatically update to the latest ready generated agent context at the next safe boundary when that fingerprint changes.
+Agents and Extensions are the user-facing source of reusable prompt material and capability composition. Agent profiles contain actor kind, model/reasoning, and extension usage selections. Base actor prompts are shipped instruction-only extensions: `base-common` is default-loaded for all adopted actor kinds, while `base-orchestrator`, `base-handler`, and `base-workflow-task` are default-loaded by the corresponding default agent profile. Extensions contain shipped, user, and external_instruction records with ordered full loaded instruction source files, minimal loading hints, generated previews, and category-specific reset/delete behavior. The ordered full instruction files are an editing convenience; generated actor contexts receive one concatenated loaded instruction block per loaded extension, including loaded base instruction extensions. External instruction records show discovered files such as `AGENTS.md` and `CLAUDE.md` as read-only generated-context inputs with open-external-file controls. New orchestrator sessions, handler threads, and workflow task agents bind to the latest ready generated agent context. Existing surfaces store the generated agent context fingerprint they received and automatically update to the latest ready generated agent context at the next safe boundary when that fingerprint changes.
 
 The default actor-specific generated context split is:
 
@@ -688,11 +688,11 @@ Each handler thread should have:
 - zero or more workflow runs
 - zero or more handoff episodes
 
-Context-pack keys describe reusable product knowledge loaded into actor prompts by default or requested on demand, such as `Project CI`.
+Available extension ids describe reusable product knowledge loaded into actor prompts by default or requested on demand, such as `project-ci`.
 
 The current handler objective, wait state, generated agent context binding, active workflow run ids, and latest handoff metadata are exposed to the handler through `thread_current`. The orchestrator and handlers inspect delegated thread rows through `thread_list`, and exact durable handoff episode bodies through `thread_handoffs`. These read tools do not include transcripts, workflow summaries, or Smithers internals; handlers use active workflow run ids with `smithers_*` tools when workflow details matter.
 
-Agent profiles describe the provider, model, reasoning level, base instructions, extension usage selections, and callable policy used by pi-backed product agents. The Agents pane is the product-owned profile surface. It appears in the sidebar between Logs and Extensions, and owns orchestrator profiles, the special handler-thread profile, and workflow-agent profiles rather than burying model behavior in general settings.
+Agent profiles describe the provider, model, reasoning level, extension usage selections, and callable policy used by pi-backed product agents. Base role instructions are selected through shipped `base-*` instruction extensions rather than stored as profile-local prompt blobs. The Agents pane is the product-owned profile surface. It appears in the sidebar between Logs and Extensions, and owns orchestrator profiles, the special handler-thread profile, and workflow-agent profiles rather than burying model behavior in general settings.
 
 The app owns these app-wide agent profile settings:
 
@@ -727,7 +727,7 @@ Agents own:
 - profile display name
 - actor kind
 - provider/model and reasoning defaults
-- base instructions
+- default-loaded base instruction extensions
 - per-extension usage state: `default_loaded`, `available`, or `unavailable`, except fixed
   app-native controls such as Extension Loading
 - generated context and generated runtime-surface previews for that profile
@@ -735,7 +735,7 @@ Agents own:
 Extensions own:
 
 - shipped, user, and external_instruction categories
-- full loaded instructions
+- ordered full loaded instruction source files that generate one loaded instruction block
 - minimal available instructions
 - native tool, svvyx, or instructions-only interface
 - generated TypeScript client declarations when enabled
@@ -751,7 +751,7 @@ External instruction records represent files such as `AGENTS.md` and `CLAUDE.md`
 
 Generated agent context bindings store loaded extension ids, available extension ids, external instruction content/order, native tool declarations, loaded svvyx guidance, generated TypeScript client declarations, current-build context references, and generated agent context fingerprint for sessions, handler threads, and workflow task-agent attempts.
 
-New top-level sessions, handler threads, and workflow task agents always use the latest ready generated agent context from Agents, Extensions, generated contracts, and current external instructions. Existing surfaces store the generated agent context fingerprint they received. When the current ready generated context fingerprint differs from the bound fingerprint, `svvy` automatically queues or applies `agent_context_refresh` work labelled `Update agent context`. If the surface is idle, the update is claimed before the next prompt-bearing item runs. If the surface is active, the update is visible in the queue until it applies at the next safe `refreshRunContext` boundary or before the next prompt-bearing item. On success, the affected session records `Agent context updated` with details of what changed. The visible surface identity and transcript stay continuous even if the internal managed pi runtime must be recreated to load the fresh `systemPrompt`.
+New top-level sessions, handler threads, and workflow task agents always use the latest context-ready generated agent context from Agents, Extensions, generated contracts, and current external instructions. Existing surfaces store the generated agent context fingerprint they received. When the current context-ready generated context fingerprint differs from the bound fingerprint, `svvy` automatically queues or applies `agent_context_refresh` work labelled `Update agent context`. If the surface is idle, the update is claimed before the next prompt-bearing item runs. If the surface is active, the update is visible in the queue until it applies at the next safe `refreshRunContext` boundary or before the next prompt-bearing item. On success, the affected session records `Agent context updated` with details of what changed. The visible surface identity and transcript stay continuous even if the internal managed pi runtime must be recreated to load the fresh `systemPrompt`.
 
 Top-level session titles are generated through an explicit durable title-generation flow. Before the first turn is submitted, the visible default session title follows the beginning of the live composer draft for that session's orchestrator surface. When the first real user turn starts in a top-level session, the app records a pending title-generation job and runs the configured `namer` agent concurrently with the orchestrator turn; until that generated title lands, the visible title continues to use the first user message summary. The orchestrator must not wait for the namer, and the namer must not wait for the orchestrator response. The namer settings prompt is the title-generation instruction; the one-shot user prompt sent to that agent contains only the first user message context to title, not another naming instruction or extracted keyword list. While that job is pending or running, manual session rename is blocked for that session so the generated title and a user rename cannot race. The generated title is persisted once, auto-title generation stops after that first successful generation, and a manual rename permanently freezes future auto-titling for the session. Handler-thread titles are generated by the same configured `namer` agent from the orchestrator-supplied `thread_start` objective; the orchestrator does not receive or supply a separate handler title field. Workflow runs do not have a separate title concept and use workflow identity or entry metadata for labels.
 
@@ -929,7 +929,7 @@ Every user request that can start immediately goes through one orchestrator-cont
 1. load current workspace, session, thread, workflow-run, episode, artifact, Project CI, and wait context
 2. identify the target surface of the message
 3. drain any earlier queued `agent_context_refresh` control item for the target surface, refreshing the generated agent context binding before prompt-bearing work
-4. compose that surface's actor prompt from its bound generated agent context, including agent base instructions, loaded extension instructions, available extension loading hints, external instruction files, native tool declarations, loaded svvyx guidance, and generated TypeScript client declarations, then load it into pi's true `systemPrompt` channel before sending the new user message
+4. compose that surface's actor prompt from its bound generated agent context, including loaded base instruction extensions, loaded capability extension instructions, available extension loading hints, external instruction files, native tool declarations, loaded svvyx guidance, and generated TypeScript client declarations, then load it into pi's true `systemPrompt` channel before sending the new user message
 5. open a new turn for that surface
 6. let that surface choose and persist its top-level turn decision, then decide its next tool call or direct response
 7. execute tools through the correct runtime handler

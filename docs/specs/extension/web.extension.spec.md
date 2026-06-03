@@ -416,7 +416,10 @@ Because Web is a shipped prompt-only extension:
   `docs/specs/extensions-and-tools.spec.md` and `docs/specs/extension/extension-managing.extension.spec.md`
 - Web has no editable executable source in v1
 - Web has no generated TypeScript declaration file in v1
-- Web has no extension build step in v1
+- Web has no executable or `svvyx` source build step in v1
+- Web still participates in the normal Extension Managing validation/build path for prompt-only
+  extensions so changed instruction overlays regenerate generated prompt context and extension
+  fingerprints
 
 The Extension UI may show whether the `tinyfish` binary appears to be available on PATH or from the
 app-managed trusted CLI dependency location, but that is advisory. Missing TinyFish CLI does not
