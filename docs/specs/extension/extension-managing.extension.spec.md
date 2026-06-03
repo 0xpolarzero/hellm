@@ -16,6 +16,10 @@ extension loading model, actor defaults, `svvyx` dispatcher/runtime model, shell
 dependencies, and secrets are defined in `docs/specs/extensions-and-tools.spec.md` and
 `docs/specs/extension/svvyx-incur-runtime.spec.md`.
 
+Live rendering for `svvyx extensions ...` commands is defined in
+`docs/specs/live-tool-projection.spec.md`. Those commands remain ordinary `exec_command`
+invocations; Extension Managing does not gain a separate model-facing tool surface.
+
 ## Product Role
 
 Extension Managing is a shipped extension for managing extension definitions and extension usage.

@@ -44,6 +44,7 @@ Current detailed behavior is defined in:
 - `docs/specs/extensions-and-tools.spec.md`, "`exec_command` Source And Lifecycle"
 - `docs/specs/extensions-and-tools.spec.md`, "`write_stdin`"
 - `docs/specs/extensions-and-tools.spec.md`, "Execution Policy"
+- `docs/specs/live-tool-projection.spec.md`, "Command Execution Projection"
 
 ## Notes
 

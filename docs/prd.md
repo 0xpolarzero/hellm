@@ -23,6 +23,8 @@ The product combines:
 - Smithers-backed workflow runs executed under those handler threads
 - authored artifact workflows plus workspace-saved reusable workflow assets and runnable workflow entries
 - first-class threads, workflow runs, commands, episodes, artifacts, Project CI, and worktree awareness
+- live Codex-like tool projection for streamed tool arguments, command output, patch previews,
+  approvals, waits, and final command facts
 - first-class workspace app logs for structured, redacted, live product observability
 - a VS Code-like shared palette shell where `>` switches quick-open search into command/action mode without creating a second runtime
 
@@ -86,6 +88,14 @@ The target surface may be:
 
 Everything the agent does is still driven through turns, tools, runtime handlers, and durable state.
 
+Tool use must project live through the same execution model. When a model starts a tool call, the UI
+should render the correct tool item immediately, update large arguments progressively while they are
+being generated, stream runtime output or progress while the handler runs, and then settle the card
+from the authoritative final command facts. `apply_patch` uses a Codex-like structured file-change
+projection with patch snapshots; `exec_command` uses command output deltas; `execute_typescript`
+uses source, diagnostic, runtime, and child-command projection. This is not achieved by asking the
+agent to split coherent work into many tiny tool calls.
+
 Before any target surface runs a turn through pi:
 
 - `svvy` must compose that surface's actor prompt from the current generated agent context and load the resulting instructions through pi's real `systemPrompt` channel
@@ -110,6 +120,9 @@ The default actor-specific generated context split is:
 - a workflow-task-agent prompt receives task-local instructions and task-local callable declarations; in the default adopted workflow-agent profile it receives Extension Loading, task-local direct tools, and `execute_typescript`, while Smithers, Extension Managing, and broad handler/orchestrator controls are not default-loaded
 - a workflow-task-agent runtime must not load ambient pi built-in tools, extensions, skills, prompt templates, themes, commands, hooks, provider adapters, or equivalent host resources unless the user enables that exact resource category and source for workflow task agents
 - user-configured extension usage state remains the source of truth for loaded, available, and unavailable extensions; Extension Loading is the only fixed always-loaded extension control
+- current Smithers-facing agent APIs are not the source of truth for live tool projection. When the
+  Smithers bridge is revamped, its replacement tools must emit the same turn/item/command projection
+  phases as other native tools rather than creating a workflow-specific rendering path.
 
 ### 3. Handler Threads Are The Delegation Unit
 
@@ -286,6 +299,11 @@ Every submitted snippet is persisted as a file-backed artifact in the workspace 
 
 Structured diagnostics must be produced, and invalid snippets must not run.
 
+Live rendering for `execute_typescript` follows the shared tool projection model: the source argument
+may stream into a code preview, the persisted source artifact and typecheck diagnostics are runtime
+progress, generated-client calls appear as nested child commands, and the final parent command facts
+remain authoritative.
+
 ### 7. Native Control Tools Stay Small And Explicit
 
 Some actions are not ordinary generic work because they change product-level control flow or the
@@ -305,6 +323,11 @@ Those actions stay as `svvy`-native control tools:
 - `wait`
 
 These are still tool calls.
+
+Native control tools use the same live projection model as direct coding tools. Tool cards appear
+when the tool name is known, large freeform arguments such as thread objectives and reports may
+stream into previews, and final thread ids, report request ids, episode ids, loaded extension ids,
+wait state, and errors come from runtime command facts.
 
 The concrete thread-control and thread-inspection APIs are defined in
 `docs/specs/extension/thread-managing.extension.spec.md`.

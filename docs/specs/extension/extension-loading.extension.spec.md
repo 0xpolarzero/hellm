@@ -44,6 +44,7 @@ Current detailed behavior is defined in:
 - `docs/specs/extensions-and-tools.spec.md`, "`list_extensions`"
 - `docs/specs/extensions-and-tools.spec.md`, "`load_extension`"
 - `docs/specs/extensions-and-tools.spec.md`, "Extension Usage State And Invocation-Time Overrides"
+- `docs/specs/live-tool-projection.spec.md`, "Extension Loading Projection"
 
 ## Notes
 

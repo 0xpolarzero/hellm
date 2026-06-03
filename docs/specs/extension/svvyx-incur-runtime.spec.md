@@ -26,6 +26,8 @@ Related specs:
   clients inside `execute_typescript`.
 - `docs/specs/extension/shell.extension.spec.md` defines `exec_command`, which is how agents run
   `svvyx ...` from the shell.
+- `docs/specs/live-tool-projection.spec.md` defines how `svvyx ...` command-family progress renders
+  over ordinary `exec_command` execution.
 
 ## Product Decision
 

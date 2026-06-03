@@ -35,6 +35,9 @@ This document defines:
 The concrete Thread Orchestration and Thread Handling native tool APIs that read and write this state are defined in
 `docs/specs/extension/thread-managing.extension.spec.md`.
 
+Live tool projection and command event semantics are defined in
+`docs/specs/live-tool-projection.spec.md`.
+
 ## Reference Rule
 
 The executable reference sketch for this spec is [docs/pocs/structured-session-state.poc.ts](../pocs/structured-session-state.poc.ts).
@@ -53,6 +56,9 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Model top-level session auto-title generation as explicit durable state driven by the first real user turn start, with pending/running/completed/failed title-generation status, manual-rename freeze state, and a rename lock while generation is pending or running. The configured internal title-naming prompt owns the title-generation instruction; the one-shot prompt body carries only the first user message context being titled, without a second naming instruction or extracted keyword list. The namer runs concurrently with the orchestrator's first turn: neither surface waits for the other to finish.
 - Persist one top-level per-turn decision for every surface, with orchestrator routing decisions and handler supervision decisions sharing one field.
 - Treat every tool call as a `CommandRecord`.
+- Project live tool use through Codex-like turn items: streamed argument snapshots before runtime
+  execution, durable command events after runtime acceptance, and final command facts as the
+  authoritative recovery source.
 - Make native direct tools plus prompt-only cx CLI guidance the default coding-agent work surface.
 - Treat every top-level `execute_typescript` invocation as one parent command record and every generated client call as a child command record.
 - Keep only a very small set of native control tools for thread spawning, handler reporting, session-local extension loading, explicit objective conclusion, and wait; workflow control belongs on Smithers-native `smithers_*` bridge tools.
@@ -275,6 +281,7 @@ type StructuredSessionState = {
 
   commands: Array<{
     id: string;
+    toolItemId: string | null;
     turnId: string | null;
     workflowTaskAttemptId: string | null;
     surfacePiSessionId: string;
@@ -299,6 +306,29 @@ type StructuredSessionState = {
     startedAt: string;
     updatedAt: string;
     finishedAt: string | null;
+  }>;
+
+  commandEvents: Array<{
+    id: string;
+    commandId: string;
+    toolItemId: string | null;
+    turnId: string | null;
+    surfacePiSessionId: string;
+    seq: number;
+    kind:
+      | "command.requested"
+      | "command.started"
+      | "command.output_delta"
+      | "command.progress"
+      | "command.waiting"
+      | "command.approval_requested"
+      | "command.approval_resolved"
+      | "command.child_linked"
+      | "command.workspace_diff_updated"
+      | "command.finished";
+    data: Record<string, unknown>;
+    artifactId: string | null;
+    createdAt: string;
   }>;
 
   episodes: Array<{
@@ -369,6 +399,7 @@ type StructuredSessionState = {
         | "thread"
         | "workflowRun"
         | "command"
+        | "commandEvent"
         | "episode"
         | "ciRun"
         | "ciCheckResult"
@@ -485,6 +516,12 @@ They answer:
 - how commands nest
 - which commands are trace-only versus surfaced work
 - what summary belongs to that tool run without inventing an episode for it
+
+Command records also anchor live projection. A tool card may begin rendering from transient
+turn-item argument snapshots before the command record exists, but once the runtime accepts the tool
+call, durable progress, output, approval, wait, child-link, workspace-diff, and terminal updates
+belong to the command record through ordered command events. Renderer-local state and transcript
+text are never the recovery source for a tool card.
 
 ### Episode
 
@@ -722,6 +759,7 @@ When a workflow run is `continued`, selector logic should follow `activeDescenda
 | Field                | Why it exists                                                                                   |
 | -------------------- | ----------------------------------------------------------------------------------------------- |
 | `id`                 | Stable command handle.                                                                          |
+| `toolItemId`         | Links the command to the live turn item used by the renderer when one exists.                   |
 | `turnId`             | Links the command to the triggering request.                                                    |
 | `surfacePiSessionId` | Identifies which interactive surface executed the command.                                      |
 | `threadId`           | Links the command to the delegated thread when relevant.                                        |
@@ -754,6 +792,41 @@ At minimum that should include:
 - affected run id, node id, and iteration when relevant
 - pre-status and post-status
 - observed event-sequence range when a command is tied to workflow events
+
+### Command Projection Events
+
+`commandEvents` are append-only durable updates for command projection detail. They are lower-level
+than `CommandRecord.facts` and higher-level than raw terminal buffers.
+
+The stored `kind` values intentionally reuse the live command projection event discriminants from
+`docs/specs/live-tool-projection.spec.md`. Transport adapters may translate wire-level names, but
+structured state stores the canonical `command.*` names so renderer recovery and live rendering use
+one vocabulary. `toolItemId` must be set whenever the command came from a turn item; commands
+created outside a model tool item may leave it `null`.
+
+They exist to recover and render:
+
+- streamed command output
+- patch/file-change snapshots
+- TypeScript diagnostics and logs
+- nested generated-client command links
+- approval and wait state
+- workspace diff snapshots after file-changing commands
+- runtime progress for long-running commands such as extension builds
+
+Rules:
+
+- `seq` is strictly increasing per `commandId`.
+- `data` stores already-redacted structured payloads only.
+- large output belongs in file-backed artifacts; `artifactId` links the event to the artifact when
+  the event represents or summarizes artifactized data.
+- terminal state must also be reflected on the owning `CommandRecord`.
+- final facts on the command record are authoritative when they conflict with earlier events.
+- partial pre-command tool arguments may be visible in the live surface, but they are not required
+  to persist in `commandEvents` until the command record exists.
+- current `smithers_*` bridge tools may continue to produce command records and command facts through
+  the existing workflow-supervision model, but they are not required to emit this live projection
+  event set until the Smithers bridge revamp adopts a replacement tool surface.
 
 ### CommandRecord Visibility
 

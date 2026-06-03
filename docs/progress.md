@@ -38,6 +38,13 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Persist session wait state as a frontier-level summary derived from surface, workflow, and session wait projection. Commit(s): `fff54d7`, `f53c9b8`, `43a26cb`
 - [x] Drive structured session state only from explicit runtime producers or tool events. Commit(s): `fff54d7`, `59fc34e`, `43a26cb`
 - [x] Reconstruct workspace and session summaries from structured state on app load. Commit(s): `b510857`, `fff54d7`
+- [ ] Build a POC Codex-like live tool projection stream for one surface, covering tool item start,
+  streamed argument snapshots, command output deltas, structured file-change patch snapshots,
+  approval or wait state, final command facts, and renderer recovery after reload.
+- [ ] Persist and render live tool projection across native direct tools, thread-control tools,
+  extension loading, `execute_typescript`, and command-family `exec_command` surfaces such as
+  `svvyx ...`, while keeping current `smithers_*` APIs out of this slice until the Smithers bridge
+  revamp lands.
 
 ## 2. `execute_typescript`
 

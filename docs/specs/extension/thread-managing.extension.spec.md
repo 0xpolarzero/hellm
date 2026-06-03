@@ -17,6 +17,8 @@ Related specs:
 
 - `docs/specs/extensions-and-tools.spec.md` defines the broader extension architecture and native
   tool model.
+- `docs/specs/live-tool-projection.spec.md` defines how thread-control tool calls render from
+  streamed arguments, runtime command events, and final command facts.
 - `docs/specs/structured-session-state.spec.md` defines the durable session, thread, command,
   queue, report-request, and episode records these tools read and write.
 - `docs/specs/workflow-supervision.spec.md` defines Smithers workflow lifecycle behavior under

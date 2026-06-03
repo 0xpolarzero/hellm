@@ -42,6 +42,7 @@ Current detailed behavior is defined in:
 - `docs/specs/extensions-and-tools.spec.md`, "Shell And Patch Work"
 - `docs/specs/extensions-and-tools.spec.md`, "Apply Patch Source And Policy"
 - `docs/specs/extensions-and-tools.spec.md`, "Execution Policy"
+- `docs/specs/live-tool-projection.spec.md`, "File Change Projection"
 
 ## Notes
 

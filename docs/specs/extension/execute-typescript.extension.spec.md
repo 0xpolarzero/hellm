@@ -6,6 +6,7 @@
 - Status: resolved direction for `execute_typescript` under the Extensions architecture
 - Related specs:
   - `docs/specs/extensions-and-tools.spec.md`
+  - `docs/specs/live-tool-projection.spec.md`
   - `docs/specs/extension/svvyx-incur-runtime.spec.md`
   - `docs/specs/extension/cx.extension.spec.md`
 

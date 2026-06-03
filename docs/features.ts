@@ -98,13 +98,27 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Direct Tools And Execute TypeScript",
     status: "in-progress",
     summary:
-      "Provides Codex-like native Shell and Apply Patch extensions as the default coding-agent work interface, with `exec_command`, `write_stdin`, and `apply_patch` carrying command lifecycle, long-running session, patch facts, and Codex-like approval-boundary decisions; packages macOS sandboxing through `/usr/bin/sandbox-exec` plus vendored or ported Codex Seatbelt policy generation, exposes simple execution settings for `approvalMode` (`auto-review`, `user`, or `full-access`) and default-on `networkAccess`, and treats `svvyx ...` as ordinary `exec_command` input rather than a separate tool; keeps `execute_typescript` as an actor-local TypeScript composition tool with generated svvy and loaded-extension clients as the preferred typed interface while explicitly excluding cx generated clients in v1; preserves arbitrary TypeScript side effects as opaque unless they go through svvy-owned client boundaries; produces preflight typecheck or compile diagnostics when available, stores file-backed source artifacts for every attempt, and rolls generated-client child command facts under the parent.",
+      "Provides Codex-like native Shell and Apply Patch extensions as the default coding-agent work interface, with `exec_command`, `write_stdin`, and `apply_patch` carrying command lifecycle, long-running session, streamed command output, structured patch/file-change previews, patch facts, and Codex-like approval-boundary decisions; packages macOS sandboxing through `/usr/bin/sandbox-exec` plus vendored or ported Codex Seatbelt policy generation, exposes simple execution settings for `approvalMode` (`auto-review`, `user`, or `full-access`) and default-on `networkAccess`, and treats `svvyx ...` as ordinary `exec_command` input rather than a separate tool; keeps `execute_typescript` as an actor-local TypeScript composition tool with generated svvy and loaded-extension clients as the preferred typed interface while explicitly excluding cx generated clients in v1; preserves arbitrary TypeScript side effects as opaque unless they go through svvy-owned client boundaries; produces preflight typecheck or compile diagnostics when available, stores file-backed source artifacts for every attempt, and rolls generated-client child command facts under the parent.",
     sourceSpecs: [
       "docs/prd.md",
+      "docs/specs/live-tool-projection.spec.md",
       "docs/specs/extension/shell.extension.spec.md",
       "docs/specs/extension/apply-patch.extension.spec.md",
       "docs/specs/extension/execute-typescript.extension.spec.md",
       "docs/specs/extension/svvyx-incur-runtime.spec.md",
+    ],
+  },
+  {
+    id: "live-tool-projection",
+    name: "Live Tool Projection",
+    status: "in-progress",
+    summary:
+      "Adopts Codex's turn item model for live tool rendering: show the tool card as soon as the tool name is known, stream large argument snapshots before runtime execution, render `apply_patch` as structured file-change snapshots rather than many tiny patch calls, stream `exec_command` output and runtime progress through durable command events, nest `execute_typescript` generated-client child commands under the parent, keep `svvyx ...` and prompt-only CLIs as command-family projections over `exec_command`, and treat final command facts as the authoritative recovery source while excluding the current `smithers_*` API pending its revamp.",
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/live-tool-projection.spec.md",
+      "docs/specs/extensions-and-tools.spec.md",
+      "docs/specs/structured-session-state.spec.md",
     ],
   },
   {
@@ -339,9 +353,10 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Turn And Command State",
     status: "in-progress",
     summary:
-      "Tracks every turn on the orchestrator surface and handler thread surfaces, including each turn's top-level turn decision, plus every tool call including execute_typescript snippets and generated-client child command facts, as durable state with lifecycle status, ownership, linkage, attempts, and trace-versus-surface visibility.",
+      "Tracks every turn on the orchestrator surface and handler thread surfaces, including each turn's top-level turn decision, plus every tool call including execute_typescript snippets and generated-client child command facts, as durable state with lifecycle status, ownership, linkage, attempts, trace-versus-surface visibility, and ordered command projection events for output, progress, patch/file-change snapshots, approvals, waits, child links, workspace diff updates, and terminal facts.",
     sourceSpecs: [
       "docs/specs/structured-session-state.spec.md",
+      "docs/specs/live-tool-projection.spec.md",
       "docs/specs/extension/thread-managing.extension.spec.md",
     ],
   },

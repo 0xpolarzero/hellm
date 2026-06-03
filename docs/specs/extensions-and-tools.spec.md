@@ -32,6 +32,9 @@ Related specs:
   implementation behind the Thread Orchestration and Thread Handling extension records and the
   concrete `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`,
   `thread_request_report`, `thread_current`, and `thread_report` APIs.
+- `docs/specs/live-tool-projection.spec.md` defines the Codex-like live turn item, streamed
+  argument, runtime progress, file-change preview, command output, approval, wait, and final command
+  projection model used by native tools and command-family visualizations.
 - `docs/specs/extension/cx.extension.spec.md` defines the shipped prompt-only cx extension and its direct CLI
   boundary.
 - `docs/specs/extension/web.extension.spec.md` defines the shipped prompt-only Web extension and TinyFish CLI
@@ -73,8 +76,8 @@ The product should expose a first-class Extensions model:
 The goal is a conservative coding-agent tool model for ordinary coding work, close to Codex and
 other strong coding agents, while making `svvy` opinionated where it has product-specific leverage:
 actor-scoped capability composition, explicit generated agent contexts, extension loading, extension
-authoring, encrypted app-managed secrets, rich tool-use visualization, and reversible app-state
-changes.
+authoring, encrypted app-managed secrets, Codex-like live tool-use projection, and reversible
+app-state changes.
 
 ## Explicitly Rejected Or Deferred Ideas
 
@@ -2053,6 +2056,9 @@ Codex details worth preserving unless implementation constraints force a change:
 - initial `exec_command` yield waits are clamped between a small minimum and a maximum around 30s
 - `write_stdin` empty polls wait longer than non-empty writes
 - output is streamed to UI events and also returned as a bounded tool response snapshot
+- live command rendering follows `docs/specs/live-tool-projection.spec.md`: the command card appears
+  when the tool item starts, output deltas append while the process runs, and final command facts are
+  authoritative after completion
 - long-running process entries are pruned by a bounded process manager, preferring old exited
   processes before live recent ones
 - Codex uses a maximum of 64 remembered unified exec processes; `svvy` should use the same number
@@ -2119,13 +2125,22 @@ Codex collapses a parsed command display to unknown when any parsed segment is u
 should borrow that conservative display behavior: mixed known/unknown shell pipelines must not show
 only the known part as if the full command was understood.
 
-Extension-scoped command visualization contributions for cx, git, GitHub CLI, Smithers, Extension
-Managing, TinyFish CLI commands, and other known command families are optional display
-improvements. If implemented, they must parse actual `exec_command` input and output at the command
-boundary. They must not rely on hidden assistant-authored Markdown directives such as
-`git-create-pr`, `git-push`, or similar milestone markers. A pull request creation fact is a GitHub
-CLI or API event, not a git operation. In v1, authoritative capture comes only from `svvy`-owned tool
-and command boundaries.
+Extension-scoped command visualization contributions for cx, git, GitHub CLI, Extension Managing,
+TinyFish CLI commands, future revamped workflow bridge commands, and other known command families
+are optional display improvements. If implemented, they must parse actual `exec_command` input and
+output at the command boundary. They must not rely on hidden assistant-authored Markdown directives
+such as `git-create-pr`, `git-push`, or similar milestone markers. A pull request creation fact is a
+GitHub CLI or API event, not a git operation. In v1, authoritative capture comes only from
+`svvy`-owned tool and command boundaries.
+
+`svvy` must not emit, parse, store, display, or act on assistant-authored hidden Markdown directives
+for product state, even as best-effort hints. Product state comes from tool boundaries, runtime
+events, command facts, durable records, and trusted command output.
+
+Command-family visualization is layered over the generic live tool projection model. `svvyx ...`,
+`git ...`, `gh ...`, `cx ...`, and `tinyfish ...` remain ordinary `exec_command` inputs; any richer
+display is a renderer over command arguments, trusted command-family markers, command output, and
+final command facts, not a separate model-facing tool or security boundary.
 
 ### Apply Patch Source And Policy
 
@@ -2141,6 +2156,13 @@ Reference sources:
 - `docs/references/codex/codex-rs/apply-patch/src/lib.rs`
 - `docs/references/codex/codex-rs/core/src/safety.rs`
 - `docs/references/codex/codex-rs/protocol/src/permissions.rs`
+
+Live rendering for `apply_patch` must follow Codex's `fileChange` item model. While the model is
+streaming the freeform patch argument, `svvy` should parse complete snapshots into structured file
+changes and update the patch preview progressively. The runtime still performs one apply attempt for
+one accepted tool call, and the final command facts plus post-apply diff state are authoritative.
+The agent should not be prompted or rewarded for emitting many tiny `apply_patch` calls solely to
+make the UI animate.
 
 Policy:
 
