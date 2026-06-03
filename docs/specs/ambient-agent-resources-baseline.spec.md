@@ -727,8 +727,9 @@ Resolved `svvy` execution policy:
 - `full-access` maps to no approval boundary and disabled managed filesystem permissions
 - `networkAccess` defaults to true; when false, outbound network access is restricted and the shipped
   Web extension is disabled through normal extension binding
-- workflow task agents use this same execution policy for task-local shell, patch, network, and
-  generated-client boundaries, scoped to the owning Smithers task attempt
+- workflow task agents use this same execution policy for task-local shell, patch, network, parent
+  `execute_typescript`, and generated loaded-extension client boundaries, scoped to the owning
+  Smithers task attempt
 
 Pi-specific rule:
 

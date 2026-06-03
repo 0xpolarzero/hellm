@@ -656,63 +656,66 @@ cli.command("status", {
 This file is derived from
 `/Users/polarzero/code/wevm/incur/skills/incur-typescript-client/SKILL.md`.
 
-The generated instruction must preserve the original skill's local client guidance as faithfully as
-possible. It should present `MemoryClient` as the normal local in-process client path for `svvyx`
-extension work, not as one transport option among many.
+This instruction is the generic Execute TypeScript guidance for consuming loaded `svvyx` extension
+clients. It must preserve the original skill's wording, headings, and full commented output examples
+as faithfully as possible wherever the content still applies, but it must be adapted to the
+generated `extensions.<extension-id>` API.
 
-Keep these source sections and examples, reframed as local client guidance:
+Keep these source sections and examples, reframed as generated extension-client guidance:
 
-- Creating Clients, only the `MemoryClient.create(...)` path
+- public `incur/client` imports, limited to `Client`, `Resources`, `Run`, and other public types that
+  snippets may use directly
+- command map and command id explanation
 - Running Commands
+- strict input examples
+- output controls and pagination
 - CTAs
-- Errors
+- Errors with `Client.ClientError`
 - Streaming
-- Discovery Resources only for local CLI/client `llms`, `llmsFull`, `schema`, and `help` resources
-- command-scoped `llms`, `llmsFull`, `schema`, and `help` discovery examples
-- local skills actions
-- local MCP actions
-- Lower-Level Notes only where they describe memory/local client behavior
+- Discovery Resources only when the exact generated declaration for a loaded extension exposes that
+  resource surface through `extensions.<extensionId>`, such as `llms`, `llmsFull`, `schema`, `help`,
+  and `openapi`
+- command-scoped `llms`, `llmsFull`, `schema`, and `help` discovery examples only when the generated
+  declaration for that loaded extension includes those resources
 
 Remove these source sections and references:
 
 - frontmatter
 - Setup type-generation instructions
 - generated-file setup commands
+- Creating Clients
 - `HttpClient`
 - `HttpTransport`
+- `MemoryClient`
+- `MemoryTransport`
+- `Client.create()`
 - remote or served CLI guidance
 - HTTP transport details
 - HTTP endpoint and RPC endpoint details
 - Fetch gateway caveats
-- contrast language such as "HTTP clients do not expose local actions"
-- language that frames local actions as "memory-only" rather than "local client actions"
+- all client-construction examples
+- local Incur setup actions
+- local Skills actions
+- local MCP actions
 - generated Skills index, generated Skills get, or generated MCP tool inventory examples as
   discovery resources
 
-The generated instruction may document local skills and MCP client actions, but only as local client
-actions under a heading named `Local Client Actions`. These local actions are only Incur
-local-client operations for authoring or testing external agent setup; they are not how `svvy` loads
-extensions, grants tools, or registers MCP. The generated instruction must not imply that `svvy` uses
-Incur MCP, Incur HTTP, installed Incur Skills, or local MCP registration as the agent runtime
-integration. The runtime integration remains generated agent context, the stable `svvyx` dispatcher,
-and generated `execute_typescript` extension clients.
+Apply these exact corrections:
 
-The normal local client setup shape is:
+- replace `client.run(...)` with `extensions.<extensionId>.run(...)`
+- keep the original full commented output examples, changing only client variable names, generated
+  command-map type names, and extension ids needed to make examples fit the `extensions` namespace
+- say the `extensions` object contains only loaded TypeScript-enabled `svvyx` extensions available
+  to the current actor
+- say `incur/client` is importable inside snippets
+- say agents should import `Client` from `incur/client` when they need `Client.ClientError`
+- say agents must not construct `MemoryClient`, import extension implementation files, or use local
+  Incur setup actions
+- do not mention a global `svvy` client or injected `api` object
 
-```ts
-import { MemoryClient } from "incur/client";
-import cli from "./cli.js";
-
-const client = MemoryClient.create(cli, {
-  env: {
-    ACME_TOKEN: "dev_secret_123",
-  },
-  outputFormat: "toon",
-});
-```
-
-Generated `execute_typescript` clients should be explained as typed calls into the same Incur command
-surface that agents can call through `svvyx <extension-id> ...`.
+`MemoryClient.create(cli, { env })` remains the internal svvy runtime plumbing for generated clients,
+as defined in `docs/specs/extension/svvyx-incur-runtime.spec.md`. It is not agent-facing
+`execute_typescript` guidance.
 
 ## Common Output Rules
 

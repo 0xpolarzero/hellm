@@ -204,25 +204,42 @@ the Extensions pane or app settings; they must never ask the user to paste secre
 ## Generated TypeScript Clients
 
 Generated TypeScript clients are a typed composition surface inside `execute_typescript`. They are
-not a second shell dispatcher and not a separate approval surface.
+not a second shell dispatcher and not a separate approval surface. The top-level
+`execute_typescript` tool call goes through the normal approval-boundary path before the snippet
+runs.
 
 For a loaded `svvyx` extension with TypeScript API enabled, generated clients should use the same
-current build and the same Incur command contracts as shell dispatch. The preferred implementation is
-to import the current build's default Incur CLI and use Incur's memory client or equivalent in-process
+current build and the same Incur command contracts as shell dispatch. The implementation should
+import the current build's default Incur CLI and use Incur's memory client or equivalent in-process
 client path with the same explicit extension env source:
 
 ```text
-extensions.linear.issuesList(...)
+extensions.linear.run("issues.list", { options: { status: "open" } })
   -> generated client for loaded extension "linear"
   -> import linear current build CLI
   -> MemoryClient.create(cli, { env: extensionEnv("linear") })
-  -> run the Incur command
+  -> run the Incur command "issues.list"
   -> record a child command under the parent execute_typescript command
 ```
 
 Generated client calls must apply the same readiness checks, env injection rules, redaction, command
-fact recording, and failure semantics as `svvyx` shell dispatch. They must not expose or depend on a
-generic Incur client object in the agent-facing TypeScript declaration.
+fact recording, and failure semantics as `svvyx` shell dispatch. Agent-facing TypeScript sees only
+per-loaded-extension Incur-compatible command clients under `extensions.<extension-id>`, not a broad
+generic all-extension client.
+
+`MemoryClient` is internal plumbing for generated clients. Agent-authored snippets must not
+construct `MemoryClient`, import extension current-build files, or use MemoryClient local actions.
+The exposed `extensions.<extension-id>` object must remove local Incur client actions such as local
+Skills or MCP setup actions. The only cross-extension abstraction is the `extensions` wrapper.
+
+Generated client declarations must preserve Incur command semantics:
+
+- command ids are the extension's Incur command paths
+- inputs use Incur `args`, `options`, and output controls
+- non-streaming results use the Incur `Run.Result` envelope
+- streaming commands use Incur stream response semantics
+- command failures throw `Client.ClientError` from `incur/client`
+- snippets may import public types and errors from `incur/client`
 
 Available-but-not-loaded extensions and unavailable extensions do not contribute generated
 TypeScript clients, even though the stable `svvyx` dispatcher may technically dispatch any known

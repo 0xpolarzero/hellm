@@ -16,8 +16,10 @@ Decision: host command execution through `exec_command`, `svvyx ...` through `ex
 with vendored or ported Codex Seatbelt policy generation, default-on `networkAccess`, and approval
 modes `auto-review`, `user`, and `full-access`.
 
-Later follow-up: implement the shared runtime policy and decide the exact confinement strategy for
-arbitrary `execute_typescript` snippets that do not go through generated `svvy` or extension clients.
+Later follow-up: implement the shared runtime policy and exact confinement strategy for arbitrary
+`execute_typescript` snippets that do not go through generated loaded-extension clients. The
+top-level `execute_typescript` action itself must use the same approval-boundary path as other
+approval-gated native actions before execution.
 
 Reference: `docs/codebase-audit-issue-research.md`, AUD-001.
 

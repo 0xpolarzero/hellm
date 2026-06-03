@@ -1784,12 +1784,13 @@ Incur provides:
 - command schemas
 - generated docs
 - generated `Commands` types
-- typed client inputs for generated `svvy` and extension clients when useful
+- typed client inputs for generated loaded-extension clients when useful
 
 Incur does not itself give the model tools. The model can use an Incur-backed `svvyx` command only
 through `exec_command`. Generated TypeScript clients may call loaded extension contracts from
 `execute_typescript`, but those clients are typed composition helpers, not a separate model-facing
-`svvyx` command runner and not a separate approval surface.
+`svvyx` command runner and not a separate approval surface. The top-level `execute_typescript` tool
+call is the approval-boundary action for TypeScript execution.
 
 ### Stable Dispatcher
 
@@ -1843,12 +1844,16 @@ binding refresh are owned by `svvy`.
 The resolved model is:
 
 - the snippet may run ordinary TypeScript
-- generated `svvy` and loaded-extension clients are the preferred way to call `svvy` capabilities
-  from TypeScript
-- generated clients are actor-scoped and extension-scoped
-- generated clients expose only capabilities that are currently loaded and allowed for the actor
+- the top-level `execute_typescript` tool call goes through the same approval-boundary flow as other
+  approval-gated native actions before the snippet runs
+- the generated `extensions` object is the preferred way to call loaded TypeScript-enabled `svvyx`
+  extensions from TypeScript
+- generated extension clients are actor-scoped and extension-scoped
+- generated clients expose only loaded TypeScript-enabled `svvyx` extensions that are currently
+  available to the actor
 - no broad hand-written helper surface for ordinary repository primitives is part of the final
   spec
+- there is no global `svvy` client and no injected `api` object in the resolved API
 - arbitrary TypeScript side effects that do not go through generated clients are treated as opaque
   process behavior for UI capture and policy
 
@@ -1856,18 +1861,18 @@ The TypeScript API is controlled per extension. If an extension has TypeScript A
 still be callable through `svvyx` when loaded, but generated TypeScript client helpers for that
 extension are not included in `execute_typescript`.
 
-Generated clients should be built from the same source contracts as the loaded extension runtime:
-
-- native tool schemas for loaded native tool extensions
-- `svvyx`/Incur command schemas for loaded `svvyx` extensions
-- app-owned control contracts for loaded native control tools
+Generated clients should be built from the same `svvyx`/Incur command schemas as the loaded
+extension runtime. `typescriptApiEnabled` is valid only for `svvyx` extensions; native-tool
+extensions do not opt into generated TypeScript clients.
 
 Prompt-only extensions do not contribute generated TypeScript clients. In particular, the shipped
 Web extension is prompt-only TinyFish CLI guidance and does not expose generated Web clients.
 
-Implementation may use Incur's typed client machinery where it is the best source contract for an
-extension CLI. That is an implementation detail; the agent-facing contract is generated
-actor-scoped TypeScript clients, not an exposed generic Incur client requirement.
+Implementation uses Incur's typed client machinery for `svvyx` extension CLIs. Internally, generated
+clients may call current extension builds through `MemoryClient.create(cli, { env })`, but
+`MemoryClient` is not agent-facing. The agent-facing contract is an actor-scoped `extensions`
+wrapper whose loaded extension entries expose Incur-compatible `.run(commandId, input)` clients.
+Snippets may import public types and errors from `incur/client`, including `Client.ClientError`.
 
 ## Native Tool Classification
 
@@ -3746,7 +3751,7 @@ read-only external inputs.
 | Base: Workflow Task Agent (`base-workflow-task`) | shipped | instructions | Smithers task-attempt role instructions for task-local coding-agent work under workflow runtime ownership | unavailable | unavailable | default_loaded |
 | Shell | shipped | native_tool | `exec_command`, `write_stdin`, Codex-like shell instructions, and `svvyx` access through `exec_command` | default_loaded | default_loaded | default_loaded |
 | Apply Patch | shipped | native_tool | `apply_patch` with Codex-like structured patch instructions for repository and allowed extension file edits | default_loaded | default_loaded | default_loaded |
-| Execute TypeScript | shipped | native_tool | `execute_typescript` with generated `svvy` and loaded-extension clients as the preferred TypeScript interface | default_loaded | default_loaded | default_loaded |
+| Execute TypeScript | shipped | native_tool | `execute_typescript` with top-level approval-boundary classification and generated `extensions.<id>.run(...)` clients for loaded TypeScript-enabled `svvyx` extensions as the preferred TypeScript interface; no global `svvy` client, no broad injected `api` helpers, and no generated clients for prompt-only cx/Web/Git/GitHub | default_loaded | default_loaded | default_loaded |
 | Extension Loading | shipped | native_tool | `list_extensions`, `load_extension`; fixed app-native control, always default-loaded and not configurable | default_loaded | default_loaded | default_loaded |
 | Request User Input (`request-user-input`) | shipped | native_tool | `request_user_input`; one visible dual-variant extension whose active nonblocking or blocking variant controls the loaded instructions, tool schema descriptions, and runtime behavior | default_loaded | default_loaded | unavailable |
 | Thread Orchestration (`thread-orchestration`) | shipped | native_tool | Orchestrator-only handler-thread controls: `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`, and `thread_request_report`; concrete API is defined in `docs/specs/extension/thread-managing.extension.spec.md` | default_loaded | unavailable | unavailable |
@@ -3759,7 +3764,7 @@ read-only external inputs.
 | GitHub | shipped | instructions | GitHub/`gh` CLI guidance for issues, PRs, review comments, Actions, publishing, and wrap-up; no wrapper CLI or generated TypeScript client by default | default_loaded | default_loaded | available |
 | External Instructions | external_instruction | instructions | read-only external instruction files such as `AGENTS.md` and `CLAUDE.md`, surfaced with open-external-file controls | default_loaded | default_loaded | default_loaded |
 | Project CI | shipped | instructions | Project CI authoring guidance for defining and maintaining CI workflow lanes; no tools by default | available | available | unavailable |
-| Artifacts | shipped | svvyx | `svvyx artifacts create/inspect/list/open/delete` for durable single-file byproducts, evidence, previews, reports, logs, and screenshots, plus generated `extensions.artifacts.*` TypeScript clients; concrete API is defined in `docs/specs/extension/artifacts.extension.spec.md` | default_loaded | default_loaded | default_loaded |
+| Artifacts | shipped | svvyx | `svvyx artifacts create/inspect/list/open/delete` for durable single-file byproducts, evidence, previews, reports, logs, and screenshots, plus the generated Incur-compatible `extensions.artifacts.run(...)` TypeScript client when loaded; concrete API is defined in `docs/specs/extension/artifacts.extension.spec.md` | default_loaded | default_loaded | default_loaded |
 
 The Git and GitHub extensions must not wrap `git` or `gh` by default. Agents use ordinary shell
 commands and command help. App-owned startup, extension refresh, `list_extensions`, and Extension

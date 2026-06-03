@@ -37,8 +37,8 @@ The resolved cx v1 model is:
   `cx_lang_list`, `cx_lang_add`, `cx_lang_remove`, `cx_cache_path`, or `cx_cache_clean` as native
   model tools.
 - `svvy` does not expose `svvyx cx`.
-- `svvy` does not expose `api.cx_*`, `svvy.cx.*`, `extensions.cx.*`, or any generated cx
-  TypeScript client in v1.
+- `svvy` does not expose `api.cx_*`, `extensions.cx.*`, or any generated cx TypeScript client in
+  v1.
 - `svvy` does not wrap cx in an Incur CLI or expose Incur to agents for cx.
 
 This is intentional. cx already has a small agent-facing CLI and an agent-facing `cx skill`
@@ -303,7 +303,6 @@ cx has no generated TypeScript SDK in v1.
 The following generated clients are explicitly not part of the intended product surface:
 
 - `api.cx_*`
-- `svvy.cx.*`
 - `extensions.cx.*`
 
 This is a deliberate simplification. A cx TypeScript SDK would reintroduce a wrapper surface around a

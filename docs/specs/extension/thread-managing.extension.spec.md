@@ -841,8 +841,8 @@ thread_handoff({ title: "...", summary: "...", body: "..." });
 thread_handoffs({ threadId: "thread_123" });
 thread_report({ conclude: { outcome: "succeeded" } });
 thread_report({ workflowRunId: "smithers_run_123" });
-api.thread.start(...); // broad execute_typescript helper family
-api.workflow.*;        // parallel svvy workflow abstraction
+extensions.thread.start(...); // broad execute_typescript helper family
+extensions.workflow.*;        // parallel workflow abstraction
 ```
 
 Workflow run launch and exact Smithers run resume use Smithers-native tools inside the handler

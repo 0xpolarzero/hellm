@@ -98,14 +98,24 @@ the user asked for deletion or the task explicitly requires cleaning up an artif
 When writing TypeScript inside `execute_typescript`, prefer the generated client:
 
 ```ts
-await extensions.artifacts.create({ path, title, mimeType });
-await extensions.artifacts.inspect({ id });
-await extensions.artifacts.list({ threadId, limit });
-await extensions.artifacts.open({ id });
-await extensions.artifacts.delete({ id });
+await extensions.artifacts.run("create", {
+  options: { path, title, mimeType },
+});
+await extensions.artifacts.run("inspect", {
+  options: { id },
+});
+await extensions.artifacts.run("list", {
+  options: { threadId, limit },
+});
+await extensions.artifacts.run("open", {
+  options: { id },
+});
+await extensions.artifacts.run("delete", {
+  options: { id },
+});
 ```
 
-Generated client failures reject with `ArtifactCommandError`.
+Generated client failures reject with `Client.ClientError` from `incur/client`.
 
 HTML artifact previews are sandboxed by the product. You cannot loosen preview sandbox permissions
 through command flags, TypeScript inputs, MIME type overrides, or artifact content.
@@ -116,9 +126,10 @@ minimal available instruction:
 
 ```md
 Artifacts can create, inspect, open, list, and delete durable byproduct/evidence files through
-`svvyx artifacts ...` and generated `extensions.artifacts.*` TypeScript clients. Load Artifacts when
-you need to preserve screenshots, logs, reports, previews, workflow exports, CI evidence, or other
-large inspectable outputs outside the repository tree.
+`svvyx artifacts ...`; once Artifacts is loaded, `execute_typescript` also receives the generated
+`extensions.artifacts.run(...)` TypeScript client. Load Artifacts when you need to preserve
+screenshots, logs, reports, previews, workflow exports, CI evidence, or other large inspectable
+outputs outside the repository tree.
 ```
 
 ## Product Model
@@ -506,7 +517,9 @@ known. Deleting an unknown artifact returns `ARTIFACT_NOT_FOUND`.
 
 ## Generated TypeScript API
 
-When Artifacts is loaded for an actor, `execute_typescript` receives this generated client:
+When Artifacts is loaded for an actor, `execute_typescript` receives an Incur-compatible generated
+client at `extensions.artifacts`. The exact helper type names are generated, but the command map must
+be equivalent to:
 
 ```ts
 type ArtifactRef = {
@@ -519,59 +532,125 @@ type ArtifactRef = {
   createdAt: string;
 };
 
-type ArtifactCommandError = Error & {
-  name: "ArtifactCommandError";
-  code: ArtifactErrorResult["error"]["code"];
-  message: string;
-  path?: string;
-  id?: string;
-  result: ArtifactErrorResult;
-};
-
-declare const extensions: {
-  artifacts: {
-    create(input: {
+type ArtifactsCommands = {
+  create: {
+    args: {};
+    options: {
       path: string;
       title?: string;
       mimeType?: string;
-    }): Promise<ArtifactRef>;
-
-    inspect(input: {
+    };
+    output: ArtifactRef;
+  };
+  inspect: {
+    args: {};
+    options: {
       id: string;
-    }): Promise<ArtifactRef>;
-
-    list(input?: {
+    };
+    output: ArtifactRef;
+  };
+  list: {
+    args: {};
+    options: {
       threadId?: string;
       limit?: number;
-    }): Promise<{
+    };
+    output: {
       artifacts: ArtifactRef[];
-    }>;
-
-    open(input: {
+    };
+  };
+  open: {
+    args: {};
+    options: {
       id: string;
-    }): Promise<{
+    };
+    output: {
       id: string;
       opened: true;
-    }>;
-
-    delete(input: {
+    };
+  };
+  delete: {
+    args: {};
+    options: {
       id: string;
-    }): Promise<{
+    };
+    output: {
       id: string;
       deleted: true;
-    }>;
+    };
   };
 };
+
+declare const extensions: {
+  artifacts: IncurExtensionClient<ArtifactsCommands>;
+};
+```
+
+Agent-authored snippets use the generated client with Incur command ids and `options`:
+
+```ts
+const created = await extensions.artifacts.run("create", {
+  options: {
+    path: "/private/tmp/coverage-report.html",
+    title: "Coverage report",
+    mimeType: "text/html",
+  },
+});
+
+console.log(created);
+/// Run.Result<ArtifactRef, ArtifactsCommands>
+// {
+//   ok: true,
+//   data: {
+//     id: "artifact_01JZ3R9YH0V8C8V6K4F6N1HX4A",
+//     path: "/Users/polarzero/.config/svvy/artifacts/session_01JZ3R8Y4B/artifact_01JZ3R9YH0V8C8V6K4F6N1HX4A-coverage-report.html",
+//     name: "Coverage report",
+//     mimeType: "text/html",
+//     bytes: 48291,
+//     sha256: "9d59a7f6c8b9d72204a9dbbb0d5e5f27f3ff948731b73420f4e7e8f2820a6e9b",
+//     createdAt: "2026-06-04T09:42:31.214Z",
+//   },
+//   output: {
+//     text: "id: artifact_01JZ3R9YH0V8C8V6K4F6N1HX4A\npath: /Users/polarzero/.config/svvy/artifacts/session_01JZ3R8Y4B/artifact_01JZ3R9YH0V8C8V6K4F6N1HX4A-coverage-report.html\nname: Coverage report\nmimeType: text/html\nbytes: 48291\nsha256: 9d59a7f6c8b9d72204a9dbbb0d5e5f27f3ff948731b73420f4e7e8f2820a6e9b\ncreatedAt: 2026-06-04T09:42:31.214Z",
+//     format: "toon",
+//   },
+//   meta: {
+//     command: "create",
+//     duration: "18ms",
+//   },
+// }
+```
+
+Handle failures with `Client.ClientError`:
+
+```ts
+import { Client } from "incur/client";
+
+try {
+  await extensions.artifacts.run("inspect", {
+    options: { id: "artifact_missing" },
+  });
+} catch (error) {
+  if (error instanceof Client.ClientError) {
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+    };
+  }
+  throw error;
+}
 ```
 
 Generated-client calls:
 
 - use the same Incur command contracts as `svvyx artifacts ...`
-- reject with `ArtifactCommandError` on command failure rather than resolving an `{ error }` union
+- reject with `Client.ClientError` on command failure rather than resolving an `{ error }` union
 - apply the same readiness checks, env injection, redaction, command facts, and failure semantics as
   shell dispatch
 - create child command records under the parent `execute_typescript` command
-- do not expose a generic Incur client object to agent-authored TypeScript
+- expose only the per-loaded-extension client under `extensions.artifacts`; do not expose
+  `MemoryClient`, local actions, or a broad all-extension Incur client
 
 ## Preview And UX
 

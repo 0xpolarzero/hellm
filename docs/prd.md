@@ -225,9 +225,10 @@ The adopted direction for task agents is:
 - use a PI-backed workflow task agent by default when a workflow task needs an adaptive coding agent
 - give that task agent a minimal `svvy` workflow-task system prompt rather than the orchestrator or handler-thread prompt
 - expose a task-local generated capability set plus `execute_typescript` for typed composition
-- run task-local shell, patch, network, and generated-client boundaries through the same `svvy`
-  execution policy as orchestrators and handler threads, including managed sandboxing,
-  `networkAccess`, and the configured approval mode, scoped to the exact Smithers task attempt
+- run task-local shell, patch, network, parent `execute_typescript`, and generated loaded-extension
+  client boundaries through the same `svvy` execution policy as orchestrators and handler threads,
+  including managed sandboxing, `networkAccess`, and the configured approval mode, scoped to the
+  exact Smithers task attempt
 - keep `thread_start`, `thread_report`, `thread_request_report`, `thread_episodes`, `request_user_input`, and `smithers_*` out of the default task-agent runtime and tool schema instead of describing absent controls in prompt prose
 - keep Smithers workflow approval and hijack as Smithers runtime or operator controls around the
   task, not as ordinary task-agent tools
@@ -279,22 +280,31 @@ CLI dependency confirmation flow; agents must not run package-manager install co
 
 That includes:
 
-- batching direct-tool calls
-- looping over many results
-- filtering and aggregating search output
+- batching loaded-extension calls
+- looping over many structured extension results
+- filtering and aggregating already available structured output
 - producing durable artifact evidence from composed results
 
-Inside `execute_typescript`, the runtime exposes actor-specific generated TypeScript clients.
+Inside `execute_typescript`, the runtime exposes an actor-specific generated `extensions` object.
 
-Generated clients expose only loaded `svvy` and extension capabilities that are useful inside
-TypeScript composition and callable by the current actor. They are generated from the same source
-contracts as the runtime tools or extension commands. They do not preserve a broad hand-written
-helper surface for ordinary repository primitives.
+`extensions` contains only loaded TypeScript-enabled `svvyx` extensions that are callable by the
+current actor. If the actor has loaded extensions `a`, `b`, and `d`, the generated declarations and
+instructions include only `extensions.a`, `extensions.b`, and `extensions.d` plus those extensions'
+command types and command-specific guidance. There is no global `svvy` client and no broad injected
+`api` helper surface.
 
-The default orchestrator generated TypeScript client does not include workflow discovery, Smithers runtime control, or any `workflow` or `smithers` namespace. Workflow action from the orchestrator normally goes through `thread_start` into a handler thread.
+Generated extension clients use the Incur-compatible shape
+`extensions.<extensionId>.run(commandId, input)`. Agents may import public types and errors from
+`incur/client`, including `Client.ClientError`, inside snippets. `MemoryClient` is internal plumbing
+used by the app to invoke current extension builds and is not exposed to agent-authored snippets.
 
-The default workflow task-agent generated TypeScript client includes only task-local clients. It does
-not include workflow discovery, Smithers runtime control, or handler/orchestrator control clients.
+The default orchestrator `execute_typescript` extension set does not include workflow discovery,
+Smithers runtime control, or any `workflow` or `smithers` namespace. Workflow action from the
+orchestrator normally goes through `thread_start` into a handler thread.
+
+The default workflow task-agent `execute_typescript` extension set includes only task-local loaded
+extension clients. It does not include workflow discovery, Smithers runtime control, or
+handler/orchestrator control clients.
 
 File edits use `apply_patch`.
 
@@ -302,6 +312,12 @@ Every submitted snippet is persisted as a file-backed artifact in the configured
 and the runtime must compile or typecheck the snippet before execution.
 
 Structured diagnostics must be produced, and invalid snippets must not run.
+
+The top-level `execute_typescript` tool call goes through the same approval-boundary flow as other
+approval-gated native actions before the snippet runs. Generated extension-client calls inside an
+approved snippet are recorded as child commands and enforce extension readiness, env injection,
+redaction, product-state validation, and failure semantics, but they are not the first approval gate
+for arbitrary TypeScript execution.
 
 Live rendering for `execute_typescript` follows the shared tool projection model: the source argument
 may stream into a code preview, the persisted source artifact and typecheck diagnostics are runtime

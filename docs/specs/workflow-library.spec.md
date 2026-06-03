@@ -58,6 +58,11 @@ This split is intentional.
 
 Asset discovery and saved-library writes are not workflow launch.
 
+This spec does not define a Workflows `svvyx` extension or an `execute_typescript`
+`extensions.workflows.*` client. Do not expose the Workflows library read model through
+`extensions.workflows.run(...)` unless a future spec adds a real loaded TypeScript-enabled `svvyx`
+Workflows extension contract.
+
 Exact native-tool and `execute_typescript` shapes are provided by generated tool schemas and TypeScript declarations. Exact handler-authored runnable entry and workflow task-agent shapes are provided by the generated workflow-authoring declaration.
 
 ## Handler-Owned Authoring
@@ -278,7 +283,7 @@ The adopted handler-side workflow-authoring flow is:
 
 1. A handler thread decides that direct bounded work is not enough and a workflow is justified.
 2. The handler uses its injected generated workflow-authoring contract, guide, and examples first.
-3. The handler uses the loaded Workflows extension generated client or Workflows library read model as needed.
+3. The handler uses the Workflows library read model as needed.
 4. The handler inspects promising saved definitions, prompts, or component files through
    `exec_command` before relying on implementation details.
 5. The handler may use future packaged-app-safe workflow-agent components when that Workflows behavior is adopted.
@@ -293,12 +298,12 @@ The adopted handler-side workflow-authoring flow is:
 
 ### Authoring-Time Asset Discovery
 
-Handlers discover reusable assets through the loaded Workflows extension generated client and the
-Workflows library read model.
+Handlers discover reusable assets through the Workflows library read model. This is not an
+`execute_typescript` generated extension client in this spec.
 
 This is the primary discovery interface for saved and artifact authoring assets.
 
-The generated client contract is the exact input and output contract. It returns the enforced asset
+The generated command contract is the exact input and output contract. It returns the enforced asset
 identity metadata plus a workspace-relative `path`.
 
 Each returned asset has:
@@ -348,8 +353,9 @@ Supported filters are:
 - `modelId?`
 - `includeUnavailable?`
 
-When the handler has a generated TypeScript client for workflow authoring, the generated client
-method must use the same contract as `workflow_list_models`.
+If `workflow_list_models` is ever mirrored into `execute_typescript`, that mirror must be exposed only
+through a loaded TypeScript-enabled `svvyx` extension contract and must use the same input and output
+contract as `workflow_list_models`.
 
 ### Runnable Workflow Discovery
 
@@ -370,7 +376,7 @@ Each returned runnable workflow entry includes the handler-visible launch contra
 
 This preserves the intended split:
 
-- loaded Workflows extension generated clients and read models for authoring-time asset discovery
+- Workflows library read models for authoring-time asset discovery
 - `apply_patch` for saved-library writes
 - `smithers_*` for launch and supervision
 

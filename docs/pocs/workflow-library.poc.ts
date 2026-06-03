@@ -5,7 +5,7 @@
  * - saved reusable assets live under `.svvy/workflows/{definitions,prompts,components}`
  * - runnable saved entries live under `.svvy/workflows/entries`
  * - artifact workflows live under `.svvy/artifacts/workflows/<id>/{...,entries,metadata.json}`
- * - the loaded Workflows extension generated client provides authoring-time asset discovery
+ * - the Workflows library read model provides authoring-time asset discovery
  * - `workflow_list_models()` exposes pi-normalized provider/model/reasoning choices for fresh task-agent authoring
  * - `smithers_list_workflows` is reserved for runnable entries and lists both saved and artifact entries
  * - launch goes through a minimal bridge-shaped `smithers_*` seam rather than a trace-local helper
@@ -1242,7 +1242,7 @@ async function runArtifactAuthoringScenario(
     args: { purpose: "discover saved definitions before reading promising files" },
     childCalls: [
       {
-        toolName: "extensions.workflows.listAssets",
+        toolName: "workflow_library_read_model.assets.list",
         args: { kind: "definition", scope: "saved" },
         result: summarizeAssets(definitionAssets),
       },
@@ -1259,7 +1259,7 @@ async function runArtifactAuthoringScenario(
     args: { purpose: "discover saved prompts before reading promising files" },
     childCalls: [
       {
-        toolName: "extensions.workflows.listAssets",
+        toolName: "workflow_library_read_model.assets.list",
         args: { kind: "prompt", scope: "saved" },
         result: summarizeAssets(promptAssets),
       },
@@ -1276,7 +1276,7 @@ async function runArtifactAuthoringScenario(
     args: { purpose: "discover saved components before reading promising files" },
     childCalls: [
       {
-        toolName: "extensions.workflows.listAssets",
+        toolName: "workflow_library_read_model.assets.list",
         args: { kind: "component", scope: "saved" },
         result: summarizeAssets(savedComponents),
       },
@@ -1388,7 +1388,7 @@ async function runArtifactAuthoringScenario(
     },
     childCalls: [
       {
-        toolName: "extensions.workflows.listAssets",
+        toolName: "workflow_library_read_model.assets.list",
         args: { kind: "component", scope: "both" },
         result: summarizeAssets(allComponents),
       },
@@ -1529,7 +1529,7 @@ async function runExplicitSaveScenario(
     },
     childCalls: [
       {
-        toolName: "extensions.workflows.listAssets",
+        toolName: "workflow_library_read_model.assets.list",
         args: { scope: "saved", pathPrefix: ".svvy/workflows/" },
         result: summarizeAssets(savedAssets),
       },

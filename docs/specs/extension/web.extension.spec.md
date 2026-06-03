@@ -36,7 +36,8 @@ The resolved Web v1 model is:
 - `web` is prompt-only.
 - `web` is default-loaded for eligible actors only while `networkAccess` is enabled.
 - `web` teaches agents to use the official TinyFish CLI directly through ordinary shell commands.
-- `svvy` does not expose `web_search`, `web_fetch`, `svvyx web`, `api.web_*`, or `svvy.web.*`.
+- `svvy` does not expose `web_search`, `web_fetch`, `svvyx web`, `api.web_*`, or generated Web
+  TypeScript clients.
 - `svvy` does not own Web provider selection, Web provider readiness, Web provider API keys, Web
   schemas, Web tool output, or Web artifacts in v1.
 
@@ -350,8 +351,6 @@ The following generated TypeScript clients are not part of the intended product 
 
 - `api.web_search`
 - `api.web_fetch`
-- `svvy.web.search`
-- `svvy.web.fetch`
 - `extensions.web.*`
 
 The following product settings are not part of the intended product surface:

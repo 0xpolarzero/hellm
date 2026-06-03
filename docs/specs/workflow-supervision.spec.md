@@ -310,11 +310,13 @@ The adopted direction is:
   extension usage state
 - do not load ambient pi built-in tools or workspace-discovered extension tools into the task agent runtime
 - execute the task agent and its task-local tools from Smithers' current task root or worktree, while leaving Smithers runtime DB ownership and `svvy` workflow projection workspace-scoped
-- run task-local shell, patch, network, and generated-client boundaries through the same `svvy`
-  agent/runtime execution path used by orchestrators and handler threads, including Codex-like macOS
-  sandboxing, `networkAccess`, and approval modes `auto-review`, `user`, and `full-access`
-- scope any approval raised by a shell, `apply_patch`, network, or generated-client boundary to the
-  exact workflow task attempt identified by Smithers run and attempt identity
+- run task-local shell, patch, network, parent `execute_typescript`, and generated loaded-extension
+  client boundaries through the same `svvy` agent/runtime execution path used by orchestrators and
+  handler threads, including Codex-like macOS sandboxing, `networkAccess`, and approval modes
+  `auto-review`, `user`, and `full-access`
+- scope any approval raised by a shell, `apply_patch`, network, parent `execute_typescript`, or
+  generated loaded-extension client boundary to the exact workflow task attempt identified by
+  Smithers run and attempt identity
 - preserve structured message arrays, step boundaries, and usage across retries, schema repair prompts, and hijack handoff instead of flattening continuation state into plain transcript prose
 - stream live assistant deltas and tool updates so heartbeat freshness and UI activity reflect real task-agent progress rather than only terminal text
 

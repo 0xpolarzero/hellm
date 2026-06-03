@@ -23,9 +23,12 @@
   - need to figure out when it's sensible to run so it doesn't bloat the machine; in a vm it would solve it but the (remote) vm is something we need to figure out separately
   - should support both automatic post-work runs and manual runs from a clearer UX surface
 
-- use sandboxing separate from environment 
+- use sandboxing separate from environment
   - https://x.com/nicoalbanese10/status/2043745569278251112
-  - keep the initial `execute_typescript` implementation unsandboxed; sandboxing should be a later hardening layer around the same `execute_typescript` and generated-client contract, not a different execution model
+  - route parent `execute_typescript` through the same approval and sandbox classification path as
+    other approval-boundary commands before snippet execution
+  - generated loaded-extension client calls inside `execute_typescript` still record child command
+    facts and enforce extension readiness, env, redaction, and failure semantics
   - https://github.com/vercel-labs/open-agents
 
 - integration with jjhub/codeplane would make sense, for instance:

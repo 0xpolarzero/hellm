@@ -49,19 +49,20 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 ## 2. `execute_typescript`
 
 - [x] Build a POC `execute_typescript` runtime with compile or typecheck-before-run diagnostics and the adopted TypeScript input/output contract. Commit(s): `76cc8f3`, `b41e5e6`
-- [x] Expose a minimal `execute_typescript` tool with the adopted input/output contract and injected `api.*` surface. Commit(s): `76cc8f3`
+- [ ] Expose the resolved `execute_typescript` runtime surface with no global `svvy` client and no injected `api` object.
 - [x] Persist each attempted snippet as a file-backed artifact before execution, with SQLite metadata and path indexing. Commit(s): `76cc8f3`, `fff54d7`
-- [x] Generate the typed declaration for the `execute_typescript` subset of direct tools. Commit(s): `76cc8f3`, `29d8452`
-- [ ] Generate and enforce actor-specific `execute_typescript` capability profiles so orchestrators do not receive workflow or Smithers control through generated TypeScript clients, handler threads receive only clients for their loaded extensions, and workflow task agents receive only task-local generated clients.
+- [ ] Route the top-level `execute_typescript` action through the same approval-boundary path as other approval-gated native actions before executing submitted code.
+- [ ] Generate actor-specific `execute_typescript` declarations containing only the current actor's loaded TypeScript-enabled `svvyx` extension clients under `extensions.<id>`, plus only those extensions' command map types.
+- [ ] Make `incur/client` importable in `execute_typescript` snippets for public Incur types and `Client.ClientError`.
 - [x] Run a simple composed scripted task through `execute_typescript`. Commit(s): `76cc8f3`
 - [x] Build a POC artifact and tracing pipeline for code-mode execution. Commit(s): `76cc8f3`
 - [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Keep thread orchestration, thread handling, extension loading, and request-user-input as small `svvy`-native control surfaces while exposing Smithers workflow operations through Smithers-native bridge tools. Commit(s): `a02bd48`
-- [x] Keep the `execute_typescript` API bounded to generated clients that benefit from typed composition. Commit(s): `76cc8f3`, `29d8452`
+- [ ] Expose generated `svvyx` extension clients as Incur-compatible `extensions.<id>.run(commandId, input)` clients, with `MemoryClient` and local Incur actions kept internal.
 - [x] Expose Codex-like Shell and Apply Patch extensions, with `exec_command`, `write_stdin`, and `apply_patch` as the normal coding-agent work interface. Commit(s): `76cc8f3`, `29d8452`
-- [ ] Keep cx out of generated `execute_typescript` clients; generated TypeScript profiles should not expose `api.cx_*`, `svvy.cx.*`, or `extensions.cx.*`.
+- [ ] Keep cx out of generated `execute_typescript` clients; generated TypeScript profiles should not expose `api.cx_*` or `extensions.cx.*`.
 - [x] Record direct tool calls and nested code-mode calls in the shared structured command model. Commit(s): `76cc8f3`, `29d8452`
-- [x] Persist normalized child-command facts for nested `api.*` calls while the parent `execute_typescript` attempt remains the main semantic unit. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
+- [ ] Persist normalized child-command facts for generated `extensions.<id>.run(...)` calls while the parent `execute_typescript` attempt remains the main semantic unit.
 - [x] Surface parent rollups and trace inspector detail without promoting child commands to top-level cards. Commit(s): `5b0a223`
 
 ## 2A. Prompt-Only TinyFish Web Extension

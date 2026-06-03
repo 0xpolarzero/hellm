@@ -212,9 +212,9 @@ The app should create artifact records in these cases:
 1. Automatically, for mandatory runtime evidence such as every submitted `execute_typescript` snippet.
 2. Automatically, when a runtime needs to retain a large stdout, stderr, diagnostics, trace, screenshot, workflow export, or other execution payload that is too bulky for command facts or transcript text.
 3. Explicitly, through `svvyx artifacts create --path <file> --json` or the generated
-   `extensions.artifacts.create(...)` TypeScript client, when an agent creates or obtains a durable
-   single-file byproduct that should be inspectable later but should not normally live in the
-   repository.
+   `extensions.artifacts.run("create", { options: { path, ... } })` TypeScript client, when an
+   agent creates or obtains a durable single-file byproduct that should be inspectable later but
+   should not normally live in the repository.
 
 The app should not create artifact records for:
 

@@ -56,11 +56,11 @@ flowchart TD
     end
 
     subgraph GenericExec["Generic Execution"]
-        Compile["Compile or typecheck snippet against api.* types"]
+        ApproveTs["Classify execute_typescript approval boundary"]
+        Compile["Compile or typecheck snippet against generated extensions types"]
         Run["Run valid TypeScript program"]
-        Api["Injected generated TypeScript clients"]
-        ApiSvvy["generated svvy clients"]
-        ApiExtensions["generated loaded-extension clients"]
+        Api["Generated extensions object"]
+        ApiExtensions["loaded svvyx clients under extensions.<id>"]
     end
 
     subgraph Runtime["Runtime Handlers"]
@@ -96,10 +96,10 @@ flowchart TD
     Decide --> Wait
     Decide --> DirectReply
 
-    Generic --> Compile
+    Generic --> ApproveTs
+    ApproveTs --> Compile
     Compile --> Run
     Run --> Api
-    Api --> ApiSvvy
     Api --> ApiExtensions
     Api --> RuntimeHandler
 
@@ -202,9 +202,10 @@ The adopted direction is:
 - use a PI-backed workflow task agent by default when a workflow task needs an adaptive agent
 - give that workflow task agent a minimal `svvy` workflow-task prompt rather than the orchestrator or handler-thread prompt
 - expose task-local direct tools plus `execute_typescript` for typed composition
-- run task-local shell, patch, network, and generated-client boundaries through the same `svvy`
-  execution policy as orchestrators and handler threads, including Codex-like macOS sandboxing,
-  `networkAccess`, and approval modes, scoped to the exact Smithers task attempt
+- run task-local shell, patch, network, parent `execute_typescript`, and generated loaded-extension
+  client boundaries through the same `svvy` execution policy as orchestrators and handler threads,
+  including Codex-like macOS sandboxing, `networkAccess`, and approval modes, scoped to the exact
+  Smithers task attempt
 - do not expose `thread_start`, `thread_report`, `thread_request_report`, `thread_episodes`, `wait`, or `smithers_*` to workflow task agents or mention those unavailable controls in their base prompt
 - do not load ambient pi built-in tools or workspace-discovered extension tools into workflow task agents
 - execute workflow task agents from Smithers' current task root or worktree rather than from the workspace runtime DB root
@@ -322,14 +323,17 @@ No runtime path infers CI from arbitrary workflow output, command names, logs, o
 - Direct tools are the default coding-agent work surface.
 - cx prompt-only CLI guidance is part of generated actor context and is the preferred first step for supported code navigation when the cx extension is loaded; agents run official `cx` commands through `exec_command`.
 - ordinary repository inspection uses `exec_command` with shell tools such as `rg`, `sed`, `cat`, `ls`, `find`, `git show`, `nl`, and `wc`.
-- generated `execute_typescript` clients are derived from loaded native tools and loaded extensions; broad hand-written `api.read`, `api.bash`, and `api.workflow_*` helper families are not part of the resolved model.
+- generated `execute_typescript` extension clients are derived from loaded TypeScript-enabled
+  `svvyx` extensions; broad hand-written `api.read`, `api.bash`, and `api.workflow_*` helper
+  families, as well as a global `svvy` client, are not part of the resolved model.
 - Thread Orchestration controls, Thread Handling controls, `load_extension`, and `wait` remain `svvy`-native control tools.
 - workflow supervision should use Smithers-native bridge tools such as `smithers_run_workflow`, `smithers_get_run`, and `smithers_resolve_approval`.
 - the Smithers-native capability set targets product-runtime runnable workflows rather than the repo authoring workspace under `workflows/`.
 - capability declarations are actor-specific: the orchestrator gets only orchestrator-callable tools, and handler threads get only handler-callable tools.
 - workflow task agents are another actor class below handler threads and should receive only task-local cx CLI instructions, direct tools, and `execute_typescript`, with no ambient pi extension-tool leakage.
 - runtime handlers and bridges write durable facts from real execution; agents do not mutate product state through arbitrary write tools.
-- child `api.*` calls remain nested command facts under a parent `execute_typescript` command.
+- generated `extensions.<id>.run(...)` calls remain nested command facts under a parent
+  `execute_typescript` command.
 - tool-run summaries stay on command records and artifacts; ordinary handler replies do not emit episodes.
 - workflow runs are durable execution records under a handler thread.
 - episodes are the main reusable semantic outputs returned to the orchestrator.

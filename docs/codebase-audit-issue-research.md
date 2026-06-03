@@ -77,7 +77,7 @@ The five source audits used slightly different scoring scales, but the combined 
 - **Test quality:** mostly 5/10 to 6/10. Unit coverage is broad, but e2e/proof tests include retries, force clicks, live-provider gates, stale delete assertions, and missing restart/resume paths.
 - **UX/product clarity:** mostly 5/10 to 7/10. Dockview, logs, command palette, and inspectors are substantial, but missing semantic transcript cards, incomplete palette routes, artifact ownership, and related-link gaps can confuse users.
 - **Performance risk:** mostly 6/10 to 8/10 risk. The repeated concerns were full snapshot streaming, Markdown reparsing, workflow inspector polling/rebuilds, broad SQLite selectors, app-log aggregation, path-index churn, registry refresh churn, and sync scans.
-- **Security/privacy risk:** mostly 7/10 to 8/10 risk, with one audit scoring 4/10 but still listing high-leverage risks. Repeated concerns were bridge exposure, unsandboxed `execute_typescript`, arbitrary artifact file reads, HTML preview sandboxing, provider secrets, private URL validation, and redaction gaps.
+- **Security/privacy risk:** mostly 7/10 to 8/10 risk, with one audit scoring 4/10 but still listing high-leverage risks. Repeated concerns were bridge exposure, incomplete `execute_typescript` approval and sandbox boundary implementation, arbitrary artifact file reads, HTML preview sandboxing, provider secrets, private URL validation, and redaction gaps.
 
 ### Do Not Change Casually
 
@@ -206,7 +206,7 @@ Relevant code:
 - `src/bun/execute-typescript-tool.ts`: runtime execution via `new Function(...)`.
 - `src/bun/default-system-prompt.ts`: prompt-only instruction that code should use the provided API.
 
-**Why this matters later:** TypeScript checking prevents some undeclared names at compile time, but JavaScript dynamic evaluation still reaches host capabilities. If `svvy` later needs to treat agent code or shell commands as untrusted, the current model is not enough: file, process, network, or other host operations can happen without going through a narrow recorded `api.*` call surface.
+**Why this matters later:** TypeScript checking prevents some undeclared names at compile time, but JavaScript dynamic evaluation still reaches host capabilities. If `svvy` later needs to treat agent code or shell commands as untrusted, the current model is not enough: file, process, network, or other host operations can happen without going through a narrow recorded generated-client call surface.
 
 **Later fix:** Design one host-execution confinement model that covers both `execute_typescript` and bash.
 
@@ -214,7 +214,7 @@ The clean long-term fix is a real execution boundary:
 
 1. Keep typechecking/transpilation in the trusted Bun process.
 2. Execute compiled snippets in a constrained subprocess, worker isolate, or OS sandbox with a minimal global object.
-3. Expose only the allowed `api.*` capabilities through an RPC bridge from the sandbox to the host.
+3. Expose only the allowed generated `extensions.<id>.run(...)` capabilities through an RPC bridge from the sandbox to the host.
 4. Validate every RPC call against the current actor's capability profile before performing host work.
 5. Record host-side effects from that RPC layer, not from snippet-side assumptions.
 
@@ -223,7 +223,7 @@ Do not rely on deleting globals from the current realm, prompt text, TypeScript 
 **Future verification required:**
 
 - Unit tests where snippets try `Function("return process")`, `globalThis.Bun`, `eval`, dynamic imports, and constructor escapes; all must fail without host side effects.
-- Tests showing allowed `api.*` calls still work and are recorded.
+- Tests showing allowed generated extension-client calls still work and are recorded.
 - Regression tests for current typecheck behavior, artifact APIs, child-command APIs, and web APIs.
 - A destructive-operation guard test proving denied snippets do not spawn child commands or write files.
 
