@@ -544,80 +544,37 @@ negative inventory belongs to product specs, not loaded agent instructions.
 
 ### `020-incur-cli-authoring.md`
 
-This file is derived from `/Users/polarzero/code/wevm/incur/SKILL.md`.
+The instruction content is:
 
-The generated instruction must preserve the original skill as faithfully as possible. The transform
-may remove only material for surfaces that `svvy` does not expose to authoring agents, and may apply
-only the `svvyx` corrections listed below.
+````md
+# Incur CLI Authoring
 
-Keep these source sections and their examples except for the corrections below:
+Incur is the TypeScript framework used for `svvyx` extension CLIs. It builds CLIs for agents and
+human consumption with strictly typed schemas for arguments and options, structured output envelopes,
+token-aware output controls, and agent-readable command documentation.
 
-- Quick Start
-- Creating a CLI
-- Commands
-- Registering commands
-- Subcommand groups
-- Arguments & Options
-- Arguments
-- Options
-- Aliases
-- Deprecated options
-- Environment variables
-- Usage patterns
-- Output
-- Output schema
-- Formats
-- Envelope
-- Filtering output
-- Token pagination
-- Command schema
-- TTY detection
-- Run Context
-- `agent` boolean
-- `ok()` and `error()` helpers
-- CTAs
-- `--llms` flag
-- Built-in Flags, except remove `--mcp`
-- Examples
-- Typed examples on commands
-- Hints
-- Output policy
-- Middleware
-- Vars
-- Streaming
-- Full Example
+Use this guidance when creating or editing a `svvyx` extension's Incur CLI.
 
-Remove these source sections and references:
+In `svvyx` extension source, default-export the CLI. Do not call `cli.serve()` in the module. svvy
+invokes the default-exported CLI when an agent runs:
 
-- frontmatter
-- Install
-- Fetch API
-- Fetch API + OpenAPI
-- Serve CLI as Fetch API
-- Fetch gateways
-- MCP over HTTP
-- MCP Server
-- `mcp add`
-- `--mcp` flag
-- Skills add installation/configuration material
-- Serving
-- `serve()` options
-- `cli.fetch`
-- Type Generation
-- TypeScript Client
-- intro wording that says discovery is through MCP, HTTP, gateways, or installed Skills
+```sh
+svvyx <extension-id> <command> ...
+```
 
-Apply these exact corrections:
+Command names and flags are owned by the extension's Incur CLI. Agents call them through `svvyx`.
 
-- Replace examples that call `cli.serve()` from the module with `export default cli`.
-- If an example needs invocation prose, describe agent invocation as
-  `svvyx <extension-id> <command> ...`.
-- Replace language that says env is parsed from `process.env` with language that says extension
-  authors declare env with Incur env schemas and read app-managed values from `c.env`.
-- Do not copy examples that read app-managed secrets with `process.env.MY_SECRET`.
-- Do not tell agents to install Incur or run type generation.
+Declare app-managed env through Incur env schemas and read it from command or middleware context as
+`c.env`. Do not read app-managed secrets from `process.env.MY_SECRET`. svvy injects env explicitly
+through Incur and does not mutate `process.env`.
 
-The corrected Quick Start shape is:
+If TypeScript API is enabled, generated clients are another typed way to call the same Incur
+commands. They are not a separate custom SDK surface.
+
+Missing required env is a runtime readiness issue. Declare env requirements clearly, but do not ask
+users to paste secrets into chat.
+
+## Quick Start
 
 ```ts
 import { Cli, z } from "incur";
@@ -635,7 +592,207 @@ const cli = Cli.create("greet", {
 export default cli;
 ```
 
-The corrected env shape is:
+```sh
+svvyx greet world
+# -> message: hello world
+```
+
+## Creating A CLI
+
+`Cli.create()` is the entry point. It has two modes.
+
+### Single-command CLI
+
+Pass `run` to create a CLI with no subcommands:
+
+```ts
+const cli = Cli.create("tool", {
+  description: "Does one thing",
+  args: z.object({ file: z.string() }),
+  run({ args, options }) {
+    return { processed: args.file };
+  },
+});
+
+export default cli;
+```
+
+### Router CLI
+
+Omit `run` to create a CLI that registers subcommands via `.command()`:
+
+```ts
+const cli = Cli.create("gh", {
+  version: "1.0.0",
+  description: "GitHub CLI",
+});
+
+cli.command("status", {
+  description: "Show repo status",
+  run() {
+    return { clean: true };
+  },
+});
+
+export default cli;
+```
+
+## Commands
+
+### Registering Commands
+
+```ts
+cli.command("install", {
+  description: "Install a package",
+  args: z.object({
+    package: z.string().optional().describe("Package name"),
+  }),
+  options: z.object({
+    saveDev: z.boolean().optional().describe("Save as dev dependency"),
+    global: z.boolean().optional().describe("Install globally"),
+  }),
+  alias: { saveDev: "D", global: "g" },
+  output: z.object({
+    added: z.number(),
+    packages: z.number(),
+  }),
+  examples: [
+    { args: { package: "express" }, description: "Install a package" },
+    {
+      args: { package: "vitest" },
+      options: { saveDev: true },
+      description: "Install as dev dependency",
+    },
+  ],
+  run({ args, options }) {
+    return { added: 1, packages: 451 };
+  },
+});
+```
+
+`.command()` is chainable:
+
+```ts
+cli
+  .command("ping", { run: () => ({ pong: true }) })
+  .command("version", { run: () => ({ version: "1.0.0" }) });
+```
+
+### Subcommand Groups
+
+Create a sub-CLI and mount it as a command group:
+
+```ts
+const cli = Cli.create("gh", { description: "GitHub CLI" });
+
+const pr = Cli.create("pr", { description: "Pull request commands" });
+
+pr.command("list", {
+  description: "List pull requests",
+  options: z.object({
+    state: z.enum(["open", "closed", "all"]).default("open"),
+  }),
+  run({ options }) {
+    return { prs: [], state: options.state };
+  },
+});
+
+pr.command("view", {
+  description: "View a pull request",
+  args: z.object({ number: z.number() }),
+  run({ args }) {
+    return { number: args.number, title: "Fix bug" };
+  },
+});
+
+cli.command(pr);
+
+export default cli;
+```
+
+```sh
+svvyx gh pr list --state closed
+svvyx gh pr view 42
+```
+
+Groups nest arbitrarily:
+
+```ts
+const cli = Cli.create("gh", { description: "GitHub CLI" });
+const pr = Cli.create("pr", { description: "Pull requests" });
+const review = Cli.create("review", { description: "Review commands" });
+
+review.command("approve", { run: () => ({ approved: true }) });
+pr.command(review);
+cli.command(pr);
+// -> svvyx gh pr review approve
+```
+
+## Arguments & Options
+
+All schemas use Zod. Arguments are positional, assigned by schema key order. Options are named flags.
+
+### Arguments
+
+```ts
+args: z.object({
+  repo: z.string().describe("Repository in owner/repo format"),
+  branch: z.string().optional().describe("Branch name"),
+});
+```
+
+```sh
+svvyx git-tools clone owner/repo main
+#                      ^^^^^^^^^^ ^^^^
+#                      repo       branch
+```
+
+### Options
+
+```ts
+options: z.object({
+  state: z.enum(["open", "closed"]).default("open").describe("Filter by state"),
+  limit: z.number().default(30).describe("Max results"),
+  label: z.array(z.string()).optional().describe("Filter by labels"),
+  verbose: z.boolean().optional().describe("Show details"),
+});
+```
+
+Supported parsing:
+
+- `--flag value` and `--flag=value`
+- `-f value` short aliases, via `alias`
+- `--verbose` boolean flags (`true`), `--no-verbose` (`false`)
+- `--label bug --label feature` array options
+- automatic type coercion from strings to numbers and booleans
+- defaults from `.default()`, optionality from `.optional()`
+
+### Aliases
+
+```ts
+alias: { state: "s", limit: "l" };
+```
+
+```sh
+svvyx tool list -s closed -l 10
+```
+
+### Deprecated Options
+
+Mark options as deprecated with `.meta({ deprecated: true })`. Deprecated options show
+`[deprecated]` in `--help`, `**Deprecated.**` in skill docs, `deprecated: true` in JSON Schema, and
+emit a stderr warning in TTY mode.
+
+```ts
+options: z.object({
+  zone: z.string().optional().describe("Availability zone").meta({ deprecated: true }),
+  region: z.string().optional().describe("Target region"),
+});
+```
+
+### Environment Variables
+
+Declare env in the CLI and read app-managed values from `c.env`:
 
 ```ts
 const cli = Cli.create("gh-tools", {
@@ -651,71 +808,539 @@ cli.command("status", {
 });
 ```
 
+Do not read app-managed secrets from `process.env`.
+
+### Usage Patterns
+
+Define alternative usage patterns to show in `--help` instead of the auto-generated synopsis:
+
+```ts
+Cli.create("curl.md", {
+  args: z.object({ url: z.string() }),
+  options: z.object({ objective: z.string().optional() }),
+  usage: [
+    { args: { url: true } },
+    { args: { url: true }, options: { objective: true } },
+    { prefix: "cat file.txt |", suffix: "| head" },
+  ],
+  run({ args }) {
+    return { content: "..." };
+  },
+});
+```
+
+Renders in help as:
+
+```text
+Usage: curl.md <url>
+       curl.md <url> --objective <objective>
+       cat file.txt | curl.md | head
+```
+
+Each usage entry supports:
+
+| Property  | Type                         | Description                                      |
+| --------- | ---------------------------- | ------------------------------------------------ |
+| `args`    | `Partial<Record<key, true>>` | Argument keys to include as `<key>` placeholders |
+| `options` | `Partial<Record<key, true>>` | Option keys to include as `--key <key>` flags    |
+| `prefix`  | `string`                     | Text prepended before the command, e.g. piping   |
+| `suffix`  | `string`                     | Text appended after the command                  |
+
+Both `args` and `options` are strictly typed from the Zod schemas. Usage patterns also work on
+subcommands via `.command()`.
+
+## Output
+
+Every command returns data. Incur wraps it in a structured envelope and serializes to the requested
+format.
+
+### Output Schema
+
+Define `output` to declare the return shape:
+
+```ts
+cli.command("info", {
+  output: z.object({
+    name: z.string(),
+    version: z.string(),
+  }),
+  run() {
+    return { name: "express", version: "4.21.2" };
+  },
+});
+```
+
+When `output` is provided, TypeScript enforces that `run()` returns the correct shape.
+
+### Formats
+
+Control with `--format <fmt>` or `--json`:
+
+| Flag            | Format   | Description                                  |
+| --------------- | -------- | -------------------------------------------- |
+| _(default)_     | TOON     | Token-efficient, about 40% fewer tokens than JSON |
+| `--format json` | JSON     | `JSON.parse()`-safe                          |
+| `--format yaml` | YAML     | Human-readable                               |
+| `--format md`   | Markdown | Tables for docs/issues                       |
+
+### Envelope
+
+With `--full-output`, the full envelope is emitted:
+
+```sh
+svvyx tool info express --full-output
+```
+
+```text
+ok: true
+data:
+  name: express
+  version: 4.21.2
+meta:
+  command: info
+  duration: 12ms
+```
+
+Without `--full-output`, only `data` is emitted. On errors, only the `error` block is emitted.
+
+### Filtering Output
+
+Use `--filter-output` to prune command output to specific keys. It supports dot notation for nested
+access, array slices with `[start,end]`, and comma-separated paths.
+
+```ts
+cli.command("users", {
+  description: "List users",
+  run() {
+    return {
+      users: [
+        { name: "Alice", email: "alice@example.com", role: "admin" },
+        { name: "Bob", email: "bob@example.com", role: "user" },
+        { name: "Carol", email: "carol@example.com", role: "user" },
+      ],
+    };
+  },
+});
+```
+
+```sh
+svvyx tool users --filter-output users.name
+# -> [3]: Alice,Bob,Carol
+
+svvyx tool users --filter-output users[0,2].name
+# -> users[2]{name}:
+# ->   Alice
+# ->   Bob
+```
+
+### Token Pagination
+
+Use `--token-count`, `--token-limit`, and `--token-offset` to manage large outputs. Tokens are
+estimated using LLM tokenization rules.
+
+```sh
+svvyx tool users --token-count
+svvyx tool users --token-limit 20
+svvyx tool users --token-offset 20 --token-limit 20
+```
+
+With `--full-output`, truncated output includes `meta.nextOffset` for programmatic pagination.
+
+### Command Schema
+
+Use `--schema` to print the JSON Schema for a command's arguments, environment variables, options,
+and output:
+
+```ts
+cli.command("install", {
+  description: "Install a package",
+  args: z.object({
+    package: z.string().describe("Package name"),
+  }),
+  options: z.object({
+    saveDev: z.boolean().optional().describe("Save as dev dependency"),
+  }),
+  run({ args }) {
+    return { added: 1 };
+  },
+});
+```
+
+```sh
+svvyx tool install --schema
+# -> args:
+# ->   type: object
+# ->   properties:
+# ->     package:
+# ->       type: string
+# -> options:
+# ->   type: object
+# ->   properties:
+# ->     saveDev:
+# ->       type: boolean
+```
+
+Use `--schema --format json` for machine-readable output.
+
+### TTY Detection
+
+Incur adapts output based on whether stdout is a TTY:
+
+| Scenario              | TTY (human)             | Non-TTY (agent/pipe) |
+| --------------------- | ----------------------- | -------------------- |
+| Command output        | Formatted data only     | TOON envelope        |
+| Errors                | Human-readable message  | Error envelope       |
+| `--help`              | Pretty help text        | Same                 |
+| `--json` / `--format` | Overrides to structured | Same                 |
+
+## Run Context
+
+### `agent` Boolean
+
+The `run` context includes `agent`, which is true when stdout is not a TTY and false when running in
+a terminal:
+
+```ts
+cli.command("deploy", {
+  run(c) {
+    if (!c.agent) console.log("Deploying...");
+    return { status: "ok" };
+  },
+});
+```
+
+### `ok()` And `error()` Helpers
+
+Use the context helpers for explicit result control:
+
+```ts
+run(c) {
+  const item = await db.find(c.args.id);
+  if (!item) {
+    return c.error({
+      code: "NOT_FOUND",
+      message: `Item ${c.args.id} not found`,
+      retryable: false,
+    });
+  }
+  return c.ok(item);
+}
+```
+
+### CTAs
+
+Suggest next commands to guide agents on success:
+
+```ts
+run(c) {
+  const result = { id: 42, name: c.args.name };
+  return c.ok(result, {
+    cta: {
+      description: "Suggested commands:",
+      commands: [
+        { command: "get", args: { id: 42 }, description: "View the item" },
+        "list",
+      ],
+    },
+  });
+}
+```
+
+Or on errors, to help agents self-correct:
+
+```ts
+run(c) {
+  if (!c.env.GH_TOKEN) {
+    return c.error({
+      code: "NOT_AUTHENTICATED",
+      message: "GitHub token not configured.",
+      retryable: true,
+      cta: {
+        description: "Configure GitHub auth in svvy settings.",
+        commands: [
+          { command: "status", description: "Check extension readiness" },
+        ],
+      },
+    });
+  }
+  // ...
+}
+```
+
+## Agent Discovery
+
+### `--llms` Flag
+
+Every Incur CLI gets a built-in `--llms` flag that outputs an agent-readable manifest of all
+commands:
+
+```sh
+svvyx tool --llms
+```
+
+It outputs Markdown skill documentation by default.
+
+```md
+# tool install
+
+Install a package
+
+## Arguments
+
+| Name      | Type     | Required | Description             |
+| --------- | -------- | -------- | ----------------------- |
+| `package` | `string` | no       | Package name to install |
+
+## Options
+
+| Flag        | Type      | Default | Description            |
+| ----------- | --------- | ------- | ---------------------- |
+| `--saveDev` | `boolean` |         | Save as dev dependency |
+| `--global`  | `boolean` |         | Install globally       |
+```
+
+Use `--llms --format json` for the JSON schema manifest.
+
+## Built-in Flags
+
+| Flag             | Description                                 |
+| ---------------- | ------------------------------------------- |
+| `--help`, `-h`   | Show help for the CLI or a specific command |
+| `--version`      | Print CLI version                           |
+| `--llms`         | Output agent-readable command manifest      |
+| `--json`         | Shorthand for `--format json`               |
+| `--format <fmt>` | Output format: `toon`, `json`, `yaml`, `md` |
+| `--full-output`  | Include full envelope (`ok`, `data`, `meta`) |
+
+Do not document `--mcp`, MCP registration, HTTP serving, `cli.fetch`, or Skills installation in
+`svvyx` extension instructions.
+
+## Examples
+
+### Typed Examples On Commands
+
+```ts
+cli.command("deploy", {
+  args: z.object({ env: z.enum(["staging", "production"]) }),
+  options: z.object({ force: z.boolean().optional() }),
+  examples: [
+    { args: { env: "staging" }, description: "Deploy to staging" },
+    { args: { env: "production" }, options: { force: true }, description: "Force deploy to prod" },
+  ],
+  run({ args }) {
+    return { deployed: args.env };
+  },
+});
+```
+
+Examples appear in `--help` output and generated skill files.
+
+### Hints
+
+```ts
+cli.command("publish", {
+  hint: "Requires NPM_TOKEN to be configured in svvy.",
+  // ...
+});
+```
+
+Hints are displayed after examples in help output and included in skill files.
+
+### Output Policy
+
+Control whether output data is displayed to humans. `"all"` shows output to everyone.
+`"agent-only"` suppresses data in human/TTY mode while still returning it via `--json`, `--format`,
+or `--full-output`.
+
+```ts
+cli.command("deploy", {
+  outputPolicy: "agent-only",
+  run() {
+    return { id: "deploy-123", url: "https://staging.example.com" };
+  },
+});
+```
+
+Set on a group or root CLI to inherit across children. Children can override.
+
+## Middleware
+
+Register composable before/after hooks with `cli.use()`. Middleware executes in registration order,
+onion-style. Each calls `await next()` to proceed.
+
+```ts
+const cli = Cli.create("deploy-cli", { description: "Deploy tools" })
+  .use(async (c, next) => {
+    const start = Date.now();
+    await next();
+    console.log(`took ${Date.now() - start}ms`);
+  })
+  .command("deploy", {
+    run() {
+      return { deployed: true };
+    },
+  });
+```
+
+Middleware on a sub-CLI applies only to its commands. Per-command middleware runs after root and
+group middleware, and only for that command.
+
+### Vars: Typed Dependency Injection
+
+Declare a `vars` schema on `create()` to inject typed variables. Middleware sets them with `c.set()`;
+handlers read them via `c.var`. Use `.default()` for vars that do not need middleware.
+
+```ts
+const cli = Cli.create("my-cli", {
+  description: "My CLI",
+  vars: z.object({
+    user: z.custom<{ id: string; name: string }>(),
+    requestId: z.string(),
+    debug: z.boolean().default(false),
+  }),
+});
+
+cli.use(async (c, next) => {
+  c.set("user", await authenticate());
+  c.set("requestId", crypto.randomUUID());
+  await next();
+});
+
+cli.command("whoami", {
+  run(c) {
+    return { user: c.var.user, requestId: c.var.requestId, debug: c.var.debug };
+  },
+});
+```
+
+Middleware does not run for built-in commands such as `--help` and `--llms`.
+
+## Streaming
+
+Use `async *run` to stream chunks incrementally. Yield objects for structured data or plain strings
+for text:
+
+```ts
+cli.command("logs", {
+  description: "Tail logs",
+  async *run() {
+    yield "connecting...";
+    yield "streaming logs";
+    yield "done";
+  },
+});
+```
+
+Each yielded value is written as a line in human/TOON mode. With `--format jsonl`, each chunk becomes
+`{"type":"chunk","data":"..."}`. You can also yield objects:
+
+```ts
+async *run() {
+  yield { progress: 50 };
+  yield { progress: 100 };
+}
+```
+
+Use `ok()` or `error()` as the return value to attach CTAs or signal failure:
+
+```ts
+async *run({ ok }) {
+  yield { step: 1 };
+  yield { step: 2 };
+  return ok(undefined, { cta: { commands: ["status"] } });
+}
+```
+
+## Full svvyx Extension Example
+
+```ts
+import { Cli, z } from "incur";
+
+const cli = Cli.create("npm", {
+  version: "10.9.2",
+  description: "The package manager for JavaScript.",
+});
+
+cli.command("install", {
+  description: "Install a package",
+  args: z.object({
+    package: z.string().optional().describe("Package name to install"),
+  }),
+  options: z.object({
+    saveDev: z.boolean().optional().describe("Save as dev dependency"),
+    global: z.boolean().optional().describe("Install globally"),
+  }),
+  alias: { saveDev: "D", global: "g" },
+  output: z.object({
+    added: z.number().describe("Number of packages added"),
+    packages: z.number().describe("Total packages"),
+  }),
+  examples: [
+    { args: { package: "express" }, description: "Install a package" },
+    {
+      args: { package: "vitest" },
+      options: { saveDev: true },
+      description: "Install as dev dependency",
+    },
+  ],
+  run({ args }) {
+    if (!args.package) return { added: 120, packages: 450 };
+    return { added: 1, packages: 451 };
+  },
+});
+
+cli.command("outdated", {
+  description: "Check for outdated packages",
+  options: z.object({
+    global: z.boolean().describe("Check global packages"),
+  }),
+  alias: { global: "g" },
+  output: z.object({
+    packages: z.array(
+      z.object({
+        name: z.string(),
+        current: z.string(),
+        wanted: z.string(),
+        latest: z.string(),
+      }),
+    ),
+  }),
+  run() {
+    return {
+      packages: [{ name: "express", current: "4.18.0", wanted: "4.21.2", latest: "4.21.2" }],
+    };
+  },
+});
+
+export default cli;
+```
+
+Always `export default cli` so svvy can import the extension CLI and run it through `svvyx`.
+````
+
 ### `030-incur-typescript-client.md`
 
-This file is derived from
-`/Users/polarzero/code/wevm/incur/skills/incur-typescript-client/SKILL.md`.
-
 This instruction is the generic Execute TypeScript guidance for consuming loaded `svvyx` extension
-clients. It must preserve the original skill's wording, headings, and full commented output examples
-as faithfully as possible wherever the content still applies, but it must be adapted to the
-generated `extensions.<extension-id>` API.
+clients. Its exact content is the generic instruction text in
+`docs/specs/extension/execute-typescript.extension.spec.md` under `## Execute TypeScript
+Instruction`.
 
-Keep these source sections and examples, reframed as generated extension-client guidance:
+Do not generate this file from a transformation recipe at runtime, and do not create a second
+hand-maintained variant. Materialize the exact instruction text from that spec section so the
+Extension Managing guidance and the `execute_typescript` loaded instruction stay identical.
 
-- public `incur/client` imports, limited to `Client`, `Resources`, `Run`, and other public types that
-  snippets may use directly
-- command map and command id explanation
-- Running Commands
-- strict input examples
-- output controls and pagination
-- CTAs
-- Errors with `Client.ClientError`
-- Streaming
-- Discovery Resources only when the exact generated declaration for a loaded extension exposes that
-  resource surface through `extensions.<extensionId>`, such as `llms`, `llmsFull`, `schema`, `help`,
-  and `openapi`
-- command-scoped `llms`, `llmsFull`, `schema`, and `help` discovery examples only when the generated
-  declaration for that loaded extension includes those resources
+This file must not mention:
 
-Remove these source sections and references:
-
-- frontmatter
-- Setup type-generation instructions
-- generated-file setup commands
-- Creating Clients
+- a global `svvy` client
+- an injected `api` object
 - `HttpClient`
 - `HttpTransport`
 - `MemoryClient`
 - `MemoryTransport`
 - `Client.create()`
-- remote or served CLI guidance
-- HTTP transport details
-- HTTP endpoint and RPC endpoint details
-- Fetch gateway caveats
-- all client-construction examples
-- local Incur setup actions
-- local Skills actions
-- local MCP actions
-- generated Skills index, generated Skills get, or generated MCP tool inventory examples as
-  discovery resources
-
-Apply these exact corrections:
-
-- replace `client.run(...)` with `extensions.<extensionId>.run(...)`
-- keep the original full commented output examples, changing only client variable names, generated
-  command-map type names, and extension ids needed to make examples fit the `extensions` namespace
-- say the `extensions` object contains only loaded TypeScript-enabled `svvyx` extensions available
-  to the current actor
-- say `incur/client` is importable inside snippets
-- say agents should import `Client` from `incur/client` when they need `Client.ClientError`
-- say agents must not construct `MemoryClient`, import extension implementation files, or use local
-  Incur setup actions
-- do not mention a global `svvy` client or injected `api` object
-
-`MemoryClient.create(cli, { env })` remains the internal svvy runtime plumbing for generated clients,
-as defined in `docs/specs/extension/svvyx-incur-runtime.spec.md`. It is not agent-facing
-`execute_typescript` guidance.
+- extension implementation imports
+- Incur local Skills setup actions
+- Incur local MCP setup actions
 
 ## Common Output Rules
 

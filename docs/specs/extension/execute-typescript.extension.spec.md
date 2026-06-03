@@ -270,49 +270,531 @@ The last example has no child command facts because it does not call a generated
 
 ## Execute TypeScript Instruction
 
-The loaded Execute TypeScript instruction must be generic and must not contain the whole generated
-declaration block. It should be derived from
-`/Users/polarzero/code/wevm/incur/skills/incur-typescript-client/SKILL.md` by preserving the
-original wording, headings, and full commented output examples wherever the content still applies,
-then making only the `svvy`-specific corrections below.
+The loaded Execute TypeScript instruction is generic. It must not contain every generated extension
+declaration or every loaded extension's command docs. The exact command map and extension-specific
+examples are generated beside this instruction from the actor's loaded TypeScript-enabled `svvyx`
+extensions.
 
-Keep and adapt these Incur TypeScript client sections:
+The generic instruction text is:
 
-- public `incur/client` imports, limited to types and errors that snippets may use
-- command maps and command ids
-- Running Commands
-- strict inputs
-- output controls and pagination
-- CTAs
-- Errors with `Client.ClientError`
-- Streaming
-- Discovery Resources only when the exact generated declaration for a loaded extension exposes that
-  resource surface through `extensions.<extensionId>`; do not imply all generated clients include
-  resource helpers
+````md
+# Incur TypeScript Clients
 
-Remove these source sections and examples:
+Use this guidance when TypeScript code inside `execute_typescript` needs to call a loaded `svvyx`
+extension programmatically. Use shell commands when the operation is a one-shot CLI call or ordinary
+repository inspection.
 
-- Setup and type-generation instructions
-- `HttpClient`
-- `HttpTransport`
-- `MemoryClient`
-- `MemoryTransport`
-- `Client.create()`
-- remote or served CLI guidance
-- generated Skills local actions
-- MCP local actions
-- any example that constructs a client
+The public Incur client types and errors live in `incur/client`:
 
-Required substitutions:
+```ts
+import { Client, Resources, Run } from "incur/client";
+```
 
-- replace `client.run(...)` examples with `extensions.<extensionId>.run(...)`
-- keep the original full commented result examples, changing only client names, command-map type
-  names, and extension ids needed to make the example fit the generated `extensions` namespace
-- describe `extensions` as containing only loaded TypeScript-enabled `svvyx` extensions available to
-  the current actor
-- say `incur/client` is importable inside snippets
-- say agents must import `Client` from `incur/client` when they need `Client.ClientError`
-- say agents must not construct `MemoryClient` or import extension implementation files
+`incur/client` is available inside `execute_typescript` snippets. Import `Client` when you need to
+handle `Client.ClientError`.
+
+## Loaded Extension Clients
+
+`execute_typescript` exposes an actor-scoped `extensions` object. It contains only loaded
+TypeScript-enabled `svvyx` extensions available to the current actor.
+
+If the current actor has loaded TypeScript-enabled extensions `artifacts`, `linear`, and `jira`,
+then only those clients exist:
+
+```ts
+extensions.artifacts;
+extensions.linear;
+extensions.jira;
+```
+
+Available-but-not-loaded extensions and unavailable extensions do not appear in `extensions` and do
+not contribute command types, examples, or docs.
+
+There is no global `svvy` client and no injected `api` object.
+
+Do not construct `MemoryClient`, `HttpClient`, `Client.create()`, transports, or extension
+implementation imports inside snippets. The app owns the generated clients and injects extension env
+internally.
+
+## Command Maps And Command IDs
+
+Each generated extension client is typed from that extension's Incur command map. Command IDs are full
+Incur command paths such as `"project status"`, `"logs tail"`, or `"create"`.
+
+Command map entries have this shape:
+
+```ts
+type Commands = {
+  "project status": {
+    args: { projectId: string };
+    options: {};
+    output: { status: "ok" | "blocked" };
+  };
+  "logs tail": {
+    args: { service: string };
+    options: {};
+    output: { line: string };
+    stream: true;
+  };
+};
+```
+
+The actual command maps are generated for the loaded extensions available to this actor.
+
+## Running Commands
+
+`extensions.<extensionId>.run(command, input)` mirrors the extension's `svvyx <extension-id> ...`
+command surface. `args` are positional arguments, `options` are named flags, and output controls
+mirror global Incur CLI flags.
+
+```ts
+const report = await extensions.acme.run("project report", {
+  args: { projectId: "proj_web_2026" },
+  options: { includeClosed: false },
+
+  // Equivalent to --filter-output. This changes result.data, so data is typed unknown.
+  selection: ["summary", "items[0:3]", "nextCursor"],
+
+  // These affect rendered result.output.text, not the extension command's original full output.
+  outputFormat: "md",
+  outputTokenCount: true,
+  outputTokenLimit: 128,
+});
+```
+
+The returned value for non-streaming commands is `Run.Result<data, Commands>`:
+
+```ts
+console.log(report);
+/// Run.Result<unknown, AcmeCommands>
+// {
+//   ok: true,
+//   data: {
+//     summary: 'Website refresh is on track',
+//     items: [
+//       { id: 'task_1', title: 'Finalize copy', status: 'done' },
+//       { id: 'task_2', title: 'QA checkout flow', status: 'blocked' },
+//       { id: 'task_3', title: 'Publish launch checklist', status: 'open' },
+//     ],
+//     nextCursor: 'task_4',
+//   },
+//   output: {
+//     text: '## Website refresh is on track\n\n- done: Finalize copy\n- blocked: QA checkout flow',
+//     format: 'md',
+//     tokenCount: 37,
+//     tokenLimit: 128,
+//     tokenOffset: 0,
+//     next: [Function],
+//   },
+//   meta: {
+//     command: 'project report',
+//     duration: '18ms',
+//     cta: {
+//       commands: [
+//         {
+//           command: 'project unblock',
+//           cliCommand: 'project unblock task_2',
+//           description: 'Unblock the blocked checkout QA task.',
+//           args: { taskId: 'task_2' },
+//           options: {},
+//           raw: { command: 'project unblock', args: { taskId: 'task_2' } },
+//           run: [Function],
+//         },
+//       ],
+//     },
+//   },
+// }
+```
+
+Because `selection` changes the shape of `data`, selected results are typed as `unknown`.
+
+If `output.next` exists, fetch the next rendered output page for the same command:
+
+```ts
+const nextPage = await report.output?.next?.();
+
+console.log(nextPage);
+/// Run.Result<unknown, AcmeCommands> | undefined
+// {
+//   ok: true,
+//   data: { ... },
+//   output: {
+//     text: '- open: Publish launch checklist',
+//     format: 'md',
+//     tokenCount: 37,
+//     tokenLimit: 128,
+//     tokenOffset: 128,
+//   },
+//   meta: { command: 'project report', duration: '12ms' },
+// }
+```
+
+Input is strict. Required `args` and `options` make the input object required; unknown commands and
+extra keys are rejected by TypeScript when the command map is known.
+
+```ts
+await extensions.acme.run("project status", {
+  args: { projectId: "proj_web_2026" },
+});
+
+// Type error: unknown command.
+await extensions.acme.run("project missing");
+
+// Type error: missing required args.
+await extensions.acme.run("project status");
+```
+
+If an extension client has default output selection, result data is conservative `unknown`. Clear it
+for a call with `selection: undefined` to recover the full output type:
+
+```ts
+const selected = await extensions.acme.run("project report", {
+  args: { projectId: "proj_web_2026" },
+});
+// selected.data is unknown when the generated client applies default selection.
+
+const full = await extensions.acme.run("project report", {
+  args: { projectId: "proj_web_2026" },
+  selection: undefined,
+});
+
+console.log(full);
+/// Run.Result<ProjectReport, AcmeCommands>
+// {
+//   ok: true,
+//   data: {
+//     summary: 'Website refresh is on track',
+//     items: [
+//       { id: 'task_1', title: 'Finalize copy', status: 'done' },
+//       { id: 'task_2', title: 'QA checkout flow', status: 'blocked' },
+//       { id: 'task_3', title: 'Publish launch checklist', status: 'open' },
+//     ],
+//     nextCursor: 'task_4',
+//   },
+//   output: {
+//     text: 'summary: Website refresh is on track\nitems[3]{id,title,status}: ...',
+//     format: 'toon',
+//   },
+//   meta: { command: 'project report', duration: '18ms' },
+// }
+```
+
+## CTAs
+
+Commands can return CTAs in `meta.cta`. Client CTAs are runnable:
+
+```ts
+const cta = report.meta.cta?.commands[0];
+
+console.log(cta);
+/// Run.Cta<AcmeCommands> | undefined
+// {
+//   command: 'project unblock',
+//   cliCommand: 'project unblock task_2',
+//   description: 'Unblock the blocked checkout QA task.',
+//   args: { taskId: 'task_2' },
+//   options: {},
+//   raw: {
+//     command: 'project unblock',
+//     args: { taskId: 'task_2' },
+//     options: {},
+//     description: 'Unblock the blocked checkout QA task.',
+//   },
+//   run: [Function],
+// }
+
+if (cta) {
+  const result = await cta.run({
+    outputFormat: "toon",
+  });
+
+  console.log(result);
+  /// Run.Result<unknown, AcmeCommands>
+  // {
+  //   ok: true,
+  //   data: { unblocked: true, taskId: 'task_2' },
+  //   output: {
+  //     text: 'unblocked: true\ntaskId: task_2',
+  //     format: 'toon',
+  //   },
+  //   meta: { command: 'project unblock', duration: '14ms' },
+  // }
+}
+```
+
+CTA `run()` does not inherit output controls from the original command result. Pass the controls you
+want for the CTA run.
+
+CTA objects have `command`, `cliCommand`, optional `description`, `args`, `options`, `raw`, and
+`run()`. Do not check for a `runnable` property.
+
+## Errors
+
+Failed command runs and malformed client responses throw `Client.ClientError`:
+
+```ts
+import { Client } from "incur/client";
+
+try {
+  await extensions.acme.run("project deploy", {
+    args: { projectId: "proj_web_2026" },
+    options: { environment: "production" },
+  });
+} catch (error) {
+  if (error instanceof Client.ClientError) {
+    console.log(error);
+    /// Client.ClientError
+    // Incur.ClientError: Login required before deploying.
+    // {
+    //   message: 'Login required before deploying.',
+    //   code: 'NOT_AUTHENTICATED',
+    //   status: 401,
+    //   retryable: false,
+    //   fieldErrors: undefined,
+    //   meta: {
+    //     command: 'project deploy',
+    //     duration: '4ms',
+    //     cta: {
+    //       description: 'Authenticate before deploying.',
+    //       commands: [
+    //         {
+    //           command: 'auth login',
+    //           cliCommand: 'auth login',
+    //           description: 'Log in to Acme.',
+    //           args: {},
+    //           options: {},
+    //           raw: { command: 'auth login', description: 'Log in to Acme.' },
+    //           run: [Function],
+    //         },
+    //       ],
+    //     },
+    //   },
+    //   error: {
+    //     code: 'NOT_AUTHENTICATED',
+    //     message: 'Login required before deploying.',
+    //     retryable: false,
+    //   },
+    //   data: {
+    //     ok: false,
+    //     error: {
+    //       code: 'NOT_AUTHENTICATED',
+    //       message: 'Login required before deploying.',
+    //       retryable: false,
+    //     },
+    //     meta: {
+    //       command: 'project deploy',
+    //       duration: '4ms',
+    //       cta: { ... },
+    //     },
+    //   },
+    // }
+  }
+}
+```
+
+Do not use a structural `IncurClientError` alias. Import `Client` from `incur/client`.
+
+## Streaming
+
+Commands implemented with `async *run` return `Run.StreamResponse<chunk, finalData, Commands>`.
+
+```ts
+const stream = await extensions.acme.run("logs tail", {
+  args: { service: "checkout-api" },
+});
+
+for await (const chunk of stream) {
+  console.log(chunk);
+  /// LogLine
+  // {
+  //   timestamp: '2026-05-24T10:15:00Z',
+  //   level: 'info',
+  //   message: 'request completed',
+  // }
+}
+
+const final = await stream.final;
+
+console.log(final);
+/// Run.StreamFinal<unknown, AcmeCommands>
+// {
+//   ok: true,
+//   data: { lines: 124 },
+//   output: {
+//     text: 'lines: 124',
+//     format: 'toon',
+//   },
+//   meta: {
+//     command: 'logs tail',
+//     duration: '30s',
+//   },
+// }
+```
+
+Use `records()` when you need every stream record, including terminal error records:
+
+```ts
+const rawStream = await extensions.acme.run("logs tail", {
+  args: { service: "checkout-api" },
+});
+
+for await (const record of rawStream.records()) {
+  if (record.type === "chunk") {
+    console.log(record);
+    /// Extract<Run.StreamRecord<LogLine, unknown, AcmeCommands>, { type: 'chunk' }>
+    // {
+    //   type: 'chunk',
+    //   data: {
+    //     timestamp: '2026-05-24T10:15:00Z',
+    //     level: 'info',
+    //     message: 'request completed',
+    //   },
+    //   output: {
+    //     text: 'timestamp: 2026-05-24T10:15:00Z\nlevel: info\nmessage: request completed',
+    //     format: 'toon',
+    //   },
+    // }
+  }
+
+  if (record.type === "done") {
+    console.log(record);
+    /// Extract<Run.StreamRecord<LogLine, unknown, AcmeCommands>, { type: 'done' }>
+    // {
+    //   type: 'done',
+    //   ok: true,
+    //   data: { lines: 124 },
+    //   output: { text: 'lines: 124', format: 'toon' },
+    //   meta: { command: 'logs tail', duration: '30s' },
+    // }
+  }
+
+  if (record.type === "error") {
+    console.log(record);
+    /// Extract<Run.StreamRecord<LogLine, unknown, AcmeCommands>, { type: 'error' }>
+    // {
+    //   type: 'error',
+    //   ok: false,
+    //   error: {
+    //     code: 'LOG_STREAM_DISCONNECTED',
+    //     message: 'Log stream disconnected.',
+    //     retryable: true,
+    //   },
+    //   meta: { command: 'logs tail', duration: '30s' },
+    // }
+  }
+}
+```
+
+A stream can only be consumed once: use async iteration, `.records()`, or `.final` as the consumption
+mode. Streaming commands allow `selection` and `outputFormat`, but reject token pagination controls
+such as `outputTokenLimit`.
+
+## Discovery Resources
+
+Some generated extension clients may expose read-only Incur discovery resources. Use only the
+resources visible in the exact generated declaration for that loaded extension. Do not assume every
+extension client exposes these helpers.
+
+```ts
+const llms = await extensions.acme.llms();
+const llmsMd = await extensions.acme.llms({ command: "project", format: "md" });
+const full = await extensions.acme.llmsFull();
+const schema = await extensions.acme.schema("project report");
+const help = await extensions.acme.help("project report");
+const openapi = await extensions.acme.openapi();
+
+console.log(llms);
+/// Resources.LlmsManifest<AcmeCommands>
+// {
+//   version: 'incur.v1',
+//   commands: [
+//     {
+//       name: 'project report',
+//       description: 'Summarize project progress.',
+//     },
+//     {
+//       name: 'project status',
+//       description: 'Show project status.',
+//     },
+//   ],
+// }
+
+console.log(llmsMd);
+/// string
+// '# acme project\n\n| Command | Description |\n|---------|-------------|\n| `acme project report <projectId>` | Summarize project progress. |'
+
+console.log(full);
+/// Resources.LlmsFullManifest<AcmeCommands>
+// {
+//   version: 'incur.v1',
+//   commands: [
+//     {
+//       name: 'project report',
+//       description: 'Summarize project progress.',
+//       schema: {
+//         args: {
+//           type: 'object',
+//           required: ['projectId'],
+//           properties: { projectId: { type: 'string' } },
+//         },
+//         options: {
+//           type: 'object',
+//           properties: { includeClosed: { type: 'boolean' } },
+//         },
+//         output: {
+//           type: 'object',
+//           properties: { summary: { type: 'string' } },
+//         },
+//       },
+//     },
+//   ],
+// }
+
+console.log(schema);
+/// Resources.CommandSchema<AcmeCommands>
+// {
+//   args: {
+//     type: 'object',
+//     required: ['projectId'],
+//     properties: { projectId: { type: 'string' } },
+//   },
+//   options: {
+//     type: 'object',
+//     properties: { includeClosed: { type: 'boolean' } },
+//   },
+//   output: {
+//     type: 'object',
+//     properties: { summary: { type: 'string' } },
+//   },
+// }
+
+console.log(help);
+/// string
+// 'Usage: acme project report <projectId> [--include-closed]\n\nSummarize project progress.'
+
+console.log(openapi);
+/// Resources.OpenApiDocument
+// {
+//   openapi: '3.1.0',
+//   info: { title: 'acme', version: '1.0.0' },
+//   paths: { ... },
+// }
+```
+
+Use command-group scopes where accepted:
+
+```ts
+await extensions.acme.llmsFull({ command: "project" });
+await extensions.acme.schema("project");
+await extensions.acme.help("project report");
+```
+
+Use discovery resources for docs, UI generation, tests, and schema inspection. Use
+`extensions.<extensionId>.run()` for command execution.
+
+Do not use local Skills actions or MCP setup actions. Generated clients do not expose
+`skills.add()`, `skills.get()`, `skills.index()`, `mcp.add()`, or `mcp.tools()`.
+````
 
 ## Prompt Exposure
 
