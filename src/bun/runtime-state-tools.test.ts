@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { PromptExecutionRuntimeHandle } from "./prompt-execution-context";
 import {
-  createRuntimeCurrentTool,
   createThreadCurrentTool,
   createThreadHandoffsTool,
   createThreadListTool,
@@ -22,21 +21,7 @@ afterEach(() => {
   }
 });
 
-describe("runtime state tools", () => {
-  it("returns the current runtime binding", async () => {
-    const { runtime, thread } = createRuntimeFixture();
-    const tool = createRuntimeCurrentTool({ runtime });
-
-    const result = await tool.execute("tool-call-1", {});
-
-    expect(result.details).toEqual({
-      actor: "handler",
-      workspaceSessionId: "workspace-session-1",
-      surfacePiSessionId: "handler-surface-1",
-      threadId: thread.id,
-    });
-  });
-
+describe("thread state tools", () => {
   it("fails thread_current outside a handler and returns compact current handler state inside a handler", async () => {
     const { runtime, store, thread, workflow } = createRuntimeFixture();
     const tool = createThreadCurrentTool({ runtime, store });

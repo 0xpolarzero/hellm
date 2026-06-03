@@ -12,7 +12,6 @@ import type {
   StructuredWorkflowRunRecord,
 } from "./structured-session-state";
 
-export const RUNTIME_CURRENT_TOOL_NAME = "runtime_current";
 export const THREAD_CURRENT_TOOL_NAME = "thread_current";
 export const THREAD_LIST_TOOL_NAME = "thread_list";
 export const THREAD_HANDOFFS_TOOL_NAME = "thread_handoffs";
@@ -47,13 +46,6 @@ const threadHandoffsParamsSchema = Type.Object(
 type EmptyParams = Static<typeof emptyParamsSchema>;
 type ThreadListParams = Static<typeof threadListParamsSchema>;
 type ThreadHandoffsParams = Static<typeof threadHandoffsParamsSchema>;
-
-type RuntimeCurrentDetails = {
-  actor: "orchestrator" | "handler";
-  workspaceSessionId: string;
-  surfacePiSessionId: string;
-  threadId: string | null;
-};
 
 type ToolWait = {
   kind: "user" | "external";
@@ -101,28 +93,6 @@ type ThreadHandoffsDetails = {
     createdAt: string;
   }>;
 };
-
-export function createRuntimeCurrentTool(options: {
-  runtime: PromptExecutionRuntimeHandle;
-}): AgentTool<typeof emptyParamsSchema, RuntimeCurrentDetails> {
-  return {
-    label: "Runtime Current",
-    name: RUNTIME_CURRENT_TOOL_NAME,
-    description:
-      "Return the current svvy runtime actor and surface binding for this active prompt.",
-    parameters: emptyParamsSchema,
-    async execute(_toolCallId, _params: EmptyParams) {
-      const runtime = requireActiveRuntime(options.runtime, RUNTIME_CURRENT_TOOL_NAME);
-      const details: RuntimeCurrentDetails = {
-        actor: runtime.surfaceKind,
-        workspaceSessionId: runtime.sessionId,
-        surfacePiSessionId: runtime.surfacePiSessionId,
-        threadId: runtime.surfaceThreadId,
-      };
-      return jsonToolResult(details);
-    },
-  };
-}
 
 export function createThreadCurrentTool(options: {
   runtime: PromptExecutionRuntimeHandle;

@@ -1974,7 +1974,7 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("exposes runtime/thread state tools on the intended actor surfaces", async () => {
+  it("exposes thread state tools on the intended actor surfaces", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = new WorkspaceSessionCatalog(cwd, agentDir, sessionDir);
 
@@ -1984,7 +1984,6 @@ describe("WorkspaceSessionCatalog", () => {
       const orchestratorTools = getActiveToolNames(orchestratorManaged);
       expect(orchestratorTools).toEqual(
         expect.arrayContaining([
-          "runtime_current",
           "thread_list",
           "thread_handoffs",
           "thread_start",
@@ -2005,7 +2004,6 @@ describe("WorkspaceSessionCatalog", () => {
       const handlerTools = getActiveToolNames(handlerManaged);
       expect(handlerTools).toEqual(
         expect.arrayContaining([
-          "runtime_current",
           "thread_current",
           "thread_list",
           "thread_handoffs",

@@ -6,7 +6,6 @@ import type {
   StructuredSessionStateStore,
 } from "./structured-session-state";
 import {
-  RUNTIME_CURRENT_TOOL_NAME,
   THREAD_CURRENT_TOOL_NAME,
   THREAD_HANDOFFS_TOOL_NAME,
   THREAD_LIST_TOOL_NAME,
@@ -19,7 +18,6 @@ const SPECIALIZED_TOOL_NAMES = new Set([
   "request_context",
   "thread_handoff",
   "wait",
-  RUNTIME_CURRENT_TOOL_NAME,
   THREAD_CURRENT_TOOL_NAME,
   THREAD_LIST_TOOL_NAME,
   THREAD_HANDOFFS_TOOL_NAME,

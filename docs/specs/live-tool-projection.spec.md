@@ -475,11 +475,7 @@ Extension Loading tools behave as follows:
 because build or dependency work is required, the card should show the readiness failure and point to
 the relevant Extension Managing command path.
 
-## Request User Input And Runtime Inspection Projection
-
-`runtime_current` is a final-only read tool. It should render from the returned structured runtime
-binding state and must not create a command record unless a future concrete API spec changes that
-rule.
+## Request User Input Projection
 
 `request_user_input` is the shipped native user-clarification surface. Its concrete API is defined
 in `docs/specs/extension/request-user-input.extension.spec.md`.
@@ -589,7 +585,6 @@ Classification meanings:
 | `thread_current` | final | Final read result. |
 | `thread_list` | final | Final read result. |
 | `thread_episodes` | final | Final read result. |
-| `runtime_current` | final, underspecified | Final read result once concrete schema is adopted. |
 | `request_user_input` | both | Question/default preview, durable request records, nonblocking default result or blocking wait state, final answer facts, and later answer queue projection when applicable. |
 | `workflow_list_models` | final | Loading state plus model/provider readiness result. |
 | Artifacts callable API | underspecified | Future artifact-write tools must use argument projection for large contents. |

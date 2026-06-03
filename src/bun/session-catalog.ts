@@ -123,7 +123,6 @@ import { createListToolsTool } from "./list-tools-tool";
 import { createWebProvider } from "./web-runtime/provider-registry";
 import { createPromptLibraryStore, type PromptLibraryStore } from "./prompt-library-store";
 import {
-  createRuntimeCurrentTool,
   createThreadCurrentTool,
   createThreadHandoffsTool,
   createThreadListTool,
@@ -4157,9 +4156,6 @@ async function createManagedSession(
     workflowLibrary: createWorkflowLibrary(options.sessionManager.getCwd()),
     webProvider,
   });
-  const runtimeCurrentTool = createRuntimeCurrentTool({
-    runtime: promptExecutionRuntime,
-  });
   const listUnresolvedWorkflowRuns = (input: { sessionId: string; threadId: string }) =>
     options.smithersRuntimeManager.listUnresolvedWorkflowRunsForThread(input);
   const threadListTool = createThreadListTool({
@@ -4180,7 +4176,6 @@ async function createManagedSession(
     createListToolsTool({
       getSession: () => sessionForListTools,
     }),
-    runtimeCurrentTool,
     threadListTool,
     threadHandoffsTool,
     ...createCxTools({ cwd: options.sessionManager.getCwd() }),

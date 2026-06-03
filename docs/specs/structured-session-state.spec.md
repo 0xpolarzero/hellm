@@ -1210,7 +1210,7 @@ Write responsibility is:
 - workflow-task-attempt projection stores svvy-owned product metadata such as `meta.promptBinding` on the exact Smithers attempt address while leaving Smithers-owned run, node, attempt, retry, wait, output, usage, and transcript facts in Smithers durable state
 - Project CI writes belong to the runtime or bridge path that handles terminal Smithers runs from entries declaring `productKind = "project-ci"` and validates their terminal output against the declared CI result schema
 - wait writes belong to the `svvy` runtime
-- runtime-state read tools (`runtime_current`, `thread_current`, `thread_list`, and `thread_episodes`) read durable structured state and the active prompt runtime binding without creating command records or writing lifecycle facts; concrete thread read-tool contracts are defined in `docs/specs/extension/thread-managing.extension.spec.md`
+- thread read tools (`thread_current`, `thread_list`, and `thread_episodes`) read durable structured state and the active prompt runtime binding without creating command records or writing lifecycle facts; concrete thread read-tool contracts are defined in `docs/specs/extension/thread-managing.extension.spec.md`
 
 No runtime component may synthesize `turnDecision`, thread, workflow-run, Project CI, or wait facts from transcript prose after the fact.
 
@@ -1225,7 +1225,7 @@ Read APIs and selectors are projection-only for lifecycle state:
 
 The implementation must enforce these invariants:
 
-- every mutating or work-producing tool call creates exactly one command record; low-noise runtime-state read tools are projection reads rather than command-producing work
+- every mutating or work-producing tool call creates exactly one command record; low-noise thread read tools are projection reads rather than command-producing work
 - a handler thread owns exactly one backing `surfacePiSessionId`
 - generated agent context bindings are durable surface state and survive resume
 - `load_extension` may only load extensions available and ready for the current actor binding

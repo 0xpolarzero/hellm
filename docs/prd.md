@@ -116,10 +116,10 @@ The default actor-specific generated context split is:
 
 - the orchestrator prompt knows that handler threads can supervise Smithers workflows, but the default orchestrator extension state does not load the Smithers extension; if it wants workflow action, it normally delegates by calling `thread_start`
 - a handler-thread prompt receives `smithers_*`, `load_extension`, `list_extensions`, `request_user_input`, `thread_current`, `thread_report`, `thread_episodes`, direct tools, and `execute_typescript` for typed composition by default; `thread_start` is not part of the default adopted handler model
-- the orchestrator prompt receives `request_user_input`, `runtime_current`, `thread_start`,
-  `thread_resume`, `thread_list`, `thread_episodes`, and `thread_request_report` so user
-  clarification, runtime binding, delegated-thread state, durable episodes, and handler status
-  requests are handled through focused tools instead of prompt stuffing
+- the orchestrator prompt receives `request_user_input`, `thread_start`, `thread_resume`,
+  `thread_list`, `thread_episodes`, and `thread_request_report` so user clarification,
+  delegated-thread state, durable episodes, and handler status requests are handled through focused
+  tools instead of prompt stuffing
 - a workflow-task-agent prompt receives task-local instructions and task-local callable declarations; in the default adopted workflow-agent profile it receives Extension Loading, task-local direct tools, and `execute_typescript`, while Smithers, Extension Managing, and broad handler/orchestrator controls are not default-loaded
 - a workflow-task-agent runtime must not load ambient pi built-in tools, extensions, skills, prompt templates, themes, commands, hooks, provider adapters, or equivalent host resources unless the user enables that exact resource category and source for workflow task agents
 - user-configured extension usage state remains the source of truth for loaded, available, and unavailable extensions; Extension Loading is the only fixed always-loaded extension control

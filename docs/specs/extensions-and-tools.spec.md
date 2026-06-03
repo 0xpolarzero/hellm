@@ -538,8 +538,8 @@ All input fields are optional.
 | `query` | string | Optional case-insensitive substring search over actor-visible `id`, `title`, `description`, and available `minimalInstructions`. |
 
 `list_extensions` must not echo actor identity, session id, or filters in its result. The current
-actor is implicit in the tool binding. If an agent needs actor or runtime identity, it should use the
-appropriate runtime inspection tool rather than `list_extensions`.
+actor is established by the actor-specific generated prompt and callable tool binding. There is no
+agent-facing tool for actor or runtime identity inspection.
 
 Result:
 
@@ -1908,7 +1908,7 @@ The resolved native direct tool set includes:
 - `load_extension`
 - `list_extensions`
 - product control tools such as `thread_start`, `thread_resume`, `thread_request_report`,
-  `thread_report`, `thread_episodes`, `request_user_input`, `runtime_current`, `thread_current`, and
+  `thread_report`, `thread_episodes`, `request_user_input`, `thread_current`, and
   `thread_list`
 - artifact tools, because artifacts are `svvy` product state
 

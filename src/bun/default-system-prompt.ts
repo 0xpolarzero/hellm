@@ -67,7 +67,6 @@ const COMMON_INSTRUCTION_BODY = [
   "Prefer read, grep, find, and ls over bash for file exploration; use bash when the work actually requires a shell command.",
   "Use read for visual inspection of local image files as well as text files; image reads return image attachments to the model.",
   "Use list_tools when you need to inspect the exact callable tool surface for the current actor.",
-  "Use runtime_current only when you need to confirm which svvy runtime actor and surface you are operating in.",
   "Use thread_list when delegated thread state matters, and use thread_handoffs when reconciling or checking durable handoff episodes.",
   "Do not expect runtime, thread, handoff, or workflow state to be repeated in user messages.",
   "Create artifacts only for durable byproducts or evidence that should remain inspectable but should not normally be placed in the repository; use write/edit for requested workspace files and prose for small answers.",
@@ -174,7 +173,6 @@ function buildCommonInstructions(actor: SvvyActorKind): string[] {
   return common.filter(
     (instruction) =>
       !instruction.includes("handoff episodes") &&
-      !instruction.includes("runtime_current") &&
       !instruction.includes("thread_list") &&
       !instruction.includes("runtime, thread, handoff, or workflow state"),
   );
