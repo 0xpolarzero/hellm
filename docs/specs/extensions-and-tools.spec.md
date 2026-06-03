@@ -2,7 +2,7 @@
 
 ## Status
 
-- Date: 2026-06-02
+- Date: 2026-06-03
 - Status: authoritative product spec
 - Scope of this document:
   - define the extension and tool architecture for `svvy`
@@ -1228,7 +1228,6 @@ Agent context updated
 The event is not model-authored transcript text. Its expanded details must list the actual changed
 categories, such as:
 
-- base instructions
 - base instruction extensions
 - loaded extension instructions
 - available extension loading hints
@@ -1456,6 +1455,99 @@ profile intentionally changes these usage states, the generated context follows 
 any other extension selection. The default shipped profiles should keep exactly `base-common` plus
 one actor-specific base extension loaded so newly created agents begin with the relevant role
 instructions without requiring PromptLibrary or context-pack composition.
+
+Concrete UI and generated-context shape:
+
+```text
+Extensions pane
+  Base: Common svvy Conduct       shipped / instructions / used by 3 default profiles
+  Base: Orchestrator              shipped / instructions / used by Default orchestrator
+  Base: Handler Thread            shipped / instructions / used by threadHandler
+  Base: Workflow Task Agent       shipped / instructions / used by Default workflow agent
+```
+
+```text
+Agents pane -> Default orchestrator -> Extensions
+  default_loaded  Base: Common svvy Conduct
+  default_loaded  Base: Orchestrator
+  unavailable     Base: Handler Thread
+  unavailable     Base: Workflow Task Agent
+
+Agents pane -> threadHandler -> Extensions
+  default_loaded  Base: Common svvy Conduct
+  unavailable     Base: Orchestrator
+  default_loaded  Base: Handler Thread
+  unavailable     Base: Workflow Task Agent
+
+Agents pane -> Default workflow agent -> Extensions
+  default_loaded  Base: Common svvy Conduct
+  unavailable     Base: Orchestrator
+  unavailable     Base: Handler Thread
+  default_loaded  Base: Workflow Task Agent
+```
+
+Generated orchestrator prompt skeleton:
+
+```md
+## Loaded Extension: Base: Common svvy Conduct
+
+You are svvy, a pragmatic software engineering assistant running inside the svvy desktop app.
+...
+
+## Loaded Extension: Base: Orchestrator
+
+This surface is the orchestrator.
+...
+
+## Loaded Extension: Shell
+...
+
+## Loaded Extension: Thread Managing
+...
+
+## Available Extension: Project CI
+
+Load Project CI when the delegated objective needs CI authoring guidance.
+```
+
+Generated handler prompt skeleton:
+
+```md
+## Loaded Extension: Base: Common svvy Conduct
+...
+
+## Loaded Extension: Base: Handler Thread
+
+This surface is a delegated handler thread.
+...
+
+## Loaded Extension: Smithers
+
+Handler threads supervise Smithers workflow runs through native smithers_* tools.
+...
+```
+
+Generated workflow task-agent prompt skeleton:
+
+```md
+## Loaded Extension: Base: Common svvy Conduct
+...
+
+## Loaded Extension: Base: Workflow Task Agent
+
+You are a task-scoped coding agent running inside one Smithers workflow task attempt.
+...
+
+## Available Extension: GitHub
+
+Load GitHub when the task objective explicitly requires GitHub issues, pull requests, review
+comments, Actions checks, or other GitHub work.
+```
+
+The generated prompt builder should delete the old PromptLibrary/context-pack branch entirely for
+these role instructions. `src/bun/default-system-prompt.ts` may still contain generation helpers
+during refactor, but the source content it emits must come from the built `base-*` extension records
+and the actor's resolved extension binding.
 
 ### Creation-Time And Invocation-Time Overrides
 
