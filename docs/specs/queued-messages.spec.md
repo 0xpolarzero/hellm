@@ -87,8 +87,8 @@ means the row is durably enqueued and claimed by the shared queue runner before 
 queued state. An agent context refresh is ordered with the rest of the surface queue, but it is not
 sent to the agent and does not create transcript or prompt-history content. When delivered, it
 refreshes the bound base instructions, loaded and available extension binding, generated extension
-instructions, external instruction records, mounted `svvyx` command set, native tool schemas, loaded
-`svvyx` command guidance, and TypeScript declarations before later prompt-bearing queue items run. Active runs
+instructions, external instruction records, native tool schemas, loaded `svvyx` command guidance,
+and TypeScript declarations before later prompt-bearing queue items run. Active runs
 may also apply the ready refreshed context at the next pi `refreshRunContext` boundary; the queued
 item remains the durable recovery and ordering record.
 
@@ -175,9 +175,9 @@ If the queue has at least one queued item:
 
 1. atomically claim the first `queued` item and mark it `dispatching`
 2. derive the action for that item kind
-3. for `agent_context_refresh`, recreate or refresh the managed pi runtime binding and
-   actor-scoped `svvyx` command binding behind the same product surface, record the
-   `Agent context updated` product event, mark the item delivered, and continue draining later items
+3. for `agent_context_refresh`, recreate or refresh the managed pi runtime binding and generated
+   actor context behind the same product surface, record the `Agent context updated` product event,
+   mark the item delivered, and continue draining later items
 4. for `user_message`, `handler_handoff`, `initial_handler_start`, or `workflow_attention`, submit the derived text as the next real user message to that same pi surface; `handler_handoff` delivery reconciles an already-recorded durable episode
 5. create a normal turn record for prompt-bearing delivery
 6. mark prompt-bearing items `delivered` once pi accepts the queued item into the surface history

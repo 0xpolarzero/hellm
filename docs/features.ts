@@ -51,7 +51,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Snippets Prompt Macros",
     status: "in-progress",
     summary:
-      "Defines product-owned Snippets as explicit user-inserted prompt macros, with managed and read-only discovered Markdown records, a Snippets pane, composer `@` picker insertion, argument placeholders, editable expansion before send, transcript provenance metadata, and host runtime prompt-template or slash-command expansion kept disabled so snippets never grant tools, change actor capability, alter generated agent context, or mount commands.",
+      "Defines product-owned Snippets as explicit user-inserted prompt macros, with managed and read-only discovered Markdown records, a Snippets pane, composer `@` picker insertion, argument placeholders, editable expansion before send, transcript provenance metadata, and host runtime prompt-template or slash-command expansion kept disabled so snippets never grant tools, change actor capability, alter generated agent context, or add command guidance.",
     sourceSpecs: ["docs/specs/snippets.spec.md"],
   },
   {
@@ -59,10 +59,11 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Extension Env And Secrets",
     status: "in-progress",
     summary:
-      "Defines app-global extension env declarations and app-managed values keyed by `(extensionId, envName)`, with user-only secret entry/update/removal, encrypted local secret storage, non-secret manifest defaults plus app-level overrides, status-only agent inspection through `list_extensions` and Extension Managing, build-time declaration validation separate from ready state, process-local runtime injection into only the specific trusted extension command or generated extension-client invocation, and redaction across prompts, generated docs, tool output, logs, artifacts, transcripts, and snapshots while deferring egress-proxy credential boundaries.",
+      "Defines app-global extension env declarations and app-managed values keyed by `(extensionId, envName)`, with user-only secret entry/update/removal, encrypted local secret storage, non-secret manifest defaults plus app-level overrides, status-only agent inspection through `list_extensions` and Extension Managing, build-time declaration validation separate from ready state, invocation-local explicit-env injection into only the specific Incur `svvyx` command or generated extension-client invocation, and redaction across prompts, generated docs, tool output, logs, artifacts, transcripts, and snapshots while deferring egress-proxy credential boundaries.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/extensions-and-tools.spec.md",
+      "docs/specs/extension/svvyx-incur-runtime.spec.md",
       "docs/specs/extension/extension-managing.extension.spec.md",
       "docs/todo.md",
     ],
@@ -103,6 +104,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
       "docs/specs/extension/shell.extension.spec.md",
       "docs/specs/extension/apply-patch.extension.spec.md",
       "docs/specs/extension/execute-typescript.extension.spec.md",
+      "docs/specs/extension/svvyx-incur-runtime.spec.md",
     ],
   },
   {
@@ -148,10 +150,11 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Agents And Extensions Prompt Composition",
     status: "in-progress",
     summary:
-      "Reframes prompt composition around Agents and Extensions: agent profiles own base instructions, model/reasoning, actor kind defaults, and per-extension usage states while fixed app-native controls such as Extension Loading stay always default-loaded, and Extensions own shipped, user, and external_instruction capability records with loaded full instructions, available minimal loading hints, generated previews, reset/delete controls appropriate to category, and requirement readiness surfaced through `list_extensions` and Extension Managing inspection. Generated context previews show base instructions, loaded extension instructions, available loading hints, read-only external instruction files such as `AGENTS.md` and `CLAUDE.md` with open-external-file controls, native tool declarations, loaded svvyx guidance, and generated TypeScript client declarations; shipped prompt-only cx guidance is default-loaded for all adopted agent kinds and teaches official `cx` CLI use through `exec_command`, shipped prompt-only Git guidance is default-loaded for all agent kinds, shipped prompt-only GitHub guidance is default-loaded for orchestrators and handler threads and available for workflow task agents, these prompt-only CLI extensions use ordinary shell commands without wrapper tools or generated clients, and new surfaces bind to the latest ready generated agent context while existing surfaces receive durable `Update agent context` work when their fingerprint differs.",
+      "Reframes prompt composition around Agents and Extensions: agent profiles own base instructions, model/reasoning, actor kind defaults, and per-extension usage states while fixed app-native controls such as Extension Loading stay always default-loaded, and Extensions own shipped, user, and external_instruction capability records with loaded full instructions, available minimal loading hints, generated previews, reset/delete controls appropriate to category, and requirement readiness surfaced through `list_extensions` and Extension Managing inspection. Generated context previews show base instructions, loaded extension instructions, available loading hints, read-only external instruction files such as `AGENTS.md` and `CLAUDE.md` with open-external-file controls, native tool declarations, loaded svvyx guidance, and generated TypeScript client declarations; Incur-backed extensions are built as current builds behind one stable app-owned `svvyx <extension-id> ...` dispatcher, with usage state controlling generated guidance and clients rather than shell impossibility; shipped prompt-only cx guidance is default-loaded for all adopted agent kinds and teaches official `cx` CLI use through `exec_command`, shipped prompt-only Git guidance is default-loaded for all agent kinds, shipped prompt-only GitHub guidance is default-loaded for orchestrators and handler threads and available for workflow task agents, these prompt-only CLI extensions use ordinary shell commands without wrapper tools or generated clients, and new surfaces bind to the latest ready generated agent context while existing surfaces receive durable `Update agent context` work when their fingerprint differs.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/extensions-and-tools.spec.md",
+      "docs/specs/extension/svvyx-incur-runtime.spec.md",
       "docs/specs/extension/thread-managing.extension.spec.md",
       "docs/specs/extension/extension-managing.extension.spec.md",
       "docs/specs/extension/web.extension.spec.md",

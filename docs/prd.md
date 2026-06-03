@@ -313,10 +313,10 @@ actor's loaded and available extension records and never exposes unavailable ext
 secret values, generated context fingerprints, aggregate cache keys, or global profile usage state.
 
 `load_extension` is a native control tool. It loads an available, ready extension into the current
-actor session, refreshes the same-turn tool declarations, mounted `svvyx` namespace, generated
-TypeScript declarations, and generated agent context binding, and records an `Agent context updated`
-product event. It does not build extensions, request dependency approval, configure env values, or
-mutate agent profile defaults.
+actor session, refreshes the same-turn tool declarations, loaded `svvyx` command guidance,
+generated TypeScript declarations, and generated agent context binding, and records an
+`Agent context updated` product event. It does not build extensions, request dependency approval,
+configure env values, or mutate agent profile defaults.
 
 Prompt-only Web guidance is different from a native Web tool surface.
 
@@ -749,7 +749,7 @@ contract.
 
 External instruction records represent files such as `AGENTS.md` and `CLAUDE.md`. They appear in the Extensions pane as a distinct read-only category, use the same per-agent usage states as other extensions, show path/content/order in generated-context previews, and provide an open-external-file action. Resetting an external instruction record changes only `svvy` settings or metadata overlays; it never overwrites the external file.
 
-Generated agent context bindings store loaded extension ids, available extension ids, external instruction content/order, native tool declarations, loaded svvyx guidance, generated TypeScript client declarations, aggregate cache key, and generated agent context fingerprint for sessions, handler threads, and workflow task-agent attempts.
+Generated agent context bindings store loaded extension ids, available extension ids, external instruction content/order, native tool declarations, loaded svvyx guidance, generated TypeScript client declarations, current-build context references, and generated agent context fingerprint for sessions, handler threads, and workflow task-agent attempts.
 
 New top-level sessions, handler threads, and workflow task agents always use the latest ready generated agent context from Agents, Extensions, generated contracts, and current external instructions. Existing surfaces store the generated agent context fingerprint they received. When the current ready generated context fingerprint differs from the bound fingerprint, `svvy` automatically queues or applies `agent_context_refresh` work labelled `Update agent context`. If the surface is idle, the update is claimed before the next prompt-bearing item runs. If the surface is active, the update is visible in the queue until it applies at the next safe `refreshRunContext` boundary or before the next prompt-bearing item. On success, the affected session records `Agent context updated` with details of what changed. The visible surface identity and transcript stay continuous even if the internal managed pi runtime must be recreated to load the fresh `systemPrompt`.
 

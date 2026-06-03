@@ -31,8 +31,8 @@ Baseline behavior:
 - keep host slash-command execution disabled
 
 Snippets do nothing until the user inserts one. They are not default-loaded instructions, so they do
-not need actor toggles, extension usage states, generated agent context refresh, or runtime capability
-mounting.
+not need actor toggles, extension usage states, generated agent context refresh, or runtime command
+surfaces.
 
 ## Discovery Sources
 
@@ -219,6 +219,6 @@ prompt text.
 - Snippets never grant tools.
 - Snippets never change model, provider, reasoning, extension loading, generated declarations, or
   execution policy.
-- Snippets never mount `svvyx` commands.
+- Snippets never add `svvyx` command guidance or generated clients.
 - Snippets never alter generated agent context.
 - Snippets are sent as user-authored prompt text after explicit insertion.

@@ -72,7 +72,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [ ] Treat TinyFish CLI output as ordinary shell output: the CLI writes search and fetch JSON to stdout by default, fetch includes page body text in `results[].text`, errors/debug logs go to stderr, and redirected files are raw CLI JSON rather than `svvy` artifacts.
 - [ ] Add generated-context and extension-inventory tests proving Web is prompt-only, default-loaded
   for all adopted actor kinds only while `networkAccess` is true, unavailable when `networkAccess` is
-  false, and absent from native tool declarations, `svvyx` command mounts, generated TypeScript
+  false, and absent from native tool declarations, loaded `svvyx` command guidance, generated TypeScript
   declarations, provider settings, and Firecrawl provider lists.
 
 ## 3. Turn Decisions And Delegation
@@ -286,7 +286,7 @@ Current product decisions for this section are specified in `docs/specs/queued-m
 
 ## 14. Agents, Extensions, And Generated Agent Context
 
-Current product decisions for this section are specified in `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/extension-managing.extension.spec.md`, `docs/specs/structured-session-state.spec.md`, `docs/specs/queued-messages.spec.md`, and `docs/specs/project-ci.spec.md`.
+Current product decisions for this section are specified in `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/extension-managing.extension.spec.md`, `docs/specs/extension/svvyx-incur-runtime.spec.md`, `docs/specs/structured-session-state.spec.md`, `docs/specs/queued-messages.spec.md`, and `docs/specs/project-ci.spec.md`.
 
 - [x] Define shipped extensions for Shell, Apply Patch, Execute TypeScript, Extension Loading, Extension Managing, cx, Smithers, Web, Git, GitHub, External Instructions, and Project CI with default usage states for each adopted agent family. Commit(s): `673837a`
 - [x] Load default Smithers extension guidance so orchestrators route workflow work, handlers supervise workflows, and workflow task agents keep the Smithers task boundary without loading handler Smithers declarations by default. Commit(s): `673837a`
@@ -297,6 +297,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Seed editable shipped base instructions for common, orchestrator, handler, and workflow task guidance inside agent profiles, with profile-level reset behavior where product settings allow it. Commit(s): `118fd39c9f`
 - [x] Seed shipped extension records for code navigation, Smithers routing, Smithers supervision, workflow task boundary, Web, and Project CI, with per-agent usage states, non-deletable shipped rows, app-global scope, and extension reset behavior. Commit(s): `118fd39c9f`
 - [x] Render generated agent-context previews for orchestrator, handler, and workflow task-agent actors, linking loaded and available extension rows back to their extension records and showing generated prompt, `svvyx` guidance, native schemas, and TypeScript declaration previews. Commit(s): `118fd39c9f`
+- [ ] Implement the stable app-owned `svvyx <extension-id> ...` dispatcher that resolves extension current builds, imports default-exported Incur CLIs, invokes `cli.serve` with invocation-local explicit env, records command facts, and treats extension usage state as generated guidance/client visibility rather than shell impossibility.
 - [ ] Store user-named Extension Managing snapshots plus durable generated agent context bindings and agent context fingerprints so historical sessions, handler threads, and workflow task-agent attempts remain inspectable after app restart.
 - [ ] Add automatic generated agent context update projection for existing orchestrator and handler-thread surfaces, including grouped semantic diff details on queued, applied, failed, cancelled, and out-of-date states.
 - [ ] Route `thread_start` extension overrides and handler-side `load_extension` through generated agent context bindings while preserving durable loaded and available extension ids on each affected surface.

@@ -169,9 +169,8 @@ Inside a handler thread, the normal choices are:
 The workflow runtime capability set should mirror Smithers semantics rather than a svvy-defined `workflow_*` alias layer. Runnable entry discovery belongs to `smithers_list_workflows({ workflowId? })`, which returns each entry's `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `launchInputSchema`. Fresh launch and explicit resume belong to the stable `smithers_run_workflow({ workflowId, input, runId? })` tool, with `input` validated against the workflow's real TypeScript or Zod launch schema rather than handwritten prompt prose or repo inspection. Supplying `runId` resumes exactly that run; omitting `runId` requests a fresh launch, never silently resumes, and is rejected when the same handler already owns a nonterminal run with the same `workflowId`. Different `workflowId` values can run concurrently under one handler thread. `workflow_list_models` is the narrow authoring-time exception for provider/model/reasoning discovery; it does not launch, inspect, resume, or supervise workflows. Smithers-native commands are supervision helpers inside the handler-thread lifecycle, not evidence that the repo-root `workflows/` authoring package is the shipped product runtime.
 
 The agent does not get raw Smithers internals, a raw Smithers HTTP client, a raw Smithers MCP server,
-or raw Smithers CLI access. It gets `svvy`-registered `smithers_*` tools and, when the Smithers
-extension is loaded, actor-scoped `svvyx smithers ...` commands that call the Bun-owned Smithers
-bridge.
+a raw Smithers CLI, or any Incur-backed Smithers facade. It gets `svvy`-registered `smithers_*`
+tools through the Bun-owned Smithers bridge when the Smithers extension is loaded.
 
 The handler-thread prompt may know that the orchestrator can delegate and reconcile work, but it should not receive orchestrator-only tool declarations such as `thread_start` unless nested delegation is explicitly adopted later.
 

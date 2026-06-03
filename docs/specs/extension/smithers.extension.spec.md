@@ -3,10 +3,10 @@
 ## Status
 
 - Date: 2026-06-03
-- Status: draft extension spec
+- Status: accepted extension surface direction
 - Scope:
   - centralize the current Smithers extension record
-  - mark unresolved Smithers extension API details explicitly
+  - resolve Smithers as a first-party native tool extension, not an Incur-backed `svvyx` extension
   - point to the existing workflow supervision and workflow library specs
 
 ## Extension Record
@@ -15,7 +15,7 @@
 {
   "id": "smithers",
   "category": "shipped",
-  "interface": "svvyx",
+  "interface": "native_tool",
   "title": "Smithers",
   "description": "Smithers-native workflow run, inspection, supervision, approval, signal, transcript, and artifact controls.",
   "typescriptApiEnabled": true
@@ -57,11 +57,11 @@ getDevToolsSnapshot(...)
 streamDevTools(...)
 ```
 
-## Draft Notes
+## Notes
 
 - Exact input/output schemas are not centralized in this file yet.
-- The extension record currently says `interface: "svvyx"`, while the intended surface also
-  references first-party Smithers bridge tools. This needs one resolved wording.
+- Smithers is not an Incur-backed `svvyx` extension. Handler-thread agent-facing workflow control is
+  exposed as first-party `smithers_*` tools through the Bun-owned Smithers bridge.
 - Workflow run behavior is currently defined in `docs/specs/workflow-supervision.spec.md`.
 - Workflow authoring and saved entry behavior is currently defined in
   `docs/specs/workflow-library.spec.md`.

@@ -11,15 +11,18 @@
   - define the `svvyx extensions ...` command API
 
 This spec covers the Extension Managing extension only. The broader extension architecture,
-extension loading model, actor defaults, `svvyx` mounting model, shell policy, dependencies, and
-secrets are defined in `docs/specs/extensions-and-tools.spec.md`.
+extension loading model, actor defaults, `svvyx` dispatcher/runtime model, shell policy,
+dependencies, and secrets are defined in `docs/specs/extensions-and-tools.spec.md` and
+`docs/specs/extension/svvyx-incur-runtime.spec.md`.
 
 ## Product Role
 
 Extension Managing is a shipped extension for managing extension definitions and extension usage.
 
-It combines the earlier "Extension Manager" and "Incur Authoring" ideas. There is no separate Incur
-Authoring extension unless the product intentionally splits this capability later.
+It owns extension lifecycle, source editing, builds, dependency approvals, and usage-state commands.
+Authoring-facing Incur guidance belongs to this extension's loaded instructions, but the internal
+runtime plumbing for making built Incur CLIs callable belongs to
+`docs/specs/extension/svvyx-incur-runtime.spec.md`.
 
 Default usage state:
 
@@ -657,32 +660,32 @@ Prompt-only shipped example:
 }
 ```
 
-Incur-backed shipped example:
+Incur-backed user example:
 
 ```json
 {
   "ok": true,
   "extension": {
-    "id": "smithers",
-    "category": "shipped",
+    "id": "linear",
+    "category": "user",
     "interface": "svvyx",
-    "title": "Smithers",
-    "description": "Workflow supervision commands for handler threads.",
+    "title": "Linear",
+    "description": "Linear issue and project workflow support.",
     "resettable": true,
-    "deletable": false,
+    "deletable": true,
     "typescriptApiEnabled": true,
     "paths": {
-      "sourceRoot": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers",
-      "manifest": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/manifest.json",
-      "instructionsFull": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full.md",
-      "instructionsMinimal": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/minimal.md",
+      "sourceRoot": "/Users/example/.config/svvy/extensions/sources/user/linear",
+      "manifest": "/Users/example/.config/svvy/extensions/sources/user/linear/manifest.json",
+      "instructionsFull": "/Users/example/.config/svvy/extensions/sources/user/linear/instructions/full.md",
+      "instructionsMinimal": "/Users/example/.config/svvy/extensions/sources/user/linear/instructions/minimal.md",
       "externalInstructionFile": null,
-      "extensionSource": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/source",
+      "extensionSource": "/Users/example/.config/svvy/extensions/sources/user/linear/source",
       "packageJson": "/Users/example/.config/svvy/extensions/package/package.json",
       "lockfile": "/Users/example/.config/svvy/extensions/package/bun.lock",
-      "generatedRoot": "/Users/example/.config/svvy/extensions/generated/extensions/smithers",
-      "typescriptTypes": "/Users/example/.config/svvy/extensions/generated/extensions/smithers/types.d.ts",
-      "buildCurrent": "/Users/example/.config/svvy/extensions/builds/extensions/smithers/current"
+      "generatedRoot": "/Users/example/.config/svvy/extensions/generated/extensions/linear",
+      "typescriptTypes": "/Users/example/.config/svvy/extensions/generated/extensions/linear/types.d.ts",
+      "buildCurrent": "/Users/example/.config/svvy/extensions/builds/extensions/linear/current"
     },
     "usage": [
       {
@@ -991,12 +994,12 @@ Dependency confirmation example:
 }
 ```
 
-Failed builds must leave the current mounted extension command set untouched. The failed staging
-directory is discarded unless retained only long enough to surface diagnostics for that build
-attempt; it is not a preserved build artifact or rollback target.
+Failed builds must leave the current successful build untouched. The failed staging directory is
+discarded unless retained only long enough to surface diagnostics for that build attempt; it is not a
+preserved build artifact or rollback target.
 
-Failed installs must leave the current mounted extension command set untouched. `package.json` remains as
-the user's or agent's requested dependency state. `bun.lock` may have changed only if Bun reached the
+Failed installs must leave the current successful build untouched. `package.json` remains as the
+user's or agent's requested dependency state. `bun.lock` may have changed only if Bun reached the
 lockfile write step before failure; after any failed, interrupted, or externally modified install,
 the next startup, refresh, or build must validate `package.json`, `bun.lock`, installed artifacts,
 and the approval ledger before using that dependency state. A stale or inconsistent lockfile is a
@@ -1028,8 +1031,7 @@ Dependency identity and approval rules:
   dependency identity that would be installed or trusted has already been approved
 - direct user edits, agent edits, reset, revert, delete restore, and snapshot restore all use the
   same build/install approval pipeline
-- failed install or build leaves `builds/extensions/<id>/current/` and any existing mounted runtime
-  command set untouched
+- failed install or build leaves `builds/extensions/<id>/current/` untouched
 - extension installs must not rely on Bun's default trusted npm allowlist as product policy
 - dependency lifecycle scripts are disabled unless the exact `trusted_dependency` identity has been
   approved in `svvy`
@@ -1071,10 +1073,9 @@ Dependency approval UI:
   request
 - approval resumes blocked app-level build work and any still-pending conversation tool card whose
   blocked operation is an install/build for the same approval request; it does not create a new actor
-  binding or mount an extension into a session
+  binding or expose new generated extension guidance to a session
 - rejecting a request marks that pending request rejected, updates every referencing pane and
-  conversation tool card, leaves `buildRequired: true`, and leaves the current mounted command set
-  unchanged
+  conversation tool card, leaves `buildRequired: true`, and leaves the current build unchanged
 - rejection does not create a permanent deny rule; a later explicit build or refresh may create a new
   approval request if the same unapproved identities are still required
 - unanswered approval requests remain pending and visible until approved, rejected, or made obsolete
@@ -1083,7 +1084,8 @@ Dependency approval UI:
 Dependency approval is not the Codex-like shell approval path. It is a product-state approval ledger
 for exact dependency and trusted dependency identities. It must not be sent to the auto-reviewer as a
 generic policy fact, must not grant shell approval, must not grant a command-prefix rule, and must not
-mount or load an extension by itself. If an agent runs `svvyx extensions build <id> --json` and that
+load an extension or expose generated extension guidance by itself. If an agent runs
+`svvyx extensions build <id> --json` and that
 build reaches dependency approval, the command result references the durable dependency approval
 request; the blocked install/build resumes only after that dependency request is approved.
 
@@ -1461,16 +1463,15 @@ without prompting. If at least one dependency or trusted dependency identity is 
 creates or reuses the durable pending approval request for those identities and pauses before
 install/build continues. Approving the request records the listed identities and resumes the blocked
 snapshot build work. Rejecting it marks the snapshot load's build work blocked, leaves
-`buildRequired: true` for affected extensions, and leaves current mounted extension command sets
-unchanged.
+`buildRequired: true` for affected extensions, and leaves current builds unchanged.
 
 Snapshot dependency approvals follow the same separation as build dependency approvals: they are not
 auto-review/user shell approvals, do not enter ordinary auto-review payloads, and do not affect
 runtime approval state for `exec_command`, `apply_patch`, `svvyx`, or workflow task-agent tool calls.
 
-Loading a snapshot must leave current mounted extension command sets in place until replacement builds
-succeed. If a snapshot removes an extension that an existing session had loaded or available, that
-session drops the missing extension exactly as it would after extension deletion and then receives an
+Loading a snapshot must leave current builds in place until replacement builds succeed. If a
+snapshot removes an extension that an existing session had loaded or available, that session drops
+the missing extension exactly as it would after extension deletion and then receives an
 `agent_context_refresh`.
 
 Load success example:
@@ -1532,4 +1533,6 @@ Load paused for dependency approval example:
 
 - The exact `manifest.json` schema is not yet finalized. It should be generated or documented from
   the implementation contract rather than maintained as loose prose.
-- The exact generated TypeScript declaration shape depends on the final Incur public surface.
+- The exact generated TypeScript declaration names and import shape remain an implementation
+  contract to generate from source; the `svvyx` dispatch and explicit-env runtime contract is
+  resolved in `docs/specs/extension/svvyx-incur-runtime.spec.md`.

@@ -6,6 +6,7 @@
 - Status: resolved direction for `execute_typescript` under the Extensions architecture
 - Related specs:
   - `docs/specs/extensions-and-tools.spec.md`
+  - `docs/specs/extension/svvyx-incur-runtime.spec.md`
   - `docs/specs/extension/cx.extension.spec.md`
 
 This spec replaces the older direct-tool helper model. `execute_typescript` is now a native
@@ -144,12 +145,16 @@ keep a second manually maintained helper API beside the generated client interfa
 - Typecheck failure stops execution before generated client calls run.
 - Runtime failure records the thrown error and preserves any child command facts already emitted.
 - Generated client calls create child command records under the parent `execute_typescript` command.
+- Generated clients for Incur-backed `svvyx` extensions resolve the same current build as shell
+  dispatch and call the default-exported Incur CLI through `MemoryClient.create(cli, { env })` or an
+  equivalent in-process explicit-env client path.
 - Console logs are bounded and recorded as command output or artifacts according to size.
 - Secret redaction runs before logs, outputs, artifacts, command facts, or transcript text are
   persisted.
 - Extension secrets are never injected into the broad TypeScript execution environment.
 - Extension env values are injected only into the exact generated client command invocation that
-  belongs to that extension.
+  belongs to that extension, and extension code receives them through Incur `c.env`, not through
+  broad TypeScript process env.
 - Already emitted generated-client calls finish against the loaded tool/client set that produced
   them.
 - If `load_extension` succeeds earlier in the same turn, the next model call in that same turn sees
