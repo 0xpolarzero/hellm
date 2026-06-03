@@ -22,6 +22,8 @@ Related specs:
   generated agent context, env redaction, and shell policy.
 - `docs/specs/extension/extension-managing.extension.spec.md` defines the management CLI that creates,
   inspects, builds, and updates extension source state.
+- `docs/specs/extension/artifacts.extension.spec.md` defines the product-record-creating `svvyx`
+  Artifacts extension that relies on dispatcher runtime context.
 - `docs/specs/extension/execute-typescript.extension.spec.md` defines generated loaded-extension
   clients inside `execute_typescript`.
 - `docs/specs/extension/shell.extension.spec.md` defines `exec_command`, which is how agents run
@@ -230,6 +232,14 @@ built extension by id from a shell command.
 
 The model-visible operation remains `exec_command` for shell use and `execute_typescript` for typed
 composition.
+
+Every `svvyx` invocation runs inside a concrete `svvy` runtime context. Before dispatching to the
+extension CLI or generated in-process client, the app-owned dispatcher must attach the current
+session, surface, thread, workflow run, workflow task attempt, parent command, child command, and
+actor binding facts that are already known to the runtime. These context facts are trusted product
+state inputs, not shell arguments and not prompt text. Extensions that create product records, such
+as Artifacts, must derive ownership and linkage from this dispatcher context rather than accepting
+agent-supplied owner ids.
 
 When `exec_command` runs a command whose argv begins with `svvyx`, `svvy` should parse the command
 well enough to attach best-effort structured facts:

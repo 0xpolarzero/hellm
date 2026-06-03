@@ -17,7 +17,7 @@
   "interface": "native_tool",
   "title": "Apply Patch",
   "description": "Codex-like structured patch editing for repository and allowed extension files.",
-  "typescriptApiEnabled": true
+  "typescriptApiEnabled": false
 }
 ```
 

@@ -17,7 +17,7 @@
   "interface": "native_tool",
   "title": "Shell",
   "description": "Codex-like shell command execution and long-running command continuation.",
-  "typescriptApiEnabled": true
+  "typescriptApiEnabled": false
 }
 ```
 

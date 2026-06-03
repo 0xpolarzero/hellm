@@ -182,7 +182,7 @@ The renderer may still group the data visually, but the backend selector owns th
 
 ## Artifact Projection
 
-The draft Artifacts extension record and unresolved callable API notes are defined in
+The Artifacts extension record and callable `svvyx artifacts ...` API are defined in
 `docs/specs/extension/artifacts.extension.spec.md`.
 
 ### What Counts As An Artifact
@@ -211,8 +211,10 @@ The app should create artifact records in these cases:
 
 1. Automatically, for mandatory runtime evidence such as every submitted `execute_typescript` snippet.
 2. Automatically, when a runtime needs to retain a large stdout, stderr, diagnostics, trace, screenshot, workflow export, or other execution payload that is too bulky for command facts or transcript text.
-3. Explicitly, through generated artifact clients, when an agent creates a durable byproduct that should be inspectable later but should not normally live in the repository.
-4. Explicitly, through a generated artifact attach-file client, when an existing generated file should be retained as evidence without treating that file as a normal workspace deliverable.
+3. Explicitly, through `svvyx artifacts create --path <file> --json` or the generated
+   `extensions.artifacts.create(...)` TypeScript client, when an agent creates or obtains a durable
+   single-file byproduct that should be inspectable later but should not normally live in the
+   repository.
 
 The app should not create artifact records for:
 
@@ -226,9 +228,12 @@ The app should not create artifact records for:
 
 Agent-facing prompts and generated API docs should teach this decision rule:
 
-- use direct `write` or `edit` when the file is part of the workspace the user is asking to change
+- use direct workspace file edits when the file is part of the repository state the user is asking to
+  change
 - answer in prose when the information is small and only needs to appear in the transcript
-- use `artifact_write_text`, `artifact_write_json`, or `artifact_attach_file` only for durable byproducts, evidence, previews, logs, reports, screenshots, or large payloads that should be inspectable later but should not normally be placed in the repository
+- write or obtain a single file, then use `svvyx artifacts create --path <file> --json` only for
+  durable byproducts, evidence, previews, logs, reports, screenshots, or large payloads that should
+  be inspectable later but should not normally be placed in the repository
 
 This keeps artifacts from becoming a confusing second filesystem for normal project files.
 
@@ -247,10 +252,11 @@ The block should include artifacts linked directly to the thread plus artifacts 
 The compact row should show:
 
 - artifact name
-- artifact kind
+- artifact MIME type or internal artifact kind when MIME type is unavailable
 - producing workflow run or command when known
 - created time
 - missing-file warning when the file no longer exists
+- deleted state when the artifact has been tombstoned
 
 ### Workflow-Run Artifact Block
 
@@ -271,6 +277,10 @@ Small text, JSON, log, image, and HTML artifacts may show inline previews or thu
 Visible HTML previews must render inside sandboxed iframes. Script-capable previews may enable scripts with `allow-scripts`, but the sandbox must not grant same-origin access, top navigation, popups, forms, or other parent/app escape permissions by default.
 
 Missing artifact files should still render a stale artifact row using retained metadata. The row should show that the file is missing rather than disappearing silently.
+
+Deleted artifacts are omitted from default artifact blocks and lists. Historical command, thread,
+workflow, or CI inspectors that reference a deleted artifact may still show a tombstoned row so users
+can understand that an artifact existed and was deleted.
 
 ## Project CI Projection
 

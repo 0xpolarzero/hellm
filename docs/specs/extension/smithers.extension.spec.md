@@ -18,7 +18,7 @@
   "interface": "native_tool",
   "title": "Smithers",
   "description": "Smithers-native workflow run, inspection, supervision, approval, signal, transcript, and artifact controls.",
-  "typescriptApiEnabled": true
+  "typescriptApiEnabled": false
 }
 ```
 

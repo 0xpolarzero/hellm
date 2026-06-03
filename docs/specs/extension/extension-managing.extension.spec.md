@@ -221,6 +221,8 @@ Rules:
 - `interface: "svvyx"` requires editable executable source under `source/`.
 - `interface: "instructions"` must not expose editable executable source.
 - `typescriptApiEnabled` defaults to `false`.
+- `typescriptApiEnabled: true` is valid only with `interface: "svvyx"`; native-tool and
+  instruction-only extensions must keep it `false`.
 - `dependencies` and `trustedDependencies` use exact package versions only. Ranges, tags, and
   floating versions are build validation errors.
 - Env declarations follow the architecture-wide env schema in

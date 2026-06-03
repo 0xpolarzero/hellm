@@ -50,6 +50,7 @@ Related `svvy` specs:
 - `docs/specs/structured-session-state.spec.md`
 - `docs/specs/extension/shell.extension.spec.md`
 - `docs/specs/extension/apply-patch.extension.spec.md`
+- `docs/specs/extension/artifacts.extension.spec.md`
 - `docs/specs/extension/execute-typescript.extension.spec.md`
 - `docs/specs/extension/thread-managing.extension.spec.md`
 - `docs/specs/extension/extension-loading.extension.spec.md`
@@ -509,16 +510,28 @@ revamped API must use this projection model when defined.
 
 ## Artifacts Projection
 
-The Artifacts native extension is draft and the concrete callable API remains unresolved.
+The Artifacts `svvyx` extension exposes the concrete command family defined in
+`docs/specs/extension/artifacts.extension.spec.md`:
 
-Any future artifact-write tool must use argument projection for large artifact contents:
+- `svvyx artifacts create --path <file> [--title <title>] [--mime-type <mime>] --json`
+- `svvyx artifacts inspect --id <artifact_id> --json`
+- `svvyx artifacts list [--thread-id <thread_id>] [--limit <n>] --json`
+- `svvyx artifacts open --id <artifact_id> --json`
+- `svvyx artifacts delete --id <artifact_id> --json`
 
-- text and JSON writes stream a content preview while arguments arrive
-- file attachment shows selected paths, copy progress, and final artifact ids
-- final command facts own artifact ids, paths, MIME types, and linkage
+Artifacts projection is a command-family renderer layered over `exec_command`, not a separate model
+tool. The renderer should use argument projection and final command facts this way:
 
-Until the concrete Artifacts API is adopted, draft names such as `artifact_write_text`,
-`artifact_write_json`, and `artifact_attach_file` must not be treated as stable callable tools.
+- `create` shows the selected source path, optional title and MIME type, copy progress when
+  available, and final artifact id, copied path, MIME type, byte size, digest, created time, and
+  runtime-derived linkage
+- `inspect` shows the target artifact id while running and settles from the final `ArtifactRef`
+- `list` shows the requested scope and limit while running and settles from the final artifact list
+- `open` shows the target artifact id and final open result
+- `delete` shows the target artifact id and final deleted result
+
+The old draft names `artifact_write_text`, `artifact_write_json`, and `artifact_attach_file` are not
+stable callable tools.
 
 ## CLI And `svvyx` Projection Through `exec_command`
 
@@ -587,7 +600,7 @@ Classification meanings:
 | `thread_episodes` | final | Final read result. |
 | `request_user_input` | both | Question/default preview, durable request records, nonblocking default result or blocking wait state, final answer facts, and later answer queue projection when applicable. |
 | `workflow_list_models` | final | Loading state plus model/provider readiness result. |
-| Artifacts callable API | underspecified | Future artifact-write tools must use argument projection for large contents. |
+| `svvyx artifacts ...` | via `exec_command` | Command-family projection over shell output; `create`, `inspect`, `list`, `open`, and `delete` settle from final structured JSON and command facts. |
 | `svvyx ...` | via `exec_command` | Command-family projection over shell output; no separate tool. |
 | `git ...`, `gh ...`, `cx ...`, `tinyfish ...` | via `exec_command` | Optional command-family projection over shell output; no wrapper tools. |
 | current `smithers_*` API | excluded | Must be revamped separately; future replacement uses this model. |

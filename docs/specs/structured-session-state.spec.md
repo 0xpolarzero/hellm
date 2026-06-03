@@ -171,7 +171,6 @@ type StructuredSessionState = {
       | "exec_command"
       | "write_stdin"
       | "apply_patch"
-      | `artifact_${string}`
       | "list_extensions"
       | "workflow_list_models"
       | "execute_typescript"
@@ -414,6 +413,11 @@ type StructuredSessionState = {
   }>;
 };
 ```
+
+`workspace.artifactDir` is a workspace read-model copy of the resolved app artifact-store setting used
+for copied durable artifacts in that workspace runtime. The app setting defaults to
+`~/.config/svvy/artifacts` and may be changed through General settings. It is not inferred from the
+repository checkout and is not supplied by agents when they create artifacts.
 
 ## Surface Target Identity
 
@@ -986,24 +990,39 @@ No runtime component may create these records by reading workflow logs, Smithers
 
 ## Artifact Model
 
-The draft Artifacts extension record and unresolved callable API notes are defined in
+The Artifacts extension record and callable `svvyx artifacts ...` API are defined in
 `docs/specs/extension/artifacts.extension.spec.md`.
 
 ### Artifact Fields
 
-| Field             | Why it exists                                                          |
-| ----------------- | ---------------------------------------------------------------------- |
-| `id`              | Stable artifact handle.                                                |
-| `threadId`        | Links the artifact to the owning thread when relevant.                 |
-| `workflowRunId`   | Links the artifact to the workflow run that produced it when relevant. |
-| `sourceCommandId` | Links the artifact back to the command attempt that produced it.       |
-| `kind`            | Distinguishes text, log, json, and file outputs.                       |
-| `name`            | Human-readable artifact label.                                         |
-| `path`            | Workspace artifact path inside the dedicated artifact directory.       |
-| `content`         | Optional inline preview content for small artifacts and the POC.       |
-| `createdAt`       | Orders artifact creation.                                              |
+| Field                   | Why it exists                                                                 |
+| ----------------------- | ----------------------------------------------------------------------------- |
+| `id`                    | Stable artifact handle.                                                       |
+| `sessionId`             | Links the artifact to the owning session.                                      |
+| `threadId`              | Links the artifact to the owning thread when relevant.                         |
+| `workflowRunId`         | Links the artifact to the workflow run that produced it when relevant.         |
+| `workflowTaskAttemptId` | Links the artifact to the workflow task attempt that produced it when relevant. |
+| `sourceCommandId`       | Links the artifact back to the command attempt that produced it.               |
+| `kind`                  | Internal projection category such as text, log, json, or file.                |
+| `name`                  | Human-readable artifact label.                                                |
+| `path`                  | Absolute copied artifact path inside the configured artifact directory.        |
+| `mimeType`              | MIME type used for preview selection and agent-facing metadata.                |
+| `bytes`                 | Byte size of the copied artifact file.                                         |
+| `sha256`                | Lowercase hex SHA-256 digest of the copied artifact file bytes.                |
+| `content`               | Optional internal preview-cache content for legacy/small artifact projections; not canonical artifact content and not part of the Artifacts v1 create API. |
+| `createdAt`             | Orders artifact creation.                                                     |
+| `deletedAt`             | Tombstone timestamp when the artifact is deleted; `null` while active.         |
 
 Every submitted `execute_typescript` snippet must land in this table as a file-backed artifact before execution begins.
+
+Explicit agent-created artifacts are created through `svvyx artifacts create --path <file> --json`.
+The source file is copied into `workspace.artifactDir`; the artifact record stores the copied path
+and runtime-derived ownership links. Agents do not supply `sessionId`, `sourceCommandId`,
+`workflowRunId`, or `workflowTaskAttemptId`.
+
+Artifact deletion is a tombstone lifecycle transition. `svvyx artifacts delete --id <artifact_id>
+--json` sets `deletedAt`, removes the copied artifact file when present, leaves historical command
+and thread links intact, and emits `artifact.deleted`.
 
 ### Artifact Preview Isolation
 
@@ -1043,6 +1062,7 @@ The precise list may grow, but the first adopted set is:
 - `ciRun.recorded`
 - `ciCheckResult.recorded`
 - `artifact.created`
+- `artifact.deleted`
 - `requestUserInput.created`
 - `requestUserInput.answered`
 - `requestUserInput.completed`

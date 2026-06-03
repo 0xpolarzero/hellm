@@ -44,7 +44,8 @@ Related specs:
 - `docs/specs/extension/smithers.extension.spec.md` is the draft Smithers extension spec.
 - `docs/specs/extension/project-ci.extension.spec.md` is the draft Project CI prompt-only extension
   spec.
-- `docs/specs/extension/artifacts.extension.spec.md` is the draft Artifacts extension spec.
+- `docs/specs/extension/artifacts.extension.spec.md` defines the shipped Artifacts `svvyx` extension
+  API.
 - `docs/specs/extension/external-instructions.extension.spec.md` defines external instruction
   extension records.
 
@@ -468,6 +469,10 @@ Allowed values:
 | `native_tool` | The extension contributes one or more native model tools that are already declared in the actor's native tool declarations when loaded. |
 | `svvyx` | The extension contributes `svvyx <extension-id> ...` command guidance and optional generated TypeScript clients when loaded; shell dispatch is handled by the stable app-owned `svvyx` dispatcher defined in `docs/specs/extension/svvyx-incur-runtime.spec.md`. |
 | `instructions` | The extension contributes prompt instructions only. It does not add native tools, `svvyx` commands, or TypeScript command types. |
+
+`typescriptApiEnabled` may be `true` only when `interface` is `svvyx`. Native-tool extensions already
+contribute direct model tools through native tool declarations, and instruction-only extensions do
+not contribute callable TypeScript clients.
 
 The old `runtimeKind` field is not part of agent-facing JSON. Implementation may still internally
 distinguish native code, Incur-backed source, or prompt-only storage, but agent-facing tools and
@@ -1663,7 +1668,7 @@ Example:
     "description": "Workflow supervision commands for handler threads.",
     "resettable": true,
     "deletable": false,
-    "typescriptApiEnabled": true,
+    "typescriptApiEnabled": false,
     "instructions": "Full loaded Smithers instructions...",
     "instructionFiles": [
       {
@@ -1910,7 +1915,6 @@ The resolved native direct tool set includes:
 - product control tools such as `thread_start`, `thread_resume`, `thread_request_report`,
   `thread_report`, `thread_episodes`, `request_user_input`, `thread_current`, and
   `thread_list`
-- artifact tools, because artifacts are `svvy` product state
 
 `svvyx` extensions expose stable dispatcher shell commands through `exec_command` and may expose
 generated TypeScript clients inside `execute_typescript` when `typescriptApiEnabled` is true. There is no
@@ -3755,7 +3759,7 @@ read-only external inputs.
 | GitHub | shipped | instructions | GitHub/`gh` CLI guidance for issues, PRs, review comments, Actions, publishing, and wrap-up; no wrapper CLI or generated TypeScript client by default | default_loaded | default_loaded | available |
 | External Instructions | external_instruction | instructions | read-only external instruction files such as `AGENTS.md` and `CLAUDE.md`, surfaced with open-external-file controls | default_loaded | default_loaded | default_loaded |
 | Project CI | shipped | instructions | Project CI authoring guidance for defining and maintaining CI workflow lanes; no tools by default | available | available | unavailable |
-| Artifacts | shipped | native_tool | Draft artifact creation, inspection, linking, and projection capability; concrete model-callable API is not specced yet | default_loaded | default_loaded | default_loaded |
+| Artifacts | shipped | svvyx | `svvyx artifacts create/inspect/list/open/delete` for durable single-file byproducts, evidence, previews, reports, logs, and screenshots, plus generated `extensions.artifacts.*` TypeScript clients; concrete API is defined in `docs/specs/extension/artifacts.extension.spec.md` | default_loaded | default_loaded | default_loaded |
 
 The Git and GitHub extensions must not wrap `git` or `gh` by default. Agents use ordinary shell
 commands and command help. App-owned startup, extension refresh, `list_extensions`, and Extension
@@ -3788,9 +3792,9 @@ handlers so `thread_start` can preload it for CI-authoring objectives and handle
 Running existing Project CI workflow entries does not require loading this extension; the Smithers
 extension owns runtime workflow supervision.
 
-Artifacts is a shipped native-tool extension in draft. Existing artifact records, storage, and
-projection are already product concepts, but the concrete agent-facing artifact API still needs to
-be specced in `docs/specs/extension/artifacts.extension.spec.md`.
+Artifacts is a shipped `svvyx` extension. Existing artifact records, storage, and projection are
+product concepts, and the concrete agent-facing command and generated-client API is defined in
+`docs/specs/extension/artifacts.extension.spec.md`.
 
 ## Workflow Agent Extension Model
 
@@ -4103,7 +4107,6 @@ still draft extension contracts and must be completed in their own files before 
 surface is implemented:
 
 - `docs/specs/extension/project-ci.extension.spec.md`
-- `docs/specs/extension/artifacts.extension.spec.md`
 - draft portions of `docs/specs/extension/smithers.extension.spec.md`
 
 Generated `execute_typescript` declaration names and import shape are owned by

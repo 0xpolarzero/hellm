@@ -73,7 +73,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Artifacts Projection",
     status: "shipped",
     summary:
-      "Presents generated artifacts as explicit Dockview artifact inspector panes keyed by durable artifact identity, with visible HTML previews isolated in sandboxed iframes that grant script execution only without same-origin, navigation, popup, form, or parent/app escape permissions.",
+      "Presents generated artifacts as explicit Dockview artifact inspector panes keyed by durable artifact identity, with visible HTML previews isolated in sandboxed iframes that grant script execution only without same-origin, navigation, popup, form, or parent/app escape permissions, and defines Artifacts as a shipped `svvyx` extension whose concrete `create`, `inspect`, `list`, `open`, and `delete` command family has matching generated TypeScript clients.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/extension/artifacts.extension.spec.md",
@@ -86,7 +86,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Durable Artifact Storage",
     status: "in-progress",
     summary:
-      "Moves artifacts into a dedicated workspace artifact directory with SQLite metadata and path indexing, including submitted `execute_typescript` source for every attempt and workflow-related logs and exports.",
+      "Moves artifacts into the configured artifact directory, defaulting to `~/.config/svvy/artifacts`, with SQLite metadata, path indexing, MIME type, byte size, digest, created/deleted lifecycle fields, source-command/thread/workflow linkage, submitted `execute_typescript` source for every attempt, and workflow-related logs and exports.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/extension/artifacts.extension.spec.md",
