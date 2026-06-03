@@ -51,7 +51,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Keep only `thread_start`, `thread_handoff`, and `wait` as `svvy`-native control tools while exposing Smithers workflow operations through Smithers-native bridge tools. Commit(s): `a02bd48`
 - [x] Keep the `execute_typescript` API bounded to generated clients that benefit from typed composition. Commit(s): `76cc8f3`, `29d8452`
-- [x] Expose the Codex-like Filesystem extension with `exec_command`, `write_stdin`, and `apply_patch` as the normal coding-agent work interface. Commit(s): `76cc8f3`, `29d8452`
+- [x] Expose Codex-like Shell and Apply Patch extensions, with `exec_command`, `write_stdin`, and `apply_patch` as the normal coding-agent work interface. Commit(s): `76cc8f3`, `29d8452`
 - [ ] Keep cx out of generated `execute_typescript` clients; generated TypeScript profiles should not expose `api.cx_*`, `svvy.cx.*`, or `extensions.cx.*`.
 - [x] Record direct tool calls and nested code-mode calls in the shared structured command model. Commit(s): `76cc8f3`, `29d8452`
 - [x] Persist normalized child-command facts for nested `api.*` calls while the parent `execute_typescript` attempt remains the main semantic unit. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
@@ -59,7 +59,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 
 ## 2A. Prompt-Only TinyFish Web Extension
 
-Current product decisions for this section are specified in `docs/specs/web-tools.spec.md`.
+Current product decisions for this section are specified in `docs/specs/extension/web.extension.spec.md`.
 
 - [ ] Expose Web as a shipped `instructions` extension that is default-loaded for orchestrators,
   handler threads, and workflow task agents only while `networkAccess` is true, and unavailable with
@@ -286,9 +286,9 @@ Current product decisions for this section are specified in `docs/specs/queued-m
 
 ## 14. Agents, Extensions, And Generated Agent Context
 
-Current product decisions for this section are specified in `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension-managing.spec.md`, `docs/specs/structured-session-state.spec.md`, `docs/specs/queued-messages.spec.md`, and `docs/specs/project-ci.spec.md`.
+Current product decisions for this section are specified in `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/extension-managing.extension.spec.md`, `docs/specs/structured-session-state.spec.md`, `docs/specs/queued-messages.spec.md`, and `docs/specs/project-ci.spec.md`.
 
-- [x] Define shipped extensions for Filesystem, Execute TypeScript, Extension Loading, Extension Managing, cx, Smithers, Web, Git, GitHub, External Instructions, and Project CI with default usage states for each adopted agent family. Commit(s): `673837a`
+- [x] Define shipped extensions for Shell, Apply Patch, Execute TypeScript, Extension Loading, Extension Managing, cx, Smithers, Web, Git, GitHub, External Instructions, and Project CI with default usage states for each adopted agent family. Commit(s): `673837a`
 - [x] Load default Smithers extension guidance so orchestrators route workflow work, handlers supervise workflows, and workflow task agents keep the Smithers task boundary without loading handler Smithers declarations by default. Commit(s): `673837a`
 - [x] Define available extensions as the on-demand product-knowledge and capability layer for specialized handler work. Commit(s): `2a5dbbe`
 - [x] Render loaded and available extension bindings in surface metadata so users can see when extensions such as `project-ci` are active. Commit(s): `2a5dbbe`

@@ -10,6 +10,11 @@
   - define recovery, reconnect, wake-up, and cleanup behavior
   - separate the borrowed Smithers transport shape from `svvy`-owned product behavior
 
+Concrete Thread Managing tool APIs such as `thread_resume`, `thread_handoff`, and
+`thread_current` are defined in `docs/specs/extension/thread-managing.extension.spec.md`.
+The draft Smithers extension record and centralized extension API notes are defined in
+`docs/specs/extension/smithers.extension.spec.md`.
+
 ## Purpose
 
 `svvy` needs workflow supervision to be a real product subsystem rather than a thin tool wrapper.

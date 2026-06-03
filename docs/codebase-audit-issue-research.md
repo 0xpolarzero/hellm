@@ -354,7 +354,7 @@ Relevant code:
 **Disposition:** Not accepted as a product issue for now. `svvy` redacts app logs because logs are designed to be copied and shared for support/debugging. Other durable records, such as commands, tool inputs/results, snippets, artifacts, and web outputs, are local product state whose value often depends on preserving exact content. A broad shared redaction policy would be unreliable and could corrupt the records users expect the app to retain.
 
 **Web note:** The provider-backed Web implementation referenced below is obsolete under
-`docs/specs/web-tools.spec.md`. Web v1 is prompt-only TinyFish CLI guidance and does not define
+`docs/specs/extension/web.extension.spec.md`. Web v1 is prompt-only TinyFish CLI guidance and does not define
 `svvy`-owned Web fetch artifacts or Web provider output persistence. The Web-specific part of this
 audit entry is historical evidence only unless a later product decision adopts a new native or
 provider-backed Web surface.
@@ -914,7 +914,7 @@ Relevant code:
 
 ### AUD-020 - Workflow task-agent config, generated declarations, saved settings, and runtime behavior diverged
 
-**Disposition:** Fixed, with the cx portion superseded by `docs/specs/cx-tools.spec.md`.
+**Disposition:** Fixed, with the cx portion superseded by `docs/specs/extension/cx.extension.spec.md`.
 `WorkflowTaskAgentConfig` now uses `reasoningEffort`, settings render workflow agents assignable to
 that contract, runtime task-agent registration filters the ordered task-tool registry by
 `config.toolSurface`, and task-agent projection binds by exact Smithers `(runId, nodeId, iteration,
@@ -1452,7 +1452,7 @@ This issue groups smaller findings that were still independently actionable. The
 
 #### AUD-034A - Obsolete provider-backed Web private URL guard is syntactic and incomplete
 
-**Disposition:** Obsolete for Web v1. `docs/specs/web-tools.spec.md` defines Web as prompt-only
+**Disposition:** Obsolete for Web v1. `docs/specs/extension/web.extension.spec.md` defines Web as prompt-only
 TinyFish CLI guidance, with TinyFish calls governed as ordinary shell/network execution rather than
 a `svvy` native Web provider. This finding is historical evidence for the retired provider-backed
 Web implementation and should only become active again if a later product decision adopts a native

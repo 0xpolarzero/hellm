@@ -294,12 +294,19 @@ current actor's generated extension binding.
 Those actions stay as `svvy`-native control tools:
 
 - `thread_start`
+- `thread_resume`
 - `load_extension`
 - `list_extensions`
 - `thread_handoff`
+- `thread_current`
+- `thread_list`
+- `thread_handoffs`
 - `wait`
 
 These are still tool calls.
+
+The concrete thread-control and thread-inspection APIs are defined in
+`docs/specs/extension/thread-managing.extension.spec.md`.
 
 `list_extensions` is a native read-only actor-local inspection tool. It reports only the current
 actor's loaded and available extension records and never exposes unavailable extension details,
@@ -324,24 +331,10 @@ extension is disabled through normal extension binding, which means TinyFish pro
 included for orchestrators, handler threads, or workflow task agents.
 
 The orchestrator may provide handler creation-time extension overrides when the delegated objective
-should begin with a non-default extension state:
-
-```ts
-thread_start({
-  objective: "Define Project CI checks for this repository",
-  extensions: {
-    "project-ci": "default_loaded",
-  },
-});
-```
-
-That starts a normal handler thread with the default handler runtime shape and the requested extension
-binding before its first turn. The override is a partial override over the `threadHandler` profile:
-listed extensions take the supplied `default_loaded`, `available`, or `unavailable` state, omitted
-extensions keep the profile state, Extension Loading remains fixed `default_loaded`, and the override
-does not mutate the handler profile.
-
-There is no legacy `context: ["ci"]`, `thread_start_ci`, `ci.start`, or CI-specific orchestrator.
+should begin with a non-default extension state. `thread_start` owns that creation-time override and
+starts a normal handler thread with the default handler runtime shape plus the requested extension
+binding before its first turn. Exact input, output, and rejected legacy shapes are defined in
+`docs/specs/extension/thread-managing.extension.spec.md`.
 
 Workflow supervision is different.
 
@@ -749,6 +742,10 @@ Extensions own:
 - env and dependency readiness
 - category-appropriate reset/delete behavior
 - read-only usage views showing which agents use the extension
+
+Artifacts is a shipped extension in draft: artifact records, storage, and projection are established
+product concepts, while the concrete model-callable Artifacts API still needs a dedicated extension
+contract.
 
 External instruction records represent files such as `AGENTS.md` and `CLAUDE.md`. They appear in the Extensions pane as a distinct read-only category, use the same per-agent usage states as other extensions, show path/content/order in generated-context previews, and provide an open-external-file action. Resetting an external instruction record changes only `svvy` settings or metadata overlays; it never overwrites the external file.
 

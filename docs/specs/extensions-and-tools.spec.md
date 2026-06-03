@@ -16,12 +16,31 @@ Related product docs must stay synchronized with this model.
 
 Related specs:
 
-- `docs/specs/extension-managing.spec.md` defines the Extension Managing extension and its
+- `docs/specs/extension/shell.extension.spec.md` defines the Shell native-tool extension index for
+  `exec_command` and `write_stdin`.
+- `docs/specs/extension/apply-patch.extension.spec.md` defines the Apply Patch native-tool
+  extension index for `apply_patch`.
+- `docs/specs/extension/execute-typescript.extension.spec.md` defines the Execute TypeScript native
+  extension.
+- `docs/specs/extension/extension-loading.extension.spec.md` defines the fixed Extension Loading
+  native control extension.
+- `docs/specs/extension/extension-managing.extension.spec.md` defines the Extension Managing extension and its
   `svvyx extensions ...` lifecycle API.
-- `docs/specs/cx-tools.spec.md` defines the shipped prompt-only cx extension and its direct CLI
+- `docs/specs/extension/thread-managing.extension.spec.md` defines the Thread Managing native control surface and the
+  concrete `thread_start`, `thread_resume`, `thread_handoff`, `thread_current`, `thread_list`, and
+  `thread_handoffs` APIs.
+- `docs/specs/extension/cx.extension.spec.md` defines the shipped prompt-only cx extension and its direct CLI
   boundary.
-- `docs/specs/web-tools.spec.md` defines the shipped prompt-only Web extension and TinyFish CLI
+- `docs/specs/extension/web.extension.spec.md` defines the shipped prompt-only Web extension and TinyFish CLI
   boundary.
+- `docs/specs/extension/git.extension.spec.md` defines the shipped prompt-only Git extension.
+- `docs/specs/extension/github.extension.spec.md` defines the shipped prompt-only GitHub extension.
+- `docs/specs/extension/smithers.extension.spec.md` is the draft Smithers extension spec.
+- `docs/specs/extension/project-ci.extension.spec.md` is the draft Project CI prompt-only extension
+  spec.
+- `docs/specs/extension/artifacts.extension.spec.md` is the draft Artifacts extension spec.
+- `docs/specs/extension/external-instructions.extension.spec.md` defines external instruction
+  extension records.
 
 The generated-context terminology in this document is intentional:
 
@@ -201,7 +220,7 @@ extension. Workspace-scoped extensions remain a future decision.
 | `user` | Created by the user, deletable, not resettable to shipped defaults. |
 | `external_instruction` | Discovered from an external file such as `AGENTS.md` or `CLAUDE.md`, read-only in `svvy`, non-deletable, and resettable only at the `svvy` usage/settings layer. |
 
-`category` is separate from `interface`. For example, Filesystem is
+`category` is separate from `interface`. For example, Shell and Apply Patch are
 `{ category: "shipped", interface: "native_tool" }`, Git is
 `{ category: "shipped", interface: "instructions" }`, and a discovered `AGENTS.md` record is
 `{ category: "external_instruction", interface: "instructions" }`.
@@ -1110,80 +1129,11 @@ profile config; it is always loaded.
 
 `thread_start` may include an optional `extensions` object. The object is a partial override over the
 configured `threadHandler` profile's extension usage states for the new handler thread.
+The concrete `thread_start` input, output, and rejection rules live in
+`docs/specs/extension/thread-managing.extension.spec.md`.
 
-Input shape:
-
-```ts
-type ThreadStartInput = {
-  objective: string;
-  extensions?: Partial<Record<ExtensionId, "default_loaded" | "available" | "unavailable">>;
-};
-```
-
-Rules:
-
-- `objective` is required and is the raw delegated objective for the handler thread.
-- `extensions` is optional.
-- when omitted, the handler uses the configured `threadHandler` profile extension states
-- when provided, each listed extension id overrides that extension's state for this handler thread
-- omitted extension ids keep the `threadHandler` profile state
-- values may be `default_loaded`, `available`, or `unavailable`
-- Extension Loading cannot be overridden and remains `default_loaded`
-- the override is bound to the created handler thread and does not mutate the `threadHandler` profile
-- the override is applied before the handler's first turn and before generated prompt, tools, `svvyx`
-  guidance, TypeScript declarations, and fingerprints are created for that handler
-- there is no legacy `context` field, `context: ["ci"]` alias, `thread_start_ci`, `ci.start`, or
-  other product-specific handler-start variant
-- `thread_start` extension overrides do not affect workflow task agents launched by workflows under
-  that handler
-
-Example:
-
-```json
-{
-  "objective": "Configure Project CI for this repository",
-  "extensions": {
-    "project-ci": "default_loaded",
-    "github": "available"
-  }
-}
-```
-
-Success result:
-
-```json
-{
-  "ok": true,
-  "threadId": "thread_123",
-  "surfacePiSessionId": "pi_thread_123",
-  "title": "Configure Project CI",
-  "objective": "Configure Project CI for this repository",
-  "agentContextBinding": {
-    "actorKind": "handler-thread",
-    "selectedAgentProfileId": "threadHandler",
-    "loadedExtensionIds": [
-      "filesystem",
-      "execute-typescript",
-      "extension-loading",
-      "cx",
-      "smithers",
-      "web",
-      "git",
-      "github",
-      "external-instructions",
-      "project-ci"
-    ],
-    "availableExtensionIds": ["extension-managing"],
-    "overrides": {
-      "project-ci": "default_loaded",
-      "github": "available"
-    }
-  }
-}
-```
-
-The result should expose the bound extension facts as durable provenance for the created handler.
-These facts do not affect future workflow task-agent extension selection, future handlers, or the
+The bound extension facts returned by `thread_start` are durable provenance for the created handler.
+Those facts do not affect future workflow task-agent extension selection, future handlers, or the
 `threadHandler` profile.
 
 Workflow task-agent component calls may also include an optional `extensions` object. The object is a
@@ -1516,7 +1466,7 @@ They contribute instructions for using the official external CLI through `exec_c
 Under the resolved shipped extension map, cx is prompt-only direct CLI guidance and Smithers controls
 are a shipped `svvyx` extension plus Smithers-native bridge tools where specified.
 
-### Ordinary Filesystem Work
+### Shell And Patch Work
 
 Read, search, and list operations should follow Codex's ordinary coding-agent model: use shell
 commands such as `rg`, `rg --files`, `sed`, `cat`, `ls`, `find`, `git show`, `nl`, and `wc`.
@@ -1525,19 +1475,23 @@ General `read`, `grep`, `find`, `ls`, `edit`, and `write` are not part of the re
 model-visible tool set. If any are added later, they need a concrete product reason beyond ordinary
 repo work.
 
-The Filesystem native extension exposes exactly the Codex-like command/edit primitives:
+The Shell native extension exposes exactly the Codex-like command primitives:
 
 - `exec_command` starts a command in a PTY or non-PTY process and returns output, exit status, or a
   `session_id` for a still-running process
 - `write_stdin` sends bytes to an existing running `exec_command` session or polls it for more
   output
+
+The Apply Patch native extension exposes exactly the Codex-like patch primitive:
+
 - `apply_patch` applies structured file edits through Codex's freeform patch grammar
 
 There is no separate model-facing tool named `shell`, `bash`, `read`, `write`, `edit`, `grep`,
 `find`, or `ls` in this resolved surface. The user-facing and agent-facing command execution tool is
-`exec_command`.
+`exec_command`; Shell is the extension name for `exec_command` plus `write_stdin`, not a callable
+tool name.
 
-The Filesystem extension instructions should be adapted from:
+The Shell and Apply Patch extension instructions should be adapted from:
 
 - `docs/references/codex/codex-rs/core/gpt_5_2_prompt.md`
 - `docs/references/codex/codex-rs/core/gpt_5_codex_prompt.md`
@@ -2295,8 +2249,8 @@ shell metacharacters, `svvyx ...` usage, redirection, and substitutions are not 
 
 `mcp_tool_call` remains a Codex Guardian action type, but it is not part of the resolved `svvy` v1
 payload unless `svvy` later exposes model-callable MCP tools that need approval routing. Native
-product control tools such as `load_extension`, `list_extensions`, `thread_start`, `thread_handoff`,
-`wait`, and Smithers bridge tools are not auto-reviewed merely because they are tools. They execute
+product control tools such as `load_extension`, `list_extensions`, `thread_start`, `thread_resume`,
+`thread_handoff`, `wait`, and Smithers bridge tools are not auto-reviewed merely because they are tools. They execute
 according to their own product contracts unless a future spec defines a specific approval boundary
 for one of them.
 
@@ -3301,9 +3255,11 @@ read-only external inputs.
 
 | Extension | Category | Interface | Included tools or capability | Default orchestrator state | Default handler state | Default workflow-agent state |
 | --- | --- | --- | --- | --- | --- | --- |
-| Filesystem | shipped | native_tool | `exec_command`, `write_stdin`, `apply_patch`, Codex-like filesystem/shell instructions, and `svvyx` access through `exec_command` | default_loaded | default_loaded | default_loaded |
+| Shell | shipped | native_tool | `exec_command`, `write_stdin`, Codex-like shell instructions, and `svvyx` access through `exec_command` | default_loaded | default_loaded | default_loaded |
+| Apply Patch | shipped | native_tool | `apply_patch` with Codex-like structured patch instructions for repository and allowed extension file edits | default_loaded | default_loaded | default_loaded |
 | Execute TypeScript | shipped | native_tool | `execute_typescript` with generated `svvy` and loaded-extension clients as the preferred TypeScript interface | default_loaded | default_loaded | default_loaded |
 | Extension Loading | shipped | native_tool | `list_extensions`, `load_extension`; fixed app-native control, always default-loaded and not configurable | default_loaded | default_loaded | default_loaded |
+| Thread Managing | shipped | native_tool | Actor-scoped handler-thread controls and inspection tools; concrete API is defined in `docs/specs/extension/thread-managing.extension.spec.md` | default_loaded | default_loaded | unavailable |
 | Extension Managing | shipped | svvyx | `svvyx extensions ...` lifecycle commands for inspect, create, build, usage state, reset, delete, and revert; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |
 | cx | shipped | instructions | official cx CLI semantic code-navigation guidance through `exec_command`; no native `cx_*`, `svvyx cx`, generated TypeScript client, product navigation, or product-state controls | default_loaded | default_loaded | default_loaded |
 | Smithers | shipped | svvyx | workflow run/list/inspect/resume/signal/transcript controls | unavailable | default_loaded | unavailable |
@@ -3312,6 +3268,7 @@ read-only external inputs.
 | GitHub | shipped | instructions | GitHub/`gh` CLI guidance for issues, PRs, review comments, Actions, publishing, and wrap-up; no wrapper CLI or generated TypeScript client by default | default_loaded | default_loaded | available |
 | External Instructions | external_instruction | instructions | read-only external instruction files such as `AGENTS.md` and `CLAUDE.md`, surfaced with open-external-file controls | default_loaded | default_loaded | default_loaded |
 | Project CI | shipped | instructions | Project CI authoring guidance for defining and maintaining CI workflow lanes; no tools by default | available | available | unavailable |
+| Artifacts | shipped | native_tool | Draft artifact creation, inspection, linking, and projection capability; concrete model-callable API is not specced yet | default_loaded | default_loaded | default_loaded |
 
 The Git and GitHub extensions must not wrap `git` or `gh` by default. Agents use ordinary shell
 commands and command help. App-owned startup, extension refresh, `list_extensions`, and Extension
@@ -3333,13 +3290,17 @@ These extensions teach shell use of `git` and `gh`; they do not introduce a para
 
 Extension Managing combines the earlier separate "Extension Manager" and "Incur Extension
 Authoring" ideas. There is no separate Incur Authoring extension unless this gets split again later.
-Its detailed command surface is defined in `docs/specs/extension-managing.spec.md`.
+Its detailed command surface is defined in `docs/specs/extension/extension-managing.extension.spec.md`.
 
 Project CI is a shipped prompt-only extension. It is available by default to orchestrators and
 handlers so `thread_start` can preload it for CI-authoring objectives and handlers can load it with
 `load_extension({ extensionId: "project-ci" })` when CI definition work appears after delegation.
 Running existing Project CI workflow entries does not require loading this extension; the Smithers
 extension owns runtime workflow supervision.
+
+Artifacts is a shipped native-tool extension in draft. Existing artifact records, storage, and
+projection are already product concepts, but the concrete agent-facing artifact API still needs to
+be specced in `docs/specs/extension/artifacts.extension.spec.md`.
 
 ## Workflow Agent Extension Model
 
@@ -3371,7 +3332,8 @@ The workflow-agent component extension override API is:
 MyWorkflowAgent({
   prompt: "...",
   extensions: {
-    filesystem: "default_loaded",
+    shell: "default_loaded",
+    "apply-patch": "default_loaded",
     "execute-typescript": "default_loaded",
     github: "available",
     web: "unavailable",
@@ -3672,8 +3634,20 @@ Related source-of-truth docs are:
 - `docs/prd.md`
 - `docs/features.ts`
 - `docs/progress.md`
-- `docs/specs/extension-managing.spec.md`
+- `docs/specs/extension/extension-managing.extension.spec.md`
 - `docs/specs/ambient-agent-resources-baseline.spec.md`
-- `docs/specs/execute-typescript.spec.md`
+- `docs/specs/extension/shell.extension.spec.md`
+- `docs/specs/extension/apply-patch.extension.spec.md`
+- `docs/specs/extension/execute-typescript.extension.spec.md`
+- `docs/specs/extension/extension-loading.extension.spec.md`
+- `docs/specs/extension/thread-managing.extension.spec.md`
+- `docs/specs/extension/cx.extension.spec.md`
+- `docs/specs/extension/web.extension.spec.md`
+- `docs/specs/extension/git.extension.spec.md`
+- `docs/specs/extension/github.extension.spec.md`
+- `docs/specs/extension/smithers.extension.spec.md`
+- `docs/specs/extension/project-ci.extension.spec.md`
+- `docs/specs/extension/artifacts.extension.spec.md`
+- `docs/specs/extension/external-instructions.extension.spec.md`
 - `docs/specs/project-ci.spec.md`
 - `docs/specs/workflow-library.spec.md`

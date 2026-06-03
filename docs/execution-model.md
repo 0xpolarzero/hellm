@@ -47,10 +47,9 @@ flowchart TD
     subgraph Tools["Generated Capability Set"]
         DirectTools["PI-backed direct tools"]
         Generic["execute_typescript"]
-        ThreadStart["thread_start"]
+        ThreadManaging["Thread Managing native controls"]
         ListExtensions["list_extensions"]
         LoadExtension["load_extension"]
-        ThreadHandoff["thread_handoff"]
         SmithersTools["Smithers-native workflow tools (`smithers_*`)"]
         Wait["wait"]
         DirectReply["Direct reply"]
@@ -65,7 +64,7 @@ flowchart TD
     end
 
     subgraph Runtime["Runtime Handlers"]
-        RuntimeHandler["svvy runtime handles execute_typescript, thread_start, load_extension, thread_handoff, and wait"]
+        RuntimeHandler["svvy runtime handles execute_typescript, Thread Managing controls, load_extension, and wait"]
         SmithersBridge["Bun-owned Smithers bridge handles Smithers-native workflow tools"]
         ResumeHandler["Runtime resumes the supervising handler thread when a workflow run changes state"]
     end
@@ -90,10 +89,9 @@ flowchart TD
     OpenTurn --> Decide
 
     Decide --> Generic
-    Decide --> ThreadStart
+    Decide --> ThreadManaging
     Decide --> ListExtensions
     Decide --> LoadExtension
-    Decide --> ThreadHandoff
     Decide --> SmithersTools
     Decide --> Wait
     Decide --> DirectReply
@@ -105,10 +103,9 @@ flowchart TD
     Api --> ApiExtensions
     Api --> RuntimeHandler
 
-    ThreadStart --> RuntimeHandler
+    ThreadManaging --> RuntimeHandler
     ListExtensions --> RuntimeHandler
     LoadExtension --> RuntimeHandler
-    ThreadHandoff --> RuntimeHandler
     SmithersTools --> SmithersBridge
     Wait --> RuntimeHandler
     DirectReply --> State
@@ -147,6 +144,7 @@ The orchestrator typically chooses among:
 - cx CLI guidance through `exec_command` plus direct tools
 - `execute_typescript`
 - `thread_start`
+- `thread_resume` for completed handler-thread follow-up
 - `wait`
 
 It normally does **not** supervise every workflow pause, rerun, and repair step itself.
@@ -289,14 +287,8 @@ GitHub issues, pull requests, review comments, Actions, or other GitHub work.
 
 The orchestrator can preload an extension for a delegated objective:
 
-```ts
-thread_start({
-  objective: "Define Project CI checks for this repository",
-  extensions: {
-    "project-ci": "default_loaded",
-  },
-});
-```
+Use `thread_start.extensions` to apply creation-time handler extension overrides. The exact
+`thread_start` API lives in `docs/specs/extension/thread-managing.extension.spec.md`.
 
 A handler can load the extension later:
 
@@ -323,7 +315,7 @@ No runtime path infers CI from arbitrary workflow output, command names, logs, o
 - cx prompt-only CLI guidance is part of generated actor context and is the preferred first step for supported code navigation when the cx extension is loaded; agents run official `cx` commands through `exec_command`.
 - ordinary repository inspection uses `exec_command` with shell tools such as `rg`, `sed`, `cat`, `ls`, `find`, `git show`, `nl`, and `wc`.
 - generated `execute_typescript` clients are derived from loaded native tools and loaded extensions; broad hand-written `api.read`, `api.bash`, and `api.workflow_*` helper families are not part of the resolved model.
-- `thread_start`, `load_extension`, `thread_handoff`, and `wait` remain `svvy`-native control tools.
+- Thread Managing controls, `load_extension`, and `wait` remain `svvy`-native control tools.
 - workflow supervision should use Smithers-native bridge tools such as `smithers_run_workflow`, `smithers_get_run`, and `smithers_resolve_approval`.
 - the Smithers-native capability set targets product-runtime runnable workflows rather than the repo authoring workspace under `workflows/`.
 - capability declarations are actor-specific: the orchestrator gets only orchestrator-callable tools, and handler threads get only handler-callable tools.

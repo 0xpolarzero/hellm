@@ -12,7 +12,9 @@
   - define how handler threads load the Project CI authoring extension only when needed
   - define how Project CI is configured organically through normal handler work rather than a setup launcher
 
-Extension loading mechanics are defined in [Extensions And Tools Spec](./extensions-and-tools.spec.md).
+The Project CI prompt-only extension record and draft extension-instruction contract are defined in
+[Project CI Extension Spec](./extension/project-ci.extension.spec.md). Extension loading mechanics
+are defined in [Extensions And Tools Spec](./extensions-and-tools.spec.md).
 
 ## Naming
 
@@ -155,7 +157,9 @@ A handler with the `project-ci` extension loaded may run Project CI entries thro
 
 The `project-ci` extension may be loaded in either of two ways:
 
-- the orchestrator starts the handler with `thread_start({ objective, extensions: { "project-ci": "default_loaded" } })`
+- the orchestrator starts the handler with a `thread_start` creation-time extension override that
+  sets `project-ci` to `default_loaded`; the exact API is defined in
+  `docs/specs/extension/thread-managing.extension.spec.md`
 - an existing handler calls `load_extension({ extensionId: "project-ci" })`
 
 Loading the same extension more than once is idempotent.

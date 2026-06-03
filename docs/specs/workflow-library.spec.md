@@ -12,6 +12,14 @@
   - define optional product metadata and result schemas for special product lanes such as Project CI
   - define how saved workflow files are written and validated
 
+Related extension specs:
+
+- `docs/specs/extension/smithers.extension.spec.md` defines the draft Smithers extension surface that
+  launches and supervises runnable workflow entries.
+- `docs/specs/extension/artifacts.extension.spec.md` defines the draft Artifacts extension surface;
+  artifact workflows here are persisted workflow source artifacts, not the final callable artifact
+  API.
+
 ## Purpose
 
 `svvy` needs one clear split between:
@@ -478,8 +486,8 @@ Project CI is a special product lane over this same library.
 Normal handlers may select a configured Project CI entry through `smithers_list_workflows({ productKind: "project-ci" })`.
 
 CI configuration is owned by whichever handler thread has loaded the `project-ci` extension, either
-from `thread_start({ extensions: { "project-ci": "default_loaded" } })` or from
-`load_extension({ extensionId: "project-ci" })`.
+from a `thread_start` creation-time extension override defined in
+`docs/specs/extension/thread-managing.extension.spec.md` or from `load_extension({ extensionId: "project-ci" })`.
 
 ## Out Of Scope
 

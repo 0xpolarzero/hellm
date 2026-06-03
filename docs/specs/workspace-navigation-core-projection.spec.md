@@ -182,6 +182,9 @@ The renderer may still group the data visually, but the backend selector owns th
 
 ## Artifact Projection
 
+The draft Artifacts extension record and unresolved callable API notes are defined in
+`docs/specs/extension/artifacts.extension.spec.md`.
+
 ### What Counts As An Artifact
 
 An artifact is a durable byproduct or evidence file produced by work the app performed.

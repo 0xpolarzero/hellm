@@ -32,6 +32,9 @@ This document defines:
 - the ownership boundaries for those concepts
 - the shape of the reference POC and its intended SQLite-backed implementation
 
+The concrete Thread Managing native tool APIs that read and write this state are defined in
+`docs/specs/extension/thread-managing.extension.spec.md`.
+
 ## Reference Rule
 
 The executable reference sketch for this spec is [docs/pocs/structured-session-state.poc.ts](../pocs/structured-session-state.poc.ts).
@@ -164,6 +167,7 @@ type StructuredSessionState = {
       | "execute_typescript"
       | "clarify"
       | "thread_start"
+      | "thread_resume"
       | "load_extension"
       | "thread_handoff"
       | "wait"
@@ -731,7 +735,7 @@ Use them this way:
 
 - low-level reads, searches, and workflow discovery calls are usually `trace`
 - material writes, artifact creation, `exec_command` command executions, and failures usually roll up as `summary`
-- `thread_start`, `load_extension`, `thread_handoff`, `wait`, and Smithers-mutating commands such as `smithers_run_workflow`, `smithers_resolve_approval`, `smithers_runs_cancel`, and `smithers_signals_send` are normally `surface`
+- `thread_start`, `thread_resume`, `load_extension`, `thread_handoff`, `wait`, and Smithers-mutating commands such as `smithers_run_workflow`, `smithers_resolve_approval`, `smithers_runs_cancel`, and `smithers_signals_send` are normally `surface`
 - read-only Smithers inspection commands are usually `summary` unless the UI chooses to surface a specific one directly
 - child generated-client commands remain nested detail by default
 
@@ -864,6 +868,9 @@ The idempotency rule is:
 No runtime component may create these records by reading workflow logs, Smithers node outputs, final prose, or command names.
 
 ## Artifact Model
+
+The draft Artifacts extension record and unresolved callable API notes are defined in
+`docs/specs/extension/artifacts.extension.spec.md`.
 
 ### Artifact Fields
 
@@ -1061,14 +1068,14 @@ Recommended implementation rules:
 Write responsibility is:
 
 - ordinary orchestrator-turn writes, including turn decisions, and root command writes belong to the `svvy` runtime
-- `thread_start` applies any handler creation-time extension overrides as a partial override over the `threadHandler` profile before the handler's first turn runs, then dispatches that first handler turn without waiting for the user to manually send a message in the new thread
+- Thread Managing write-tool contracts, including `thread_start`, `thread_resume`, and `thread_handoff`, are defined in `docs/specs/extension/thread-managing.extension.spec.md`
 - handler-thread turn writes, including turn decisions, and command writes belong to the `svvy` runtime over pi thread surfaces
 - `load_extension` updates the current actor's loaded and available extension binding, is idempotent when the extension is already loaded, and refreshes generated agent context before the next model call
 - workflow-run writes belong to the Smithers bridge
 - workflow-task-attempt projection stores svvy-owned product metadata such as `meta.promptBinding` on the exact Smithers attempt address while leaving Smithers-owned run, node, attempt, retry, wait, output, usage, and transcript facts in Smithers durable state
 - Project CI writes belong to the runtime or bridge path that handles terminal Smithers runs from entries declaring `productKind = "project-ci"` and validates their terminal output against the declared CI result schema
 - wait writes belong to the `svvy` runtime
-- runtime-state read tools (`runtime_current`, `thread_current`, `thread_list`, and `thread_handoffs`) read durable structured state and the active prompt runtime binding without creating command records or writing lifecycle facts
+- runtime-state read tools (`runtime_current`, `thread_current`, `thread_list`, and `thread_handoffs`) read durable structured state and the active prompt runtime binding without creating command records or writing lifecycle facts; concrete thread read-tool contracts are defined in `docs/specs/extension/thread-managing.extension.spec.md`
 
 No runtime component may synthesize `turnDecision`, thread, workflow-run, Project CI, or wait facts from transcript prose after the fact.
 

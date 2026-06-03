@@ -63,7 +63,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/extensions-and-tools.spec.md",
-      "docs/specs/extension-managing.spec.md",
+      "docs/specs/extension/extension-managing.extension.spec.md",
       "docs/todo.md",
     ],
   },
@@ -75,6 +75,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
       "Presents generated artifacts as explicit Dockview artifact inspector panes keyed by durable artifact identity, with visible HTML previews isolated in sandboxed iframes that grant script execution only without same-origin, navigation, popup, form, or parent/app escape permissions.",
     sourceSpecs: [
       "docs/prd.md",
+      "docs/specs/extension/artifacts.extension.spec.md",
       "docs/specs/structured-session-state.spec.md",
       "docs/specs/workspace-navigation-core-projection.spec.md",
     ],
@@ -85,15 +86,24 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     status: "in-progress",
     summary:
       "Moves artifacts into a dedicated workspace artifact directory with SQLite metadata and path indexing, including submitted `execute_typescript` source for every attempt and workflow-related logs and exports.",
-    sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/extension/artifacts.extension.spec.md",
+      "docs/specs/structured-session-state.spec.md",
+    ],
   },
   {
     id: "execute-typescript-surface",
     name: "Direct Tools And Execute TypeScript",
     status: "in-progress",
     summary:
-      "Provides Codex-like native filesystem tools as the default coding-agent work interface, with `exec_command`, `write_stdin`, and `apply_patch` carrying command lifecycle, long-running session, patch facts, and Codex-like approval-boundary decisions; packages macOS sandboxing through `/usr/bin/sandbox-exec` plus vendored or ported Codex Seatbelt policy generation, exposes simple execution settings for `approvalMode` (`auto-review`, `user`, or `full-access`) and default-on `networkAccess`, and treats `svvyx ...` as ordinary `exec_command` input rather than a separate tool; keeps `execute_typescript` as an actor-local TypeScript composition tool with generated svvy and loaded-extension clients as the preferred typed interface while explicitly excluding cx generated clients in v1; preserves arbitrary TypeScript side effects as opaque unless they go through svvy-owned client boundaries; produces preflight typecheck or compile diagnostics when available, stores file-backed source artifacts for every attempt, and rolls generated-client child command facts under the parent.",
-    sourceSpecs: ["docs/prd.md", "docs/specs/execute-typescript.spec.md"],
+      "Provides Codex-like native Shell and Apply Patch extensions as the default coding-agent work interface, with `exec_command`, `write_stdin`, and `apply_patch` carrying command lifecycle, long-running session, patch facts, and Codex-like approval-boundary decisions; packages macOS sandboxing through `/usr/bin/sandbox-exec` plus vendored or ported Codex Seatbelt policy generation, exposes simple execution settings for `approvalMode` (`auto-review`, `user`, or `full-access`) and default-on `networkAccess`, and treats `svvyx ...` as ordinary `exec_command` input rather than a separate tool; keeps `execute_typescript` as an actor-local TypeScript composition tool with generated svvy and loaded-extension clients as the preferred typed interface while explicitly excluding cx generated clients in v1; preserves arbitrary TypeScript side effects as opaque unless they go through svvy-owned client boundaries; produces preflight typecheck or compile diagnostics when available, stores file-backed source artifacts for every attempt, and rolls generated-client child command facts under the parent.",
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/extension/shell.extension.spec.md",
+      "docs/specs/extension/apply-patch.extension.spec.md",
+      "docs/specs/extension/execute-typescript.extension.spec.md",
+    ],
   },
   {
     id: "trusted-cli-dependencies",
@@ -103,9 +113,11 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
       "Defines app-managed fixed-version CLI dependencies for shipped prompt-only extensions and ordinary coding-agent CLIs, with exact pinned records for `cx-cli@0.7.1`, `@tiny-fish/cli@0.1.6`, `git@2.54.0`, and `gh@2.93.0`; checks whether the user already has each binary before offering installation, routes missing-binary installation through the existing extension-style confirmation UI, rejects floating versions such as `latest`, and keeps agent instructions free of package-manager install commands.",
     sourceSpecs: [
       "docs/specs/extensions-and-tools.spec.md",
-      "docs/specs/cx-tools.spec.md",
-      "docs/specs/web-tools.spec.md",
-      "docs/specs/extension-managing.spec.md",
+      "docs/specs/extension/git.extension.spec.md",
+      "docs/specs/extension/github.extension.spec.md",
+      "docs/specs/extension/cx.extension.spec.md",
+      "docs/specs/extension/web.extension.spec.md",
+      "docs/specs/extension/extension-managing.extension.spec.md",
     ],
   },
   {
@@ -114,7 +126,10 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     status: "in-progress",
     summary:
       "Defines Web as a shipped default-loaded prompt-only extension while `networkAccess` is enabled, disables Web through normal extension binding when network access is off, vendors TinyFish-owned `use-tinyfish` agent instructions, declares an app-managed trusted `tinyfish` CLI dependency, teaches agents to authenticate the official TinyFish CLI and use `tinyfish search query` plus `tinyfish fetch content get` through ordinary shell commands, explicitly omits `web_search`, `web_fetch`, `svvyx web`, generated Web TypeScript clients, Firecrawl, Web Provider settings, and svvy-owned TinyFish key storage, and tells agents to redirect large TinyFish JSON output to files when useful because the tested CLI writes search and fetch results to stdout by default.",
-    sourceSpecs: ["docs/specs/web-tools.spec.md", "docs/specs/extensions-and-tools.spec.md"],
+    sourceSpecs: [
+      "docs/specs/extension/web.extension.spec.md",
+      "docs/specs/extensions-and-tools.spec.md",
+    ],
   },
   {
     id: "handler-thread-surfaces",
@@ -122,7 +137,11 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     status: "in-progress",
     summary:
       "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise one delegated objective, immediately start the handler's first turn from the raw objective, explicitly resume a completed handler thread through `thread_resume` when follow-up work belongs in the same delegated context, optionally apply `thread_start.extensions` as a partial override over the `threadHandler` profile with `default_loaded`, `available`, or `unavailable` states such as setting `project-ci` to `default_loaded`, derive handler-thread titles through the configured `namer` from the supplied objective instead of exposing a separate title field to the orchestrator, stay multi-turn and directly messageable before and after handoff, expose runtime and thread state through `runtime_current`, `thread_current`, `thread_list`, and `thread_handoffs`, distinguish idle, handler-active, workflow-active, waiting, troubleshooting, and completed thread states, reject `thread_handoff` while the thread still owns a running or waiting workflow run for the current span, route workflow attention back to the owning handler surface rather than the focused Dockview panel, can be inspected on demand without becoming the default reconciliation path, and return control to the orchestrator only through explicit `thread_handoff` calls that append ordered handoff episodes over the thread's lifetime and schedule typed orchestrator reconciliation notifications.",
-    sourceSpecs: ["docs/prd.md", "docs/specs/structured-session-state.spec.md"],
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/extension/thread-managing.extension.spec.md",
+      "docs/specs/structured-session-state.spec.md",
+    ],
   },
   {
     id: "agents-and-extensions",
@@ -133,9 +152,16 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/extensions-and-tools.spec.md",
-      "docs/specs/extension-managing.spec.md",
-      "docs/specs/web-tools.spec.md",
-      "docs/specs/cx-tools.spec.md",
+      "docs/specs/extension/thread-managing.extension.spec.md",
+      "docs/specs/extension/extension-managing.extension.spec.md",
+      "docs/specs/extension/web.extension.spec.md",
+      "docs/specs/extension/cx.extension.spec.md",
+      "docs/specs/extension/git.extension.spec.md",
+      "docs/specs/extension/github.extension.spec.md",
+      "docs/specs/extension/external-instructions.extension.spec.md",
+      "docs/specs/extension/extension-loading.extension.spec.md",
+      "docs/specs/extension/project-ci.extension.spec.md",
+      "docs/specs/extension/artifacts.extension.spec.md",
       "docs/specs/project-ci.spec.md",
       "docs/specs/structured-session-state.spec.md",
     ],
@@ -146,7 +172,11 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     status: "in-progress",
     summary:
       "Exposes Smithers-native semantic workflow control and inspection tools through the Bun bridge for handler-thread surfaces, with normal startup discovering only configured saved entries under `.svvy/workflows/entries/` and artifact entries under `.svvy/artifacts/workflows/`, a stable `smithers_run_workflow({ workflowId, input, runId? })` tool validated against each entry's real TypeScript or Zod launch schema where supplied `runId` resumes exactly that run, omitted `runId` requests a fresh launch, omitted `runId` is rejected when the same handler already owns a nonterminal run with the same `workflowId`, and different `workflowId` values can run concurrently under one handler, `smithers_list_workflows({ workflowId?, productKind? })` returning full runnable-entry contract metadata including `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, `launchInputSchema`, and optional product metadata such as Project CI `productKind` and result schema, `smithers_list_runs` returning workspace-global compact run summaries enriched with svvy `sessionId` and `threadId` ownership when known, and the rest of the handler-thread surface preserving official Smithers names such as `get_run`, `watch_run`, `explain_run`, `list_pending_approvals`, `resolve_approval`, `get_node_detail`, `list_artifacts`, `get_chat_transcript`, `get_run_events`, `runs.cancel`, `signals.send`, `frames.list`, `getDevToolsSnapshot`, and `streamDevTools` instead of inventing a parallel svvy `workflow_*` abstraction, while preserving transport and invocation metadata in command facts, returning an empty workflow list when no real entries are configured, and avoiding any dependency on the repo authoring workspace under `workflows/`.",
-    sourceSpecs: ["docs/prd.md", "docs/specs/workflow-supervision.spec.md"],
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/extension/smithers.extension.spec.md",
+      "docs/specs/workflow-supervision.spec.md",
+    ],
   },
   {
     id: "workflow-task-agents",
@@ -158,7 +188,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
       "docs/prd.md",
       "docs/specs/extensions-and-tools.spec.md",
       "docs/specs/workflow-supervision.spec.md",
-      "docs/specs/execute-typescript.spec.md",
+      "docs/specs/extension/execute-typescript.extension.spec.md",
     ],
   },
   {
@@ -199,7 +229,11 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     status: "in-progress",
     summary:
       "Lets a user, orchestrator, or backend coordinator submit prompt-bearing and surface-control work to an orchestrator or handler-thread surface by placing it in a durable FIFO queue owned by the target `surfacePiSessionId`; ordinary sends, idle sends, `thread_resume` requests, initial handler starts, workflow-attention wake-ups, and agent context refreshes do not bypass the queue manager, while a row-level `Steer` action promotes a durable row to the front for ordered next-turn delivery rather than injecting a direct pi steering prompt; the queue is a typed surface queue where all surfaces accept `user_message`, `agent_context_refresh`, `initial_handler_start`, and `workflow_attention` items, and the orchestrator also accepts `handler_handoff` notification items created after durable `thread_handoff` recording; queued items are claimed atomically by one shared queue runner per `surfacePiSessionId`, active-surface follow-ups stay visible as editable queued rows until claimed, idle-surface items are claimed before renderer-visible queued state so their first visible state is pending or active work, committed user transcript messages expose copy plus edit-and-resend with a visible transcript highlight for the message under edit and a draft-replacement warning before overwriting non-empty composer input, then move the same pi surface back to the original message's parent state before continuing from the edited message, queue rows remain structured product state until delivered as real pi input, handoff notification, or agent context refresh, survive panel focus changes and duplicated panels, write user prompt history once at queue time only for user messages, and stay recoverable across restart, cancellation, restore-to-composer, and pre-accept delivery failure.",
-    sourceSpecs: ["docs/prd.md", "docs/specs/queued-messages.spec.md"],
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/queued-messages.spec.md",
+      "docs/specs/extension/thread-managing.extension.spec.md",
+    ],
   },
   {
     id: "composer-mention-links",
@@ -248,6 +282,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
       "Provides an Agents pane between Logs and Extensions that owns app-wide orchestrator profiles, the current special `threadHandler` profile, and workflow-agent profiles, persists provider, model, reasoning, base instructions, extension usage selections, and profile metadata as app-global settings, lets users create or duplicate additional orchestrator profiles, deletes user-created profiles through an inline single-confirm action, drives the New orchestrator picker order and profile badges from the orchestrator-profile order, keeps the default orchestrator profile locked, first, non-draggable, and non-deletable while still allowing settings edits, lets profile-backed orchestrator sessions optionally save composer model and reasoning changes back to their profile for future sessions, uses internal title-naming settings for top-level session titles and handler-thread titles derived from delegated objectives without exposing title naming as a special profile, uses the special `threadHandler` profile for delegated handler-thread surfaces with partial extension-state overrides available through `thread_start.extensions`, exposes focused-surface agent summaries in pane chrome, and uses direct-saving profile editors with connected-provider model dropdowns plus selected-model reasoning dropdowns derived from pi's normalized model metadata and runtime thinking controls rather than svvy-owned provider/model special cases. Extension-provided agent profiles remain future work and do not imply a repo-root `workflows/` shipped runtime.",
     sourceSpecs: [
       "docs/prd.md",
+      "docs/specs/extension/thread-managing.extension.spec.md",
       "docs/specs/extensions-and-tools.spec.md",
       "docs/specs/structured-session-state.spec.md",
       "docs/specs/workflow-library.spec.md",
@@ -291,7 +326,10 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     status: "in-progress",
     summary:
       "Adds a workspace-scoped svvy-owned product state layer above pi and Smithers with durable session, surface composer draft, turn, handler thread, workflow-run binding/projection, workflow-task-attempt UI projection, command, episode, artifact, Project CI run/check result, attention, and lifecycle projection records, explicit surface-target identity (`workspaceSessionId`, `surfacePiSessionId`, `threadId`), exact Smithers identifiers for workflow/task projection rows, and workspace-level metadata projection that survives reload, while leaving Smithers execution facts such as run/node/attempt/wait/output/approval/timer/event state in Smithers and live-surface transcript updates separate from durable workspace read models.",
-    sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
+    sourceSpecs: [
+      "docs/specs/structured-session-state.spec.md",
+      "docs/specs/extension/thread-managing.extension.spec.md",
+    ],
   },
   {
     id: "turn-command-state",
@@ -299,7 +337,10 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     status: "in-progress",
     summary:
       "Tracks every turn on the orchestrator surface and handler thread surfaces, including each turn's top-level turn decision, plus every tool call including execute_typescript snippets and generated-client child command facts, as durable state with lifecycle status, ownership, linkage, attempts, and trace-versus-surface visibility.",
-    sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
+    sourceSpecs: [
+      "docs/specs/structured-session-state.spec.md",
+      "docs/specs/extension/thread-managing.extension.spec.md",
+    ],
   },
   {
     id: "session-threads",
@@ -307,7 +348,10 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     status: "in-progress",
     summary:
       "Tracks delegated handler threads as durable interactive surfaces keyed separately from workspace session containers and pi surface ids, with objective, handler-attention status, wait state, worktree context, explicit orchestrator re-engagement of completed threads through `thread_resume`, and linkage to multiple workflow runs and multiple handoff episodes over the thread's lifetime without flattening workflow outcome into thread terminal state.",
-    sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
+    sourceSpecs: [
+      "docs/specs/structured-session-state.spec.md",
+      "docs/specs/extension/thread-managing.extension.spec.md",
+    ],
   },
   {
     id: "durable-episodes",
@@ -315,7 +359,10 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     status: "in-progress",
     summary:
       "Stores reusable semantic outputs as first-class episode records, with handler threads able to emit multiple ordered handoff episodes over their lifetime through explicit `thread_handoff` calls whose success boundary is durable episode recording plus objective-span closure, including orchestrator-local episodes when substantive local work completes, while ordinary tool runs keep their own command summaries and artifacts.",
-    sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
+    sourceSpecs: [
+      "docs/specs/structured-session-state.spec.md",
+      "docs/specs/extension/thread-managing.extension.spec.md",
+    ],
   },
   {
     id: "project-ci-lane",
@@ -325,8 +372,9 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
       'Provides Project CI status and result projection over normal saved Smithers entries under `.svvy/workflows/.../ci/`, records svvy-owned CI run and CI check result rows only from entries declaring `productKind = "project-ci"` whose durable Smithers terminal result validates against the declared result schema, derives UI/read models from Smithers result facts plus svvy ownership/product-binding facts rather than process memory or copied svvy output fields, treats terminal events, reconnect, and restart recovery as idempotent triggers to re-read Smithers durable state, records missing or invalid Smithers terminal results as durable svvy projection failure or troubleshooting state, exposes latest CI status in specialized UI, and delivers CI authoring guidance only through the handler-available `project-ci` extension set to `default_loaded` by a `thread_start.extensions` partial override or loaded by handler-side `load_extension({ extensionId: "project-ci" })`, without a setup launcher, CI-specific orchestrator, or shipped placeholder CI entry.',
     sourceSpecs: [
       "docs/specs/project-ci.spec.md",
+      "docs/specs/extension/thread-managing.extension.spec.md",
       "docs/specs/extensions-and-tools.spec.md",
-      "docs/specs/extension-managing.spec.md",
+      "docs/specs/extension/extension-managing.extension.spec.md",
       "docs/specs/structured-session-state.spec.md",
       "docs/specs/workspace-navigation-core-projection.spec.md",
       "docs/specs/workflow-library.spec.md",

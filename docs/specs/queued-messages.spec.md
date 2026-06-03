@@ -6,6 +6,9 @@
 - Status: adopted product direction for durable surface queue work
 - Scope: composer sends and surface-control work that target orchestrator or handler-thread surfaces
 
+Thread Managing tools that create or consume queue work, including `thread_resume` and
+`thread_handoff`, are defined in `docs/specs/extension/thread-managing.extension.spec.md`.
+
 ## Purpose
 
 `svvy` needs a clear way for every prompt-bearing or surface-control item to pass through one ordered surface queue, whether the surface is currently idle or already running.

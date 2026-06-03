@@ -6,7 +6,7 @@
 - Status: resolved direction for `execute_typescript` under the Extensions architecture
 - Related specs:
   - `docs/specs/extensions-and-tools.spec.md`
-  - `docs/specs/cx-tools.spec.md`
+  - `docs/specs/extension/cx.extension.spec.md`
 
 This spec replaces the older direct-tool helper model. `execute_typescript` is now a native
 extension capability.
@@ -25,7 +25,7 @@ It is useful when TypeScript control flow helps the agent:
 - collect evidence into artifacts through generated clients when those clients expose artifact
   operations
 
-Ordinary one-shot repository work should use the Filesystem native extension:
+Ordinary one-shot repository work should use the Shell and Apply Patch native extensions:
 
 - inspect files and search with `exec_command`
 - continue long-running processes with `write_stdin`
