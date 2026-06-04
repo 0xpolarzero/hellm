@@ -201,6 +201,12 @@ When this text is included in generated actor context, `svvy` may replace "Read 
 "raw file reads through `exec_command`" and "Edit tool" with "`apply_patch`" so the instruction names
 match the `svvy` runtime. The command reference and usage ladder must remain cx-owned.
 
+`cx lang add`, `cx lang remove`, and cache-management commands mutate cx-owned grammar/support
+state. They are permitted ordinary `exec_command` work under the active shell approval and sandbox
+policy, and they are not trusted CLI dependency installation. Installing or upgrading the trusted
+`cx` binary itself remains app-managed and must not be done by agent-authored package-manager
+commands.
+
 ## cx CLI Command Surface
 
 Agents may call these cx commands through `exec_command` when the cx extension is loaded:

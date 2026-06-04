@@ -96,6 +96,7 @@ export interface AppLogEntry {
   workflowRunId?: string;
   workflowTaskAttemptId?: string;
   commandId?: string;
+  artifactId?: string;
 }
 
 export interface AppLogSummary {

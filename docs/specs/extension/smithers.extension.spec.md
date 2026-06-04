@@ -35,26 +35,30 @@ Default usage:
 The Smithers extension is the handler-thread workflow-supervision capability. It should preserve
 Smithers-native names instead of inventing a parallel `workflow_*` abstraction.
 
-Currently referenced controls include:
+Agent-visible tools use the `smithers_*` namespace. When the underlying Smithers operation uses a
+dotted or camelCase name, the model-facing tool name is the snake_case `smithers_` form while final
+command facts preserve the raw Smithers operation name.
+
+Currently referenced model-facing controls include:
 
 ```ts
 smithers_run_workflow({ workflowId, input, runId? })
 smithers_list_workflows({ workflowId?, productKind? })
 smithers_list_runs(...)
-get_run(...)
-watch_run(...)
-explain_run(...)
-list_pending_approvals(...)
-resolve_approval(...)
-get_node_detail(...)
-list_artifacts(...)
-get_chat_transcript(...)
-get_run_events(...)
-runs.cancel(...)
-signals.send(...)
-frames.list(...)
-getDevToolsSnapshot(...)
-streamDevTools(...)
+smithers_get_run(...)
+smithers_watch_run(...)
+smithers_explain_run(...)
+smithers_list_pending_approvals(...)
+smithers_resolve_approval(...)
+smithers_get_node_detail(...)
+smithers_list_artifacts(...)
+smithers_get_chat_transcript(...)
+smithers_get_run_events(...)
+smithers_runs_cancel(...)
+smithers_signals_send(...)
+smithers_frames_list(...)
+smithers_get_devtools_snapshot(...)
+smithers_stream_devtools(...)
 ```
 
 ## Notes

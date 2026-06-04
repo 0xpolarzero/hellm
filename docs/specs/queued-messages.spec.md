@@ -70,7 +70,7 @@ Local pi references:
 
 ## Adopted Product Behavior
 
-`svvy` treats ordinary composer submits as durable surface queue work. The visible queue row also exposes an explicit `Steer` action for the uncommon case where the user wants blocked queued text delivered through pi/Codex-style steering at the next safe boundary of the active turn.
+`svvy` treats ordinary composer submits as durable surface queue work. The visible queue row also exposes an explicit `Steer` action for the uncommon case where the user wants blocked queued text promoted ahead of ordinary user messages for next safe-boundary delivery.
 
 The queue is generic surface work, not only composer text. Every interactive surface accepts
 `user_message`, `agent_context_refresh`, `initial_handler_start`, and `workflow_attention` queue
@@ -83,10 +83,10 @@ durable episode or return a tool error to the handler.
 
 Interactive orchestrator and handler-thread surfaces also accept `request_user_input_answer` items
 created when the user answers a nonblocking `request_user_input` request after the originating tool
-call already returned its default answer. These items are prompt-bearing user steering for the same
-surface that created the original request. They are not ordinary composer messages, and they must be
-routed by generated request/question ids back to the original request record instead of by display
-text or currently focused panel.
+call already returned its default answer. These items are prompt-bearing answer follow-ups for the
+same surface that created the original request. They are not ordinary composer messages, and they
+must be routed by generated request/question ids back to the original request record instead of by
+display text or currently focused panel.
 
 An `agent_context_refresh` item is a surface-local control item created automatically when the
 current generated agent context fingerprint differs from the context fingerprint bound to that
@@ -119,7 +119,11 @@ Ordinary queued composer sends must not:
 - retarget itself to the orchestrator just because the focused panel changed
 - become an inline transcript message before delivery
 
-The `Steer` row action is separate from ordinary queued delivery. It promotes the selected durable row to the front of the surface queue for next-turn delivery. `svvy` does not inject a direct pi steering message as a fast path; the row remains durable and ordered until the shared queue runner claims it. If delivery fails before pi accepts it, `svvy` restores the row to the front of the durable queue.
+The `Steer` row action is separate from ordinary queued delivery. It promotes the selected durable
+row to the front of the surface queue for next safe-boundary delivery. `svvy` does not inject a
+direct pi steering message as a fast path; the row remains durable and ordered until the shared queue
+runner claims it. If delivery fails before pi accepts it, `svvy` restores the row to the front of the
+durable queue.
 
 ## Queue Ownership
 
@@ -149,15 +153,21 @@ type QueuedMessageStatus =
   | "steering"
   | "dispatching"
   | "delivered"
+  | "failed"
+  | "blocked"
+  | "out_of_date"
   | "cancelled";
 ```
 
 Lifecycle rules:
 
 - `queued`: durably accepted and waiting because the surface lock or earlier queue work is ahead of it
-- `steering`: selected for pi steering, locked in the UI, and waiting for pi accept/reject
+- `steering`: promoted by the user, locked in the UI, and waiting for the queue runner to claim it for the next safe delivery boundary
 - `dispatching`: selected as the next item for the surface and being submitted or applied; it is durable queue state, but it is not projected as visible queue UI once represented as pending or active surface work
 - `delivered`: committed as the next real user message in pi's session history
+- `failed`: delivery or control-work application failed and requires retry, edit, cancellation, or product repair
+- `blocked`: the item cannot proceed until a product prerequisite is satisfied
+- `out_of_date`: the item was superseded by a newer generated context or producer state and should be cancelled or regenerated
 - `cancelled`: removed by the user before delivery or dropped because the owning surface was explicitly closed in a way that discards queued work
 
 The durable record should keep:

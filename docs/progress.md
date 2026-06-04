@@ -32,7 +32,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Add `surfacePiSessionId` linkage on turns so orchestrator-surface and handler-thread turns use one model. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Persist handler-thread records with title, objective, objective state, backing pi session id, and derived workflow-run linkage. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Support workflow-run records that allow many runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
-- [x] Persist workflow-run records with run id, workflow name, workflow source, runnable entry path plus saved-entry linkage when relevant, status, summary, and timestamps. Commit(s): `8f0e4ec`
+- [x] Persist workflow-run product-binding records with run id, workflow name, workflow source, runnable entry path plus saved-entry linkage when relevant, projected product status, Smithers reconnect/attention cursors, summary, and timestamps while keeping raw Smithers execution facts authoritative in Smithers. Commit(s): `8f0e4ec`
 - [x] Persist artifact references independently from transcript parsing at thread, workflow-run, and command scope. Commit(s): `fff54d7`
 - [x] Persist ordered update and conclusion episode records each time a handler thread reports to the orchestrator, while preserving earlier episodes for later follow-up turns. Commit(s): `d323012`
 - [x] Persist session wait state as a frontier-level summary derived from surface, workflow, request-user-input, and session wait projection. Commit(s): `fff54d7`, `f53c9b8`, `43a26cb`
@@ -42,9 +42,9 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
   streamed argument snapshots, command output deltas, structured file-change patch snapshots,
   approval or wait state, final command facts, and renderer recovery after reload.
 - [ ] Persist and render live tool projection across native direct tools, thread-control tools,
-  extension loading, `execute_typescript`, and command-family `exec_command` surfaces such as
-  `svvyx ...`, while keeping current `smithers_*` APIs out of this slice until the Smithers bridge
-  revamp lands.
+  extension loading, `execute_typescript`, command-family `exec_command` surfaces such as
+  `svvyx ...`, and the adopted Smithers-native handler tools without introducing a
+  workflow-specific rendering or recovery path.
 
 ## 2. `execute_typescript`
 
@@ -52,17 +52,17 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [ ] Expose the resolved `execute_typescript` runtime surface with no global `svvy` client and no injected `api` object.
 - [x] Persist each attempted snippet as a file-backed artifact before execution, with SQLite metadata and path indexing. Commit(s): `76cc8f3`, `fff54d7`
 - [ ] Route the top-level `execute_typescript` action through the same approval-boundary path as other approval-gated native actions before executing submitted code.
-- [ ] Generate actor-specific `execute_typescript` declarations containing only the current actor's loaded TypeScript-enabled `svvyx` extension clients under `extensions.<id>`, plus only those extensions' command map types.
+- [ ] Generate actor-specific `execute_typescript` declarations containing only the current actor's loaded TypeScript-enabled `svvyx` extension clients under `extensions["<id>"]`, plus only those extensions' command map types.
 - [ ] Make `incur/client` importable in `execute_typescript` snippets for public Incur types and `Client.ClientError`.
 - [x] Run a simple composed scripted task through `execute_typescript`. Commit(s): `76cc8f3`
 - [x] Build a POC artifact and tracing pipeline for code-mode execution. Commit(s): `76cc8f3`
 - [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
 - [x] Keep thread orchestration, thread handling, extension loading, and request-user-input as small `svvy`-native control surfaces while exposing Smithers workflow operations through Smithers-native bridge tools. Commit(s): `a02bd48`
-- [ ] Expose generated `svvyx` extension clients as Incur-compatible `extensions.<id>.run(commandId, input)` clients, with `MemoryClient` and local Incur actions kept internal.
+- [ ] Expose generated `svvyx` extension clients as Incur-compatible `extensions["<id>"].run(commandId, input)` clients, with `MemoryClient` and local Incur actions kept internal.
 - [x] Expose Codex-like Shell and Apply Patch extensions, with `exec_command`, `write_stdin`, and `apply_patch` as the normal coding-agent work interface. Commit(s): `76cc8f3`, `29d8452`
 - [ ] Keep cx out of generated `execute_typescript` clients; generated TypeScript profiles should not expose `api.cx_*` or `extensions.cx.*`.
 - [x] Record direct tool calls and nested code-mode calls in the shared structured command model. Commit(s): `76cc8f3`, `29d8452`
-- [ ] Persist normalized child-command facts for generated `extensions.<id>.run(...)` calls while the parent `execute_typescript` attempt remains the main semantic unit.
+- [ ] Persist normalized child-command facts for generated `extensions["<id>"].run(...)` calls while the parent `execute_typescript` attempt remains the main semantic unit.
 - [x] Surface parent rollups and trace inspector detail without promoting child commands to top-level cards. Commit(s): `5b0a223`
 
 ## 2A. Prompt-Only TinyFish Web Extension
@@ -296,14 +296,14 @@ Current product decisions for this section are specified in `docs/specs/queued-m
 
 Current product decisions for this section are specified in `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/extension_managing.extension.spec.md`, `docs/specs/extension/svvyx-incur-runtime.spec.md`, `docs/specs/structured-session-state.spec.md`, `docs/specs/queued-messages.spec.md`, and `docs/specs/project-ci.spec.md`.
 
-- [x] Define shipped extensions for Shell, Apply Patch, Execute TypeScript, Extension Loading, Extension Managing, cx, Smithers, Web, Git, GitHub, External Instructions, and Project CI with default usage states for each adopted agent family. Commit(s): `673837a`
-- [x] Load default Smithers extension guidance so orchestrators route workflow work, handlers supervise workflows, and workflow task agents keep the Smithers task boundary without loading handler Smithers declarations by default. Commit(s): `673837a`
+- [x] Define shipped extensions for Shell, Apply Patch, Execute TypeScript, Extension Loading, Extension Managing, cx, Smithers, Web, Git, GitHub, External Instructions, Artifacts, Request User Input, and Project CI with default usage states for each adopted agent family. Commit(s): `673837a`
+- [x] Load base orchestrator, handler, and workflow-task guidance through shipped `base-*` instruction extensions, with orchestrators aware that workflow action normally delegates into handlers, handlers default-loaded with Smithers supervision tools, and workflow task agents keeping Smithers and handler controls unavailable by default. Commit(s): `673837a`
 - [x] Define available extensions as the on-demand product-knowledge and capability layer for specialized handler work. Commit(s): `2a5dbbe`
 - [x] Render loaded and available extension bindings in surface metadata so users can see when extensions such as `project-ci` are active. Commit(s): `2a5dbbe`
 - [x] Store app-wide agent profiles, extension usage selections, generated agent-context aggregate references, extension context fingerprints, and app-global extension activation metadata. Commit(s): `118fd39c9f`
 - [x] Add an `Extensions` sidebar surface below `Agents`, with shipped, user, and external-instruction records that manage reusable prompt material and capabilities rather than exposing one raw system-prompt textarea. Commit(s): `118fd39c9f`
 - [ ] Represent common, orchestrator, handler-thread, and workflow task-agent base prompts as shipped instruction-only extensions (`base-common`, `base-orchestrator`, `base-handler`, and `base-workflow-task`) with normal Extensions-pane editing, reset, generated-context preview, fingerprinting, and profile usage-state controls.
-- [x] Seed shipped extension records for code navigation, Smithers routing, Smithers supervision, workflow task boundary, Web, and Project CI, with per-agent usage states, non-deletable shipped rows, app-global scope, and extension reset behavior. Commit(s): `118fd39c9f`
+- [x] Seed shipped extension records for base actor instructions, code navigation, handler-only Smithers supervision, workflow task boundaries, Web, Git, GitHub, Artifacts, Request User Input, and Project CI, with per-agent usage states, non-deletable shipped rows, app-global scope, and extension reset behavior. Commit(s): `118fd39c9f`
 - [x] Render generated agent-context previews for orchestrator, handler, and workflow task-agent actors, linking loaded and available extension rows back to their extension records and showing generated prompt, `svvyx` guidance, native schemas, and TypeScript declaration previews. Commit(s): `118fd39c9f`
 - [ ] Implement the stable app-owned `svvyx <extension-id> ...` dispatcher that resolves extension current builds, imports default-exported Incur CLIs, invokes `cli.serve` with invocation-local explicit env, records command facts, and treats extension usage state as generated guidance/client visibility rather than shell impossibility.
 - [ ] Store user-named Extension Managing snapshots plus durable generated agent context bindings and agent context fingerprints so historical sessions, handler threads, and workflow task-agent attempts remain inspectable after app restart.

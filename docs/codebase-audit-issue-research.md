@@ -214,7 +214,7 @@ The clean long-term fix is a real execution boundary:
 
 1. Keep typechecking/transpilation in the trusted Bun process.
 2. Execute compiled snippets in a constrained subprocess, worker isolate, or OS sandbox with a minimal global object.
-3. Expose only the allowed generated `extensions.<id>.run(...)` capabilities through an RPC bridge from the sandbox to the host.
+3. Expose only the allowed generated `extensions["<id>"].run(...)` capabilities through an RPC bridge from the sandbox to the host.
 4. Validate every RPC call against the current actor's capability profile before performing host work.
 5. Record host-side effects from that RPC layer, not from snippet-side assumptions.
 

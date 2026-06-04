@@ -1249,7 +1249,7 @@ type InspectInstructionFile = {
 };
 
 type ExtensionUsageState = {
-  actorKind: "orchestrator" | "handler" | "workflow_agent";
+  actorKind: "orchestrator" | "handler" | "workflow-task";
   agentProfile: string;
   state: "default_loaded" | "available" | "unavailable";
   configurable: boolean;
@@ -1396,7 +1396,7 @@ Prompt-only shipped example:
       },
       {
         "agentProfile": "reviewer",
-        "actorKind": "workflow_agent",
+        "actorKind": "workflow-task",
         "state": "available",
         "configurable": true
       }
@@ -1508,7 +1508,7 @@ Incur-backed user example:
       },
       {
         "agentProfile": "reviewer",
-        "actorKind": "workflow_agent",
+        "actorKind": "workflow-task",
         "state": "unavailable",
         "configurable": true
       }
@@ -1659,7 +1659,7 @@ Example output:
       },
       {
         "agentProfile": "reviewer",
-        "actorKind": "workflow_agent",
+        "actorKind": "workflow-task",
         "state": "unavailable",
         "configurable": true
       }

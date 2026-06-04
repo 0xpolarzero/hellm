@@ -51,7 +51,7 @@ flowchart TD
         ListExtensions["list_extensions"]
         LoadExtension["load_extension"]
         SmithersTools["Smithers-native workflow tools (`smithers_*`)"]
-        Wait["wait"]
+        RequestInput["request_user_input"]
         DirectReply["Direct reply"]
     end
 
@@ -60,11 +60,11 @@ flowchart TD
         Compile["Compile or typecheck snippet against generated extensions types"]
         Run["Run valid TypeScript program"]
         Api["Generated extensions object"]
-        ApiExtensions["loaded svvyx clients under extensions.<id>"]
+        ApiExtensions["loaded svvyx clients under extensions[<id>]"]
     end
 
     subgraph Runtime["Runtime Handlers"]
-        RuntimeHandler["svvy runtime handles execute_typescript, thread controls, load_extension, and wait"]
+        RuntimeHandler["svvy runtime handles execute_typescript, thread controls, load_extension, request_user_input, and durable wait state"]
         SmithersBridge["Bun-owned Smithers bridge handles Smithers-native workflow tools"]
         ResumeHandler["Runtime resumes the supervising handler thread when a workflow run changes state"]
     end
@@ -145,7 +145,7 @@ The orchestrator typically chooses among:
 - `execute_typescript`
 - Thread Orchestration tools: `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`,
   and `thread_request_report`
-- `wait`
+- `request_user_input` when user clarification is needed
 
 It normally does **not** supervise every workflow pause, rerun, and repair step itself.
 
@@ -166,7 +166,7 @@ Inside a handler thread, the normal choices are:
 - `list_extensions` and `load_extension`
 - `workflow_list_models` when authoring a fresh workflow task-agent configuration
 - Smithers-native workflow tools such as `smithers_list_workflows`, `smithers_run_workflow`, `smithers_get_run`, `smithers_explain_run`, and `smithers_resolve_approval`
-- `wait`
+- `request_user_input` when user clarification is needed
 
 The workflow runtime capability set should mirror Smithers semantics rather than a svvy-defined `workflow_*` alias layer. Runnable entry discovery belongs to `smithers_list_workflows({ workflowId? })`, which returns each entry's `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `launchInputSchema`. Fresh launch and explicit resume belong to the stable `smithers_run_workflow({ workflowId, input, runId? })` tool, with `input` validated against the workflow's real TypeScript or Zod launch schema rather than handwritten prompt prose or repo inspection. Supplying `runId` resumes exactly that run; omitting `runId` requests a fresh launch, never silently resumes, and is rejected when the same handler already owns a nonterminal run with the same `workflowId`. Different `workflowId` values can run concurrently under one handler thread. `workflow_list_models` is the narrow authoring-time exception for provider/model/reasoning discovery; it does not launch, inspect, resume, or supervise workflows. Smithers-native commands are supervision helpers inside the handler-thread lifecycle, not evidence that the repo-root `workflows/` authoring package is the shipped product runtime.
 
@@ -206,7 +206,7 @@ The adopted direction is:
   client boundaries through the same `svvy` execution policy as orchestrators and handler threads,
   including Codex-like macOS sandboxing, `networkAccess`, and approval modes, scoped to the exact
   Smithers task attempt
-- do not expose `thread_start`, `thread_report`, `thread_request_report`, `thread_episodes`, `wait`, or `smithers_*` to workflow task agents or mention those unavailable controls in their base prompt
+- do not expose `thread_start`, `thread_report`, `thread_request_report`, `thread_episodes`, `request_user_input`, or `smithers_*` to workflow task agents or mention those unavailable controls in their base prompt
 - do not load ambient pi built-in tools or workspace-discovered extension tools into workflow task agents
 - execute workflow task agents from Smithers' current task root or worktree rather than from the workspace runtime DB root
 - preserve structured message history, step boundaries, and usage across retries and hijack handoff instead of flattening task-agent continuation into plain text
@@ -268,13 +268,14 @@ That explicit episode is the default reconciliation unit.
 
 ### 7. Waiting Is A Lifecycle Status
 
-`wait` is still a native control tool because wait changes product-level state.
+There is no shipped model-facing `wait` tool.
 
-But waiting is not a separate execution subsystem.
+Waiting is a lifecycle state recorded by request-user-input, execution approval, workflow attention,
+signal, timer, and other durable product records. It is not a separate execution subsystem.
 
 Any interactive surface may enter wait when it needs:
 
-- user clarification
+- user clarification through `request_user_input`
 - an external prerequisite
 
 The difference is where the wait lives:
@@ -326,13 +327,14 @@ No runtime path infers CI from arbitrary workflow output, command names, logs, o
 - generated `execute_typescript` extension clients are derived from loaded TypeScript-enabled
   `svvyx` extensions; broad hand-written `api.read`, `api.bash`, and `api.workflow_*` helper
   families, as well as a global `svvy` client, are not part of the resolved model.
-- Thread Orchestration controls, Thread Handling controls, `load_extension`, and `wait` remain `svvy`-native control tools.
+- Thread Orchestration controls, Thread Handling controls, `load_extension`, `list_extensions`, and
+  `request_user_input` remain `svvy`-native control tools.
 - workflow supervision should use Smithers-native bridge tools such as `smithers_run_workflow`, `smithers_get_run`, and `smithers_resolve_approval`.
 - the Smithers-native capability set targets product-runtime runnable workflows rather than the repo authoring workspace under `workflows/`.
 - capability declarations are actor-specific: the orchestrator gets only orchestrator-callable tools, and handler threads get only handler-callable tools.
 - workflow task agents are another actor class below handler threads and should receive only task-local cx CLI instructions, direct tools, and `execute_typescript`, with no ambient pi extension-tool leakage.
 - runtime handlers and bridges write durable facts from real execution; agents do not mutate product state through arbitrary write tools.
-- generated `extensions.<id>.run(...)` calls remain nested command facts under a parent
+- generated `extensions["<id>"].run(...)` calls remain nested command facts under a parent
   `execute_typescript` command.
 - tool-run summaries stay on command records and artifacts; ordinary handler replies do not emit episodes.
 - workflow runs are durable execution records under a handler thread.

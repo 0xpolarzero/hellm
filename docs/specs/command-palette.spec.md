@@ -64,6 +64,7 @@ With that prefix present, the palette discovers and executes product actions, in
 - open handler thread surfaces
 - open workflow inspector-related surfaces
 - open the read-only Workflows library surface
+- open Extensions surfaces and generated agent-context previews
 - Dockview panel and layout actions once Dockview layout exists
 - settings and Agents profile actions when those features exist
 - future product actions as they are added
@@ -98,6 +99,8 @@ type CommandAction = {
     | "handler-thread"
     | "workflow-inspector"
     | "workflow-library"
+    | "extensions"
+    | "generated-agent-context"
     | "pane"
     | "settings"
     | "agents";

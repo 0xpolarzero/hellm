@@ -1354,12 +1354,12 @@ async function runArtifactAuthoringScenario(
     },
     childCalls: [
       {
-        toolName: "write",
+        toolName: "apply_patch",
         args: { path: artifact.promptPath },
         result: { path: artifact.promptPath },
       },
       {
-        toolName: "write",
+        toolName: "apply_patch",
         args: { path: artifact.componentPath },
         result: { path: artifact.componentPath },
       },
@@ -1494,22 +1494,22 @@ async function runExplicitSaveScenario(
     },
     childCalls: [
       {
-        toolName: "write",
+        toolName: "apply_patch",
         args: { path: saved.promptPath },
         result: { path: saved.promptPath },
       },
       {
-        toolName: "write",
+        toolName: "apply_patch",
         args: { path: saved.componentPath },
         result: { path: saved.componentPath },
       },
       {
-        toolName: "write",
+        toolName: "apply_patch",
         args: { path: saved.entryPath },
         result: { path: saved.entryPath },
       },
       {
-        toolName: "console.log",
+        toolName: "workflow_library.validation",
         args: { pathPrefix: ".svvy/workflows/" },
         result: { message: "Workflow validation passed for the saved workflow library state." },
       },

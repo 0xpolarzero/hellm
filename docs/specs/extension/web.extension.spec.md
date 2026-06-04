@@ -417,7 +417,7 @@ Because Web is a shipped prompt-only extension:
 - Web has no generated TypeScript declaration file in v1
 - Web has no executable or `svvyx` source build step in v1
 - Web still participates in the normal Extension Managing validation/build path for prompt-only
-  extensions so changed instruction overlays regenerate generated prompt context and extension
+  extensions so changed instruction overlays regenerate generated agent context and extension
   fingerprints
 
 The Extension UI may show whether the `tinyfish` binary appears to be available on PATH or from the

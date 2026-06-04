@@ -114,16 +114,21 @@ declare const console: SvvyConsole;
 There is no global `svvy` client and no broad injected `api` object.
 
 `LoadedExtensionsClient` contains only loaded `svvyx` extensions that opted into TypeScript API
-generation. If the current actor has loaded TypeScript-enabled extensions `a`, `b`, and `d`, the
-generated declaration contains `extensions.a`, `extensions.b`, and `extensions.d`, plus only those
-extensions' command map types. It must not contain `extensions.c`, command types for unavailable
-extensions, or docs for available-but-not-loaded extensions.
+generation. If the current actor has loaded TypeScript-enabled extensions `a`, `b`, and
+`project-ci`, the generated declaration contains string-literal properties `extensions.a`,
+`extensions.b`, and `extensions["project-ci"]`, plus only those extensions' command map types. It
+must not contain `extensions.c`, command types for unavailable extensions, or docs for
+available-but-not-loaded extensions.
 
 Each generated extension client is an Incur-compatible per-extension command client:
 
 ```ts
-extensions.<extensionId>.run(commandId, input)
+extensions["<extensionId>"].run(commandId, input)
 ```
+
+Dot access such as `extensions.artifacts.run(...)` is valid shorthand only for extension ids that
+are also TypeScript identifiers. Hyphenated ids such as `project-ci` must use bracket access:
+`extensions["project-ci"].run(...)`.
 
 Command ids are the extension's Incur command paths. Inputs use Incur `args`, `options`, and output
 controls. Non-streaming results use the Incur `Run.Result` envelope with `ok`, `data`, `output`, and
@@ -156,7 +161,7 @@ interface SvvyConsole {
 ```
 
 The generated declaration is the precise API contract. The Execute TypeScript loaded instruction
-files teach base `execute_typescript` usage plus the generic `extensions.<id>.run(...)` API and
+files teach base `execute_typescript` usage plus the generic `extensions["<id>"].run(...)` API and
 `incur/client` usage; each loaded extension's own instruction teaches its specific command ids and
 examples. The Execute TypeScript instruction files must not inline every generated declaration or
 every extension command schema.
@@ -408,7 +413,7 @@ The actual command maps are generated for the loaded extensions available to thi
 
 ## Running Commands
 
-`extensions.<extensionId>.run(command, input)` mirrors the extension's `svvyx <extension-id> ...`
+`extensions["<extensionId>"].run(command, input)` mirrors the extension's `svvyx <extension-id> ...`
 command surface. `args` are positional arguments, `options` are named flags, and output controls
 mirror global Incur CLI flags.
 
@@ -756,103 +761,13 @@ such as `outputTokenLimit`.
 
 ## Discovery Resources
 
-Some generated extension clients may expose read-only Incur discovery resources. Use only the
-resources visible in the exact generated declaration for that loaded extension. Do not assume every
-extension client exposes these helpers.
+Incur discovery resources such as llms docs, schemas, help text, and OpenAPI descriptions are
+internal inputs to extension build, validation, inspection, and generated-contract creation.
 
-```ts
-const llms = await extensions.acme.llms();
-const llmsMd = await extensions.acme.llms({ command: "project", format: "md" });
-const full = await extensions.acme.llmsFull();
-const schema = await extensions.acme.schema("project report");
-const help = await extensions.acme.help("project report");
-const openapi = await extensions.acme.openapi();
-
-console.log(llms);
-/// Resources.LlmsManifest<AcmeCommands>
-// {
-//   version: 'incur.v1',
-//   commands: [
-//     {
-//       name: 'project report',
-//       description: 'Summarize project progress.',
-//     },
-//     {
-//       name: 'project status',
-//       description: 'Show project status.',
-//     },
-//   ],
-// }
-
-console.log(llmsMd);
-/// string
-// '# acme project\n\n| Command | Description |\n|---------|-------------|\n| `acme project report <projectId>` | Summarize project progress. |'
-
-console.log(full);
-/// Resources.LlmsFullManifest<AcmeCommands>
-// {
-//   version: 'incur.v1',
-//   commands: [
-//     {
-//       name: 'project report',
-//       description: 'Summarize project progress.',
-//       schema: {
-//         args: {
-//           type: 'object',
-//           required: ['projectId'],
-//           properties: { projectId: { type: 'string' } },
-//         },
-//         options: {
-//           type: 'object',
-//           properties: { includeClosed: { type: 'boolean' } },
-//         },
-//         output: {
-//           type: 'object',
-//           properties: { summary: { type: 'string' } },
-//         },
-//       },
-//     },
-//   ],
-// }
-
-console.log(schema);
-/// Resources.CommandSchema<AcmeCommands>
-// {
-//   args: {
-//     type: 'object',
-//     required: ['projectId'],
-//     properties: { projectId: { type: 'string' } },
-//   },
-//   options: {
-//     type: 'object',
-//     properties: { includeClosed: { type: 'boolean' } },
-//   },
-//   output: {
-//     type: 'object',
-//     properties: { summary: { type: 'string' } },
-//   },
-// }
-
-console.log(help);
-/// string
-// 'Usage: acme project report <projectId> [--include-closed]\n\nSummarize project progress.'
-
-console.log(openapi);
-/// Resources.OpenApiDocument
-// {
-//   openapi: '3.1.0',
-//   info: { title: 'acme', version: '1.0.0' },
-//   paths: { ... },
-// }
-```
-
-Use command-group scopes where accepted:
-
-```ts
-await extensions.acme.llmsFull({ command: "project" });
-await extensions.acme.schema("project");
-await extensions.acme.help("project report");
-```
+In v1, agent-authored `execute_typescript` snippets do not receive discovery helper methods such as
+`llms()`, `llmsFull()`, `schema()`, `help()`, or `openapi()` on generated extension clients. The
+agent-facing client surface remains `extensions["<extensionId>"].run(commandId, input)` plus
+generated command map types for loaded TypeScript-enabled extensions.
 
 Use discovery resources for docs, UI generation, tests, and schema inspection. Use
 `extensions.<extensionId>.run()` for command execution.
@@ -869,7 +784,7 @@ The agent receives:
 - generated TypeScript declarations for the current actor
 - base Execute TypeScript usage guidance saying `execute_typescript` is for TypeScript composition,
   not one-shot repository inspection or file edits
-- separate generic Incur TypeScript client guidance for `extensions.<id>.run(...)` and
+- separate generic Incur TypeScript client guidance for `extensions["<id>"].run(...)` and
   `incur/client`
 - loaded-extension client documentation only for loaded extensions that expose TypeScript API
 

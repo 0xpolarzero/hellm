@@ -142,11 +142,11 @@ Snippets are not part of this spec. They must not secretly grant tools or change
 
 An actor kind is the product/runtime family for an agent.
 
-Adopted actor kinds remain:
+Adopted serialized actor kinds are:
 
-- orchestrator
-- handler thread
-- workflow task agent
+- `orchestrator`
+- `handler`
+- `workflow-task`
 
 An actor kind is not an editable user preset. It determines the default base prompt shape, default
 app behavior, and default extension usage states for newly created agents of that kind. It is not a
@@ -1415,7 +1415,7 @@ const defaultOrchestratorProfile = {
     git: "default_loaded",
     github: "default_loaded",
     web: "default_loaded",
-    "project-ci": "available"
+    "project-ci": "unavailable"
   }
 };
 
@@ -1523,7 +1523,8 @@ This surface is the orchestrator.
 
 ## Available Extension: Project CI
 
-Load Project CI when the delegated objective needs CI authoring guidance.
+If the delegated objective needs CI authoring guidance from the first handler turn, pass a
+`thread_start.extensions` override that sets `project-ci` to `default_loaded` for the new handler.
 ```
 
 Generated handler prompt skeleton:
@@ -1575,9 +1576,10 @@ configured `threadHandler` profile's extension usage states for the new handler 
 The concrete `thread_start` input, output, and rejection rules live in
 `docs/specs/extension/thread_managing.extension.spec.md`.
 
-The bound extension facts returned by `thread_start` are durable provenance for the created handler.
-Those facts do not affect future workflow task-agent extension selection, future handlers, or the
-`threadHandler` profile.
+The bound extension facts recorded by `thread_start` are durable provenance for the created handler.
+The result only needs to return the created thread and queued work unless the thread-managing spec
+adds an explicit binding field. Recorded handler extension facts do not affect future workflow
+task-agent extension selection, future handlers, or the `threadHandler` profile.
 
 Workflow task-agent component calls may also include an optional `extensions` object. The object is a
 partial override over that workflow agent profile's configured extension usage states for that
@@ -2480,13 +2482,13 @@ type ApprovalOwner =
       turnId: string;
     }
   | {
-      actorKind: "handler_thread";
+      actorKind: "handler";
       surfacePiSessionId: string;
       threadId: string;
       turnId: string;
     }
   | {
-      actorKind: "workflow_task_agent";
+      actorKind: "workflow-task";
       surfacePiSessionId: string;
       threadId: string;
       smithersRunId: string;
@@ -2593,7 +2595,7 @@ Canonical payload:
 ```ts
 type AutoReviewPayload = {
   actor: {
-    kind: "orchestrator" | "handler_thread" | "workflow_task_agent";
+    kind: "orchestrator" | "handler" | "workflow-task";
     profile: {
       id: string;
       label: string;
@@ -2764,7 +2766,7 @@ Example auto-review payload for an approval-boundary `exec_command`:
 ```json
 {
   "actor": {
-    "kind": "handler_thread",
+    "kind": "handler",
     "profile": {
       "id": "default-handler",
       "label": "Handler"
@@ -3752,7 +3754,7 @@ read-only external inputs.
 | Base: Workflow Task Agent (`base-workflow-task`) | shipped | instructions | Smithers task-attempt role instructions for task-local coding-agent work under workflow runtime ownership | unavailable | unavailable | default_loaded |
 | Shell | shipped | native_tool | `exec_command` and `write_stdin`, with one base shell instruction file and one separate Incur-backed `svvyx` CLI usage instruction file | default_loaded | default_loaded | default_loaded |
 | Apply Patch | shipped | native_tool | `apply_patch` with Codex-like structured patch instructions for repository and allowed extension file edits | default_loaded | default_loaded | default_loaded |
-| Execute TypeScript | shipped | native_tool | `execute_typescript` with top-level approval-boundary classification, one base TypeScript execution instruction file, one separate Incur generated-client usage instruction file, and generated `extensions.<id>.run(...)` clients for loaded TypeScript-enabled `svvyx` extensions; no global `svvy` client, no broad injected `api` helpers, and no generated clients for prompt-only cx/Web/Git/GitHub | default_loaded | default_loaded | default_loaded |
+| Execute TypeScript | shipped | native_tool | `execute_typescript` with top-level approval-boundary classification, one base TypeScript execution instruction file, one separate Incur generated-client usage instruction file, and generated `extensions["<id>"].run(...)` clients for loaded TypeScript-enabled `svvyx` extensions; no global `svvy` client, no broad injected `api` helpers, and no generated clients for prompt-only cx/Web/Git/GitHub | default_loaded | default_loaded | default_loaded |
 | Extension Loading | shipped | native_tool | `list_extensions`, `load_extension`; fixed app-native control, always default-loaded and not configurable | default_loaded | default_loaded | default_loaded |
 | Request User Input (`request-user-input`) | shipped | native_tool | `request_user_input`; one visible dual-variant extension whose active nonblocking or blocking variant controls the loaded instructions, tool schema descriptions, and runtime behavior | default_loaded | default_loaded | unavailable |
 | Thread Orchestration (`thread-orchestration`) | shipped | native_tool | Orchestrator-only handler-thread controls: `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`, and `thread_request_report`; concrete API is defined in `docs/specs/extension/thread_managing.extension.spec.md` | default_loaded | unavailable | unavailable |
@@ -3764,7 +3766,7 @@ read-only external inputs.
 | Git | shipped | instructions | Git shell guidance for dirty worktrees, staging, commits, branch/history inspection, and destructive-command safety; no wrapper CLI or generated TypeScript client by default | default_loaded | default_loaded | default_loaded |
 | GitHub | shipped | instructions | GitHub/`gh` CLI guidance for issues, PRs, review comments, Actions, publishing, and wrap-up; no wrapper CLI or generated TypeScript client by default | default_loaded | default_loaded | available |
 | External Instructions | external_instruction | instructions | read-only external instruction files such as `AGENTS.md` and `CLAUDE.md`, surfaced with open-external-file controls | default_loaded | default_loaded | default_loaded |
-| Project CI | shipped | instructions | Project CI authoring guidance for defining and maintaining CI workflow lanes; no tools by default | available | available | unavailable |
+| Project CI | shipped | instructions | Handler-only Project CI authoring guidance for defining and maintaining CI workflow lanes; no tools by default | unavailable | available | unavailable |
 | Artifacts | shipped | svvyx | `svvyx artifacts create/inspect/list/open/delete` for durable single-file byproducts, evidence, previews, reports, logs, and screenshots, plus the generated Incur-compatible `extensions.artifacts.run(...)` TypeScript client when loaded; concrete API is defined in `docs/specs/extension/artifacts.extension.spec.md` | default_loaded | default_loaded | default_loaded |
 
 The Git and GitHub extensions must not wrap `git` or `gh` by default. Agents use ordinary shell
@@ -3794,9 +3796,10 @@ Execute TypeScript's separate Incur client instruction file. Internal `svvyx` ru
 defined separately in `docs/specs/extension/svvyx-incur-runtime.spec.md`. Its detailed command
 surface is defined in `docs/specs/extension/extension_managing.extension.spec.md`.
 
-Project CI is a shipped prompt-only extension. It is available by default to orchestrators and
-handlers so `thread_start` can preload it for CI-authoring objectives and handlers can load it with
-`load_extension({ extensionId: "project-ci" })` when CI definition work appears after delegation.
+Project CI is a shipped prompt-only extension. It is unavailable to orchestrators and available to
+handlers. Orchestrators may preload it for a new handler through `thread_start.extensions`; handlers
+may load it with `load_extension({ extensionId: "project-ci" })` when CI definition work appears
+after delegation.
 Running existing Project CI workflow entries does not require loading this extension; the Smithers
 extension owns runtime workflow supervision.
 
@@ -3930,7 +3933,8 @@ The generated view should include:
 - external instructions that reached the actor
 - loaded `svvyx` extension id list
 - loaded `svvyx` command guidance
-- generated TypeScript declarations for `svvy` and loaded-extension clients
+- generated TypeScript declarations for `execute_typescript` and loaded
+  TypeScript-enabled `extensions["<id>"].run(...)` clients
 - native tool declarations
 - unavailable extensions omitted entirely
 

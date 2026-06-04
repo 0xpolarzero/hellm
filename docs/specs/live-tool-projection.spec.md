@@ -8,13 +8,13 @@
   - define how `svvy` renders model tool use progressively while a turn is still running
   - define the shared event model for streamed tool arguments, runtime progress, command output,
     file-change previews, approvals, waits, and final command facts
-  - classify every currently documented non-Smithers native or product tool surface by the live
-    projection behavior it should use
+  - classify every currently documented native or product tool surface by the live projection
+    behavior it should use
 
 This spec is the source of truth for live tool projection. It intentionally excludes the current
-`smithers_*` agent API because that surface is due for a separate revamp. Future workflow and
-Smithers-facing tools must use the same projection model defined here, but their concrete tool list
-and names are out of scope for this document.
+pre-revamp Smithers bridge shape that existed before the adopted `smithers_*` tool list. The
+adopted Smithers-native surface in `docs/specs/workflow-supervision.spec.md` uses the same
+turn/item/command projection model as other native tools.
 
 ## Source References
 
@@ -56,6 +56,8 @@ Related `svvy` specs:
 - `docs/specs/extension/extension_loading.extension.spec.md`
 - `docs/specs/extension/svvyx-incur-runtime.spec.md`
 - `docs/specs/extension/extension_managing.extension.spec.md`
+- `docs/specs/extension/smithers.extension.spec.md`
+- `docs/specs/workflow-supervision.spec.md`
 - `docs/specs/workflow-library.spec.md`
 
 ## Product Intent
@@ -505,8 +507,21 @@ Saved workflow authoring uses ordinary direct tools:
 - validation diagnostics after edits surface through the command records and projection events for
   the originating file-change or command
 
-Current `smithers_*` run and supervision tools are excluded from this spec. Their replacement or
-revamped API must use this projection model when defined.
+## Smithers Projection
+
+The adopted `smithers_*` run and supervision tools are native handler-thread tools. They must use
+the same tool item lifecycle as direct tools:
+
+- argument projection for workflow ids, run ids, product filters, approval ids, signal names, node
+  ids, and compact resume/cancel reasons
+- command records that preserve both the model-facing `smithers_*` tool name and the raw Smithers
+  operation, transport, arguments, affected run/node, and observed event-sequence range
+- runtime progress events when a Smithers operation launches, resumes, cancels, signals, resolves an
+  approval, or watches a run
+- final command facts that settle from a Smithers durable-state reread rather than from streamed
+  prose, transient logs, or renderer memory
+- workflow-run, task-attempt, Project CI, wait, and handler-attention projection updated through the
+  structured state records owned by the workflow supervision spec
 
 ## Artifacts Projection
 
@@ -585,7 +600,7 @@ Classification meanings:
 
 | Surface | Classification | Required projection |
 | --- | --- | --- |
-| `exec_command` | runtime | Command execution item, approval state, output deltas, running session, Kill, final output snapshot. |
+| `exec_command` | both | Command argument preview, approval state, output deltas, running session, Kill, final output snapshot. |
 | `write_stdin` | runtime | Continuation of the owning command session with input action and appended output. |
 | `apply_patch` | both | File-change item with structured patch snapshots, approval/apply runtime state, final apply result, and turn diff refresh. |
 | `execute_typescript` | both | Source preview, source artifact, diagnostics, runtime result, nested child commands. |
@@ -600,10 +615,16 @@ Classification meanings:
 | `thread_episodes` | final | Final read result. |
 | `request_user_input` | both | Question/default preview, durable request records, nonblocking default result or blocking wait state, final answer facts, and later answer queue projection when applicable. |
 | `workflow_list_models` | final | Loading state plus model/provider readiness result. |
+| `smithers_list_workflows` | final | Loading state plus runnable-entry contracts, filters, product metadata, and validation errors. |
+| `smithers_run_workflow` | both | Workflow/run argument preview, launch or explicit resume progress, workflow-run binding, Smithers run id, and final command facts from Smithers reread. |
+| `smithers_list_runs`, `smithers_get_run`, `smithers_explain_run`, `smithers_get_node_detail`, `smithers_list_artifacts`, `smithers_get_chat_transcript`, `smithers_get_run_events` | final | Loading state plus final Smithers read result and svvy ownership enrichment when applicable. |
+| `smithers_watch_run` | runtime | Watch progress, timeout or terminal state, heartbeat freshness, and final state from Smithers reread. |
+| `smithers_list_pending_approvals`, `smithers_resolve_approval` | both | Approval target preview, pending/resolve progress, and final approval/run state from Smithers reread. |
+| `smithers_runs_cancel`, `smithers_signals_send` | both | Target run/signal preview, runtime mutation progress, and final state from Smithers reread. |
+| `smithers_frames_list`, `smithers_get_devtools_snapshot`, `smithers_stream_devtools` | runtime | Inspector-oriented frame/snapshot/stream projection tied to the workflow inspector surface and final command facts when invoked as tools. |
 | `svvyx artifacts ...` | via `exec_command` | Command-family projection over shell output; `create`, `inspect`, `list`, `open`, and `delete` settle from final structured JSON and command facts. |
 | `svvyx ...` | via `exec_command` | Command-family projection over shell output; no separate tool. |
 | `git ...`, `gh ...`, `cx ...`, `tinyfish ...` | via `exec_command` | Optional command-family projection over shell output; no wrapper tools. |
-| current `smithers_*` API | excluded | Must be revamped separately; future replacement uses this model. |
 
 ## Non-Goals
 
@@ -614,4 +635,5 @@ Classification meanings:
 - Do not persist raw unbounded terminal output in structured state.
 - Do not make renderer-local state the recovery source.
 - Do not infer security decisions from command-family display parsers.
-- Do not spec the current `smithers_*` API here.
+- Do not create a workflow-specific renderer or recovery path outside the shared tool projection
+  model.

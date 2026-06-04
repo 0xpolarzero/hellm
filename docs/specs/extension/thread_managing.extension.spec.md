@@ -148,6 +148,7 @@ type QueuedItemKind =
   | "report_request"
   | "thread_report"
   | "workflow_attention"
+  | "request_user_input_answer"
   | "agent_context_refresh";
 
 type QueuedItemSummary = {

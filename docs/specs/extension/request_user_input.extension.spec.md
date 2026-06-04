@@ -446,7 +446,7 @@ The active variant instructions must tell agents:
 - ask one to three short questions
 - always provide the default through exactly one recommended option or a freeform `defaultAnswer`
 - continue using the returned default result
-- treat any later deferred answer as normal user steering and reassess if it materially changes the
+- treat any later deferred answer as normal queued answer follow-up and reassess if it materially changes the
   work
 
 ## Blocking Variant Semantics
@@ -834,7 +834,7 @@ Use either exactly two or three options with exactly one `recommended: true`, or
 `defaultAnswer`.
 
 Continue with the returned answer. If a later `request_user_input.answer` message arrives, treat it
-as normal user steering and reassess only if it materially changes the work.
+as a normal queued answer follow-up and reassess only if it materially changes the work.
 ```
 
 Loaded blocking instructions must include these rules:

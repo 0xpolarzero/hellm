@@ -77,18 +77,18 @@ Always read [ui.prd.md](ui.prd.md) before implementing any item in this roadmap,
 - [x] Render user, orchestrator, handler-thread, system-prompt metadata, assistant streaming, tool-call, and error transcript items with the ported Replit visual treatment.
 - [x] Render turn decisions and command rollups as compact semantic blocks without promoting nested child commands to top-level cards.
 - [x] Render `execute_typescript` submitted snippets, diagnostics, logs, child command summaries, and artifacts with clear parent-first hierarchy.
-- [x] Render durable handoff episodes as reusable semantic outputs while preserving earlier handoff points.
+- [x] Render durable `thread_report` update and conclusion episodes as reusable semantic outputs while preserving earlier report points.
 - [x] Preserve transcript virtualization, panel-local scroll, copy transcript, streaming cursor, pending tool calls, and failure states.
 - [x] Verify long transcripts, large code blocks, interrupted streams, failed turns, and duplicated panel views of the same surface.
 
 ## 7. Handler Threads And Delegation Projection
 
-- [x] Render handler-thread summaries with objective, title, lifecycle state, wait state, loaded extension ids, generated agent context binding, latest handoff, latest workflow-run summary, and related artifacts.
+- [x] Render handler-thread summaries with objective, title, lifecycle state, wait state, loaded extension ids, generated agent context binding, latest update or conclusion episode, latest workflow-run summary, and related artifacts.
 - [x] Render handler-active, workflow-active, waiting, troubleshooting, and completed states with distinct but restrained visual semantics.
 - [x] Render direct handler-thread surfaces with the same transcript and composer quality as orchestrator surfaces.
 - [x] Normalize Replit artifact "subagent" visual vocabulary into handler-thread and workflow task-agent labels before porting delegation surfaces.
 - [x] Render thread metadata so users can inspect active system prompt, model, reasoning, worktree, loaded extensions, generated agent context, and workflow ownership.
-- [x] Preserve direct user messaging into handler threads before and after handoff, and keep completed threads available for explicit orchestrator re-engagement through `thread_resume`.
+- [x] Preserve direct user messaging into handler threads before and after objective conclusion, and keep completed threads available for explicit orchestrator re-engagement through `thread_resume`.
 - [x] Verify workflow attention routes back to the owning handler surface rather than the currently focused panel.
 
 ## 8. Workflow, Artifact, And Command Inspectors

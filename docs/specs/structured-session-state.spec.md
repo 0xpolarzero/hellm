@@ -76,7 +76,7 @@ If this spec and the POC ever disagree, the POC should be reconciled to the spec
 - Project workflow task attempts as first-class durable records keyed by Smithers `runId` plus `nodeId`, `iteration`, and `attempt`, while keeping their full transcript canonical in Smithers and their inspectable task-agent transcript, command, and artifact projection in `svvy`.
 - Create or update workflow-task-attempt records from the exact Smithers task-attempt identity before task-local commands run. The only bootstrap path for task-local command binding is the current Smithers context's `(runId, nodeId, iteration, attempt)` tuple; do not use resume handles, heuristic recency scans, transcript inference, or multi-stage fallback chains.
 - Keep thread state about handler ownership and attention, not as a lossy proxy for raw workflow outcome.
-- Preserve raw Smithers workflow status, wait kind, heartbeat freshness, cursor metadata, and lineage instead of flattening them into generic thread objective state.
+- Preserve projected Smithers workflow status, wait kind, heartbeat freshness, cursor metadata, and lineage on the workflow-run binding instead of flattening them into generic thread objective state; Smithers remains authoritative for raw execution facts.
 - Derive active and latest workflow selectors from workflow-run state and recency rules rather than persisting a thread-level latest-workflow pointer.
 - Treat a handler thread as one delegated objective that may supervise many workflow runs over its lifetime.
 - Treat handler-thread episodes as durable semantic reports emitted explicitly through `thread_report`; reports with `outcome` conclude the current objective and give control back to the orchestrator.
@@ -196,7 +196,7 @@ type StructuredSessionState = {
     objective: string;
     objectiveState: "active" | "concluded";
     agentContextBinding: {
-      actorKind: "orchestrator" | "handler-thread" | "workflow-task-agent";
+      actorKind: "orchestrator" | "handler" | "workflow-task";
       selectedAgentProfileId: string | null;
       loadedExtensionIds: string[];
       availableExtensionIds: string[];
@@ -231,7 +231,10 @@ type StructuredSessionState = {
     workflowSource: "saved" | "artifact";
     entryPath: string | null;
     savedEntryId: string | null;
-    status: "running" | "waiting" | "continued" | "completed" | "failed" | "cancelled";
+    productStatus: "running" | "waiting" | "continued" | "completed" | "failed" | "cancelled";
+    // Projection fields written only from Smithers bridge events or bootstrap/reconnect reads.
+    // Smithers remains authoritative for execution status, waits, approvals, timers, output,
+    // transcript, task-attempt facts, and raw event state.
     smithersStatus:
       | "running"
       | "waiting-approval"
@@ -300,7 +303,14 @@ type StructuredSessionState = {
       | "runtime"
       | "smithers";
     visibility: "trace" | "summary" | "surface";
-    status: "requested" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+    status:
+      | "requested"
+      | "running"
+      | "waiting"
+      | "succeeded"
+      | "failed"
+      | "declined"
+      | "cancelled";
     attempts: number;
     title: string;
     summary: string;
@@ -381,14 +391,20 @@ type StructuredSessionState = {
 
   artifacts: Array<{
     id: string;
+    sessionId: string;
     threadId: string | null;
     workflowRunId: string | null;
+    workflowTaskAttemptId: string | null;
     sourceCommandId: string | null;
     kind: "text" | "log" | "json" | "file";
     name: string;
     path: string;
+    mimeType: string;
+    bytes: number;
+    sha256: string;
     content?: string;
     createdAt: string;
+    deletedAt: string | null;
   }>;
 
   events: Array<{
@@ -406,7 +422,8 @@ type StructuredSessionState = {
         | "episode"
         | "ciRun"
         | "ciCheckResult"
-        | "artifact";
+        | "artifact"
+        | "requestUserInput";
       id: string;
     };
     data?: Record<string, unknown>;
@@ -507,7 +524,7 @@ They answer:
 - how many workflow runs happened under a thread
 - which runnable entry shape was used and whether it came from the saved library or an artifact workflow
 - which Smithers run id corresponds to each execution
-- the normalized run status plus raw Smithers status and wait kind
+- the normalized product run status plus projected raw Smithers status and wait kind
 - whether the run continued into another lineage
 - whether supervision is current enough to reconnect without replaying from scratch
 
@@ -729,9 +746,9 @@ handler `report_request` queue item is created. A successful `thread_report` wit
 | `workflowSource`        | Distinguishes saved-library entry execution from artifact-entry execution.                |
 | `entryPath`             | Records the runnable entry path used for the run when relevant.                           |
 | `savedEntryId`          | Records which saved runnable entry was launched when relevant.                            |
-| `status`                | Captures the normalized top-level run status used by `svvy`.                              |
-| `smithersStatus`        | Preserves the raw Smithers run status for faithful inspection and reconnect behavior.     |
-| `waitKind`              | Preserves whether a waiting run is blocked on approval, event, or timer.                  |
+| `productStatus`         | Captures the normalized top-level run status used by `svvy` read models.                  |
+| `smithersStatus`        | Projects the last applied raw Smithers run status for faithful inspection and reconnect behavior; Smithers remains authoritative. |
+| `waitKind`              | Projects whether a waiting run is blocked on approval, event, or timer.                   |
 | `continuedFromRunIds`   | Preserves run lineage when Smithers continues the workflow as a new run.                  |
 | `activeDescendantRunId` | Points at the active descendant run when Smithers continued this run as new.              |
 | `lastEventSeq`          | Stores the most recent applied Smithers event sequence for reconnect.                     |
@@ -874,6 +891,7 @@ The adopted statuses are:
 - `waiting`
 - `succeeded`
 - `failed`
+- `declined`
 - `cancelled`
 
 ### CommandRecord Retry Policy
@@ -1053,7 +1071,7 @@ The precise list may grow, but the first adopted set is:
 - `thread.finished`
 - `workflowRun.created`
 - `workflowRun.updated`
-- `context.loaded`
+- `agentContext.updated`
 - `command.requested`
 - `command.started`
 - `command.waiting`
@@ -1202,6 +1220,9 @@ The real implementation should store session-scoped rows for:
 - `workflow_run`
 - `command`
 - `report_request`
+- `request_user_input_request`
+- `request_user_input_question`
+- `request_user_input_answer`
 - `episode`
 - `ci_run`
 - `ci_check_result`
