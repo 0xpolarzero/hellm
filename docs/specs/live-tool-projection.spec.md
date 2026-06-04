@@ -49,13 +49,13 @@ Related `svvy` specs:
 - `docs/specs/extensions-and-tools.spec.md`
 - `docs/specs/structured-session-state.spec.md`
 - `docs/specs/extension/shell.extension.spec.md`
-- `docs/specs/extension/apply-patch.extension.spec.md`
+- `docs/specs/extension/apply_patch.extension.spec.md`
 - `docs/specs/extension/artifacts.extension.spec.md`
-- `docs/specs/extension/execute-typescript.extension.spec.md`
-- `docs/specs/extension/thread-managing.extension.spec.md`
-- `docs/specs/extension/extension-loading.extension.spec.md`
+- `docs/specs/extension/execute_typescript.extension.spec.md`
+- `docs/specs/extension/thread_managing.extension.spec.md`
+- `docs/specs/extension/extension_loading.extension.spec.md`
 - `docs/specs/extension/svvyx-incur-runtime.spec.md`
-- `docs/specs/extension/extension-managing.extension.spec.md`
+- `docs/specs/extension/extension_managing.extension.spec.md`
 - `docs/specs/workflow-library.spec.md`
 
 ## Product Intent
@@ -479,7 +479,7 @@ the relevant Extension Managing command path.
 ## Request User Input Projection
 
 `request_user_input` is the shipped native user-clarification surface. Its concrete API is defined
-in `docs/specs/extension/request-user-input.extension.spec.md`.
+in `docs/specs/extension/request_user_input.extension.spec.md`.
 
 Projection behavior:
 

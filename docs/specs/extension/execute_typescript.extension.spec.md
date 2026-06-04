@@ -156,9 +156,10 @@ interface SvvyConsole {
 ```
 
 The generated declaration is the precise API contract. The Execute TypeScript loaded instruction
-teaches the generic `extensions.<id>.run(...)` API and `incur/client` usage; each loaded extension's
-own instruction teaches its specific command ids and examples. The Execute TypeScript instruction
-must not inline every generated declaration or every extension command schema.
+files teach base `execute_typescript` usage plus the generic `extensions.<id>.run(...)` API and
+`incur/client` usage; each loaded extension's own instruction teaches its specific command ids and
+examples. The Execute TypeScript instruction files must not inline every generated declaration or
+every extension command schema.
 
 ## Removed Surfaces
 
@@ -268,14 +269,78 @@ return {
 
 The last example has no child command facts because it does not call a generated client.
 
-## Execute TypeScript Instruction
+## Execute TypeScript Loaded Instruction Files
 
-The loaded Execute TypeScript instruction is generic. It must not contain every generated extension
-declaration or every loaded extension's command docs. The exact command map and extension-specific
-examples are generated beside this instruction from the actor's loaded TypeScript-enabled `svvyx`
-extensions.
+The shipped Execute TypeScript extension has two full instruction source files. These files are
+ordered by filename under `instructions/full/`:
 
-The generic instruction text is:
+```text
+010-execute-typescript.md
+020-incur-typescript-clients.md
+```
+
+The generated loaded instruction for Execute TypeScript is the concatenation of those files. This
+split keeps generic TypeScript execution guidance separate from generic Incur-backed generated
+client usage.
+
+The loaded Execute TypeScript instruction files are generic. They must not contain every generated
+extension declaration or every loaded extension's command docs. The exact command map and
+extension-specific examples are generated beside these instructions from the actor's loaded
+TypeScript-enabled `svvyx` extensions.
+
+### `010-execute-typescript.md`
+
+This file owns generic `execute_typescript` guidance. Its canonical content is:
+
+````md
+# Execute TypeScript
+
+Use `execute_typescript` when TypeScript control flow helps compose work that would be awkward as
+one shell command or one extension call.
+
+Good uses:
+
+- batch related loaded-extension operations
+- loop over structured extension results
+- filter or aggregate JSON already available to the snippet
+- call generated loaded-extension clients repeatedly
+- transform data before returning a concise result
+
+Prefer Shell and Apply Patch for ordinary repository work:
+
+- inspect files and search with `exec_command`
+- continue long-running processes with `write_stdin`
+- edit files with `apply_patch`
+
+`execute_typescript` does not replace `exec_command`, `write_stdin`, or `apply_patch`.
+
+The submitted TypeScript source is the tool input:
+
+```ts
+execute_typescript({
+  typescriptCode: `
+    const values = [1, 2, 3, 4];
+    return { sum: values.reduce((total, value) => total + value, 0) };
+  `
+})
+```
+
+The snippet may use ordinary TypeScript and the generated declarations supplied with the tool. The
+only stable injected globals are the generated `extensions` object, when loaded TypeScript-enabled
+extensions exist, and `console` for bounded diagnostic logging.
+
+Use `console.log`, `console.info`, `console.warn`, or `console.error` for concise diagnostics. Do
+not use logs as the main result when returning structured data is clearer.
+
+Arbitrary TypeScript side effects that do not go through generated clients are opaque to product
+state. Use loaded extension clients for app-owned operations that need command facts, redaction,
+env injection, artifacts, or other product-state capture.
+````
+
+### `020-incur-typescript-clients.md`
+
+This file owns generic usage of generated Incur-compatible clients for loaded `svvyx` extensions.
+Its canonical content is:
 
 ````md
 # Incur TypeScript Clients
@@ -802,9 +867,10 @@ The agent receives:
 
 - the `execute_typescript` tool declaration
 - generated TypeScript declarations for the current actor
-- concise usage guidance saying `execute_typescript` is for TypeScript composition, not one-shot
-  repository inspection or file edits
-- generic Execute TypeScript instruction for `extensions.<id>.run(...)` and `incur/client`
+- base Execute TypeScript usage guidance saying `execute_typescript` is for TypeScript composition,
+  not one-shot repository inspection or file edits
+- separate generic Incur TypeScript client guidance for `extensions.<id>.run(...)` and
+  `incur/client`
 - loaded-extension client documentation only for loaded extensions that expose TypeScript API
 
 The agent must not receive generated declarations for unavailable or available-but-not-loaded

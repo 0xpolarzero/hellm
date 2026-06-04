@@ -278,6 +278,11 @@ CLI dependency confirmation flow; agents must not run package-manager install co
 
 `execute_typescript` is available when typed control flow is the right unit of work.
 
+The Shell and `execute_typescript` native-tool instructions keep generic runtime guidance separate
+from Incur-specific guidance: Shell has one base command-execution instruction file and one separate
+Incur-backed `svvyx` CLI usage file, while `execute_typescript` has one base TypeScript execution
+instruction file and one separate Incur generated-client usage file.
+
 That includes:
 
 - batching loaded-extension calls
@@ -350,7 +355,7 @@ input questions may stream into previews, and final thread ids, report request i
 loaded extension ids, request-input answers, wait state, and errors come from runtime command facts.
 
 The concrete thread-control and thread-inspection APIs are defined in
-`docs/specs/extension/thread-managing.extension.spec.md`.
+`docs/specs/extension/thread_managing.extension.spec.md`.
 
 `list_extensions` is a native read-only actor-local inspection tool. It reports only the current
 actor's loaded and available extension records and never exposes unavailable extension details,
@@ -378,7 +383,7 @@ The orchestrator may provide handler creation-time extension overrides when the 
 should begin with a non-default extension state. `thread_start` owns that creation-time override and
 starts a normal handler thread with the default handler runtime shape plus the requested extension
 binding before its first turn. Exact input, output, and rejected legacy shapes are defined in
-`docs/specs/extension/thread-managing.extension.spec.md`.
+`docs/specs/extension/thread_managing.extension.spec.md`.
 
 Workflow supervision is different.
 

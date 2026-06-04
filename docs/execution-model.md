@@ -297,7 +297,7 @@ GitHub issues, pull requests, review comments, Actions, or other GitHub work.
 The orchestrator can preload an extension for a delegated objective:
 
 Use `thread_start.extensions` to apply creation-time handler extension overrides. The exact
-Thread Orchestration and Thread Handling APIs live in `docs/specs/extension/thread-managing.extension.spec.md`.
+Thread Orchestration and Thread Handling APIs live in `docs/specs/extension/thread_managing.extension.spec.md`.
 
 A handler can load the extension later:
 

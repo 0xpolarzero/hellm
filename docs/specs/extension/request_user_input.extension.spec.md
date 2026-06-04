@@ -36,7 +36,7 @@ Local Codex reference files:
 Related `svvy` specs:
 
 - `docs/specs/extensions-and-tools.spec.md`
-- `docs/specs/extension/extension-managing.extension.spec.md`
+- `docs/specs/extension/extension_managing.extension.spec.md`
 - `docs/specs/queued-messages.spec.md`
 - `docs/specs/live-tool-projection.spec.md`
 - `docs/specs/structured-session-state.spec.md`

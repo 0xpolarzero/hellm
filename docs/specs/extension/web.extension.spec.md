@@ -18,9 +18,9 @@ Related specs:
 - `docs/specs/extensions-and-tools.spec.md` defines the general extension architecture, extension
   usage states, generated agent context, native tools, `svvyx`, prompt-only extensions, and
   app-managed trusted CLI dependencies.
-- `docs/specs/extension/extension-managing.extension.spec.md` defines how shipped extension instructions are inspected,
+- `docs/specs/extension/extension_managing.extension.spec.md` defines how shipped extension instructions are inspected,
   overlaid, reset, and built when extension content is editable.
-- `docs/specs/extension/execute-typescript.extension.spec.md` defines generated TypeScript clients. Web v1 does not
+- `docs/specs/extension/execute_typescript.extension.spec.md` defines generated TypeScript clients. Web v1 does not
   contribute any generated TypeScript client.
 
 ## Product Intent
@@ -412,7 +412,7 @@ Because Web is a shipped prompt-only extension:
 - Web is non-deletable
 - Web is resettable to shipped defaults
 - Web can be customized only through the normal shipped-extension overlay mechanisms described in
-  `docs/specs/extensions-and-tools.spec.md` and `docs/specs/extension/extension-managing.extension.spec.md`
+  `docs/specs/extensions-and-tools.spec.md` and `docs/specs/extension/extension_managing.extension.spec.md`
 - Web has no editable executable source in v1
 - Web has no generated TypeScript declaration file in v1
 - Web has no executable or `svvyx` source build step in v1

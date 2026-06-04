@@ -493,7 +493,7 @@ Normal handlers may select a configured Project CI entry through `smithers_list_
 
 CI configuration is owned by whichever handler thread has loaded the `project-ci` extension, either
 from a `thread_start` creation-time extension override defined in
-`docs/specs/extension/thread-managing.extension.spec.md` or from `load_extension({ extensionId: "project-ci" })`.
+`docs/specs/extension/thread_managing.extension.spec.md` or from `load_extension({ extensionId: "project-ci" })`.
 
 ## Out Of Scope
 

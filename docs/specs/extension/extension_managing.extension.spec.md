@@ -252,7 +252,7 @@ user skeletons should use zero-padded numeric prefixes, for example:
 ```text
 010-svvyx-extension-managing.md
 020-incur-cli-authoring.md
-030-incur-typescript-client.md
+030-domain-guide.md
 ```
 
 The ordering rule is deliberately file-system-visible so agents can understand it from `inspect`
@@ -471,13 +471,12 @@ native `list_extensions` tool:
 
 ## Extension Managing Loaded Instruction Files
 
-The shipped Extension Managing extension has three full instruction source files. These files are
+The shipped Extension Managing extension has two full instruction source files. These files are
 ordered by filename under `instructions/full/`:
 
 ```text
 010-svvyx-extension-managing.md
 020-incur-cli-authoring.md
-030-incur-typescript-client.md
 ```
 
 The generated loaded instruction for Extension Managing is the concatenation of those files. This
@@ -517,23 +516,14 @@ The module should default-export the CLI:
 export default cli
 ```
 
-Do not call `cli.serve()` from the extension module. svvy invokes the default-exported CLI when an
-agent runs:
-
-```sh
-svvyx <extension-id> <command> ...
-```
-
-Command names and flags are owned by the extension's Incur CLI. Agents call them through `svvyx`.
+Do not call `cli.serve()` from the extension module. svvy invokes the default-exported CLI through
+the stable `svvyx` dispatcher.
 
 Declare app-managed env through Incur env schemas and read it from command or middleware context as
 `c.env`.
 
 Do not read app-managed secrets from `process.env.MY_SECRET`. svvy injects env explicitly through
 Incur and does not mutate `process.env`.
-
-If TypeScript API is enabled, generated clients are another typed way to call the same Incur
-commands. They are not a separate custom SDK surface.
 
 Missing required env is a runtime readiness issue. Declare env requirements clearly, but do not ask
 users to paste secrets into chat.
@@ -556,20 +546,11 @@ token-aware output controls, and agent-readable command documentation.
 Use this guidance when creating or editing a `svvyx` extension's Incur CLI.
 
 In `svvyx` extension source, default-export the CLI. Do not call `cli.serve()` in the module. svvy
-invokes the default-exported CLI when an agent runs:
-
-```sh
-svvyx <extension-id> <command> ...
-```
-
-Command names and flags are owned by the extension's Incur CLI. Agents call them through `svvyx`.
+invokes the default-exported CLI through the stable `svvyx` dispatcher.
 
 Declare app-managed env through Incur env schemas and read it from command or middleware context as
 `c.env`. Do not read app-managed secrets from `process.env.MY_SECRET`. svvy injects env explicitly
 through Incur and does not mutate `process.env`.
-
-If TypeScript API is enabled, generated clients are another typed way to call the same Incur
-commands. They are not a separate custom SDK surface.
 
 Missing required env is a runtime readiness issue. Declare env requirements clearly, but do not ask
 users to paste secrets into chat.
@@ -849,14 +830,10 @@ Each usage entry supports:
 Both `args` and `options` are strictly typed from the Zod schemas. Usage patterns also work on
 subcommands via `.command()`.
 
-## Output
+## Output Schema
 
-Every command returns data. Incur wraps it in a structured envelope and serializes to the requested
-format.
-
-### Output Schema
-
-Define `output` to declare the return shape:
+Every command returns data. Incur wraps it in a structured envelope at runtime. Define `output` to
+declare the return shape:
 
 ```ts
 cli.command("info", {
@@ -871,127 +848,6 @@ cli.command("info", {
 ```
 
 When `output` is provided, TypeScript enforces that `run()` returns the correct shape.
-
-### Formats
-
-Control with `--format <fmt>` or `--json`:
-
-| Flag            | Format   | Description                                  |
-| --------------- | -------- | -------------------------------------------- |
-| _(default)_     | TOON     | Token-efficient, about 40% fewer tokens than JSON |
-| `--format json` | JSON     | `JSON.parse()`-safe                          |
-| `--format yaml` | YAML     | Human-readable                               |
-| `--format md`   | Markdown | Tables for docs/issues                       |
-
-### Envelope
-
-With `--full-output`, the full envelope is emitted:
-
-```sh
-svvyx tool info express --full-output
-```
-
-```text
-ok: true
-data:
-  name: express
-  version: 4.21.2
-meta:
-  command: info
-  duration: 12ms
-```
-
-Without `--full-output`, only `data` is emitted. On errors, only the `error` block is emitted.
-
-### Filtering Output
-
-Use `--filter-output` to prune command output to specific keys. It supports dot notation for nested
-access, array slices with `[start,end]`, and comma-separated paths.
-
-```ts
-cli.command("users", {
-  description: "List users",
-  run() {
-    return {
-      users: [
-        { name: "Alice", email: "alice@example.com", role: "admin" },
-        { name: "Bob", email: "bob@example.com", role: "user" },
-        { name: "Carol", email: "carol@example.com", role: "user" },
-      ],
-    };
-  },
-});
-```
-
-```sh
-svvyx tool users --filter-output users.name
-# -> [3]: Alice,Bob,Carol
-
-svvyx tool users --filter-output users[0,2].name
-# -> users[2]{name}:
-# ->   Alice
-# ->   Bob
-```
-
-### Token Pagination
-
-Use `--token-count`, `--token-limit`, and `--token-offset` to manage large outputs. Tokens are
-estimated using LLM tokenization rules.
-
-```sh
-svvyx tool users --token-count
-svvyx tool users --token-limit 20
-svvyx tool users --token-offset 20 --token-limit 20
-```
-
-With `--full-output`, truncated output includes `meta.nextOffset` for programmatic pagination.
-
-### Command Schema
-
-Use `--schema` to print the JSON Schema for a command's arguments, environment variables, options,
-and output:
-
-```ts
-cli.command("install", {
-  description: "Install a package",
-  args: z.object({
-    package: z.string().describe("Package name"),
-  }),
-  options: z.object({
-    saveDev: z.boolean().optional().describe("Save as dev dependency"),
-  }),
-  run({ args }) {
-    return { added: 1 };
-  },
-});
-```
-
-```sh
-svvyx tool install --schema
-# -> args:
-# ->   type: object
-# ->   properties:
-# ->     package:
-# ->       type: string
-# -> options:
-# ->   type: object
-# ->   properties:
-# ->     saveDev:
-# ->       type: boolean
-```
-
-Use `--schema --format json` for machine-readable output.
-
-### TTY Detection
-
-Incur adapts output based on whether stdout is a TTY:
-
-| Scenario              | TTY (human)             | Non-TTY (agent/pipe) |
-| --------------------- | ----------------------- | -------------------- |
-| Command output        | Formatted data only     | TOON envelope        |
-| Errors                | Human-readable message  | Error envelope       |
-| `--help`              | Pretty help text        | Same                 |
-| `--json` / `--format` | Overrides to structured | Same                 |
 
 ## Run Context
 
@@ -1066,54 +922,6 @@ run(c) {
   // ...
 }
 ```
-
-## Agent Discovery
-
-### `--llms` Flag
-
-Every Incur CLI gets a built-in `--llms` flag that outputs an agent-readable manifest of all
-commands:
-
-```sh
-svvyx tool --llms
-```
-
-It outputs Markdown skill documentation by default.
-
-```md
-# tool install
-
-Install a package
-
-## Arguments
-
-| Name      | Type     | Required | Description             |
-| --------- | -------- | -------- | ----------------------- |
-| `package` | `string` | no       | Package name to install |
-
-## Options
-
-| Flag        | Type      | Default | Description            |
-| ----------- | --------- | ------- | ---------------------- |
-| `--saveDev` | `boolean` |         | Save as dev dependency |
-| `--global`  | `boolean` |         | Install globally       |
-```
-
-Use `--llms --format json` for the JSON schema manifest.
-
-## Built-in Flags
-
-| Flag             | Description                                 |
-| ---------------- | ------------------------------------------- |
-| `--help`, `-h`   | Show help for the CLI or a specific command |
-| `--version`      | Print CLI version                           |
-| `--llms`         | Output agent-readable command manifest      |
-| `--json`         | Shorthand for `--format json`               |
-| `--format <fmt>` | Output format: `toon`, `json`, `yaml`, `md` |
-| `--full-output`  | Include full envelope (`ok`, `data`, `meta`) |
-
-Do not document `--mcp`, MCP registration, HTTP serving, `cli.fetch`, or Skills installation in
-`svvyx` extension instructions.
 
 ## Examples
 
@@ -1317,30 +1125,6 @@ export default cli;
 
 Always `export default cli` so svvy can import the extension CLI and run it through `svvyx`.
 ````
-
-### `030-incur-typescript-client.md`
-
-This instruction is the generic Execute TypeScript guidance for consuming loaded `svvyx` extension
-clients. Its exact content is the generic instruction text in
-`docs/specs/extension/execute-typescript.extension.spec.md` under `## Execute TypeScript
-Instruction`.
-
-Do not generate this file from a transformation recipe at runtime, and do not create a second
-hand-maintained variant. Materialize the exact instruction text from that spec section so the
-Extension Managing guidance and the `execute_typescript` loaded instruction stay identical.
-
-This file must not mention:
-
-- a global `svvy` client
-- an injected `api` object
-- `HttpClient`
-- `HttpTransport`
-- `MemoryClient`
-- `MemoryTransport`
-- `Client.create()`
-- extension implementation imports
-- Incur local Skills setup actions
-- Incur local MCP setup actions
 
 ## Common Output Rules
 

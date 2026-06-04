@@ -18,7 +18,7 @@ Related specs:
 - `docs/specs/extensions-and-tools.spec.md` defines the general extension architecture, prompt-only
   extensions, trusted CLI dependency registry, shell policy, generated agent context, and
   `execute_typescript`.
-- `docs/specs/extension/extension-managing.extension.spec.md` defines how shipped extension instructions are inspected,
+- `docs/specs/extension/extension_managing.extension.spec.md` defines how shipped extension instructions are inspected,
   overlaid, reset, and built when extension content is editable.
 
 ## Product Intent

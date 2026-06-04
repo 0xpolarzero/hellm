@@ -11,7 +11,7 @@
   - separate the borrowed Smithers transport shape from `svvy`-owned product behavior
 
 Concrete thread tool APIs such as `thread_resume`, `thread_request_report`, `thread_report`, and
-`thread_current` are defined in `docs/specs/extension/thread-managing.extension.spec.md`.
+`thread_current` are defined in `docs/specs/extension/thread_managing.extension.spec.md`.
 The draft Smithers extension record and centralized extension API notes are defined in
 `docs/specs/extension/smithers.extension.spec.md`.
 

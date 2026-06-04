@@ -12,7 +12,7 @@
 
 This spec intentionally does not teach agents how to author an Incur CLI. Extension authoring,
 source editing, lifecycle commands, reset/delete/revert, and future Incur-authoring instructions
-belong to `docs/specs/extension/extension-managing.extension.spec.md` and the loaded Extension
+belong to `docs/specs/extension/extension_managing.extension.spec.md` and the loaded Extension
 Managing instructions. This file is the internal plumbing contract for making already-authored
 Incur-backed extensions buildable and callable.
 
@@ -20,11 +20,11 @@ Related specs:
 
 - `docs/specs/extensions-and-tools.spec.md` defines the overall extension model, usage states,
   generated agent context, env redaction, and shell policy.
-- `docs/specs/extension/extension-managing.extension.spec.md` defines the management CLI that creates,
+- `docs/specs/extension/extension_managing.extension.spec.md` defines the management CLI that creates,
   inspects, builds, and updates extension source state.
 - `docs/specs/extension/artifacts.extension.spec.md` defines the product-record-creating `svvyx`
   Artifacts extension that relies on dispatcher runtime context.
-- `docs/specs/extension/execute-typescript.extension.spec.md` defines generated loaded-extension
+- `docs/specs/extension/execute_typescript.extension.spec.md` defines generated loaded-extension
   clients inside `execute_typescript`.
 - `docs/specs/extension/shell.extension.spec.md` defines `exec_command`, which is how agents run
   `svvyx ...` from the shell.

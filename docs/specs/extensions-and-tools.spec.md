@@ -18,17 +18,17 @@ Related specs:
 
 - `docs/specs/extension/shell.extension.spec.md` defines the Shell native-tool extension index for
   `exec_command` and `write_stdin`.
-- `docs/specs/extension/apply-patch.extension.spec.md` defines the Apply Patch native-tool
+- `docs/specs/extension/apply_patch.extension.spec.md` defines the Apply Patch native-tool
   extension index for `apply_patch`.
-- `docs/specs/extension/execute-typescript.extension.spec.md` defines the Execute TypeScript native
+- `docs/specs/extension/execute_typescript.extension.spec.md` defines the Execute TypeScript native
   extension.
-- `docs/specs/extension/extension-loading.extension.spec.md` defines the fixed Extension Loading
+- `docs/specs/extension/extension_loading.extension.spec.md` defines the fixed Extension Loading
   native control extension.
-- `docs/specs/extension/extension-managing.extension.spec.md` defines the Extension Managing extension and its
+- `docs/specs/extension/extension_managing.extension.spec.md` defines the Extension Managing extension and its
   `svvyx extensions ...` lifecycle API.
 - `docs/specs/extension/svvyx-incur-runtime.spec.md` defines the internal runtime contract for
   building and invoking Incur-backed `svvyx` extensions through the stable `svvyx` dispatcher.
-- `docs/specs/extension/thread-managing.extension.spec.md` defines the shared native
+- `docs/specs/extension/thread_managing.extension.spec.md` defines the shared native
   implementation behind the Thread Orchestration and Thread Handling extension records and the
   concrete `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`,
   `thread_request_report`, `thread_current`, and `thread_report` APIs.
@@ -42,11 +42,11 @@ Related specs:
 - `docs/specs/extension/git.extension.spec.md` defines the shipped prompt-only Git extension.
 - `docs/specs/extension/github.extension.spec.md` defines the shipped prompt-only GitHub extension.
 - `docs/specs/extension/smithers.extension.spec.md` is the draft Smithers extension spec.
-- `docs/specs/extension/project-ci.extension.spec.md` is the draft Project CI prompt-only extension
+- `docs/specs/extension/project_ci.extension.spec.md` is the draft Project CI prompt-only extension
   spec.
 - `docs/specs/extension/artifacts.extension.spec.md` defines the shipped Artifacts `svvyx` extension
   API.
-- `docs/specs/extension/external-instructions.extension.spec.md` defines external instruction
+- `docs/specs/extension/external_instructions.extension.spec.md` defines external instruction
   extension records.
 
 The generated-context terminology in this document is intentional:
@@ -974,8 +974,9 @@ smaller:
 
 Dispatcher import, serving, stdout, exit, sandbox, command-fact, and generated-client plumbing are
 internal `svvy` runtime behavior. Agent-facing Extension Managing instructions may mention only the
-default export rule, the no-top-level-`cli.serve()` rule, the `svvyx <extension-id> ...` invocation
-shape, and the `c.env` env access rule.
+default export rule, the no-top-level-`cli.serve()` rule, the `c.env` env access rule, and the
+`svvyx <extension-id> ...` dispatcher shape only as authored-CLI runtime context. Generic guidance
+for using arbitrary loaded `svvyx` CLIs belongs to Shell's separate Incur CLI usage instruction.
 
 ### Prompt-Only And External Instruction Extensions
 
@@ -1572,7 +1573,7 @@ and the actor's resolved extension binding.
 `thread_start` may include an optional `extensions` object. The object is a partial override over the
 configured `threadHandler` profile's extension usage states for the new handler thread.
 The concrete `thread_start` input, output, and rejection rules live in
-`docs/specs/extension/thread-managing.extension.spec.md`.
+`docs/specs/extension/thread_managing.extension.spec.md`.
 
 The bound extension facts returned by `thread_start` are durable provenance for the created handler.
 Those facts do not affect future workflow task-agent extension selection, future handlers, or the
@@ -3749,13 +3750,13 @@ read-only external inputs.
 | Base: Orchestrator (`base-orchestrator`) | shipped | instructions | Orchestrator role instructions for strategy, routing, delegation, handler resume, user clarification, and final decisions | default_loaded | unavailable | unavailable |
 | Base: Handler Thread (`base-handler`) | shipped | instructions | Handler-thread role instructions for delegated objective ownership, workflow supervision boundary, waits, reporting, and conclusions | unavailable | default_loaded | unavailable |
 | Base: Workflow Task Agent (`base-workflow-task`) | shipped | instructions | Smithers task-attempt role instructions for task-local coding-agent work under workflow runtime ownership | unavailable | unavailable | default_loaded |
-| Shell | shipped | native_tool | `exec_command`, `write_stdin`, Codex-like shell instructions, and `svvyx` access through `exec_command` | default_loaded | default_loaded | default_loaded |
+| Shell | shipped | native_tool | `exec_command` and `write_stdin`, with one base shell instruction file and one separate Incur-backed `svvyx` CLI usage instruction file | default_loaded | default_loaded | default_loaded |
 | Apply Patch | shipped | native_tool | `apply_patch` with Codex-like structured patch instructions for repository and allowed extension file edits | default_loaded | default_loaded | default_loaded |
-| Execute TypeScript | shipped | native_tool | `execute_typescript` with top-level approval-boundary classification and generated `extensions.<id>.run(...)` clients for loaded TypeScript-enabled `svvyx` extensions as the preferred TypeScript interface; no global `svvy` client, no broad injected `api` helpers, and no generated clients for prompt-only cx/Web/Git/GitHub | default_loaded | default_loaded | default_loaded |
+| Execute TypeScript | shipped | native_tool | `execute_typescript` with top-level approval-boundary classification, one base TypeScript execution instruction file, one separate Incur generated-client usage instruction file, and generated `extensions.<id>.run(...)` clients for loaded TypeScript-enabled `svvyx` extensions; no global `svvy` client, no broad injected `api` helpers, and no generated clients for prompt-only cx/Web/Git/GitHub | default_loaded | default_loaded | default_loaded |
 | Extension Loading | shipped | native_tool | `list_extensions`, `load_extension`; fixed app-native control, always default-loaded and not configurable | default_loaded | default_loaded | default_loaded |
 | Request User Input (`request-user-input`) | shipped | native_tool | `request_user_input`; one visible dual-variant extension whose active nonblocking or blocking variant controls the loaded instructions, tool schema descriptions, and runtime behavior | default_loaded | default_loaded | unavailable |
-| Thread Orchestration (`thread-orchestration`) | shipped | native_tool | Orchestrator-only handler-thread controls: `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`, and `thread_request_report`; concrete API is defined in `docs/specs/extension/thread-managing.extension.spec.md` | default_loaded | unavailable | unavailable |
-| Thread Handling (`thread-handling`) | shipped | native_tool | Handler-only thread controls: `thread_current`, `thread_report`, and `thread_episodes`; concrete API is defined in `docs/specs/extension/thread-managing.extension.spec.md` | unavailable | default_loaded | unavailable |
+| Thread Orchestration (`thread-orchestration`) | shipped | native_tool | Orchestrator-only handler-thread controls: `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`, and `thread_request_report`; concrete API is defined in `docs/specs/extension/thread_managing.extension.spec.md` | default_loaded | unavailable | unavailable |
+| Thread Handling (`thread-handling`) | shipped | native_tool | Handler-only thread controls: `thread_current`, `thread_report`, and `thread_episodes`; concrete API is defined in `docs/specs/extension/thread_managing.extension.spec.md` | unavailable | default_loaded | unavailable |
 | Extension Managing | shipped | svvyx | `svvyx extensions ...` lifecycle commands for inspect, create, full-instruction file add/remove/rename/reorder, build, usage state, reset, delete, revert, and snapshots; content edits use returned file paths plus native `apply_patch` | available | available | unavailable |
 | cx | shipped | instructions | official cx CLI semantic code-navigation guidance through `exec_command`; no native `cx_*`, `svvyx cx`, generated TypeScript client, product navigation, or product-state controls | default_loaded | default_loaded | default_loaded |
 | Smithers | shipped | native_tool | `smithers_*` workflow run/list/inspect/resume/signal/transcript controls backed by the Bun-owned Smithers bridge | unavailable | default_loaded | unavailable |
@@ -3787,9 +3788,11 @@ These extensions teach shell use of `git` and `gh`; they do not introduce a para
 Extension Managing owns extension lifecycle, source discovery, build, usage-state, reset, delete,
 revert, snapshot, and full-instruction source-file lifecycle commands. Content edits still use
 ordinary shell inspection plus native `apply_patch`. Authoring-facing Incur guidance belongs to the
-Extension Managing instruction layer, while the internal `svvyx` runtime plumbing is defined
-separately in `docs/specs/extension/svvyx-incur-runtime.spec.md`. Its detailed command surface is
-defined in `docs/specs/extension/extension-managing.extension.spec.md`.
+Extension Managing instruction layer. Generic Incur-backed `svvyx` CLI usage belongs to Shell's
+separate Incur CLI usage instruction file, and generic Incur generated-client usage belongs to
+Execute TypeScript's separate Incur client instruction file. Internal `svvyx` runtime plumbing is
+defined separately in `docs/specs/extension/svvyx-incur-runtime.spec.md`. Its detailed command
+surface is defined in `docs/specs/extension/extension_managing.extension.spec.md`.
 
 Project CI is a shipped prompt-only extension. It is available by default to orchestrators and
 handlers so `thread_start` can preload it for CI-authoring objectives and handlers can load it with
@@ -3999,8 +4002,7 @@ actor-scoped extension invocation:
   actor availability
 - loaded `svvyx` extension id list
 - loaded `svvyx` command guidance included for loaded extensions
-- generated TypeScript declarations included for `execute_typescript`, `svvy` clients, and loaded
-  extension clients
+- generated TypeScript declarations included for `execute_typescript` and loaded extension clients
 - generated native tool schema files included in the actor context
 - external instructions that reached the actor, including exact content, order, additions/removals,
   and visible source metadata when that metadata appears in generated context
@@ -4111,11 +4113,11 @@ The shared extension architecture in this document is resolved. Some individual 
 still draft extension contracts and must be completed in their own files before their model-callable
 surface is implemented:
 
-- `docs/specs/extension/project-ci.extension.spec.md`
+- `docs/specs/extension/project_ci.extension.spec.md`
 - draft portions of `docs/specs/extension/smithers.extension.spec.md`
 
 Generated `execute_typescript` declaration names and import shape are owned by
-`docs/specs/extension/execute-typescript.extension.spec.md`: actors receive one generated declaration
+`docs/specs/extension/execute_typescript.extension.spec.md`: actors receive one generated declaration
 block, and handwritten extension prose must not redefine that interface.
 
 Resolved in the 2026-06-02 auto-review design pass:
@@ -4144,20 +4146,20 @@ Related source-of-truth docs are:
 - `docs/prd.md`
 - `docs/features.ts`
 - `docs/progress.md`
-- `docs/specs/extension/extension-managing.extension.spec.md`
+- `docs/specs/extension/extension_managing.extension.spec.md`
 - `docs/specs/ambient-agent-resources-baseline.spec.md`
 - `docs/specs/extension/shell.extension.spec.md`
-- `docs/specs/extension/apply-patch.extension.spec.md`
-- `docs/specs/extension/execute-typescript.extension.spec.md`
-- `docs/specs/extension/extension-loading.extension.spec.md`
-- `docs/specs/extension/thread-managing.extension.spec.md`
+- `docs/specs/extension/apply_patch.extension.spec.md`
+- `docs/specs/extension/execute_typescript.extension.spec.md`
+- `docs/specs/extension/extension_loading.extension.spec.md`
+- `docs/specs/extension/thread_managing.extension.spec.md`
 - `docs/specs/extension/cx.extension.spec.md`
 - `docs/specs/extension/web.extension.spec.md`
 - `docs/specs/extension/git.extension.spec.md`
 - `docs/specs/extension/github.extension.spec.md`
 - `docs/specs/extension/smithers.extension.spec.md`
-- `docs/specs/extension/project-ci.extension.spec.md`
+- `docs/specs/extension/project_ci.extension.spec.md`
 - `docs/specs/extension/artifacts.extension.spec.md`
-- `docs/specs/extension/external-instructions.extension.spec.md`
+- `docs/specs/extension/external_instructions.extension.spec.md`
 - `docs/specs/project-ci.spec.md`
 - `docs/specs/workflow-library.spec.md`

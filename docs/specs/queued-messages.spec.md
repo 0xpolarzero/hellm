@@ -8,7 +8,7 @@
 
 Thread tools that create or consume queue work, including `thread_resume`,
 `thread_request_report`, and `thread_report`, are defined in
-`docs/specs/extension/thread-managing.extension.spec.md`.
+`docs/specs/extension/thread_managing.extension.spec.md`.
 
 ## Purpose
 

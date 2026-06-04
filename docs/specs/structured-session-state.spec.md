@@ -33,7 +33,7 @@ This document defines:
 - the shape of the reference POC and its intended SQLite-backed implementation
 
 The concrete Thread Orchestration and Thread Handling native tool APIs that read and write this state are defined in
-`docs/specs/extension/thread-managing.extension.spec.md`.
+`docs/specs/extension/thread_managing.extension.spec.md`.
 
 Live tool projection and command event semantics are defined in
 `docs/specs/live-tool-projection.spec.md`.
@@ -1223,14 +1223,14 @@ Recommended implementation rules:
 Write responsibility is:
 
 - ordinary orchestrator-turn writes, including turn decisions, and root command writes belong to the `svvy` runtime
-- Thread write-tool contracts, including `thread_start`, `thread_resume`, `thread_request_report`, and `thread_report`, are defined in `docs/specs/extension/thread-managing.extension.spec.md`
+- Thread write-tool contracts, including `thread_start`, `thread_resume`, `thread_request_report`, and `thread_report`, are defined in `docs/specs/extension/thread_managing.extension.spec.md`
 - handler-thread turn writes, including turn decisions, and command writes belong to the `svvy` runtime over pi thread surfaces
 - `load_extension` updates the current actor's loaded and available extension binding, is idempotent when the extension is already loaded, and refreshes generated agent context before the next model call
 - workflow-run writes belong to the Smithers bridge
 - workflow-task-attempt projection stores svvy-owned product metadata such as `meta.promptBinding` on the exact Smithers attempt address while leaving Smithers-owned run, node, attempt, retry, wait, output, usage, and transcript facts in Smithers durable state
 - Project CI writes belong to the runtime or bridge path that handles terminal Smithers runs from entries declaring `productKind = "project-ci"` and validates their terminal output against the declared CI result schema
 - wait writes belong to the `svvy` runtime
-- thread read tools (`thread_current`, `thread_list`, and `thread_episodes`) read durable structured state and the active prompt runtime binding without creating command records or writing lifecycle facts; concrete thread read-tool contracts are defined in `docs/specs/extension/thread-managing.extension.spec.md`
+- thread read tools (`thread_current`, `thread_list`, and `thread_episodes`) read durable structured state and the active prompt runtime binding without creating command records or writing lifecycle facts; concrete thread read-tool contracts are defined in `docs/specs/extension/thread_managing.extension.spec.md`
 
 No runtime component may synthesize `turnDecision`, thread, workflow-run, Project CI, or wait facts from transcript prose after the fact.
 
