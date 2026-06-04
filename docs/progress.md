@@ -104,6 +104,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Build a POC turn flow from message targeting to surface turn creation and command recording. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Implement direct surface targeting so a pane send goes to either the orchestrator surface or a handler-thread surface. Commit(s): `f53c9b8`
 - [x] Add `thread_start` as the orchestrator-side delegation primitive. Commit(s): `f53c9b8`
+- [ ] Expose the resolved thread-control runtime surface and generated prompt text: orchestrators get `thread_start({ threadGroupId?, threads })` with per-item `history` and `extensions`, `thread_followup({ activate? })`, `thread_list`, `thread_episodes`, and `thread_request_report`; handlers get `thread_current`, `thread_group`, `thread_report`, and `thread_episodes`; obsolete `thread_handoff`, `thread_handoffs`, `thread_resume`, and single-objective `thread_start` shapes are absent from agent-facing prompts and tool schemas.
 - [x] Implement minimal orchestrator routing for local reply, local `execute_typescript`, clarification, and `thread_start`. Commit(s): `d323012`
 - [x] Re-enter orchestrator control from durable handler-thread episodes, using durable thread objective state plus the latest episode instead of raw transcript scanning. Commit(s): `d323012`, `fdaf460`
 
@@ -257,6 +258,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Build a POC New orchestrator creation flow with profile-backed orchestrator selection. Commit(s): `8e19462`
 - [x] Persist the orchestrator profile snapshot and prompt selection used by created sessions. Commit(s): `8e19462`
 - [x] Persist per-session orchestrator profile overrides. Commit(s): `8e19462`
+- [ ] Persist and deliver handler start history mode for delegated handler threads, defaulting `thread_start.threads[].history` to `forked` inherited-history context and supporting explicit `isolated` starts when durable inputs fully specify the work or inherited conversation would bias or bloat the handler.
 - [ ] Persist handler creation-time extension-state overrides for delegated handler threads as partial overrides over the `threadHandler` profile.
 - [x] Keep the Agents sidebar pane between Logs and Extensions, with orchestrator profiles plus the `threadHandler` special profile owned there instead of in General settings. Commit(s): `2b97c46648`, `b714aa26f9`
 - [x] Drive the New orchestrator picker order, profile-specific command palette actions, and surface profile badges from Agents-pane orchestrator profile order. Commit(s): `2b97c46648`, `031510ba2b`

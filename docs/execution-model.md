@@ -303,10 +303,17 @@ usually needs git context. Prompt-only GitHub guidance is default-loaded for orc
 threads, and available for workflow task agents only when the task objective explicitly requires
 GitHub issues, pull requests, review comments, Actions, or other GitHub work.
 
-The orchestrator can preload an extension for a delegated objective:
+The orchestrator can preload inherited history or an extension for a delegated objective:
 
 Use `thread_start.threads[].extensions` to apply creation-time handler extension overrides. The exact
 Thread Orchestration and Thread Handling APIs live in `docs/specs/extension/thread_managing.extension.spec.md`.
+
+Use `thread_start.threads[].history` only when deviating from the default. The default is
+`"forked"`: the handler starts as its own handler actor, then receives product-filtered inherited
+orchestrator conversation context before the delegated objective. Use `"isolated"` when durable
+files, specs, tests, or the objective itself fully specify the work, when prior chat is noisy, stale,
+speculative, or likely to bias an independent review, or when context minimization is materially
+more important than inherited discussion.
 
 A handler can load the extension later:
 

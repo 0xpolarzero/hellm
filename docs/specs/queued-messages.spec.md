@@ -185,7 +185,8 @@ The durable record should keep:
 - source thread, report request id, request text, and request time for `report_request`
 - previous and requested generated agent context fingerprint, changed categories, changed extension
   ids when applicable, and request time for `agent_context_refresh`
-- thread id and request time for `initial_handler_start`
+- thread id, request time, history mode, and product-filtered inherited-history payload when
+  `history` is `forked` for `initial_handler_start`
 - workflow run, Smithers run, workflow id, summary, and reason for `workflow_attention`
 - source request id, source question id, original default answer, user answer, and answer delivery
   mode for `request_user_input_answer`
@@ -209,18 +210,45 @@ If the queue has at least one queued item:
    mark the item delivered, and continue draining later items
 4. for `user_message`, `thread_followup`, `thread_report`, `report_request`, `initial_handler_start`,
    `workflow_attention`, or `request_user_input_answer`, submit the derived text as the next real
-   user message to that same pi surface; `thread_followup` delivery sends the orchestrator-authored
-   follow-up to the target handler and, when the row reactivated a concluded objective, prepends the
-   product-authored reactivation context defined below; `thread_report` delivery reconciles an
-   already-recorded durable episode, `report_request` delivery asks the handler to answer with
-   `thread_report({ requestId, ... })`, and `request_user_input_answer` delivery supplies the
-   original question, the answer the agent used by default, and the user's later answer
+   user message to that same pi surface; `initial_handler_start` delivery sends the delegated
+   objective and, when `history` is `forked`, prepends the product-filtered inherited orchestrator
+   history and boundary note defined below; `thread_followup` delivery sends the
+   orchestrator-authored follow-up to the target handler and, when the row reactivated a concluded
+   objective, prepends the product-authored reactivation context defined below; `thread_report`
+   delivery reconciles an already-recorded durable episode, `report_request` delivery asks the
+   handler to answer with `thread_report({ requestId, ... })`, and `request_user_input_answer`
+   delivery supplies the original question, the answer the agent used by default, and the user's
+   later answer
 5. create a normal turn record for prompt-bearing delivery
 6. mark prompt-bearing items `delivered` once pi accepts the queued item into the surface history
 
 If delivery fails before pi accepts the item, the item returns to the front of the durable `queued` list.
 
 If delivery starts and the resulting turn later fails, the queued item remains `delivered`; the turn failure belongs to the normal turn lifecycle.
+
+`initial_handler_start` inherited-history delivery:
+
+- when `thread_start.threads[].history` is omitted or `"forked"`, the queue row records the
+  inherited-history payload captured from the current orchestrator surface before the handler's first
+  turn
+- the inherited-history payload is captured from committed transcript ancestors at the
+  `thread_start` command acceptance boundary. It includes committed user messages and completed
+  orchestrator assistant messages on the current transcript branch before the orchestrator assistant
+  turn that calls `thread_start`, including the committed user message that caused that turn.
+- the inherited-history payload excludes tool calls, tool results, raw command output, logs, hidden
+  reasoning, transient UI/control messages, queue rows, generated tool schemas, and orchestrator-only
+  callable surface details. It also excludes the in-progress orchestrator assistant turn that called
+  `thread_start`, any assistant prose in that turn, the `thread_start` tool-call content, and the
+  `thread_start` result.
+- delivery prepends a product-authored boundary note before the delegated objective, telling the
+  handler that the inherited history is context only, earlier assistant messages were produced by
+  the orchestrator, and the handler's current system prompt and tool schema are authoritative
+- delivery sends the inherited-history section and delegated objective as one initial prompt-bearing
+  start item for the handler surface. It becomes part of the handler pi transcript for
+  reproducibility, but it is not reconstructed as separate prior handler turns, not written into the
+  handler system prompt, and not shared pi transcript state.
+- when `history` is `"isolated"`, no inherited orchestrator history is included; the handler receives
+  only the delegated objective as the prompt-bearing start item
 
 `thread_followup` reactivation delivery:
 

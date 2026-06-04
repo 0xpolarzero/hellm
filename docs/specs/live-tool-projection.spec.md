@@ -454,7 +454,7 @@ Projection behavior:
 
 | Tool | Projection |
 | --- | --- |
-| `thread_start` | Argument projection for `threads[]` objectives, per-thread extension overrides, and group membership; runtime progress for thread-group creation or reuse, handler-thread row creation, generated context binding, initial queue items, and first handler turn starts. |
+| `thread_start` | Argument projection for `threads[]` objectives, per-thread history mode, per-thread extension overrides, and group membership; runtime progress for thread-group creation or reuse, handler-thread row creation, generated context binding, initial queue items, and first handler turn starts. |
 | `thread_followup` | Argument projection for exact target threads or target thread group, follow-up message, and `activate`; runtime progress for optional objective reactivation and handler queue delivery. |
 | `thread_request_report` | Argument projection for target thread and request body; runtime progress for report-request record creation and handler queue delivery. |
 | `thread_report` | Argument projection for title, summary, body, and optional outcome; runtime progress for episode recording, objective conclusion when applicable, and orchestrator queue notification. |
@@ -607,7 +607,7 @@ Classification meanings:
 | `execute_typescript` | both | Source preview, source artifact, diagnostics, runtime result, nested child commands. |
 | `list_extensions` | final | Loading state plus final actor-local extension inventory. |
 | `load_extension` | runtime | Readiness check, generated context refresh, tool/type/command guidance refresh, final loaded binding. |
-| `thread_start` | both | `threads[]` objective preview, per-thread extension override preview, thread-group creation or reuse, thread creation, context binding, initial handler turns. |
+| `thread_start` | both | `threads[]` objective preview, per-thread history mode preview, per-thread extension override preview, thread-group creation or reuse, thread creation, context binding, initial handler turns. |
 | `thread_followup` | both | Target thread or group preview, message preview, optional objective reactivation, handler queue delivery. |
 | `thread_request_report` | both | Request preview, request record creation, queue delivery. |
 | `thread_report` | both | Report preview, episode creation, optional objective conclusion, orchestrator queue notification. |

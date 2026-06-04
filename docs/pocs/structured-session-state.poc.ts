@@ -45,6 +45,7 @@ type ThreadRecord = {
   surfacePiSessionId: string;
   title: string;
   objective: string;
+  history: "forked" | "isolated";
   status: "running" | "waiting" | "completed" | "failed" | "cancelled";
   wait: WaitState | null;
   agentContextBinding: {
@@ -266,6 +267,7 @@ const state: StructuredSessionState = {
       title: "Workflow Execution Design",
       objective:
         "Own the delegated design task and supervise workflow selection, pause, resume, and final synthesis.",
+      history: "forked",
       status: "completed",
       wait: null,
       agentContextBinding: {

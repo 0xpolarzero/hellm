@@ -58,6 +58,12 @@ Use Artifacts for screenshots, logs, traces, retained test output, coverage repo
 benchmark reports, generated HTML previews, workflow exports, CI evidence, implementation plans,
 review notes, and other large or durable work outputs.
 
+Artifacts are also a good handoff surface when later agents should read, reassess, or modify a
+bounded plan, design note, review brief, checklist, or research summary without inheriting the full
+conversation that produced it. Create a mutable Markdown artifact for these handoffs when the
+handoff content is too large or too durable for transcript prose and should stay inspectable as a
+session artifact.
+
 Do not use Artifacts for ordinary repository files the user asked you to create or edit. If a file
 belongs in the workspace, create or edit it as normal workspace state. If the information is small
 enough to answer in prose, answer in prose.
@@ -171,6 +177,8 @@ Use artifacts for:
 - retained logs, traces, test output, coverage summaries, JUnit XML, and CI evidence
 - generated HTML previews that should remain inspectable
 - implementation plans, review notes, and other session-local planning or review documents
+- bounded handoff documents intended to be read, reassessed, or modified by another agent without
+  requiring that agent to inherit the full conversation context
 - submitted `execute_typescript` source snippets, including failed attempts
 - workflow exports and other execution evidence
 

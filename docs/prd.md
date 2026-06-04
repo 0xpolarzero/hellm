@@ -105,6 +105,12 @@ Before any target surface runs a turn through pi:
 - the UI should project the active system prompt as expandable surface metadata rather than as inline transcript prose, and should warn when a surface is bound to an older prompt revision than current settings
 - each surface must receive only the generated tool declarations and SDK blocks present in that surface's resolved extension binding and native runtime surface
 - each surface may receive compact knowledge about what another surface commonly does, but it must not receive that other surface's full callable API block just for awareness
+- handler threads may start with a product-filtered inherited-history section from the orchestrator
+  when `thread_start.threads[].history` is `forked`. That inherited-history section is delivered as
+  a product-authored context block inside the handler's first prompt-bearing start item for
+  reproducibility. It is not reconstructed as separate prior handler turns, not written into the
+  handler system prompt, and not shared pi transcript state. It does not create shared tools or
+  continuing access to orchestrator-only callable surfaces.
 
 Ambient coding-agent resources are default-off unless explicitly enabled through `svvy` settings. This applies to pi resources such as extensions, skills, prompt templates, themes, packages, slash commands, hooks, provider adapters, credentials, and execution-policy settings, and to equivalent resources exposed by other coding-agent hosts. This default-off rule applies to imported or host-ambient resources, not to app-owned builtin extensions whose default usage is explicitly defined in product specs and profile settings. The current builtin prompt-only defaults are cx and Git default-loaded for all adopted agent kinds, Web default-loaded for all adopted agent kinds only while `networkAccess` is enabled, and GitHub default-loaded for orchestrators and handler threads while available for workflow task agents. `svvy` preserves plain external instruction files such as discovered `AGENTS.md` and `CLAUDE.md` as visible generated agent context through read-only extension records, but behavior-changing ambient resources must be enabled by category, source, host, workspace, and target agent/profile configuration before they can affect prompts, tools, commands, UI, provider behavior, auth, or execution policy. Enabled callable resources must still appear in the resolved generated API block for the exact actor session or task attempt that may call them.
 
@@ -417,6 +423,15 @@ The intended use of the native control subset is:
 
 - the orchestrator normally uses `thread_start` with one `threads[]` item to open one delegated
   handler thread for ordinary delegation
+- `thread_start.threads[].history` defaults to `"forked"`, meaning the handler receives a
+  product-filtered inherited-history section from the current orchestrator conversation before the
+  delegated objective; this is the normal mode because handler threads are disposable supervising
+  orchestrators that can use prior discussion while returning bounded episodes to spare the main
+  orchestrator context
+- the orchestrator uses `history: "isolated"` when the delegated objective is fully specified by
+  durable files, specs, tests, or explicit objective text; when prior conversation is noisy,
+  stale, speculative, or likely to bias the handler; when independent review is the point; or when
+  context minimization is materially useful
 - the orchestrator uses multiple `thread_start.threads[]` items only for separate user-visible
   handler conversations where the user is invested in each workstream, each objective may need
   direct follow-up, or the workstreams are clearly independent conversations; ordinary parallel
@@ -763,7 +778,8 @@ Each handler thread should have:
 
 - a title
 - an objective
-- its own direct conversation history
+- its own direct conversation history after creation, plus optional product-filtered inherited
+  orchestrator history when started with `history: "forked"`
 - durable objective state
 - loaded and available extension ids, when specialized product guidance or capability has been preloaded or loaded during the session
 - zero or more workflow runs
@@ -945,6 +961,8 @@ Examples:
 - screenshots
 - generated audit, benchmark, inspection, or workflow reports that are evidence of agent work rather than requested repository files
 - implementation plans, review notes, and other session-local planning or review documents
+- bounded handoff documents intended to be read, reassessed, or modified by another agent without
+  inheriting the full conversation that produced them
 - exported workflow details
 
 A normal repository file edited by the agent is not automatically an artifact.
@@ -1062,6 +1080,9 @@ When the target surface is the main orchestrator:
    - call `thread_start` with one `threads[]` item for ordinary delegation, or multiple items only
      for separate user-visible handler conversations that should share one durable thread group
    - delegate each objective to a handler thread
+   - omit `history` for the default forked inherited-history mode, or set `history: "isolated"` when
+     durable files, specs, tests, or the objective itself fully specify the work and prior
+     conversation is more likely to bias or bloat the handler
    - include handler extension-state overrides such as setting `project-ci` to `default_loaded` only when the objective needs that product guidance from the first handler turn
 5. when a handler thread emits an episode, reconcile the typed `thread_report` notification against durable state: thread durable state plus the latest episode
 6. if the orchestrator needs status while the handler remains active or interactable, call `thread_request_report` and reconcile the resulting episode when the handler answers

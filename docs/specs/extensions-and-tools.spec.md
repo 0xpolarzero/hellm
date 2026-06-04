@@ -279,6 +279,12 @@ Use thread_start with one item in threads for ordinary delegation. Use more than
 the user clearly wants separate handler conversations or the objectives are independently
 discussable. Internal parallel work belongs inside one handler-owned Smithers workflow.
 
+thread_start defaults each thread's history to forked. Use the default when the handler should act as
+a disposable supervising orchestrator with prior user/orchestrator discussion available as context.
+Use history isolated when the objective is fully specified by durable files, specs, tests, or
+objective text; when prior conversation is noisy, stale, speculative, or biasing; when independent
+review is the point; or when context minimization matters.
+
 thread_start returns a durable threadGroupId. thread_list returns that group id again and can filter
 by it when you need to rediscover related handler threads. Use thread_start with an existing
 threadGroupId only to add a new related handler conversation to that group.
@@ -1587,9 +1593,10 @@ and the actor's resolved extension binding.
 
 ### Creation-Time And Invocation-Time Overrides
 
-Each `thread_start.threads[]` item may include an optional `extensions` object. The object is a
-partial override over the configured `threadHandler` profile's extension usage states for that new
-handler thread.
+Each `thread_start.threads[]` item may include optional `history` and `extensions` fields. `history`
+defaults to `forked` and may be set to `isolated` when the handler should start without inherited
+orchestrator conversation context. `extensions` is a partial override over the configured
+`threadHandler` profile's extension usage states for that new handler thread.
 The concrete `thread_start` input, output, and rejection rules live in
 `docs/specs/extension/thread_managing.extension.spec.md`.
 
