@@ -176,9 +176,10 @@ type StructuredSessionState = {
       | "execute_typescript"
       | "clarify"
       | "thread_start"
-      | "thread_resume"
+      | "thread_followup"
       | "thread_request_report"
       | "load_extension"
+      | "thread_group"
       | "thread_report"
       | "request_user_input"
       | `smithers_${string}`;
@@ -188,9 +189,17 @@ type StructuredSessionState = {
     finishedAt: string | null;
   }>;
 
+  threadGroups: Array<{
+    id: string;
+    workspaceSessionId: string;
+    createdByCommandId: string;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+
   threads: Array<{
     id: string;
-    parentThreadId: string | null;
+    threadGroupId: string;
     surfacePiSessionId: string;
     title: string;
     objective: string;
@@ -668,11 +677,39 @@ Every turn should persist one explicit surface-level turn decision.
 Use `turnDecision` this way:
 
 - `pending` is allowed only between turn creation and the moment the surface chooses how to proceed
-- orchestrator turns persist session-level routing decisions such as `reply`, `execute_typescript`, `clarify`, or `thread_start`
-- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `request_user_input`, `load_extension`, `workflow_list_models`, `smithers_run_workflow`, `smithers_get_run`, `smithers_resolve_approval`, or `thread_report`
+- orchestrator turns persist session-level routing decisions such as `reply`, `execute_typescript`, `clarify`, `thread_start`, `thread_followup`, or `thread_request_report`
+- handler-thread turns persist delegated-supervision decisions such as `reply`, `execute_typescript`, `clarify`, `request_user_input`, `load_extension`, `thread_group`, `workflow_list_models`, `smithers_run_workflow`, `smithers_get_run`, `smithers_resolve_approval`, or `thread_report`
 - this symmetry is intentional even though only orchestrator turns own session-level routing
 - the turn decision is the top-level classification of the turn, not a replacement for command records
 - linkage to spawned threads, workflow runs, artifacts, and episodes still belongs in their own records plus linked commands
+
+## Thread Group Model
+
+Thread groups are durable topology records for related handler threads.
+
+They exist because the product needs a durable answer to:
+
+- which handler threads were intentionally started together
+- which later handler threads were added to an existing related group
+- which group the orchestrator should target when sending a correction or follow-up to related
+  handler conversations
+- which sibling objectives a handler may inspect through `thread_group`
+
+A thread group is not shared memory, a transcript, a workflow graph, or a peer-to-peer messaging
+channel. It is product-state-backed topology and addressing only.
+
+Every handler thread belongs to exactly one thread group. A one-thread `thread_start` still creates a
+thread group, so later related handler threads can be added without changing the data model.
+
+### Thread Group Fields
+
+| Field                | Why it exists                                                                                         |
+| -------------------- | ----------------------------------------------------------------------------------------------------- |
+| `id`                 | Stable group handle returned by `thread_start` and accepted by `thread_start`, `thread_list`, and `thread_followup`. |
+| `workspaceSessionId` | Keeps the group scoped to its top-level session container.                                             |
+| `createdByCommandId` | Links the group to the `thread_start` command that created it.                                         |
+| `createdAt`          | Orders group creation.                                                                                |
+| `updatedAt`          | Tracks membership or relevant topology changes.                                                       |
 
 ## Thread Model
 
@@ -680,8 +717,8 @@ Use `turnDecision` this way:
 
 | Field                | Why it exists                                                                                                              |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `id`                 | Stable delegated-objective handle.                                                                                         |
-| `parentThreadId`     | Allows future thread-to-thread delegation or grouping without forcing it into v1.                                          |
+| `id`                 | Stable handler-thread handle for the interactive surface and delegated context.                                             |
+| `threadGroupId`      | Links the thread to its durable thread group for related handler topology and group follow-ups.                            |
 | `surfacePiSessionId` | Links the thread to the backing pi conversation surface.                                                                   |
 | `title`              | Compact human-readable label. Defaults to the objective at creation, then may be generated by the configured namer from the objective. |
 | `objective`          | Durable statement of what this thread owns, supplied by `thread_start`.                                                     |
@@ -690,7 +727,7 @@ Use `turnDecision` this way:
 | `worktree`           | Records the bound worktree when relevant.                                                                                  |
 | `startedAt`          | Orders thread creation.                                                                                                    |
 | `updatedAt`          | Enables recency-based selectors.                                                                                           |
-| `concludedAt`        | Marks when the current objective most recently became concluded. Clear it when `thread_resume` activates a new objective in the same thread. |
+| `concludedAt`        | Marks when the current objective most recently became concluded. Clear it when `thread_followup({ activate: true })` activates a new objective in the same thread. |
 
 ### Thread Objective State Semantics
 
@@ -711,8 +748,10 @@ A concluded thread surface remains directly interactive after conclusion.
 
 A follow-up chat turn may leave `objectiveState` unchanged.
 
-Explicit orchestrator `thread_resume` may move a concluded thread back to `active` for a new
-objective, preserving earlier episodes as durable history.
+Explicit orchestrator `thread_followup({ activate: true })` may move a concluded thread back to
+`active` for a new objective, preserving earlier episodes as durable history. The follow-up message
+becomes the new objective only for targets that were concluded and are reactivated by that command;
+active targets receiving the same follow-up keep their existing objective.
 
 If the same terminal workflow snapshot is replayed after conclusion during final reconciliation or
 recovery, the thread remains `concluded` because that replay does not start a new objective.
@@ -773,7 +812,7 @@ Map Smithers run status into `svvy` this way:
 
 Do not confuse workflow-run termination with thread termination.
 
-A thread may survive several workflow runs before it emits a conclusion episode, and it may later supervise more runs after `thread_resume` activates a new objective in the same thread.
+A thread may survive several workflow runs before it emits a conclusion episode, and it may later supervise more runs after `thread_followup({ activate: true })` activates a new objective in the same thread.
 
 When a workflow run is `continued`, selector logic should follow `activeDescendantRunId` to find the currently active execution.
 
@@ -865,7 +904,7 @@ Use them this way:
 
 - low-level reads, searches, and workflow discovery calls are usually `trace`
 - material writes, artifact creation, `exec_command` command executions, and failures usually roll up as `summary`
-- `thread_start`, `thread_resume`, `thread_request_report`, `thread_report`, `load_extension`,
+- `thread_start`, `thread_followup`, `thread_request_report`, `thread_report`, `load_extension`,
   `request_user_input`, and Smithers-mutating commands such as `smithers_run_workflow`,
   `smithers_resolve_approval`, `smithers_runs_cancel`, and `smithers_signals_send` are normally
   `surface`
@@ -1068,7 +1107,7 @@ The precise list may grow, but the first adopted set is:
 - `turn.failed`
 - `thread.created`
 - `thread.updated`
-- `thread.finished`
+- `thread.objective_concluded`
 - `workflowRun.created`
 - `workflowRun.updated`
 - `agentContext.updated`
@@ -1232,6 +1271,9 @@ The real implementation should store session-scoped rows for:
 Recommended implementation rules:
 
 - every row should carry `session_id`
+- `thread_group.session_id` should be indexed for session-scoped group listing
+- `thread.thread_group_id` should be indexed for `thread_list({ threadGroupId })` and
+  handler-scoped `thread_group({})`
 - `thread.surface_pi_session_id` should be unique
 - generated agent context binding rows should preserve one current binding per `surface_pi_session_id`, external instruction fingerprints when external instructions reached the actor, bound time, and historical binding events for inspection
 - `workflow_run.smithers_run_id` should be unique
@@ -1244,14 +1286,14 @@ Recommended implementation rules:
 Write responsibility is:
 
 - ordinary orchestrator-turn writes, including turn decisions, and root command writes belong to the `svvy` runtime
-- Thread write-tool contracts, including `thread_start`, `thread_resume`, `thread_request_report`, and `thread_report`, are defined in `docs/specs/extension/thread_managing.extension.spec.md`
+- Thread write-tool contracts, including `thread_start`, `thread_followup`, `thread_request_report`, and `thread_report`, are defined in `docs/specs/extension/thread_managing.extension.spec.md`
 - handler-thread turn writes, including turn decisions, and command writes belong to the `svvy` runtime over pi thread surfaces
 - `load_extension` updates the current actor's loaded and available extension binding, is idempotent when the extension is already loaded, and refreshes generated agent context before the next model call
 - workflow-run writes belong to the Smithers bridge
 - workflow-task-attempt projection stores svvy-owned product metadata such as `meta.promptBinding` on the exact Smithers attempt address while leaving Smithers-owned run, node, attempt, retry, wait, output, usage, and transcript facts in Smithers durable state
 - Project CI writes belong to the runtime or bridge path that handles terminal Smithers runs from entries declaring `productKind = "project-ci"` and validates their terminal output against the declared CI result schema
 - wait writes belong to the `svvy` runtime
-- thread read tools (`thread_current`, `thread_list`, and `thread_episodes`) read durable structured state and the active prompt runtime binding without creating command records or writing lifecycle facts; concrete thread read-tool contracts are defined in `docs/specs/extension/thread_managing.extension.spec.md`
+- thread read tools (`thread_current`, `thread_group`, `thread_list`, and `thread_episodes`) read durable structured state and the active prompt runtime binding without creating command records or writing lifecycle facts; concrete thread read-tool contracts are defined in `docs/specs/extension/thread_managing.extension.spec.md`
 
 No runtime component may synthesize `turnDecision`, thread, workflow-run, Project CI, or wait facts from transcript prose after the fact.
 
@@ -1267,13 +1309,14 @@ Read APIs and selectors are projection-only for lifecycle state:
 The implementation must enforce these invariants:
 
 - every mutating or work-producing tool call creates exactly one command record; low-noise thread read tools are projection reads rather than command-producing work
+- every handler thread belongs to exactly one thread group
 - a handler thread owns exactly one backing `surfacePiSessionId`
 - generated agent context bindings are durable surface state and survive resume
 - `load_extension` may only load extensions available and ready for the current actor binding
 - a thread may have many workflow runs over time
 - a handler thread may wait and resume many times
 - a handler thread remains message-addressable after concluding an objective
-- a concluded thread may later return to `active` only through `thread_resume`
+- a concluded thread may later return to `active` only through `thread_followup({ activate: true })`
 - a conclusion episode may be created only when a thread has an active objective, owns no active workflow runs, and explicitly calls `thread_report` with `outcome`
 - an update episode may be created for an active or concluded objective by calling `thread_report` without `outcome`
 - a pending report request may be resolved only by a successful `thread_report` carrying that request id

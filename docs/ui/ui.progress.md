@@ -88,7 +88,7 @@ Always read [ui.prd.md](ui.prd.md) before implementing any item in this roadmap,
 - [x] Render direct handler-thread surfaces with the same transcript and composer quality as orchestrator surfaces.
 - [x] Normalize Replit artifact "subagent" visual vocabulary into handler-thread and workflow task-agent labels before porting delegation surfaces.
 - [x] Render thread metadata so users can inspect active system prompt, model, reasoning, worktree, loaded extensions, generated agent context, and workflow ownership.
-- [x] Preserve direct user messaging into handler threads before and after objective conclusion, and keep completed threads available for explicit orchestrator re-engagement through `thread_resume`.
+- [x] Preserve direct user messaging into handler threads before and after objective conclusion, and keep completed threads available for explicit orchestrator re-engagement through `thread_followup({ activate: true })`.
 - [x] Verify workflow attention routes back to the owning handler surface rather than the currently focused panel.
 
 ## 8. Workflow, Artifact, And Command Inspectors

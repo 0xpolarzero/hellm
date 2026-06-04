@@ -143,7 +143,7 @@ The orchestrator typically chooses among:
 - direct reply
 - cx CLI guidance through `exec_command` plus direct tools
 - `execute_typescript`
-- Thread Orchestration tools: `thread_start`, `thread_resume`, `thread_list`, `thread_episodes`,
+- Thread Orchestration tools: `thread_start`, `thread_followup`, `thread_list`, `thread_episodes`,
   and `thread_request_report`
 - `request_user_input` when user clarification is needed
 
@@ -161,6 +161,7 @@ Inside a handler thread, the normal choices are:
 - cx CLI guidance through `exec_command` plus direct tools
 - `execute_typescript`
 - `thread_current`
+- `thread_group`
 - `thread_report`
 - `thread_episodes`
 - `list_extensions` and `load_extension`
@@ -181,10 +182,14 @@ The handler thread may:
 - reuse a saved runnable entry
 - author a short-lived artifact workflow
 - import saved definitions, prompts, and components while authoring that workflow
+- inspect its current thread group and sibling objective summaries through `thread_group` when that
+  context materially helps the current objective
 - rerun after repair
 - resume after clarification
 - stay in normal multi-turn chat for ordinary replies
 - call `thread_report` without `outcome` when it wants to emit an important intermediate update to the orchestrator
+- call `thread_report` without `outcome` when it needs the orchestrator to decide whether a
+  correction or finding should be forwarded to sibling threads
 - call `thread_report` with `outcome` when it wants to conclude the current objective and return control to the orchestrator with a durable conclusion episode
 
 ### 4. Workflow Task Agents Are Lower-Level Workers
@@ -206,7 +211,10 @@ The adopted direction is:
   client boundaries through the same `svvy` execution policy as orchestrators and handler threads,
   including Codex-like macOS sandboxing, `networkAccess`, and approval modes, scoped to the exact
   Smithers task attempt
-- do not expose `thread_start`, `thread_report`, `thread_request_report`, `thread_episodes`, `request_user_input`, or `smithers_*` to workflow task agents or mention those unavailable controls in their base prompt
+- do not expose `thread_start`, `thread_followup`, `thread_list`, `thread_current`,
+  `thread_group`, `thread_report`, `thread_request_report`, `thread_episodes`,
+  `request_user_input`, or `smithers_*` to workflow task agents or mention those unavailable
+  controls in their base prompt
 - do not load ambient pi built-in tools or workspace-discovered extension tools into workflow task agents
 - execute workflow task agents from Smithers' current task root or worktree rather than from the workspace runtime DB root
 - preserve structured message history, step boundaries, and usage across retries and hijack handoff instead of flattening task-agent continuation into plain text
@@ -261,8 +269,8 @@ Each `thread_report` emits one ordered episode. Reports with `outcome` also mark
 objective concluded, while the thread surface itself stays interactive for later follow-up.
 
 If the orchestrator later needs more help from the same delegated context, it should use
-`thread_resume` to re-engage the concluded handler objective with a new objective instead of
-creating an unrelated replacement thread by default.
+`thread_followup({ activate: true })` to re-engage the concluded handler objective with a new
+objective instead of creating an unrelated replacement thread by default.
 
 That explicit episode is the default reconciliation unit.
 
@@ -297,7 +305,7 @@ GitHub issues, pull requests, review comments, Actions, or other GitHub work.
 
 The orchestrator can preload an extension for a delegated objective:
 
-Use `thread_start.extensions` to apply creation-time handler extension overrides. The exact
+Use `thread_start.threads[].extensions` to apply creation-time handler extension overrides. The exact
 Thread Orchestration and Thread Handling APIs live in `docs/specs/extension/thread_managing.extension.spec.md`.
 
 A handler can load the extension later:

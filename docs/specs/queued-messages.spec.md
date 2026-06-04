@@ -2,11 +2,11 @@
 
 ## Status
 
-- Date: 2026-05-15
+- Date: 2026-06-04
 - Status: adopted product direction for durable surface queue work
 - Scope: composer sends and surface-control work that target orchestrator or handler-thread surfaces
 
-Thread tools that create or consume queue work, including `thread_resume`,
+Thread tools that create or consume queue work, including `thread_followup`,
 `thread_request_report`, and `thread_report`, are defined in
 `docs/specs/extension/thread_managing.extension.spec.md`.
 
@@ -74,12 +74,12 @@ Local pi references:
 
 The queue is generic surface work, not only composer text. Every interactive surface accepts
 `user_message`, `agent_context_refresh`, `initial_handler_start`, and `workflow_attention` queue
-items. Handler surfaces additionally accept `report_request` items created by
-`thread_request_report`. The orchestrator additionally accepts `thread_report` notification items
-created after `thread_report` records a durable episode. A `thread_report` item waits in the
-orchestrator queue with user messages and is delivered as orchestrator reconciliation input.
-Dismissing or deleting the notification cancels only the queue row; it does not roll back the
-durable episode or return a tool error to the handler.
+items. Handler surfaces additionally accept `thread_followup` items created by `thread_followup` and
+`report_request` items created by `thread_request_report`. The orchestrator additionally accepts
+`thread_report` notification items created after `thread_report` records a durable episode. A
+`thread_report` item waits in the orchestrator queue with user messages and is delivered as
+orchestrator reconciliation input. Dismissing or deleting the notification cancels only the queue
+row; it does not roll back the durable episode or return a tool error to the handler.
 
 Interactive orchestrator and handler-thread surfaces also accept `request_user_input_answer` items
 created when the user answers a nonblocking `request_user_input` request after the originating tool
@@ -135,8 +135,9 @@ Required identity:
 - `surfacePiSessionId`
 - `threadId` when the target surface is a handler thread
 - `queuedItemId`
-- `kind`, currently `user_message`, `thread_report`, `report_request`, `agent_context_refresh`,
-  `initial_handler_start`, `workflow_attention`, or `request_user_input_answer`
+- `kind`, currently `user_message`, `thread_followup`, `thread_report`, `report_request`,
+  `agent_context_refresh`, `initial_handler_start`, `workflow_attention`, or
+  `request_user_input_answer`
 - idempotency key for stable internal producers and recovery seeding
 
 The queue is ordered per `surfacePiSessionId`. Queue ordering is FIFO unless the user explicitly edits, removes, or reorders messages through future queue-management UI.
@@ -164,7 +165,9 @@ Lifecycle rules:
 - `queued`: durably accepted and waiting because the surface lock or earlier queue work is ahead of it
 - `steering`: promoted by the user, locked in the UI, and waiting for the queue runner to claim it for the next safe delivery boundary
 - `dispatching`: selected as the next item for the surface and being submitted or applied; it is durable queue state, but it is not projected as visible queue UI once represented as pending or active surface work
-- `delivered`: committed as the next real user message in pi's session history
+- `delivered`: the queued work reached its delivery boundary; prompt-bearing items were committed
+  as the next real user message in pi's session history, while product-control items were applied to
+  their target product state or delivered through their product-specific control path
 - `failed`: delivery or control-work application failed and requires retry, edit, cancellation, or product repair
 - `blocked`: the item cannot proceed until a product prerequisite is satisfied
 - `out_of_date`: the item was superseded by a newer generated context or producer state and should be cancelled or regenerated
@@ -174,6 +177,9 @@ The durable record should keep:
 
 - item kind
 - submitted text exactly as sent for `user_message`
+- source command id, source orchestrator surface id, target thread id, target thread group id when
+  group-targeted, follow-up message text, `activate` flag, and whether this row reactivated a
+  concluded objective for `thread_followup`
 - source thread, source command, episode id, title, summary, body, episode kind, and conclusion
   outcome for `thread_report`
 - source thread, report request id, request text, and request time for `report_request`
@@ -201,10 +207,12 @@ If the queue has at least one queued item:
 3. for `agent_context_refresh`, recreate or refresh the managed pi runtime binding and generated
    actor context behind the same product surface, record the `Agent context updated` product event,
    mark the item delivered, and continue draining later items
-4. for `user_message`, `thread_report`, `report_request`, `initial_handler_start`,
+4. for `user_message`, `thread_followup`, `thread_report`, `report_request`, `initial_handler_start`,
    `workflow_attention`, or `request_user_input_answer`, submit the derived text as the next real
-   user message to that same pi surface; `thread_report` delivery reconciles an already-recorded
-   durable episode, `report_request` delivery asks the handler to answer with
+   user message to that same pi surface; `thread_followup` delivery sends the orchestrator-authored
+   follow-up to the target handler and, when the row reactivated a concluded objective, prepends the
+   product-authored reactivation context defined below; `thread_report` delivery reconciles an
+   already-recorded durable episode, `report_request` delivery asks the handler to answer with
    `thread_report({ requestId, ... })`, and `request_user_input_answer` delivery supplies the
    original question, the answer the agent used by default, and the user's later answer
 5. create a normal turn record for prompt-bearing delivery
@@ -213,6 +221,23 @@ If the queue has at least one queued item:
 If delivery fails before pi accepts the item, the item returns to the front of the durable `queued` list.
 
 If delivery starts and the resulting turn later fails, the queued item remains `delivered`; the turn failure belongs to the normal turn lifecycle.
+
+`thread_followup` reactivation delivery:
+
+- when `thread_followup({ activate: true })` targets a concluded thread, the thread lifecycle write
+  happens before the queue row is created and the row records that it reactivated that target
+- when that row is delivered, the runtime prepends a product-authored preface before the follow-up
+  message
+- the preface must tell the handler that the thread was previously concluded and has now been
+  reactivated by the orchestrator for a new objective in the same delegated context
+- the preface must include the new objective text, which is the `thread_followup.message`
+- the preface must tell the handler to use existing thread history, episodes, artifacts, and
+  workflow-run context as relevant
+- the preface must tell the handler to call `thread_report` if the reason for reactivation is
+  unclear instead of guessing
+- active handlers receiving `thread_followup` do not get this lifecycle preface
+- concluded handlers receiving `thread_followup` without `activate` do not get this lifecycle
+  preface and remain concluded; the queued text is ordinary follow-up context, not a new objective
 
 `request_user_input_answer` ordering:
 
@@ -271,7 +296,7 @@ Projection should make clear:
 - whether the current surface is running, waiting, or ready
 - whether a message is queued for normal follow-up or has been selected for steering
 
-Queued rows render as a compact vertical list directly above attachment chips and the textarea only while they are blocked queue work, such as active-surface follow-ups or items behind earlier queue work. Rows use single-line ellipsized message text, centered controls, and dense workbench row sizing. Editable `user_message` rows expose drag reorder, `Steer`, edit, and delete. Editable `thread_report` and `report_request` rows expose drag reorder, `Steer`, and dismiss/delete; they do not expose text edit or restore-to-composer because their prompt is derived from durable product metadata at delivery time, and dismissal does not alter the recorded episode or report request. Editable `agent_context_refresh` rows are labelled `Update agent context`, expose cancel while unclaimed, and omit edit, restore, and steer because they are control work rather than agent input. Drag-hover reorder previews are local renderer state; the durable queue order changes only when the user drops a row into a final changed position. Locked `steering` rows remain in place but replace the controls with a status indicator and cannot be edited, deleted, dismissed, steered again, or reordered. `dispatching` rows are durable backend state and do not render as queue rows once claimed for pending or active surface work.
+Queued rows render as a compact vertical list directly above attachment chips and the textarea only while they are blocked queue work, such as active-surface follow-ups or items behind earlier queue work. Rows use single-line ellipsized message text, centered controls, and dense workbench row sizing. Editable `user_message` rows expose drag reorder, `Steer`, edit, and delete. Editable `thread_followup`, `thread_report`, and `report_request` rows expose drag reorder, `Steer`, and dismiss/delete; they do not expose text edit or restore-to-composer because their prompt is derived from durable product metadata at delivery time, and dismissal does not alter the recorded follow-up command, episode, or report request. Editable `agent_context_refresh` rows are labelled `Update agent context`, expose cancel while unclaimed, and omit edit, restore, and steer because they are control work rather than agent input. Drag-hover reorder previews are local renderer state; the durable queue order changes only when the user drops a row into a final changed position. Locked `steering` rows remain in place but replace the controls with a status indicator and cannot be edited, deleted, dismissed, steered again, or reordered. `dispatching` rows are durable backend state and do not render as queue rows once claimed for pending or active surface work.
 
 Sidebar rows may show a compact queued-count badge for an open surface, but queued messages do not change the row's lifecycle status to running or waiting by themselves.
 
@@ -291,7 +316,9 @@ Recovery must not infer queued messages from transcript text. The queue is struc
 
 - treating ordinary composer submit as pi steering
 - global workspace message queues
-- queueing messages across multiple target surfaces from one submit
+- queueing ordinary composer messages across multiple target surfaces from one submit; product
+  control tools such as `thread_followup({ threadGroupId, ... })` may create one queue row per
+  target surface explicitly through their own product contract
 - running two user turns concurrently on one surface
 - queuing slash commands or product command-palette actions as transcript text
 - treating queued messages as Smithers workflow signals or approvals

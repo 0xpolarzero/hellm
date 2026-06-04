@@ -32,9 +32,16 @@ type TurnRecord = {
   finishedAt: string | null;
 };
 
+type ThreadGroupRecord = {
+  id: string;
+  createdByCommandId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type ThreadRecord = {
   id: string;
-  parentThreadId: string | null;
+  threadGroupId: string;
   surfacePiSessionId: string;
   title: string;
   objective: string;
@@ -183,6 +190,7 @@ type StructuredSessionState = {
     };
   };
   turns: TurnRecord[];
+  threadGroups: ThreadGroupRecord[];
   threads: ThreadRecord[];
   workflowRuns: WorkflowRunRecord[];
   commands: CommandRecord[];
@@ -242,10 +250,18 @@ const state: StructuredSessionState = {
       finishedAt: now("09:20"),
     },
   ],
+  threadGroups: [
+    {
+      id: "thread-group-1",
+      createdByCommandId: "cmd-1",
+      createdAt: now("09:00"),
+      updatedAt: now("09:00"),
+    },
+  ],
   threads: [
     {
       id: "thread-1",
-      parentThreadId: null,
+      threadGroupId: "thread-group-1",
       surfacePiSessionId: "pi-thread-session-1",
       title: "Workflow Execution Design",
       objective:
@@ -310,7 +326,7 @@ const state: StructuredSessionState = {
       attempts: 1,
       title: "Start handler thread",
       summary: "Opened a delegated handler thread for the workflow execution design objective.",
-      facts: { threadId: "thread-1", title: "Workflow Execution Design" },
+      facts: { threadGroupId: "thread-group-1", threadId: "thread-1" },
       error: null,
       startedAt: now("09:02"),
       updatedAt: now("09:02"),

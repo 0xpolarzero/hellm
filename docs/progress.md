@@ -99,7 +99,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Let handler threads receive direct user messages through the same surface model as the orchestrator. Commit(s): `f53c9b8`
 - [x] Make handler-thread clarification, waiting, and resume happen inside the thread itself instead of bouncing through the orchestrator by default. Commit(s): `f53c9b8`
 - [x] Keep handed-back handler threads directly interactive for follow-up chat without forcing a new thread. Commit(s): `ba5c3f0`
-- [x] Let a concluded handler objective move back to active through explicit orchestrator re-engagement with `thread_resume`, preserving handler and workflow activity as derived facts. Commit(s): `f53c9b8`, `a02bd48`
+- [x] Let a concluded handler objective move back to active through explicit orchestrator re-engagement with `thread_followup({ activate: true })`, preserving handler and workflow activity as derived facts. Commit(s): `f53c9b8`, `a02bd48`
 - [x] Preserve earlier thread episodes when the same thread later returns control again. Commit(s): `d323012`
 - [x] Allow the orchestrator to inspect a handler thread on demand without making that the default reconciliation path. Commit(s): `ba5c3f0`
 - [x] Make `thread_report` the explicit handler-thread episode and conclusion path so ordinary handler replies stay interactive and multi-turn. Commit(s): `fdaf460`

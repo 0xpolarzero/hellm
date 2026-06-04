@@ -115,11 +115,12 @@ Agents and Extensions are the user-facing source of reusable prompt material and
 The default actor-specific generated context split is:
 
 - the orchestrator prompt knows that handler threads can supervise Smithers workflows, but the default orchestrator extension state does not load the Smithers extension; if it wants workflow action, it normally delegates by calling `thread_start`
-- a handler-thread prompt receives `smithers_*`, `load_extension`, `list_extensions`, `request_user_input`, `thread_current`, `thread_report`, `thread_episodes`, direct tools, and `execute_typescript` for typed composition by default; `thread_start` is not part of the default adopted handler model
-- the orchestrator prompt receives `request_user_input`, `thread_start`, `thread_resume`,
+- a handler-thread prompt receives `smithers_*`, `load_extension`, `list_extensions`, `request_user_input`, `thread_current`, `thread_group`, `thread_report`, `thread_episodes`, direct tools, and `execute_typescript` for typed composition by default; `thread_start` is not part of the default adopted handler model
+- the orchestrator prompt receives `request_user_input`, `thread_start`, `thread_followup`,
   `thread_list`, `thread_episodes`, and `thread_request_report` so user clarification,
-  delegated-thread state, durable episodes, and handler status requests are handled through focused
-  tools instead of prompt stuffing
+  delegated-thread state, durable thread groups, durable episodes, handler follow-ups, handler
+  reactivation, and handler status requests are handled through focused tools instead of prompt
+  stuffing
 - a workflow-task-agent prompt receives task-local instructions and task-local callable declarations; in the default adopted workflow-agent profile it receives Extension Loading, task-local direct tools, and `execute_typescript`, while Smithers, Extension Managing, and broad handler/orchestrator controls are not default-loaded
 - a workflow-task-agent runtime must not load ambient pi built-in tools, extensions, skills, prompt templates, themes, commands, hooks, provider adapters, or equivalent host resources unless the user enables that exact resource category and source for workflow task agents
 - user-configured extension usage state remains the source of truth for loaded, available, and unavailable extensions; Extension Loading is the only fixed always-loaded extension control
@@ -229,7 +230,10 @@ The adopted direction for task agents is:
   client boundaries through the same `svvy` execution policy as orchestrators and handler threads,
   including managed sandboxing, `networkAccess`, and the configured approval mode, scoped to the
   exact Smithers task attempt
-- keep `thread_start`, `thread_report`, `thread_request_report`, `thread_episodes`, `request_user_input`, and `smithers_*` out of the default task-agent runtime and tool schema instead of describing absent controls in prompt prose
+- keep `thread_start`, `thread_followup`, `thread_list`, `thread_current`, `thread_group`,
+  `thread_report`, `thread_request_report`, `thread_episodes`, `request_user_input`, and
+  `smithers_*` out of the default task-agent runtime and tool schema instead of describing absent
+  controls in prompt prose
 - keep Smithers workflow approval and hijack as Smithers runtime or operator controls around the
   task, not as ordinary task-agent tools
 - execute the task agent and its task-local tool calls from Smithers' current task root, including the active worktree when the task is worktree-bound
@@ -337,11 +341,12 @@ current actor's generated extension binding.
 Those actions stay as `svvy`-native control tools:
 
 - `thread_start`
-- `thread_resume`
+- `thread_followup`
 - `thread_request_report`
 - `load_extension`
 - `list_extensions`
 - `thread_current`
+- `thread_group`
 - `thread_report`
 - `thread_list`
 - `thread_episodes`
@@ -379,10 +384,12 @@ The execution setting `networkAccess` defaults to true. When `networkAccess` is 
 extension is disabled through normal extension binding, which means TinyFish prompt guidance is not
 included for orchestrators, handler threads, or workflow task agents.
 
-The orchestrator may provide handler creation-time extension overrides when the delegated objective
-should begin with a non-default extension state. `thread_start` owns that creation-time override and
-starts a normal handler thread with the default handler runtime shape plus the requested extension
-binding before its first turn. Exact input, output, and rejected legacy shapes are defined in
+The orchestrator may provide per-handler creation-time extension overrides when the delegated
+objective should begin with a non-default extension state. `thread_start` owns that creation-time
+override on each `threads[]` item and starts normal handler threads with the default handler runtime
+shape plus the requested extension binding before each first turn. `thread_start` always returns a
+durable `threadGroupId` at top level; individual returned thread rows do not repeat it. Exact input,
+output, and rejected legacy shapes are defined in
 `docs/specs/extension/thread_managing.extension.spec.md`.
 
 Workflow supervision is different.
@@ -408,12 +415,31 @@ More precisely, this means:
 
 The intended use of the native control subset is:
 
-- the orchestrator normally uses `thread_start` to open a delegated handler thread
-- the orchestrator uses `thread_resume` when a handler thread whose current objective is concluded already has the right delegated context for follow-up work
+- the orchestrator normally uses `thread_start` with one `threads[]` item to open one delegated
+  handler thread for ordinary delegation
+- the orchestrator uses multiple `thread_start.threads[]` items only for separate user-visible
+  handler conversations where the user is invested in each workstream, each objective may need
+  direct follow-up, or the workstreams are clearly independent conversations; ordinary parallel
+  implementation, research, review, and workflow steps belong inside one handler-supervised
+  Smithers workflow
+- every `thread_start` creates or appends to a durable thread group; the orchestrator may pass a
+  prior `threadGroupId` to add later related handler threads to that group
+- the orchestrator uses `thread_followup` to send corrections, clarifications, or later
+  instructions to existing handler threads by exact `threadIds` or by one `threadGroupId`
+- the orchestrator uses `thread_followup({ activate: true })` when a handler thread whose current
+  objective is concluded already has the right delegated context for follow-up work; active targets
+  receiving the same follow-up keep their current objective
 - the orchestrator may pass a `project-ci` extension override to `thread_start` when the delegated objective clearly needs Project CI authoring guidance from the first handler turn
 - a handler thread may call `load_extension({ extensionId: "project-ci" })` when it later discovers that Project CI configuration or modification is required
-- the orchestrator uses `thread_request_report` when it needs an explicit update episode from a handler without resuming or replacing that handler's objective
+- the orchestrator uses `thread_request_report` when it needs an explicit update episode from one
+  handler without changing that handler's objective
+- a handler thread may use `thread_group` to inspect the current thread group and sibling objective
+  summaries when that topology is materially relevant to the current objective; thread groups are
+  topology and addressing only, not shared memory or peer messaging
 - a handler thread uses `thread_report` without `outcome` to emit an intermediate update episode when it has important information for the orchestrator
+- a handler thread that wants a correction, decision, or useful finding forwarded to sibling threads
+  uses `thread_report` without `outcome` to ask the orchestrator to forward it; the orchestrator
+  decides whether to send a `thread_followup` to the target `threadGroupId` or exact `threadIds`
 - a handler thread uses `thread_report` with `outcome` to conclude the current objective only after no active workflow run still belongs to that objective; the tool call succeeds when `svvy` records the durable conclusion episode and marks the current objective concluded
 - after a durable episode is recorded, `svvy` creates a typed orchestrator queue item so the orchestrator can reconcile the recorded episode in surface-queue order; cancelling or deleting that notification does not roll back the episode or return a tool error to the handler
 - a handler thread normally uses Smithers-native bridge tools such as `smithers_list_workflows`, `smithers_run_workflow`, `smithers_get_run`, `smithers_explain_run`, `smithers_list_pending_approvals`, `smithers_resolve_approval`, `smithers_get_node_detail`, `smithers_list_artifacts`, and `smithers_get_run_events` to supervise Smithers execution
@@ -470,7 +496,8 @@ In the adopted delegated model:
 - a handler thread may emit an intermediate update episode with `thread_report` without concluding the current objective
 - a handler thread may be idle between turns while still remaining open, owned, and ready for direct follow-up
 - a handler thread returns control to the orchestrator by explicitly calling `thread_report` with an `outcome`, which marks the current objective concluded and emits a conclusion episode only after the thread no longer owns active workflow runs for that objective
-- the thread surface remains open for later inspection, direct follow-up chat, and resumed work on that same objective
+- the thread surface remains open for later inspection, direct follow-up chat, and explicitly
+  reactivated work in that same delegated context
 
 That lifecycle boundary is the thread's concluded objective state plus the conclusion episode it emits.
 
@@ -742,7 +769,7 @@ Each handler thread should have:
 
 Available extension ids describe reusable product knowledge loaded into actor prompts by default or requested on demand, such as `project-ci`.
 
-The current handler objective, active workflow run ids, pending report requests, and latest episode summary are exposed to the handler through `thread_current`. The orchestrator inspects delegated thread rows through `thread_list`, requests handler updates through `thread_request_report`, and reads exact durable episode bodies through `thread_episodes`. Handlers can also read their own durable episodes through `thread_episodes`. These read tools do not include transcripts, workflow summaries, or Smithers internals; handlers use active workflow run ids with `smithers_*` tools when workflow details matter.
+The current handler objective, current `threadGroupId`, active workflow run ids, pending report requests, and latest episode summary are exposed to the handler through `thread_current`. The orchestrator inspects delegated thread rows through `thread_list`, filters those rows by `threadGroupId` when it needs a related group, requests handler updates through `thread_request_report`, sends follow-ups through `thread_followup`, and reads exact durable episode bodies through `thread_episodes`. Handlers can inspect their current group and sibling objective summaries through `thread_group`, and can read their own durable episodes through `thread_episodes`. These read tools do not include transcripts, workflow summaries, or Smithers internals; handlers use active workflow run ids with `smithers_*` tools when workflow details matter.
 
 Agent profiles describe the provider, model, reasoning level, extension usage selections, and callable policy used by pi-backed product agents. Base role instructions are selected through builtin `base-*` instruction extensions rather than stored as profile-local prompt blobs. The Agents pane is the product-owned profile surface. It appears in the sidebar between Logs and Extensions, and owns orchestrator profiles, the special handler-thread profile, and workflow-agent profiles rather than burying model behavior in general settings.
 
@@ -758,10 +785,10 @@ User-created orchestrator profiles are ordered in the Agents pane. That order dr
 
 Session records persist the orchestrator profile selected at creation time, the profile snapshot that was active at creation time, and the generated agent context fingerprint used by the orchestrator surface. All top-level sessions are orchestrator sessions created through New orchestrator or equivalent command-palette prompt fallback.
 
-Handler threads use the `threadHandler` special profile. `thread_start` may pass creation-time
-extension overrides as a partial override over that profile's extension usage states. Extensions
-remain separate product knowledge and capability records; they do not carry model, reasoning, or
-prompt-selection settings.
+Handler threads use the `threadHandler` special profile. Each `thread_start.threads[]` item may pass
+creation-time extension overrides as a partial override over that profile's extension usage states.
+Extensions remain separate product knowledge and capability records; they do not carry model,
+reasoning, or prompt-selection settings.
 
 The Agents pane edits app-global agent profiles, including orchestrator profiles, `threadHandler`, and workflow-agent profiles. General settings edit app-global model provider credentials, app appearance (`system`, `light`, or `dark` with `system` as the default), the user's preferred external editor for opening workspace source files from read-only product surfaces, and the artifact directory used for copied durable artifacts. The artifact directory defaults to `~/.config/svvy/artifacts` and remains app-owned configuration rather than an agent-supplied command argument. Provider rows use icon-only key, OAuth, and remove controls with explanatory tooltips; remove uses an inline single-confirm action. Web-specific TinyFish CLI auth is owned by TinyFish CLI commands such as `tinyfish auth login`, `tinyfish auth set`, and `tinyfish auth status`, not by `svvy` General settings. Extension definitions, extension instructions, external instruction controls, and generated context previews are edited or inspected in the Extensions pane rather than buried in general settings. Complex settings and configuration editors use TanStack Form for renderer form state where they need validation, dirty state, field-level errors, submit pending state, reset/cancel behavior, and async save errors, while Bun-side settings validation and normalization remain authoritative. Agent profile changes save directly from the setting control rather than through a separate save button. Agent model selection is a constrained picker over models from currently connected providers, and reasoning selection is constrained to the levels supported by the selected model, matching the interactive session controls rather than accepting freeform provider, model, or reasoning text. An orchestrator profile may either keep composer model and reasoning changes local to each session or let sessions using that profile save those composer changes back to the profile for future sessions. The source of truth for provider/model capability metadata is pi's normalized model registry and runtime APIs: `svvy` does not maintain separate provider-specific reasoning tables, Codex reasoning special cases, or request-shape mappings. Visible reasoning output is whatever pi normalizes into assistant `thinking` blocks; for providers such as OpenAI Codex this is a reasoning summary when the provider streams one, not raw chain-of-thought, and encrypted continuation-only reasoning with no visible summary must be labelled unavailable rather than redacted.
 
@@ -1020,12 +1047,18 @@ When the target surface is the main orchestrator:
    - or use `execute_typescript`
    - or ask for clarification
 4. if delegated:
-   - call `thread_start`
-   - delegate the objective to a handler thread
+   - call `thread_start` with one `threads[]` item for ordinary delegation, or multiple items only
+     for separate user-visible handler conversations that should share one durable thread group
+   - delegate each objective to a handler thread
    - include handler extension-state overrides such as setting `project-ci` to `default_loaded` only when the objective needs that product guidance from the first handler turn
 5. when a handler thread emits an episode, reconcile the typed `thread_report` notification against durable state: thread durable state plus the latest episode
 6. if the orchestrator needs status while the handler remains active or interactable, call `thread_request_report` and reconcile the resulting episode when the handler answers
-7. if later work belongs in the same delegated context after the objective is concluded, call `thread_resume` with the thread id and a new objective instead of starting an unrelated replacement thread
+7. if later work belongs in the same delegated context after the objective is concluded, call
+   `thread_followup({ activate: true })` with exact `threadIds` or one `threadGroupId` instead of
+   starting an unrelated replacement thread
+8. if a handler asks the orchestrator to forward a correction or finding to siblings, decide whether
+   the request is strategically valid and, if so, use `thread_followup` with the relevant
+   `threadGroupId` or exact `threadIds`
 
 ### Handler Thread Loop
 
@@ -1036,6 +1069,7 @@ When the target surface is a handler thread:
    - reply directly inside the thread
    - use `execute_typescript`
    - request optional product guidance or capability through `load_extension`
+   - inspect current group topology and sibling objective summaries through `thread_group` when that context materially helps the current objective
    - reuse a saved runnable entry
    - author a short-lived artifact workflow, often by importing saved definitions, prompts, and components
    - inspect workflow state through Smithers-native bridge tools such as `smithers_get_run`, `smithers_explain_run`, `smithers_get_node_detail`, and `smithers_get_run_events`
@@ -1044,6 +1078,7 @@ When the target surface is a handler thread:
    - ask the user for clarification through `request_user_input`
    - enter a runtime waiting state because of blocking request input, workflow attention, approval, signal, timer, or another external dependency
    - emit an important intermediate update with `thread_report`
+   - ask the orchestrator through `thread_report` to forward a correction or finding to sibling threads when direct sibling messaging is not available and group-wide coordination is needed
    - conclude the current objective with `thread_report` and `outcome`
 3. run or resume workflow execution as needed
 4. regain control when the workflow run reaches a terminal outcome or another actionable attention state
@@ -1055,7 +1090,7 @@ When conclusion through `thread_report` succeeds, the ownership boundary has cro
 If a thread already handed control back earlier:
 
 - a direct follow-up question may be answered inside that same thread without reopening the orchestrator loop
-- explicit orchestrator re-engagement through `thread_resume` may move the concluded thread back to an active objective state for a new objective span
+- explicit orchestrator re-engagement through `thread_followup({ activate: true })` may move the concluded thread back to an active objective state for a new objective span
 - a later return to the orchestrator should produce another conclusion episode
 
 ### Clarification And Waiting
@@ -1233,7 +1268,8 @@ The design is successful when:
 - delegated work happens inside handler threads that feel like real interactive surfaces
 - all substantive delegated execution flows through Smithers workflows
 - handler threads can repair, clarify, and rerun internally before returning control
-- handed-back threads remain open for follow-up chat and resumed work on the same objective
+- handed-back threads remain open for follow-up chat and explicit reactivation in the same delegated
+  context
 - the user can understand the current state of the session, threads, and workflows from durable state
 - meaningful delegated work terminates in reusable episodes instead of transcript archaeology
 - pi remains the runtime substrate and Smithers remains the delegated workflow engine rather than replacing the product shell
