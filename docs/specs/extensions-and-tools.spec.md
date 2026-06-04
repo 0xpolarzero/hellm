@@ -2380,27 +2380,67 @@ When `networkAccess` is false:
 
 ### macOS Sandbox Packaging
 
-On macOS, `svvy` should use the same sandboxing design as Codex:
+On macOS, `svvy` must use the same sandboxing design as Codex for managed filesystem policy
+enforcement:
 
 - check that `/usr/bin/sandbox-exec` exists and is executable
 - call that system binary directly when managed sandboxing is active
-- vendor or port Codex's sandbox policy generation logic and SBPL templates into the packaged app
+- vendor or faithfully port Codex's sandbox policy generation logic and SBPL templates into the
+  packaged app
 - do not depend on an installed Codex CLI, a Codex source checkout, or repo-relative reference files
 - do not vendor `/usr/bin/sandbox-exec`; it is provided by macOS
 
-The app-owned sandbox module should be built from:
+The app-owned sandbox module must not be a loose TypeScript approximation of writable path checks.
+`svvy` must vendor a Codex-derived native Rust sandbox helper, or an equivalently faithful native
+port, and call it from the Bun runtime. The preferred implementation is a packaged Rust helper that
+runs the command itself under the generated sandbox invocation so Bun does not reconstruct or quote
+Seatbelt command lines. If the helper instead returns transformed argv/policy to Bun, the quoted
+policy, parameters, cwd, environment, and command argv must remain byte-for-byte testable against the
+Codex-derived policy generator.
+
+The helper may vendor an audited subset of Codex's internal Rust workspace crates, but it must not
+depend on unstable internal Codex crates as floating public libraries. The vendored subset must carry
+the required license and notice metadata from the upstream Apache-2.0 Codex source.
+
+The app-owned sandbox module must be built from:
 
 - Codex `codex-sandboxing` Seatbelt command generation
+- Codex `codex-protocol` filesystem policy concepts needed for effective access resolution
+- Codex `codex-utils-absolute-path` path normalization behavior needed by the sandbox policy
 - `seatbelt_base_policy.sbpl`
 - `seatbelt_network_policy.sbpl`
-- Codex permission-profile and filesystem-policy projection rules needed to generate the same
+- Codex permission-profile and filesystem-policy projection rules needed to generate the same managed
   workspace-write policy
+
+The filesystem policy model must preserve these Codex semantics:
+
+- `FileSystemAccessMode` values `Read`, `Write`, and `None`
+- effective path resolution where the most specific matching path wins
+- access tie-breaking compatible with Codex when two entries have the same specificity
+- writable roots with `read_only_subpaths`
+- protected metadata path names under writable roots
+- explicit `require-not (literal ...)` and `require-not (subpath ...)` exclusions in generated
+  macOS Seatbelt write rules for read-only subpaths
+- deny/read-restriction rules that apply to both direct write attempts and destructive probing such as
+  unlink-style operations where Codex applies them
+- fail-closed behavior when a read-only subpath or deny path cannot be enforced reliably, including
+  symlink cases
+
+A flat `writable_roots: string[]` implementation is not compatible with this product spec. Any
+implementation that cannot express a writable parent with a read-only child must be treated as a
+runtime setup failure, not as a reason to widen access or repeatedly ask for approval.
 
 The default managed workspace-write filesystem policy must:
 
 - allow broad filesystem reads unless a deny/read-restriction rule says otherwise
 - allow writes to the active workspace roots
 - allow writes to configured additional writable roots
+- allow writes to the current session artifact directory, `<artifactDir>/<sessionId>/`, when the
+  Artifacts extension is loaded for the actor session or artifact-backed runtime surface
+- keep `<artifactDir>/<sessionId>/immutable/` as a read-only subpath under that writable artifact
+  root
+- never grant broad writable access to `<artifactDir>/**` or to artifact directories owned by other
+  sessions
 - allow writes to `/tmp` and `$TMPDIR` unless the corresponding Codex-compatible exclude flags are set
 - preserve Codex-style read-only carveouts for protected metadata such as `.git`, `.agents`, and
   `.codex` even when they are nested under an otherwise writable root
@@ -2412,6 +2452,15 @@ The default managed workspace-write filesystem policy must:
 Every `exec_command` call goes through one shared runtime decision flow. This includes ordinary shell
 commands, prompt-only extension CLI commands such as `git`, `gh`, `cx`, and `tinyfish`, and loaded
 extension commands invoked as `svvyx ...`.
+
+Loaded `svvyx` commands inherit the outer `exec_command` approval and projection path. Product-owned
+mutations that need app authority inside otherwise read-only product storage are handled after the
+outer command is allowed. In v1 this applies to `svvyx artifacts create --immutable` and
+`svvyx artifacts delete`: the Artifacts runner may receive scoped internal filesystem authority for
+the exact resolved artifact file operation only. That authority is not represented as a process
+writable root, does not widen the actor's command sandbox, and must not make ordinary shell commands,
+`apply_patch`, or arbitrary `execute_typescript` side effects writable under the session
+`immutable/` artifact directory.
 
 The runtime flow is:
 
@@ -2635,6 +2684,9 @@ type AutoReviewPayload = {
     cwd: string;
     workspaceRoots: string[];
     writableRoots: string[];
+    readOnlySubpaths: string[];
+    sessionArtifactDir?: string;
+    immutableArtifactDir?: string;
   };
   network: {
     access: "enabled" | "restricted";
@@ -2681,6 +2733,13 @@ type AutoReviewPayload = {
   };
 };
 ```
+
+Filesystem payload fields are descriptive policy facts. `writableRoots` must list roots that are
+writable after the active permission profile is applied. `readOnlySubpaths` must list nested
+carveouts such as protected metadata paths and the active session's immutable artifact directory.
+`sessionArtifactDir` and `immutableArtifactDir` are present when the actor has the Artifacts
+extension loaded or otherwise receives artifact-backed runtime access. They must not be interpreted
+as approval to widen filesystem access; the runtime remains authoritative.
 
 Action shapes:
 
@@ -2808,9 +2867,16 @@ Example auto-review payload for an approval-boundary `exec_command`:
     "workspaceRoots": ["/Users/example/project"],
     "writableRoots": [
       "/Users/example/project",
+      "/Users/example/.config/svvy/artifacts/session_01JZ3R8Y4B",
       "/tmp",
       "/private/var/folders/example/T"
-    ]
+    ],
+    "readOnlySubpaths": [
+      "/Users/example/project/.git",
+      "/Users/example/.config/svvy/artifacts/session_01JZ3R8Y4B/immutable"
+    ],
+    "sessionArtifactDir": "/Users/example/.config/svvy/artifacts/session_01JZ3R8Y4B",
+    "immutableArtifactDir": "/Users/example/.config/svvy/artifacts/session_01JZ3R8Y4B/immutable"
   },
   "network": {
     "access": "enabled"
@@ -2984,7 +3050,7 @@ Working assignment:
 | --- | --- |
 | `exec_command` | Codex-like approval-boundary policy; the active approval mode decides whether approval-required actions go to `auto_review`, user approval, or full access. |
 | `write_stdin` | Continues an existing running `exec_command` session; inherits the owning session/process policy and records lifecycle output. |
-| `svvyx ...` invoked through `exec_command` | Inherits `exec_command` policy. |
+| `svvyx ...` invoked through `exec_command` | Inherits `exec_command` policy. Product-owned exact file mutations defined by an extension, such as immutable artifact create/delete, receive only the extension-defined scoped operation authority after the outer command is allowed. |
 | `apply_patch` | Direct inside the session workspace or allowed extension editing paths; approval-required when it would write outside those roots; rejected when outside policy. |
 | `load_extension` | Direct native control only when the extension is available and ready; clear failure when unavailable or not ready. It does not build, install, request dependency approval, or mutate the binding on failure. |
 | Extension file edits through `apply_patch` | Directly done with rich visualization, Build required indicator, and per-change revert; no auto-build after ordinary agent edits. |
@@ -3785,7 +3851,7 @@ read-only external inputs.
 | GitHub | builtin | instructions | GitHub/`gh` CLI guidance for issues, PRs, review comments, Actions, publishing, and wrap-up; no wrapper CLI or generated TypeScript client by default | default_loaded | default_loaded | available |
 | External Instructions | external_instruction | instructions | read-only external instruction files such as `AGENTS.md` and `CLAUDE.md`, surfaced with open-external-file controls | default_loaded | default_loaded | default_loaded |
 | Project CI | builtin | instructions | Handler-only Project CI authoring guidance for defining and maintaining CI workflow lanes; no tools by default | unavailable | available | unavailable |
-| Artifacts | builtin | svvyx | `svvyx artifacts create/inspect/list/open/delete` for durable single-file byproducts, evidence, previews, reports, logs, and screenshots, plus the generated Incur-compatible `extensions.artifacts.run(...)` TypeScript client when loaded; concrete API is defined in `docs/specs/extension/artifacts.extension.spec.md` | default_loaded | default_loaded | default_loaded |
+| Artifacts | builtin | svvyx | `svvyx artifacts create/inspect/list/open/delete` for durable session artifact files, including mutable review documents, copied reports/logs/screenshots, and immutable evidence/final files under the session `immutable/` directory, plus the generated Incur-compatible `extensions.artifacts.run(...)` TypeScript client when loaded; concrete API is defined in `docs/specs/extension/artifacts.extension.spec.md` | default_loaded | default_loaded | default_loaded |
 
 The Git and GitHub extensions must not wrap `git` or `gh` by default. Agents use ordinary shell
 commands and command help. App-owned startup, extension refresh, `list_extensions`, and Extension
@@ -3821,9 +3887,9 @@ handlers. Orchestrators may preload it for a new handler through
 Running existing Project CI workflow entries does not require loading this extension; the Smithers
 extension owns runtime workflow supervision.
 
-Artifacts is a builtin `svvyx` extension. Existing artifact records, storage, and projection are
-product concepts, and the concrete agent-facing command and generated-client API is defined in
-`docs/specs/extension/artifacts.extension.spec.md`.
+Artifacts is a builtin `svvyx` extension. Existing artifact records, storage, mutability boundaries,
+and projection are product concepts, and the concrete agent-facing command and generated-client API
+is defined in `docs/specs/extension/artifacts.extension.spec.md`.
 
 ## Workflow Agent Extension Model
 
@@ -4142,12 +4208,16 @@ Generated `execute_typescript` declaration names and import shape are owned by
 `docs/specs/extension/execute_typescript.extension.spec.md`: actors receive one generated declaration
 block, and handwritten extension prose must not redefine that interface.
 
-Resolved in the 2026-06-02 auto-review design pass:
+Current execution-policy requirements:
 
 - shell approval-boundary semantics follow Codex's runtime-enforced exec policy and sandbox retry
   model
-- macOS sandboxing uses `/usr/bin/sandbox-exec` plus vendored or ported Codex Seatbelt policy
-  generation and SBPL templates
+- macOS sandboxing uses `/usr/bin/sandbox-exec` plus a Codex-derived native Rust sandbox helper or an
+  equivalently faithful native port, including the license and notice metadata required by the
+  vendored upstream Apache-2.0 Codex source
+- if Bun receives transformed argv or policy instead of delegating command execution to the helper,
+  the quoted policy, parameters, cwd, environment, and command argv must remain byte-for-byte
+  testable against the Codex-derived generator
 - approval modes are `auto-review`, `user`, and `full-access`
 - `networkAccess` defaults to true and disables the Web extension when false
 - `svvyx ...` is always an `exec_command` command, never a separate tool or reviewer action type

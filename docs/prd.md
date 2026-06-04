@@ -552,7 +552,9 @@ In practice that means:
 - `approvalMode: "auto-review"` routes approval-boundary requests to the automatic reviewer
 - `approvalMode: "user"` blocks the exact tool call on an actor-local user approval request
 - `approvalMode: "full-access"` disables the approval boundary and managed filesystem sandbox
-- macOS managed sandboxing uses `/usr/bin/sandbox-exec` with packaged Codex-derived Seatbelt policy generation
+- macOS managed sandboxing uses `/usr/bin/sandbox-exec` with a packaged Codex-derived native sandbox
+  helper that preserves Codex filesystem policy semantics, including writable roots with read-only
+  subpaths
 - `networkAccess` defaults to true; disabling it restricts network access and disables the Web extension
 - dependency installation remains an explicit user-confirmation flow because it can download and execute third-party code
 - ambiguity is handled through clarification and waiting states when the agent needs user intent, not through hidden approval gates
@@ -790,7 +792,7 @@ creation-time extension overrides as a partial override over that profile's exte
 Extensions remain separate product knowledge and capability records; they do not carry model,
 reasoning, or prompt-selection settings.
 
-The Agents pane edits app-global agent profiles, including orchestrator profiles, `threadHandler`, and workflow-agent profiles. General settings edit app-global model provider credentials, app appearance (`system`, `light`, or `dark` with `system` as the default), the user's preferred external editor for opening workspace source files from read-only product surfaces, and the artifact directory used for copied durable artifacts. The artifact directory defaults to `~/.config/svvy/artifacts` and remains app-owned configuration rather than an agent-supplied command argument. Provider rows use icon-only key, OAuth, and remove controls with explanatory tooltips; remove uses an inline single-confirm action. Web-specific TinyFish CLI auth is owned by TinyFish CLI commands such as `tinyfish auth login`, `tinyfish auth set`, and `tinyfish auth status`, not by `svvy` General settings. Extension definitions, extension instructions, external instruction controls, and generated context previews are edited or inspected in the Extensions pane rather than buried in general settings. Complex settings and configuration editors use TanStack Form for renderer form state where they need validation, dirty state, field-level errors, submit pending state, reset/cancel behavior, and async save errors, while Bun-side settings validation and normalization remain authoritative. Agent profile changes save directly from the setting control rather than through a separate save button. Agent model selection is a constrained picker over models from currently connected providers, and reasoning selection is constrained to the levels supported by the selected model, matching the interactive session controls rather than accepting freeform provider, model, or reasoning text. An orchestrator profile may either keep composer model and reasoning changes local to each session or let sessions using that profile save those composer changes back to the profile for future sessions. The source of truth for provider/model capability metadata is pi's normalized model registry and runtime APIs: `svvy` does not maintain separate provider-specific reasoning tables, Codex reasoning special cases, or request-shape mappings. Visible reasoning output is whatever pi normalizes into assistant `thinking` blocks; for providers such as OpenAI Codex this is a reasoning summary when the provider streams one, not raw chain-of-thought, and encrypted continuation-only reasoning with no visible summary must be labelled unavailable rather than redacted.
+The Agents pane edits app-global agent profiles, including orchestrator profiles, `threadHandler`, and workflow-agent profiles. General settings edit app-global model provider credentials, app appearance (`system`, `light`, or `dark` with `system` as the default), the user's preferred external editor for opening workspace source files from read-only product surfaces, and the artifact directory used for durable session artifact files. The artifact directory defaults to `~/.config/svvy/artifacts` and remains app-owned configuration rather than an agent-supplied command argument. Provider rows use icon-only key, OAuth, and remove controls with explanatory tooltips; remove uses an inline single-confirm action. Web-specific TinyFish CLI auth is owned by TinyFish CLI commands such as `tinyfish auth login`, `tinyfish auth set`, and `tinyfish auth status`, not by `svvy` General settings. Extension definitions, extension instructions, external instruction controls, and generated context previews are edited or inspected in the Extensions pane rather than buried in general settings. Complex settings and configuration editors use TanStack Form for renderer form state where they need validation, dirty state, field-level errors, submit pending state, reset/cancel behavior, and async save errors, while Bun-side settings validation and normalization remain authoritative. Agent profile changes save directly from the setting control rather than through a separate save button. Agent model selection is a constrained picker over models from currently connected providers, and reasoning selection is constrained to the levels supported by the selected model, matching the interactive session controls rather than accepting freeform provider, model, or reasoning text. An orchestrator profile may either keep composer model and reasoning changes local to each session or let sessions using that profile save those composer changes back to the profile for future sessions. The source of truth for provider/model capability metadata is pi's normalized model registry and runtime APIs: `svvy` does not maintain separate provider-specific reasoning tables, Codex reasoning special cases, or request-shape mappings. Visible reasoning output is whatever pi normalizes into assistant `thinking` blocks; for providers such as OpenAI Codex this is a reasoning summary when the provider streams one, not raw chain-of-thought, and encrypted continuation-only reasoning with no visible summary must be labelled unavailable rather than redacted.
 
 Workflow-agent profiles are app-global Agents-pane profiles. Packaged workflow-agent component files,
 when adopted under `.svvy/workflows/components/agents.ts`, are generated or saved Workflows-library
@@ -930,7 +932,7 @@ They remain inspectable through durable links and thread history.
 
 ### Artifact
 
-Artifacts are durable byproducts or evidence files produced by commands, workflow runs, and related execution.
+Artifacts are durable session files produced by commands, workflow runs, and related execution.
 
 They live under the `svvy` artifact area rather than as normal project source. They are for outputs that should remain inspectable but should not normally be committed into the user's repository tree as product code, source docs, configuration, tests, or assets.
 
@@ -942,19 +944,29 @@ Examples:
 - submitted `execute_typescript` source snippets, including failed attempts
 - screenshots
 - generated audit, benchmark, inspection, or workflow reports that are evidence of agent work rather than requested repository files
+- implementation plans, review notes, and other session-local planning or review documents
 - exported workflow details
 
 A normal repository file edited by the agent is not automatically an artifact.
 
 If the user asks for a file to be created in the repository, that file is workspace state, not an artifact. If the information is small enough to answer in prose, it belongs in the transcript or command summary, not in an artifact file.
 
-Agents should create artifacts only for durable byproducts, evidence, previews, logs, reports, screenshots, or large payloads that need later inspection and should not normally be placed in the repository.
+Agents should create artifacts only for durable session outputs, evidence, previews, logs, reports,
+screenshots, review files, or large payloads that need later inspection and should not normally be
+placed in the repository.
 
-For explicit artifact creation, the agent first creates or obtains the intended single file in a
-writable workspace or temporary location, then calls `svvyx artifacts create --path <file> --json`.
-`svvy` copies that source file into the configured artifact store, creates the durable artifact
-record, and links it to the current session, thread, workflow run, workflow task attempt, and source
-command from the runtime boundary. The source path is not the artifact.
+For explicit artifact creation, the agent either calls `svvyx artifacts create --name
+<filename-with-extension> --json` to create a new empty mutable artifact file, or calls `svvyx
+artifacts create --path <file> [--name <filename-with-extension>] --json` to copy one existing source
+file into the configured artifact store. `--name` is the exact stored filename and must include the
+extension. `--immutable` stores the artifact under the session `immutable/` artifact directory.
+`svvy` creates the durable artifact record and links it to the current session, thread, workflow run,
+workflow task attempt, and source command from the runtime boundary. For copied artifacts, the source
+path is not the artifact.
+
+Artifact files live under `<artifactDir>/<sessionId>/`. Ordinary command execution may write only the
+current session artifact directory and must treat `<artifactDir>/<sessionId>/immutable/` as read-only.
+That immutable boundary is enforced by the managed filesystem policy, not by OS-level file flags.
 
 Artifact projection should show durable work outputs linked to threads, workflow runs, commands, and CI checks before relying on transcript reconstruction.
 

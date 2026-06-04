@@ -34,6 +34,10 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Support workflow-run records that allow many runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
 - [x] Persist workflow-run product-binding records with run id, workflow name, workflow source, runnable entry path plus saved-entry linkage when relevant, projected product status, Smithers reconnect/attention cursors, summary, and timestamps while keeping raw Smithers execution facts authoritative in Smithers. Commit(s): `8f0e4ec`
 - [x] Persist artifact references independently from transcript parsing at thread, workflow-run, and command scope. Commit(s): `fff54d7`
+- [ ] Store artifacts under the configured artifact directory as per-session files, with mutable artifacts
+  directly under `<artifactDir>/<sessionId>/`, immutable artifacts under
+  `<artifactDir>/<sessionId>/immutable/`, exact stored filenames, immutable metadata, refreshed
+  file-backed byte/digest facts, and no reliance on OS-level file flags for immutability.
 - [x] Persist ordered update and conclusion episode records each time a handler thread reports to the orchestrator, while preserving earlier episodes for later follow-up turns. Commit(s): `d323012`
 - [x] Persist session wait state as a frontier-level summary derived from surface, workflow, request-user-input, and session wait projection. Commit(s): `fff54d7`, `f53c9b8`, `43a26cb`
 - [x] Drive structured session state only from explicit runtime producers or tool events. Commit(s): `fff54d7`, `59fc34e`, `43a26cb`
@@ -60,6 +64,17 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Keep thread orchestration, thread handling, extension loading, and request-user-input as small `svvy`-native control surfaces while exposing Smithers workflow operations through Smithers-native bridge tools. Commit(s): `a02bd48`
 - [ ] Expose generated `svvyx` extension clients as Incur-compatible `extensions["<id>"].run(commandId, input)` clients, with `MemoryClient` and local Incur actions kept internal.
 - [x] Expose Codex-like Shell and Apply Patch extensions, with `exec_command`, `write_stdin`, and `apply_patch` as the normal coding-agent work interface. Commit(s): `76cc8f3`, `29d8452`
+- [ ] Vendor a Codex-derived native Rust sandbox helper that preserves Codex filesystem policy
+  semantics for `Read`, `Write`, and `None` entries, most-specific path precedence, writable roots
+  with read-only subpaths, protected metadata carveouts, macOS Seatbelt generation through
+  `/usr/bin/sandbox-exec`, and fail-closed behavior when carveouts cannot be enforced.
+- [ ] Grant the active session artifact directory as a writable root while treating that session's
+  `immutable/` artifact child as a read-only subpath, without granting broad writable access to the
+  configured artifact root or to artifacts owned by other sessions.
+- [ ] Implement the Artifacts `svvyx` command and generated-client contract for empty artifact
+  creation with exact `--name <filename.ext>`, copy creation with `--path` plus optional exact
+  `--name`, `--immutable`, extension-required basename validation, collision rejection, and no
+  `--kind`, implicit extension, inline content, or OS file-flag immutability.
 - [ ] Keep cx out of generated `execute_typescript` clients; generated TypeScript profiles should not expose `api.cx_*` or `extensions.cx.*`.
 - [x] Record direct tool calls and nested code-mode calls in the shared structured command model. Commit(s): `76cc8f3`, `29d8452`
 - [ ] Persist normalized child-command facts for generated `extensions["<id>"].run(...)` calls while the parent `execute_typescript` attempt remains the main semantic unit.

@@ -441,9 +441,14 @@ type StructuredSessionState = {
 ```
 
 `workspace.artifactDir` is a workspace read-model copy of the resolved app artifact-store setting used
-for copied durable artifacts in that workspace runtime. The app setting defaults to
+for durable artifact files in that workspace runtime. The app setting defaults to
 `~/.config/svvy/artifacts` and may be changed through General settings. It is not inferred from the
 repository checkout and is not supplied by agents when they create artifacts.
+
+For each session, artifact files live under `<workspace.artifactDir>/<sessionId>/`. That session
+artifact directory is the only artifact-store area that ordinary command execution may receive as a
+writable root. The child directory `<workspace.artifactDir>/<sessionId>/immutable/` is a read-only
+subpath used for immutable artifact files.
 
 ## Surface Target Identity
 
@@ -1061,25 +1066,32 @@ The Artifacts extension record and callable `svvyx artifacts ...` API are define
 | `workflowTaskAttemptId` | Links the artifact to the workflow task attempt that produced it when relevant. |
 | `sourceCommandId`       | Links the artifact back to the command attempt that produced it.               |
 | `kind`                  | Internal projection category such as text, log, json, or file.                |
-| `name`                  | Human-readable artifact label.                                                |
-| `path`                  | Absolute copied artifact path inside the configured artifact directory.        |
+| `name`                  | Exact stored artifact filename, including extension.                          |
+| `path`                  | Absolute artifact path inside the configured artifact directory.               |
+| `immutable`             | `true` when the artifact is stored under the session `immutable/` directory and is read-only to ordinary command execution. |
 | `mimeType`              | MIME type used for preview selection and agent-facing metadata.                |
-| `bytes`                 | Byte size of the copied artifact file.                                         |
-| `sha256`                | Lowercase hex SHA-256 digest of the copied artifact file bytes.                |
-| `content`               | Optional internal preview-cache content for legacy/small artifact projections; not canonical artifact content and not part of the Artifacts v1 create API. |
+| `bytes`                 | Byte size of the artifact file at the last refresh/write known to product state. |
+| `sha256`                | Lowercase hex SHA-256 digest of the artifact file bytes at the last refresh/write known to product state. |
+| `content`               | Optional internal preview-cache content for product-created small artifact projections; not canonical artifact content and not part of the Artifacts v1 create API. |
 | `createdAt`             | Orders artifact creation.                                                     |
 | `deletedAt`             | Tombstone timestamp when the artifact is deleted; `null` while active.         |
 
 Every submitted `execute_typescript` snippet must land in this table as a file-backed artifact before execution begins.
 
-Explicit agent-created artifacts are created through `svvyx artifacts create --path <file> --json`.
-The source file is copied into `workspace.artifactDir`; the artifact record stores the copied path
-and runtime-derived ownership links. Agents do not supply `sessionId`, `sourceCommandId`,
-`workflowRunId`, or `workflowTaskAttemptId`.
+Explicit agent-created artifacts are created through `svvyx artifacts create --name
+<filename-with-extension> --json` or `svvyx artifacts create --path <file> [--name
+<filename-with-extension>] --json`. Empty artifacts are created directly under
+`<workspace.artifactDir>/<sessionId>/`; copied artifacts copy one source file into that same session
+artifact directory unless `--immutable` is present. Immutable artifacts are stored under
+`<workspace.artifactDir>/<sessionId>/immutable/`.
+
+The artifact record stores the artifact path and runtime-derived ownership links. It does not store
+or expose an original source path as canonical artifact content. Agents do not supply `sessionId`,
+`sourceCommandId`, `workflowRunId`, or `workflowTaskAttemptId`.
 
 Artifact deletion is a tombstone lifecycle transition. `svvyx artifacts delete --id <artifact_id>
---json` sets `deletedAt`, removes the copied artifact file when present, leaves historical command
-and thread links intact, and emits `artifact.deleted`.
+--json` sets `deletedAt`, removes the artifact file when present, leaves historical command and
+thread links intact, and emits `artifact.deleted`.
 
 ### Artifact Preview Isolation
 
