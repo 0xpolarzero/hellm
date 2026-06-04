@@ -191,7 +191,7 @@ type WorkflowRunId = string;
 type ISODateString = string;
 type ExtensionId = string;
 
-type ThreadStartHistoryMode = "forked" | "isolated";
+type ThreadStartHistoryMode = "isolated" | "forked";
 
 type ExtensionUsageState = "default_loaded" | "available" | "unavailable";
 
@@ -297,7 +297,10 @@ Rules:
   default maximum is `50`. The limit exists only to prevent runaway typo or generation crashes; it
   is not a product recommendation to create 50 threads.
 - each `threads[].objective` is required and is the raw delegated objective for that handler thread.
-- each `threads[].history` is optional and defaults to `"forked"`.
+- each `threads[].history` is optional and defaults to `"isolated"`. Command acceptance normalizes
+  omission to persisted `"isolated"` on the created handler thread, command payload, initial-start
+  recovery work row, and `initial_handler_start` surface queue row. Omission is not preserved as a
+  third history state.
 - each `threads[].extensions` is optional.
 - when `threadGroupId` is omitted, `svvy` creates a new thread group and places every created
   handler thread in that group.
@@ -319,6 +322,8 @@ Rules:
   `svvyx` guidance, TypeScript declarations, and fingerprints are created for that handler.
 - each handler's active delegated instruction is its raw `objective`; the orchestrator must not
   manually send a first handler-thread message.
+- `"isolated"` means the handler receives no inherited orchestrator conversation history; it starts
+  from handler system prompt, handler tools, handler extension binding, and the delegated objective.
 - `"forked"` means the handler starts as its own handler actor with handler system prompt, handler
   tools, handler extension binding, and a product-filtered inherited-history section from the
   current orchestrator surface before the delegated objective.
@@ -339,8 +344,6 @@ Rules:
 - `history` is persisted as internal creation-time provenance and prompt-delivery state. Thread read
   APIs intentionally omit it; handlers know forked context from the initial boundary note, and
   orchestrators do not need `history` to route follow-ups, groups, reports, or episodes.
-- `"isolated"` means the handler receives no inherited orchestrator conversation history; it starts
-  from handler system prompt, handler tools, handler extension binding, and the delegated objective.
 - handler-thread UI titles, if present, are product-generated outside this API; the orchestrator does
   not supply a title and this result does not return one.
 - `thread_start` extension overrides do not affect workflow task agents launched by workflows under
@@ -349,14 +352,18 @@ Rules:
 Policy:
 
 - use `thread_start` with one item in `threads` for ordinary delegation.
-- use default `"forked"` history for ordinary delegation. A handler thread is a disposable
-  supervising orchestrator: it usually benefits from the orchestrator's prior discussion, can write
-  or choose fresh Smithers workflows with that context, and returns bounded episodes instead of
-  expanding the main orchestrator context.
-- use `"isolated"` when the delegated objective is fully specified by durable files, specs, tests, or
-  explicit objective text; when inherited conversation is noisy, stale, speculative, or biasing; when
-  independent review is more valuable than continuity; or when context minimization is materially
-  useful.
+- use default `"isolated"` history for ordinary delegation. The orchestrator should give the handler
+  a compact objective with durable file paths, accepted decisions, constraints, acceptance criteria,
+  and expected output shape instead of relying on inherited chat.
+- use `"forked"` only when the user explicitly asks to fork, continue, or share the current
+  conversation context; when the delegated work is a continuation of an unresolved design discussion
+  whose important nuance is not captured in durable files; when re-explaining the background would be
+  materially lossy; or when the point is to try multiple approaches from the exact same
+  conversational starting point.
+- do not use `"forked"` for ordinary implementation, source-driven research, test fixing, code
+  review, security review, independent critique, verification, tasks already specified by durable
+  files/specs/tests/handoff docs/objective text, or conversations that include stale plans,
+  speculative reasoning, rejected alternatives, or likely bias.
 - use multiple `threads` only when the user clearly wants separate conversations, the objectives are
   independently discussable, or each workstream may need direct user follow-up.
 - do not use multiple handler threads merely to parallelize ordinary implementation, research,
@@ -789,7 +796,7 @@ Example output:
       "outcome": "succeeded",
       "title": "Thread API shape accepted",
       "summary": "The array-shaped `thread_start` API is valid if group topology stays explicit.",
-      "body": "The handler completed the delegated objective. The API should use `thread_start({ threadGroupId?, threads })`, return one top-level `threadGroupId`, and use `thread_followup({ activate: true })` instead of a separate `thread_resume` tool.",
+      "body": "The handler completed the delegated objective. The API should use `thread_start({ threadGroupId?, threads })`, return one top-level `threadGroupId`, and reactivate concluded objectives with `thread_followup({ activate: true })` when later work belongs in the same delegated context.",
       "createdAt": "2026-06-04T14:55:20.000Z"
     }
   ]
@@ -1125,7 +1132,7 @@ Example conclusion input:
 {
   "title": "Thread API shape accepted",
   "summary": "The array-shaped `thread_start` API is valid if group topology stays explicit.",
-  "body": "The handler completed the delegated objective. The API should use `thread_start({ threadGroupId?, threads })`, return one top-level `threadGroupId`, and use `thread_followup({ activate: true })` instead of a separate `thread_resume` tool.",
+  "body": "The handler completed the delegated objective. The API should use `thread_start({ threadGroupId?, threads })`, return one top-level `threadGroupId`, and reactivate concluded objectives with `thread_followup({ activate: true })` when later work belongs in the same delegated context.",
   "outcome": "succeeded"
 }
 ```
@@ -1185,15 +1192,20 @@ Prefer one handler thread for an objective. If the work is internally parallel b
 separate user-visible conversations, start one handler and let that handler supervise a Smithers
 workflow with parallel task agents.
 
-Use default `history: "forked"` for ordinary handler starts. The handler is a disposable supervising
-orchestrator: it normally benefits from the prior user/orchestrator discussion, can write or choose
-fresh Smithers workflows with that context, and returns a bounded episode so the main orchestrator
-does not absorb the working context.
+Use default `history: "isolated"` for ordinary handler starts. The handler should receive a compact
+objective with durable file paths, accepted decisions, constraints, acceptance criteria, and expected
+output shape instead of inheriting the orchestrator conversation by default.
 
-Use `history: "isolated"` when the delegated objective is already fully specified by durable files,
-source files, specs, tests, or the objective text itself; when prior conversation is noisy, stale,
-speculative, or likely to bias the handler; when independent review is the point; or when context
-minimization is materially useful.
+Use `history: "forked"` only when the user explicitly asks to fork, continue, or share the current
+conversation context; when the delegated work is a continuation of an unresolved design discussion
+whose important nuance is not captured in durable files; when re-explaining the background would be
+materially lossy; or when the point is to try multiple approaches from the exact same conversational
+starting point.
+
+Do not use `history: "forked"` for ordinary implementation, source-driven research, test fixing,
+code review, security review, independent critique, verification, tasks already specified by durable
+files, specs, tests, handoff docs, or objective text, or conversations that include stale plans,
+speculative reasoning, rejected alternatives, or likely bias.
 
 Use `thread_start` with multiple `threads` only when the user clearly wants separate conversations,
 the objectives are independently discussable, or each workstream may need direct user follow-up.
@@ -1202,7 +1214,7 @@ Do not use multiple handler threads merely to parallelize ordinary implementatio
 or workflow steps. That belongs inside one handler-owned Smithers workflow.
 
 `thread_start` always takes an object with `threads`. For ordinary delegation, pass one item. Omit
-`history` when the default forked history is appropriate.
+`history` when the default isolated history is appropriate.
 
 `thread_start` returns the created `threadGroupId` and thread ids. Later, `thread_list` can return
 those ids again and can filter by `threadGroupId`, so you do not need to preserve them only in
@@ -1255,8 +1267,9 @@ orchestrator to forward it to the group.
 Use `thread_report` without `outcome` for important intermediate updates, report-request answers, or
 coordination requests to the orchestrator.
 
-Use `thread_report` with `outcome` only when the current objective is actually concluded and no
-active workflow run remains owned by this objective.
+Use `thread_report` with `outcome` only when the current objective is actually concluded, no active
+workflow run remains owned by this objective, and every referenced file, artifact, or evidence item
+has already been created or updated and is inspectable by the orchestrator.
 
 Do not use `thread_report` as a raw chat log. Keep reports compact, durable, and actionable for
 orchestrator reconciliation.

@@ -185,8 +185,8 @@ The durable record should keep:
 - source thread, report request id, request text, and request time for `report_request`
 - previous and requested generated agent context fingerprint, changed categories, changed extension
   ids when applicable, and request time for `agent_context_refresh`
-- thread id, request time, history mode, and product-filtered inherited-history payload when
-  `history` is `forked` for `initial_handler_start`
+- thread id, request time, normalized history mode, delegated objective, and product-filtered
+  inherited-history payload only when normalized `history` is `forked` for `initial_handler_start`
 - workflow run, Smithers run, workflow id, summary, and reason for `workflow_attention`
 - source request id, source question id, original default answer, user answer, and answer delivery
   mode for `request_user_input_answer`
@@ -228,7 +228,11 @@ If delivery starts and the resulting turn later fails, the queued item remains `
 
 `initial_handler_start` inherited-history delivery:
 
-- when `thread_start.threads[].history` is omitted or `"forked"`, the queue row records the
+- command acceptance normalizes omitted `thread_start.threads[].history` to `"isolated"` before the
+  handler-thread record, command payload, initial-start recovery work row, and
+  `initial_handler_start` surface queue row are written. Queue and recovery state never preserve
+  omission as a third history mode.
+- when normalized `thread_start.threads[].history` is `"forked"`, the queue row records the
   inherited-history payload captured from the current orchestrator surface before the handler's first
   turn
 - the inherited-history payload is captured from committed transcript ancestors at the
@@ -247,8 +251,8 @@ If delivery starts and the resulting turn later fails, the queued item remains `
   start item for the handler surface. It becomes part of the handler pi transcript for
   reproducibility, but it is not reconstructed as separate prior handler turns, not written into the
   handler system prompt, and not shared pi transcript state.
-- when `history` is `"isolated"`, no inherited orchestrator history is included; the handler receives
-  only the delegated objective as the prompt-bearing start item
+- when normalized `history` is `"isolated"`, no inherited orchestrator history is included; the
+  handler receives only the delegated objective as the prompt-bearing start item
 
 `thread_followup` reactivation delivery:
 

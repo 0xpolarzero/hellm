@@ -423,15 +423,20 @@ The intended use of the native control subset is:
 
 - the orchestrator normally uses `thread_start` with one `threads[]` item to open one delegated
   handler thread for ordinary delegation
-- `thread_start.threads[].history` defaults to `"forked"`, meaning the handler receives a
-  product-filtered inherited-history section from the current orchestrator conversation before the
-  delegated objective; this is the normal mode because handler threads are disposable supervising
-  orchestrators that can use prior discussion while returning bounded episodes to spare the main
-  orchestrator context
-- the orchestrator uses `history: "isolated"` when the delegated objective is fully specified by
-  durable files, specs, tests, or explicit objective text; when prior conversation is noisy,
-  stale, speculative, or likely to bias the handler; when independent review is the point; or when
-  context minimization is materially useful
+- `thread_start.threads[].history` defaults to `"isolated"`, meaning the handler starts without
+  inherited orchestrator conversation history and receives only handler prompt, handler tools,
+  handler extension binding, and delegated objective; this is the normal mode because ordinary
+  coding-agent delegation is more reliable when the handler receives a compact task packet instead
+  of inherited chat
+- the orchestrator uses `history: "forked"` only when the user explicitly asks to fork, continue, or
+  share the current conversation context; when the delegated work continues unresolved design
+  discussion whose important nuance is not captured in durable files; when re-explaining the
+  background would be materially lossy; or when the point is to try multiple approaches from the
+  exact same conversational starting point
+- the orchestrator does not use `history: "forked"` for ordinary implementation, source-driven
+  research, test fixing, code review, security review, independent critique, verification, tasks
+  already specified by durable files, specs, tests, handoff docs, or objective text, or conversations
+  that include stale plans, speculative reasoning, rejected alternatives, or likely bias
 - the orchestrator uses multiple `thread_start.threads[]` items only for separate user-visible
   handler conversations where the user is invested in each workstream, each objective may need
   direct follow-up, or the workstreams are clearly independent conversations; ordinary parallel
@@ -1080,9 +1085,10 @@ When the target surface is the main orchestrator:
    - call `thread_start` with one `threads[]` item for ordinary delegation, or multiple items only
      for separate user-visible handler conversations that should share one durable thread group
    - delegate each objective to a handler thread
-   - omit `history` for the default forked inherited-history mode, or set `history: "isolated"` when
-     durable files, specs, tests, or the objective itself fully specify the work and prior
-     conversation is more likely to bias or bloat the handler
+   - omit `history` for the default isolated mode
+   - set `history: "forked"` only when conversational continuity is explicitly requested, materially
+     necessary and cannot be captured cleanly in a compact objective or durable handoff file, or
+     required to try multiple approaches from the exact same conversational starting point
    - include handler extension-state overrides such as setting `project-ci` to `default_loaded` only when the objective needs that product guidance from the first handler turn
 5. when a handler thread emits an episode, reconcile the typed `thread_report` notification against durable state: thread durable state plus the latest episode
 6. if the orchestrator needs status while the handler remains active or interactable, call `thread_request_report` and reconcile the resulting episode when the handler answers

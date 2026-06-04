@@ -258,7 +258,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Build a POC New orchestrator creation flow with profile-backed orchestrator selection. Commit(s): `8e19462`
 - [x] Persist the orchestrator profile snapshot and prompt selection used by created sessions. Commit(s): `8e19462`
 - [x] Persist per-session orchestrator profile overrides. Commit(s): `8e19462`
-- [ ] Persist and deliver handler start history mode for delegated handler threads, defaulting `thread_start.threads[].history` to `forked` inherited-history context and supporting explicit `isolated` starts when durable inputs fully specify the work or inherited conversation would bias or bloat the handler.
+- [ ] Persist and deliver handler start history mode for delegated handler threads, defaulting `thread_start.threads[].history` to `isolated` and supporting explicit `forked` starts only for conservative continuity cases where the user asks for current conversation context, unresolved design nuance cannot be captured in durable files or a compact objective, or multiple approaches must start from the exact same conversational point.
 - [ ] Persist handler creation-time extension-state overrides for delegated handler threads as partial overrides over the `threadHandler` profile.
 - [x] Keep the Agents sidebar pane between Logs and Extensions, with orchestrator profiles plus the `threadHandler` special profile owned there instead of in General settings. Commit(s): `2b97c46648`, `b714aa26f9`
 - [x] Drive the New orchestrator picker order, profile-specific command palette actions, and surface profile badges from Agents-pane orchestrator profile order. Commit(s): `2b97c46648`, `031510ba2b`

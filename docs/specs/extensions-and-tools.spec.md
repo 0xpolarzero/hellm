@@ -279,11 +279,13 @@ Use thread_start with one item in threads for ordinary delegation. Use more than
 the user clearly wants separate handler conversations or the objectives are independently
 discussable. Internal parallel work belongs inside one handler-owned Smithers workflow.
 
-thread_start defaults each thread's history to forked. Use the default when the handler should act as
-a disposable supervising orchestrator with prior user/orchestrator discussion available as context.
-Use history isolated when the objective is fully specified by durable files, specs, tests, or
-objective text; when prior conversation is noisy, stale, speculative, or biasing; when independent
-review is the point; or when context minimization matters.
+thread_start defaults each thread's history to isolated. Use the default for ordinary delegation and
+give the handler a compact objective with durable file paths, accepted decisions, constraints,
+acceptance criteria, and expected output shape. Use history forked only when the user explicitly asks
+to fork, continue, or share the current conversation context; when the delegated work is a
+continuation of unresolved design discussion that is not captured in durable files; when
+re-explaining the background would be materially lossy; or when trying multiple approaches from the
+exact same conversational starting point.
 
 thread_start returns a durable threadGroupId. thread_list returns that group id again and can filter
 by it when you need to rediscover related handler threads. Use thread_start with an existing
@@ -312,7 +314,8 @@ Ordinary replies inside a handler thread do not close it or emit durable episode
 
 Use thread_report without outcome for intermediate updates that the orchestrator should reconcile.
 Use thread_report with outcome only when the current objective is ready to hand control back to the
-orchestrator with durable state.
+orchestrator with durable state and every referenced file, artifact, or evidence item already exists
+and is inspectable.
 
 Thread groups are topology, not shared memory. You cannot message sibling threads directly.
 
@@ -1594,8 +1597,8 @@ and the actor's resolved extension binding.
 ### Creation-Time And Invocation-Time Overrides
 
 Each `thread_start.threads[]` item may include optional `history` and `extensions` fields. `history`
-defaults to `forked` and may be set to `isolated` when the handler should start without inherited
-orchestrator conversation context. `extensions` is a partial override over the configured
+defaults to `isolated` and may be set to `forked` only for the conservative continuity cases defined
+by the Thread Managing extension. `extensions` is a partial override over the configured
 `threadHandler` profile's extension usage states for that new handler thread.
 The concrete `thread_start` input, output, and rejection rules live in
 `docs/specs/extension/thread_managing.extension.spec.md`.
