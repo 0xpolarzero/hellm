@@ -5,7 +5,7 @@
 - Date: 2026-06-02
 - Status: authoritative product spec
 - Scope:
-  - define the shipped Web extension as prompt-only TinyFish CLI guidance
+  - define the builtin Web extension as prompt-only TinyFish CLI guidance
   - define how `svvy` vendors TinyFish-owned agent instructions
   - define TinyFish CLI trusted dependency, auth, search, fetch, and output expectations
   - define what `svvy` does not abstract, wrap, configure, or expose for Web v1
@@ -18,7 +18,7 @@ Related specs:
 - `docs/specs/extensions-and-tools.spec.md` defines the general extension architecture, extension
   usage states, generated agent context, native tools, `svvyx`, prompt-only extensions, and
   app-managed trusted CLI dependencies.
-- `docs/specs/extension/extension_managing.extension.spec.md` defines how shipped extension instructions are inspected,
+- `docs/specs/extension/extension_managing.extension.spec.md` defines how builtin extension instructions are inspected,
   overlaid, reset, and built when extension content is editable.
 - `docs/specs/extension/execute_typescript.extension.spec.md` defines generated TypeScript clients. Web v1 does not
   contribute any generated TypeScript client.
@@ -31,7 +31,7 @@ agent-facing CLI.
 
 The resolved Web v1 model is:
 
-- `web` is a shipped extension.
+- `web` is a builtin extension.
 - `web` uses `interface: "instructions"`.
 - `web` is prompt-only.
 - `web` is default-loaded for eligible actors only while `networkAccess` is enabled.
@@ -47,12 +47,12 @@ it.
 
 ## Extension Record
 
-The shipped Web extension record is:
+The builtin Web extension record is:
 
 ```json
 {
   "id": "web",
-  "category": "shipped",
+  "category": "builtin",
   "interface": "instructions",
   "title": "Web",
   "description": "Use TinyFish CLI for public web search, fetch, and browser-backed research.",
@@ -85,7 +85,7 @@ Primary source:
 
 - `https://github.com/tinyfish-io/tinyfish-cookbook/blob/main/skills/use-tinyfish/SKILL.md`
 
-The shipped default instructions should be a vendored copy of that `SKILL.md` content, with a small
+The builtin default instructions should be a vendored copy of that `SKILL.md` content, with a small
 `svvy`-owned preface or appendix allowed only for product integration facts that are not part of the
 TinyFish skill itself.
 
@@ -123,7 +123,7 @@ Updating the vendored TinyFish instructions is a deliberate product update. The 
 
 `tinyfish` is an app-managed trusted CLI dependency.
 
-The shipped trusted CLI dependency record is:
+The builtin trusted CLI dependency record is:
 
 ```ts
 const tinyfishTrustedCliDependency = {
@@ -405,13 +405,13 @@ approval, and network policy.
 
 ## Extension Managing And Storage
 
-Because Web is a shipped prompt-only extension:
+Because Web is a builtin prompt-only extension:
 
-- shipped defaults live in packaged app resources
-- the vendored TinyFish skill content is part of the shipped default instructions
+- builtin defaults live in packaged app resources
+- the vendored TinyFish skill content is part of the builtin default instructions
 - Web is non-deletable
-- Web is resettable to shipped defaults
-- Web can be customized only through the normal shipped-extension overlay mechanisms described in
+- Web is resettable to builtin defaults
+- Web can be customized only through the normal builtin-extension overlay mechanisms described in
   `docs/specs/extensions-and-tools.spec.md` and `docs/specs/extension/extension_managing.extension.spec.md`
 - Web has no editable executable source in v1
 - Web has no generated TypeScript declaration file in v1
@@ -430,7 +430,7 @@ confirmation flow, not through agent-run install instructions.
 
 Required doc/extension tests:
 
-- Web is represented as `category: "shipped"` and `interface: "instructions"`.
+- Web is represented as `category: "builtin"` and `interface: "instructions"`.
 - Web is default-loaded for orchestrator, handler-thread, and workflow task-agent actors when
   `networkAccess` is true.
 - Web is unavailable and absent from generated actor context when `networkAccess` is false.
@@ -465,7 +465,7 @@ key.
 
 ## Invariants
 
-- Web v1 is a prompt-only shipped extension.
+- Web v1 is a prompt-only builtin extension.
 - Web v1 is TinyFish-only.
 - Web v1 is default-loaded for eligible actors only when `networkAccess` is true.
 - Web v1 is disabled and contributes no prompt guidance when `networkAccess` is false.

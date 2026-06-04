@@ -48,10 +48,10 @@ loaded extension set:
 
 Provider readiness is not a generic reason to expose generated clients. If a future provider-backed
 extension needs generated clients, that extension must still expose a concrete loaded runtime
-interface whose source contracts can generate the client. The shipped Web extension is prompt-only
+interface whose source contracts can generate the client. The builtin Web extension is prompt-only
 and therefore never contributes generated clients in Web v1.
 
-The shipped cx extension is also prompt-only and therefore never contributes generated clients in cx
+The builtin cx extension is also prompt-only and therefore never contributes generated clients in cx
 v1. `execute_typescript` must not expose `api.cx_*`, `extensions.cx.*`, or another cx SDK. Agents
 use official `cx` CLI commands through `exec_command`.
 
@@ -276,7 +276,7 @@ The last example has no child command facts because it does not call a generated
 
 ## Execute TypeScript Loaded Instruction Files
 
-The shipped Execute TypeScript extension has two full instruction source files. These files are
+The builtin Execute TypeScript extension has two full instruction source files. These files are
 ordered by filename under `instructions/full/`:
 
 ```text

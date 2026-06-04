@@ -5,7 +5,7 @@
 - Date: 2026-06-03
 - Status: accepted extension index; detailed execution policy remains in `docs/specs/extensions-and-tools.spec.md`
 - Scope:
-  - define the shipped native-tool extension that exposes `exec_command` and `write_stdin`
+  - define the builtin native-tool extension that exposes `exec_command` and `write_stdin`
   - point to the current canonical `exec_command` and `write_stdin` contracts
 
 ## Extension Record
@@ -13,7 +13,7 @@
 ```json
 {
   "id": "shell",
-  "category": "shipped",
+  "category": "builtin",
   "interface": "native_tool",
   "title": "Shell",
   "description": "Codex-like shell command execution and long-running command continuation.",
@@ -48,7 +48,7 @@ Current detailed behavior is defined in:
 
 ## Shell Loaded Instruction Files
 
-The shipped Shell extension has two full instruction source files. These files are ordered by
+The builtin Shell extension has two full instruction source files. These files are ordered by
 filename under `instructions/full/`:
 
 ```text

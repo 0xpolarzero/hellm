@@ -5,7 +5,7 @@
 - Date: 2026-06-03
 - Status: authoritative product spec for native thread-control extensions
 - Scope of this document:
-  - define the shipped native implementation that owns delegated handler-thread controls
+  - define the builtin native implementation that owns delegated handler-thread controls
   - define the two actor-scoped agent-facing extension records backed by that implementation
   - define the concrete APIs for `thread_start`, `thread_resume`, `thread_list`,
     `thread_episodes`, `thread_request_report`, `thread_current`, and `thread_report`

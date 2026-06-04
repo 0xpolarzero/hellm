@@ -5,7 +5,7 @@
 - Date: 2026-06-01
 - Status: accepted working spec extracted from `docs/specs/extensions-and-tools.spec.md`
 - Scope of this document:
-  - define the shipped Extension Managing extension surface
+  - define the builtin Extension Managing extension surface
   - define which extension source discovery happens through Extension Managing
   - define which extension content changes happen through normal files and `apply_patch`
   - define which extension changes happen through lifecycle/product-state commands
@@ -22,7 +22,7 @@ invocations; Extension Managing does not gain a separate model-facing tool surfa
 
 ## Product Role
 
-Extension Managing is a shipped extension for managing extension definitions and extension usage.
+Extension Managing is a builtin extension for managing extension definitions and extension usage.
 
 It owns extension lifecycle, source discovery, builds, dependency approvals, usage-state commands,
 snapshot commands, and full-instruction source-file lifecycle commands. It does not own text-editing
@@ -69,7 +69,7 @@ Product-state changes use Extension Managing commands:
 - extension build
 - full-instruction source file add, remove, rename, and reorder operations
 - extension usage state changes
-- shipped extension reset
+- builtin extension reset
 - user-extension delete
 - extension change revert
 - extension snapshot save/load/rename/delete when exposed to agents
@@ -104,7 +104,7 @@ These paths must not be edited by agents:
 - `node_modules`
 - trash
 - snapshots
-- packaged shipped defaults
+- packaged builtin defaults
 
 `bun.lock` is durable dependency state and may be returned for inspection, but it is never an editing
 target. Requested dependency changes are made in extension manifests, extension source inputs, or the
@@ -214,8 +214,8 @@ type ExtensionManifestEnv = {
 
 Rules:
 
-- `native_tool` manifests are app-owned shipped implementation records and cannot be created through
-  `svvyx extensions create`; shipped native-tool overlays may still expose editable title,
+- `native_tool` manifests are app-owned builtin implementation records and cannot be created through
+  `svvyx extensions create`; builtin native-tool overlays may still expose editable title,
   description, and instructions through app-owned overlay storage.
 - `id` must match the extension id used in the registry path and command arguments.
 - `interface: "svvyx"` requires editable executable source under `source/`.
@@ -246,7 +246,7 @@ does not mean the model receives an array-valued instruction. The generated acto
 one loaded instruction block for the extension, produced by concatenating the ordered full
 instruction files with stable file-boundary headings or equivalent internal separators.
 
-Full instruction files are ordered lexicographically by filename. Shipped defaults and generated
+Full instruction files are ordered lexicographically by filename. Builtin defaults and generated
 user skeletons should use zero-padded numeric prefixes, for example:
 
 ```text
@@ -281,7 +281,7 @@ loaded.
 Database or product-state storage includes:
 
 - extension registry records
-- category: `shipped`, `user`, or `external_instruction`
+- category: `builtin`, `user`, or `external_instruction`
 - interface: `native_tool`, `svvyx`, or `instructions`
 - current build status and extension context fingerprints as internal activation state, not as a
   user-facing rollback surface
@@ -299,18 +299,18 @@ If implementation stores editable data in a database, Extension Managing must st
 materialized editable file path for any content an agent is expected to change. Agents should not
 have to use a DB-specific write command to edit extension instructions or metadata.
 
-Shipped extensions have packaged defaults plus editable overlays:
+Builtin extensions have packaged defaults plus editable overlays:
 
-- shipped extensions are non-deletable
-- shipped extensions are resettable
-- shipped defaults live in packaged app resources and are read-only
-- shipped title, description, instructions, and optional editable extension source are editable by
+- builtin extensions are non-deletable
+- builtin extensions are resettable
+- builtin defaults live in packaged app resources and are read-only
+- builtin title, description, instructions, and optional editable extension source are editable by
   materializing or updating app-owned overlay files under `sources/builtin-overlays/<id>/`
-- shipped generated files, native runtime implementation, and app-owned bridge code are read-only and
+- builtin generated files, native runtime implementation, and app-owned bridge code are read-only and
   cannot be edited through Extension Managing
-- `inspect` materializes shipped overlay files before returning editable paths so shell inspection and
+- `inspect` materializes builtin overlay files before returning editable paths so shell inspection and
   `apply_patch` work normally
-- `reset` restores shipped defaults by removing or replacing the overlay for the selected scope
+- `reset` restores builtin defaults by removing or replacing the overlay for the selected scope
 
 External instruction records are a separate category:
 
@@ -318,7 +318,7 @@ External instruction records are a separate category:
 - source content lives in external files such as `AGENTS.md` or `CLAUDE.md`
 - Extension Managing may inspect their metadata and usage state but must not expose their source
   files as editable extension paths
-- reset restores only `svvy` usage/settings or shipped metadata overlays, not the external file
+- reset restores only `svvy` usage/settings or builtin metadata overlays, not the external file
 - delete is unavailable
 
 User extensions are ordinary app-owned extension directories:
@@ -327,7 +327,7 @@ User extensions are ordinary app-owned extension directories:
 - `source/` exists only for extensions with editable executable source; prompt-only extensions omit
   it or return `source: null` from `inspect`
 - user extensions are deletable
-- user extensions are not resettable to shipped defaults
+- user extensions are not resettable to builtin defaults
 - deletion moves the extension into app-managed trash so the delete change can be reverted
 
 Generated extension files live under `generated/extensions/<id>/`. In the normal agent-facing
@@ -471,7 +471,7 @@ native `list_extensions` tool:
 
 ## Extension Managing Loaded Instruction Files
 
-The shipped Extension Managing extension has two full instruction source files. These files are
+The builtin Extension Managing extension has two full instruction source files. These files are
 ordered by filename under `instructions/full/`:
 
 ```text
@@ -1215,7 +1215,7 @@ type InspectExtensionResult = {
 
 type InspectExtension = {
   id: string;
-  category: "shipped" | "user" | "external_instruction";
+  category: "builtin" | "user" | "external_instruction";
   interface: "native_tool" | "svvyx" | "instructions";
   title: string;
   description: string;
@@ -1348,14 +1348,14 @@ block inspect readiness or generated prompt loading. Known status can be display
 GitHub prompt still tells agents to report missing CLI binaries through the app-managed trusted CLI
 dependency flow and to offer auth guidance only after an actual `gh` command fails.
 
-Prompt-only shipped example:
+Prompt-only builtin example:
 
 ```json
 {
   "ok": true,
   "extension": {
     "id": "github",
-    "category": "shipped",
+    "category": "builtin",
     "interface": "instructions",
     "title": "GitHub",
     "description": "Conservative GitHub CLI guidance for issues, pull requests, review comments, Actions checks, publishing, and PR wrap-up.",
@@ -1591,12 +1591,12 @@ Parameters:
 | `--id` | yes | Stable extension id. |
 | `--title` | yes | User-facing title. |
 | `--description` | yes | Short user-facing description. |
-| `--interface` | yes | `instructions` or `svvyx`. `native_tool` is reserved for shipped app-owned extensions and cannot be created through Extension Managing. |
+| `--interface` | yes | `instructions` or `svvyx`. `native_tool` is reserved for app-owned builtin extensions and cannot be created through Extension Managing. |
 | `--typescript-api` | no | Boolean. Defaults to `false`. |
 | `--json` | no | Return machine-readable JSON. |
 
 `--id` must satisfy the architecture-wide extension id rules in
-`docs/specs/extensions-and-tools.spec.md`. It must not collide with a shipped extension, existing
+`docs/specs/extensions-and-tools.spec.md`. It must not collide with a builtin extension, existing
 user extension, external instruction record, deleted extension still in trash, pending snapshot
 restore target, native control namespace, or other reserved `svvyx` namespace.
 
@@ -1708,12 +1708,12 @@ Accepted names must:
 Applicability:
 
 - user extensions may use these commands when they have app-owned instruction storage
-- shipped extensions may use these commands only through app-owned overlay materialization under
+- builtin extensions may use these commands only through app-owned overlay materialization under
   `sources/builtin-overlays/<id>/`
-- shipped packaged defaults must never be mutated directly
-- removing or renaming a shipped default instruction file records an overlay tombstone or equivalent
+- builtin packaged defaults must never be mutated directly
+- removing or renaming a builtin default instruction file records an overlay tombstone or equivalent
   overlay metadata so reset can restore the packaged file set
-- prompt-only, `svvyx`, and native-tool shipped extensions may all use these commands if they have
+- prompt-only, `svvyx`, and native-tool builtin extensions may all use these commands if they have
   editable app-owned instruction overlays
 - `external_instruction` records must reject these commands because their source files are external
   and read-only from Extension Managing
@@ -2273,7 +2273,7 @@ Example output:
 
 ## `reset`
 
-Use case: restore a shipped extension back to shipped defaults.
+Use case: restore a builtin extension back to builtin defaults.
 
 ```bash
 svvyx extensions reset <id> --scope instructions --json
@@ -2289,10 +2289,10 @@ Parameters:
 
 For `--scope instructions`, reset applies to the complete instruction source set:
 
-- the shipped `instructions/full/*.md` file set is restored exactly
+- the builtin `instructions/full/*.md` file set is restored exactly
 - overlay-added full instruction files are removed
-- overlay-removed shipped full instruction files are restored
-- renamed full instruction files are restored to shipped names
+- overlay-removed builtin full instruction files are restored
+- renamed full instruction files are restored to builtin names
 - `instructions/minimal.md` is restored
 
 Example output:
@@ -2325,7 +2325,7 @@ User-extension error:
   "ok": false,
   "error": {
     "code": "NOT_BUILTIN",
-    "message": "Only shipped extensions can be reset to shipped defaults."
+    "message": "Only builtin extensions can be reset to builtin defaults."
   }
 }
 ```
@@ -2361,14 +2361,14 @@ Delete moves the extension into app-managed trash and records a reversible comma
 Trash is reachable only through the delete change card or change history; the product does not need
 a standalone trash browser.
 
-Shipped-extension error:
+Builtin-extension error:
 
 ```json
 {
   "ok": false,
   "error": {
-    "code": "SHIPPED_NOT_DELETABLE",
-    "message": "Shipped extensions cannot be deleted. Use reset instead."
+    "code": "BUILTIN_NOT_DELETABLE",
+    "message": "Builtin extensions cannot be deleted. Use reset instead."
   }
 }
 ```
@@ -2600,7 +2600,7 @@ secret blobs, keychain item ids, generated aggregate cache paths, or build outpu
 Snapshot payload includes:
 
 - user extension source files and manifests
-- shipped overlay files
+- builtin overlay files
 - extension registry/config/settings
 - agent/profile extension usage states
 - package and lockfile state needed to reproduce exact dependency identities

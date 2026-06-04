@@ -5,7 +5,7 @@
 - Date: 2026-06-03
 - Status: adopted product spec
 - Scope:
-  - define the shipped Request User Input native extension
+  - define the builtin Request User Input native extension
   - define the model-facing `request_user_input` API
   - define the nonblocking and blocking runtime variants
   - define user-answer queue delivery and side-panel behavior
@@ -14,7 +14,7 @@
 This spec replaces the previous draft/native `wait` tool as the model-facing way for orchestrator
 and handler-thread agents to ask the user for missing intent. The product may still project generic
 waiting state for blocked surfaces, Smithers runs, approvals, signals, timers, and external
-dependencies, but there is no shipped model-facing native tool named `wait`.
+dependencies, but there is no builtin model-facing native tool named `wait`.
 
 ## Source References
 
@@ -43,7 +43,7 @@ Related `svvy` specs:
 
 ## Product Role
 
-Request User Input is a shipped native tool extension for asking the user a bounded question while
+Request User Input is a builtin native tool extension for asking the user a bounded question while
 preserving the normal coding-agent turn and queue model.
 
 The extension has one visible product identity:
@@ -52,7 +52,7 @@ The extension has one visible product identity:
 {
   "id": "request-user-input",
   "title": "Request User Input",
-  "category": "shipped",
+  "category": "builtin",
   "interface": "native_tool"
 }
 ```
@@ -86,7 +86,7 @@ but the app owns two internal variants:
 | `nonblocking` | The tool creates answerable side-panel requests, immediately returns the agent's default answer, and lets later user answers queue through normal surface queue delivery. | `request_user_input` |
 | `blocking` | The tool creates answerable side-panel requests and does not return until the user answers or the configured timeout supplies the default answer. | `request_user_input` |
 
-The current variant is an app-global product setting for this shipped extension. Switching the
+The current variant is an app-global product setting for this builtin extension. Switching the
 variant changes all three of these surfaces together:
 
 - loaded instruction files
@@ -141,7 +141,7 @@ this extension. Agent edit, reset, revert, and instruction-file lifecycle operat
 active variant. The user-facing extension pane may switch variants and may then inspect, edit, reset,
 or build the newly active variant as the current extension source view.
 
-The UI may show that this is a dual-mode shipped extension, but Extension Managing's agent-facing
+The UI may show that this is a dual-mode builtin extension, but Extension Managing's agent-facing
 inspection behaves as if there is one extension whose active source files are the relevant files.
 
 ## Extension Pane Settings

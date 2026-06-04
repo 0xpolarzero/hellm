@@ -5,7 +5,7 @@
 - Date: 2026-06-03
 - Status: accepted extension index; loaded instruction text remains in `docs/specs/extensions-and-tools.spec.md`
 - Scope:
-  - define Git as a shipped prompt-only extension
+  - define Git as a builtin prompt-only extension
   - keep `git` usage on ordinary shell commands through the Shell extension
 
 ## Extension Record
@@ -13,7 +13,7 @@
 ```json
 {
   "id": "git",
-  "category": "shipped",
+  "category": "builtin",
   "interface": "instructions",
   "title": "Git",
   "description": "Conservative Git CLI guidance for repository inspection, staging, commits, branches, and diffs.",

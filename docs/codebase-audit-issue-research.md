@@ -123,7 +123,7 @@ The items below were highlighted by source audit finals or source audit subagent
 - **Panel release gaps:** Mentioned by renderer audit summaries. AUD-023 covers focus-global artifact/static inspector state, but pane close/release reference counting should be checked separately for leaked or prematurely disposed live surfaces.
 - **Fabricated workflow progress:** Mentioned by a renderer audit roster. AUD-022 and AUD-026 cover transcript and workflow inspector projection, but a follow-up should verify whether any UI progress display is inferred rather than derived from durable Smithers/structured state.
 - **Additional performance hotspots:** Registry refresh churn, app-log aggregation, path-index churn, log burst cost, and sync scans were called out in audit summaries. AUD-025 through AUD-027 cover the largest performance issues, but these named paths need targeted profiling or static confirmation before implementation.
-- **Workflow rename state:** Mentioned in progress drift summaries. AUD-032 covers progress/docs drift, but workflow rename shipped state should be verified before ticking or rewriting progress items.
+- **Workflow rename state:** Mentioned in progress drift summaries. AUD-032 covers progress/docs drift, but workflow rename builtin state should be verified before ticking or rewriting progress items.
 
 ### Smithers-Native Follow-Ups From AUD-011 Exploration
 
@@ -1398,7 +1398,7 @@ Relevant files:
 
 **Disposition:** Fixed. The handler-facing Smithers capability set now delegates native Smithers operations through a Smithers adapter, keeps native Smithers shapes for approvals, node detail, artifacts, transcript, events, run watching, and DevTools streaming, and task-attempt binding uses exact Smithers task-attempt identity.
 
-**Precise issue:** The shipped Smithers-facing tools did not mirror the native Smithers tool schemas documented in the full Smithers reference. Some svvy schemas required fields Smithers treats as optional filters, renamed fields, omitted structured fields, or returned non-native shapes. Task-attempt binding also used recency lookup by resume handle rather than exact current run/node/attempt identity.
+**Precise issue:** The builtin Smithers-facing tools did not mirror the native Smithers tool schemas documented in the full Smithers reference. Some svvy schemas required fields Smithers treats as optional filters, renamed fields, omitted structured fields, or returned non-native shapes. Task-attempt binding also used recency lookup by resume handle rather than exact current run/node/attempt identity.
 
 Smithers reference facts from `https://smithers.sh/llms-full.txt`:
 

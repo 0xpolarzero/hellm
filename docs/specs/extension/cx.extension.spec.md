@@ -5,7 +5,7 @@
 - Date: 2026-06-02
 - Status: authoritative product spec
 - Scope:
-  - define the shipped cx extension boundary
+  - define the builtin cx extension boundary
   - define cx as prompt-only direct CLI guidance
   - define the exact cx CLI commands agents may use through `exec_command`
   - define the app-managed trusted CLI dependency record for cx
@@ -18,7 +18,7 @@ Related specs:
 - `docs/specs/extensions-and-tools.spec.md` defines the general extension architecture, prompt-only
   extensions, trusted CLI dependency registry, shell policy, generated agent context, and
   `execute_typescript`.
-- `docs/specs/extension/extension_managing.extension.spec.md` defines how shipped extension instructions are inspected,
+- `docs/specs/extension/extension_managing.extension.spec.md` defines how builtin extension instructions are inspected,
   overlaid, reset, and built when extension content is editable.
 
 ## Product Intent
@@ -28,7 +28,7 @@ product-owned editing, filesystem, shell, or TypeScript SDK surface.
 
 The resolved cx v1 model is:
 
-- `cx` is a shipped extension.
+- `cx` is a builtin extension.
 - `cx` uses `interface: "instructions"`.
 - `cx` is prompt-only.
 - `cx` is default-loaded for all adopted actor kinds.
@@ -47,12 +47,12 @@ let agents run `cx` through the normal shell command tool.
 
 ## Extension Record
 
-The shipped cx extension record is:
+The builtin cx extension record is:
 
 ```json
 {
   "id": "cx",
-  "category": "shipped",
+  "category": "builtin",
   "interface": "instructions",
   "title": "cx",
   "description": "Use the cx CLI for semantic code navigation before raw file reads.",
@@ -76,7 +76,7 @@ TypeScript client is registered.
 
 `cx` is an app-managed trusted CLI dependency.
 
-The shipped trusted CLI dependency record is:
+The builtin trusted CLI dependency record is:
 
 ```ts
 const cxTrustedCliDependency = {
@@ -113,7 +113,7 @@ Primary source:
 - `https://github.com/ind-igo/cx`
 - `cx skill` from `cx-cli@0.7.1`
 
-The shipped default instructions should be a vendored copy of `cx skill`, with a small `svvy`-owned
+The builtin default instructions should be a vendored copy of `cx skill`, with a small `svvy`-owned
 preface or appendix allowed only for product integration facts that are not part of the cx skill
 itself.
 
@@ -323,7 +323,7 @@ availability. Until then, agents use `cx` through `exec_command`.
 
 Required doc/extension tests:
 
-- cx is represented as `category: "shipped"` and `interface: "instructions"`.
+- cx is represented as `category: "builtin"` and `interface: "instructions"`.
 - cx is default-loaded for orchestrator, handler-thread, and workflow task-agent actors.
 - Generated actor context includes the vendored `cx skill` guidance plus only the bounded `svvy`
   appendix.
@@ -346,7 +346,7 @@ Optional live verification:
 
 ## Invariants
 
-- cx v1 is a prompt-only shipped extension.
+- cx v1 is a prompt-only builtin extension.
 - cx v1 is default-loaded for all adopted actor kinds.
 - cx v1 teaches direct use of the official `cx` CLI through `exec_command`.
 - cx v1 does not expose native `cx_*` tools.

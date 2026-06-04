@@ -106,11 +106,11 @@ Before any target surface runs a turn through pi:
 - each surface must receive only the generated tool declarations and SDK blocks present in that surface's resolved extension binding and native runtime surface
 - each surface may receive compact knowledge about what another surface commonly does, but it must not receive that other surface's full callable API block just for awareness
 
-Ambient coding-agent resources are default-off unless explicitly enabled through `svvy` settings. This applies to pi resources such as extensions, skills, prompt templates, themes, packages, slash commands, hooks, provider adapters, credentials, and execution-policy settings, and to equivalent resources exposed by other coding-agent hosts. This default-off rule applies to imported or host-ambient resources, not to app-owned shipped extensions whose default usage is explicitly defined in product specs and profile settings. The current shipped prompt-only defaults are cx and Git default-loaded for all adopted agent kinds, Web default-loaded for all adopted agent kinds only while `networkAccess` is enabled, and GitHub default-loaded for orchestrators and handler threads while available for workflow task agents. `svvy` preserves plain external instruction files such as discovered `AGENTS.md` and `CLAUDE.md` as visible generated agent context through read-only extension records, but behavior-changing ambient resources must be enabled by category, source, host, workspace, and target agent/profile configuration before they can affect prompts, tools, commands, UI, provider behavior, auth, or execution policy. Enabled callable resources must still appear in the resolved generated API block for the exact actor session or task attempt that may call them.
+Ambient coding-agent resources are default-off unless explicitly enabled through `svvy` settings. This applies to pi resources such as extensions, skills, prompt templates, themes, packages, slash commands, hooks, provider adapters, credentials, and execution-policy settings, and to equivalent resources exposed by other coding-agent hosts. This default-off rule applies to imported or host-ambient resources, not to app-owned builtin extensions whose default usage is explicitly defined in product specs and profile settings. The current builtin prompt-only defaults are cx and Git default-loaded for all adopted agent kinds, Web default-loaded for all adopted agent kinds only while `networkAccess` is enabled, and GitHub default-loaded for orchestrators and handler threads while available for workflow task agents. `svvy` preserves plain external instruction files such as discovered `AGENTS.md` and `CLAUDE.md` as visible generated agent context through read-only extension records, but behavior-changing ambient resources must be enabled by category, source, host, workspace, and target agent/profile configuration before they can affect prompts, tools, commands, UI, provider behavior, auth, or execution policy. Enabled callable resources must still appear in the resolved generated API block for the exact actor session or task attempt that may call them.
 
 Extension env values are app-managed per extension in v1. Secret values are keyed by `(extensionId, envName)`, entered only through user-owned app UI, stored encrypted by the app or OS keychain, injected only into the specific trusted extension runtime invocation that needs them, and never exposed to agents through prompts, generated docs, tool output, logs, artifacts, transcripts, global pi env, global shell env, or `execute_typescript` snippet env. Agent-facing extension inspection may report only declaration metadata and missing/configured readiness. Workspace-scoped extension env values and egress-proxy credential boundaries are not part of v1.
 
-Agents and Extensions are the user-facing source of reusable prompt material and capability composition. Agent profiles contain actor kind, model/reasoning, and extension usage selections. Base actor prompts are shipped instruction-only extensions: `base-common` is default-loaded for all adopted actor kinds, while `base-orchestrator`, `base-handler`, and `base-workflow-task` are default-loaded by the corresponding default agent profile. Extensions contain shipped, user, and external_instruction records with ordered full loaded instruction source files, minimal loading hints, generated previews, and category-specific reset/delete behavior. The ordered full instruction files are an editing convenience; generated actor contexts receive one concatenated loaded instruction block per loaded extension, including loaded base instruction extensions. External instruction records show discovered files such as `AGENTS.md` and `CLAUDE.md` as read-only generated-context inputs with open-external-file controls. New orchestrator sessions, handler threads, and workflow task agents bind to the latest ready generated agent context. Existing surfaces store the generated agent context fingerprint they received and automatically update to the latest ready generated agent context at the next safe boundary when that fingerprint changes.
+Agents and Extensions are the user-facing source of reusable prompt material and capability composition. Agent profiles contain actor kind, model/reasoning, and extension usage selections. Base actor prompts are builtin instruction-only extensions: `base-common` is default-loaded for all adopted actor kinds, while `base-orchestrator`, `base-handler`, and `base-workflow-task` are default-loaded by the corresponding default agent profile. Extensions contain builtin, user, and external_instruction records with ordered full loaded instruction source files, minimal loading hints, generated previews, and category-specific reset/delete behavior. The ordered full instruction files are an editing convenience; generated actor contexts receive one concatenated loaded instruction block per loaded extension, including loaded base instruction extensions. External instruction records show discovered files such as `AGENTS.md` and `CLAUDE.md` as read-only generated-context inputs with open-external-file controls. New orchestrator sessions, handler threads, and workflow task agents bind to the latest ready generated agent context. Existing surfaces store the generated agent context fingerprint they received and automatically update to the latest ready generated agent context at the next safe boundary when that fingerprint changes.
 
 The default actor-specific generated context split is:
 
@@ -272,7 +272,7 @@ run the official CLI through `exec_command`. The normal inspection ladder is:
 cx overview -> cx symbols -> cx definition / cx references -> exec_command with rg/sed/cat/ls/find
 ```
 
-The shipped cx instructions are default-loaded for orchestrators, handler threads, and workflow task
+The builtin cx instructions are default-loaded for orchestrators, handler threads, and workflow task
 agents. If the `cx` binary is missing, `svvy` handles installation through the app-managed trusted
 CLI dependency confirmation flow; agents must not run package-manager install commands for cx.
 
@@ -369,7 +369,7 @@ configure env values, or mutate agent profile defaults.
 
 Prompt-only Web guidance is different from a native Web tool surface.
 
-The shipped Web extension is a default-loaded prompt-only extension that teaches agents to use the
+The builtin Web extension is a default-loaded prompt-only extension that teaches agents to use the
 official TinyFish CLI through ordinary shell commands. It does not add `web_search`, `web_fetch`,
 `svvyx web`, generated Web TypeScript clients, or app-owned Web Provider settings. TinyFish owns CLI
 install, auth, search, fetch, browser-backed research, and command output behavior. `svvy` only owns
@@ -744,7 +744,7 @@ Available extension ids describe reusable product knowledge loaded into actor pr
 
 The current handler objective, active workflow run ids, pending report requests, and latest episode summary are exposed to the handler through `thread_current`. The orchestrator inspects delegated thread rows through `thread_list`, requests handler updates through `thread_request_report`, and reads exact durable episode bodies through `thread_episodes`. Handlers can also read their own durable episodes through `thread_episodes`. These read tools do not include transcripts, workflow summaries, or Smithers internals; handlers use active workflow run ids with `smithers_*` tools when workflow details matter.
 
-Agent profiles describe the provider, model, reasoning level, extension usage selections, and callable policy used by pi-backed product agents. Base role instructions are selected through shipped `base-*` instruction extensions rather than stored as profile-local prompt blobs. The Agents pane is the product-owned profile surface. It appears in the sidebar between Logs and Extensions, and owns orchestrator profiles, the special handler-thread profile, and workflow-agent profiles rather than burying model behavior in general settings.
+Agent profiles describe the provider, model, reasoning level, extension usage selections, and callable policy used by pi-backed product agents. Base role instructions are selected through builtin `base-*` instruction extensions rather than stored as profile-local prompt blobs. The Agents pane is the product-owned profile surface. It appears in the sidebar between Logs and Extensions, and owns orchestrator profiles, the special handler-thread profile, and workflow-agent profiles rather than burying model behavior in general settings.
 
 The app owns these app-wide agent profile settings:
 
@@ -786,7 +786,7 @@ Agents own:
 
 Extensions own:
 
-- shipped, user, and external_instruction categories
+- builtin, user, and external_instruction categories
 - ordered full loaded instruction source files that generate one loaded instruction block
 - minimal available instructions
 - native tool, svvyx, or instructions-only interface
@@ -795,7 +795,7 @@ Extensions own:
 - category-appropriate reset/delete behavior
 - read-only usage views showing which agents use the extension
 
-Artifacts is a shipped `svvyx` extension with generated TypeScript clients. Its model-callable API is
+Artifacts is a builtin `svvyx` extension with generated TypeScript clients. Its model-callable API is
 the `svvyx artifacts ...` command family, with `create`, `inspect`, `list`, `open`, and `delete`
 commands defined in `docs/specs/extension/artifacts.extension.spec.md`.
 
@@ -1071,7 +1071,7 @@ In the adopted delegated model:
 
 - if an orchestrator or handler thread needs clarification, it uses `request_user_input`
 - the default `request_user_input` variant is nonblocking: the agent supplies a recommended/default answer, the tool immediately returns that default, and later user answers are delivered through the owning surface queue with priority over ordinary user messages
-- the user may switch the shipped Request User Input extension into blocking mode; in that variant the same tool waits until the user answers or the five-minute default timer supplies the default answer
+- the user may switch the builtin Request User Input extension into blocking mode; in that variant the same tool waits until the user answers or the five-minute default timer supplies the default answer
 - if a handler thread needs clarification, it asks inside that thread
 - the user's reply goes back to that same thread surface
 - the orchestrator does not need to intermediate that clarification by default

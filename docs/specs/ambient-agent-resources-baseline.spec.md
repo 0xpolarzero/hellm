@@ -140,13 +140,13 @@ External instructions appear in the Extensions pane as read-only records with ca
 
 ```text
 Extensions
-- shipped
+- builtin
 - user
 - external_instruction
 ```
 
-`external_instruction` is its own category. It is not folded into shipped native built-ins, user
-extensions, editable base instructions, or prompt-only shipped extensions.
+`external_instruction` is its own category. It is not folded into builtin native-tool extensions, user
+extensions, editable base instructions, or prompt-only builtin extensions.
 
 Each external instruction row shows:
 
@@ -725,7 +725,7 @@ Resolved `svvy` execution policy:
   in whether approval-boundary requests are resolved by the reviewer model or by a pending user
   approval
 - `full-access` maps to no approval boundary and disabled managed filesystem permissions
-- `networkAccess` defaults to true; when false, outbound network access is restricted and the shipped
+- `networkAccess` defaults to true; when false, outbound network access is restricted and the builtin
   Web extension is disabled through normal extension binding
 - workflow task agents use this same execution policy for task-local shell, patch, network, parent
   `execute_typescript`, and generated loaded-extension client boundaries, scoped to the owning

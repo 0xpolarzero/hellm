@@ -25,7 +25,7 @@ Use these terms consistently:
 - **Project CI**: the dedicated product lane for configuring and running the repository's repeatable confidence checks.
 - **CI lane**: the product projection for Project CI status, configured entries, latest run, check results, and linked workflow artifacts.
 - **CI status surface**: the UI surface or panel that renders the CI lane. It may route user requests into normal handler threads, but it is not a separate setup launcher or runtime.
-- **Project CI extension**: the shipped prompt-only extension loaded by `thread_start` extension overrides or by a handler calling `load_extension({ extensionId: "project-ci" })`.
+- **Project CI extension**: the builtin prompt-only extension loaded by `thread_start` extension overrides or by a handler calling `load_extension({ extensionId: "project-ci" })`.
 - **CI entry**: a normal Smithers runnable saved workflow entry that declares `productKind = "project-ci"`.
 - **CI run**: one `svvy` product projection row for a Smithers workflow run launched from a CI entry.
 - **CI check result**: one structured check inside a CI run, such as typecheck, test, lint, build, integration, or manual check.
@@ -123,7 +123,7 @@ The orchestrator may:
 
 The orchestrator knows only a lightweight routing fact:
 
-- `project-ci` is a handler-available shipped prompt-only extension for Project CI authoring.
+- `project-ci` is a handler-available builtin prompt-only extension for Project CI authoring.
 
 The orchestrator does not load Smithers workflow tools by default.
 

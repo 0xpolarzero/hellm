@@ -13,7 +13,7 @@
 ```json
 {
   "id": "extension-loading",
-  "category": "shipped",
+  "category": "builtin",
   "interface": "native_tool",
   "title": "Extension Loading",
   "description": "Inspect available extensions and load ready available extensions into the current actor context.",

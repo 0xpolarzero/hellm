@@ -5,7 +5,7 @@
 - Date: 2026-06-03
 - Status: accepted prompt-only extension instruction spec
 - Scope:
-  - define the shipped Project CI extension record
+  - define the builtin Project CI extension record
   - separate the prompt-only authoring extension from the broader Project CI lane spec
 
 ## Extension Record
@@ -13,7 +13,7 @@
 ```json
 {
   "id": "project-ci",
-  "category": "shipped",
+  "category": "builtin",
   "interface": "instructions",
   "title": "Project CI",
   "description": "Project CI authoring guidance for defining and maintaining repository confidence-check workflow lanes.",

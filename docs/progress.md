@@ -69,7 +69,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 
 Current product decisions for this section are specified in `docs/specs/extension/web.extension.spec.md`.
 
-- [ ] Expose Web as a shipped `instructions` extension that is default-loaded for orchestrators,
+- [ ] Expose Web as a builtin `instructions` extension that is default-loaded for orchestrators,
   handler threads, and workflow task agents only while `networkAccess` is true, and unavailable with
   no prompt guidance when `networkAccess` is false.
 - [ ] Vendor the TinyFish-owned `use-tinyfish` agent instructions as the Web extension's core prompt content.
@@ -149,7 +149,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 
 ## 7. Project CI Lane
 
-- [x] Model Project CI authoring guidance as the handler-available shipped `project-ci` extension. Commit(s): `2a5dbbe`
+- [x] Model Project CI authoring guidance as the handler-available builtin `project-ci` extension. Commit(s): `2a5dbbe`
 - [x] Use `load_extension({ extensionId: "project-ci" })` for handler-side Project CI authoring guidance and store the resulting generated agent context binding. Commit(s): `2a5dbbe`
 - [x] Extend `thread_start` so the orchestrator can create a handler with `project-ci` loaded through extension overrides. Commit(s): `2a5dbbe`
 - [x] Make Project CI configuration happen organically through normal handler-thread work, with the `project-ci` extension loaded when CI authoring guidance is needed, instead of a setup launcher or CI-specific runtime. Commit(s): `2a5dbbe`
@@ -296,14 +296,14 @@ Current product decisions for this section are specified in `docs/specs/queued-m
 
 Current product decisions for this section are specified in `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/extension_managing.extension.spec.md`, `docs/specs/extension/svvyx-incur-runtime.spec.md`, `docs/specs/structured-session-state.spec.md`, `docs/specs/queued-messages.spec.md`, and `docs/specs/project-ci.spec.md`.
 
-- [x] Define shipped extensions for Shell, Apply Patch, Execute TypeScript, Extension Loading, Extension Managing, cx, Smithers, Web, Git, GitHub, External Instructions, Artifacts, Request User Input, and Project CI with default usage states for each adopted agent family. Commit(s): `673837a`
-- [x] Load base orchestrator, handler, and workflow-task guidance through shipped `base-*` instruction extensions, with orchestrators aware that workflow action normally delegates into handlers, handlers default-loaded with Smithers supervision tools, and workflow task agents keeping Smithers and handler controls unavailable by default. Commit(s): `673837a`
+- [x] Define builtin extensions for Shell, Apply Patch, Execute TypeScript, Extension Loading, Extension Managing, cx, Smithers, Web, Git, GitHub, External Instructions, Artifacts, Request User Input, and Project CI with default usage states for each adopted agent family. Commit(s): `673837a`
+- [x] Load base orchestrator, handler, and workflow-task guidance through builtin `base-*` instruction extensions, with orchestrators aware that workflow action normally delegates into handlers, handlers default-loaded with Smithers supervision tools, and workflow task agents keeping Smithers and handler controls unavailable by default. Commit(s): `673837a`
 - [x] Define available extensions as the on-demand product-knowledge and capability layer for specialized handler work. Commit(s): `2a5dbbe`
 - [x] Render loaded and available extension bindings in surface metadata so users can see when extensions such as `project-ci` are active. Commit(s): `2a5dbbe`
 - [x] Store app-wide agent profiles, extension usage selections, generated agent-context aggregate references, extension context fingerprints, and app-global extension activation metadata. Commit(s): `118fd39c9f`
-- [x] Add an `Extensions` sidebar surface below `Agents`, with shipped, user, and external-instruction records that manage reusable prompt material and capabilities rather than exposing one raw system-prompt textarea. Commit(s): `118fd39c9f`
-- [ ] Represent common, orchestrator, handler-thread, and workflow task-agent base prompts as shipped instruction-only extensions (`base-common`, `base-orchestrator`, `base-handler`, and `base-workflow-task`) with normal Extensions-pane editing, reset, generated-context preview, fingerprinting, and profile usage-state controls.
-- [x] Seed shipped extension records for base actor instructions, code navigation, handler-only Smithers supervision, workflow task boundaries, Web, Git, GitHub, Artifacts, Request User Input, and Project CI, with per-agent usage states, non-deletable shipped rows, app-global scope, and extension reset behavior. Commit(s): `118fd39c9f`
+- [x] Add an `Extensions` sidebar surface below `Agents`, with builtin, user, and external-instruction records that manage reusable prompt material and capabilities rather than exposing one raw system-prompt textarea. Commit(s): `118fd39c9f`
+- [ ] Represent common, orchestrator, handler-thread, and workflow task-agent base prompts as builtin instruction-only extensions (`base-common`, `base-orchestrator`, `base-handler`, and `base-workflow-task`) with normal Extensions-pane editing, reset, generated-context preview, fingerprinting, and profile usage-state controls.
+- [x] Seed builtin extension records for base actor instructions, code navigation, handler-only Smithers supervision, workflow task boundaries, Web, Git, GitHub, Artifacts, Request User Input, and Project CI, with per-agent usage states, non-deletable builtin rows, app-global scope, and extension reset behavior. Commit(s): `118fd39c9f`
 - [x] Render generated agent-context previews for orchestrator, handler, and workflow task-agent actors, linking loaded and available extension rows back to their extension records and showing generated prompt, `svvyx` guidance, native schemas, and TypeScript declaration previews. Commit(s): `118fd39c9f`
 - [ ] Implement the stable app-owned `svvyx <extension-id> ...` dispatcher that resolves extension current builds, imports default-exported Incur CLIs, invokes `cli.serve` with invocation-local explicit env, records command facts, and treats extension usage state as generated guidance/client visibility rather than shell impossibility.
 - [ ] Store user-named Extension Managing snapshots plus durable generated agent context bindings and agent context fingerprints so historical sessions, handler threads, and workflow task-agent attempts remain inspectable after app restart.

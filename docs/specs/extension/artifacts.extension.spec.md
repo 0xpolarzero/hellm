@@ -5,7 +5,7 @@
 - Date: 2026-06-04
 - Status: resolved extension API spec
 - Scope:
-  - define Artifacts as a shipped Incur-backed `svvyx` extension
+  - define Artifacts as a builtin Incur-backed `svvyx` extension
   - define the complete v1 `svvyx artifacts ...` command API
   - define the generated `execute_typescript` client surface for the extension
   - define file-backed storage, product-state linkage, preview, deletion, and settings rules
@@ -19,7 +19,7 @@ contracts.
 ```json
 {
   "id": "artifacts",
-  "category": "shipped",
+  "category": "builtin",
   "interface": "svvyx",
   "title": "Artifacts",
   "description": "Create, inspect, open, list, and delete durable byproduct and evidence files.",

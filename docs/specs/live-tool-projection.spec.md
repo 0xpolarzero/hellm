@@ -480,7 +480,7 @@ the relevant Extension Managing command path.
 
 ## Request User Input Projection
 
-`request_user_input` is the shipped native user-clarification surface. Its concrete API is defined
+`request_user_input` is the builtin native user-clarification surface. Its concrete API is defined
 in `docs/specs/extension/request_user_input.extension.spec.md`.
 
 Projection behavior:

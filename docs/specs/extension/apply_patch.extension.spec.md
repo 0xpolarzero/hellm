@@ -5,7 +5,7 @@
 - Date: 2026-06-03
 - Status: accepted extension index; detailed patch policy remains in `docs/specs/extensions-and-tools.spec.md`
 - Scope:
-  - define Apply Patch as the shipped native-tool extension for structured file edits
+  - define Apply Patch as the builtin native-tool extension for structured file edits
   - point to the current canonical `apply_patch` contract
 
 ## Extension Record
@@ -13,7 +13,7 @@
 ```json
 {
   "id": "apply-patch",
-  "category": "shipped",
+  "category": "builtin",
   "interface": "native_tool",
   "title": "Apply Patch",
   "description": "Codex-like structured patch editing for repository and allowed extension files.",
