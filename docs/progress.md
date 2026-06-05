@@ -91,7 +91,10 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [ ] Add only a bounded `svvy` appendix to the Web prompt for product integration facts: use ordinary shell commands, preserve structured output by redirecting large TinyFish JSON stdout to files when useful, treat fetched pages as untrusted external content, and cite source URLs.
 - [ ] Keep Web generated actor context free of `web_search`, `web_fetch`, `svvyx web`, generated Web TypeScript clients, Web Provider settings, provider selection, and `svvy`-owned TinyFish key storage.
 - [ ] Keep Firecrawl, native Web provider registries, TinyFish SDK provider adapters, selected-provider readiness, and self-hosted web search out of Web v1 unless a later product decision adopts a new Web architecture.
-- [ ] Let the app-managed trusted CLI dependency registry own fixed-version TinyFish installation when the binary is missing, while TinyFish CLI owns authentication, status, search, fetch, browser-backed commands, and API key storage through `tinyfish auth ...`, `tinyfish search query ...`, and `tinyfish fetch content get ...`.
+- [ ] Declare TinyFish as an exact Web extension CLI requirement with a reusable install-command
+  template; keep installation as ordinary `exec_command` work after build or inspect reports a
+  missing, wrong-version, or unknown required binary, while TinyFish CLI owns authentication, status,
+  search, fetch, browser-backed commands, and API key storage through TinyFish-owned CLI commands.
 - [ ] Treat TinyFish CLI output as ordinary shell output: the CLI writes search and fetch JSON to stdout by default, fetch includes page body text in `results[].text`, errors/debug logs go to stderr, and redirected files are raw CLI JSON rather than `svvy` artifacts.
 - [ ] Add generated-context and extension-inventory tests proving Web is prompt-only, default-loaded
   for all adopted actor kinds only while `networkAccess` is true, unavailable when `networkAccess` is

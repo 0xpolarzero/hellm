@@ -574,7 +574,7 @@ Extension Managing commands classify as:
 | `svvyx extensions inspect` | Final structured result over `exec_command`. |
 | `svvyx extensions create` | Final structured result plus observed workspace or extension-source changes. |
 | `svvyx extensions instructions add/rename/remove/reorder` | Final structured result plus observed extension-source changes. |
-| `svvyx extensions build` | Runtime progress for validation, dependency readiness, install approval when required, build, activation, and final build facts. |
+| `svvyx extensions build` | Runtime progress for validation, package dependency readiness and approval when required, CLI requirement checks, generated instruction output, build, activation, and final build facts. Missing or wrong-version CLI requirements settle as ordinary build errors rather than a special install approval state. |
 | `svvyx extensions set-usage` | Final structured result. |
 | `svvyx extensions reset` | Runtime progress when it triggers build or dependency work; otherwise final structured result. |
 | `svvyx extensions delete` | Final structured result. |

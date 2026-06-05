@@ -2,13 +2,13 @@
 
 ## Status
 
-- Date: 2026-06-03
+- Date: 2026-06-05
 - Status: authoritative product spec
 - Scope of this document:
   - define the extension and tool architecture for `svvy`
   - define the relationship between Agents, Extensions, actors, profiles, native tools, Incur CLIs, `svvyx`, `execute_typescript`, shell policy, dependencies, and secrets
-  - define the app-managed trusted CLI dependency registry used by builtin prompt-only CLI
-    extensions
+  - define extension-declared CLI requirements used by prompt-only CLI extensions, instruction
+    generation, and extension builds
   - define the rejected and deferred ideas that must not be folded into this feature without a new product decision
 
 This document is the source of truth for the resolved Extensions and native tool direction.
@@ -255,7 +255,7 @@ Example `base-orchestrator` manifest:
   "typescriptApiEnabled": false,
   "env": [],
   "dependencies": [],
-  "trustedCliDependencies": []
+  "cliRequirements": []
 }
 ```
 
@@ -404,7 +404,8 @@ Each extension has:
 - optional TypeScript API enablement
 - generated TypeScript API overview when TypeScript API is enabled
 - dependency and env requirements when relevant
-- trusted CLI dependency references when the extension teaches a direct external CLI
+- CLI requirement declarations when the extension teaches or generates instructions for a direct
+  external CLI
 - readonly usage view showing which agents use it and whether each usage is default-loaded or
   available
 - reset behavior when it is builtin or when it is an external instruction usage setting
@@ -647,14 +648,14 @@ type ExtensionPathsForLoadedExtension = {
 type ExtensionInstructionFile = {
   name: string;
   path: string;
+  generated?: {
+    script: string;
+    output: string;
+  };
 };
 
 type ExtensionRequirements = {
-  externalBinaries: Array<{
-    name: string;
-    status: "available" | "missing" | "unknown";
-  }>;
-  trustedCliDependencies: TrustedCliDependencyRequirement[];
+  cliRequirements: CliRequirementStatus[];
   env: Array<{
     name: string;
     required: boolean;
@@ -666,23 +667,16 @@ type ExtensionRequirements = {
   trustedDependencies: ExtensionDependencyRequirement[];
 };
 
-type TrustedCliDependencyRequirement = {
+type CliRequirementStatus = {
   id: string;
   binary: string;
-  status: "available" | "missing" | "unknown";
+  required: boolean;
+  version: string | null;
+  status: "available" | "missing" | "wrong_version" | "unknown";
   detectedVersion: string | null;
-  install: {
-    package: string;
-    version: string;
-    source:
-      | "cargo"
-      | "npm"
-      | "github-release"
-      | "git-scm-release"
-      | "bundled_app_resource";
-    approval: "not_required_when_user_binary_exists" | "needs_user_confirmation" | "approved";
-    install: "installed" | "not_installed" | "unknown";
-  };
+  path: string | null;
+  versionCommand: string | null;
+  installCommand: string | null;
 };
 
 type ExtensionDependencyRequirement = {
@@ -717,8 +711,9 @@ type ExtensionIssue = {
     | "BUILD_FAILED"
     | "NO_CURRENT_BUILD"
     | "CURRENT_BUILD_INVALID"
-    | "EXTERNAL_BINARY_MISSING"
-    | "EXTERNAL_BINARY_UNKNOWN"
+    | "CLI_MISSING"
+    | "CLI_WRONG_VERSION"
+    | "CLI_STATUS_UNKNOWN"
     | "EXTERNAL_CLI_AUTH_MISSING"
     | "EXTERNAL_CLI_AUTH_INSUFFICIENT"
     | "EXTERNAL_CLI_AUTH_UNKNOWN";
@@ -729,7 +724,7 @@ type ExtensionIssue = {
 `currentBuild.status` reports whether the current generated build for the extension is readable and
 structurally valid, not whether all runtime requirements are satisfied. `ready` is the final
 agent-actionable answer after combining build state, dependency/install state, env status, required
-external binary status, known blocking external CLI auth status, and the current actor binding.
+CLI status, known blocking external CLI auth status, and the current actor binding.
 `lastBuild` may be omitted only when the implementation has no build attempt record yet; if present,
 it must be coarse status only and must not include timestamps or build ids.
 
@@ -747,60 +742,159 @@ agent/profile usage state belongs to Extension Managing `inspect`.
 agent-actionable messages. Missing required env values must direct the user to configure values in
 the app UI; they must not ask the user to paste a secret into chat.
 
-`externalBinaries` reports only whether declared local command-line binaries are known to be present.
-It must not encode account authentication, OAuth state, token scopes, remote service reachability, or
-last-check timestamps. If an extension depends on a local CLI account state, such as GitHub CLI
-authentication for `gh`, that readiness is represented only through coarse `state.ready` and
-`state.issues` values when the app already knows the status. Do not add an `externalAuth`,
-`authStatus`, token-scope, account-name, username, or host credential field to the normal
-agent-facing requirements shape.
+### CLI Requirements
 
-`trustedCliDependencies` reports app-managed trusted CLI dependencies referenced by the extension.
-This is separate from extension build dependencies and from Bun's `trustedDependencies` package
-field. A trusted CLI dependency is a concrete binary that an extension teaches agents to use through
-ordinary shell commands. Each record must have an exact package, exact version, source kind, and
-binary name. Version ranges, floating tags such as `latest`, branch names, mutable URLs, and
-unpinned package-manager installs are not valid trusted CLI dependency records.
+Extensions may declare CLI requirements in their manifest when their instructions or runtime depend
+on a command-line binary that is expected to exist in the shell environment used by
+`exec_command`.
 
-Trusted CLI dependency status is local and bounded:
+Manifest shape:
 
-- `status` reports whether the binary is available from the actor's command environment or from the
-  app-managed install location.
-- `detectedVersion` may be `null` when version detection is unavailable or too expensive.
-- a user-owned binary on PATH is usable even when its version differs from the app-managed install
-  version, unless a separate product policy later requires stricter validation for that dependency
-- when the binary is missing, `install` reports whether the exact app-managed dependency is already
-  installed or needs user confirmation
-- installing a trusted CLI dependency is user-confirmed app behavior, not an agent shell task
+```ts
+type CliRequirementDeclaration = {
+  id: string;
+  binary: string;
+  required: boolean;
+  version?: string;
+  versionCommand?: string;
+  installCommand?: string;
+};
+```
 
-For prompt-only direct CLI extensions, missing trusted CLI dependencies do not make the extension
-instructions unavailable. The generated prompt should still include the extension's instructions so
-the agent understands the intended capability. The app should surface missing trusted CLI dependency
-attention through its normal confirmation UI. Agents should not be instructed to run package-manager,
-curl, Homebrew, Cargo, npm, or GitHub release install commands for builtin trusted CLI dependencies.
-If a command fails because the binary is missing, the agent should report that the app-managed
-trusted CLI dependency is unavailable and ask the user to enable or install it through the app.
+Rules:
 
-The builtin trusted CLI dependency registry is:
+- `id` is stable within the extension and must match `/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/`.
+- `binary` is the command name agents are expected to run, such as `git`, `gh`, `cx`, `tinyfish`, or
+  `smithers`.
+- `required: true` means `svvyx extensions build <id> --json` fails when the binary is missing or
+  when `version` is set and the detected version does not match exactly.
+- `required: false` reports status through inspect but does not fail build.
+- `version` is optional. When present, it is exact. It is not a range, minimum version, tag, or
+  "latest" request.
+- `versionCommand` is optional. When present, readiness checks may run it to detect the installed
+  version. The command must be a normal shell command that does not install packages, mutate auth
+  state, rewrite files, or contact remote services only to improve a label.
+- `installCommand` is optional. It may contain `{{version}}`, which expands to the declared exact
+  `version`. If `version` is omitted, `installCommand` must not contain `{{version}}`.
+- `installCommand` is never run by `inspect`, `startup refresh`, `load_extension`, or
+  `svvyx extensions build`. It is returned so an agent or UI can deliberately run it through the
+  normal `exec_command` path when the user wants the CLI installed.
+- manifest `installCommand` is a reusable template. Inspect and build-error output return a
+  concrete `installCommand` with the current declared version substituted, so an agent can pass the
+  returned command directly to `exec_command`.
+- installing or upgrading a CLI requirement is not an Extension Managing product-state lifecycle
+  command. It is an ordinary shell command and uses the normal execution-policy, sandbox, network,
+  and approval-mode flow.
 
-| Id | Binary | Package | Version | Source | Used by |
-| --- | --- | --- | --- | --- | --- |
-| `cx` | `cx` | `cx-cli` | `0.7.1` | `cargo` | cx prompt-only extension |
-| `tinyfish` | `tinyfish` | `@tiny-fish/cli` | `0.1.6` | `npm` | Web prompt-only extension |
-| `git` | `git` | `git` | `2.54.0` | `git-scm-release` | Git and GitHub prompt-only extensions |
-| `gh` | `gh` | `gh` | `2.93.0` | `github-release` | GitHub prompt-only extension |
+Build behavior:
 
-Registry entries are app-owned release decisions. Updating any `version`, `source`, package id, or
-binary name is a product change that must update this table, the owning extension spec, generated
-extension metadata tests, and any packaged installer logic together. The app must never silently
-substitute a newer trusted CLI dependency because a package manager reports a newer release.
+- build checks every declared CLI requirement before generated instruction scripts run
+- build fails with a normal JSON error when a required CLI is missing
+- build fails with a normal JSON error when a required CLI declares `version` and the detected
+  version does not match exactly
+- build fails with a normal JSON error when required CLI presence or exact version status cannot be
+  determined
+- build does not create a dependency approval request for missing, wrong-version, or unknown required
+  CLI requirements
+- build does not run the `installCommand`
+- after the user or agent installs the CLI through `exec_command`, the agent reruns
+  `svvyx extensions build <id> --json`
 
-For prompt-only instruction extensions, declared external binaries are advisory unless the extension
-explicitly says a binary is required before instructions can load. The builtin Git and GitHub
-extensions must still load their prompt guidance when `git`, `gh`, or `gh` auth is unknown. Unknown
-GitHub CLI auth must not make the prompt-only GitHub extension not ready. Known missing or
-insufficient `gh` auth may be shown as an issue when the app already knows it, but the agent-facing
-GitHub instructions still trigger auth guidance only after an actual `gh` command fails.
+### Generated Instruction Files
+
+Extensions may declare generated full-instruction files when instruction content must be derived
+from an installed CLI or from a versioned upstream documentation bundle.
+
+Manifest shape:
+
+```ts
+type GeneratedInstructionDeclaration = {
+  output: string;
+  script: string;
+  versionFromCliRequirement?: string;
+};
+```
+
+Rules:
+
+- `output` is a path relative to the extension source root and must be under
+  `instructions/full/`.
+- generated instruction outputs are part of the ordered full-instruction file set, using the same
+  lexicographic order as hand-authored Markdown files.
+- `script` is a path relative to the extension source root and must point at an editable script under
+  `scripts/`.
+- `versionFromCliRequirement` is optional. When present, it names a CLI requirement whose exact
+  `version` is passed to the script.
+- if `versionFromCliRequirement` is present and that CLI requirement has no `version`, build fails.
+- build runs generated instruction scripts after CLI requirement checks and before context/build
+  activation.
+- build invokes generated instruction scripts as:
+
+```text
+bun <script> --output <absolute-output-path> [--version <exact-version>]
+```
+
+- the script must write the generated Markdown file at `--output`; stdout is diagnostic only and is
+  captured as build output
+- generated instruction output files are read-only to agents even though they live under the
+  extension source root; agents edit the script or manifest, then rerun build
+- inspect reports generated metadata inline on the corresponding instruction file:
+
+```json
+{
+  "name": "010-smithers-full.generated.md",
+  "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md",
+  "generated": {
+    "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-full.ts",
+    "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md"
+  }
+}
+```
+
+There is no `svvyx extensions instructions generate` command. Generation is part of
+`svvyx extensions build`.
+
+`cliRequirements` reports the concrete command-line binaries declared by an extension. A CLI
+requirement is a file-backed manifest declaration, not an app-managed package registry entry. It can
+declare a required binary, an optional exact version, an optional version-check command, and an
+optional install-command template. The app checks only the command environment used by `exec_command`
+and reports status. It does not install, rewrite PATH, run auth flows, or mutate the user's shell
+during inspect/startup/readiness checks.
+
+CLI requirement status is local and bounded:
+
+- `status: "available"` means the binary was found and, when `version` is set, the detected version
+  satisfies that exact version.
+- `status: "missing"` means the binary was not found.
+- `status: "wrong_version"` means the binary was found but `version` is set and the detected version
+  does not match exactly.
+- `status: "unknown"` means the app could not determine presence or version without doing work that
+  readiness checks are not allowed to do.
+- `version` is `null` when the extension intentionally accepts whatever installed binary is on PATH.
+  This is the default for generic CLIs such as Git and GitHub CLI where `svvy` does not ship
+  version-specific agent instructions.
+- when `version` is not `null`, that version is exact. It is both the required runtime CLI version
+  and the version used by any generated instruction script for that extension.
+- `detectedVersion` may be `null` when no version command is declared, the binary is missing, the
+  version check fails, or parsing is unsupported.
+- `installCommand` in inspect and build-error output is the concrete command for the current
+  declared version, not a command already approved by `svvy`. The manifest stores the reusable
+  template; output resolves `{{version}}` before returning it. If `version` is `null`, the manifest
+  install command must not contain `{{version}}`.
+
+For prompt-only direct CLI extensions, missing CLI requirements do not make the extension
+instructions disappear from generated context. The generated prompt should still include the
+extension's instructions so the agent understands the intended capability. If a command fails because
+the binary is missing, or if `inspect`/`build` reports a missing or wrong-version CLI requirement,
+the agent may run the returned concrete install command with `exec_command` when that is appropriate
+for the user's request. That install is an ordinary shell command and uses the normal execution
+policy, sandbox, network, and approval-mode flow. There is no separate `cli install` command, no
+app-managed CLI install lifecycle, and no durable dependency approval request for CLI requirements.
+
+For prompt-only instruction extensions, unknown `git`, `gh`, or `gh` auth status is advisory and
+must not block generated prompt loading. Known missing or insufficient CLI auth may be shown as an
+issue when the app already knows it, but the agent-facing GitHub instructions still trigger auth
+guidance only after an actual `gh` command fails.
 Use `EXTERNAL_CLI_AUTH_UNKNOWN` only when auth uncertainty blocks a concrete extension runtime
 invocation; do not use it to block prompt-only GitHub guidance.
 
@@ -881,10 +975,9 @@ Example:
         "buildCurrent": "/Users/example/.config/svvy/extensions/builds/extensions/linear/current"
       },
       "requirements": {
-        "externalBinaries": [],
+        "cliRequirements": [],
         "env": [],
         "dependencies": [],
-        "trustedCliDependencies": [],
         "trustedDependencies": []
       },
       "state": {
@@ -918,10 +1011,9 @@ Example:
         "externalInstructionFile": null
       },
       "requirements": {
-        "externalBinaries": [],
+        "cliRequirements": [],
         "env": [],
         "dependencies": [],
-        "trustedCliDependencies": [],
         "trustedDependencies": []
       },
       "state": {
@@ -1043,11 +1135,12 @@ A successful build atomically replaces the extension's current build. The curren
 
 - manifest
 - full and minimal instructions
+- generated instruction metadata and generated Markdown output when declared
 - CLI entrypoint or native runtime binding metadata
 - generated TypeScript command types when enabled
 - dependency graph metadata
 - env requirements
-- external binary requirements
+- CLI requirements
 - internal content hashes stored in product state or non-agent-readable build metadata
 
 Env requirements in build output are declaration metadata and readiness status only. Current build
@@ -1057,6 +1150,12 @@ identifiers, value timestamps, extension context fingerprints, generated agent c
 aggregate cache keys, build ids, build timestamps, install timestamps, or internal content hashes.
 Internal hashes are activation/cache state only; they must not be written into agent-readable
 build-current files, used as secret fingerprints, or displayed as env status.
+
+Build runs generated instruction scripts after required CLI checks pass and before staged build
+activation. Generated instruction script output is build output, not hand-authored source. If a
+generated instruction script fails, does not write its declared output file, writes outside its
+declared output, or writes non-Markdown content, the build fails and the current build remains
+unchanged.
 
 Builds write into `builds/extensions/<id>/staging/<build-run-id>/` while they are running. After a
 build validates successfully, `svvy` atomically replaces `builds/extensions/<id>/current/` with that
@@ -1104,16 +1203,22 @@ Directory layout:
       instructions/
         full/
           010-overview.md
-          020-domain-guide.md
+          020-generated.generated.md
+          030-domain-guide.md
         minimal.md
+      scripts/
+        generate-docs.ts
       source/
     builtin-overlays/<extension-id>/
       manifest.json
       instructions/
         full/
           010-overview.md
-          020-domain-guide.md
+          020-generated.generated.md
+          030-domain-guide.md
         minimal.md
+      scripts/
+        generate-docs.ts
       source/
   generated/
     extensions/<extension-id>/
@@ -1145,8 +1250,13 @@ Ownership:
   description, instructions, and optional editable extension source.
 - `instructions/full/*.md` contains ordered full loaded instruction source files. The generated
   actor prompt receives their concatenated content as one loaded extension instruction block.
+- generated instruction outputs also live under `instructions/full/` so their final ordering is
+  visible in the same file list, but they are read-only to agents; agents edit their associated
+  scripts or manifest declarations and rerun `svvyx extensions build`
 - `instructions/minimal.md` contains the single minimal loading hint used while the extension is
   available but not loaded.
+- `scripts/` contains editable extension-owned helper scripts, including generated-instruction
+  scripts.
 - `source/` exists only for extensions with editable executable source; prompt-only extensions omit
   it or return `source: null` from `inspect`.
 - builtin defaults live in packaged app resources and are read-only.
@@ -1166,10 +1276,11 @@ Ownership:
 - `snapshots/` stores local-only user-named extension snapshots; secret payloads or local keychain
   references are kept in non-agent-readable app secret storage, not as agent-inspectable files.
 
-Generated files, build outputs, `package/bun.lock`, `node_modules`, trash, and snapshots are
-separated from editable source. Agents may inspect those paths for traceability, but they are not
-editing targets. Agents may edit extension source files, instruction files, manifest files, and the
-shared extension `package/package.json` through the normal shell plus `apply_patch` path.
+Generated files, generated instruction outputs, build outputs, `package/bun.lock`, `node_modules`,
+trash, and snapshots are separated from editable source. Agents may inspect those paths for
+traceability, but they are not editing targets. Agents may edit extension source files, hand-authored
+instruction files, generator scripts, manifest files, and the shared extension `package/package.json`
+through the normal shell plus `apply_patch` path.
 
 Native runtime implementation, generated TypeScript declarations, internal native tool schemas, and
 app-owned bridge code for builtin extensions are read-only. A builtin extension can still be
@@ -1702,8 +1813,12 @@ Example:
     "instructions": "Full loaded Smithers instructions...",
     "instructionFiles": [
       {
-        "name": "010-smithers.md",
-        "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers.md"
+        "name": "010-smithers-full.generated.md",
+        "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md",
+        "generated": {
+          "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-full.ts",
+          "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md"
+        }
       }
     ],
     "paths": {
@@ -1711,8 +1826,12 @@ Example:
       "manifest": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/manifest.json",
       "instructionsFull": [
         {
-          "name": "010-smithers.md",
-          "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers.md"
+          "name": "010-smithers-full.generated.md",
+          "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md",
+          "generated": {
+            "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-full.ts",
+            "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md"
+          }
         }
       ],
       "instructionsFullDir": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full",
@@ -1726,10 +1845,21 @@ Example:
       "buildCurrent": null
     },
     "requirements": {
-      "externalBinaries": [],
+      "cliRequirements": [
+        {
+          "id": "smithers-orchestrator",
+          "binary": "smithers",
+          "required": true,
+          "version": "0.22.0",
+          "status": "available",
+          "detectedVersion": "0.22.0",
+          "path": "/opt/homebrew/bin/smithers",
+          "versionCommand": "smithers --version",
+          "installCommand": "npm install -g smithers-orchestrator@0.22.0"
+        }
+      ],
       "env": [],
       "dependencies": [],
-      "trustedCliDependencies": [],
       "trustedDependencies": []
     },
     "state": {
@@ -1761,6 +1891,9 @@ type LoadExtensionErrorResult = {
       | "EXTENSION_ENV_MISSING"
       | "DEPENDENCY_APPROVAL_REQUIRED"
       | "DEPENDENCY_MISSING"
+      | "CLI_MISSING"
+      | "CLI_WRONG_VERSION"
+      | "CLI_STATUS_UNKNOWN"
       | "BUILD_REQUIRED"
       | "BUILD_FAILED"
       | "NO_CURRENT_BUILD"
@@ -1773,10 +1906,10 @@ type LoadExtensionErrorResult = {
 };
 ```
 
-If dependency approval, dependency install, build, missing required env, or validation would be
-needed before runtime use, `load_extension` returns `ok: false`. It must not create dependency
-approval requests, run install, run build, mutate the actor binding, or expose partial loaded
-guidance.
+If dependency approval, dependency install, build, missing required env, missing, wrong-version, or
+unknown required CLI requirements, or validation would be needed before runtime use, `load_extension`
+returns `ok: false`. It must not create dependency approval requests, run CLI install commands, run
+package installs, run build, mutate the actor binding, or expose partial loaded guidance.
 
 A missing required env value is not an approval request and cannot be resolved by the agent. The
 native load result must name only the missing env declarations and direct the user to configure them
@@ -2211,12 +2344,15 @@ Policy:
 - editable extension source paths returned by `svvyx extensions inspect <id> --json` are explicit
   writable roots only under `~/.config/svvy/extensions/sources/user/<id>/` and
   `~/.config/svvy/extensions/sources/builtin-overlays/<id>/`
+- within those source roots, generated instruction output files declared by the manifest are
+  read-only subpaths even though they live under `instructions/full/`; agents edit the associated
+  script or manifest declaration and rerun build
 - the exact shared dependency request file returned as `packageJson` by
   `svvyx extensions inspect <id> --json` is an explicit writable file when an agent or user needs
   to add, remove, or change a direct dependency or trusted dependency request
-- generated extension outputs, aggregate cache blobs, build `current/` and `staging/` directories,
-  `package/bun.lock`, `package/node_modules/`, trash, snapshots, and packaged builtin defaults are
-  not editable roots
+- generated extension outputs, generated instruction outputs, aggregate cache blobs, build
+  `current/` and `staging/` directories, `package/bun.lock`, `package/node_modules/`, trash,
+  snapshots, and packaged builtin defaults are not editable roots
 - approval-required when a patch would write outside the active session workspace or explicit writable
   roots; the active approval mode decides whether `auto_review` or the user reviews the request
 - rejected when the active policy forbids the required write escalation
@@ -2262,10 +2398,19 @@ The resolved policy direction is Codex-style execution policy:
 - runtime-enforced approval decisions before or after sandbox denial
 - no separate `svvyx` approval mechanism
 - no blanket review of every shell command
+- an optional package release-age policy for package-manager install commands, used only to classify
+  or deny risky install commands and not to maintain an app-owned package registry
 
 The model never owns approval enforcement. The model calls `exec_command`, `apply_patch`, or another
 tool. The runtime classifies the action, blocks or asks when needed, runs allowed commands in the
 selected sandbox, and retries only after an approved escalation when policy allows it.
+
+When configured, package release-age policy applies to commands that install or upgrade packages from
+package registries, such as npm, Cargo, Homebrew, or equivalent sources. The policy may require a
+minimum age since package publication or release before an install command can be approved without
+explicit user instruction to bypass it. The normal command classifier should identify obvious
+attempts to disable, bypass, or work around that policy, such as using command flags, alternate
+package managers, direct tarball URLs, or wrapper scripts only to avoid the age check.
 
 ### Codex Reference Facts
 
@@ -2641,6 +2786,10 @@ Reviewer instruction posture copies Codex Guardian's policy shape:
   injection requires denial
 - allow high-risk actions only when authorization and scope satisfy tenant policy
 - deny critical-risk actions and tenant absolute-deny categories
+- for package install or upgrade commands, deny any action that disables, bypasses, weakens, or works
+  around the configured minimum package release-age policy unless the user explicitly instructed the
+  agent to perform that exact bypass; agent-authored claims of urgency, dependency failure, or
+  convenience are not enough to approve a release-age bypass
 
 Reviewer output is strict JSON:
 
@@ -3579,36 +3728,16 @@ objective explicitly requires GitHub issues, pull requests, reviews, Actions, or
 GitHub remains available, not unavailable, in the default workflow task-agent profile so a task
 whose contract explicitly names GitHub can request it through the normal extension-loading path.
 
-Git and GitHub also participate in the app-managed trusted CLI dependency registry. The builtin
-records are:
-
-```ts
-const gitTrustedCliDependency = {
-  id: "git",
-  binary: "git",
-  package: "git",
-  version: "2.54.0",
-  source: "git-scm-release",
-  upstream: "https://git-scm.com/",
-};
-
-const ghTrustedCliDependency = {
-  id: "gh",
-  binary: "gh",
-  package: "gh",
-  version: "2.93.0",
-  source: "github-release",
-  upstream: "https://github.com/cli/cli",
-};
-```
-
-The same rule applies to every trusted CLI dependency: if the user already has the binary, use it;
-if the binary is missing, the app may offer to install exactly the pinned version through the normal
-confirmation UI; agents do not receive install commands.
+Git and GitHub declare unversioned CLI requirements. `svvy` checks whether `git` and `gh` appear to
+be available in the shell command environment and reports that status in inspect/readiness output,
+but it does not pin a Git or GitHub CLI version and does not ship version-specific Git/GitHub
+instructions. Missing binaries are handled as ordinary CLI requirement issues. If an extension
+declares an install command for one of these CLIs in the future, an agent runs that command through
+`exec_command` and the normal approval flow.
 
 ### Git Extension
 
-Extension metadata:
+Inspect/readiness metadata excerpt:
 
 ```json
 {
@@ -3619,28 +3748,28 @@ Extension metadata:
   "description": "Conservative git CLI guidance for repository inspection, dirty worktrees, staging, commits, branches, and destructive-command safety.",
   "typescriptApiEnabled": false,
   "requirements": {
-    "externalBinaries": [{ "name": "git", "status": "unknown" }],
-    "env": [],
-    "dependencies": [],
-    "trustedCliDependencies": [
+    "cliRequirements": [
       {
         "id": "git",
         "binary": "git",
+        "required": true,
+        "version": null,
         "status": "unknown",
         "detectedVersion": null,
-        "install": {
-          "package": "git",
-          "version": "2.54.0",
-          "source": "git-scm-release",
-          "approval": "not_required_when_user_binary_exists",
-          "install": "not_installed"
-        }
+        "path": null,
+        "versionCommand": "git --version",
+        "installCommand": null
       }
     ],
+    "env": [],
+    "dependencies": [],
     "trustedDependencies": []
   }
 }
 ```
+
+This example is an inspect/readiness shape. In manifest files, `cliRequirements` is a top-level
+declaration; `requirements.cliRequirements` is the status shape returned by inspect/readiness APIs.
 
 Default usage:
 
@@ -3712,7 +3841,7 @@ tools.
 
 ### GitHub Extension
 
-Extension metadata:
+Inspect/readiness metadata excerpt:
 
 ```json
 {
@@ -3723,44 +3852,39 @@ Extension metadata:
   "description": "Conservative GitHub CLI guidance for issues, pull requests, review comments, Actions checks, publishing, and PR wrap-up.",
   "typescriptApiEnabled": false,
   "requirements": {
-    "externalBinaries": [
-      { "name": "git", "status": "unknown" },
-      { "name": "gh", "status": "unknown" }
-    ],
-    "env": [],
-    "dependencies": [],
-    "trustedCliDependencies": [
+    "cliRequirements": [
       {
         "id": "git",
         "binary": "git",
+        "required": true,
+        "version": null,
         "status": "unknown",
         "detectedVersion": null,
-        "install": {
-          "package": "git",
-          "version": "2.54.0",
-          "source": "git-scm-release",
-          "approval": "not_required_when_user_binary_exists",
-          "install": "not_installed"
-        }
+        "path": null,
+        "versionCommand": "git --version",
+        "installCommand": null
       },
       {
         "id": "gh",
         "binary": "gh",
+        "required": true,
+        "version": null,
         "status": "unknown",
         "detectedVersion": null,
-        "install": {
-          "package": "gh",
-          "version": "2.93.0",
-          "source": "github-release",
-          "approval": "not_required_when_user_binary_exists",
-          "install": "not_installed"
-        }
+        "path": null,
+        "versionCommand": "gh --version",
+        "installCommand": null
       }
     ],
+    "env": [],
+    "dependencies": [],
     "trustedDependencies": []
   }
 }
 ```
+
+This example is an inspect/readiness shape. In manifest files, `cliRequirements` is a top-level
+declaration; `requirements.cliRequirements` is the status shape returned by inspect/readiness APIs.
 
 Default usage:
 
@@ -3781,8 +3905,8 @@ workflows. Do not create GitHub-specific wrapper tools by default.
 Setup and auth:
 - Use `gh` directly when the task requires GitHub CLI behavior.
 - Do not run preflight availability or auth checks before ordinary `gh` use.
-- If a `gh` command fails because `gh` is missing, report that the app-managed trusted CLI
-  dependency is unavailable and ask the user to enable or install it through the app.
+- If a `gh` command fails because `gh` is missing, report that the GitHub CLI is unavailable and use
+  Extension Managing inspection to find any returned install command before suggesting an install.
 - If a `gh` command fails because authentication or scopes are missing, ask the user to run
   `gh auth login` and retry only after they confirm.
 
@@ -3865,7 +3989,7 @@ read-only external inputs.
 
 The Git and GitHub extensions must not wrap `git` or `gh` by default. Agents use ordinary shell
 commands and command help. App-owned startup, extension refresh, `list_extensions`, and Extension
-Managing `inspect` paths may refresh declared `externalBinaries` status for `git` and `gh`, and may
+Managing `inspect` paths may refresh declared `cliRequirements` status for `git` and `gh`, and may
 report known CLI auth blockers through `state.ready` and `state.issues`. That app-owned status
 refresh is not an instruction for agents to run `gh --version`, `gh auth status`, or any other
 availability/auth preflight. The app must not add a separate auth-status field, run login flows,

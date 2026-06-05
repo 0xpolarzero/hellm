@@ -2,7 +2,7 @@
 
 ## Status
 
-- Date: 2026-06-03
+- Date: 2026-06-05
 - Status: accepted extension index; loaded instruction text remains in `docs/specs/extensions-and-tools.spec.md`
 - Scope:
   - define Git as a builtin prompt-only extension
@@ -17,7 +17,15 @@
   "interface": "instructions",
   "title": "Git",
   "description": "Conservative Git CLI guidance for repository inspection, staging, commits, branches, and diffs.",
-  "typescriptApiEnabled": false
+  "typescriptApiEnabled": false,
+  "cliRequirements": [
+    {
+      "id": "git",
+      "binary": "git",
+      "required": true,
+      "versionCommand": "git --version"
+    }
+  ]
 }
 ```
 
@@ -39,7 +47,8 @@ Agents use:
 git ...
 ```
 
-through `exec_command`.
+through `exec_command`. Git intentionally has no pinned version in v1 because the builtin guidance is
+generic Git behavior rather than a version-specific generated instruction bundle.
 
 Current detailed behavior and loaded instructions are defined in
 `docs/specs/extensions-and-tools.spec.md`, "Git Extension".

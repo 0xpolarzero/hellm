@@ -283,8 +283,11 @@ cx overview -> cx symbols -> cx definition / cx references -> exec_command with 
 ```
 
 The builtin cx instructions are default-loaded for orchestrators, handler threads, and workflow task
-agents. If the `cx` binary is missing, `svvy` handles installation through the app-managed trusted
-CLI dependency confirmation flow; agents must not run package-manager install commands for cx.
+agents. The cx extension declares an exact CLI requirement and a reusable install-command template.
+If the `cx` binary is missing or the installed version does not match the declared version,
+extension build fails with an ordinary structured error. Agents may then run the concrete install
+command returned by inspect/build through `exec_command` when that is appropriate for the user's
+request; that command uses the normal execution-policy, sandbox, network, and approval-mode flow.
 
 `execute_typescript` is available when typed control flow is the right unit of work.
 
@@ -576,7 +579,11 @@ In practice that means:
   helper that preserves Codex filesystem policy semantics, including writable roots with read-only
   subpaths
 - `networkAccess` defaults to true; disabling it restricts network access and disables the Web extension
-- dependency installation remains an explicit user-confirmation flow because it can download and execute third-party code
+- extension package dependency installation remains an explicit user-confirmation flow because it
+  can download and execute third-party code
+- extension-declared CLI install commands are ordinary `exec_command` calls after a missing,
+  wrong-version, or unknown required CLI requirement is reported; approval-mode and auto-review
+  decide whether the concrete shell command can proceed
 - ambiguity is handled through clarification and waiting states when the agent needs user intent, not through hidden approval gates
 - delegated handler threads and workflow task agents may pause on actor-local execution-permission approvals only when `approvalMode` is `user`; Smithers workflow approvals remain Smithers workflow state
 

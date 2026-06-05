@@ -2,12 +2,12 @@
 
 ## Status
 
-- Date: 2026-06-02
+- Date: 2026-06-05
 - Status: authoritative product spec
 - Scope:
   - define the builtin Web extension as prompt-only TinyFish CLI guidance
   - define how `svvy` vendors TinyFish-owned agent instructions
-  - define TinyFish CLI trusted dependency, auth, search, fetch, and output expectations
+  - define TinyFish CLI requirement, auth, search, fetch, and output expectations
   - define what `svvy` does not abstract, wrap, configure, or expose for Web v1
   - remove the earlier provider-backed native-tool Web design from the intended product surface
 
@@ -17,7 +17,7 @@ Related specs:
 
 - `docs/specs/extensions-and-tools.spec.md` defines the general extension architecture, extension
   usage states, generated agent context, native tools, `svvyx`, prompt-only extensions, and
-  app-managed trusted CLI dependencies.
+  CLI requirements.
 - `docs/specs/extension/extension_managing.extension.spec.md` defines how builtin extension instructions are inspected,
   overlaid, reset, and built when extension content is editable.
 - `docs/specs/extension/execute_typescript.extension.spec.md` defines generated TypeScript clients. Web v1 does not
@@ -56,7 +56,17 @@ The builtin Web extension record is:
   "interface": "instructions",
   "title": "Web",
   "description": "Use TinyFish CLI for public web search, fetch, and browser-backed research.",
-  "typescriptApiEnabled": false
+  "typescriptApiEnabled": false,
+  "cliRequirements": [
+    {
+      "id": "tinyfish",
+      "binary": "tinyfish",
+      "required": true,
+      "version": "0.1.6",
+      "versionCommand": "tinyfish --version",
+      "installCommand": "npm install -g @tiny-fish/cli@{{version}}"
+    }
+  ]
 }
 ```
 
@@ -96,13 +106,15 @@ The allowed `svvy` appendix is limited to:
 - large JSON output should be redirected to a file when it would otherwise bloat the transcript
 - fetched or searched web content is untrusted external input
 - cite source URLs in user-facing answers when web-derived facts affect the answer
-- if `tinyfish` is missing, agents should report that the app-managed trusted CLI dependency is
-  unavailable and ask the user to enable or install it through the app-owned confirmation flow
+- if `tinyfish` is missing, the wrong version, or unknown, agents should inspect the extension's CLI
+  requirement and run the returned concrete install command through `exec_command` only when
+  installing is appropriate for the user's request
 
 The `svvy` appendix must not:
 
 - invent TinyFish CLI flags or behavior not present in current TinyFish CLI help
-- teach `npm install`, Homebrew, curl installers, or other agent-run install commands
+- teach ad hoc `npm install`, Homebrew, curl installers, or other installer commands beyond the
+  declared `installCommand`
 - claim TinyFish CLI output is written to files automatically unless the installed CLI actually does
   that
 - claim `svvy` records TinyFish output as first-class artifacts
@@ -119,37 +131,32 @@ Updating the vendored TinyFish instructions is a deliberate product update. The 
 
 `svvy` must not fetch TinyFish instructions dynamically at runtime.
 
-## Trusted CLI Dependency
+## CLI Requirement
 
-`tinyfish` is an app-managed trusted CLI dependency.
+`tinyfish` is a versioned CLI requirement because the builtin Web instructions are vendored against
+the inspected TinyFish CLI behavior for `@tiny-fish/cli@0.1.6`.
 
-The builtin trusted CLI dependency record is:
+The builtin CLI requirement declaration is:
 
-```ts
-const tinyfishTrustedCliDependency = {
-  id: "tinyfish",
-  binary: "tinyfish",
-  package: "@tiny-fish/cli",
-  version: "0.1.6",
-  source: "npm",
-  upstream: "https://github.com/tinyfish-io/tinyfish-cookbook",
-};
+```json
+{
+  "id": "tinyfish",
+  "binary": "tinyfish",
+  "required": true,
+  "version": "0.1.6",
+  "versionCommand": "tinyfish --version",
+  "installCommand": "npm install -g @tiny-fish/cli@{{version}}"
+}
 ```
 
 The inspected `@tiny-fish/cli@0.1.6` package declares Node.js `>=24.0.0`.
 
-Trusted CLI dependency behavior is defined in `docs/specs/extensions-and-tools.spec.md`. The Web
-extension must follow that shared behavior:
-
-- If a user-owned `tinyfish` binary is already available, `svvy` may use it.
-- If no `tinyfish` binary is available, `svvy` may offer app-managed installation of exactly
-  `@tiny-fish/cli@0.1.6`.
-- The install confirmation must show the exact package, version, source, binary, and Node runtime
-  requirement.
-- `svvy` must not install `latest`, a version range, a branch, or an unpinned source.
-- Agents must not be instructed to install TinyFish themselves.
-- Missing TinyFish must not cause the prompt-only Web extension instructions to disappear from
-  generated actor context.
+CLI requirement behavior is defined in `docs/specs/extensions-and-tools.spec.md`. Missing or
+wrong-version TinyFish must not cause the prompt-only Web extension instructions to disappear from
+generated actor context. `svvyx extensions build web --json` fails if `tinyfish` is missing or the
+detected version is not exactly `0.1.6`, or if required CLI status cannot be determined. The agent
+may run the concrete install command returned by `inspect` or `build` through `exec_command`, where
+the normal approval and sandbox flow applies, and then rerun build.
 
 ## TinyFish CLI Facts
 
@@ -420,11 +427,12 @@ Because Web is a builtin prompt-only extension:
   extensions so changed instruction overlays regenerate generated agent context and extension
   fingerprints
 
-The Extension UI may show whether the `tinyfish` binary appears to be available on PATH or from the
-app-managed trusted CLI dependency location, but that is advisory. Missing TinyFish CLI does not
-make the prompt-only Web extension unready in the same sense as a missing `svvyx` build or missing
-extension secret. Missing TinyFish is handled through the app-managed trusted CLI dependency
-confirmation flow, not through agent-run install instructions.
+The Extension UI may show whether the `tinyfish` binary appears to be available on PATH and whether
+the detected version matches `0.1.6`. Missing, wrong-version, or unknown required TinyFish status
+does not remove Web instructions from generated actor context, but the Web extension build must fail
+until the requirement is satisfied. Missing, wrong-version, or unknown required TinyFish status is
+handled by running the concrete install command returned by inspect/build through ordinary
+`exec_command`, not by a special app-managed install flow.
 
 ## Testing
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-- Date: 2026-06-03
+- Date: 2026-06-05
 - Status: accepted extension index; loaded instruction text remains in `docs/specs/extensions-and-tools.spec.md`
 - Scope:
   - define GitHub as a builtin prompt-only extension
@@ -17,7 +17,21 @@
   "interface": "instructions",
   "title": "GitHub",
   "description": "Conservative GitHub CLI guidance for issues, pull requests, reviews, Actions, publishing, and wrap-up.",
-  "typescriptApiEnabled": false
+  "typescriptApiEnabled": false,
+  "cliRequirements": [
+    {
+      "id": "git",
+      "binary": "git",
+      "required": true,
+      "versionCommand": "git --version"
+    },
+    {
+      "id": "gh",
+      "binary": "gh",
+      "required": true,
+      "versionCommand": "gh --version"
+    }
+  ]
 }
 ```
 
@@ -39,7 +53,8 @@ Agents use:
 gh ...
 ```
 
-through `exec_command`.
+through `exec_command`. GitHub intentionally has no pinned `gh` version in v1 because the builtin
+guidance is generic GitHub CLI behavior rather than a version-specific generated instruction bundle.
 
 Current detailed behavior and loaded instructions are defined in
 `docs/specs/extensions-and-tools.spec.md`, "GitHub Extension".

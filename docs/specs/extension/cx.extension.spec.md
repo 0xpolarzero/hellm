@@ -2,13 +2,13 @@
 
 ## Status
 
-- Date: 2026-06-02
+- Date: 2026-06-05
 - Status: authoritative product spec
 - Scope:
   - define the builtin cx extension boundary
   - define cx as prompt-only direct CLI guidance
   - define the exact cx CLI commands agents may use through `exec_command`
-  - define the app-managed trusted CLI dependency record for cx
+  - define the versioned cx CLI requirement used by build/readiness checks
   - reject native `cx_*` tools, `svvyx cx`, and generated cx TypeScript clients for v1
 
 This document is the source of truth for the resolved cx extension direction.
@@ -16,7 +16,7 @@ This document is the source of truth for the resolved cx extension direction.
 Related specs:
 
 - `docs/specs/extensions-and-tools.spec.md` defines the general extension architecture, prompt-only
-  extensions, trusted CLI dependency registry, shell policy, generated agent context, and
+  extensions, CLI requirements, shell policy, generated agent context, and
   `execute_typescript`.
 - `docs/specs/extension/extension_managing.extension.spec.md` defines how builtin extension instructions are inspected,
   overlaid, reset, and built when extension content is editable.
@@ -56,7 +56,17 @@ The builtin cx extension record is:
   "interface": "instructions",
   "title": "cx",
   "description": "Use the cx CLI for semantic code navigation before raw file reads.",
-  "typescriptApiEnabled": false
+  "typescriptApiEnabled": false,
+  "cliRequirements": [
+    {
+      "id": "cx",
+      "binary": "cx",
+      "required": true,
+      "version": "0.7.1",
+      "versionCommand": "cx --version",
+      "installCommand": "cargo install cx-cli --version {{version}}"
+    }
+  ]
 }
 ```
 
@@ -72,37 +82,33 @@ The cx extension being default-loaded means the generated actor prompt includes 
 instructions. It does not mean any additional native tool, `svvyx` namespace, or generated
 TypeScript client is registered.
 
-## Trusted CLI Dependency
+## CLI Requirement
 
-`cx` is an app-managed trusted CLI dependency.
+`cx` is a versioned CLI requirement because the builtin instructions are vendored from
+`cx-cli@0.7.1` output.
 
-The builtin trusted CLI dependency record is:
+The builtin CLI requirement declaration is:
 
-```ts
-const cxTrustedCliDependency = {
-  id: "cx",
-  binary: "cx",
-  package: "cx-cli",
-  version: "0.7.1",
-  source: "cargo",
-  upstream: "https://github.com/ind-igo/cx",
-};
+```json
+{
+  "id": "cx",
+  "binary": "cx",
+  "required": true,
+  "version": "0.7.1",
+  "versionCommand": "cx --version",
+  "installCommand": "cargo install cx-cli --version {{version}}"
+}
 ```
 
 The package identity was verified from the upstream `Cargo.toml` for `ind-igo/cx`, where the package
 name is `cx-cli`, version is `0.7.1`, and the binary name is `cx`.
 
-Trusted CLI dependency behavior is defined in `docs/specs/extensions-and-tools.spec.md`. The cx
-extension must follow that shared behavior:
-
-- If a user-owned `cx` binary is already available, `svvy` may use it.
-- If no `cx` binary is available, `svvy` may offer app-managed installation of exactly
-  `cx-cli@0.7.1`.
-- The install confirmation must show the exact package, version, source, and binary.
-- `svvy` must not install `latest`, a version range, a branch, or an unpinned source.
-- Agents must not be instructed to install cx themselves.
-- Missing cx must not cause the prompt-only cx extension instructions to disappear from generated
-  actor context.
+CLI requirement behavior is defined in `docs/specs/extensions-and-tools.spec.md`. Missing or
+wrong-version `cx` must not cause the prompt-only cx extension instructions to disappear from
+generated actor context. `svvyx extensions build cx --json` fails if `cx` is missing or the detected
+version is not exactly `0.7.1`, or if required CLI status cannot be determined. The agent may run
+the concrete install command returned by `inspect` or `build` through `exec_command`, where the
+normal approval and sandbox flow applies, and then rerun build.
 
 ## Instruction Source
 
@@ -122,8 +128,9 @@ The allowed `svvy` appendix is limited to:
 - the extension is prompt-only and exposes no `svvy` cx tools
 - agents use cx through `exec_command`
 - `apply_patch` remains the editing surface
-- if `cx` is missing, agents should report that the trusted CLI dependency is unavailable and ask
-  the user to enable or install it through the app-owned trusted CLI dependency flow
+- if `cx` is missing, the wrong version, or unknown, agents should inspect the extension's CLI
+  requirement and run the returned concrete install command through `exec_command` only when
+  installing is appropriate for the user's request
 - `execute_typescript` has no cx SDK in v1
 
 The `svvy` appendix must not:
@@ -132,7 +139,8 @@ The `svvy` appendix must not:
 - add `svvyx cx` commands
 - add generated TypeScript clients
 - invent cx CLI flags or behavior not present in `cx --help`, command help, or `cx skill`
-- teach `cargo install`, Homebrew, curl installers, or other agent-run install commands
+- teach ad hoc `cargo install`, Homebrew, curl installers, or other installer commands beyond the
+  declared `installCommand`
 
 Updating the vendored cx instructions is a deliberate product update. The update process is:
 
@@ -203,9 +211,8 @@ match the `svvy` runtime. The command reference and usage ladder must remain cx-
 
 `cx lang add`, `cx lang remove`, and cache-management commands mutate cx-owned grammar/support
 state. They are permitted ordinary `exec_command` work under the active shell approval and sandbox
-policy, and they are not trusted CLI dependency installation. Installing or upgrading the trusted
-`cx` binary itself remains app-managed and must not be done by agent-authored package-manager
-commands.
+policy, and they are not the cx CLI requirement install. Installing or upgrading the `cx` binary
+uses the concrete install command returned by inspect/build through ordinary `exec_command`.
 
 ## cx CLI Command Surface
 
@@ -330,13 +337,13 @@ Required doc/extension tests:
 - Generated actor context does not include native `cx_*` tool declarations.
 - Generated actor context does not include `svvyx cx` guidance.
 - Generated `execute_typescript` declarations do not include cx clients.
-- cx appears in the trusted CLI dependency registry as `cx-cli@0.7.1` from Cargo with binary `cx`.
+- cx declares `cx-cli@0.7.1` as a CLI requirement with binary `cx`.
 - Missing cx does not remove the prompt-only cx extension from generated actor context.
 - cx instructions do not contain agent-run install commands.
 
 Optional live verification:
 
-- enable or install the app-managed trusted cx CLI dependency
+- install the declared cx CLI requirement when it is missing or the wrong version
 - run `cx --version`
 - run `cx skill`
 - run `cx lang list`
@@ -355,5 +362,5 @@ Optional live verification:
 - cx v1 does not expose an Incur wrapper to agents.
 - cx v1 does not create a custom editing or writing surface.
 - cx v1 does not own product navigation or product state.
-- cx v1 depends on app-managed trusted CLI dependency resolution for missing binaries, not
+- cx v1 depends on declared CLI requirement resolution for missing binaries, not
   agent-run installation instructions.

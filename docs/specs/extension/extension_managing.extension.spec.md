@@ -2,7 +2,7 @@
 
 ## Status
 
-- Date: 2026-06-01
+- Date: 2026-06-05
 - Status: accepted working spec extracted from `docs/specs/extensions-and-tools.spec.md`
 - Scope of this document:
   - define the builtin Extension Managing extension surface
@@ -24,9 +24,10 @@ invocations; Extension Managing does not gain a separate model-facing tool surfa
 
 Extension Managing is a builtin extension for managing extension definitions and extension usage.
 
-It owns extension lifecycle, source discovery, builds, dependency approvals, usage-state commands,
-snapshot commands, and full-instruction source-file lifecycle commands. It does not own text-editing
-commands for instruction or source bodies. Authoring-facing Incur guidance belongs to this
+It owns extension lifecycle, source discovery, builds, package dependency approvals, usage-state
+commands, snapshot commands, and full-instruction source-file lifecycle commands. It does not own
+text-editing commands for instruction or source bodies and does not provide a separate command for
+installing CLI requirements. Authoring-facing Incur guidance belongs to this
 extension's loaded instructions, but the internal runtime plumbing for making built Incur CLIs
 callable belongs to
 `docs/specs/extension/svvyx-incur-runtime.spec.md`.
@@ -67,6 +68,7 @@ Product-state changes use Extension Managing commands:
 
 - extension creation
 - extension build
+- generated instruction regeneration as part of extension build
 - full-instruction source file add, remove, rename, and reorder operations
 - extension usage state changes
 - builtin extension reset
@@ -91,12 +93,14 @@ The UI must not store editor text as hidden prompt state outside these files.
 The Extension Managing instructions define what may be edited:
 
 - extension source files
-- extension instruction files
+- hand-authored extension instruction files
+- extension generated-instruction scripts under `scripts/`
 - extension manifest files
 - the shared extension `package/package.json`
 
 These paths must not be edited by agents:
 
+- generated instruction output files under `instructions/full/`
 - `package/bun.lock`
 - generated TypeScript declarations
 - aggregate cache files
@@ -130,16 +134,22 @@ Directory layout:
       instructions/
         full/
           010-overview.md
-          020-domain-guide.md
+          020-generated.generated.md
+          030-domain-guide.md
         minimal.md
+      scripts/
+        generate-docs.ts
       source/
     builtin-overlays/<extension-id>/
       manifest.json
       instructions/
         full/
           010-overview.md
-          020-domain-guide.md
+          020-generated.generated.md
+          030-domain-guide.md
         minimal.md
+      scripts/
+        generate-docs.ts
       source/
   generated/
     extensions/<extension-id>/
@@ -176,7 +186,10 @@ aggregate cache, dependency state, and build output under `~/.config/svvy/extens
 Editable file-backed content includes:
 
 - manifest-like editable metadata
-- ordered full instruction source files under `instructions/full/`
+- ordered hand-authored full instruction source files under `instructions/full/`
+- generated instruction declarations in `manifest.json` and generated Markdown outputs under
+  `instructions/full/`
+- editable generated-instruction scripts under `scripts/`
 - minimal instructions
 - extension command source code for `svvyx` extensions
 - the shared extension `package/package.json` when dependency state needs manual adjustment
@@ -199,6 +212,8 @@ type ExtensionManifestV1 = {
   interface: "instructions" | "svvyx";
   typescriptApiEnabled?: boolean;
   env?: ExtensionManifestEnv[];
+  cliRequirements?: ExtensionManifestCliRequirement[];
+  generatedInstructions?: ExtensionManifestGeneratedInstruction[];
   dependencies?: Record<string, string>;
   trustedDependencies?: Record<string, string>;
 };
@@ -209,6 +224,21 @@ type ExtensionManifestEnv = {
   secret: boolean;
   description: string;
   default?: string;
+};
+
+type ExtensionManifestCliRequirement = {
+  id: string;
+  binary: string;
+  required: boolean;
+  version?: string;
+  versionCommand?: string;
+  installCommand?: string;
+};
+
+type ExtensionManifestGeneratedInstruction = {
+  output: string;
+  script: string;
+  versionFromCliRequirement?: string;
 };
 ```
 
@@ -227,6 +257,13 @@ Rules:
   floating versions are build validation errors.
 - Env declarations follow the architecture-wide env schema in
   `docs/specs/extensions-and-tools.spec.md`; `default` is allowed only when `secret: false`.
+- `cliRequirements` declare shell CLIs required or inspected by the extension. `version` is exact
+  when present, and `installCommand` may use `{{version}}` only when `version` is present.
+- manifest `installCommand` is a reusable template; inspect and build-error output return a concrete
+  install command with the current declared version substituted.
+- `generatedInstructions` declare build-generated Markdown files under `instructions/full/` and
+  editable generator scripts under `scripts/`. Build runs generation; there is no separate
+  `instructions generate` command.
 - Full instruction file ordering is not stored in the manifest in v1. The source of truth is the
   lexicographic directory listing under `instructions/full/`.
 - Additional implementation-private manifest fields are allowed only if build preserves them and
@@ -1246,6 +1283,10 @@ type InspectExtensionPaths = {
 type InspectInstructionFile = {
   name: string;
   path: string;
+  generated?: {
+    script: string;
+    output: string;
+  };
 };
 
 type ExtensionUsageState = {
@@ -1257,10 +1298,7 @@ type ExtensionUsageState = {
 };
 
 type InspectExtensionRequirements = {
-  externalBinaries: Array<{
-    name: string;
-    status: "available" | "missing" | "unknown";
-  }>;
+  cliRequirements: CliRequirementStatus[];
   env: Array<{
     name: string;
     required: boolean;
@@ -1269,22 +1307,19 @@ type InspectExtensionRequirements = {
     status: "configured" | "missing" | "defaulted" | "optional_missing";
   }>;
   dependencies: ExtensionDependencyRequirement[];
-  trustedCliDependencies: TrustedCliDependencyRequirement[];
   trustedDependencies: ExtensionDependencyRequirement[];
 };
 
-type TrustedCliDependencyRequirement = {
+type CliRequirementStatus = {
   id: string;
   binary: string;
-  status: "available" | "missing" | "unknown";
+  required: boolean;
+  version: string | null;
+  status: "available" | "missing" | "wrong_version" | "unknown";
   detectedVersion: string | null;
-  install: {
-    package: string;
-    version: string;
-    source: "npm" | "cargo" | "github-release" | "git-scm-release" | "bundled_app_resource";
-    approval: "not_required_when_user_binary_exists" | "needs_user_confirmation" | "approved";
-    install: "installed" | "not_installed" | "unknown";
-  };
+  path: string | null;
+  versionCommand: string | null;
+  installCommand: string | null;
 };
 
 type ExtensionDependencyRequirement = {
@@ -1319,8 +1354,9 @@ type ExtensionIssue = {
     | "BUILD_FAILED"
     | "NO_CURRENT_BUILD"
     | "CURRENT_BUILD_INVALID"
-    | "EXTERNAL_BINARY_MISSING"
-    | "EXTERNAL_BINARY_UNKNOWN"
+    | "CLI_MISSING"
+    | "CLI_WRONG_VERSION"
+    | "CLI_STATUS_UNKNOWN"
     | "EXTERNAL_CLI_AUTH_MISSING"
     | "EXTERNAL_CLI_AUTH_INSUFFICIENT"
     | "EXTERNAL_CLI_AUTH_UNKNOWN";
@@ -1328,25 +1364,29 @@ type ExtensionIssue = {
 };
 ```
 
+`CliRequirementStatus.installCommand` is directly runnable through `exec_command` when non-null. The
+manifest stores the reusable template; inspect and build-error output resolve `{{version}}` before
+returning the status object.
+
 `usage` is the global agent/profile usage configuration for the inspected extension. It is useful in
 Extension Managing because the command is a management surface. Native `list_extensions` must not
 return `usage`; it returns only the current actor's `state.binding`.
 
 Inspect uses the same requirement-readiness semantics as native `list_extensions`.
-`requirements.externalBinaries[].status` is limited to `"available"`, `"missing"`, or `"unknown"`
-for local binary presence. It must not encode CLI account authentication, OAuth state, token scopes,
-remote service reachability, timestamps, account names, usernames, or host credentials. Known CLI
-auth blockers, such as missing or insufficient GitHub CLI auth for `gh`, are represented only by
-coarse `state.ready: false` plus `state.issues` codes when the app already knows them. Extension
-Managing must not add a separate `externalAuth` or `authStatus` field, run login flows, mutate
-credentials, contact remotes only to improve status labels, or watch arbitrary failed agent shell
-commands to update inspect readiness.
+`requirements.cliRequirements[].status` is limited to `"available"`, `"missing"`,
+`"wrong_version"`, or `"unknown"`. It reports shell binary presence and exact version matching only.
+It must not encode CLI account authentication, OAuth state, token scopes, remote service
+reachability, timestamps, account names, usernames, or host credentials. Known CLI auth blockers,
+such as missing or insufficient GitHub CLI auth for `gh`, are represented only by coarse
+`state.ready: false` plus `state.issues` codes when the app already knows them. Extension Managing
+must not add a separate `externalAuth` or `authStatus` field, run login flows, mutate credentials,
+contact remotes only to improve status labels, or watch arbitrary failed agent shell commands to
+update inspect readiness.
 
 For prompt-only Git and GitHub, unknown `git`, `gh`, or `gh` auth status is advisory and must not
 block inspect readiness or generated prompt loading. Known status can be displayed through
-`requirements.externalBinaries`, `requirements.trustedCliDependencies`, and `state.issues`, but the
-GitHub prompt still tells agents to report missing CLI binaries through the app-managed trusted CLI
-dependency flow and to offer auth guidance only after an actual `gh` command fails.
+`requirements.cliRequirements` and `state.issues`, but the GitHub prompt still tells agents to offer
+auth guidance only after an actual `gh` command fails.
 
 Prompt-only builtin example:
 
@@ -1402,46 +1442,32 @@ Prompt-only builtin example:
       }
     ],
     "requirements": {
-      "externalBinaries": [
-        {
-          "name": "git",
-          "status": "available"
-        },
-        {
-          "name": "gh",
-          "status": "available"
-        }
-      ],
-      "env": [],
-      "dependencies": [],
-      "trustedCliDependencies": [
+      "cliRequirements": [
         {
           "id": "git",
           "binary": "git",
+          "required": true,
+          "version": null,
           "status": "available",
           "detectedVersion": "2.54.0",
-          "install": {
-            "package": "git",
-            "version": "2.54.0",
-            "source": "git-scm-release",
-            "approval": "not_required_when_user_binary_exists",
-            "install": "not_installed"
-          }
+          "path": "/usr/bin/git",
+          "versionCommand": "git --version",
+          "installCommand": null
         },
         {
           "id": "gh",
           "binary": "gh",
+          "required": true,
+          "version": null,
           "status": "available",
           "detectedVersion": "2.93.0",
-          "install": {
-            "package": "gh",
-            "version": "2.93.0",
-            "source": "github-release",
-            "approval": "not_required_when_user_binary_exists",
-            "install": "not_installed"
-          }
+          "path": "/opt/homebrew/bin/gh",
+          "versionCommand": "gh --version",
+          "installCommand": null
         }
       ],
+      "env": [],
+      "dependencies": [],
       "trustedDependencies": []
     },
     "state": {
@@ -1514,7 +1540,7 @@ Incur-backed user example:
       }
     ],
     "requirements": {
-      "externalBinaries": [],
+      "cliRequirements": [],
       "env": [
         {
           "name": "SMITHERS_API_KEY",
@@ -1542,7 +1568,6 @@ Incur-backed user example:
           "install": "installed"
         }
       ],
-      "trustedCliDependencies": [],
       "trustedDependencies": []
     },
     "state": {
@@ -2046,6 +2071,70 @@ Incur-backed success example:
   ],
   "generated": {
     "typescriptTypes": "/Users/example/.config/svvy/extensions/generated/extensions/linear/types.d.ts"
+  }
+}
+```
+
+CLI requirement failures:
+
+`svvyx extensions build <id> --json` checks required CLI requirements before package dependency
+installation and before generated instruction scripts run. If a required CLI is missing or has the
+wrong exact version, or if required CLI status cannot be determined, build fails with an ordinary
+JSON error. It must not create a dependency approval request, must not run the declared install
+command, and must not leave a blocked build that can resume automatically. The agent or user can run
+the returned install command through
+`exec_command` and then rerun build.
+
+Missing CLI example:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "CLI_MISSING",
+    "message": "tinyfish 0.1.6 is required by web but was not found on PATH.",
+    "extensionId": "web",
+    "cli": {
+      "id": "tinyfish",
+      "binary": "tinyfish",
+      "required": true,
+      "version": "0.1.6",
+      "detectedVersion": null,
+      "path": null,
+      "versionCommand": "tinyfish --version",
+      "installCommand": "npm install -g @tiny-fish/cli@0.1.6"
+    },
+    "nextSteps": [
+      "Run the install command through exec_command if the user wants this CLI installed.",
+      "Rerun `svvyx extensions build web --json` after installation."
+    ]
+  }
+}
+```
+
+Wrong-version CLI example:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "CLI_WRONG_VERSION",
+    "message": "tinyfish 0.1.6 is required by web, but tinyfish 0.1.5 was found.",
+    "extensionId": "web",
+    "cli": {
+      "id": "tinyfish",
+      "binary": "tinyfish",
+      "required": true,
+      "version": "0.1.6",
+      "detectedVersion": "0.1.5",
+      "path": "/usr/local/bin/tinyfish",
+      "versionCommand": "tinyfish --version",
+      "installCommand": "npm install -g @tiny-fish/cli@0.1.6"
+    },
+    "nextSteps": [
+      "Run the install command through exec_command if the user wants to replace or upgrade this CLI.",
+      "Rerun `svvyx extensions build web --json` after installation."
+    ]
   }
 }
 ```
