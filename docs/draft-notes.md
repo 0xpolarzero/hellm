@@ -117,3 +117,5 @@
   - can do convenient stuff such as click "review" on a agent message, which creates an artifact for that response that can be reviewed with comments, etc, then sent back
   - "enter review" mode where you select a chat, then do the review on the diff, comments, on code and files, etc, then send will send review to the selected (or new) chat
   - in chat anyway we want an easy way to select and "add to chat" like codex except that it adds an actual mention in the composer and we should be able to quote files and code diff as well
+
+- https://github.com/wevm/curl.md can help for fetching pages in token-optimized markdown
