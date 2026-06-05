@@ -1,0 +1,18 @@
+---
+title: ticket-create
+description: Turn a request into one structured implementation ticket.
+---
+
+`ticket-create` turns a prompt into a single ticket with title, description, and acceptance criteria.
+
+```bash
+bunx smithers-orchestrator workflow run ticket-create --prompt "Add a settings page for API keys"
+```
+
+## Inputs
+
+| Input | Type | Default |
+| --- | --- | --- |
+| `prompt` | string | `"Create a ticket for the requested work."` |
+
+Use this when the request is already narrow enough for one implementable unit. For larger requests, use `tickets-create`.

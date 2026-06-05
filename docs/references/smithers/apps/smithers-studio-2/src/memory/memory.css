@@ -1,0 +1,215 @@
+/* Memory surface styles. Prefix: memory-* (phase-2 owns this file). */
+
+.memory-surface {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+}
+
+.memory-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-height: 64px;
+  padding: var(--space-6) var(--space-7);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.memory-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.memory-search {
+  flex: 1;
+  max-width: 420px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-primary);
+  font-size: var(--text-body);
+  outline: none;
+  transition: border-color var(--motion-fast) var(--ease);
+}
+
+.memory-search::placeholder {
+  color: var(--text-tertiary);
+}
+
+.memory-search:focus {
+  border-color: var(--accent-stroke);
+}
+
+.memory-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-7);
+  border-bottom: 1px solid var(--border);
+}
+
+.memory-statustext {
+  font-size: var(--text-mono-sm);
+  color: var(--text-secondary);
+}
+
+.memory-statustext-error {
+  color: var(--danger);
+}
+
+.memory-dbpath {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50%;
+}
+
+.memory-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.memory-empty {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  color: var(--text-tertiary);
+  font-size: var(--text-body);
+  padding: var(--space-8);
+  text-align: center;
+}
+
+.memory-list {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.memory-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.35fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-4) var(--space-7);
+  text-align: left;
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.memory-row:hover {
+  background: var(--fill-hover);
+}
+
+.memory-row-selected {
+  background: var(--fill-selected);
+}
+
+.memory-row-namespace {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+  color: var(--info);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-row-key {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-row-updated {
+  font-size: var(--text-mono-sm);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.memory-detail {
+  width: 40%;
+  min-width: 320px;
+  max-width: 520px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface-1);
+  overflow-y: auto;
+  padding: var(--space-7);
+}
+
+.memory-detail-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+
+.memory-detail-namespace {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+  color: var(--info);
+}
+
+.memory-detail-key {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.memory-detail-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-6);
+}
+
+.memory-detail-meta div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.memory-detail-meta dt {
+  font-size: var(--text-section);
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.memory-detail-meta dd {
+  margin: 0;
+  font-size: var(--text-mono-sm);
+  color: var(--text-secondary);
+}
+
+.memory-detail-value {
+  margin: 0;
+  padding: var(--space-4);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

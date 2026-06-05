@@ -1,0 +1,14 @@
+---
+title: listWorkflows
+description: Gateway RPC for listing registered workflows.
+maturity: stable
+apiVersion: v1
+---
+
+- Method: `listWorkflows`
+- Scope: `run:read`
+- Transports: HTTP RPC, WebSocket RPC
+- Request: `{ filter?: { hasUi?: boolean } }`
+- Response: `GatewayWorkflowSummary[]`
+
+Each summary includes `key`, `hasUi`, and `uiPath`. `readableName` and `description` are included when the workflow exposes them.

@@ -1,7 +1,7 @@
 /** @jsxImportSource smithers-orchestrator */
 import { Loop, Sequence, Task, type AgentLike, type OutputTarget } from "smithers-orchestrator";
 import { z } from "zod/v4";
-import GrillMeSkill from "skills/grill-me/SKILL.md";
+import GrillMeSkill from "../prompts/grill-me.mdx";
 import AskUserInstructions from "../prompts/ask-user-instructions.mdx";
 
 export const grillOutputSchema = z.looseObject({

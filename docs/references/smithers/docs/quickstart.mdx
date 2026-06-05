@@ -1,37 +1,30 @@
 ---
 title: Quickstart
-description: Start with the JSX quickstart for Smithers workflows.
+description: Scaffold and run a Smithers workflow in two commands.
 ---
-
-## 1. Initialize
 
 ```bash
 bunx smithers-orchestrator init
+bunx smithers-orchestrator init --template idea-to-prd
+bunx smithers-orchestrator workflow run implement --prompt "Add rate limiting"
 ```
 
-Scaffolds `.smithers/` with ready-to-use workflows.
+`init` scaffolds `.smithers/` (workflows, prompts, components, agent config). Add `--template <id>` when you want the init result to include the selected starter command and follow-up notes. Run `bunx smithers-orchestrator starters` to browse template IDs.
 
-## 2. Run a Workflow
+Inspect the run:
 
 ```bash
-bunx smithers workflow implement --prompt "Add rate limiting to the API"
+bunx smithers-orchestrator ps
+bunx smithers-orchestrator inspect <run-id>
+bunx smithers-orchestrator logs <run-id> --tail 20
 ```
 
-## 3. Build Your Own
+Resume after a crash:
 
-- [JSX Quickstart](/api/quickstart) -- Build a TSX workflow with `<Task>` components and typed `deps`.
+```bash
+bunx smithers-orchestrator up workflow.tsx --run-id <run-id> --resume true
+```
 
-## Runtime
+Prefer to let your agent drive? [Install the agent skill](/installation#install-the-agent-skill) and just ask for the outcome — your coding agent runs Smithers for you.
 
-Every workflow gets:
-
-- SQLite persistence
-- Resume after restarts
-- Retries, approvals, loops
-- Observability and CLI tooling
-
-## Next Steps
-
-- [JSX Quickstart](/api/quickstart) -- Build a render-driven TSX workflow from scratch.
-- [Hello World Example](/examples/hello-world) -- Smallest complete workflow.
-- [Review Loop Guide](/guides/review-loop) -- From linear flow to iterative refinement.
+For a full worked example, see the [Tour](/tour). For every CLI command see the [CLI catalog](/cli/overview).

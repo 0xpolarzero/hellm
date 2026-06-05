@@ -1,45 +1,160 @@
 # Smithers
 
-**Deterministic, durable AI workflows defined as React components.**
+**Orchestrate agents at scale with composable workflows.**
 
-## What Smithers Does
+Smithers is a durable runtime for long-running AI coding agents. Install a skill and your
+agent writes the workflow — a composable TypeScript tree — then runs it for minutes or
+days with crash recovery, retries, human approvals, replay, and full observability across
+any agent, any model, and any machine.
 
-* Defines workflows as React component trees
-* Executes tasks in sequence, parallel, or loops
-* Persists every task result to SQLite
-* Validates outputs against Zod schemas
-* Re-renders the workflow after each step
-* Resumes exactly where it left off after crashes
-* Supports subscriptions
-* Hot-reloads workflow code on file save (prompts, config, components) without restarting
+- 🧩 **Composable workflows**: sequence, fan out, branch, and loop tasks into workflows
+  shaped to your task and your project. Not one giant one-size-fits-all agent.
+- 🔌 **Model- and harness-agnostic**: Claude Code, Codex, Pi, Antigravity, and more, plus
+  any model through the AI SDK. Swap the harness without rewriting the workflow.
+- 🛡️ **Robust by default**: durable execution, retries, replay, time-travel, evals,
+  human-in-the-loop approvals, and Prometheus metrics. Operational guarantees no single
+  agent gives you.
 
-Durable execution checkpoints live in SQLite. The runtime still keeps transient process-local helpers such as file watchers, abort controllers, and active server records in memory. Every task result is stored as:
+## Why Smithers
 
+We build Smithers to put power in the hands of builders. You shouldn't have to wait and
+see what the model companies decide to ship next. With composable, model- and
+harness-agnostic workflows, you can build the future you want to see today, on whatever
+model and harness is best this week.
+
+Every decision in Smithers is about making builders **more** powerful, not replacing
+them. Where other tools race to swap human craftsmanship for slop, Smithers is built to
+get **higher-quality output** out of agents, with the review loops, approvals, evals,
+and structure that real work demands.
+
+And we don't believe in one-size-fits-all orchestration. The best results come from
+**task-specific and project-specific workflows**, so Smithers ships dozens of them
+ready to run, and treats having your agent author new ones as a first-class path.
+
+## Quick start
+
+```bash
+# scaffold the workflow pack into .smithers/
+bunx smithers-orchestrator init
+
+# break a request into ticket files under .smithers/tickets/
+bunx smithers-orchestrator workflow run tickets-create --prompt "add rate limiting, audit logging, and API key rotation"
+
+# implement the tickets, each in its own worktree branch
+bunx smithers-orchestrator workflow run kanban
 ```
-(runId, nodeId, iteration) → validated output row
+
+`init` scaffolds a `.smithers/` folder preloaded with production-ready workflows for
+planning, implementation, review, debugging, tickets, audits, and long-horizon missions.
+Run `bunx smithers-orchestrator starters` to browse plain-English starters, and
+`smithers workflow list` to see what's installed.
+
+## Run it from your coding agent
+
+Smithers is driven by an AI agent (Claude Code, Codex, and friends), **not** a GUI you
+click. Your agent runs Smithers on your behalf: it scaffolds workflows, kicks off runs,
+watches them, and handles approvals.
+
+The fastest way to make your agent fluent is the two fan-out commands — they install the
+Smithers skill and register the MCP server into **every coding agent on your machine**
+(Claude Code, Codex, Cursor, Copilot, Pi, Hermes, OpenClaw, and ~20 more):
+
+```bash
+bunx smithers-orchestrator skills add   # install the skill set into every detected agent
+bunx smithers-orchestrator mcp add      # register Smithers as an MCP server everywhere
 ```
 
----
+Prefer to wire one agent by hand, or want the curated onboarding skill with the full docs
+bundle? Drop it in directly:
 
-## Example
+```bash
+mkdir -p ~/.claude/skills/smithers
+curl -fsSL https://raw.githubusercontent.com/smithersai/smithers/main/skills/smithers/SKILL.md \
+  -o ~/.claude/skills/smithers/SKILL.md
+curl -fsSL https://smithers.sh/llms-full.txt \
+  -o ~/.claude/skills/smithers/llms-full.txt
+```
+
+Then just ask: *"orchestrate an agent to add rate limiting and keep iterating until the
+tests pass."* See [Agent Support](https://smithers.sh/agents/overview) for the per-agent
+setup (skill, MCP, instructions) for Claude Code, Codex, Cursor, Copilot, Pi, Hermes, and
+OpenClaw, and [`skills/smithers/`](./skills/smithers) for the onboarding skill.
+
+## Any agent, any model
+
+Smithers doesn't bet on one lab or one harness. Point a task at whichever agent is best
+for the job and switch freely:
+
+- **CLI agents**: [Claude Code](./docs/integrations/cli-agents.mdx), Codex,
+  [Pi](./docs/integrations/pi-integration.mdx), Antigravity, and more, driven through
+  their own runtimes.
+- **SDK agents**: any model the [Vercel AI SDK](./docs/integrations/sdk-agents.mdx)
+  supports, with tools, structured output, and MCP.
+- **Mix them in one workflow**: let a frontier model plan, a fast model fan out, and a
+  specialized harness do the edits. The workflow doesn't change when the model does.
+
+## Built-in workflows
+
+`smithers init` installs a pack of ready-to-run workflows. Point your agent at one and go via `bunx smithers-orchestrator workflow run <id> --prompt "..."`:
+
+| Workflow | What it does |
+| --- | --- |
+| `implement` | Implement a focused change with validation and review feedback loops. |
+| `research-plan-implement` | Research a request, produce a plan, then implement it with validation and review. |
+| `plan` | Create a practical implementation plan before code changes begin. |
+| `research` | Gather repository and external context before planning or building. |
+| `review` | Review current repository changes with one or more configured agents. |
+| `debug` | Reproduce, fix, validate, and review a reported bug. |
+| `improve-test-coverage` | Find and add high-impact missing tests for the repository. |
+| `audit` | Audit feature groups for tests, docs, observability, and maintainability gaps. |
+| `feature-enum` | Build or refine a code-backed feature inventory for a repository. |
+| `grill-me` | Ask targeted questions until vague requirements become actionable. |
+| `write-a-prd` | Turn a product or feature idea into a detailed PRD. |
+| `ticket-create` / `tickets-create` | Turn a request into one or many structured implementation tickets. |
+| `kanban` | Implement ticket files in worktree branches, board-style. |
+| `ralph` | Keep working continuously on an open-ended maintenance prompt. |
+| `mission` | Run long-horizon work as approved milestones with focused workers and validation. |
+
+See [`docs/workflows/`](./docs/workflows/overview.mdx) for the full pack.
+
+## Examples
+
+The [`examples/`](./examples) folder has 90+ runnable workflows covering real patterns. Copy one as a starting point:
+
+| Example | Pattern |
+| --- | --- |
+| [`code-review-loop`](./examples/code-review-loop.jsx) | Implement → review → fix, looped until approved. |
+| [`coverage-loop`](./examples/coverage-loop.jsx) | Run tests, measure coverage, write tests, repeat to target. |
+| [`panel`](./examples/panel.jsx) | N specialist agents review in parallel, a moderator synthesizes. |
+| [`debate`](./examples/debate.jsx) | Two agents argue opposing positions; a judge decides. |
+| [`supervisor`](./examples/supervisor.jsx) | A boss agent plans and delegates to workers dynamically. |
+| [`fan-out-fan-in`](./examples/fan-out-fan-in.jsx) | Split work across N parallel agents, aggregate results. |
+| [`parallel-tickets`](./examples/parallel-tickets.jsx) | Triage, run waves of work in parallel, merge-queue the results. |
+| [`migration`](./examples/migration.jsx) | Plan → transform files → validate → report. |
+| [`pr-shepherd`](./examples/pr-shepherd.jsx) | Watch a PR, gather context, leave structured review comments. |
+| [`canary-judge`](./examples/canary-judge.jsx) | Compare stable vs. canary metrics; recommend promote/hold/rollback. |
+| [`slo-breach-explainer`](./examples/slo-breach-explainer.jsx) | On an SLO alarm, pull traces/logs/changes and explain the cause. |
+| [`repo-janitor`](./examples/repo-janitor.jsx) | On a schedule, clean warnings, stale TODOs, and doc drift. |
+
+## Author your own
+
+The built-in workflows are normal Smithers TSX files: run them as-is, have your agent
+adapt them to your repo, or have it write new ones from the same primitives. A workflow
+is a JSX tree of tasks:
 
 ```tsx
 import { createSmithers, Sequence } from "smithers-orchestrator";
 import { z } from "zod";
 
-const analyzeSchema = z.object({
-  summary: z.string(),
-  severity: z.enum(["low", "medium", "high"]),
-});
-
-const fixSchema = z.object({
-  patch: z.string(),
-  explanation: z.string(),
-});
-
 const { Workflow, Task, smithers, outputs } = createSmithers({
-  analyze: analyzeSchema,
-  fix: fixSchema,
+  analyze: z.object({
+    summary: z.string(),
+    severity: z.enum(["low", "medium", "high"]),
+  }),
+  fix: z.object({
+    patch: z.string(),
+    explanation: z.string(),
+  }),
 });
 
 export default smithers((ctx) => (
@@ -57,89 +172,11 @@ export default smithers((ctx) => (
 ));
 ```
 
-This defines a two-stage DAG:
+Each task output is validated against its Zod schema and persisted to SQLite. If the
+process crashes, Smithers resumes from the last completed node without re-running
+finished work.
 
-```
-analyze → fix
-```
-
-After `analyze` completes:
-
-* Output is validated against `analyzeSchema`
-* Written to SQLite
-* The tree re-renders
-* `fix` becomes runnable
-
-If the process crashes, Smithers resumes from the last completed node.
-
----
-
-## Install
-
-Requires Bun ≥ 1.3.
-
-```bash
-bun add smithers-orchestrator ai @ai-sdk/anthropic zod
-```
-
----
-
-## Mental Model
-
-### 1. React Tree = Execution Plan
-
-Your JSX tree is not UI. It is a declarative execution graph.
-
-* `<Workflow>` is the root.
-* `<Task>` is a node.
-* `<Sequence>` runs children in order.
-* `<Parallel>` runs children concurrently.
-* `<Ralph>` repeats children until a condition is met.
-
-After each task finishes, Smithers re-renders the tree with updated context.
-
-If new nodes are unblocked, they become runnable.
-
----
-
-### 2. Zod Schemas = Durable Tables
-
-Each output schema becomes a SQLite table. Pass the schema directly to `<Task>` via the `outputs` object returned by `createSmithers`:
-
-```ts
-const analyzeSchema = z.object({
-  summary: z.string(),
-  severity: z.enum(["low", "medium", "high"]),
-});
-
-const { Workflow, Task, smithers, outputs } = createSmithers({
-  analyze: analyzeSchema,
-});
-
-// outputs.analyze === analyzeSchema (the ZodObject, by reference)
-```
-
-* Agent output must validate against the schema.
-* If validation fails, the task retries (with error feedback).
-* Validated output is persisted.
-
-This makes workflows typed, inspectable, and reproducible.
-
----
-
-### 3. Deterministic Execution
-
-Execution order is:
-
-* Depth-first
-* Left-to-right
-* Unblocked nodes only
-
-There is no hidden scheduler logic in user code.
-
----
-
-## Core Components
+### Components
 
 | Component    | Purpose                        |
 | ------------ | ------------------------------ |
@@ -148,42 +185,10 @@ There is no hidden scheduler logic in user code.
 | `<Sequence>` | Ordered execution              |
 | `<Parallel>` | Concurrent execution           |
 | `<Branch>`   | Conditional execution          |
-| `<Ralph>`    | Loop until condition satisfied |
-
----
-
-## Validation and Retries
-
-If an agent returns malformed JSON:
-
-1. Smithers appends the validation error to the prompt
-2. Retries the task
-3. Persists only valid output
+| `<Ralph>`    | Loop until a condition is met  |
 
 ```tsx
-<Task
-  id="analyze"
-  output={outputs.analyze}
-  agent={analyzer}
-  retries={2}
->
-  Analyze the codebase
-</Task>
-```
-
----
-
-## Looping with `<Ralph>`
-
-`<Ralph>` repeats its children until a condition becomes true.
-
-Each iteration is stored separately in the database.
-
-```tsx
-<Ralph
-  until={ctx.latest("review", "validate")?.approved}
-  maxIterations={5}
->
+<Ralph until={ctx.latest("validate")?.approved} maxIterations={5}>
   <Task id="implement" output={outputs.implement} agent={coder}>
     Fix based on feedback
   </Task>
@@ -194,111 +199,99 @@ Each iteration is stored separately in the database.
 </Ralph>
 ```
 
----
+There are many more: approvals, merge queues, sub-workflows, signals, timers, sagas, and
+composite patterns. See [Components](https://smithers.sh/components/workflow).
 
-## Dynamic Branching
+## Durable by default
 
-Because the workflow re-renders after each task, you can branch with normal JSX:
-
-```tsx
-<Task id="assess" output={outputs.assess} agent={analyst}>
-  Assess complexity
-</Task>
-
-{ctx.output("assess", { nodeId: "assess" }).complexity === "high" ? (
-  <Task id="plan" output={outputs.plan} agent={architect}>
-    Plan implementation
-  </Task>
-) : (
-  <Task id="implement" output={outputs.code} agent={coder}>
-    Quick fix
-  </Task>
-)}
-```
-
----
-
-## CLI
+Runs survive crashes, restarts, and flaky tools. Every completed step is persisted the
+moment it finishes, so the runtime always knows what's done and what to run next.
 
 ```bash
-smithers run workflow.tsx --input '{"description": "Fix bug"}'
-smithers resume workflow.tsx --run-id abc123
-smithers list workflow.tsx
-smithers approve workflow.tsx --run-id abc123 --node-id review
+smithers up workflow.tsx --input '{"description":"Fix bug"}'
+smithers up workflow.tsx --run-id abc123 --resume true   # resume after a crash
+smithers ps                                              # list active runs
+smithers rewind abc123 --frame 4                         # time-travel to an earlier frame
 ```
 
-## Hot Module Replacement
+Approvals, human questions, retries, and replay are first-class. You can rewind a run to
+an earlier state and fork alternate timelines.
 
-Edit your workflow files while a run is executing. Smithers watches your source tree and hot-reloads changes on save — prompts, config, agent settings, and component structure — without restarting the process or losing run state.
+## Observability
+
+Smithers ships a full observability story, not an afterthought:
 
 ```bash
-smithers run workflow.tsx --hot
+smithers observability up                       # Grafana + Prometheus + Tempo + OTLP collector
+smithers up workflow.tsx --serve --metrics      # HTTP API, SSE event stream, and /metrics
 ```
 
-In-flight tasks continue with their original code. Only newly scheduled tasks pick up the changes.
+Every run emits Prometheus metrics and OpenTelemetry traces, so you can see token spend,
+task latency, retries, and failures across thousands of runs.
 
+## Evals
+
+Run repeatable workflow regressions from JSON or JSONL cases:
+
+```jsonl
+{"id":"happy-path","input":{"description":"Fix bug"},"expected":{"status":"finished"}}
 ```
-[00:05:12] ⟳ File change detected: 1 file(s)
-[00:05:12] ⟳ Workflow reloaded (generation 1)
-[00:05:13] → implement-cat-12 (attempt 1, iteration 0)
+
+```bash
+smithers eval workflow.tsx --cases evals/smoke.jsonl --suite smoke --force
 ```
 
-**What you can change live:**
+Reports are written to `.smithers/evals/<suite>.json`, and the command exits non-zero when
+any case fails.
 
-* Prompt strings and `.md`/`.mdx` prompt files
-* Focus lists, config values, concurrency settings
-* Agent models, timeouts, system prompts
-* JSX tree structure (add/remove/reorder tasks)
+## Prompt optimization
 
-**What requires a restart:**
+Run GEPA-style prompt optimization against an eval suite:
 
-* Output schema changes (Zod shapes)
-* Database path changes
+```bash
+smithers optimize workflow.tsx \
+  --cases evals/smoke.jsonl \
+  --suite smoke-gepa \
+  --provider cerebras \
+  --model gpt-oss-120b \
+  --artifact .smithers/optimizations/smoke-gepa.json
+```
 
-See the [Hot Reload Guide](/guides/hot-reload) for details.
+Smithers runs a baseline eval, generates prompt patches, reruns the suite with the
+candidate, and writes the artifact only when the optimized score improves.
 
----
+## Hot reload
 
-## Built-in Tools
+```bash
+smithers up workflow.tsx --hot
+```
+
+Edit prompts, config, agent settings, or JSX structure while a run is executing. In-flight
+tasks finish with their original code; only newly scheduled tasks pick up changes.
+
+## Scale across machines
+
+Most workflows run fine on your laptop. When you need more, like isolation, parallelism, or
+horizontal scale, the same `<Sandbox>` primitive runs agents in a local sandbox or on a
+remote provider, with no change to the workflow:
+
+- **Local**: run agents in an isolated sandbox on your own machine.
+- **Remote**: [gVisor](https://gvisor.dev), Kubernetes, [freestyle.sh](https://freestyle.sh),
+  [Daytona](https://daytona.io), and [Cloudflare](https://workers.cloudflare.com).
 
 ```tsx
-import { read, edit, bash, grep, write } from "smithers-orchestrator";
+// Run a child workflow through an injectable provider (local or remote).
+<Sandbox id="build" provider={freestyleProvider} workflow={migration} input={ctx.input} />
 ```
 
-* Sandboxed to workflow root
-* `bash` is network-disabled by default
+See [`examples/freestyle-sandbox-provider`](./docs/examples/freestyle-sandbox-provider.mdx)
+and the [Sandbox component](https://smithers.sh/components/sandbox).
 
----
+## Docs
 
-## How Execution Works
-
-1. Render React tree
-2. Identify runnable tasks
-3. Execute task
-4. Validate output
-5. Persist to SQLite
-6. Re-render
-7. Repeat
-
-Crash at any point → resume from last persisted step.
-
----
-
-## When to Use Smithers
-
-* Multi-step AI workflows
-* Tool-using agents
-* Systems requiring resumability
-* Human-in-the-loop review cycles
-* Typed, inspectable AI pipelines
-
-Not intended for:
-
-* Single prompt calls
-* Stateless toy scripts
-
----
+Full documentation lives at **[smithers.sh](https://smithers.sh)**.
 
 ## License
 
 MIT
+

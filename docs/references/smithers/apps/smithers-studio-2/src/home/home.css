@@ -1,0 +1,246 @@
+/* Home (WELCOME altitude) — port of gui/WelcomeView.swift. Prefix: home-* */
+
+.home {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: var(--space-10) var(--space-9);
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.home-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  width: 100%;
+  max-width: 720px;
+}
+
+.home-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  text-align: center;
+}
+
+.home-glyph {
+  font-size: 56px;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.home-title {
+  font-size: 34px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.home-tagline {
+  font-size: var(--text-body);
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.home-actions {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.home-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-card);
+  padding: var(--space-5) var(--space-7);
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.home-action--primary {
+  min-width: 200px;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.home-action--primary:hover { background: var(--info); }
+
+.home-action--secondary {
+  min-width: 180px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.home-action--secondary:hover { background: var(--fill-hover); }
+
+.home-divider {
+  height: 1px;
+  background: var(--border);
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.home-recents {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.home-recents-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.home-recents-empty {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  padding: var(--space-7) 0;
+  margin: 0;
+}
+
+.home-recents-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.home-recent-row {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-card);
+}
+
+.home-recent-row:hover { background: var(--fill-hover); }
+
+.home-recent-open {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+}
+
+.home-recent-open:disabled { cursor: default; }
+
+.home-recent-glyph {
+  font-size: 15px;
+  width: 20px;
+  flex: none;
+}
+
+.home-recent-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.home-recent-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.home-recent-path {
+  font-size: var(--text-mono-sm);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-recent-row--missing .home-recent-name {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
+
+.home-recent-row--missing .home-recent-glyph { color: var(--text-tertiary); }
+
+.home-recent-remove {
+  background: transparent;
+  border: 0;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  padding: var(--space-2) var(--space-3);
+}
+
+.home-recent-remove:hover { color: var(--text-secondary); }
+
+.home-operations {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.home-op {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-4);
+  text-align: left;
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.home-op:hover { background: var(--fill-hover); }
+
+.home-op-count {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.home-op-label {
+  font-size: var(--text-mono-sm);
+  color: var(--text-secondary);
+}
+
+.home-op--running .home-op-count { color: var(--accent); }
+.home-op--waiting .home-op-count { color: var(--info); }
+.home-op--approval .home-op-count { color: var(--warning); }
+
+.home-boot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: flex-start;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-6);
+}
+
+.home-boot-title {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.home-boot-body {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0;
+}

@@ -1,0 +1,175 @@
+---
+title: <Sandbox>
+description: Run a child workflow through an injectable sandbox provider and collect outputs, artifacts, and reviewed file changes.
+---
+
+`<Sandbox>` is a task boundary for work that should execute outside the parent task process. The public component is provider-first: pass an injectable provider object or a registered provider id. `runtime` remains only for the built-in legacy local transports.
+
+```ts
+import { Sandbox } from "smithers-orchestrator";
+import type { SandboxProvider } from "smithers-orchestrator/sandbox";
+
+type SandboxProps = {
+  id: string;
+  output: ZodObject | DrizzleTable | string;
+  workflow?: SmithersWorkflow<unknown>;
+  input?: unknown;
+
+  provider?: SandboxProvider | string;
+  runtime?: "bubblewrap" | "docker" | "codeplane"; // legacy local transports
+
+  allowNetwork?: boolean;
+  reviewDiffs?: boolean; // default true
+  autoAcceptDiffs?: boolean; // default false
+  allowNested?: boolean; // default false
+
+  image?: string;
+  env?: Record<string, string>;
+  ports?: Array<{ host: number; container: number }>;
+  volumes?: Array<{ host: string; container: string; readonly?: boolean }>;
+  memoryLimit?: string;
+  cpuLimit?: string;
+  command?: string;
+  workspace?: {
+    name: string;
+    snapshotId?: string;
+    idleTimeoutSecs?: number;
+    persistence?: "ephemeral" | "sticky";
+  };
+};
+```
+
+## Basic usage
+
+```tsx
+const provider = {
+  id: "remote-vm",
+  async run(request) {
+    const remote = await createRemoteVm({
+      input: request.input,
+      requestBundlePath: request.requestBundlePath,
+    });
+
+    return {
+      status: "finished",
+      output: await remote.readJson("/workspace/smithers-result.json"),
+      remoteRunId: remote.id,
+      workspaceId: remote.workspaceId,
+      diffBundle: await remote.diffBundle(),
+    };
+  },
+};
+
+<Workflow name="remote-codegen">
+  <Sandbox
+    id="generate"
+    provider={provider}
+    workflow={generateCodeWorkflow}
+    input={{ prompt: ctx.input.prompt }}
+    output={outputs.result}
+    allowNetwork={false}
+    reviewDiffs
+  />
+</Workflow>
+```
+
+## Execution model
+
+1. Smithers renders `<Sandbox>` as one scheduler task. Children do not become parent-run tasks.
+2. At execution time Smithers writes a request bundle under `.smithers/sandboxes/<run>/<sandbox>/request-bundle`.
+3. A provider receives the request, runs work remotely, and returns either a local bundle path or a structured result.
+4. Smithers validates the result bundle, records sandbox lifecycle events, enforces diff review policy, applies accepted `diffBundle`s, and returns `outputs` to the parent task output table.
+
+The provider contract receives the child workflow, input, root directory, request/result bundle paths, limits, abort signal, and a heartbeat callback:
+
+```ts
+type SandboxProvider = {
+  id: string;
+  run(request: SandboxProviderRequest): Promise<SandboxProviderResult> | SandboxProviderResult;
+  cleanup?(request: SandboxProviderRequest): Promise<void> | void;
+};
+```
+
+Register reusable providers when a workflow should reference them by id:
+
+```ts
+import { registerSandboxProvider } from "smithers-orchestrator/sandbox";
+
+const unregister = registerSandboxProvider(provider);
+
+<Sandbox id="generate" provider="remote-vm" workflow={child} output={outputs.result} />;
+```
+
+## Result bundles
+
+A provider can return a path to a bundle it created:
+
+```ts
+return {
+  bundlePath: "/tmp/smithers-result-bundle",
+  remoteRunId: vmId,
+  workspaceId: vmId,
+};
+```
+
+Or it can return a structured result and let Smithers materialize the bundle locally:
+
+```ts
+return {
+  status: "finished",
+  output: { summary: "done" },
+  runId: vmId,
+  diffBundle: {
+    seq: 1,
+    baseRef: "HEAD",
+    patches: [
+      {
+        path: "src/app.ts",
+        operation: "modify",
+        diff: "diff --git a/src/app.ts b/src/app.ts\n...",
+      },
+    ],
+  },
+};
+```
+
+Bundle limits are enforced before the result is accepted: 100 MB total, 5 MB manifest file (README.md), 1,000 patch files, bounded JSON output, and no path traversal or symlinks in bundle paths.
+
+## Diff review
+
+`reviewDiffs` defaults to `true`. If the sandbox returns patch files or a `diffBundle`, Smithers records `SandboxDiffReviewRequested`.
+
+When `autoAcceptDiffs` is false, changed bundles fail closed until a review path accepts them. When `autoAcceptDiffs` is true, or `reviewDiffs` is false, Smithers applies `diffBundle` through the engine diff-bundle applier. Legacy patch files are still collected and review-gated, but the apply path is `diffBundle`.
+
+## Nested sandboxes
+
+Nested sandbox execution is disabled by default. A sandbox running inside another sandbox must set `allowNested`.
+
+Use nesting only when the provider and diff policy are designed for it. The hard cases are:
+
+- Diff base conflicts: an inner sandbox can generate a `diffBundle` against a different base than the outer sandbox.
+- Cleanup ordering: an outer provider cleanup can delete the workspace before the inner provider finishes.
+- Quotas and concurrency: nested remote VMs can multiply resource usage quickly.
+- Network and secrets: inherited remote credentials may be broader than intended.
+- Event lineage: parent run, outer sandbox run, and inner sandbox run need clear ids for debugging.
+
+For most workflows, use sibling sandboxes under a `Parallel` or `MergeQueue` instead of nesting.
+
+## Built-in local transports
+
+When `provider` is omitted, Smithers uses the legacy local transport path. `runtime` may be `"bubblewrap"`, `"docker"`, or `"codeplane"`. If `runtime` is omitted, the local path defaults to `"bubblewrap"`.
+
+Unknown runtimes now fail closed. Docker is not silently replaced by bubblewrap when Docker is unavailable.
+
+## Freestyle provider example
+
+[Freestyle VMs](https://docs.freestyle.sh/v2/vms) are extremely powerful sandboxes with nested virtualization, full networking, and the ability to scale to more resources than alternatives. Use Freestyle VMs when you want to give your agents a real computer, not a code runner.
+
+See `examples/freestyle/` for a provider adapter that creates a Freestyle VM, ships a request with `additionalFiles`, executes a command with `vm.exec()`, reads `smithers-result.json`, and returns a Smithers sandbox result.
+
+Freestyle's current VM docs show the stable package as `freestyle`, VM creation through `freestyle.vms.create()`, support for `additionalFiles`, `gitRepos`, `workdir`, `idleTimeoutSeconds`, and command execution with `vm.exec()`. Relevant Freestyle docs:
+
+- https://docs.freestyle.sh/v2/vms
+- https://docs.freestyle.sh/v2/vms/configuration
+- https://docs.freestyle.sh/v2/vms/configuration/files-and-repos
+- https://docs.freestyle.sh/v2/vms/lifecycle

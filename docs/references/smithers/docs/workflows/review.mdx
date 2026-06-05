@@ -1,0 +1,27 @@
+---
+title: review
+description: Review the current repository state with configured agents.
+---
+
+`review` runs the shared `Review` component over the prompt and returns structured reviewer feedback, approval status, and issues.
+
+```bash
+bunx smithers-orchestrator workflow run review --prompt "Review the current repository changes"
+```
+
+## Inputs
+
+| Input | Type | Default |
+| --- | --- | --- |
+| `prompt` | string | `"Review the current repository changes."` |
+
+## Output Shape
+
+Reviewers return:
+
+- `reviewer`: identifier string for the agent that produced this review (e.g. `reviewer-1`).
+- `approved`: whether the change is production-ready.
+- `feedback`: concise review notes.
+- `issues`: structured findings with severity, title, optional file, and description.
+
+Use this after manual edits, `implement`, `mission`, or `kanban`.

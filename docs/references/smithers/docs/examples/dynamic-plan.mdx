@@ -10,6 +10,7 @@ description: A workflow that analyzes input and branches between a simple or com
 ## Workflow Definition
 
 ```tsx
+/** @jsxImportSource smithers-orchestrator */
 // dynamic-plan.tsx
 import { createSmithers, Task, Sequence, Branch } from "smithers-orchestrator";
 import { ToolLoopAgent as Agent } from "ai";
@@ -87,7 +88,7 @@ export default smithers((ctx) => {
 ## Running
 
 ```bash
-smithers up dynamic-plan.tsx --input '{}'
+bunx smithers-orchestrator up dynamic-plan.tsx --input '{}'
 ```
 
 High complexity path:
@@ -110,5 +111,5 @@ Low complexity path (planner skipped):
 ## How Branch Works
 
 - `if` is evaluated each time the workflow re-renders. Only the matching branch (`then` or `else`) is mounted.
-- The Branch is inside a `Sequence`, so it is not reached until `analyze` finishes and `analysis` is populated.
+- The Branch is inside a `Sequence`, so it is not reached until `analyze` finishes and `analysis` is populated. `<Sequence>` runs children in order and waits for each to complete before starting the next, so the `<Branch>` only evaluates after `analyze` has persisted its output.
 - Resumable: completed task outputs are persisted, so re-running picks up where it left off.

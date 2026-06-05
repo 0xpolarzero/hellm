@@ -1,0 +1,115 @@
+/*
+ * Issues surface styles. Phase-2 declutter pass: Issues is now a secondary
+ * "More" surface, so it reads calmer and lower-density than the primary
+ * surfaces. Rules here are namespaced under `.issues-surface` and layer on top
+ * of the foundation base rules in app.css (imported earlier, so equal-specificity
+ * rules here win). Tokens only — no hardcoded color/spacing.
+ */
+
+/* Calmer secondary header: shorter, lighter, sits on the page bg not surface-2. */
+.issues-surface .view-header {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  min-height: 48px;
+  padding: var(--space-4) var(--space-7);
+}
+
+.issues-surface .view-header h2 {
+  color: var(--text-secondary);
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+/* Controls recede until needed: quiet, borderless, tertiary text. */
+.issues-surface .view-controls {
+  gap: var(--space-3);
+}
+
+.issues-surface .view-controls select,
+.issues-surface .view-controls button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-tertiary);
+  font-size: var(--text-mono);
+  padding: var(--space-1) var(--space-3);
+}
+
+.issues-surface .view-controls select:hover,
+.issues-surface .view-controls button:hover {
+  background: var(--fill-hover);
+  color: var(--text-secondary);
+}
+
+/* Quieter status line — almost ambient. */
+.issues-surface .status-message {
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-tertiary);
+  font-size: var(--text-mono-sm);
+  padding: var(--space-2) var(--space-6);
+}
+
+/* Lower-density rows: tighter vertical rhythm, no border-right slab on select. */
+.issues-surface .issue-row {
+  padding: var(--space-3) var(--space-6);
+}
+
+.issues-surface .issue-row.selected {
+  background: var(--fill-selected);
+  border-right: 2px solid var(--accent);
+}
+
+.issues-surface .issue-title {
+  font-size: var(--text-body);
+  margin-bottom: 2px;
+}
+
+/* State pill recedes to a plain colored label; drop the heavy uppercase chip. */
+.issues-surface .issue-meta {
+  font-size: var(--text-mono-sm);
+  gap: var(--space-2);
+}
+
+.issues-surface .issue-state {
+  background: transparent;
+  padding: 0;
+  text-transform: capitalize;
+}
+
+.issues-surface .issue-state-open { color: var(--success); }
+.issues-surface .issue-state-closed { color: var(--text-tertiary); }
+
+.issues-surface .issue-labels {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.issues-surface .issue-label {
+  background: var(--fill-hover);
+  color: var(--text-tertiary);
+}
+
+/* Detail header sits flat on the page; primary action stays accent-filled. */
+.issues-surface .issue-detail-header {
+  background: var(--bg);
+  padding: var(--space-6) var(--space-7);
+}
+
+.issues-surface .issue-body {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+}
+
+.issues-surface .issue-assignees,
+.issues-surface .issue-comments {
+  color: var(--text-secondary);
+  font-size: var(--text-mono);
+  padding: 0 var(--space-7) var(--space-4);
+}
+
+.issues-surface .issue-assignees strong,
+.issues-surface .issue-comments strong {
+  color: var(--text-tertiary);
+  font-weight: 600;
+}

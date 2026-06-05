@@ -1,0 +1,77 @@
+:root {
+  color-scheme: dark;
+
+  /* surfaces */
+  --bg: #0C0E16;
+  --surface-1: #141826;
+  --surface-2: #1A2030;
+
+  /* text */
+  --text-primary: rgba(255, 255, 255, 0.88);
+  --text-secondary: rgba(255, 255, 255, 0.60);
+  --text-tertiary: rgba(255, 255, 255, 0.45);
+
+  /* lines & fills */
+  --border: rgba(255, 255, 255, 0.08);
+  --fill-hover: rgba(255, 255, 255, 0.04);
+  --fill-selected: rgba(76, 141, 255, 0.12);
+
+  /* signals */
+  --accent: #4C8DFF;
+  --success: #34D399;
+  --warning: #FBBF24;
+  --danger: #F87171;
+  --info: #60A5FA;
+
+  /* signal-on-fill tints */
+  --accent-fill: rgba(76, 141, 255, 0.12);
+  --accent-fill-strong: rgba(76, 141, 255, 0.22);
+  --accent-stroke: rgba(76, 141, 255, 0.35);
+
+  /* radius */
+  --radius-card: 8px;
+  --radius-pill: 4px;
+  --radius-row: 0;
+
+  /* spacing scale */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 14px;
+  --space-6: 16px;
+  --space-7: 24px;
+  --space-8: 32px;
+  --space-9: 40px;
+  --space-10: 48px;
+
+  /* typography */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --text-body: 14px;
+  --text-mono: 12px;
+  --text-mono-sm: 11px;
+  --text-label: 12px;
+  --text-section: 10px;
+
+  /* motion */
+  --motion-fast: 120ms;
+  --motion-base: 150ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text-primary);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--bg); }
+button, input { font: inherit; }
+button { cursor: pointer; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --motion-fast: 0ms; --motion-base: 0ms; }
+}

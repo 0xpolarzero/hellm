@@ -1,23 +1,43 @@
 ---
 title: Installation
-description: Install Smithers for JSX-based workflow authoring.
+description: Install smithers-orchestrator with the workflow pack, or manually for standalone JSX workflow projects.
 ---
 
-## Recommended
+Most teams should start with the workflow pack. It gives you a working `.smithers/` directory with seeded workflows, prompts, and agent configuration instead of assembling the project structure by hand.
+
+## Always Run with `bunx`
+
+Every CLI invocation in these docs is `bunx smithers-orchestrator <command>`. Do **not** install Smithers globally and do **not** use the bare `smithers` or `bunx smithers` shorthand.
+
+- `bunx` resolves the package locally if your project depends on it, otherwise it pulls and runs the latest published version.
+- The published npm package is [`smithers-orchestrator`](https://www.npmjs.com/package/smithers-orchestrator). The bare name `smithers` is a different package, so `bunx smithers` runs something else entirely.
+- A global install creates version-drift problems across machines, CI, and contributors. With `bunx`, every project pins Smithers through its own `package.json`.
+
+If you previously ran `npm i -g smithers-orchestrator`, uninstall it (`npm rm -g smithers-orchestrator`) and switch to `bunx`.
+
+## Recommended: Install the Workflow Pack
 
 ```bash
 bunx smithers-orchestrator init
 ```
 
-Scaffolds `.smithers/` with:
+That scaffolds `.smithers/` with files such as:
 
 | Directory / File | Contents |
 |---|---|
 | `.smithers/workflows/` | Pre-built workflows (`implement`, `review`, `plan`, `ralph`, `debug`, ...) |
 | `.smithers/prompts/` | Shared MDX prompt templates |
 | `.smithers/components/` | Reusable TSX components (`Review`, `ValidationLoop`, ...) |
-| `.smithers/agents.ts` | Auto-detected agent configuration |
+| `.smithers/package.json` | Local workflow project manifest with `smithers-orchestrator` dependency |
+| `.smithers/tsconfig.json` | TypeScript config for JSX workflow authoring |
+| `.smithers/bunfig.toml` | Bun preload config for MDX workflow prompts |
+| `.smithers/preload.ts` | Registers the MDX preload plugin |
+| `.smithers/agents/` | User-owned agent config (`claude-code.ts`, `codex.ts`, `opencode.ts`, `antigravity.ts`, `index.ts`) — edit to pin models/cwd/systemPrompt; preserved across re-inits |
+| `.smithers/agents.ts` | Auto-detected agent configuration (regenerated on each `init`) |
 | `.smithers/smithers.config.ts` | Repo-level config (lint, test, coverage commands) |
+| `.smithers/tickets/` | Ticket workspace used by ticket-oriented workflows |
+| `.smithers/executions/` | Execution artifacts directory preserved across re-inits |
+| `.smithers/.gitignore` | Ignore rules for generated workflow state |
 
 To overwrite an existing scaffold:
 
@@ -25,18 +45,53 @@ To overwrite an existing scaffold:
 bunx smithers-orchestrator init --force
 ```
 
-## Manual Installation
+## Install the Agent Skill
 
-See [JSX Installation](/api/installation) for manual package setup and TypeScript configuration.
+Smithers is driven by an AI agent — Claude Code, Codex, and friends — not a GUI you
+click. Your agent runs Smithers on your behalf: scaffolding workflows, starting
+runs, watching them, and clearing approvals. The `smithers` skill makes your agent
+fluent in that without making it read the whole docs site first, so you reach the
+aha moment faster.
+
+```bash
+mkdir -p ~/.claude/skills/smithers
+curl -fsSL https://raw.githubusercontent.com/smithersai/smithers/main/skills/smithers/SKILL.md \
+  -o ~/.claude/skills/smithers/SKILL.md
+curl -fsSL https://smithers.sh/llms-full.txt \
+  -o ~/.claude/skills/smithers/llms-full.txt
+```
+
+The skill ships the full docs bundle (`llms-full.txt`) next to its `SKILL.md`, so
+the agent can read the exact API on demand. Once installed, just ask for the
+outcome — *"orchestrate an agent to add rate limiting and keep iterating until the
+tests pass"* — and the agent reaches for Smithers itself.
+
+For agents without a skills directory, point them at
+`bunx smithers-orchestrator docs-full` (prints the same bundle) or
+`bunx smithers-orchestrator ask "<question>"`.
+
+To install the skill **and** register the MCP server into every coding agent on
+your machine at once, see [Agent Support](/agents/overview) — it covers Claude
+Code, Codex, Cursor, Copilot, Pi, Hermes, OpenClaw, and ~20 more.
+
+## When to Use Manual Installation
+
+Use manual installation when embedding Smithers into an existing TypeScript codebase to author a standalone [workflow project](/guides/project-structure) from scratch.
+
+See [JSX Installation](/jsx/installation) for the package list, TypeScript configuration, and optional MDX prompt setup.
 
 ## Requirements
 
-- Bun >= 1.3
+- [Bun](https://bun.sh) >= 1.3
 - TypeScript >= 5
-- Model or provider credentials (e.g. `ANTHROPIC_API_KEY`)
+- Model or provider credentials (e.g. [Anthropic](https://docs.anthropic.com) `ANTHROPIC_API_KEY`)
 
-## Next Steps
+## After Installation
 
-- [JSX Installation](/api/installation) -- Manual setup with TSX and optional MDX prompts.
-- [CLI Reference](/cli/overview) -- Run, resume, inspect workflows.
-- [Tools Integration](/integrations/tools) -- Built-in tool sandbox.
+- [Quickstart](/quickstart) — run a seeded workflow immediately.
+- [Set up in your harness](/agents/setup) — wire Smithers into your agent and grab a copy-paste setup prompt.
+- [Install the Agent Skill](#install-the-agent-skill) — make your coding agent fluent in Smithers.
+- [CLI Quickstart](/cli/quickstart) — operational workflow.
+- [JSX Installation](/jsx/installation) — manual TSX authoring setup.
+- [Project Structure](/guides/project-structure) — how a standalone workflow project fits together.
+- [Tools Integration](/integrations/tools) — the built-in tool sandbox.

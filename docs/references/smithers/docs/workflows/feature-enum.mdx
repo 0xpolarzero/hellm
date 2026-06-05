@@ -1,0 +1,27 @@
+---
+title: feature-enum
+description: Generate or refine a code-backed feature inventory.
+---
+
+`feature-enum` scans the repository and produces grouped, SCREAMING_SNAKE_CASE feature names. It can also refine an existing inventory using prior feature groups and a previous commit hash.
+
+```bash
+bunx smithers-orchestrator workflow run feature-enum --input '{"refineIterations":3}'
+```
+
+## Inputs
+
+| Input | Type | Default |
+| --- | --- | --- |
+| `refineIterations` | integer | `1` |
+| `existingFeatures` | Record<string, string[]> or null | `null` |
+| `lastCommitHash` | string or null | `null` |
+| `additionalContext` | string | `""` |
+
+## Use It When
+
+- You need a feature inventory for audits.
+- You want stable feature names for documentation, tests, or release planning.
+- You want an agent to compare the current repo against a previous inventory.
+
+Follow with `audit`.

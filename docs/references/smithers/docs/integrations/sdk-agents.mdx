@@ -3,7 +3,7 @@ title: SDK Agents
 description: Provider-backed AI SDK agent wrappers for Anthropic and OpenAI that work like first-class Smithers agents.
 ---
 
-`AnthropicAgent` and `OpenAIAgent` are thin wrappers around the AI SDK `ToolLoopAgent` with class-style ergonomics matching the CLI agents.
+`AnthropicAgent` and `OpenAIAgent` are thin wrappers around the [AI SDK](https://ai-sdk.dev) `ToolLoopAgent` with class-style ergonomics matching the [CLI agents](/integrations/cli-agents).
 
 ## Import
 
@@ -20,7 +20,7 @@ import { stepCountIs } from "ai";
 
 ```ts
 const claude = new AnthropicAgent({
-  model: "claude-opus-4-6",
+  model: "claude-opus-4-7",
   tools,
   instructions: "You are a careful planner.",
   stopWhen: stepCountIs(40),
@@ -43,21 +43,78 @@ const codex = new OpenAIAgent({
 
 ## Model Input
 
-Both classes accept a model ID string (`"claude-opus-4-6"`, `"gpt-5.3-codex"`) or a prebuilt AI SDK language model instance.
+Both classes accept a model ID string (`"claude-opus-4-7"`, `"gpt-5.3-codex"`) or a prebuilt AI SDK language model instance.
 
 ## Options
 
-Constructors forward standard AI SDK `ToolLoopAgent` settings:
+Constructors forward standard AI SDK `ToolLoopAgent` settings: `instructions`, `tools`, `stopWhen`, `maxOutputTokens`, `temperature`, `providerOptions`, `prepareCall`. The wrapper adds `model`, which resolves model-ID strings automatically.
 
-- `instructions`
-- `tools`
-- `stopWhen`
-- `maxOutputTokens`
-- `temperature`
-- `providerOptions`
-- `prepareCall`
+For `OpenAIAgent`, pass `baseURL` and `apiKey` directly when targeting an OpenAI-compatible endpoint instead of the default OpenAI API. This is the simplest path for local servers such as llama.cpp:
 
-The only addition is `model`: the wrapper resolves model-ID strings automatically.
+```ts
+const local = new OpenAIAgent({
+  model: "llama-3.1-8b-instruct",
+  baseURL: "http://127.0.0.1:8080/v1",
+  apiKey: "none",
+  tools,
+  instructions: "You are a local coding assistant.",
+  stopWhen: stepCountIs(40),
+});
+```
+
+Set `apiKey: "none"` in the `OpenAIAgent` config when your local server accepts OpenAI-compatible requests but does not require a real key.
+
+Some OpenAI-compatible local servers accept chat requests but do not reliably implement JSON schema structured output. For those servers, keep the output schema on the Smithers task and disable native structured output on the agent so Smithers uses prompt-based JSON extraction instead:
+
+```ts
+const local = new OpenAIAgent({
+  model: "llama-3.1-8b-instruct",
+  baseURL: "http://127.0.0.1:8080/v1",
+  apiKey: "none",
+  nativeStructuredOutput: false,
+  tools,
+  instructions: "You are a local coding assistant.",
+  stopWhen: stepCountIs(40),
+});
+```
+
+For advanced provider setup, create the AI SDK OpenAI provider yourself and pass the prebuilt model into `OpenAIAgent`:
+
+```ts
+import { createOpenAI } from "@ai-sdk/openai";
+
+const localOpenAI = createOpenAI({
+  baseURL: "http://127.0.0.1:8080/v1",
+  apiKey: "none",
+});
+
+const local = new OpenAIAgent({
+  model: localOpenAI("llama-3.1-8b-instruct"),
+  tools,
+  instructions: "You are a local coding assistant.",
+  stopWhen: stepCountIs(40),
+});
+```
+
+Use the `createOpenAI` path when you need provider-level configuration beyond `baseURL` and `apiKey`; in that form, `apiKey: "none"` belongs in the `createOpenAI` config.
+
+## Hermes
+
+[Hermes](https://github.com/NousResearch/hermes-agent) (Nous Research) exposes an OpenAI-compatible HTTP API, so `HermesAgent` is a convenience subclass of `OpenAIAgent` that points the provider at your Hermes server and disables native structured output by default (a local Hermes server may not honor JSON-schema response formats).
+
+```ts
+import { HermesAgent } from "smithers-orchestrator";
+
+const hermes = new HermesAgent({
+  baseURL: "http://127.0.0.1:5123/v1", // or set HERMES_BASE_URL
+  model: "hermes",                      // whatever model id your server advertises
+  tools,
+  instructions: "You are a careful implementation agent.",
+  stopWhen: stepCountIs(40),
+});
+```
+
+`baseURL` falls back to the `HERMES_BASE_URL` env var and `apiKey` to `HERMES_API_KEY` (then `"hermes"`). Pass `nativeStructuredOutput: true` if your server does honor JSON-schema output. To use Smithers *from* Hermes instead of running Hermes as a worker, see [Agent Support → Hermes](/agents/hermes).
 
 ## Hijack Support
 
@@ -66,23 +123,22 @@ SDK agents do not reopen a provider-native CLI. Smithers persists the agent conv
 Live-run behavior:
 
 - Smithers captures response history after each step via `onStepFinish`.
-- `smithers hijack` waits until history is durable, cancels the live run, and opens the REPL.
+- `smithers hijack` waits until history is durable, aborts the current agent task (handing it off to the REPL), and opens the REPL.
 - On clean REPL exit, Smithers writes updated message history back and resumes the workflow automatically.
 
 Limits:
 
-- Conversation hijack stays on the same agent implementation. Cross-engine hijack is not supported.
-- Smithers reconstructs the original task agent from the workflow source.
+- Smithers reconstructs the agent from the workflow source on hijack. This means cross-engine hijack is not supported — the REPL will use the same agent class that ran originally.
 
 ## CLI vs SDK
 
 | | CLI Agents | SDK Agents |
 |---|---|---|
 | Billing | Provider subscription / local CLI | API billing |
-| Tools | Provider CLI tool ecosystem | Smithers `tools` sandbox |
+| Tools | Provider CLI tool ecosystem | Smithers [tools](/integrations/tools) [sandbox](/components/sandbox) |
 | Flexibility | Native CLI flags | AI SDK `providerOptions` |
 
-Pass a raw `ToolLoopAgent` directly if you prefer. The wrappers are convenience, not a separate runtime.
+Pass a raw `ToolLoopAgent` directly if you prefer — the wrappers are convenience, not a separate runtime.
 
 ## Example: Dual Setup
 
@@ -91,15 +147,19 @@ const useCli = process.env.USE_CLI_AGENTS === "1";
 
 export const claude = useCli
   ? new ClaudeCodeAgent({
-      model: "claude-opus-4-6",
+      model: "claude-opus-4-7",
       dangerouslySkipPermissions: true,
     })
   : new AnthropicAgent({
-      model: "claude-opus-4-6",
+      model: "claude-opus-4-7",
       tools,
       instructions: "You are a careful planner.",
       stopWhen: stepCountIs(40),
     });
 ```
 
-See [Model Selection](/guides/model-selection) for a broader comparison.
+## Next Steps
+
+- [CLI Agents](/integrations/cli-agents)
+- [Built-in Tools](/integrations/tools)
+- [Agents and Tools](/concepts/agents-and-tools)

@@ -1,5 +1,7 @@
 # Implementation Tickets: TUI Chat-First Redesign
 
+> Archived design prompt: `smithers tui` was removed in 0.20.2. This file is retained as historical product/design material and does not describe a current shipped command.
+
 **Total tickets**: 14
 **Approach**: TDD — each ticket writes tests first, then implementation.
 **Parallelism**: Tickets marked with the same "wave" can be built concurrently by sub-agents.

@@ -1,0 +1,98 @@
+# Smithers OpenAPI Tools
+
+> Smithers OpenAPI tools: turn an OpenAPI spec into AI SDK tools, with auth, filters, and observability.
+
+---
+
+## OpenAPI Tools
+
+> Generate AI SDK tools from an OpenAPI spec. Auth, filtering, observability built in.
+
+`createOpenApiTools` parses an OpenAPI 3.x spec and returns AI SDK tools — one per operation, with Zod schemas converted from the spec's JSON schemas.
+
+```ts
+import { createOpenApiTools } from "smithers-orchestrator/openapi";
+
+const tools = await createOpenApiTools("./petstore.json", {
+  baseUrl: "https://api.petstore.example.com",
+  auth: { type: "bearer", token: process.env.PETSTORE_TOKEN! },
+});
+
+const agent = new ToolLoopAgent({
+  model: anthropic("claude-sonnet-4-20250514"),
+  tools,
+});
+```
+
+## Options
+
+```ts
+type OpenApiToolsOptions = {
+  baseUrl?: string;                  // overrides spec.servers[0].url
+  headers?: Record<string, string>;  // merged into every request
+  auth?:
+    | { type: "apiKey"; name: string; in: "header" | "query"; value: string }
+    | { type: "bearer"; token: string }
+    | { type: "basic"; username: string; password: string };
+  include?: string[];                // operationId allowlist
+  exclude?: string[];                // operationId blocklist
+  namePrefix?: string;               // prefix generated tool names
+};
+```
+
+Pass the spec itself as the first argument to `createOpenApiTools(input, options)`. `input` may be a parsed spec object, file path, URL, or raw OpenAPI text.
+
+## Public API
+
+| Export | Purpose |
+|---|---|
+| `createOpenApiTools(input, options?)` / `createOpenApiToolsSync(input, options?)` | Build a record of AI SDK tools keyed by operationId. |
+| `createOpenApiTool(input, operationId, options?)` / `createOpenApiToolSync(...)` | Build one operation as a tool. |
+| `listOperations(input)` | Return parsed operation metadata without creating tools. |
+| `extractOperations(spec)` | Extract operations from an already parsed spec. |
+| `loadSpecEffect(input)` / `loadSpecSync(input)` | Load and parse a spec from object, path, URL, or raw text. |
+| `jsonSchemaToZod(schema)` / `buildOperationSchema(...)` | Lower-level schema conversion helpers. |
+
+## CLI preview
+
+```bash
+bunx smithers-orchestrator openapi list ./api/openapi.yaml
+```
+
+Lists every operationId, method, path, and summary — useful for auditing what an agent will be able to call before wiring it up.
+
+## What gets generated
+
+For each operation:
+
+- A Zod schema for the request body + path/query/header parameters.
+- An `execute(args)` function that performs the HTTP call.
+- The operation's `summary` / `description` becomes the tool description.
+
+## Response handling
+
+- JSON responses are parsed and returned as objects.
+- Non-JSON responses are returned as strings.
+- HTTP status codes are not special-cased by the tool factory; if the server returns a JSON or text error body, that body is returned to the agent.
+- Request failures, fetch failures, and schema/tool execution exceptions are returned as `{ error: true, message, status: "failed" }` so the agent can react in its loop.
+
+## Filtering
+
+`include` / `exclude` accept arrays of `operationId`. If both are set, exclude wins. Useful for limiting an agent's surface area to a specific feature ("just the inventory endpoints"). `namePrefix` prefixes generated tool names without changing the operationIds used for filtering.
+
+## Observability
+
+Each tool call emits an `OpenApiToolCalled` event with `operationId`, `method`, `path`, `durationMs`, `status`. Visible via `bunx smithers-orchestrator events <run-id> --type openapi`.
+
+## Notes
+
+- Schema composition (`allOf`, `anyOf`, `oneOf`) is supported — converts to Zod unions/intersections.
+- Nullable fields and defaults from the spec are preserved.
+
+---
+
+## OpenAPI Tools Quickstart
+
+> Folded into the opt-in OpenAPI fragment.
+
+This material is now in the opt-in [`/llms-openapi.txt`](/llms-openapi.txt) fragment.

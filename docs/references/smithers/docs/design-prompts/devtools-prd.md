@@ -26,7 +26,7 @@ Both surfaces consume the same data from the same backend (HTTP API, SSE streams
 
 ## Package Architecture
 
-Smithers DevTools ships as a separate internal package (`@smithers/devtools`) that is a dependency of the main `smithers-orchestrator` package. From the user's perspective, devtools is included out of the box — no additional install step.
+Smithers DevTools ships as a separate internal package (`@smithers-orchestrator/devtools`) that is a dependency of the main `smithers-orchestrator` package. From the user's perspective, devtools is included out of the box — no additional install step.
 
 ## Core Experience
 
@@ -158,10 +158,10 @@ Each agent type stores conversation transcripts in its own format and location. 
 
 - **Claude Code**: reads from Claude Code's native conversation storage
 - **Codex**: reads from Codex's conversation storage
-- **Gemini CLI**: reads from Gemini's conversation storage
+- **Antigravity CLI**: reads from Antigravity's conversation storage
 - **Custom agents**: extensible adapter interface so users can add support for their own agent types
 
-The adapter interface is part of the `@smithers/devtools` package API, allowing third-party agent integrations to provide their own chat log reader.
+The adapter interface is part of the `@smithers-orchestrator/devtools` package API, allowing third-party agent integrations to provide their own chat log reader.
 
 ## Connectivity
 
@@ -201,6 +201,6 @@ The Electrobun app connects via HTTP to the Smithers server. The Bun main proces
 ## Open Questions
 
 1. **Graph layout algorithm** — what library/approach for rendering a live, animated DAG that handles the variety of Smithers workflow shapes (deep sequences, wide parallel fans, nested loops)?
-2. **Agent chat log formats** — what exactly does each agent store and where? Need to audit Claude Code, Codex, and Gemini CLI conversation storage to design the adapter interface.
+2. **Agent chat log formats** — what exactly does each agent store and where? Need to audit Claude Code, Codex, and Antigravity CLI conversation storage to design the adapter interface.
 3. **Agent session persistence for steering** — what's the feasibility of keeping agent sessions alive or resumable? This varies significantly by agent type and is the main blocker for v2 steering features.
 4. **Internal builder parity** — do all workflow sources produce identical fiber trees, or are there internal differences the devtools needs to account for?

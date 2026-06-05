@@ -10,6 +10,7 @@ description: An iterative review loop where an agent writes code and a reviewer 
 ## Workflow Definition
 
 ```tsx
+/** @jsxImportSource smithers-orchestrator */
 // review-loop.tsx
 import { createSmithers, Task, Sequence, Loop } from "smithers-orchestrator";
 import { ToolLoopAgent as Agent } from "ai";
@@ -46,6 +47,14 @@ const reviewer = new Agent({
 export default smithers((ctx) => {
   const latestReview = ctx.outputMaybe("review", { nodeId: "review" });
   const latestCode = ctx.outputMaybe("code", { nodeId: "write" });
+  const codeFence = "`".repeat(3);
+  const reviewPrompt = [
+    "Review this code for correctness and edge cases:",
+    "",
+    `${codeFence}${latestCode?.language ?? "ts"}`,
+    latestCode?.source ?? "// no code yet",
+    codeFence,
+  ].join("\n");
 
   return (
     <Workflow name="review-loop">
@@ -65,10 +74,7 @@ export default smithers((ctx) => {
             </Task>
 
             <Task id="review" output={outputs.review} agent={reviewer}>
-              Review this code for correctness and edge cases:
-              {"\n\n```" + (latestCode?.language ?? "ts") + "\n"}
-              {latestCode?.source ?? "// no code yet"}
-              {"\n```"}
+              {reviewPrompt}
             </Task>
           </Sequence>
         </Loop>
@@ -88,7 +94,7 @@ export default smithers((ctx) => {
 ## Running
 
 ```bash
-smithers up review-loop.tsx --input '{}'
+bunx smithers-orchestrator up review-loop.tsx --input '{}'
 ```
 
 ```
@@ -114,7 +120,7 @@ smithers up review-loop.tsx --input '{}'
 
 ## Context Methods
 
-- `ctx.outputMaybe(schemaKey, { nodeId })` returns the latest value from the most recent iteration. The first argument is the schema key from `createSmithers`, not a table name.
+- `ctx.outputMaybe(schemaKey, { nodeId })` returns the value written by that task in the current render iteration (the iteration matching the current re-render frame), or `undefined` if no row exists yet. To retrieve the highest-iteration row regardless of the current frame, use `ctx.latest` instead. The first argument is the schema key from `createSmithers`, not a table name.
 - `ctx.iterationCount(schemaKey, nodeId)` returns how many times a task has executed.
 - `ctx.latest(schemaKey, nodeId)` always returns the highest-iteration row. Inside loops, this is often more convenient than `ctx.outputMaybe`.
 

@@ -1,0 +1,61 @@
+---
+title: Starters
+description: Choose a plain-English outcome and copy the Smithers command.
+---
+
+Smithers ships with starter workflows for when you want a result before your agent writes any workflow code. Browse the starter gallery from any repo:
+
+```bash
+bunx smithers-orchestrator starters
+```
+
+First-time setup:
+
+```bash
+bunx smithers-orchestrator init --add-agents
+```
+
+Or initialize with guided next steps for one template:
+
+```bash
+bunx smithers-orchestrator init --template idea-to-prd
+```
+
+Template IDs:
+
+Pass any ID from this table to `init --template <id>` to scaffold that starter.
+
+| Starter | Best for | Workflow | Command |
+| --- | --- | --- | --- |
+| `idea-to-prd` | founders, product, marketing | `write-a-prd` | `bunx smithers-orchestrator init --template idea-to-prd` |
+| `idea-to-tickets` | founders, product, operations, engineering | `tickets-create` | `bunx smithers-orchestrator init --template idea-to-tickets` |
+| `launch-checklist` | launch owners and operators | `plan` | `bunx smithers-orchestrator init --template launch-checklist` |
+| `customer-incident` | support escalations | `debug` | `bunx smithers-orchestrator init --template customer-incident` |
+| `nontechnical-research` | before-build decisions | `research` | `bunx smithers-orchestrator init --template nontechnical-research` |
+| `requirements-interview` | vague stakeholder requests | `grill-me` | `bunx smithers-orchestrator init --template requirements-interview` |
+| `quality-audit` | release readiness | `audit` | `bunx smithers-orchestrator init --template quality-audit` |
+| `test-coverage` | regression prevention | `improve-test-coverage` | `bunx smithers-orchestrator init --template test-coverage` |
+| `ship-a-change` | focused product improvements | `research-plan-implement` | `bunx smithers-orchestrator init --template ship-a-change` |
+| `mission-mode` | larger approved milestones | `mission` | `bunx smithers-orchestrator init --template mission-mode` |
+
+Each detailed starter prints:
+
+- What outcome to expect
+- What context to gather before running
+- The exact `bunx smithers-orchestrator workflow run ...` command
+- Useful follow-up commands
+- When not to use that starter
+
+Filter by audience or goal:
+
+```bash
+bunx smithers-orchestrator starters --audience product
+bunx smithers-orchestrator starters --goal quality
+bunx smithers-orchestrator starters --workflow debug
+```
+
+Use JSON when another tool needs the catalog:
+
+```bash
+bunx smithers-orchestrator starters --format json
+```

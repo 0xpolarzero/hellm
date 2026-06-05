@@ -1,6 +1,9 @@
 # dependencies (bun install)
 node_modules
 
+# local gstack artifacts (security reports, analytics) — keep out of the repo
+.gstack/
+
 # output
 out
 dist
@@ -12,8 +15,9 @@ coverage
 
 # logs
 logs
-_.log
+*.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+examples/run-*.log
 
 # dotenv environment variable files
 .env
@@ -30,6 +34,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # playwright
 playwright-report
 test-results
+tui-buffer.txt
 
 # IntelliJ based IDEs
 .idea
@@ -40,6 +45,11 @@ test-results
 # Gemini
 .gemini-clipboard/
 
+# Local workflow/runtime reports
+.claude/
+.claude/scheduled_tasks.lock
+.kanban-reports/
+
 # Profiling artifacts
 default.profraw
 
@@ -47,19 +57,32 @@ default.profraw
 deno.lock
 
 # Smithers runtime artifacts
+**/.smithers/sandboxes/
+**/.smithers/executions/
 .tui-test/
 .worktrees/
 reference/
+!docs/reference/
+!docs/reference/*.mdx
+!deploy/reference/
+!deploy/reference/**
 codex/
 ghostty/
 burns
+observability/data/
+tmp/verification/
+.context/
 
 # External reference repos
 .mastra-ref/
 .opentui_temp/
+temporal-*
 
 # Worktree script SQLite artifacts
 scripts/worktree-feature/*.db*
 smithers.db
 smithers.db-shm
 smithers.db-wal
+workflows/*.db
+workflows/*.db-shm
+workflows/*.db-wal

@@ -7,9 +7,12 @@ description: A workflow with a human-in-the-loop approval step that pauses execu
 
 `<Approval>` pauses a workflow at an explicit node, waits for a human decision, then continues.
 
+For a simpler inline approval using the `needsApproval` prop on a `<Task>`, see [workflow-approval](./workflow-approval).
+
 ## Workflow Definition
 
 ```tsx
+/** @jsxImportSource smithers-orchestrator */
 // approval-gate.tsx
 import {
   Approval,
@@ -88,14 +91,14 @@ export default smithers((ctx) => {
 ## Running
 
 ```bash
-smithers up approval-gate.tsx --input '{}'
+bunx smithers-orchestrator up approval-gate.tsx --input '{}'
 ```
 
 ```
 [approval-gate] Starting run mno345
 [write-draft] Done -> { title: "Why Resumability Matters", content: "In production AI systems..." }
 [approve-publish] Waiting for approval...
-[approval-gate] Paused — run `smithers approve` or `smithers deny` to continue.
+[approval-gate] Paused — run `bunx smithers-orchestrator approve` or `bunx smithers-orchestrator deny` to continue.
 ```
 
 ## Approving or Denying
@@ -103,8 +106,8 @@ smithers up approval-gate.tsx --input '{}'
 Approve and resume:
 
 ```bash
-smithers approve mno345 --node approve-publish
-smithers up approval-gate.tsx --run-id mno345 --resume true
+bunx smithers-orchestrator approve mno345 --node approve-publish
+bunx smithers-orchestrator up approval-gate.tsx --run-id mno345 --resume true
 ```
 
 ```
@@ -117,7 +120,7 @@ smithers up approval-gate.tsx --run-id mno345 --resume true
 Deny and halt:
 
 ```bash
-smithers deny mno345 --node approve-publish
+bunx smithers-orchestrator deny mno345 --node approve-publish
 ```
 
 ```
@@ -128,7 +131,7 @@ smithers deny mno345 --node approve-publish
 ## Listing Pending Approvals
 
 ```bash
-smithers ps --status waiting-approval
+bunx smithers-orchestrator ps --status waiting-approval
 ```
 
 ```json
@@ -147,6 +150,6 @@ smithers ps --status waiting-approval
 
 ## How It Works
 
-- `<Approval>` persists a decision object (`approved`, `note`, `decidedBy`, `decidedAt`) when the workflow resumes.
+- `<Approval>` persists a decision object (`approved`, `note`, `decidedBy`, `decidedAt`) when the workflow resumes. The audit timestamp itself lives in Smithers' approval records and event log, so `decidedAt` remains deterministic in durable outputs.
 - Re-running after approval replays completed tasks from the database and continues from the approval point.
 - Denial is permanent for that run. To retry, start a new run.

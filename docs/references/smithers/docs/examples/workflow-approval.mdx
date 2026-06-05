@@ -6,17 +6,23 @@ description: "Example from workflows/approval.tsx — A two-step sequential work
 # workflows/approval.tsx
 
 <Note>
-**Ghost doc** -- Real script from `workflows/approval.tsx`. Demonstrates `needsApproval` for human-in-the-loop workflows.
+**Synthetic example** — `workflows/approval.tsx` does not exist in the repo. This is a standalone illustration of `needsApproval` for human-in-the-loop workflows, not a copy of a real file.
+
+For a richer approval flow with custom request summaries and an `<Approval>` component, see [Approval Gate](./approval-gate).
 </Note>
 
 ## Source
 
 ```tsx
+/** @jsxImportSource smithers-orchestrator */
 // workflows/approval.tsx
-import { createSmithers, Sequence, Task, Workflow } from "smithers-orchestrator";
+import { createSmithers } from "smithers-orchestrator";
 import { z } from "zod";
 
-const { smithers, outputs } = createSmithers({
+const { Workflow, Sequence, Task, smithers, outputs } = createSmithers({
+  input: z.object({
+    name: z.string(),
+  }),
   output: z.object({
     message: z.string(),
     length: z.number(),
@@ -29,13 +35,13 @@ export default smithers((ctx) => (
       <Task id="approve" output={outputs.output} needsApproval>
         {{
           message: `Approved: ${ctx.input.name}`,
-          length: String(ctx.input.name).length,
+          length: ctx.input.name.length,
         }}
       </Task>
       <Task id="final" output={outputs.output}>
         {{
           message: `Done: ${ctx.input.name}`,
-          length: String(ctx.input.name).length,
+          length: ctx.input.name.length,
         }}
       </Task>
     </Sequence>
@@ -46,7 +52,7 @@ export default smithers((ctx) => (
 ## Running
 
 ```bash
-smithers up workflows/approval.tsx --input '{"name": "Deploy v2"}'
+bunx smithers-orchestrator up workflows/approval.tsx --input '{"name": "Deploy v2"}'
 ```
 
 The workflow pauses at the approval gate:
@@ -54,14 +60,14 @@ The workflow pauses at the approval gate:
 ```
 [approval] Starting run mno345
 [approve] Waiting for approval...
-[approval] Paused — run `smithers approve` or `smithers deny` to continue.
+[approval] Paused — run `bunx smithers-orchestrator approve` or `bunx smithers-orchestrator deny` to continue.
 ```
 
 Approve and resume:
 
 ```bash
-smithers approve mno345 --node approve
-smithers up workflows/approval.tsx --run-id mno345 --resume true
+bunx smithers-orchestrator approve mno345 --node approve
+bunx smithers-orchestrator up workflows/approval.tsx --run-id mno345 --resume true
 ```
 
 ```

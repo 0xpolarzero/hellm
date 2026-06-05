@@ -1,0 +1,81 @@
+{
+  "name": "@smithers-orchestrator/driver",
+  "version": "0.22.0",
+  "description": "Workflow execution driver — runs tasks, acts on EngineDecisions, reports results",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js",
+      "default": "./src/index.js"
+    },
+    "./interop": {
+      "types": "./src/index.d.ts",
+      "import": "./src/interop.js",
+      "default": "./src/interop.js"
+    },
+    "./RunOptions": {
+      "types": "./src/index.d.ts"
+    },
+    "./RunResult": {
+      "types": "./src/index.d.ts"
+    },
+    "./RunStatus": {
+      "types": "./src/index.d.ts"
+    },
+    "./RunAuthContext": {
+      "types": "./src/index.d.ts"
+    },
+    "./SmithersCtx": {
+      "types": "./src/index.d.ts",
+      "import": "./src/SmithersCtx.js",
+      "default": "./src/SmithersCtx.js"
+    },
+    "./OutputAccessor": {
+      "types": "./src/index.d.ts"
+    },
+    "./OutputKey": {
+      "types": "./src/index.d.ts"
+    },
+    "./workflow-types": {
+      "types": "./src/index.d.ts"
+    },
+    "./task-runtime": {
+      "types": "./src/index.d.ts",
+      "import": "./src/task-runtime.js",
+      "default": "./src/task-runtime.js"
+    },
+    "./child-process": {
+      "types": "./src/index.d.ts",
+      "import": "./src/child-process.js",
+      "default": "./src/child-process.js"
+    },
+    "./*": {
+      "types": "./src/index.d.ts",
+      "import": "./src/*.js",
+      "default": "./src/*.js"
+    }
+  },
+  "files": [
+    "src/"
+  ],
+  "scripts": {
+    "test": "bun test tests",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsup --dts-only"
+  },
+  "dependencies": {
+    "@smithers-orchestrator/db": "workspace:*",
+    "@smithers-orchestrator/errors": "workspace:*",
+    "@smithers-orchestrator/graph": "workspace:*",
+    "@smithers-orchestrator/observability": "workspace:*",
+    "@smithers-orchestrator/scheduler": "workspace:*",
+    "effect": "^3.21.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "~5.9.3"
+  }
+}

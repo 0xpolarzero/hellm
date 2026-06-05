@@ -5,21 +5,24 @@ description: A minimal workflow with a single agent task that generates a greeti
 
 # Hello World
 
+## Workflow Definition
+
 ```tsx
+/** @jsxImportSource smithers-orchestrator */
 // hello-world.tsx
-import { createSmithers, Task, Sequence } from "smithers-orchestrator";
+import { createSmithers, Sequence } from "smithers-orchestrator";
 import { ToolLoopAgent as Agent } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 
-const { Workflow, smithers, outputs } = createSmithers({
+const { Workflow, Task, smithers, outputs } = createSmithers({
   greeting: z.object({
     message: z.string(),
   }),
 });
 
 const greeter = new Agent({
-  model: anthropic("claude-sonnet-4-5-20250929"),
+  model: anthropic("claude-sonnet-4-20250514"),
   instructions: "You are a friendly greeter. Respond with a short, warm greeting.",
 });
 
@@ -34,8 +37,10 @@ export default smithers((ctx) => (
 ));
 ```
 
+## Running
+
 ```bash
-smithers up hello-world.tsx --input '{}'
+bunx smithers-orchestrator up hello-world.tsx --input '{}'
 ```
 
 ```
@@ -45,4 +50,6 @@ smithers up hello-world.tsx --input '{}'
 [hello-world] Completed
 ```
 
-`createSmithers` registers a `greeting` table with a `message` field. `Task` sends the prompt to the agent and persists structured output. Every task output is stored in the database, so the workflow is resumable -- if it crashes after `greet` completes, re-running skips to the end.
+## How It Works
+
+`createSmithers` registers a `greeting` table with a `message` field. `Task` sends the prompt to the agent and persists structured output. Every task output is stored in the database. If the workflow crashes mid-run, re-running replays completed tasks from storage and continues from the last incomplete step.

@@ -4,7 +4,7 @@ description: Sandboxed file and shell tools for AI agent tasks, with exact input
 ---
 
 ```ts
-import { tools, read, write, edit, grep, bash } from "smithers-orchestrator";
+import { tools, read, write, edit, grep, bash, defineTool, getDefinedToolMetadata } from "smithers-orchestrator";
 ```
 
 `tools` bundles all five tools keyed by name:
@@ -12,6 +12,16 @@ import { tools, read, write, edit, grep, bash } from "smithers-orchestrator";
 ```ts
 const { read, write, edit, grep, bash } = tools;
 ```
+
+The `smithers-orchestrator/tools` subpath also exports lower-level helpers for advanced integrations:
+
+| Export | Purpose |
+|---|---|
+| `readFileTool`, `writeFileTool`, `editFileTool`, `grepTool`, `bashTool` | Call the underlying implementation directly instead of the AI SDK tool wrapper. |
+| `getDefinedToolMetadata(tool)` | Read Smithers metadata (`name`, `sideEffect`, `idempotent`) from a `defineTool()` result. |
+| `getToolContext()`, `runWithToolContext(ctx, fn)` | Inspect or provide the task-local tool runtime context. |
+| `getToolIdempotencyKey(ctx?)`, `nextToolSeq(ctx)` | Build stable idempotency keys and task-local tool-call sequence numbers. |
+| `BASH_TOOL_MAX_*` constants | Upper bounds for bash command length, args, cwd, output bytes, and timeout. |
 
 ## Sandboxing
 
@@ -43,6 +53,97 @@ Every invocation is logged to `_smithers_tool_calls`:
 | `finishedAtMs` | End timestamp |
 | `status` | `"success"` or `"error"` |
 | `errorJson` | Error details (if `"error"`) |
+
+## defineTool
+
+`defineTool()` wraps custom [AI SDK](https://ai-sdk.dev) tools with Smithers runtime context, deterministic idempotency keys, and durable tool-call logging.
+
+```ts
+import { defineTool } from "smithers-orchestrator";
+import { z } from "zod";
+
+const placeOrder = defineTool({
+  name: "wholefoods.place_order",
+  description: "Place a grocery order",
+  schema: z.object({
+    sku: z.string(),
+  }),
+  sideEffect: true,
+  idempotent: false,
+  async execute(args, ctx) {
+    return await wholeFoods.placeOrder({
+      sku: args.sku,
+      idempotencyKey: ctx.idempotencyKey,
+    });
+  },
+});
+```
+
+- `ctx.idempotencyKey` is stable across retries and resumes for the same task iteration.
+- `sideEffect: true` opts the tool into Smithers side-effect tracking.
+- `idempotent: false` warns resumed/retried agent loops when the tool was called in a previous attempt.
+- Every `defineTool()` call is logged to `_smithers_tool_calls`.
+
+### Side Effects and Idempotency
+
+Every custom tool that modifies external state **must** declare `sideEffect: true`. This is how Smithers protects your [workflow](/concepts/workflows-overview) during retries and resumes. Without it, Smithers treats the tool as a pure read and replays it freely — potentially sending duplicate emails, double-charging payments, or creating duplicate records.
+
+The two flags work together:
+
+| `sideEffect` | `idempotent` | Smithers behavior |
+|---|---|---|
+| `false` (default) | `true` (default) | Pure read. Safe to replay on retry. No warnings. |
+| `true` | `true` | Mutates external state, but calling twice with the same input produces the same result (e.g. an upsert, a PUT request). Safe to replay. No warnings. |
+| `true` | `false` | Mutates external state and is **not** safe to replay (e.g. sending an email, placing an order, charging a payment). On retry, Smithers injects a warning listing the tool as already called so the agent can verify external state before calling again. |
+
+With `sideEffect: true` and `idempotent: false`, Smithers does two things on retry:
+
+1. **Warns the agent.** The retry prompt lists which non-idempotent tools were already called.
+2. **Provides a stable idempotency key.** `ctx.idempotencyKey` is deterministic for a given task + iteration; pass it to external APIs that support idempotency (Stripe, AWS) to deduplicate.
+
+If your `execute` function has `sideEffect: true, idempotent: false` but omits the `ctx` parameter, Smithers logs a startup warning. This is almost always a bug — you need `ctx.idempotencyKey` to handle retries safely.
+
+```ts
+// ✗ Bad: non-idempotent side effect without ctx
+const sendEmail = defineTool({
+  name: "email.send",
+  schema: z.object({ to: z.string(), body: z.string() }),
+  sideEffect: true,
+  idempotent: false,
+  async execute(args) {  // ← missing ctx parameter, Smithers warns
+    await mailer.send(args);
+  },
+});
+
+// ✓ Good: uses ctx.idempotencyKey to deduplicate
+const sendEmail = defineTool({
+  name: "email.send",
+  schema: z.object({ to: z.string(), body: z.string() }),
+  sideEffect: true,
+  idempotent: false,
+  async execute(args, ctx) {
+    await mailer.send({ ...args, idempotencyKey: ctx.idempotencyKey });
+  },
+});
+```
+
+### What counts as a side effect
+
+The rule is simple: **if you cannot undo it with `git reset`, mark it as a side effect.**
+
+A side effect is any mutation the runtime should not blindly repeat on retry. If a custom tool talks to an external API, writes to a database, sends a message, or triggers a webhook, mark it.
+
+The built-in `write` and `edit` tools are registered as `sideEffect: true` and `idempotent: false` because their file mutations are not safe to blindly replay on retry; like `bash`, they are treated conservatively. All three built-in mutating tools (`write`, `edit`, `bash`) are side-effecting.
+
+| Tool | Side effect? | Why |
+|---|---|---|
+| Built-in `read`, `grep` | No | Pure reads |
+| Built-in `write`, `edit` | **Yes** | Sandboxed file writes are tracked by git, but replaying on retry could overwrite content that diverged since the first call |
+| Built-in `bash` | **Yes** | Arbitrary shell commands may not be safe to repeat |
+| Custom tool calling an external API | **Yes** | Mutates state outside the sandbox |
+| Custom tool writing to a database | **Yes** | External persistent state |
+| Custom tool sending a Slack message | **Yes** | Irreversible external communication |
+| Custom tool creating a GitHub PR | **Yes** | External state visible to others |
 
 ---
 
@@ -198,12 +299,13 @@ const devAgent = new Agent({
 
 ## Using Tools with Agents
 
-Pass tools to an AI SDK agent, assign the agent to a `<Task>`:
+Pass tools to an [AI SDK](https://ai-sdk.dev) agent and assign the agent to a [`<Task>`](/components/task):
 
 ```tsx
 import { ToolLoopAgent as Agent } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { read, write, edit, grep, bash } from "smithers-orchestrator";
+import { createSmithers, read, write, edit, grep, bash, Task } from "smithers-orchestrator";
+import { z } from "zod";
 
 const codeAgent = new Agent({
   model: anthropic("claude-sonnet-4-20250514"),
@@ -247,11 +349,21 @@ const fullAgent = new Agent({
 | `toolTimeoutMs` | `60000` (60s) | Timeout for `bash` and `grep` |
 
 ```ts
-const result = await runWorkflow(workflow, {
+import { Effect } from "effect";
+import { runWorkflow } from "smithers-orchestrator";
+
+const result = await Effect.runPromise(runWorkflow(workflow, {
   input: { file: "src/auth.ts" },
   rootDir: "/home/project",
   allowNetwork: false,
   maxOutputBytes: 500_000,
   toolTimeoutMs: 120_000,
-});
+}));
 ```
+
+## See Also
+
+- [Agents and Tools](/concepts/agents-and-tools)
+- [Sandbox](/components/sandbox)
+- [Common External Tools](/integrations/common-tools)
+- [Tools Agent Example](/examples/tools-agent)

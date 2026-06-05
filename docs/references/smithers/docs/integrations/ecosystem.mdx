@@ -3,13 +3,11 @@ title: Ecosystem
 description: Community projects built on Smithers.
 ---
 
-Third-party tools and workflows built by the community.
-
 ## Burns
 
 Workspace-first local control plane for Smithers. Single UI for authoring, running, and supervising workflows across repositories. Register repos, launch runs, stream events, inspect frames, handle approvals.
 
-- React web app, ElectroBun desktop shell, or headless CLI
+- React web app, ElectroBun (a Bun-native Electron alternative) desktop shell, or headless CLI
 - AI-assisted workflow authoring via local agent CLIs
 - SQLite-backed workspace registry
 
@@ -61,3 +59,7 @@ Kubernetes-native Smithers workflow runner. Runs workflows as isolated K8s Jobs 
 <Card title="Local Isolated Ralph" icon="github" href="https://github.com/SamuelLHuber/local-isolated-ralph">
   github.com/SamuelLHuber/local-isolated-ralph
 </Card>
+
+## Publishing Workflow Packs
+
+Use the [Workflow Catalog](/workflows/catalog) metadata when publishing a pack or success story: workflow IDs, required agents, Gateway scopes, inputs, outputs, write behavior, sandbox runtime, and validation command. That keeps community projects installable by operators who did not author the underlying TSX.

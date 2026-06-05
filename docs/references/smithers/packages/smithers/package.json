@@ -1,0 +1,94 @@
+{
+  "name": "smithers-orchestrator",
+  "version": "0.22.0",
+  "description": "Public Smithers facade for durable coding-agent workflows and Gateway operation",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js",
+      "default": "./src/index.js"
+    },
+    "./tools": {
+      "types": "./src/tools.d.ts",
+      "import": "./src/tools.js",
+      "default": "./src/tools.js"
+    },
+    "./gateway-client": {
+      "types": "./src/gateway-client.d.ts",
+      "import": "./src/gateway-client.js",
+      "default": "./src/gateway-client.js"
+    },
+    "./gateway-react": {
+      "types": "./src/gateway-react.d.ts",
+      "import": "./src/gateway-react.js",
+      "default": "./src/gateway-react.js"
+    },
+    "./sandbox": {
+      "types": "./src/sandbox.d.ts",
+      "import": "./src/sandbox.js",
+      "default": "./src/sandbox.js"
+    },
+    "./control-plane": {
+      "types": "./src/control-plane.d.ts",
+      "import": "./src/control-plane.js",
+      "default": "./src/control-plane.js"
+    },
+    "./*": {
+      "types": "./src/index.d.ts",
+      "import": "./src/*.js",
+      "default": "./src/*.js"
+    },
+    "./jsx-dev-runtime": {
+      "types": "./src/index.d.ts",
+      "import": "./src/jsx-runtime.js",
+      "default": "./src/jsx-runtime.js"
+    }
+  },
+  "files": [
+    "src/"
+  ],
+  "bin": {
+    "smithers": "./src/bin/smithers.js"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsup --dts-only"
+  },
+  "dependencies": {
+    "@smithers-orchestrator/agents": "workspace:*",
+    "@smithers-orchestrator/cli": "workspace:*",
+    "@smithers-orchestrator/components": "workspace:*",
+    "@smithers-orchestrator/control-plane": "workspace:*",
+    "@smithers-orchestrator/db": "workspace:*",
+    "@smithers-orchestrator/driver": "workspace:*",
+    "@smithers-orchestrator/engine": "workspace:*",
+    "@smithers-orchestrator/errors": "workspace:*",
+    "@smithers-orchestrator/gateway-client": "workspace:*",
+    "@smithers-orchestrator/gateway-react": "workspace:*",
+    "@smithers-orchestrator/graph": "workspace:*",
+    "@smithers-orchestrator/memory": "workspace:*",
+    "@smithers-orchestrator/observability": "workspace:*",
+    "@smithers-orchestrator/openapi": "workspace:*",
+    "@smithers-orchestrator/react-reconciler": "workspace:*",
+    "@smithers-orchestrator/sandbox": "workspace:*",
+    "@smithers-orchestrator/scheduler": "workspace:*",
+    "@smithers-orchestrator/scorers": "workspace:*",
+    "@smithers-orchestrator/server": "workspace:*",
+    "@smithers-orchestrator/time-travel": "workspace:*",
+    "@smithers-orchestrator/vcs": "workspace:*",
+    "@mdx-js/esbuild": "^3.1.1",
+    "ai": "^6.0.168",
+    "diff": "^9.0.0",
+    "drizzle-orm": "^0.45.2",
+    "effect": "^3.21.1",
+    "incur": "^0.4.1",
+    "react": "^19.2.5",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "~5.9.3"
+  }
+}

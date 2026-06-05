@@ -1,0 +1,44 @@
+---
+title: Default Workflows
+description: The workflow pack scaffolded by bunx smithers-orchestrator init.
+---
+
+`bunx smithers-orchestrator init` creates a `.smithers/workflows/` directory with ready-to-run workflows for planning, implementation, review, tickets, audits, and long-running missions. These workflows are normal Smithers TSX files: run them as-is, edit them for your repo, or use them as examples for your own workflow pack.
+
+Run any default workflow by ID:
+
+```bash
+bunx smithers-orchestrator workflow run <workflow-id> --prompt "..."
+```
+
+Most prompt-driven workflows accept `--prompt` as shorthand for `--input '{"prompt":"..."}'`. Workflows with structured inputs also support `--input`.
+
+## Workflows
+
+| Workflow | Use it for |
+| --- | --- |
+| [`implement`](/workflows/implement) | Implement a change with validation and review. |
+| [`research-plan-implement`](/workflows/research-plan-implement) | Research, plan, implement, validate, and review in one run. |
+| [`mission`](/workflows/mission) | Run long-horizon work as approved milestones with focused workers. |
+| [`kanban`](/workflows/kanban) | Implement ticket files from `.smithers/tickets/` in worktree branches. |
+| [`review`](/workflows/review) | Review current repo changes with one or more configured agents. |
+| [`plan`](/workflows/plan) | Produce a practical implementation plan. |
+| [`research`](/workflows/research) | Gather repo and external context before planning or building. |
+| [`debug`](/workflows/debug) | Reproduce and fix a bug with validation. |
+| [`improve-test-coverage`](/workflows/improve-test-coverage) | Add missing tests and validate coverage-related changes. |
+| [`ticket-create`](/workflows/ticket-create) | Create one structured ticket from a prompt. |
+| [`tickets-create`](/workflows/tickets-create) | Break a request into multiple implementable tickets. |
+| [`grill-me`](/workflows/grill-me) | Interrogate a vague plan until requirements are clearer. |
+| [`write-a-prd`](/workflows/write-a-prd) | Turn a product or feature idea into a PRD. |
+| [`feature-enum`](/workflows/feature-enum) | Build or refine a code-backed feature inventory. |
+| [`audit`](/workflows/audit) | Audit feature groups for gaps and follow-up work. |
+| [`ralph`](/workflows/ralph) | Keep an agent working continuously on a prompt. |
+| [`workflow-skill`](/workflows/workflow-skill) | Create or update agent-facing skill docs from local workflows. |
+
+## Operational Notes
+
+- Default workflow files are user-owned after scaffold. `bunx smithers-orchestrator init` will not overwrite edited files unless you pass `--force`.
+- Agent pools are defined in `.smithers/agents.ts`; edit that file to change which models each workflow uses.
+- Run `bunx smithers-orchestrator workflow list` to see the workflows in the current repo, `bunx smithers-orchestrator workflow inspect <id>` to see metadata, and `bunx smithers-orchestrator workflow skills` to generate agent-facing docs under `.smithers/skills/`.
+- Workflows can carry optional metadata comments (`smithers-display-name`, `smithers-description`, `smithers-tags`, `smithers-aliases`) that `bunx smithers-orchestrator workflow list` and `workflow-skill` use for display and discovery.
+- Inspect and resume runs with the normal CLI: `inspect`, `logs`, `chat`, `events`, `why`, `approve`, and `up --resume`.

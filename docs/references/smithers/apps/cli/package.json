@@ -1,27 +1,63 @@
 {
-  "name": "@burns/cli",
-  "version": "0.1.0",
-  "description": "Burns command-line runtime for daemon and packaged web UI",
+  "name": "@smithers-orchestrator/cli",
+  "version": "0.22.0",
+  "description": "Smithers command-line interface, MCP server, and local workflow tools",
   "type": "module",
-  "bin": {
-    "burns": "./src/bin.ts"
-  },
-  "engines": {
-    "bun": ">=1.2.0"
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./src/index.js",
+      "default": "./src/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./src/*.js",
+      "default": "./src/*.js"
+    }
   },
   "files": [
-    "src",
-    "README.md",
-    "tsconfig.json"
+    "src/",
+    "dist/"
   ],
   "scripts": {
-    "start": "bun run src/bin.ts start",
-    "build:artifact": "bash ../../scripts/release/build-cli-artifact.sh --channel ${CHANNEL:-canary} --version ${RELEASE_VERSION:-local} --output-dir dist/cli",
-    "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test --timeout=120000 --max-concurrency=1 tests",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsup --dts-only"
+  },
+  "dependencies": {
+    "@mdx-js/esbuild": "^3.1.1",
+    "@effect/workflow": "^0.18.0",
+    "@clack/prompts": "^0.10.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@smithers-orchestrator/accounts": "workspace:*",
+    "@smithers-orchestrator/agents": "workspace:*",
+    "@smithers-orchestrator/usage": "workspace:*",
+    "@smithers-orchestrator/components": "workspace:*",
+    "@smithers-orchestrator/db": "workspace:*",
+    "@smithers-orchestrator/devtools": "workspace:*",
+    "@smithers-orchestrator/driver": "workspace:*",
+    "@smithers-orchestrator/engine": "workspace:*",
+    "@smithers-orchestrator/errors": "workspace:*",
+    "@smithers-orchestrator/memory": "workspace:*",
+    "@smithers-orchestrator/observability": "workspace:*",
+    "@smithers-orchestrator/openapi": "workspace:*",
+    "@smithers-orchestrator/protocol": "workspace:*",
+    "@smithers-orchestrator/scheduler": "workspace:*",
+    "@smithers-orchestrator/server": "workspace:*",
+    "@smithers-orchestrator/time-travel": "workspace:*",
+    "smithers-orchestrator": "workspace:*",
+    "cron-parser": "^5.5.0",
+    "drizzle-orm": "^0.45.2",
+    "effect": "^3.21.1",
+    "incur": "^0.4.1",
+    "picocolors": "^1.1.1",
+    "react": "^19.2.5",
+    "yaml": "^2.8.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "bun-types": "latest",
+    "@types/bun": "latest",
     "typescript": "~5.9.3"
   }
 }

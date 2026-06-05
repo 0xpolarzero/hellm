@@ -24,17 +24,19 @@ const pi = new PiAgent({
 </Task>
 ```
 
-`PiAgent` supports all PI CLI flags: provider/model, tools, extensions, skills, prompt templates, themes, and sessions. Text mode uses `--print` by default; JSON/RPC modes set `--mode` and omit `--print`.
+`PiAgent` supports all PI CLI flags: provider/model, tools, extensions, skills, prompt templates, themes, sessions. Text mode uses `--print` by default; JSON/RPC modes set `--mode` and omit `--print`.
 
 PI sessions are first-class hijack targets. `smithers hijack <runId> --target pi` reopens the PI session for local steering.
 
 ### 2) PI Server Client
 
-Use `pi-plugin` to drive Smithers server APIs from a PI extension or any Node process:
+Drive Smithers server APIs from a PI extension or any Node process via `@smithers-orchestrator/pi-plugin`:
 
 ```ts
-import { runWorkflow, approve, streamEvents } from "smithers-orchestrator/pi-plugin";
+import { runWorkflow, approve, streamEvents } from "@smithers-orchestrator/pi-plugin";
 ```
+
+The older `smithers-orchestrator/pi-plugin` and `smithers-orchestrator/pi-extension` subpaths were removed; use the scoped package directly.
 
 ### 3) Hybrid: PI Extensibility + Smithers Orchestration
 
@@ -44,7 +46,7 @@ import { runWorkflow, approve, streamEvents } from "smithers-orchestrator/pi-plu
 Patterns:
 
 1. PI skill-driven coding task inside a Smithers `<Task>`.
-2. PI extension command that starts/resumes Smithers workflows via server API or pi-plugin.
+2. PI extension command that starts/resumes Smithers workflows via server API or `@smithers-orchestrator/pi-plugin`.
 3. Smithers workflow output persisted to SQLite and consumed by later PI-assisted tasks.
 
 ## Hijacking PI Sessions
@@ -60,18 +62,18 @@ Session persistence:
 
 - `PiAgent` defaults `noSession` to `true` for one-shot calls.
 - For workflow hijack/resume/streaming, Smithers keeps session persistence enabled automatically.
-- No need to set `mode: "json"` manually for hijack support.
+- `mode: "json"` is not required for hijack support.
 
 ## Setup
 
 1. Install PI CLI and add to `PATH`.
 2. Configure PI credentials via env/config (prefer over CLI args for API keys).
 3. Instantiate `PiAgent` with explicit options in workflows.
-4. For server-driven workflows, use `pi-plugin`.
+4. For server-driven workflows, use `@smithers-orchestrator/pi-plugin`.
 
 ```bash
+# Verify PI is installed
 pi --version
-bun run test
 ```
 
 ## Design Guidance
@@ -83,4 +85,4 @@ bun run test
 
 ## Limitations
 
-Chat-provider integration lives in host applications, not this repo.
+Smithers does not provide a chat interface for PI. Chat UI integration is the responsibility of the host application using `@smithers-orchestrator/pi-plugin`.
