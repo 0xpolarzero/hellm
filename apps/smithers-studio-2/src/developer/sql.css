@@ -1,0 +1,239 @@
+/* SQL Browser surface styles (developer-gated). Prefix: sql-* */
+
+.sql-surface {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+}
+
+.sql-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-height: 64px;
+  padding: var(--space-5) var(--space-7);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.sql-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.sql-dbpath {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+.sql-body {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+
+.sql-tables {
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  padding: var(--space-4) var(--space-3);
+  background: var(--surface-1);
+}
+
+.sql-section-label {
+  font-size: var(--text-section);
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin: var(--space-4) var(--space-2) var(--space-2);
+}
+
+.sql-tables-loading,
+.sql-tables-empty {
+  padding: var(--space-3) var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-mono-sm);
+}
+
+.sql-tablelist,
+.sql-collist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sql-tablebtn {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+
+.sql-tablebtn:hover {
+  background: var(--fill-hover);
+  color: var(--text-primary);
+}
+
+.sql-tablebtn-selected {
+  background: var(--fill-selected);
+  color: var(--accent);
+}
+
+.sql-tablecount {
+  color: var(--text-tertiary);
+}
+
+.sql-schema {
+  margin-top: var(--space-5);
+  border-top: 1px solid var(--border);
+}
+
+.sql-col {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+}
+
+.sql-colname {
+  color: var(--text-primary);
+}
+
+.sql-coltype {
+  color: var(--text-tertiary);
+}
+
+.sql-colpk {
+  color: var(--warning);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.sql-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sql-editor {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border);
+}
+
+.sql-input {
+  resize: vertical;
+  min-height: 88px;
+  background: var(--bg);
+  color: var(--text-primary);
+  border: none;
+  outline: none;
+  padding: var(--space-4) var(--space-6);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+}
+
+.sql-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-6);
+  background: var(--surface-1);
+}
+
+.sql-readonly-note {
+  font-size: var(--text-section);
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.sql-run {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-6);
+  font-size: var(--text-label);
+  font-weight: 600;
+}
+
+.sql-run:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sql-error {
+  padding: var(--space-3) var(--space-6);
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.08);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+}
+
+.sql-results {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-4) var(--space-6);
+}
+
+.sql-results-empty,
+.sql-results-placeholder {
+  color: var(--text-tertiary);
+  font-size: var(--text-body);
+  padding: var(--space-6) 0;
+}
+
+.sql-results-count {
+  margin-bottom: var(--space-3);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+}
+
+.sql-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+}
+
+.sql-table th {
+  position: sticky;
+  top: calc(-1 * var(--space-4));
+  text-align: left;
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.sql-table td {
+  color: var(--text-primary);
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

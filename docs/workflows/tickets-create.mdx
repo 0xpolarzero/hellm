@@ -1,0 +1,23 @@
+---
+title: tickets-create
+description: Break a request into multiple implementable tickets.
+---
+
+`tickets-create` decomposes a broad request into a set of tickets. Each ticket includes title, description, and acceptance criteria.
+
+```bash
+bunx smithers-orchestrator workflow run tickets-create --prompt "Build the billing admin workflow"
+```
+
+## Inputs
+
+| Input | Type | Default |
+| --- | --- | --- |
+| `prompt` | string | `"Create tickets for the requested work."` |
+
+## Typical Flow
+
+1. Run `research` or `write-a-prd` for context.
+2. Run `tickets-create` to split the work.
+3. Copy the generated ticket Markdown into `.smithers/tickets/` before running `kanban`.
+4. Run `kanban` to implement them in parallel worktrees.

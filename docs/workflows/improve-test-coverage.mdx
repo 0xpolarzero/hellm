@@ -1,0 +1,22 @@
+---
+title: improve-test-coverage
+description: Add missing tests and validate the result.
+---
+
+`improve-test-coverage` runs the shared `ValidationLoop` with a prompt focused on finding and filling high-impact test gaps.
+
+```bash
+bunx smithers-orchestrator workflow run improve-test-coverage --prompt "Add regression coverage for webhook signature failures"
+```
+
+## Inputs
+
+| Input | Type | Default |
+| --- | --- | --- |
+| `prompt` | string | `"Improve the test coverage for the current repository."` |
+
+## Use It When
+
+- A feature landed without enough tests.
+- A bug fix needs regression coverage.
+- Review or audit found weak boundary coverage.

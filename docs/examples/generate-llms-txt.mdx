@@ -1,45 +1,31 @@
 ---
-title: "Ghost: scripts/generate-llms-txt.ts"
-description: "Example from scripts/generate-llms-txt.ts — A utility script that generates llms-full.txt context files from all MDX documentation pages."
+title: "Ghost: scripts/generate-llms.ts"
+description: "Example from scripts/generate-llms.ts — A utility script that generates a family of llms-*.txt context files from MDX documentation pages."
 ---
 
-# scripts/generate-llms-txt.ts
+# scripts/generate-llms.ts
 
 <Note>
-**Ghost doc** — Real utility script at `scripts/generate-llms-txt.ts`.
+**Ghost doc** — Real utility script at `scripts/generate-llms.ts`.
+
+This is an internal script used to maintain the docs, not a smithers-orchestrator workflow example.
 </Note>
 
 ## Source
 
-```ts
-// scripts/generate-llms-txt.ts
-#!/usr/bin/env bun
-import { writeFileSync } from "node:fs";
-import { generateLlmsFull } from "./docs-utils";
+The script is self-contained (~300 lines). It defines its own frontmatter parser, hardcoded manifest arrays, and a `renderPage` helper. No external helper module is imported.
 
-const output = generateLlmsFull();
-
-writeFileSync("docs/llms-full.txt", output);
-console.log(
-  `Generated docs/llms-full.txt (${output.length} chars, ~${Math.round(output.length / 4)} tokens)`,
-);
-```
+See [`scripts/generate-llms.ts`](../../scripts/generate-llms.ts) for the full source.
 
 ## Running
 
 ```bash
-bun scripts/generate-llms-txt.ts
+bun scripts/generate-llms.ts
 ```
 
 ## Key Details
 
-- Follows the `llms.txt` convention: one text file containing all documentation for AI model context.
-- Reads `docs/docs.json` so output tracks the current navigation and API tabs.
-- Strips YAML frontmatter; converts MDX components (`<Warning>`, `<Tip>`, `<Note>`) to blockquotes.
-- Each section includes a source URL back to the live docs page.
-- The generator, route preview server, and browser smoke tests share the same manifest helper, so route changes cannot drift.
-
-## Related Validation
-
-- `tests/docs-artifacts.test.ts` keeps the committed `docs/llms-full.txt` in sync with the current docs manifest.
-- `tests/docs-e2e.playwright.ts` exercises docs routes and legacy redirects against a local preview server.
+- Follows the `llms.txt` convention: produces a family of text files for AI model context.
+- Writes 9 files: `llms-core.txt`, `llms-memory.txt`, `llms-openapi.txt`, `llms-observability.txt`, `llms-effect.txt`, `llms-integrations.txt`, `llms-events.txt`, `llms-full.txt` (concatenation of all fragments), and `llms.txt` (index).
+- Pages are listed in hardcoded manifest arrays inside the script; edit the manifests to change what each fragment contains.
+- Strips YAML frontmatter; converts MDX bodies to Markdown — each section is emitted as `## title` + optional blockquote description + raw MDX body, separated by `---`.

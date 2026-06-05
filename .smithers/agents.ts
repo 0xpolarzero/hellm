@@ -1,16 +1,14 @@
 // smithers-source: generated
-import { ClaudeCodeAgent, CodexAgent, GeminiAgent, KimiAgent, type AgentLike } from "smithers-orchestrator";
+// Source of truth: ~/.smithers/accounts.json (managed via `smithers agent add|list|remove`)
+import { type AgentLike, ClaudeCodeAgent as SmithersClaudeCodeAgent } from "smithers-orchestrator";
 
 export const providers = {
-  claude: new ClaudeCodeAgent({ model: "claude-opus-4-6" }),
-  claudeSonnet: new ClaudeCodeAgent({ model: "claude-sonnet-4-6" }),
-  codex: new CodexAgent({ model: "gpt-5.3-codex", skipGitRepoCheck: true }),
-  gemini: new GeminiAgent({ model: "gemini-3.1-pro-preview" }),
-  kimi: new KimiAgent({ model: "kimi-latest" }),
+  claude1: new SmithersClaudeCodeAgent({ cwd: process.cwd(), yolo: true }),
 } as const;
 
 export const agents = {
-  cheapFast: [providers.kimi, providers.claudeSonnet],
-  smart: [providers.codex, providers.claude, providers.kimi],
-  smartTool: [providers.claude, providers.codex, providers.kimi],
+  claude: [providers.claude1],
+  cheapFast: [providers.claude1],
+  smart: [providers.claude1],
+  smartTool: [providers.claude1],
 } as const satisfies Record<string, AgentLike[]>;

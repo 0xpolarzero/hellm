@@ -1,0 +1,607 @@
+/*
+ * Legacy panel + terminal stylesheet (FOUNDATION-OWNED, frozen for phase-2).
+ *
+ * Holds the dark-recolored styles for the KEPT jjhub panels (Issues, Landings,
+ * Workspaces) and the Ghostty terminal/workspace chrome that the existing
+ * components reference. New surfaces own their own `<folder>.css`; this file is
+ * the one carve-out for behavior we are preserving verbatim from the original.
+ *
+ * Base resets, the app shell, the sidebar, and the command palette live in
+ * theme.css and shell/shell.css — they are NOT duplicated here.
+ *
+ * Phase-2 restyle of these panels migrates rules into the per-surface css files
+ * (src/issues/issues.css, src/landings/landings.css, src/workspaces/workspaces.css,
+ * src/workspace/workspace.css) and shrinks this file toward empty.
+ */
+
+/* ---- Workspace / terminal chrome (kept) ---- */
+
+.workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  height: 100vh;
+}
+
+.workspace-header {
+  align-items: center;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  min-height: 72px;
+  padding: var(--space-5) var(--space-7);
+}
+
+.workspace-header span {
+  color: var(--text-tertiary);
+  font-size: var(--text-section);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.workspace-header h1 {
+  color: var(--text-primary);
+  font-size: 20px;
+  line-height: 1.2;
+  margin: 3px 0 0;
+}
+
+.workspace-header button {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  color: var(--text-secondary);
+  min-height: 36px;
+  padding: 0 var(--space-4);
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.workspace-header button:hover:not(:disabled) { background: var(--fill-hover); }
+
+.workspace-header button:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.terminal-stack {
+  background: var(--bg);
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.terminal-pane {
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.terminal-pane.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ghostty-terminal,
+.terminal-pane .wterm {
+  height: 100%;
+  min-height: calc(100vh - 72px);
+  width: 100%;
+}
+
+.terminal-loading {
+  align-items: center;
+  color: var(--text-tertiary);
+  display: grid;
+  font-family: var(--font-mono);
+  min-height: calc(100vh - 72px);
+  place-items: center;
+}
+
+.terminal-status {
+  background: rgb(12 14 22 / 0.85);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  padding: var(--space-2) var(--space-4);
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 2;
+}
+
+/* ---- Kept jjhub panel primitives (Issues / Landings / Workspaces) ---- */
+
+.view-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.view-header {
+  align-items: center;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-6) var(--space-7);
+  min-height: 64px;
+}
+
+.view-header h2 {
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.view-controls {
+  align-items: center;
+  display: flex;
+  gap: var(--space-4);
+}
+
+.view-controls select,
+.view-controls button {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  color: var(--text-secondary);
+  font-size: var(--text-body);
+  padding: var(--space-2) var(--space-4);
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.view-controls button:hover {
+  background: var(--fill-hover);
+}
+
+.view-content {
+  flex: 1;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.split-view {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  height: 100%;
+}
+
+.split-sidebar {
+  background: var(--surface-1);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.split-main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.status-message {
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-tertiary);
+  font-size: var(--text-mono);
+  padding: var(--space-3) var(--space-6);
+}
+
+.issues-list,
+.landings-list,
+.workspaces-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.issue-row,
+.landing-row {
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  padding: var(--space-4) var(--space-6);
+}
+
+.issue-row:hover,
+.landing-row:hover {
+  background: var(--fill-hover);
+}
+
+.issue-row.selected,
+.landing-row.selected {
+  background: var(--fill-selected);
+  border-right: 3px solid var(--accent);
+}
+
+.issue-title,
+.landing-title {
+  color: var(--text-primary);
+  font-size: var(--text-body);
+  font-weight: 500;
+  margin-bottom: var(--space-1);
+}
+
+.issue-meta,
+.landing-meta {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: var(--text-mono);
+}
+
+.issue-state,
+.landing-state {
+  border-radius: var(--radius-pill);
+  font-weight: 500;
+  padding: 2px var(--space-3);
+  text-transform: uppercase;
+}
+
+.issue-state-open { background: rgb(52 211 153 / 0.16); color: var(--success); }
+.issue-state-closed { background: rgb(248 113 113 / 0.16); color: var(--danger); }
+.landing-state-open { background: rgb(52 211 153 / 0.16); color: var(--success); }
+.landing-state-closed { background: rgb(248 113 113 / 0.16); color: var(--danger); }
+.landing-state-merged { background: rgb(76 141 255 / 0.16); color: var(--accent); }
+
+.issue-label {
+  background: var(--fill-hover);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: var(--text-mono-sm);
+  padding: 1px var(--space-2);
+}
+
+.issue-detail,
+.landing-detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.issue-detail-header,
+.landing-detail-header {
+  align-items: flex-start;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-7);
+}
+
+.issue-detail-header h3,
+.landing-detail-header h3 {
+  color: var(--text-primary);
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0;
+}
+
+.issue-actions,
+.landing-actions {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+}
+
+.issue-actions button,
+.landing-actions button {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-card);
+  color: #ffffff;
+  font-size: var(--text-mono);
+  font-weight: 500;
+  padding: var(--space-3) var(--space-6);
+}
+
+.issue-body {
+  background: var(--surface-1);
+  border-radius: var(--radius-card);
+  margin: var(--space-7);
+  padding: var(--space-6);
+}
+
+.issue-body pre {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  line-height: 1.5;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.landing-detail-tabs {
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  padding: 0 var(--space-7);
+}
+
+.landing-detail-tabs button {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-body);
+  font-weight: 500;
+  padding: var(--space-4) var(--space-6);
+}
+
+.landing-detail-tabs button:hover {
+  color: var(--text-primary);
+}
+
+.landing-detail-tabs button.active {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.landing-detail-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-7);
+}
+
+.diff-content,
+.checks-content {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  line-height: 1.4;
+  margin: 0;
+  max-height: 500px;
+  overflow: auto;
+  padding: var(--space-6);
+  white-space: pre;
+}
+
+.auth-required {
+  align-items: center;
+  background: var(--surface-1);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  justify-content: center;
+  text-align: center;
+}
+
+.auth-required h3 {
+  color: var(--text-primary);
+  font-size: 18px;
+  margin: 0 0 var(--space-6);
+}
+
+.auth-required p {
+  color: var(--text-secondary);
+  margin: var(--space-3) 0;
+}
+
+.auth-required button {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-card);
+  color: #ffffff;
+  font-weight: 500;
+  margin-top: var(--space-6);
+  padding: var(--space-4) var(--space-7);
+}
+
+.empty-state {
+  align-items: center;
+  color: var(--text-tertiary);
+  display: flex;
+  flex: 1;
+  justify-content: center;
+}
+
+.loading-state {
+  color: var(--text-tertiary);
+  font-style: italic;
+  text-align: center;
+}
+
+/* ---- Shared modal (kept jjhub panels) ---- */
+
+.modal-overlay {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  height: 100vh;
+  justify-content: center;
+  left: 0;
+  position: fixed;
+  top: 0;
+  width: 100vw;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  max-width: 500px;
+  padding: var(--space-7);
+  width: 90%;
+}
+
+.modal-content h3 {
+  color: var(--text-primary);
+  font-size: var(--text-body);
+  font-weight: 600;
+  margin: 0 0 var(--space-6);
+}
+
+.form-group {
+  margin-bottom: var(--space-6);
+}
+
+.form-group label {
+  color: var(--text-secondary);
+  display: block;
+  font-size: var(--text-body);
+  font-weight: 500;
+  margin-bottom: var(--space-2);
+}
+
+.form-group input,
+.form-group textarea,
+.form-group select {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  color: var(--text-primary);
+  font-size: var(--text-body);
+  padding: var(--space-3) var(--space-4);
+  width: 100%;
+}
+
+.form-group textarea {
+  resize: vertical;
+}
+
+.modal-actions {
+  display: flex;
+  gap: var(--space-4);
+  justify-content: flex-end;
+  margin-top: var(--space-7);
+}
+
+.modal-actions button {
+  border-radius: var(--radius-card);
+  font-size: var(--text-body);
+  font-weight: 500;
+  padding: var(--space-3) var(--space-6);
+}
+
+.modal-actions button:first-child {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #ffffff;
+}
+
+.modal-actions button:last-child {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+/* ---- Workspaces (JJHub) specific (kept) ---- */
+
+.workspace-item,
+.snapshot-item {
+  align-items: center;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+  padding: var(--space-6);
+}
+
+.workspace-item.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.workspace-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.workspace-name,
+.snapshot-name {
+  color: var(--text-primary);
+  font-size: var(--text-body);
+  font-weight: 500;
+  margin-bottom: var(--space-1);
+}
+
+.workspace-meta,
+.snapshot-meta {
+  color: var(--text-secondary);
+  font-size: var(--text-mono);
+}
+
+.workspace-status {
+  border-radius: var(--radius-pill);
+  font-weight: 500;
+  padding: 2px var(--space-3);
+  text-transform: uppercase;
+}
+
+.workspace-status-running { background: rgb(52 211 153 / 0.16); color: var(--success); }
+.workspace-status-suspended { background: rgb(251 191 36 / 0.16); color: var(--warning); }
+.workspace-status-unknown { background: var(--fill-hover); color: var(--text-secondary); }
+
+.workspace-actions {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+}
+
+.workspace-actions button {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: var(--text-mono);
+  padding: var(--space-1) var(--space-3);
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.workspace-actions button:hover {
+  background: var(--fill-hover);
+}
+
+.conflict-status {
+  border-radius: var(--radius-card);
+  font-weight: 500;
+  margin-bottom: var(--space-6);
+  padding: var(--space-3) var(--space-4);
+}
+
+.conflict-status.has-conflicts {
+  background: rgb(248 113 113 / 0.16);
+  color: var(--danger);
+}
+
+.conflict-status.no-conflicts {
+  background: rgb(52 211 153 / 0.16);
+  color: var(--success);
+}
+
+.conflict-item {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  margin-bottom: var(--space-3);
+  padding: var(--space-4);
+}
+
+.conflict-file {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  font-weight: 500;
+  margin-bottom: var(--space-1);
+}
+
+.conflict-resolved.resolved {
+  color: var(--success);
+}
+
+.conflict-resolved.unresolved {
+  color: var(--danger);
+}

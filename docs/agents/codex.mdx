@@ -1,0 +1,81 @@
+---
+title: Codex
+description: Run Smithers from OpenAI's Codex CLI — install the skill, register the MCP server in config.toml, and point Codex at it with AGENTS.md.
+---
+
+[OpenAI Codex](https://developers.openai.com/codex) extends through **skills**,
+**MCP servers** declared in `~/.codex/config.toml`, and **`AGENTS.md`**
+instructions. Wire up all three in one step:
+
+```bash
+bunx smithers-orchestrator skills add --agent codex
+bunx smithers-orchestrator mcp add --agent codex
+```
+
+That installs the Smithers skill set into `~/.codex/skills/` and registers the
+MCP server in Codex's config. Restart Codex and it can drive workflows.
+
+## Install the skill
+
+Codex reads skills from `~/.codex/skills/` (global) and `.agents/skills/`
+(project). Drop the onboarding skill in manually if you prefer:
+
+```bash
+mkdir -p ~/.codex/skills/smithers
+curl -fsSL https://raw.githubusercontent.com/smithersai/smithers/main/skills/smithers/SKILL.md \
+  -o ~/.codex/skills/smithers/SKILL.md
+curl -fsSL https://smithers.sh/llms-full.txt \
+  -o ~/.codex/skills/smithers/llms-full.txt
+```
+
+Codex auto-selects a skill by its `description`, or you invoke it explicitly with
+`/skills`.
+
+## Register the MCP server
+
+`mcp add` writes the entry for you. The native config is a TOML table in
+`~/.codex/config.toml`:
+
+```toml
+[mcp_servers.smithers]
+command = "bunx"
+args = ["smithers-orchestrator", "--mcp"]
+```
+
+Or use the Codex CLI:
+
+```bash
+codex mcp add smithers -- bunx smithers-orchestrator --mcp
+```
+
+Codex launches the server at session start and the semantic tools
+(`list_workflows`, `run_workflow`, `watch_run`, `resolve_approval`, …) appear in
+the `/mcp` list. Full reference: [MCP Server](/integrations/mcp-server).
+
+## Standing instructions
+
+Codex reads `AGENTS.md` from the repo root down to the working directory. Add a
+section so Codex knows to reach for Smithers:
+
+```md
+## Orchestration
+Use Smithers for durable, multi-step, or human-in-the-loop agent work.
+Run `bunx smithers-orchestrator starters` to see ready-made workflows,
+then `bunx smithers-orchestrator workflow run <name> --prompt "…"`.
+```
+
+This same `AGENTS.md` is read by Cursor, Copilot, Hermes, and Pi — one file
+covers several agents.
+
+## Smithers runs Codex too
+
+In the other direction, Smithers spawns Codex as a worker via `CodexAgent`
+(`codex exec` with a streamed JSON protocol and native thread hijack):
+
+```tsx
+import { CodexAgent } from "smithers-orchestrator";
+
+const codex = new CodexAgent({ model: "gpt-5.3-codex", sandbox: "workspace-write" });
+```
+
+See [CLI Agents → Codex](/integrations/cli-agents#codex-cli-agent).

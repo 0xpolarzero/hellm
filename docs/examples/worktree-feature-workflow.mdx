@@ -1,12 +1,12 @@
 ---
-title: "Ghost: Worktree Feature Workflow"
-description: "Example from scripts/worktree-feature/ — A production multi-agent pipeline that discovers tickets from a PRD, implements them with Claude/Codex, validates, reviews in parallel, and generates reports."
+title: "Worktree Feature Workflow"
+description: "A multi-agent pipeline that discovers tickets from a PRD, implements them with Claude/Codex, validates, reviews in parallel, and generates reports."
 ---
 
-# scripts/worktree-feature/ — Full Pipeline
+# Worktree Feature — Full Pipeline
 
 <Note>
-**Ghost doc** — Real production workflow at `scripts/worktree-feature/`. The most complex Smithers example: multiple CLI agents (Claude Code, OpenAI Codex) through a full development lifecycle.
+The most complex Smithers example: multiple CLI agents (Claude Code, OpenAI Codex) through a full development lifecycle.
 </Note>
 
 ## Pipeline
@@ -22,65 +22,10 @@ Steps 2--5 loop via `<Loop>` until both reviewers approve or max iterations reac
 
 ## Schema Setup — smithers.ts
 
+Schema definitions are in `smithers.ts` — see [Worktree Feature Schemas](./worktree-feature-schemas) for the full field list. The file ends with the `createSmithers(...)` registration call:
+
 ```tsx
 // scripts/worktree-feature/smithers.ts
-import { createSmithers } from "smithers-orchestrator";
-import { z } from "zod";
-
-// Each pipeline stage gets its own Zod output schema
-const DiscoverOutput = z.object({
-  tickets: z.array(z.object({
-    id: z.string(),
-    title: z.string(),
-    description: z.string(),
-    acceptanceCriteria: z.array(z.string()),
-    filesToModify: z.array(z.string()),
-    filesToCreate: z.array(z.string()),
-    dependencies: z.array(z.string()).nullable(),
-  })),
-  reasoning: z.string(),
-});
-
-const ImplementOutput = z.object({
-  filesCreated: z.array(z.string()).nullable(),
-  filesModified: z.array(z.string()).nullable(),
-  whatWasDone: z.string(),
-  allTestsPassing: z.boolean(),
-  testOutput: z.string(),
-});
-
-const ValidateOutput = z.object({
-  allPassed: z.boolean(),
-  failingSummary: z.string().nullable(),
-});
-
-const ReviewOutput = z.object({
-  reviewer: z.string(),
-  approved: z.boolean(),
-  issues: z.array(z.object({
-    severity: z.enum(["critical", "major", "minor", "nit"]),
-    file: z.string(),
-    line: z.number().nullable(),
-    description: z.string(),
-    suggestion: z.string().nullable(),
-  })),
-  feedback: z.string(),
-});
-
-const ReviewFixOutput = z.object({
-  fixesMade: z.array(z.object({ issue: z.string(), fix: z.string(), file: z.string() })),
-  allIssuesResolved: z.boolean(),
-  summary: z.string(),
-});
-
-const ReportOutput = z.object({
-  ticketTitle: z.string(),
-  status: z.enum(["completed", "partial", "failed"]),
-  summary: z.string(),
-  filesChanged: z.number(),
-  reviewRounds: z.number(),
-});
-
 export const { Workflow, Task, useCtx, smithers, tables, outputs } = createSmithers({
   discover: DiscoverOutput,
   implement: ImplementOutput,
@@ -137,13 +82,13 @@ const UNSAFE = process.env.SMITHERS_UNSAFE === "1";
 
 // Claude — switches between API agent and CLI agent
 const claudeApi = new Agent({
-  model: anthropic("claude-opus-4-6"),
+  model: anthropic("claude-opus-4-7"),
   instructions: SYSTEM_PROMPT,
   stopWhen: stepCountIs(100),
 });
 
 const claudeCli = new ClaudeCodeAgent({
-  model: "claude-opus-4-6",
+  model: "claude-opus-4-7",
   systemPrompt: SYSTEM_PROMPT,
   dangerouslySkipPermissions: UNSAFE,
   timeoutMs: 30 * 60 * 1000,

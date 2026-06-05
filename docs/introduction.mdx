@@ -1,47 +1,39 @@
 ---
 title: Introduction
-description: Build Smithers workflows with JSX components on top of a durable runtime.
+description: What Smithers is and when to use it.
 ---
 
-Smithers is a JSX-first framework for deterministic, resumable AI workflows. Define the workflow as a TypeScript component tree; Smithers handles execution ordering, persistence, approvals, retries, and observability.
+Smithers orchestrates AI coding agents at scale with composable, model- and harness-agnostic workflows. Most workflow systems fail quietly. A crash mid-run means lost work and a manual restart from scratch. Smithers solves this with a render-loop execution model: every completed step is persisted immediately, so the runtime always knows exactly what has finished and what to run next.
 
-## Start Here
+Your agent writes the workflow as a JSX tree, and Smithers repeatedly renders it every "frame". Each render answers: given what has already finished, what can run now? Tasks produce outputs validated by Zod schemas; the runtime persists them to SQLite. Crashes, restarts, and approvals are first-class, and the runtime resumes from the last persisted state without re-running completed work.
 
-```bash
-bunx smithers-orchestrator init
+```tsx
+<Workflow name="review">
+  <Sequence>
+    <Task id="analyze" output={outputs.analysis} agent={analyst}>
+      {`Review ${ctx.input.repo}`}
+    </Task>
+    {analysis ? (
+      <Task id="fix" output={outputs.fix} agent={fixer}>
+        {`Fix these issues:\n${analysis.issues.map(i => `- [${i.severity}] ${i.file}:${i.line} - ${i.description}`).join("\n")}`}
+      </Task>
+    ) : null}
+  </Sequence>
+</Workflow>
 ```
 
-This creates `.smithers/` with pre-built workflows, shared components, prompt templates, and configuration. Run a seeded workflow:
+Use Smithers when:
 
-```bash
-bunx smithers workflow implement --prompt "Add input validation to the signup form"
-```
+- order matters across multiple AI or compute steps
+- you need crash recovery
+- humans must approve or answer questions mid-run
+- different tasks need different models, tools, or policies
+- operators need the [Gateway](/integrations/gateway) API to launch, stream, and approve runs programmatically
 
-- [Quickstart](/api/quickstart) -- Build a custom workflow from scratch.
-- [Workflows Overview](/concepts/workflows-overview) -- Core principles and execution model.
+Don't use it for a single prompt → single response. Use your model provider's SDK directly; Smithers adds no value there.
 
-## Concepts
+## Read next
 
-1. [Workflows Overview](/concepts/workflows-overview) -- What workflows are and how execution works.
-2. [Reactivity](/concepts/reactivity) -- How the component model enables plans that evolve.
-3. [Control Flow](/concepts/control-flow) -- Sequential, parallel, conditional, iterative.
-4. [Workflow State](/concepts/workflow-state) -- Data flow between tasks via the context API.
-5. [Agents and Tools](/concepts/agents-and-tools) -- AI agents and built-in tools.
-6. [Suspend and Resume](/concepts/suspend-and-resume) -- Durability, crash recovery, resumability.
-7. [Human-in-the-Loop](/concepts/human-in-the-loop) -- Approval gates and denial policies.
-
-## Runtime
-
-All workflows share:
-
-- Durable execution and resumability
-- Retries, timeouts, approval gates
-- SQLite persistence
-- Parallel execution and loops
-- Structured events, metrics, observability
-
-## Next Steps
-
-- [JSX API](/api/overview) -- Component model and authoring layer.
-- [CLI Reference](/cli/overview) -- Run, resume, inspect workflows.
-- [Implement-Review Loop](/guides/review-loop) -- Recommended production pattern.
+- [Tour](/tour) for a working code-review example.
+- [How It Works](/how-it-works) for the execution model.
+- [Why React?](/why-react) for the rationale behind the JSX runtime.

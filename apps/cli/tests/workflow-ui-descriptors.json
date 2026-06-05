@@ -1,0 +1,249 @@
+[
+  {
+    "key": "plan",
+    "title": "Plan",
+    "runnable": true,
+    "launchArgs": [
+      "plan",
+      "--prompt",
+      "hello"
+    ],
+    "primaryTestId": "plan-ui",
+    "populatedTestId": "plan-summary",
+    "expectedText": [
+      "mock agent completed the task",
+      "inspect",
+      "implement",
+      "verify"
+    ],
+    "verifyOutput": true
+  },
+  {
+    "key": "implement",
+    "title": "Implement",
+    "runnable": true,
+    "launchArgs": [
+      "implement",
+      "--prompt",
+      "hello"
+    ],
+    "primaryTestId": "implement-ui",
+    "populatedTestId": "implement-completion",
+    "expectedText": [
+      "mock agent completed the task",
+      "Approved",
+      "mock-reviewer"
+    ],
+    "verifyOutput": true
+  },
+  {
+    "key": "research-plan-implement",
+    "title": "Research Plan Implement",
+    "runnable": false,
+    "launchArgs": [],
+    "primaryTestId": "research-plan-implement-ui",
+    "populatedTestId": "",
+    "expectedText": [],
+    "mountOnlyReason": "does not complete deterministically with a trivial stub prompt (interview/input-driven or errors on stub output); UI is asserted to mount + boot",
+    "verifyOutput": false
+  },
+  {
+    "key": "review",
+    "title": "Review",
+    "runnable": true,
+    "launchArgs": [
+      "review",
+      "--prompt",
+      "hello"
+    ],
+    "primaryTestId": "review-ui",
+    "populatedTestId": "review-verdict",
+    "expectedText": [
+      "Approved by all reviewers",
+      "mock-reviewer",
+      "looks good",
+      "No issues raised"
+    ],
+    "verifyOutput": true
+  },
+  {
+    "key": "research",
+    "title": "Research",
+    "runnable": true,
+    "launchArgs": [
+      "research",
+      "--prompt",
+      "hello"
+    ],
+    "primaryTestId": "research-ui",
+    "populatedTestId": "research-summary-text",
+    "expectedText": [
+      "mock agent completed the task"
+    ],
+    "verifyOutput": false
+  },
+  {
+    "key": "ticket-create",
+    "title": "Ticket Create",
+    "runnable": false,
+    "launchArgs": [],
+    "primaryTestId": "ticket-create-ui",
+    "populatedTestId": "",
+    "expectedText": [],
+    "mountOnlyReason": "does not complete deterministically with a trivial stub prompt (interview/input-driven or errors on stub output); UI is asserted to mount + boot",
+    "verifyOutput": false
+  },
+  {
+    "key": "tickets-create",
+    "title": "Tickets Create",
+    "runnable": true,
+    "launchArgs": [
+      "tickets-create",
+      "--prompt",
+      "hello"
+    ],
+    "primaryTestId": "tickets-create-ui",
+    "populatedTestId": "tickets-create-summary",
+    "expectedText": [
+      "mock agent completed the task",
+      "Breakdown summary",
+      "Tickets"
+    ],
+    "verifyOutput": false
+  },
+  {
+    "key": "ralph",
+    "title": "Ralph",
+    "runnable": false,
+    "launchArgs": [],
+    "primaryTestId": "ralph-ui",
+    "populatedTestId": "ralph-summary",
+    "expectedText": [
+      "No loop running",
+      "Ralph runs a single task in an infinite loop",
+      "Start loop"
+    ],
+    "verifyOutput": false
+  },
+  {
+    "key": "improve-test-coverage",
+    "title": "Improve Test Coverage",
+    "runnable": true,
+    "launchArgs": [
+      "improve-test-coverage",
+      "--prompt",
+      "hello"
+    ],
+    "primaryTestId": "improve-test-coverage-ui",
+    "populatedTestId": "improve-test-coverage-implement",
+    "expectedText": [
+      "mock agent completed the task",
+      "Implement",
+      "Validate",
+      "Review"
+    ],
+    "verifyOutput": false
+  },
+  {
+    "key": "debug",
+    "title": "Debug",
+    "runnable": true,
+    "launchArgs": [
+      "debug",
+      "--prompt",
+      "hello"
+    ],
+    "primaryTestId": "debug-ui",
+    "populatedTestId": "debug-implement-summary",
+    "expectedText": [
+      "mock agent completed the task",
+      "looks good",
+      "mock-reviewer"
+    ],
+    "verifyOutput": false
+  },
+  {
+    "key": "grill-me",
+    "title": "Grill Me",
+    "runnable": false,
+    "launchArgs": [],
+    "primaryTestId": "grill-me-ui",
+    "populatedTestId": "grill-me-qa",
+    "expectedText": [
+      "Grill Me",
+      "Conversation history",
+      "No active run",
+      "Start Grilling"
+    ],
+    "verifyOutput": false
+  },
+  {
+    "key": "write-a-prd",
+    "title": "Write a PRD",
+    "runnable": false,
+    "launchArgs": [],
+    "primaryTestId": "write-a-prd-ui",
+    "populatedTestId": "",
+    "expectedText": [],
+    "mountOnlyReason": "does not complete deterministically with a trivial stub prompt (interview/input-driven or errors on stub output); UI is asserted to mount + boot",
+    "verifyOutput": false
+  },
+  {
+    "key": "feature-enum",
+    "title": "Feature Enum",
+    "runnable": false,
+    "launchArgs": [],
+    "primaryTestId": "feature-enum-ui",
+    "populatedTestId": "feature-enum-inventory",
+    "expectedText": [
+      "Feature Enum",
+      "Run Summary",
+      "Progress Timeline",
+      "Launch Scan"
+    ],
+    "verifyOutput": false
+  },
+  {
+    "key": "audit",
+    "title": "Audit",
+    "runnable": true,
+    "launchArgs": [
+      "audit",
+      "--prompt",
+      "hello"
+    ],
+    "primaryTestId": "audit-ui",
+    "populatedTestId": "audit-runid",
+    "expectedText": [
+      "Audit",
+      "Feature groups",
+      "Consolidated report"
+    ],
+    "verifyOutput": true
+  },
+  {
+    "key": "mission",
+    "title": "Mission",
+    "runnable": false,
+    "launchArgs": [],
+    "primaryTestId": "mission-ui",
+    "populatedTestId": "mission-empty",
+    "expectedText": [
+      "Launch a mission",
+      "Launch Mission",
+      "Mission"
+    ],
+    "verifyOutput": false
+  },
+  {
+    "key": "workflow-skill",
+    "title": "Workflow Skill",
+    "runnable": false,
+    "launchArgs": [],
+    "primaryTestId": "workflow-skill-ui",
+    "populatedTestId": "",
+    "expectedText": [],
+    "mountOnlyReason": "does not complete deterministically with a trivial stub prompt (interview/input-driven or errors on stub output); UI is asserted to mount + boot",
+    "verifyOutput": false
+  }
+]

@@ -1,0 +1,20 @@
+---
+title: plan
+description: Create a practical implementation plan.
+---
+
+`plan` turns a request into a structured implementation plan without changing the repo.
+
+```bash
+bunx smithers-orchestrator workflow run plan --prompt "Add account-level billing limits"
+```
+
+## Inputs
+
+| Input | Type | Default |
+| --- | --- | --- |
+| `prompt` | string | `"Create an implementation plan."` |
+
+## Output Shape
+
+The plan task returns a summary and ordered steps. Use it before `implement`, `research-plan-implement`, `mission`, or `tickets-create`.

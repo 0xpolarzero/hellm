@@ -4,55 +4,58 @@
 import { createSmithers } from "smithers-orchestrator";
 import { z } from "zod/v4";
 import { agents } from "../agents";
-import { implementOutputSchema, validateOutputSchema } from "../components/ValidationLoop";
-import { Review, reviewOutputSchema } from "../components/Review";
-import ResearchPrompt from "../prompts/research.mdx";
-import PlanPrompt from "../prompts/plan.mdx";
-import ImplementPrompt from "../prompts/implement.mdx";
-import ValidatePrompt from "../prompts/validate.mdx";
-
-const researchOutputSchema = z.object({
-  summary: z.string(),
-  keyFindings: z.array(z.string()).default([]),
-}).passthrough();
-
-const planOutputSchema = z.object({
-  summary: z.string(),
-  steps: z.array(z.string()).default([]),
-}).passthrough();
+import { ValidationLoop, implementOutputSchema, validateOutputSchema } from "../components/ValidationLoop";
+import { reviewOutputSchema } from "../components/Review";
 
 const inputSchema = z.object({
   prompt: z.string().default("Implement the requested change."),
 });
 
-const { Workflow, Task, Sequence, smithers } = createSmithers({
+const { Workflow, smithers } = createSmithers({
   input: inputSchema,
-  research: researchOutputSchema,
-  plan: planOutputSchema,
   implement: implementOutputSchema,
   validate: validateOutputSchema,
   review: reviewOutputSchema,
 });
 
 export default smithers((ctx) => {
-  const prompt = ctx.input.prompt;
+  const validate = ctx.outputMaybe("validate", { nodeId: "impl:validate" });
+  const reviews = ctx.outputs.review ?? [];
+
+  // done = false until validate has actually run AND passed, AND at least one reviewer approved
+  const hasValidated = validate !== undefined;
+  const validationPassed = hasValidated && validate.allPassed !== false;
+  const anyApproved = reviews.length > 0 && reviews.some((r: any) => r.approved === true);
+  const done = validationPassed && anyApproved;
+
+  const feedbackParts: string[] = [];
+  if (validate && !validationPassed && validate.failingSummary) {
+    feedbackParts.push(`VALIDATION FAILED:\n${validate.failingSummary}`);
+  }
+  for (const review of reviews) {
+    if (review.approved === false) {
+      feedbackParts.push(`REVIEWER REJECTED:\n${review.feedback}`);
+      if (review.issues?.length) {
+        for (const issue of review.issues) {
+          feedbackParts.push(`  [${issue.severity}] ${issue.title}: ${issue.description}${issue.file ? ` (${issue.file})` : ""}`);
+        }
+      }
+    }
+  }
+  const feedback = feedbackParts.length > 0 ? feedbackParts.join("\n\n") : null;
+
   return (
     <Workflow name="implement">
-      <Sequence>
-        <Task id="research" output={researchOutputSchema} agent={agents.smartTool}>
-          <ResearchPrompt prompt={prompt} />
-        </Task>
-        <Task id="plan" output={planOutputSchema} agent={agents.smart}>
-          <PlanPrompt prompt={prompt} />
-        </Task>
-        <Task id="implement" output={implementOutputSchema} agent={agents.smart}>
-          <ImplementPrompt prompt={prompt} />
-        </Task>
-        <Task id="validate" output={validateOutputSchema} agent={agents.cheapFast}>
-          <ValidatePrompt prompt={prompt} />
-        </Task>
-        <Review idPrefix="review" prompt={prompt} agents={agents.smart} />
-      </Sequence>
+      <ValidationLoop
+        idPrefix="impl"
+        prompt={ctx.input.prompt}
+        implementAgents={agents.smart}
+        validateAgents={agents.cheapFast}
+        reviewAgents={agents.smart}
+        feedback={feedback}
+        done={done}
+        maxIterations={3}
+      />
     </Workflow>
   );
 });

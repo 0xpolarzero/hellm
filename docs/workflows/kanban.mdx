@@ -1,0 +1,40 @@
+---
+title: kanban
+description: Implement ticket files from .smithers/tickets in parallel worktree branches.
+---
+
+`kanban` reads Markdown tickets from `.smithers/tickets/`, runs each ticket in its own worktree branch, then asks an agent to merge successful branches back into the main workspace.
+
+```bash
+bunx smithers-orchestrator workflow run kanban --input '{"maxConcurrency":3}'
+```
+
+## Inputs
+
+| Input | Type | Default |
+| --- | --- | --- |
+| `maxConcurrency` | number | `3` |
+
+## Ticket Layout
+
+Place ticket files in `.smithers/tickets/`:
+
+```text
+.smithers/tickets/
+  add-oauth-login.md
+  improve-empty-state.md
+```
+
+## How It Runs
+
+1. Discovers `.md` ticket files, skipping dot-prefixed files (e.g. `.gitkeep`) and any file named `readme.md` (case-insensitive).
+2. Creates a worktree branch for each ticket.
+3. Runs the shared `ValidationLoop` per ticket.
+4. Records a ticket result in the run log.
+5. Merges branches where validation passed and at least one reviewer approved.
+
+Use this after `tickets-create` when you want multiple independent tickets implemented with isolated working directories.
+
+## Output Shape
+
+Each ticket branch is merged into the main workspace on success. The run log records per-ticket validation results and reviewer feedback; failing tickets are left in their worktree branches for inspection.

@@ -1,0 +1,39 @@
+{
+  "name": "@smithers-orchestrator/smithers-studio-2",
+  "version": "0.1.0",
+  "description": "Next Smithers Studio UI shell",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "pnpm run typecheck && vite build",
+    "e2e": "playwright test",
+    "test:unit": "bun test --path-ignore-patterns=\"**/tests/**\"",
+    "preview": "vite preview --host 127.0.0.1",
+    "dev:desktop": "electrobun dev --watch",
+    "build:desktop": "pnpm run build && electrobun build"
+  },
+  "dependencies": {
+    "@smithers-orchestrator/devtools": "workspace:*",
+    "@smithers-orchestrator/gateway-client": "workspace:*",
+    "@uidotdev/usehooks": "^2.4.1",
+    "@vitejs/plugin-react": "^6.0.2",
+    "electrobun": "^1.18.1",
+    "@wterm/dom": "0.3.0",
+    "@wterm/ghostty": "0.3.0",
+    "@wterm/react": "0.3.0",
+    "node-pty": "^1.1.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "typescript": "~5.9.3",
+    "vite": "^8.0.14",
+    "zustand": "^5.0.13"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "playwright": "^1.60.0"
+  }
+}

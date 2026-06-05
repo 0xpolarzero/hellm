@@ -1,22 +1,24 @@
 ---
-title: "Ghost: workflows/hello.tsx"
-description: "Example from workflows/hello.tsx — A minimal hello-world workflow using literal output (no agent) with deterministic persistence."
+title: "Hello World Workflow"
+description: "A minimal hello-world workflow using literal output (no agent) with deterministic persistence."
 ---
 
-# workflows/hello.tsx
+# Hello World Workflow
 
 <Note>
-**Ghost doc** -- Real script from `workflows/hello.tsx`. Demonstrates literal output with no AI agent.
+Demonstrates literal output with no AI agent. For a hello-world workflow that uses an LLM agent, see [Hello World](./hello-world).
 </Note>
 
 ## Source
 
 ```tsx
+/** @jsxImportSource smithers-orchestrator */
 // workflows/hello.tsx
-import { createSmithers, Workflow, Task } from "smithers-orchestrator";
+import { createSmithers } from "smithers-orchestrator";
 import { z } from "zod";
 
-const { smithers, outputs } = createSmithers({
+const { Workflow, Task, smithers, outputs } = createSmithers({
+  input: z.object({ name: z.string() }),
   output: z.object({
     message: z.string(),
     length: z.number(),
@@ -28,7 +30,7 @@ export default smithers((ctx) => (
     <Task id="hello" output={outputs.output}>
       {{
         message: `Hello, ${ctx.input.name}!`,
-        length: String(ctx.input.name).length,
+        length: ctx.input.name.length,
       }}
     </Task>
   </Workflow>
@@ -38,7 +40,7 @@ export default smithers((ctx) => (
 ## Running
 
 ```bash
-smithers up workflows/hello.tsx --input '{"name": "World"}'
+bunx smithers-orchestrator up workflows/hello.tsx --input '{"name": "World"}'
 ```
 
 ```

@@ -1,0 +1,33 @@
+---
+title: research-plan-implement
+description: Research, plan, implement, validate, and review in one run.
+---
+
+`research-plan-implement` is a full pipeline for changes that need context before code. It asks one agent to research, another to plan, then passes the enriched prompt into the same `ValidationLoop` used by `implement`.
+
+```bash
+bunx smithers-orchestrator workflow run research-plan-implement --prompt "Replace the auth cookie format"
+```
+
+## Inputs
+
+| Input | Type | Default |
+| --- | --- | --- |
+| `prompt` | string | `"Implement the requested change."` |
+| `tdd` | boolean | `false` |
+
+When `tdd` is `true`, the planning task is instructed to start with test steps before any implementation steps, and the implementation task is instructed to write or update tests before production code.
+
+Pass structured input when you want test-first planning:
+
+```bash
+bunx smithers-orchestrator workflow run research-plan-implement \
+  --input '{"prompt":"Add invite-only signup","tdd":true}'
+```
+
+## How It Runs
+
+1. Research gathers repo context, prior art, and relevant implementation details.
+2. Planning turns the request and research into concrete steps.
+3. Implementation receives the original prompt plus research and plan context.
+4. Validation and review decide whether another implementation pass is needed.

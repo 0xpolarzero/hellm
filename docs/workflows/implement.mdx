@@ -1,0 +1,30 @@
+---
+title: implement
+description: Implement a change with validation and review.
+---
+
+`implement` is the default coding workflow for a single change. It runs a shared `ValidationLoop`: implement the requested change, validate it, review it, and feed failures back into another iteration.
+
+```bash
+bunx smithers-orchestrator workflow run implement --prompt "Add rate limiting to the API"
+```
+
+## Inputs
+
+| Input | Type | Default |
+| --- | --- | --- |
+| `prompt` | string | `"Implement the requested change."` |
+
+## How It Runs
+
+1. An implementation agent works from the prompt.
+2. A validation agent checks the repo state.
+3. Reviewer agents inspect the result.
+4. The orchestrator feeds failed validation output and reviewer rejection notes back into the next implementation pass.
+5. The loop stops after validation passes and at least one reviewer approves, or after 3 iterations.
+
+Use this when you already know what to build and want Smithers to enforce a basic build-check-review loop.
+
+## Output Shape
+
+`implement` commits changes directly to the working tree. The run log records the validation result and reviewer feedback for each iteration.

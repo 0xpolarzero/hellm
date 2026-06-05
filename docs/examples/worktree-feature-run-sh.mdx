@@ -6,7 +6,7 @@ description: "Example from scripts/worktree-feature/run.sh — Shell script laun
 # scripts/worktree-feature/run.sh
 
 <Note>
-**Ghost doc** — Real launcher script at `scripts/worktree-feature/run.sh`.
+**Example** — Aspirational launcher script for a `scripts/worktree-feature/run.sh` workflow directory. The `scripts/worktree-feature/` directory does not exist on `main`; this doc shows the intended structure for a worktree-feature workflow.
 </Note>
 
 ## Source
@@ -19,7 +19,7 @@ description: "Example from scripts/worktree-feature/run.sh — Shell script laun
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 cd "$SCRIPT_DIR"
 
@@ -35,7 +35,7 @@ echo "Root directory: $ROOT_DIR"
 echo "Press Ctrl+C to stop."
 echo ""
 
-bun "$SMITHERS_CLI" run workflow.tsx --input '{}' --root "$ROOT_DIR"
+bun "$SMITHERS_CLI" up workflow.tsx --input '{}' --root "$ROOT_DIR"
 ```
 
 ## package.json
@@ -50,9 +50,9 @@ bun "$SMITHERS_CLI" run workflow.tsx --input '{}' --root "$ROOT_DIR"
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.36",
-    "@ai-sdk/openai": "^2.0.0",
-    "ai": "^6.0.69",
+    "@ai-sdk/anthropic": "^3.0.71",
+    "@ai-sdk/openai": "^3.0.53",
+    "ai": "^6.0.168",
     "smithers-orchestrator": "file:../../",
     "zod": "^4.3.6"
   }
@@ -82,7 +82,7 @@ mdxPlugin();
 
 ## Key Details
 
-- `USE_CLI_AGENTS=1` selects CLI agents (Claude Code / Codex CLI) over API agents. `SMITHERS_UNSAFE=1` enables `dangerouslySkipPermissions` for unattended execution.
+- `USE_CLI_AGENTS=1` selects CLI agents (Claude Code / Codex CLI) over API agents. `SMITHERS_UNSAFE=1` enables `dangerouslySkipPermissions` for unattended execution — this bypasses Claude Code's permission prompts so the workflow can run headlessly. Only use it in a sandboxed environment; the agent will have unrestricted filesystem and shell access.
 - `"smithers-orchestrator": "file:../../"` links to the local package for co-development.
 - `preload.ts` registers the MDX plugin, enabling `.mdx` imports as JSX components.
 - `--root` passes the repository root so agents access the full codebase, not just the workflow directory.

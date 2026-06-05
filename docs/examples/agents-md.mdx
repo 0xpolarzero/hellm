@@ -1,46 +1,47 @@
 ---
 title: "Ghost: AGENTS.md"
-description: "Example from AGENTS.md — Repository instructions for AI coding agents working on the Smithers Bun/TypeScript codebase, its docs, examples, tests, and Burns subproject."
+description: "Example AGENTS.md — Repository instructions for AI coding agents working on the Smithers Bun/TypeScript codebase, its docs, examples, and tests."
 ---
 
 # AGENTS.md
 
+AGENTS.md sits at the repo root and is auto-injected into every AI coding session. It tells agents what the repo is, what commands to run, and what conventions to follow.
+
 <Note>
-**Ghost doc** — The real `AGENTS.md` from the Smithers repository root.
+**Ghost doc** — A reference example of what `AGENTS.md` contains for the Smithers repository.
 </Note>
 
 ## Source
 
-```markdown
+````markdown
 # Smithers Repository — Agent Instructions
 
 You are working in the Smithers repository, a Bun/TypeScript codebase centered on the `smithers-orchestrator` package.
 
 ## Repository Overview
 
-- **Core runtime**: `src/` — Smithers workflow engine, JSX components, CLI, integrations, and observability
+- **Core runtime**: `packages/` — Smithers workflow engine (`packages/engine/`), JSX components (`packages/components/`), CLI (`apps/cli/`), integrations, and observability
 - **Docs**: `docs/` — Mintlify source docs
 - **Examples**: `examples/` — runnable TSX workflows
-- **Tests**: `tests/` — Bun tests, Playwright docs checks, runtime regression coverage
-- **Burns**: `burns/` — workspace-first local control plane for Smithers with web, daemon, desktop, and CLI apps
+- **Tests**: `packages/*/tests/` — Bun unit/integration tests; `e2e/` — e2e harness; `apps/smithers-studio-2/` — Playwright e2e
+- **Apps**: `apps/` — Studio (`apps/smithers-studio-2/`), CLI (`apps/cli/`), observability, demos
 
 ## Common Commands
 
 From the repository root:
 
 ```bash
-bun test
+pnpm test
 bun run typecheck
-bun run e2e
 bun run docs
+pnpm -C apps/smithers-studio-2 e2e
 ```
 
-From `burns/`:
+From `apps/smithers-studio-2/`:
 
 ```bash
-bun run dev:daemon
-bun run dev:web
-bun run desktop:dev
+bun run dev
+bun run dev:desktop
 bun run typecheck
 ```
 
@@ -51,4 +52,4 @@ bun run typecheck
 - Source docs live under `docs/`; `docs/llms-full.txt` is generated from those pages
 - `examples/` should stay runnable against the current public API
 - The repo may be used from Git or JJ-based workspaces depending on the developer environment; do not assume one workflow unless the local task requires it
-```
+````

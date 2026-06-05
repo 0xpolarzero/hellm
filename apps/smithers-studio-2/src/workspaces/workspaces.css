@@ -1,0 +1,142 @@
+/*
+ * Workspaces (JJHub fleet) surface styles. Phase-2 declutter pass: this is a
+ * secondary "More" surface for fleet/sandbox management, distinct from the daily
+ * Workspace pane, so it reads calmer and lower-density. Rules are namespaced
+ * under `.workspaces-surface` and layer on top of the foundation base rules in
+ * app.css. Tokens only.
+ */
+
+.workspaces-surface .view-header {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  min-height: 48px;
+  padding: var(--space-4) var(--space-7);
+}
+
+.workspaces-surface .view-header h2 {
+  color: var(--text-secondary);
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+.workspaces-surface .view-controls {
+  gap: var(--space-3);
+}
+
+.workspaces-surface .view-controls select,
+.workspaces-surface .view-controls button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-tertiary);
+  font-size: var(--text-mono);
+  padding: var(--space-1) var(--space-3);
+}
+
+.workspaces-surface .view-controls select:hover,
+.workspaces-surface .view-controls button:hover {
+  background: var(--fill-hover);
+  color: var(--text-secondary);
+}
+
+.workspaces-surface .status-message {
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-tertiary);
+  font-size: var(--text-mono-sm);
+  padding: var(--space-2) var(--space-6);
+}
+
+/* Give the lists breathing room and scroll within the surface. */
+.workspaces-surface .view-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspaces-surface .cloud-workspaces,
+.workspaces-surface .local-workspaces-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-7);
+}
+
+/* Lower-density cards: flatter, lighter borders, tighter padding. */
+.workspaces-surface .workspace-item,
+.workspaces-surface .snapshot-item {
+  background: var(--surface-1);
+  margin-bottom: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+}
+
+.workspaces-surface .workspace-item.selected {
+  border-color: var(--accent-stroke);
+  box-shadow: none;
+}
+
+.workspaces-surface .workspace-name,
+.workspaces-surface .snapshot-name {
+  font-size: var(--text-body);
+  margin-bottom: 2px;
+}
+
+.workspaces-surface .workspace-meta,
+.workspaces-surface .snapshot-meta {
+  align-items: center;
+  color: var(--text-tertiary);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--text-mono-sm);
+  gap: var(--space-3);
+}
+
+/* Plain colored status instead of a heavy uppercase chip. */
+.workspaces-surface .workspace-status {
+  background: transparent;
+  padding: 0;
+  text-transform: capitalize;
+}
+
+.workspaces-surface .workspace-status-running { color: var(--success); }
+.workspaces-surface .workspace-status-suspended { color: var(--warning); }
+.workspaces-surface .workspace-status-unknown { color: var(--text-tertiary); }
+
+.workspaces-surface .workspace-created {
+  color: var(--text-tertiary);
+}
+
+/* Per-row actions recede to quiet text buttons — still always reachable. */
+.workspaces-surface .workspace-actions,
+.workspaces-surface .snapshot-actions {
+  gap: var(--space-2);
+}
+
+.workspaces-surface .workspace-actions button,
+.workspaces-surface .snapshot-actions button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--text-tertiary);
+  font-size: var(--text-mono-sm);
+  padding: var(--space-1) var(--space-3);
+}
+
+.workspaces-surface .workspace-actions button:hover:not(:disabled),
+.workspaces-surface .snapshot-actions button:hover:not(:disabled) {
+  background: var(--fill-hover);
+  color: var(--text-secondary);
+}
+
+.workspaces-surface .workspace-actions button:disabled,
+.workspaces-surface .snapshot-actions button:disabled {
+  opacity: 0.45;
+}
+
+/* Local recents read as quiet rows with a tilde-style path line. */
+.workspaces-surface .workspace-path {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -1,0 +1,38 @@
+---
+title: <Timer>
+description: Durably suspend for a relative duration or until an absolute time.
+---
+
+```ts
+import { Timer } from "smithers-orchestrator";
+
+type TimerProps = {
+  id: string;
+  duration?: string; // "500ms" | "30s" | "2h" | "7d"; exactly one of duration/until required
+  until?: string | Date; // ISO 8601 string or Date
+  every?: string; // reserved — recurring timers ship in phase 2; throws if set
+  skipIf?: boolean;
+  dependsOn?: string[];
+  needs?: Record<string, string>;
+  label?: string;
+  meta?: Record<string, unknown>;
+  key?: string;
+};
+```
+
+```tsx
+<Workflow name="delayed-report">
+  <Sequence>
+    <Timer id="cooldown" duration="30s" />
+    <Task id="report" output={outputs.report} agent={reportAgent}>
+      Generate the daily summary report.
+    </Task>
+  </Sequence>
+</Workflow>
+```
+
+## Notes
+
+- Exactly one of `duration` or `until` is required; both or neither throws at render time.
+- Produces no output. Past `until` timestamps fire immediately.
+- Worker restarts during the wait don't reset the timer.

@@ -1,0 +1,51 @@
+---
+title: workflow-skill
+description: Create or update agent-facing skill docs from local workflows.
+---
+
+`workflow-skill` reads local Smithers workflow metadata and asks an agent to write concise skill documentation for selected workflows. It passes each workflow's ID, display name, source type, entry file path, and full source to the agent. The agent infers descriptions, inputs, and other workflow-specific fields directly from the source.
+
+For deterministic, no-agent generation, use the CLI command:
+
+```bash
+bunx smithers-orchestrator workflow skills
+```
+
+To generate skill docs through the agent (with prompt-driven customization), use:
+
+```bash
+bunx smithers-orchestrator workflow run workflow-skill --input '{"workflow":"mission"}'
+```
+
+## Inputs
+
+| Input | Type | Default |
+| --- | --- | --- |
+| `workflow` | string | `"all"` |
+| `output` | string or null | `null` |
+| `prompt` | string | `""` |
+
+## Output Rules
+
+- `workflow: "all"` scans every local workflow except `workflow-skill`.
+- If `output` is omitted, skills are written under `.smithers/skills/`.
+- If `workflow` is one workflow ID and `output` is provided, the agent writes exactly that file path.
+- If `workflow` is `"all"` and `output` is provided, the agent treats it as a directory and writes one skill per workflow.
+
+## Examples
+
+Generate one skill:
+
+```bash
+bunx smithers-orchestrator workflow run workflow-skill \
+  --input '{"workflow":"mission","output":".smithers/skills/mission.md"}'
+```
+
+Generate skills for every local workflow:
+
+```bash
+bunx smithers-orchestrator workflow run workflow-skill \
+  --input '{"workflow":"all","output":".smithers/skills"}'
+```
+
+Use this when you want coding agents to discover and operate project-specific Smithers workflows without reading each workflow source file first.

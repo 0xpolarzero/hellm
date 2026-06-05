@@ -1,5 +1,7 @@
 # PRD: TUI Chat-First Redesign
 
+> Archived design prompt: `smithers tui` was removed in 0.20.2. This file is retained as historical product/design material and does not describe a current shipped command.
+
 **Status**: Draft
 **Date**: 2026-03-29
 **Author**: Auto-generated from codebase analysis
@@ -27,7 +29,7 @@ Transform the TUI's main screen from a dashboard into a **chat-first interface**
 ## Non-Goals
 
 - Multi-turn streaming (v1 uses single-turn `agent.generate()`)
-- Voice input/output in the TUI
+
 - Remote collaboration features
 - Replacing the web-based Burns UI
 
@@ -96,7 +98,7 @@ Transform the TUI's main screen from a dashboard into a **chat-first interface**
 ### F7: Status Bar
 
 - Persistent bar at the top or bottom showing:
-  - Active agent name and model (e.g., `claude-opus-4-6`)
+  - Active agent name and model (e.g., `claude-opus-4-7`)
   - Number of active runs
   - Current screen name
   - Keyboard shortcut hints

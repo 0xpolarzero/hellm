@@ -15,11 +15,11 @@ description: "Example from ~/.claude/plugins/smithers/ — A Claude Code plugin 
 {
   "name": "smithers",
   "version": "0.1.0",
-  "description": "Build AI agents with declarative JSX for Claude orchestration",
+  "description": "Build AI agents with Solid.js - Declarative JSX for Claude orchestration",
   "author": "William Cory",
   "license": "MIT",
   "repository": "https://github.com/evmts/smithers",
-  "keywords": ["orchestration", "multi-agent", "workflow", "ai-agents", "claude", "jsx"],
+  "keywords": ["orchestration", "multi-agent", "smithers", "workflow", "ai-agents", "claude", "jsx", "reactive"],
   "skills": ["skills/smithers"]
 }
 ```
@@ -29,8 +29,15 @@ description: "Example from ~/.claude/plugins/smithers/ — A Claude Code plugin 
 ```markdown
 ---
 name: smithers-orchestrator
-description: Create and monitor multi-agent AI orchestrations using Smithers framework.
-allowed-tools: [Read, Write, Edit, Bash, Glob, Grep, Task]
+description: Create and monitor multi-agent AI orchestrations using Smithers framework. Use when user wants to coordinate multiple AI agents, create complex workflows, build agent pipelines, or mentions "smithers", "multi-agent", "orchestration", "workflow", "agent coordination". Strongly recommends plan mode for orchestrations with 3+ phases.
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Bash
+  - Glob
+  - Grep
+  - Task
 user-invocable: true
 recommend-plan-mode: true
 ---
@@ -43,15 +50,14 @@ recommend-plan-mode: true
 - Build agent pipelines with state management
 
 ## Quick Start
-1. Define schemas with `createSmithers({ output: z.object({...}) })`
-2. Create agents with `new Agent({ model, instructions })`
-3. Build workflow with `smithers((ctx) => <Workflow>...</Workflow>)`
-4. Run with `smithers up workflow.tsx --input '{}'`
+1. Initialize: `bunx smithers-orchestrator init` (creates `.smithers/main.tsx`)
+2. Edit `.smithers/main.tsx` to define your agent workflow
+3. Monitor: `bunx smithers-orchestrator monitor`
 ```
 
 ## EXAMPLES.md
 
-Five complete workflow examples:
+Five complete workflow examples (see `~/.claude/plugins/smithers/skills/smithers/EXAMPLES.md` for full code):
 
 1. **Simple Sequential** — Three-phase research/implement/test pipeline
 2. **Conditional Branching** — Branches based on analysis results
@@ -61,11 +67,12 @@ Five complete workflow examples:
 
 ## REFERENCE.md
 
-| Component | Purpose |
-|-----------|---------|
-| `<Workflow>` | Root component — defines a named workflow |
-| `<Task>` | Executes an agent or static payload, persists structured output |
-| `<Sequence>` | Runs children sequentially |
-| `<Parallel>` | Runs children concurrently with optional `maxConcurrency` |
-| `<Branch>` | Conditional rendering — `if`/`then`/`else` |
-| `<Loop>` | Loop controller — iterates `until` condition or `maxIterations` |
+| Component / Utility | Purpose |
+|---------------------|---------|
+| `<Ralph>` | Loop controller — remounts children each iteration until no agents render or `maxIterations` is reached |
+| `<Claude>` | Self-executing agent — runs a Claude agent on mount, calls `onFinished`/`onError` callbacks |
+| `<Phase>` | Semantic grouping for orchestration phases, used in monitor output |
+| `<Step>` | Fine-grained grouping within a phase |
+| Zustand Store | State management — drives phase transitions via `onFinished` callbacks |
+| `RalphContext` | Context object exposing iteration count and completion signalling |
+| `serialize()` | Serializes the orchestration tree to an XML plan string |

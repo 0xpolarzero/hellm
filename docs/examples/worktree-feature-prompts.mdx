@@ -6,7 +6,7 @@ description: "Example from scripts/worktree-feature/components/*.mdx — MDX pro
 # scripts/worktree-feature/ — MDX Prompt Templates
 
 <Note>
-**Ghost doc** — Real MDX prompt files from `scripts/worktree-feature/components/`.
+**Ghost doc** — Source MDX prompt files live in `.worktrees/12-feature-flag-gate-all-non-mvp/scripts/worktree-feature/components/` (a worktree branch, not on `main`). The excerpts below reflect that source.
 </Note>
 
 ## Usage
@@ -42,6 +42,9 @@ STEPS:
 TICKET ID RULES:
 - IDs MUST be lowercase kebab-case slugs (e.g. "vcs-jj-rewrite")
 - NEVER use numeric IDs like T-001 — they collide across runs
+- Keep slugs short but descriptive (2-5 words)
+
+..._(excerpt abridged — real file also includes an EXPECTED TICKET BREAKDOWN guide and a required `{props.schema}` JSON output block)_
 ```
 
 ## Implement.mdx
@@ -63,7 +66,14 @@ FILES TO CREATE: {JSON.stringify(props.filesToCreate)}
 {props.previousImplementation ? `
 PREVIOUS ATTEMPT:
 What was done: ${props.previousImplementation.whatWasDone}
+Test output: ${props.previousImplementation.testOutput}
 Fix issues from previous attempt.` : ""}
+
+{props.validationFeedback ? `
+VALIDATION RESULTS FROM PREVIOUS ATTEMPT:
+- All passed: ${props.validationFeedback.allPassed}
+- Failures: ${props.validationFeedback.failingSummary ?? "none"}
+Fix ALL validation failures before proceeding.` : ""}
 
 {props.reviewFixes ? `
 REVIEW FIXES NEEDED:
@@ -76,6 +86,10 @@ IMPLEMENTATION RULES:
 4. After implementing, run tests
 5. If tests fail, fix before moving on.
 ```
+
+<Note>
+The "all commits on main" rule is specific to the worktree-feature pipeline, which uses Git worktrees for isolation so each ticket runs in its own filesystem sandbox. Standard Smithers workflows do not restrict branching strategy.
+</Note>
 
 ## Review.mdx
 
@@ -95,8 +109,13 @@ Review against:
 4. TYPE SAFETY — No `any` or unsafe casts?
 
 APPROVAL POLICY:
+- There is NO such thing as a non-blocking nit.
 - ANY way to improve the code → MUST be improved.
-- approved: true ONLY when there are genuinely ZERO issues.
+- Every issue — critical, major, minor, OR nit — MUST be fixed before approval.
+- approved: true ONLY when there are genuinely ZERO issues of any severity.
+- Do not "let things slide" because they seem small.
+
+..._(excerpt abridged — real file also includes VALIDATION RESULT, ARCHITECTURE, and DOCUMENTATION review sections)_
 ```
 
 ## Validate.mdx
@@ -107,7 +126,7 @@ VALIDATION — Ticket: {props.ticketId} — {props.ticketTitle}
 Independently verify implementation correctness.
 Don't trust implementation agent claims — run everything yourself.
 
-CANONICAL CHECK: Run `bun test`
+CANONICAL CHECK: Run `cd submodules/smithers && bun test`
 ALL tests must pass.
 
 ZERO TOLERANCE:
@@ -142,6 +161,7 @@ IMPLEMENTATION SUMMARY:
 
 PRE-COMPUTED METRICS (echo these back exactly):
 - filesChanged: {props.filesChanged}
+- testsAdded: {props.testsAdded}
 - reviewRounds: {props.reviewRounds}
 
 Assess: Anything go wrong? Agent struggle? Lessons for future?
@@ -169,7 +189,7 @@ The top-level system prompt uses custom MDX components to inject context:
 Components are injected at render time via `renderMdx()`:
 
 ```ts
-import { renderMdx } from "smithers-orchestrator";
+import { renderMdx } from "smithers";
 import SystemPromptMdx from "./prompts/system-prompt.mdx";
 
 export const SYSTEM_PROMPT = renderMdx(SystemPromptMdx, {

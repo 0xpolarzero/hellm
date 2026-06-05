@@ -1,0 +1,190 @@
+/*
+ * Landings surface styles. Phase-2 declutter pass: Landings is a secondary
+ * "More" surface used periodically for review/land, so it reads calmer than
+ * primary surfaces. Rules are namespaced under `.landings-surface` and layer on
+ * top of the foundation base rules in app.css. Tokens only.
+ */
+
+.landings-surface .view-header {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  min-height: 48px;
+  padding: var(--space-4) var(--space-7);
+}
+
+.landings-surface .view-header h2 {
+  color: var(--text-secondary);
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+.landings-surface .view-controls {
+  gap: var(--space-3);
+}
+
+.landings-surface .view-controls select,
+.landings-surface .view-controls button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-tertiary);
+  font-size: var(--text-mono);
+  padding: var(--space-1) var(--space-3);
+}
+
+.landings-surface .view-controls select:hover,
+.landings-surface .view-controls button:hover {
+  background: var(--fill-hover);
+  color: var(--text-secondary);
+}
+
+.landings-surface .status-message {
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-tertiary);
+  font-size: var(--text-mono-sm);
+  padding: var(--space-2) var(--space-6);
+}
+
+.landings-surface .landing-row {
+  padding: var(--space-3) var(--space-6);
+}
+
+.landings-surface .landing-row.selected {
+  background: var(--fill-selected);
+  border-right: 2px solid var(--accent);
+}
+
+.landings-surface .landing-title {
+  margin-bottom: 2px;
+}
+
+/* Calmer meta: smaller, tertiary, plain colored state instead of heavy chips. */
+.landings-surface .landing-meta {
+  color: var(--text-tertiary);
+  font-size: var(--text-mono-sm);
+  gap: var(--space-3);
+}
+
+.landings-surface .landing-state {
+  background: transparent;
+  padding: 0;
+  text-transform: capitalize;
+}
+
+.landings-surface .landing-state-open { color: var(--success); }
+.landings-surface .landing-state-draft { color: var(--warning); }
+.landings-surface .landing-state-closed { color: var(--text-tertiary); }
+.landings-surface .landing-state-merged { color: var(--accent); }
+
+.landings-surface .landing-author,
+.landings-surface .landing-target {
+  color: var(--text-tertiary);
+}
+
+.landings-surface .landing-review {
+  color: var(--text-secondary);
+}
+
+/* Detail header + tabs sit flat on the page bg. */
+.landings-surface .landing-detail-header {
+  background: var(--bg);
+  padding: var(--space-6) var(--space-7);
+}
+
+.landings-surface .landing-detail-tabs {
+  background: var(--bg);
+  gap: var(--space-2);
+}
+
+.landings-surface .landing-detail-tabs button {
+  font-size: var(--text-mono);
+  padding: var(--space-3) var(--space-4);
+}
+
+/* Metadata reads as quiet key/value lines. */
+.landings-surface .landing-description pre {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  line-height: 1.5;
+  margin: 0 0 var(--space-6);
+  white-space: pre-wrap;
+}
+
+.landings-surface .landing-metadata {
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  font-size: var(--text-mono);
+  gap: var(--space-2);
+  margin-bottom: var(--space-7);
+}
+
+.landings-surface .landing-metadata strong {
+  color: var(--text-tertiary);
+  font-weight: 600;
+}
+
+/* Review block recedes into a quiet bordered card — present but not shouting. */
+.landings-surface .landing-review-section {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-6);
+}
+
+.landings-surface .landing-review-section h4 {
+  color: var(--text-tertiary);
+  font-size: var(--text-section);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin: 0 0 var(--space-3);
+  text-transform: uppercase;
+}
+
+.landings-surface .landing-review-section textarea {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  padding: var(--space-3) var(--space-4);
+  resize: vertical;
+  width: 100%;
+}
+
+.landings-surface .review-actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.landings-surface .review-actions button {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  color: var(--text-secondary);
+  font-size: var(--text-mono);
+  font-weight: 500;
+  padding: var(--space-2) var(--space-5);
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.landings-surface .review-actions button:hover:not(:disabled) {
+  background: var(--fill-hover);
+  color: var(--text-primary);
+}
+
+/* Approve is the affirmative path — let it carry a hint of success accent. */
+.landings-surface .review-actions button:first-child {
+  border-color: var(--accent-stroke);
+  color: var(--accent);
+}
+
+.landings-surface .review-actions button:disabled {
+  opacity: 0.5;
+}
+
+.landings-surface .conflict-type {
+  color: var(--text-tertiary);
+  font-size: var(--text-mono-sm);
+}

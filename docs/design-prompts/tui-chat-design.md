@@ -1,5 +1,7 @@
 # Design Doc: TUI Chat-First Redesign
 
+> Archived design prompt: `smithers tui` was removed in 0.20.2. This file is retained as historical product/design material and does not describe a current shipped command.
+
 **Status**: Draft
 **Date**: 2026-03-29
 
@@ -38,7 +40,7 @@ This is the default screen when `smithers tui` launches. The chat view includes 
 
 ```
 ┌─ Smithers ──────────────────────────────────────────────────────────────────────┐
-│ 🟢 claude-opus-4-6 │ 2 active runs │ Chat │ /help for commands                │
+│ 🟢 claude-opus-4-7 │ 2 active runs │ Chat │ /help for commands                │
 ├──────────────────────┬──────────────────────────────────────────────────────────┤
 │ Active Runs          │                                                          │
 │ ─────────────────    │  Welcome to Smithers. Type a message or use /commands.   │
@@ -119,7 +121,7 @@ Persistent left sidebar (22 cols) showing active and recent runs. Polls `adapter
 Fixed single row at the top.
 
 ```
- 🟢 claude-opus-4-6 │ 2 active runs │ Chat │ /help for commands
+ 🟢 claude-opus-4-7 │ 2 active runs │ Chat │ /help for commands
 ```
 
 - Left: Agent indicator (green dot = connected, red = no agent) + model name
@@ -193,7 +195,7 @@ When user types `/` as the first character, an autocomplete popup appears above 
 
 ```
 ┌─ Smithers ──────────────────────────────────────────────────────────────────┐
-│ 🟢 claude-opus-4-6 │ 2 active runs │ Chat │ /help for commands            │
+│ 🟢 claude-opus-4-7 │ 2 active runs │ Chat │ /help for commands            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ... (chat messages)                                                        │
@@ -241,7 +243,7 @@ Accessed via `/dashboard` or `/runs`. This is the existing runs list + RunDetail
 
 ```
 ┌─ Smithers ──────────────────────────────────────────────────────────────────┐
-│ 🟢 claude-opus-4-6 │ 2 active runs │ Dashboard │ Esc to return to chat     │
+│ 🟢 claude-opus-4-7 │ 2 active runs │ Dashboard │ Esc to return to chat     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ ┌─ Smithers Runs ──────────────┐ ┌─ Run Details ───────────────────────┐   │
 │ │                               │ │                                     │   │
@@ -252,7 +254,7 @@ Accessed via `/dashboard` or `/runs`. This is the existing runs list + RunDetail
 │ │                               │ │ Tokens: 12,340 IN | 3,210 OUT      │   │
 │ │                               │ │                                     │   │
 │ │                               │ │ Current: validate                   │   │
-│ │                               │ │ Agent: claude-opus-4-6              │   │
+│ │                               │ │ Agent: claude-opus-4-7              │   │
 │ │                               │ │                                     │   │
 │ │                               │ │ Error: none                         │   │
 │ │                               │ │                                     │   │
@@ -277,7 +279,7 @@ Drilled from Dashboard. This is the existing `RunDetailView` component.
 
 ```
 ┌─ Smithers ──────────────────────────────────────────────────────────────────┐
-│ 🟢 claude-opus-4-6 │ Run: abc123 │ Tasks │ Esc to return                   │
+│ 🟢 claude-opus-4-7 │ Run: abc123 │ Tasks │ Esc to return                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ ┌─ Run Tasks [Esc to Return] ──┐ ┌─ Preview: discover ─────────────────┐   │
 │ │                               │ │                                     │   │
@@ -304,14 +306,14 @@ Drilled from Task List. Five sub-views via number keys.
 
 ```
 ┌─ Smithers ──────────────────────────────────────────────────────────────────┐
-│ 🟢 claude-opus-4-6 │ Task: discover │ Inspector │ Esc to return            │
+│ 🟢 claude-opus-4-7 │ Task: discover │ Inspector │ Esc to return            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ ┌─ Task Inspector ──────────────────────────────────────────────────────┐   │
 │ │ [1] Input  [2] Output  [3] Frames  [4] Chat  [5] Logs    [R] Revert │   │
 │ ├───────────────────────────────────────────────────────────────────────┤   │
 │ │                                                                       │   │
-│ │  Agent: claude-opus-4-6                                               │   │
-│ │  Model: claude-opus-4-6                                               │   │
+│ │  Agent: claude-opus-4-7                                               │   │
+│ │  Model: claude-opus-4-7                                               │   │
 │ │  Output Table: discover                                               │   │
 │ │  Retries: 0/3                                                         │   │
 │ │  Timeout: 120000ms                                                    │   │
@@ -338,7 +340,7 @@ Accessed via `/telemetry`.
 
 ```
 ┌─ Smithers ──────────────────────────────────────────────────────────────────┐
-│ 🟢 claude-opus-4-6 │ 2 active runs │ Telemetry │ Esc to return             │
+│ 🟢 claude-opus-4-7 │ 2 active runs │ Telemetry │ Esc to return             │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  Lifetime Runs: 47        Total Nodes: 312       Failed: 3                  │
@@ -356,9 +358,9 @@ Accessed via `/telemetry`.
 │                                                                             │
 │  Top Agents by Usage                                                        │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │  claude-opus-4-6     89,200 tokens   ████████████████████            │   │
+│  │  claude-opus-4-7     89,200 tokens   ████████████████████            │   │
 │  │  codex-gpt-5.3       42,100 tokens   ██████████                      │   │
-│  │  gemini-3.1-pro      11,500 tokens   ███                             │   │
+│  │  antigravity         11,500 tokens   ███                             │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -374,7 +376,7 @@ Accessed via `/triggers`.
 
 ```
 ┌─ Smithers ──────────────────────────────────────────────────────────────────┐
-│ 🟢 claude-opus-4-6 │ 2 active runs │ Triggers │ Esc to return              │
+│ 🟢 claude-opus-4-7 │ 2 active runs │ Triggers │ Esc to return              │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  Active Cron Triggers                                                       │
@@ -401,7 +403,7 @@ Accessed via `/datagrid` or `/sql`.
 
 ```
 ┌─ Smithers ──────────────────────────────────────────────────────────────────┐
-│ 🟢 claude-opus-4-6 │ 2 active runs │ Data Grid │ Esc to return             │
+│ 🟢 claude-opus-4-7 │ 2 active runs │ Data Grid │ Esc to return             │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ ┌─ Tables ──────────┐ ┌─ Query Results ─────────────────────────────────┐  │
 │ │                    │ │ SELECT * FROM _smithers_runs LIMIT 50          │  │
@@ -434,7 +436,7 @@ When a user executes a workflow slash command (e.g., `/hello`):
 
 ```
 ┌─ Smithers ──────────────────────────────────────────────────────────────────┐
-│ 🟢 claude-opus-4-6 │ 2 active runs │ Chat │ /help for commands            │
+│ 🟢 claude-opus-4-7 │ 2 active runs │ Chat │ /help for commands            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌─ You ────────────────────────────────────────────────────────────────┐   │

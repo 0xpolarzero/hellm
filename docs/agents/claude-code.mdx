@@ -1,0 +1,116 @@
+---
+title: Claude Code
+description: Run Smithers from Anthropic's Claude Code — install the skill, register the MCP server, or drop in the Claude Code plugin that bundles both.
+---
+
+[Claude Code](https://code.claude.com/docs) extends through **skills**, **MCP
+servers**, and **plugins**. Smithers ships into all three. The fastest path:
+
+```bash
+bunx smithers-orchestrator skills add --agent claude-code
+bunx smithers-orchestrator mcp add --agent claude-code
+```
+
+That installs the Smithers skill set under `~/.claude/skills/` and registers the
+MCP server in `~/.claude.json`. Restart Claude Code (or run `/mcp`) and it can
+list, run, watch, and approve workflows.
+
+## Install the skill
+
+The onboarding skill teaches Claude the Smithers mental model and ships the full
+docs bundle next to it:
+
+```bash
+mkdir -p ~/.claude/skills/smithers
+curl -fsSL https://raw.githubusercontent.com/smithersai/smithers/main/skills/smithers/SKILL.md \
+  -o ~/.claude/skills/smithers/SKILL.md
+curl -fsSL https://smithers.sh/llms-full.txt \
+  -o ~/.claude/skills/smithers/llms-full.txt
+```
+
+For project-scoped skills, write to `.claude/skills/` in the repo instead, or run
+`skills add --no-global` to generate per-command skills there.
+
+Claude loads a skill when its `description` matches the request, so once it's
+installed you just ask for the outcome — *"orchestrate an agent to add rate
+limiting and keep iterating until the tests pass"* — and Claude reaches for
+Smithers itself.
+
+## Register the MCP server
+
+`mcp add` writes the registration for you. To do it by hand, add a server with
+the Claude CLI:
+
+```bash
+claude mcp add --transport stdio --scope user smithers \
+  -- bunx smithers-orchestrator --mcp
+```
+
+Or commit a project-scoped `.mcp.json` so the whole team gets it:
+
+```json
+{
+  "mcpServers": {
+    "smithers": {
+      "command": "bunx",
+      "args": ["smithers-orchestrator", "--mcp"]
+    }
+  }
+}
+```
+
+The server exposes the semantic tool surface — `list_workflows`, `run_workflow`,
+`watch_run`, `list_pending_approvals`, `resolve_approval`, `explain_run`, and
+more. See the [MCP Server reference](/integrations/mcp-server) for every tool.
+
+## Claude Code plugin
+
+A plugin bundles the skill and MCP server behind a single install, namespaced as
+`smithers:`. The manifest lives at `.claude-plugin/plugin.json`:
+
+```json
+{
+  "name": "smithers",
+  "version": "0.1.0",
+  "description": "Durable control plane for long-running coding agents",
+  "skills": ["skills/smithers"],
+  "mcpServers": {
+    "smithers": { "command": "bunx", "args": ["smithers-orchestrator", "--mcp"] }
+  }
+}
+```
+
+Install from a marketplace and reload without restarting:
+
+```
+/plugin marketplace add smithersai/smithers
+/plugin install smithers@smithers
+/reload-plugins
+```
+
+See the worked examples: [plugin (skill)](/examples/claude-plugin-skill) and
+[plugin (orchestrator)](/examples/claude-plugin-orchestrator).
+
+## Standing instructions
+
+Add a line to `CLAUDE.md` so Claude remembers Smithers is the tool for durable,
+multi-step work:
+
+```md
+## Orchestration
+For multi-step, long-running, or human-in-the-loop agent work, use Smithers:
+`bunx smithers-orchestrator starters` lists ready-made workflows.
+```
+
+## Smithers runs Claude Code too
+
+In the other direction, Smithers spawns Claude Code as a worker inside a
+workflow via `ClaudeCodeAgent`, with native session hijack:
+
+```tsx
+import { ClaudeCodeAgent } from "smithers-orchestrator";
+
+const claude = new ClaudeCodeAgent({ model: "claude-sonnet-4-20250514" });
+```
+
+See [CLI Agents → Claude Code](/integrations/cli-agents).

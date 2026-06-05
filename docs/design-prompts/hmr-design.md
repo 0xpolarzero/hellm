@@ -21,7 +21,7 @@ export default smithers((ctx) => {
         agents={{
           opus: {
             agent: new ClaudeCodeAgent({ 
-              model: "claude-opus-4-6", 
+              model: "claude-opus-4-7", 
               systemPrompt: PLANNING_PROMPT,  // ← a string constant, frozen at import time
             }),
           },
@@ -160,7 +160,7 @@ And the engine receives the workflow object, using `workflow.build` on every loo
 ```ts
 // src/cli/index.ts
 const workflow = await loadWorkflow(workflowPath);  // loaded once
-const result = await runWorkflow(workflow, { ... }); // passed into engine
+const result = await Effect.runPromise(runWorkflow(workflow, { ... })); // passed into engine
 ```
 
 ### Where state lives

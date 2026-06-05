@@ -6,7 +6,7 @@ description: "Example from scripts/worktree-feature/components/*.schema.ts — Z
 # scripts/worktree-feature/ — Zod Output Schemas
 
 <Note>
-**Ghost doc** — Real schema files from `scripts/worktree-feature/components/`.
+**Ghost doc** — Real schema files live in `.worktrees/*/scripts/worktree-feature/components/` (per-worktree); the `scripts/worktree-feature/` directory does not exist on `main`.
 </Note>
 
 ## Discover Schema
@@ -16,9 +16,9 @@ description: "Example from scripts/worktree-feature/components/*.schema.ts — Z
 import { z } from "zod";
 
 export const Ticket = z.object({
-  id: z.string().describe("Unique slug identifier (lowercase kebab-case)"),
+  id: z.string().describe("Unique slug identifier (lowercase kebab-case, e.g. 'vcs-jj-rewrite')"),
   title: z.string().describe("Short imperative title"),
-  description: z.string().describe("Detailed description"),
+  description: z.string().describe("Detailed description of what needs to be implemented"),
   acceptanceCriteria: z.array(z.string()).describe("List of acceptance criteria"),
   filesToModify: z.array(z.string()).describe("Files to modify"),
   filesToCreate: z.array(z.string()).describe("Files to create"),
@@ -27,8 +27,8 @@ export const Ticket = z.object({
 export type Ticket = z.infer<typeof Ticket>;
 
 export const DiscoverOutput = z.object({
-  tickets: z.array(Ticket).describe("All tickets ordered by dependency"),
-  reasoning: z.string().describe("Why these tickets in this order"),
+  tickets: z.array(Ticket).describe("All tickets to implement, ordered by dependency"),
+  reasoning: z.string().describe("Why these tickets were chosen and in this order"),
 });
 export type DiscoverOutput = z.infer<typeof DiscoverOutput>;
 ```
@@ -59,9 +59,9 @@ export type ImplementOutput = z.infer<typeof ImplementOutput>;
 import { z } from "zod";
 
 export const ValidateOutput = z.object({
-  allPassed: z.boolean().describe("Whether tests exited with status 0"),
-  failingSummary: z.string().nullable().describe("Summary of what failed (null if all passed)"),
-  fullOutput: z.string().describe("Full output from test runner"),
+  allPassed: z.boolean().describe("Whether `bun test` exited with status 0"),
+  failingSummary: z.string().nullable().describe("Summary of what failed and why (null if all passed)"),
+  fullOutput: z.string().describe("Full output from `bun test`"),
 });
 export type ValidateOutput = z.infer<typeof ValidateOutput>;
 ```
@@ -82,8 +82,8 @@ export const ReviewOutput = z.object({
     description: z.string(),
     suggestion: z.string().nullable(),
   })).describe("Issues found during review"),
-  testCoverage: z.enum(["excellent", "good", "insufficient", "missing"]),
-  codeQuality: z.enum(["excellent", "good", "needs-work", "poor"]),
+  testCoverage: z.enum(["excellent", "good", "insufficient", "missing"]).describe("Test coverage assessment"),
+  codeQuality: z.enum(["excellent", "good", "needs-work", "poor"]).describe("Code quality assessment"),
   feedback: z.string().describe("Overall review feedback"),
 });
 export type ReviewOutput = z.infer<typeof ReviewOutput>;
@@ -139,7 +139,7 @@ All schemas register in one `createSmithers` call:
 
 ```ts
 // smithers.ts
-import { createSmithers } from "smithers-orchestrator";
+import { createSmithers } from "smithers";
 import { DiscoverOutput } from "./components/Discover.schema";
 import { ImplementOutput } from "./components/Implement.schema";
 import { ValidateOutput } from "./components/Validate.schema";
@@ -147,17 +147,17 @@ import { ReviewOutput } from "./components/Review.schema";
 import { ReviewFixOutput } from "./components/ReviewFix.schema";
 import { ReportOutput } from "./components/Report.schema";
 
-export const { Workflow, Task, useCtx, smithers, tables, outputs } = createSmithers({
+export const { Workflow, Task, useCtx, smithers, tables } = createSmithers({
   discover: DiscoverOutput,
   implement: ImplementOutput,
   validate: ValidateOutput,
   review: ReviewOutput,
   reviewFix: ReviewFixOutput,
   report: ReportOutput,
-});
+}, { dbPath: `${process.env.HOME}/.cache/smithers/worktree-feature.db`, journalMode: "DELETE" });
 ```
 
-Use `outputs.discover`, `outputs.review`, etc. as the `output` prop on `<Task>`.
+Use `tables.discover`, `tables.review`, etc. to access the auto-generated SQLite tables for each stage.
 
 ## Key Patterns
 
@@ -166,4 +166,4 @@ Use `outputs.discover`, `outputs.review`, etc. as the `output` prop on `<Task>`.
 - **`.nullable()`** -- ensures optional fields are always present in output JSON (e.g., `dependencies`, `failingSummary`).
 - **`z.enum()`** -- constrains agent output to valid values (severity levels, status codes, quality ratings).
 - **Schema composition** -- `Ticket` defined once, reused in `DiscoverOutput.tickets` and as a prop type throughout the pipeline.
-- **Single registration** -- `createSmithers` auto-generates SQLite tables; `outputs` provides typed references for `<Task output={outputs.xxx}>`.
+- **Single registration** -- `createSmithers` auto-generates SQLite tables and accepts an optional second argument for `dbPath` and `journalMode`; `tables` provides typed references to each stage's table.
