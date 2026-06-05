@@ -111,6 +111,7 @@
   - maybe have naming agent have context on all these sessions to be able to name them/update caption based on overall context
   - opportunity to nail the file viewer as well by showing a graph-kind view with functions and stuff in relation to each other
   - filesystem as infinite canvas as well where you see all files being edited, by which session, direct view of where the attention of an agent is, highlight and attention brought to user, etc
+  - can either hide older sessions or find a way to collapse them, as well as anything actually that can be expanded/collapsed into just a small rectangle of the orchestrator session
 
 - review mode for plan and code: see plannotator.ai
   - can do convenient stuff such as click "review" on a agent message, which creates an artifact for that response that can be reviewed with comments, etc, then sent back
