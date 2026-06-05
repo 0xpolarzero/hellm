@@ -110,10 +110,18 @@ instructions/full/020-smithers-svvy-boundary.md
 ```
 
 That file is hand-authored and ordered after the generated file. It must carry only positive
-svvy-owned product-boundary guidance that is not sourced from upstream Smithers docs. It must not
-describe obsolete or temporary `svvy` Smithers tool surfaces, must not correct contradictions left
-inside `010-smithers-full.generated.md`, and must not restate which upstream sections were removed.
-The generator must delete confusing upstream sections before the generated file is loaded.
+svvy-owned product-boundary guidance that is not sourced from upstream Smithers docs. It must include
+the svvy-specific `AgentLike` guidance for workflow task agents: existing workflow-agent profiles
+live in the Agents pane, export generated workflow-authoring components, and may be used in
+workflows with task prompts plus typed per-invocation extension overrides; when no saved
+profile/component fits, the handler creates task-local workflow-agent configuration in the artifact
+workflow source using generated workflow-authoring contracts and `workflow_list_models` for valid
+provider/model/reasoning choices. Persistent creation or editing of app-wide workflow-agent profiles
+belongs to the Agents pane product surface and remains distinct from task-local workflow-agent
+configuration in workflow source. It must not describe obsolete or temporary `svvy` Smithers tool
+surfaces, must not correct contradictions left inside `010-smithers-full.generated.md`, and must not
+restate which upstream sections were removed. The generator must delete confusing upstream sections
+before the generated file is loaded.
 
 The editable generator script is:
 

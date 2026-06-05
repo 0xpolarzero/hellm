@@ -14,8 +14,8 @@ When no existing workflow-agent profile or component fits, create task-local wor
 configuration as part of the artifact workflow source. Use the generated workflow-authoring
 contracts and `workflow_list_models` to choose valid provider, model, and reasoning settings before
 writing that configuration. Persistent creation or editing of app-wide workflow-agent profiles
-belongs to the Agents pane and Extension Managing profile configuration surface when that capability
-is available.
+belongs to the Agents pane product surface and remains distinct from task-local workflow-agent
+configuration in workflow source.
 
 Smithers workflow approvals, waits, signals, timers, retries, and run state are Smithers workflow
 state. Svvy sandbox approvals and `request_user_input` clarification are svvy actor/runtime controls.

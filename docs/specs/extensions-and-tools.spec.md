@@ -4052,8 +4052,8 @@ Resolved model:
 - A workflow agent profile appears in the Agents pane and can be customized like other agent
   profiles.
 - Customization includes extension usage states.
-- A handler can customize workflow agent profiles when it has the Extension Managing extension
-  enabled.
+- A handler with the Extension Managing extension enabled can change extension usage state for an
+  existing workflow agent profile through the specified profile usage-state command surface.
 - Each workflow agent profile that exists in the Agents pane exports a typed workflow-authoring
   component from a convenient generated import location.
 - The exported component is rebuilt whenever the workflow agent profile settings change.
