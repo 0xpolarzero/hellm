@@ -41,7 +41,9 @@ Related specs:
   boundary.
 - `docs/specs/extension/git.extension.spec.md` defines the builtin prompt-only Git extension.
 - `docs/specs/extension/github.extension.spec.md` defines the builtin prompt-only GitHub extension.
-- `docs/specs/extension/smithers.extension.spec.md` is the draft Smithers extension spec.
+- `docs/specs/extension/smithers.extension.spec.md` defines the builtin Smithers native-tool
+  extension, versioned CLI requirement, generated full instruction source, and handler-thread tool
+  boundary.
 - `docs/specs/extension/project_ci.extension.spec.md` is the draft Project CI prompt-only extension
   spec.
 - `docs/specs/extension/artifacts.extension.spec.md` defines the builtin Artifacts `svvyx` extension
@@ -839,8 +841,9 @@ bun <script.ts> --output <absolute-output-path> [--version <exact-version>]
 - generated instruction output files are read-only to agents even though they live under the
   extension source root; agents edit the script or manifest, then rerun build
 - a generated instruction output is one generated artifact; it must not be used as a container for
-  hand-authored local prefaces, appendices, or product-boundary notes. Add separate ordered Markdown
-  instruction files for hand-authored guidance.
+  hand-authored local prefaces, appendices, or product-boundary notes that are unrelated to that
+  generator's declared transform. If an extension needs product-owned guidance that is not part of a
+  deterministic source transform, add separate ordered Markdown instruction files for that guidance.
 - inspect reports generated metadata inline on the corresponding instruction file:
 
 ```json
@@ -1824,6 +1827,10 @@ Example:
           "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-full.ts",
           "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md"
         }
+      },
+      {
+        "name": "020-smithers-svvy-boundary.md",
+        "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/020-smithers-svvy-boundary.md"
       }
     ],
     "paths": {
@@ -1837,6 +1844,10 @@ Example:
             "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-full.ts",
             "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md"
           }
+        },
+        {
+          "name": "020-smithers-svvy-boundary.md",
+          "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/020-smithers-svvy-boundary.md"
         }
       ],
       "instructionsFullDir": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full",
@@ -4341,7 +4352,6 @@ still draft extension contracts and must be completed in their own files before 
 surface is implemented:
 
 - `docs/specs/extension/project_ci.extension.spec.md`
-- draft portions of `docs/specs/extension/smithers.extension.spec.md`
 
 Generated `execute_typescript` declaration names and import shape are owned by
 `docs/specs/extension/execute_typescript.extension.spec.md`: actors receive one generated declaration

@@ -14,8 +14,8 @@
 
 Related extension specs:
 
-- `docs/specs/extension/smithers.extension.spec.md` defines the draft Smithers extension surface that
-  launches and supervises runnable workflow entries.
+- `docs/specs/extension/smithers.extension.spec.md` defines the builtin Smithers native-tool
+  extension surface that launches and supervises runnable workflow entries.
 - `docs/specs/extension/artifacts.extension.spec.md` defines the Artifacts extension API; artifact
   workflows here are persisted workflow source artifacts under `.svvy/artifacts/workflows/`, not
   copied files in the configured Artifacts extension store.

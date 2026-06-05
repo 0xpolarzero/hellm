@@ -13,7 +13,8 @@
 Concrete thread tool APIs such as `thread_followup`, `thread_request_report`, `thread_report`,
 `thread_current`, and `thread_group` are defined in
 `docs/specs/extension/thread_managing.extension.spec.md`.
-The draft Smithers extension record and centralized extension API notes are defined in
+The builtin Smithers native-tool extension record, versioned CLI requirement, generated instruction
+source, and handler-thread tool boundary are defined in
 `docs/specs/extension/smithers.extension.spec.md`.
 
 ## Purpose
@@ -810,4 +811,8 @@ The correct fallback for `svvy` is reconnect and recovery, not silent polling.
 
 ### External Sources
 
-- [Smithers Full Documentation](https://smithers.sh/llms-full.txt)
+- Version-matched Smithers source documentation for generated instructions comes from the exact
+  installed global `smithers-orchestrator` CLI through `smithers docs-full --json`, then is filtered
+  as specified in `docs/specs/extension/smithers.extension.spec.md`.
+- [Smithers Full Documentation](https://smithers.sh/llms-full.txt) remains a mutable latest-docs
+  reference for human research only; it is not a generated instruction source.
