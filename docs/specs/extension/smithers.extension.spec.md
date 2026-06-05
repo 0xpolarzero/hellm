@@ -34,10 +34,31 @@ behavior remains in the workflow supervision and workflow library specs.
       "installCommand": "npm install -g smithers-orchestrator@{{version}}"
     }
   ],
+  "instructionFiles": [
+    {
+      "file": "040-smithers-memory.generated.md",
+      "bypassed": true
+    }
+  ],
   "generatedInstructions": [
     {
-      "output": "instructions/full/010-smithers-full.generated.md",
-      "script": "scripts/generate-smithers-full.ts",
+      "output": "instructions/full/010-smithers-core.generated.md",
+      "script": "scripts/generate-smithers-fragment.ts",
+      "versionCliRequirementId": "smithers-orchestrator"
+    },
+    {
+      "output": "instructions/full/020-smithers-observability.generated.md",
+      "script": "scripts/generate-smithers-fragment.ts",
+      "versionCliRequirementId": "smithers-orchestrator"
+    },
+    {
+      "output": "instructions/full/030-smithers-events.generated.md",
+      "script": "scripts/generate-smithers-fragment.ts",
+      "versionCliRequirementId": "smithers-orchestrator"
+    },
+    {
+      "output": "instructions/full/040-smithers-memory.generated.md",
+      "script": "scripts/generate-smithers-fragment.ts",
       "versionCliRequirementId": "smithers-orchestrator"
     }
   ]
@@ -94,22 +115,27 @@ smithers_stream_devtools(...)
 
 ## Generated Instruction Source And Transform
 
-The generated Smithers instruction file is:
+The generated Smithers instruction files are:
 
 ```text
-instructions/full/010-smithers-full.generated.md
+instructions/full/010-smithers-core.generated.md
+instructions/full/020-smithers-observability.generated.md
+instructions/full/030-smithers-events.generated.md
+instructions/full/040-smithers-memory.generated.md
 ```
 
-In this path, `full` means the extension's full loaded-instruction tier in `svvy`; it does not mean
-the file is a verbatim copy of Smithers' upstream `llms-full.txt`.
+These files are generated from Smithers' upstream `llms-full.txt` bundle, but no single generated
+file is a verbatim copy of that bundle. The generator validates the full bundle, splits it into
+Smithers' own LLM fragments, writes the selected fragment requested by the output filename, and then
+applies the fragment-specific `svvy` cleanup rules below.
 
 The separate svvy-specific Smithers guidance file is:
 
 ```text
-instructions/full/020-smithers-svvy-boundary.md
+instructions/full/050-smithers-svvy-boundary.md
 ```
 
-That file is hand-authored and ordered after the generated file. It must carry only positive
+That file is hand-authored and ordered after the generated files. It must carry only positive
 svvy-owned product-boundary guidance that is not sourced from upstream Smithers docs. It must include
 the svvy-specific `AgentLike` guidance for workflow task agents: existing workflow-agent profiles
 live in the Agents pane, export generated workflow-authoring components, and may be used in
@@ -119,30 +145,59 @@ workflow source using generated workflow-authoring contracts and `workflow_list_
 provider/model/reasoning choices. Persistent creation or editing of app-wide workflow-agent profiles
 belongs to the Agents pane product surface and remains distinct from task-local workflow-agent
 configuration in workflow source. It must not describe obsolete or temporary `svvy` Smithers tool
-surfaces, must not correct contradictions left inside `010-smithers-full.generated.md`, and must not
-restate which upstream sections were removed. The generator must delete confusing upstream sections
-before the generated file is loaded.
+surfaces, must not correct contradictions left inside generated files, and must not restate which
+upstream sections were removed. The generator must delete confusing upstream sections before any
+generated file is loaded.
+
+The shipped Smithers extension config bypasses the generated memory fragment:
+
+```json
+{
+  "instructionFiles": [
+    {
+      "file": "040-smithers-memory.generated.md",
+      "bypassed": true
+    }
+  ]
+}
+```
+
+That bypass is actual shipped extension state. It is not a separate default layer. The memory file is
+still generated, validated, inspectable, ordered, and resettable with the extension. It is skipped
+from loaded handler prompts until the user or an agent with Extension Managing access enables it via:
+
+```bash
+svvyx extensions instructions configure smithers \
+  --file 040-smithers-memory.generated.md \
+  --bypassed false \
+  --json
+```
 
 The editable generator script is:
 
 ```text
-scripts/generate-smithers-full.ts
+scripts/generate-smithers-fragment.ts
 ```
 
 Extension Managing invokes the script with the shared generated-instruction command contract:
 
 ```bash
-bun scripts/generate-smithers-full.ts \
-  --output /absolute/path/to/instructions/full/010-smithers-full.generated.md \
+bun scripts/generate-smithers-fragment.ts \
+  --output /absolute/path/to/instructions/full/010-smithers-core.generated.md \
   --version 0.22.0
 ```
+
+The same script path is used for every generated Smithers fragment output. The script must infer the
+requested fragment from the exact output basename and must reject unknown output basenames. It must
+not require an extra `--fragment` argument because generated instruction scripts share the common
+`bun <script> --output <absolute-output-path> --version <exact-version>` command contract.
 
 This docs repository also contains a concrete reference implementation of the generator transform
 and the svvy-specific instruction file:
 
 ```text
-docs/specs/extension/smithers-reference/scripts/generate-smithers-full.reference.ts
-docs/specs/extension/smithers-reference/instructions/full/020-smithers-svvy-boundary.md
+docs/specs/extension/smithers-reference/scripts/generate-smithers-fragment.reference.ts
+docs/specs/extension/smithers-reference/instructions/full/050-smithers-svvy-boundary.md
 ```
 
 Those files are reference artifacts for this spec. The shipped extension still uses the script and
@@ -199,17 +254,19 @@ The Smithers docs command owns source resolution for the installed CLI version:
 - `--latest` and `--docs-version` are mutually exclusive in Smithers and are irrelevant to the
   generated instruction script
 
-The generated file must be a deterministic, filtered Smithers instruction file derived from the
-validated upstream `content` field. It must not be a verbatim copy of the upstream full
-documentation followed by a corrective `svvy` note. Product-incorrect or high-confusion upstream
-sections must be deleted from the generated output. Prefer deletion over rewriting; svvy-specific
-guidance belongs in the separate hand-authored instruction file
-`instructions/full/020-smithers-svvy-boundary.md`.
+Each generated file must be deterministic, filtered Smithers instruction content derived from the
+validated upstream `content` field. Generated files must not be verbatim copies of upstream
+fragments followed by corrective `svvy` notes. Product-incorrect or high-confusion upstream sections
+must be deleted from generated output. Prefer deletion over rewriting; svvy-specific guidance
+belongs in the separate hand-authored instruction file
+`instructions/full/050-smithers-svvy-boundary.md`.
 
 The generated output should remain version-specific Smithers documentation. The transform is mostly
-mechanical: remove banned sections, replace upstream `bunx smithers-orchestrator` command prefixes
-with `smithers`, and validate that the retained output still includes core Smithers workflow,
-runtime, CLI, supervision, observability, and event material.
+mechanical: split the full bundle into Smithers' documented fragments, keep only the fragment
+requested by the output basename, remove banned sections inside retained fragments, replace upstream
+`bunx smithers-orchestrator` and `bunx smithers` command prefixes with `smithers`, and validate that
+the retained loaded output still includes core Smithers workflow, runtime, CLI, supervision,
+observability, and event material.
 
 ### Transform Policy
 
@@ -227,27 +284,58 @@ correctly:
 - CLI command syntax for running, listing, inspecting, watching/logging, approving, resuming,
   cancelling, forking, replaying, diffing, evaluating, serving, and debugging Smithers workflows
 - programmatic runtime references that handler-authored workflow code may need, including
-  `runWorkflow`, run state, events, observability, Gateway, MCP/server surfaces, memory, OpenAPI
-  tools, Effect API, and typed API references when they are directly useful for workflow authoring
-  or inspection
+  `runWorkflow`, run state, events, observability, Gateway, MCP/server surfaces, and typed API
+  references when they are directly useful for workflow authoring or inspection
 - warnings, option names, exit codes, schema shapes, and version-specific command syntax from the
   retained upstream sections
+
+Fragment policy:
+
+- `010-smithers-core.generated.md` keeps the `llms-core.txt` fragment after cleanup. This is the
+  everyday Smithers runtime, JSX, CLI, component, recipe, type, and error surface.
+- `020-smithers-observability.generated.md` keeps the `llms-observability.txt` fragment after
+  cleanup. This teaches workflow monitoring and operation through Smithers server, serve mode,
+  Gateway, SSE/events, frames, approvals, cancellation, and metrics. It must be filtered enough that
+  agents do not infer they should replace `svvy`'s product-owned Smithers bridge or stand up a
+  separate control plane for ordinary handler work.
+- `030-smithers-events.generated.md` keeps the `llms-events.txt` fragment after cleanup. This is
+  useful for run inspection, event interpretation, supervision, and UI/runtime integration.
+- `040-smithers-memory.generated.md` keeps the `llms-memory.txt` fragment after cleanup but is
+  bypassed by shipped Smithers extension config. Smithers Memory is cross-run Smithers memory
+  behavior, not normal per-run workflow state and not `svvy` session/thread/artifact state. Users can
+  enable the file when they explicitly want agents encouraged to use Smithers Memory APIs.
+- `llms-integrations.txt` is dropped entirely from generated loaded defaults because it teaches
+  Smithers SDK/CLI agent runtimes, external-agent ecosystems, Smithers built-in tools, `defineTool`,
+  and PI integration surfaces that conflict with `svvy`'s agent/tool boundary.
+- `llms-openapi.txt` is dropped from generated loaded defaults. OpenAPI tool generation is useful
+  Smithers functionality, but it primarily teaches AI SDK tool creation and agent tool wiring rather
+  than the default `svvy` handler workflow-supervision surface.
+- `llms-effect.txt` is dropped from generated loaded defaults. The low-level Effect authoring API is
+  an advanced alternate authoring surface and should not be in the default handler prompt.
 
 Remove upstream material that is confusing or actively wrong for `svvy`'s intended agent boundary:
 
 - the entire `## Always Run with \`bunx\`` section, including warnings against global install or bare
   `smithers`
+- the `## After Installation` navigation section from the core fragment, because it links to removed
+  Agent Skill, agent harness setup, and tools-integration material
 - `## Install the Agent Skill`
 - mutable docs-site reading advice and `smithers ask` / docs-helper advice
-- Smithers Integrations material for SDK/CLI agent wiring and external-agent ecosystems:
-  `# Smithers Integrations`, `## Integrations`, `## Pattern 1: Pass tools to an SDK agent`,
-  `## Pattern 2: Pass a skill / plugin / MCP config to a CLI agent`, `## CLI Agents`,
-  `## SDK Agents`, `## Built-in Tools`, `## defineTool`, `## read`, `## write`, `## edit`,
-  `## grep`, `## bash`, `## Using Tools with Agents`, `## Common External Tools`, `## Ecosystem`,
-  `## PI Integration`, and all subsections below those headings until `# Smithers Events`
+- the entire `llms-integrations.txt` fragment, including Smithers SDK/CLI agent wiring,
+  external-agent ecosystems, built-in tools, `defineTool`, common tools, ecosystem, publishing
+  workflow packs, and PI integration
+- the entire `llms-openapi.txt` fragment from default loaded output
+- the entire `llms-effect.txt` fragment from default loaded output
 - workflow-authoring recipes that are only examples of Smithers SDK tool wiring:
   `## Coherent task with tools`, `## Per-agent least-privilege tools`, and
   `## Side-effect tools with idempotency`
+- the Smithers package-configuration page sections from the core fragment, because their binary,
+  package export, workspace package, TypeScript, Bun, and script snippets expose Smithers agent,
+  tools, OpenAPI, PI, and monorepo-internal surfaces that are not default `svvy` handler guidance:
+  `## Package Configuration`, `## Binary`, `## Subpath Exports`, `## Workspace Packages`,
+  `## TypeScript Configuration`, `## Bun Configuration`, and `## npm Scripts`
+- the `## Hijack handoff` section from the core runtime fragment, because it teaches persisted CLI
+  agent and SDK-agent session handoff behavior rather than the default `svvy` handler boundary
 
 Keep Smithers intended project setup for now, including `smithers init`, `.smithers/` scaffolding,
 workflow packs, starters, templates, and workflow authoring. The workflows design is still being
@@ -256,9 +344,9 @@ the product explicitly resolves a different workflow layout.
 
 Edit retained upstream material only mechanically:
 
-- replace every `bunx smithers-orchestrator` command prefix with `smithers`
+- replace every `bunx smithers-orchestrator` or `bunx smithers` command prefix with `smithers`
 - remove the `Always Run with \`bunx\`` section rather than rewriting it
-- remove tool/agent-integration sections rather than rewriting them into svvy guidance
+- remove tool/agent-integration sections or fragments rather than rewriting them into svvy guidance
 - do not rewrite retained Smithers CLI supervision commands away; examples should use direct
   `smithers` commands such as `smithers ps`, `smithers inspect <run-id>`, `smithers logs <run-id>`,
   `smithers approve ...`, `smithers up ... --resume true`, `smithers cancel ...`,
@@ -272,14 +360,18 @@ agent knowledge.
 
 ## Generator Validation
 
-`scripts/generate-smithers-full.ts` must be deterministic for one exact Smithers version and fail
-closed when upstream docs cannot be proven to match that version or when the filtered output cannot
-be proven to match the transform policy above.
+`scripts/generate-smithers-fragment.ts` must be deterministic for one exact Smithers version and
+fail closed when upstream docs cannot be proven to match that version, when the requested output
+basename does not map to a supported Smithers fragment, or when the filtered output cannot be proven
+to match the transform policy above.
 
 The script must validate:
 
 - `--output` is present, absolute, writable by the build process, and points to the declared
   generated Markdown output
+- the `--output` basename is exactly one of:
+  `010-smithers-core.generated.md`, `020-smithers-observability.generated.md`,
+  `030-smithers-events.generated.md`, or `040-smithers-memory.generated.md`
 - `--version` is present and is an exact semver version from `versionCliRequirementId:
   "smithers-orchestrator"`
 - `smithers --version` exits successfully and prints exactly the declared version
@@ -294,13 +386,19 @@ The script must validate:
   material
 - `content` is large enough to plausibly be the full bundle rather than a concise index; for
   `0.22.0`, the packaged `llms-full.txt` is roughly 336 KB, so a tiny response is invalid
-- the transformed output is non-empty, starts with a Smithers heading, retains concrete `smithers`
-  CLI examples, and includes workflow authoring/runtime, component, CLI
-  supervision, observability, event, and type/reference material selected by the transform policy
-- the transformed output is materially smaller than the upstream full bundle and does not include
-  removed sections such as `Always Run with \`bunx\``, Agent Skill installation, `ask` docs-helper
-  guidance, Smithers SDK/CLI agent wiring, built-in tools, `defineTool`, ecosystem, or PI
-  integration
+- the full bundle splits into the expected Smithers fragments: `# Smithers`, `# Smithers Memory`,
+  `# Smithers OpenAPI Tools`, `# Smithers Observability`, `# Smithers Effect API`,
+  `# Smithers Integrations`, and `# Smithers Events`
+- the transformed output is non-empty, starts with the expected fragment heading, and retains the
+  required markers for the requested output basename
+- the loaded generated outputs after bypass state is applied include workflow authoring/runtime,
+  component, CLI supervision, observability, event, and type/reference material selected by the
+  transform policy
+- generated fragment outputs do not include removed sections such as `Always Run with \`bunx\``,
+  Agent Skill installation, `ask` docs-helper guidance, Smithers SDK/CLI agent wiring, built-in
+  tools, `defineTool`, ecosystem, or PI integration
+- `040-smithers-memory.generated.md` is generated and validates successfully even though the shipped
+  Smithers extension config bypasses it
 - every retained or generated replacement paragraph is deterministic for the input content and
   exact version; no date/time, latest-version, registry-latest, local path, or machine-specific text
   may be emitted
@@ -322,6 +420,7 @@ surfaces that must not appear in Smithers instructions:
 - `Install the Agent Skill`
 - `smithers ask`
 - `defineTool`
+- `smithers-orchestrator/tools`
 - `## Built-in Tools`
 - `## read`
 - `## write`
@@ -330,12 +429,16 @@ surfaces that must not appear in Smithers instructions:
 - `## bash`
 - `## Using Tools with Agents`
 - `# Smithers Integrations`
+- `# Smithers OpenAPI Tools`
+- `# Smithers Effect API`
 - `## CLI Agents`
 - `## SDK Agents`
 - `## Ecosystem`
 - `## PI Integration`
 
-The script must require generated output containing retained Smithers usage markers:
+The script must require generated output containing retained Smithers usage markers by output:
+
+`010-smithers-core.generated.md`:
 
 - `smithers init`
 - `smithers up`
@@ -347,6 +450,32 @@ The script must require generated output containing retained Smithers usage mark
 - `## How It Works`
 - `## JSX API`
 - `## CLI`
+
+`020-smithers-observability.generated.md`:
+
+- `# Smithers Observability`
+- `## HTTP Server`
+- `## Serve Mode`
+- `## Gateway`
+- `/metrics`
+- `/events`
+
+`030-smithers-events.generated.md`:
+
+- `# Smithers Events`
+- `SmithersEvent`
+- `smithers events`
+
+`040-smithers-memory.generated.md`:
+
+- `# Smithers Memory`
+- `createMemoryStore`
+- `memory list`
+
+The loaded Smithers generated instruction set must require retained markers:
+
+- `# Smithers`
+- `# Smithers Observability`
 - `# Smithers Events`
 
 The script must not call:
@@ -380,11 +509,10 @@ Updating the Smithers version shipped by `svvy` is a deliberate product update:
    `smithers docs-full --json` and returns the matching `v<version>/docs/llms-full.txt` URL.
 3. Run `svvyx extensions build smithers --json`; build checks the exact CLI requirement before the
    generator runs.
-4. Inspect the generated `010-smithers-full.generated.md` diff as filtered version-specific Smithers
-   instruction content.
-5. Update the transform policy or script only if upstream headings changed, the filtered content
-   lost required Smithers command/runtime material, or retained upstream wording became misleading
-   for `svvy`.
+4. Inspect the generated fragment diffs as filtered version-specific Smithers instruction content.
+5. Update the fragment map, transform policy, or script only if upstream headings changed, the
+   filtered content lost required Smithers command/runtime material, retained upstream wording became
+   misleading for `svvy`, or a previously bypassed fragment should become loaded by shipped config.
 6. Update workflow supervision or workflow library specs only when Smithers runtime/API behavior
    changed, not merely because upstream prose changed.
 
@@ -395,8 +523,17 @@ Updating the Smithers version shipped by `svvy` is a deliberate product update:
   version, or if required CLI status cannot be determined.
 - The agent may run the concrete install command returned by `inspect` or `build` through
   `exec_command`, where the normal approval flow applies, then rerun build.
-- The generated instruction output is read-only to agents. Agents edit
-  `scripts/generate-smithers-full.ts` or the manifest, then rerun build.
+- The generated instruction outputs are read-only to agents. Agents edit
+  `scripts/generate-smithers-fragment.ts` or the manifest, then rerun build.
+- Agents or users may enable the memory fragment without editing generated files by running the
+  configure command, then building the extension:
+
+  ```bash
+  svvyx extensions instructions configure smithers \
+    --file 040-smithers-memory.generated.md \
+    --bypassed false \
+    --json
+  ```
 - Build must not treat the repo-root `workflows/` authoring workspace, `workflows/node_modules`,
   `workflows/smithers.db`, or source-checkout-relative Smithers paths as part of the shipped
   Smithers extension instruction source.
@@ -408,27 +545,38 @@ Required doc/extension tests:
 - Smithers is represented as `category: "builtin"` and `interface: "native_tool"`.
 - Smithers declares a required exact CLI requirement for `smithers-orchestrator@0.22.0`, binary
   `smithers`, with version command `smithers --version`.
-- Smithers declares `generatedInstructions` with output
-  `instructions/full/010-smithers-full.generated.md`, script `scripts/generate-smithers-full.ts`,
-  and `versionCliRequirementId: "smithers-orchestrator"`.
+- Smithers declares generated outputs
+  `instructions/full/010-smithers-core.generated.md`,
+  `instructions/full/020-smithers-observability.generated.md`,
+  `instructions/full/030-smithers-events.generated.md`, and
+  `instructions/full/040-smithers-memory.generated.md`, all using
+  `scripts/generate-smithers-fragment.ts` and `versionCliRequirementId: "smithers-orchestrator"`.
+- Smithers declares instruction-file config with
+  `040-smithers-memory.generated.md` set to `bypassed: true`.
 - Generated Smithers output is produced from `smithers docs-full --json` after validating
   `smithers --version`.
-- Generated Smithers output is filtered and rewritten according to this spec's transform policy; it
-  is not byte-for-byte upstream full docs and is not upstream full docs plus a corrective appendix.
-- Generated Smithers output keeps concrete workflow authoring, runtime, component, CLI supervision,
-  observability, event, and type/reference material needed by handlers and workflow authors.
+- Generated Smithers outputs are split from Smithers' upstream `llms-full.txt` fragments, filtered,
+  and rewritten according to this spec's transform policy; they are not byte-for-byte upstream
+  fragments and are not upstream fragments plus corrective appendices.
+- Loaded generated Smithers output keeps concrete workflow authoring, runtime, component, CLI
+  supervision, observability, event, and type/reference material needed by handlers and workflow
+  authors.
 - Generated Smithers output removes `Always Run with \`bunx\``, Agent Skill installation, docs-helper,
-  ecosystem, PI integration, and Smithers SDK/CLI agent/tool material including `defineTool`,
-  built-in tools, `read`, `write`, `edit`, `grep`, and `bash`.
+  ecosystem, PI integration, OpenAPI and Effect fragments from default loaded output, and Smithers
+  SDK/CLI agent/tool material including `defineTool`, built-in tools, `read`, `write`, `edit`,
+  `grep`, and `bash`.
 - Generated Smithers output preserves direct Smithers CLI supervision commands using the global
   `smithers <command>` shape when those commands are retained.
 - Generated Smithers output keeps Smithers init, `.smithers/` scaffolding, workflow packs, starters,
   templates, and normal Smithers workflow authoring/setup material.
-- The loaded Smithers full instruction set includes the generated file followed by
-  `instructions/full/020-smithers-svvy-boundary.md`; the second file contains only positive
-  svvy-specific boundary guidance that is not derived from upstream Smithers docs, does not mention
-  removed upstream sections, and does not describe current or obsolete `svvy` Smithers tool
-  abstractions.
+- The loaded Smithers instruction set includes non-bypassed generated core, observability, and events
+  fragments followed by `instructions/full/050-smithers-svvy-boundary.md`; the boundary file contains
+  only positive svvy-specific boundary guidance that is not derived from upstream Smithers docs, does
+  not mention removed upstream sections, and does not describe current or obsolete `svvy` Smithers
+  tool abstractions.
+- `040-smithers-memory.generated.md` is generated, validated, inspectable, and ordered, but bypassed
+  in shipped config so it does not enter loaded prompts unless enabled through
+  `svvyx extensions instructions configure`.
 - Build fails rather than falling back when the `smithers` docs command fails, returns invalid
   JSON, returns a nonmatching version URL, returns implausibly small upstream source content, or
   produces transformed output that fails the keep/remove/rewrite validation checks.
@@ -457,11 +605,12 @@ Required doc/extension tests:
   version-specific Smithers knowledge.
 - The generated Smithers instruction output comes from exact-version upstream Smithers docs fetched
   through the exact installed global `smithers` CLI with `smithers docs-full --json`.
-- The generated Smithers full instruction output does not come from `docs/vendor/smithers`,
+- The generated Smithers fragment output does not come from `docs/vendor/smithers`,
   `docs/references/smithers`, `https://smithers.sh/llms-full.txt`, or repo-root `workflows/`.
 - `smithers docs-full --latest` is never used for generated instruction builds.
-- `010-smithers-full.generated.md` is a deterministic filtered Smithers instruction file, not a
-  verbatim upstream full-doc dump and not a full-doc dump plus later correction.
+- Each generated Smithers fragment file is deterministic filtered Smithers instruction content, not a
+  verbatim upstream full-doc dump and not an upstream fragment plus later correction.
+- The generated memory fragment remains present but bypassed in shipped Smithers extension config.
 - Product-incorrect setup, auth, agent-tool, and workflow-location assumptions are removed or
   mechanically rewritten in the generated output instead of being contradicted by a separate
   instruction file.

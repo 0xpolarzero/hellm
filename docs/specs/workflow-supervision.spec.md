@@ -812,7 +812,8 @@ The correct fallback for `svvy` is reconnect and recovery, not silent polling.
 ### External Sources
 
 - Version-matched Smithers source documentation for generated instructions comes from the exact
-  installed global `smithers-orchestrator` CLI through `smithers docs-full --json`, then is filtered
-  as specified in `docs/specs/extension/smithers.extension.spec.md`.
+  installed global `smithers-orchestrator` CLI through `smithers docs-full --json`, then is split
+  into selected fragments, filtered, and optionally bypassed as specified in
+  `docs/specs/extension/smithers.extension.spec.md`.
 - [Smithers Full Documentation](https://smithers.sh/llms-full.txt) remains a mutable latest-docs
   reference for human research only; it is not a generated instruction source.

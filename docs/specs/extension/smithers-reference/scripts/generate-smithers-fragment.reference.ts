@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { mkdir, rename } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 
 type SmithersDocsFullJson = {
   url: string;
@@ -13,28 +13,80 @@ type Args = {
   version: string;
 };
 
-const bannedHeadings = [
-  "## Always Run with `bunx`",
-  "## Install the Agent Skill",
-  "## Tools & sandboxing",
-  "## Coherent task with tools",
-  "## Per-agent least-privilege tools",
-  "## Side-effect tools with idempotency",
-  "# Smithers Integrations",
-] as const;
+type FragmentSpec = {
+  heading: string;
+  minLength: number;
+  bannedHeadings?: readonly string[];
+  requiredMarkers: readonly string[];
+};
 
-const requiredMarkers = [
+const outputFragments: Record<string, FragmentSpec> = {
+  "010-smithers-core.generated.md": {
+    heading: "# Smithers",
+    minLength: 150_000,
+    bannedHeadings: [
+      "## After Installation",
+      "## Always Run with `bunx`",
+      "## Install the Agent Skill",
+      "## Tools & sandboxing",
+      "## Coherent task with tools",
+      "## Per-agent least-privilege tools",
+      "## Side-effect tools with idempotency",
+      "## Package Configuration",
+      "## Binary",
+      "## Subpath Exports",
+      "## Workspace Packages",
+      "## TypeScript Configuration",
+      "## Bun Configuration",
+      "## npm Scripts",
+      "## Hijack handoff",
+    ],
+    requiredMarkers: [
+      "# Smithers",
+      "## How It Works",
+      "## JSX API",
+      "## CLI",
+      "smithers init",
+      "smithers up",
+      "smithers inspect",
+      "smithers logs",
+      "smithers approve",
+      "docs-full",
+    ],
+  },
+  "020-smithers-observability.generated.md": {
+    heading: "# Smithers Observability",
+    minLength: 20_000,
+    bannedHeadings: ["## Tool surface"],
+    requiredMarkers: [
+      "# Smithers Observability",
+      "## HTTP Server",
+      "## Serve Mode",
+      "## Gateway",
+      "/metrics",
+      "/events",
+    ],
+  },
+  "030-smithers-events.generated.md": {
+    heading: "# Smithers Events",
+    minLength: 8_000,
+    requiredMarkers: ["# Smithers Events", "SmithersEvent", "smithers events"],
+  },
+  "040-smithers-memory.generated.md": {
+    heading: "# Smithers Memory",
+    minLength: 2_000,
+    requiredMarkers: ["# Smithers Memory", "createMemoryStore", "memory list"],
+  },
+};
+
+const fullBundleRequiredHeadings = [
   "# Smithers",
-  "## How It Works",
-  "## JSX API",
-  "## CLI",
+  "# Smithers Memory",
+  "# Smithers OpenAPI Tools",
+  "# Smithers Observability",
+  "# Smithers Effect API",
+  "# Smithers Integrations",
   "# Smithers Events",
-  "smithers init",
-  "smithers up",
-  "smithers inspect",
-  "smithers logs",
-  "smithers approve",
-  "docs-full",
 ] as const;
 
 const forbiddenMarkers = [
@@ -75,6 +127,9 @@ const forbiddenMarkers = [
   "PI as Workflow Agent",
   "PI Server Client",
   "Hybrid: PI Extensibility + Smithers Orchestration",
+  "# Smithers OpenAPI Tools",
+  "# Smithers Effect API",
+  "# Smithers Integrations",
 ] as const;
 
 const parseArgs = (argv: string[]): Args => {
@@ -97,6 +152,9 @@ const parseArgs = (argv: string[]): Args => {
   }
   if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
     throw new Error("--version must be an exact semver version such as 0.22.0");
+  }
+  if (!outputFragments[basename(output)]) {
+    throw new Error(`unsupported Smithers generated output basename: ${basename(output)}`);
   }
   return { output, version };
 };
@@ -144,30 +202,61 @@ const removeSection = (markdown: string, heading: string): string => {
   return lines.join("\n").replace(/\n{3,}/g, "\n\n");
 };
 
-const transform = (content: string): string => {
-  let output = content.replace(/\r\n/g, "\n");
+const extractFragments = (content: string): Map<string, string> => {
+  const normalized = content.replace(/\r\n/g, "\n");
+  const parts = normalized.split(
+    "\n\n===============================================================================\n\n",
+  );
+  const fragments = new Map<string, string>();
 
-  for (const heading of bannedHeadings) {
+  for (const part of parts) {
+    const trimmed = part.trim();
+    for (const heading of fullBundleRequiredHeadings) {
+      if (trimmed.startsWith(`${heading}\n`)) {
+        fragments.set(heading, `${trimmed}\n`);
+      }
+    }
+  }
+
+  const first = parts[0] ?? "";
+  const coreStart = first.indexOf("\n# Smithers\n\n> Smithers");
+  if (coreStart !== -1) {
+    fragments.set("# Smithers", `${first.slice(coreStart + 1).trim()}\n`);
+  }
+
+  return fragments;
+};
+
+const transform = (content: string, spec: FragmentSpec): string => {
+  const fragments = extractFragments(content);
+  let output = fragments.get(spec.heading);
+  if (!output) {
+    throw new Error(`upstream docs-full content is missing fragment ${spec.heading}`);
+  }
+
+  for (const heading of spec.bannedHeadings ?? []) {
     output = removeSection(output, heading);
   }
 
-  output = output.replaceAll("bunx smithers-orchestrator", "smithers");
-  output =
+  return (
     output
+      .replaceAll("bunx smithers-orchestrator", "smithers")
+      .replaceAll("bunx smithers", "smithers")
       .replace(/[ \t]+\n/g, "\n")
       .replace(/\n{3,}/g, "\n\n")
-      .trimEnd() + "\n";
-  return output;
+      .trimEnd() + "\n"
+  );
 };
 
-const validateMarkers = (output: string, upstream: string): void => {
-  if (output.length >= upstream.length * 0.9) {
-    throw new Error(
-      "transformed output did not shrink enough; banned sections may still be present",
-    );
+const validateMarkers = (output: string, spec: FragmentSpec): void => {
+  if (!output.startsWith(spec.heading)) {
+    throw new Error(`transformed output must start with ${spec.heading}`);
+  }
+  if (output.length < spec.minLength) {
+    throw new Error(`transformed output for ${spec.heading} is implausibly small`);
   }
 
-  for (const marker of requiredMarkers) {
+  for (const marker of spec.requiredMarkers) {
     if (!output.includes(marker)) {
       throw new Error(`transformed output is missing required marker: ${marker}`);
     }
@@ -180,8 +269,26 @@ const validateMarkers = (output: string, upstream: string): void => {
   }
 };
 
+const validateFullBundle = (content: string): void => {
+  if (!content.startsWith("# Smithers — full documentation") || content.length < 200_000) {
+    throw new Error("upstream docs-full content does not look like the full Smithers docs bundle");
+  }
+  for (const heading of fullBundleRequiredHeadings) {
+    if (!content.includes(heading)) {
+      throw new Error(
+        `upstream docs-full content is missing expected fragment heading: ${heading}`,
+      );
+    }
+  }
+};
+
 const main = async (): Promise<void> => {
   const args = parseArgs(Bun.argv.slice(2));
+  const spec = outputFragments[basename(args.output)];
+  if (!spec) {
+    throw new Error(`unsupported Smithers generated output basename: ${basename(args.output)}`);
+  }
+
   const detectedVersion = (await run(["smithers", "--version"], "smithers --version")).trim();
   if (detectedVersion !== args.version) {
     throw new Error(`smithers version mismatch: expected ${args.version}, got ${detectedVersion}`);
@@ -197,15 +304,10 @@ const main = async (): Promise<void> => {
   if (parsed.url !== expectedUrl) {
     throw new Error(`docs URL mismatch: expected ${expectedUrl}, got ${parsed.url}`);
   }
-  if (
-    !parsed.content.startsWith("# Smithers — full documentation") ||
-    parsed.content.length < 200_000
-  ) {
-    throw new Error("upstream docs-full content does not look like the full Smithers docs bundle");
-  }
 
-  const output = transform(parsed.content);
-  validateMarkers(output, parsed.content);
+  validateFullBundle(parsed.content);
+  const output = transform(parsed.content, spec);
+  validateMarkers(output, spec);
 
   const tempPath = `${args.output}.tmp`;
   await mkdir(dirname(args.output), { recursive: true });

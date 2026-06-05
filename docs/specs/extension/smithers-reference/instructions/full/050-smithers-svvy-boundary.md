@@ -1,7 +1,7 @@
 # Smithers In Svvy
 
 Smithers is the workflow runtime for delegated execution in svvy. Use the generated Smithers
-instruction file for Smithers workflow authoring, project setup, CLI supervision commands, run
+instruction files for Smithers workflow authoring, project setup, CLI supervision commands, run
 inspection, approvals, resume, events, observability, and runtime concepts.
 
 Workflow task agents are Smithers `AgentLike` values supplied by svvy. Reusable workflow-agent

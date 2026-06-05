@@ -459,7 +459,7 @@ workflow task-agent component overrides, snapshots, or any other profile/configu
 
 `default_loaded` means:
 
-- full instructions are included in the actor prompt
+- non-bypassed full instructions are included in the actor prompt
 - the extension's `svvyx` command guidance is included if it has commands
 - loaded `svvyx` command guidance is included when the extension exposes `svvyx` commands
 - generated TypeScript command types are included when TypeScript API is enabled
@@ -521,7 +521,8 @@ instructions/minimal.md
 
 The multi-file full-instruction model is a source-editing and UI convenience. It is not a new prompt
 shape. The actor receives one loaded instruction block per loaded extension, produced by
-concatenating the ordered full instruction source files.
+concatenating the ordered full instruction source files whose current extension config does not mark
+them `bypassed`.
 
 Ordering is deterministic:
 
@@ -530,10 +531,22 @@ Ordering is deterministic:
   `010-overview.md`
 - duplicate filenames cannot exist in one directory on the target filesystem and therefore cannot be
   part of a valid source set
+- individual full instruction files may be configured as `bypassed`; bypassed files stay present,
+  inspectable, buildable, and ordered, but are skipped when composing loaded full instructions
 - non-Markdown files under `instructions/full/` are ignored by prompt generation and should be
   treated as validation warnings when they look accidental
-- missing files referenced by any future manifest metadata are build errors; the v1 source of truth
-  is the directory listing, not a hand-maintained manifest list
+- missing files referenced by instruction-file config are build errors; the v1 source of truth for
+  order is the directory listing, not a hand-maintained manifest order list
+
+Instruction-file bypass is extension configuration, not file deletion and not extension usage state:
+
+- an extension can be `default_loaded` while one or more of its instruction files are bypassed
+- bypassing a file never hides it from `inspect`, loaded-extension traceability, or source previews
+- generated instruction files are still generated and validated during build even when bypassed
+- bypass state is part of the generated-context fingerprint for every actor profile that loads the
+  extension
+- changing bypass state queues the same safe-boundary `agent_context_refresh` work as any other
+  generated-context change after a successful build
 
 Generated prompt boundaries must be traceable but must not change content semantics. The app may
 insert stable internal source-boundary headings or metadata while generating previews, but the loaded
@@ -650,6 +663,7 @@ type ExtensionPathsForLoadedExtension = {
 type ExtensionInstructionFile = {
   name: string;
   path: string;
+  bypassed: boolean;
   generated?: {
     script: string;
     output: string;
@@ -848,11 +862,12 @@ bun <script.ts> --output <absolute-output-path> [--version <exact-version>]
 
 ```json
 {
-  "name": "010-smithers-full.generated.md",
-  "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md",
+  "name": "010-smithers-core.generated.md",
+  "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-core.generated.md",
+  "bypassed": false,
   "generated": {
-    "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-full.ts",
-    "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md"
+    "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-fragment.ts",
+    "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-core.generated.md"
   }
 }
 ```
@@ -967,7 +982,8 @@ Example:
         "instructionsFull": [
           {
             "name": "010-linear.md",
-            "path": "/Users/example/.config/svvy/extensions/sources/user/linear/instructions/full/010-linear.md"
+            "path": "/Users/example/.config/svvy/extensions/sources/user/linear/instructions/full/010-linear.md",
+            "bypassed": false
           }
         ],
         "instructionsFullDir": "/Users/example/.config/svvy/extensions/sources/user/linear/instructions/full",
@@ -1106,7 +1122,7 @@ A prompt-only extension has no CLI runtime and uses `interface: "instructions"` 
 
 It still uses the same usage states:
 
-- full instructions when default-loaded
+- non-bypassed full instructions when default-loaded
 - minimal load guidance when available
 - nothing when unavailable
 
@@ -1798,8 +1814,9 @@ type LoadExtensionResult = {
 
 The `extension` object uses the same fields and redaction rules as a loaded entry from
 `list_extensions`. The additional `instructions` field contains the full loaded instructions that
-are now part of the actor context. `instructionFiles` records the ordered source files used to build
-that string for traceability; it does not mean the model receives an array-valued instruction.
+are now part of the actor context. `instructionFiles` records the ordered full instruction source
+files and their bypass state for traceability; bypassed files are listed there but do not contribute
+text to `instructions`. It does not mean the model receives an array-valued instruction.
 `load_extension` must not return custom `added`, `guidance`, `svvyxNamespaces`, `codeModeTypes`, or
 similar one-off buckets. Command details remain discoverable through the loaded extension's own CLI
 or generated client documentation.
@@ -1821,16 +1838,45 @@ Example:
     "instructions": "Full loaded Smithers instructions...",
     "instructionFiles": [
       {
-        "name": "010-smithers-full.generated.md",
-        "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md",
+        "name": "010-smithers-core.generated.md",
+        "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-core.generated.md",
+        "bypassed": false,
         "generated": {
-          "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-full.ts",
-          "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md"
+          "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-fragment.ts",
+          "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-core.generated.md"
         }
       },
       {
-        "name": "020-smithers-svvy-boundary.md",
-        "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/020-smithers-svvy-boundary.md"
+        "name": "020-smithers-observability.generated.md",
+        "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/020-smithers-observability.generated.md",
+        "bypassed": false,
+        "generated": {
+          "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-fragment.ts",
+          "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/020-smithers-observability.generated.md"
+        }
+      },
+      {
+        "name": "030-smithers-events.generated.md",
+        "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/030-smithers-events.generated.md",
+        "bypassed": false,
+        "generated": {
+          "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-fragment.ts",
+          "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/030-smithers-events.generated.md"
+        }
+      },
+      {
+        "name": "040-smithers-memory.generated.md",
+        "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/040-smithers-memory.generated.md",
+        "bypassed": true,
+        "generated": {
+          "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-fragment.ts",
+          "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/040-smithers-memory.generated.md"
+        }
+      },
+      {
+        "name": "050-smithers-svvy-boundary.md",
+        "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/050-smithers-svvy-boundary.md",
+        "bypassed": false
       }
     ],
     "paths": {
@@ -1838,16 +1884,45 @@ Example:
       "manifest": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/manifest.json",
       "instructionsFull": [
         {
-          "name": "010-smithers-full.generated.md",
-          "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md",
+          "name": "010-smithers-core.generated.md",
+          "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-core.generated.md",
+          "bypassed": false,
           "generated": {
-            "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-full.ts",
-            "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-full.generated.md"
+            "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-fragment.ts",
+            "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/010-smithers-core.generated.md"
           }
         },
         {
-          "name": "020-smithers-svvy-boundary.md",
-          "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/020-smithers-svvy-boundary.md"
+          "name": "020-smithers-observability.generated.md",
+          "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/020-smithers-observability.generated.md",
+          "bypassed": false,
+          "generated": {
+            "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-fragment.ts",
+            "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/020-smithers-observability.generated.md"
+          }
+        },
+        {
+          "name": "030-smithers-events.generated.md",
+          "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/030-smithers-events.generated.md",
+          "bypassed": false,
+          "generated": {
+            "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-fragment.ts",
+            "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/030-smithers-events.generated.md"
+          }
+        },
+        {
+          "name": "040-smithers-memory.generated.md",
+          "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/040-smithers-memory.generated.md",
+          "bypassed": true,
+          "generated": {
+            "script": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/scripts/generate-smithers-fragment.ts",
+            "output": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/040-smithers-memory.generated.md"
+          }
+        },
+        {
+          "name": "050-smithers-svvy-boundary.md",
+          "path": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full/050-smithers-svvy-boundary.md",
+          "bypassed": false
         }
       ],
       "instructionsFullDir": "/Users/example/.config/svvy/extensions/sources/builtin-overlays/smithers/instructions/full",
@@ -4162,7 +4237,7 @@ The generated view should include:
 
 - loaded base instruction extensions such as `base-common` and the actor-specific `base-*`
   extension
-- loaded extension full instructions
+- loaded extension non-bypassed full instructions
 - available extension minimal instructions
 - external instructions that reached the actor
 - loaded `svvyx` extension id list
@@ -4232,7 +4307,7 @@ actor-scoped extension invocation:
 - selected agent profile or task-agent config identity only when it affects generated context
 - ordered loaded extension ids
 - each loaded extension's current successful extension context fingerprint
-- exact loaded extension full instructions in generated order
+- exact loaded extension non-bypassed full instructions in generated order
 - ordered available extension ids
 - each available extension's current successful extension context fingerprint
 - exact available extension minimal instructions in generated order
