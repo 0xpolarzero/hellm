@@ -66,6 +66,11 @@ smithers_stream_devtools(...)
 - Exact input/output schemas are not centralized in this file yet.
 - Smithers is not an Incur-backed `svvyx` extension. Handler-thread agent-facing workflow control is
   exposed as first-party `smithers_*` tools through the Bun-owned Smithers bridge.
+- The Smithers extension's full LLM instruction bundle is vendored at
+  `docs/vendor/smithers/smithers-0.22.0.llms-full.txt` for `smithers-orchestrator@0.22.0`.
+  Whenever `svvy` updates the Smithers version it ships with, update the Smithers reference subtree,
+  regenerate the upstream `llms-full.txt` artifact, copy it to a new versioned file under
+  `docs/vendor/smithers/`, and update this note to point at the new version.
 - Workflow run behavior is currently defined in `docs/specs/workflow-supervision.spec.md`.
 - Workflow authoring and saved entry behavior is currently defined in
   `docs/specs/workflow-library.spec.md`.
