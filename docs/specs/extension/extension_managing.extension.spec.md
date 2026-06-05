@@ -94,7 +94,7 @@ The Extension Managing instructions define what may be edited:
 
 - extension source files
 - hand-authored extension instruction files
-- extension generated-instruction scripts under `scripts/`
+- extension generated-instruction TypeScript scripts under `scripts/`
 - extension manifest files
 - the shared extension `package/package.json`
 
@@ -189,7 +189,7 @@ Editable file-backed content includes:
 - ordered hand-authored full instruction source files under `instructions/full/`
 - generated instruction declarations in `manifest.json` and generated Markdown outputs under
   `instructions/full/`
-- editable generated-instruction scripts under `scripts/`
+- editable generated-instruction TypeScript scripts under `scripts/`
 - minimal instructions
 - extension command source code for `svvyx` extensions
 - the shared extension `package/package.json` when dependency state needs manual adjustment
@@ -238,7 +238,7 @@ type ExtensionManifestCliRequirement = {
 type ExtensionManifestGeneratedInstruction = {
   output: string;
   script: string;
-  versionFromCliRequirement?: string;
+  versionCliRequirementId?: string;
 };
 ```
 
@@ -262,7 +262,7 @@ Rules:
 - manifest `installCommand` is a reusable template; inspect and build-error output return a concrete
   install command with the current declared version substituted.
 - `generatedInstructions` declare build-generated Markdown files under `instructions/full/` and
-  editable generator scripts under `scripts/`. Build runs generation; there is no separate
+  editable TypeScript generator scripts under `scripts/`. Build runs generation; there is no separate
   `instructions generate` command.
 - Full instruction file ordering is not stored in the manifest in v1. The source of truth is the
   lexicographic directory listing under `instructions/full/`.

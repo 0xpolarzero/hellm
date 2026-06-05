@@ -34,7 +34,7 @@
     {
       "output": "instructions/full/010-smithers-full.generated.md",
       "script": "scripts/generate-smithers-full.ts",
-      "versionFromCliRequirement": "smithers-orchestrator"
+      "versionCliRequirementId": "smithers-orchestrator"
     }
   ]
 }

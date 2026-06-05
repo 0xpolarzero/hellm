@@ -7,8 +7,9 @@
 - Scope:
   - define the builtin cx extension boundary
   - define cx as prompt-only direct CLI guidance
-  - define the exact cx CLI commands agents may use through `exec_command`
+  - define the exact cx CLI commands agents may use as shell commands
   - define the versioned cx CLI requirement used by build/readiness checks
+  - define the generated upstream cx skill instruction source and script contract
   - reject native `cx_*` tools, `svvyx cx`, and generated cx TypeScript clients for v1
 
 This document is the source of truth for the resolved cx extension direction.
@@ -16,10 +17,10 @@ This document is the source of truth for the resolved cx extension direction.
 Related specs:
 
 - `docs/specs/extensions-and-tools.spec.md` defines the general extension architecture, prompt-only
-  extensions, CLI requirements, shell policy, generated agent context, and
-  `execute_typescript`.
-- `docs/specs/extension/extension_managing.extension.spec.md` defines how builtin extension instructions are inspected,
-  overlaid, reset, and built when extension content is editable.
+  extensions, CLI requirements, generated instruction files, shell policy, generated agent context,
+  and `execute_typescript`.
+- `docs/specs/extension/extension_managing.extension.spec.md` defines how builtin extension
+  instructions are inspected, overlaid, reset, and built when extension content is editable.
 
 ## Product Intent
 
@@ -32,7 +33,7 @@ The resolved cx v1 model is:
 - `cx` uses `interface: "instructions"`.
 - `cx` is prompt-only.
 - `cx` is default-loaded for all adopted actor kinds.
-- `cx` teaches agents to use the official `cx` CLI directly through `exec_command`.
+- `cx` teaches the official `cx` CLI by loading the generated upstream `cx skill` instructions.
 - `svvy` does not expose `cx_overview`, `cx_symbols`, `cx_definition`, `cx_references`,
   `cx_lang_list`, `cx_lang_add`, `cx_lang_remove`, `cx_cache_path`, or `cx_cache_clean` as native
   model tools.
@@ -41,9 +42,13 @@ The resolved cx v1 model is:
   v1.
 - `svvy` does not wrap cx in an Incur CLI or expose Incur to agents for cx.
 
-This is intentional. cx already has a small agent-facing CLI and an agent-facing `cx skill`
-instruction. The obvious product boundary is to ship that instruction as a prompt-only extension and
-let agents run `cx` through the normal shell command tool.
+These product-boundary statements are specification and test requirements. They are not themselves
+agent-facing cx instruction text. The agent-facing generated cx skill file must teach positive cx
+usage only, without listing old, rejected, unavailable, or implementation-only product surfaces.
+
+cx already has a small agent-facing CLI and an agent-facing `cx skill` instruction. The product
+boundary is to load that upstream skill as a generated instruction file and let the normal shell
+runtime execute `cx` commands when an agent chooses to use cx.
 
 ## Extension Record
 
@@ -66,6 +71,13 @@ The builtin cx extension record is:
       "versionCommand": "cx --version",
       "installCommand": "cargo install cx-cli --version {{version}}"
     }
+  ],
+  "generatedInstructions": [
+    {
+      "output": "instructions/full/010-cx-skill.generated.md",
+      "script": "scripts/generate-cx-skill.ts",
+      "versionCliRequirementId": "cx"
+    }
   ]
 }
 ```
@@ -84,8 +96,8 @@ TypeScript client is registered.
 
 ## CLI Requirement
 
-`cx` is a versioned CLI requirement because the builtin instructions are vendored from
-`cx-cli@0.7.1` output.
+`cx` is a versioned CLI requirement because the builtin cx instructions are generated from the
+versioned `cx-cli` package artifact.
 
 The builtin CLI requirement declaration is:
 
@@ -105,118 +117,230 @@ name is `cx-cli`, version is `0.7.1`, and the binary name is `cx`.
 
 CLI requirement behavior is defined in `docs/specs/extensions-and-tools.spec.md`. Missing or
 wrong-version `cx` must not cause the prompt-only cx extension instructions to disappear from
-generated actor context. `svvyx extensions build cx --json` fails if `cx` is missing or the detected
-version is not exactly `0.7.1`, or if required CLI status cannot be determined. The agent may run
-the concrete install command returned by `inspect` or `build` through `exec_command`, where the
-normal approval and sandbox flow applies, and then rerun build.
+generated actor context. `svvyx extensions build cx --json` fails if `cx` is missing, the detected
+version is not exactly `0.7.1`, or required CLI status cannot be determined. The agent may run the
+concrete install command returned by `inspect` or `build` through the normal shell command path only
+when installing or upgrading the cx binary is appropriate for the user's request, then rerun build.
 
-## Instruction Source
+The generated instruction script does not need the `cx` binary to be installed. It reads the
+versioned package artifact directly. The required CLI check still runs before generated instruction
+scripts because the shared extension build contract checks declared required CLIs first.
 
-The loaded cx instructions must be vendored from cx-owned guidance, not hand-rewritten from memory.
+## Instruction Files
 
-Primary source:
+cx full instructions are an ordered file set under `instructions/full/`.
 
-- `https://github.com/ind-igo/cx`
-- `cx skill` from `cx-cli@0.7.1`
+The generated upstream skill file is:
 
-The builtin default instructions should be a vendored copy of `cx skill`, with a small `svvy`-owned
-preface or appendix allowed only for product integration facts that are not part of the cx skill
-itself.
-
-The allowed `svvy` appendix is limited to:
-
-- the extension is prompt-only and exposes no `svvy` cx tools
-- agents use cx through `exec_command`
-- `apply_patch` remains the editing surface
-- if `cx` is missing, the wrong version, or unknown, agents should inspect the extension's CLI
-  requirement and run the returned concrete install command through `exec_command` only when
-  installing is appropriate for the user's request
-- `execute_typescript` has no cx SDK in v1
-
-The `svvy` appendix must not:
-
-- add native `cx_*` tool names
-- add `svvyx cx` commands
-- add generated TypeScript clients
-- invent cx CLI flags or behavior not present in `cx --help`, command help, or `cx skill`
-- teach ad hoc `cargo install`, Homebrew, curl installers, or other installer commands beyond the
-  declared `installCommand`
-
-Updating the vendored cx instructions is a deliberate product update. The update process is:
-
-1. Inspect the current cx-owned `cx skill` output and CLI help.
-2. Inspect the currently published package identity and version.
-3. Update the vendored instructions.
-4. Update tests or docs that depend on the changed instruction surface.
-5. Ship the resolved product wording.
-
-`svvy` must not fetch cx instructions dynamically at runtime.
-
-### Vendored cx Skill Text
-
-The `cx skill` output for `cx-cli@0.7.1` is:
-
-~~~md
-# cx - Semantic Code Navigation
-
-Prefer cx over reading files. Escalate: overview -> symbols -> definition/references -> Read tool.
-
-## Quick reference
-
-```
-cx overview PATH                                    file or directory table of contents
-cx overview DIR --full                              directory overview with ranges + signatures
-cx symbols [--kind K] [--name GLOB] [--file PATH]   search symbols project-wide
-cx symbols --kinds [--file PATH]                     list distinct kinds with counts
-cx definition --name NAME [--from PATH] [--kind K]  get a function/type body
-cx references --name NAME [--file PATH] [--context]  usages grouped by file; --context exact lines
-cx lang list                                         show supported languages
-cx lang add LANG [LANG...]                           install language grammars
-
-Global: --no-tests (exclude test files/symbols), --json, --limit N, --offset N, --all
+```text
+instructions/full/010-cx-skill.generated.md
 ```
 
-Aliases: `cx o`, `cx s`, `cx d`, `cx r`
+It is generated by:
 
-Kinds: fn, struct, enum, trait, type, const, class, interface, module, event, heading
-
-## Key patterns
-
-- Start with `cx overview .`, drill into subdirectories - cheaper than ls + reading files
-- `cx definition --name X` gives exact text for Edit tool's `old_string` without reading the whole file
-- `cx references --name X` groups hits by file; add `--context` only when exact source lines are needed
-- After context compression, use `cx overview` / `cx definition` to re-orient - don't re-read full files
-- Check signatures for `pub`/`export` to identify public API without reading the file
-
-## Pagination
-
-Default limits: definition 3, symbols 100, references 50. When truncated, stderr shows:
-
-```
-cx: 3/32 definitions for "X" | --from PATH to narrow | --offset 3 for more | --all
+```text
+scripts/generate-cx-skill.ts
 ```
 
-`--offset N` pages forward, `--all` bypasses, `--limit N` overrides. Narrow with `--from`/`--file`/`--kind` before paging.
+The generated file must contain only the upstream cx skill Markdown extracted from the exact
+versioned `cx-cli` package artifact. It must not append, prepend, or interleave `svvy`-owned product
+boundary notes.
 
-JSON: paginated -> `{total, offset, limit, results: [...]}`, non-paginated -> bare array.
+If `svvy` later needs cx-specific local runtime guidance, that guidance must be placed in a separate
+hand-authored instruction file that sorts after the generated upstream skill, for example:
 
-## Missing grammars
+```text
+instructions/full/020-cx-svvy-usage.md
+```
 
-If cx reports a missing grammar, install with `cx lang add <lang>`. Run `cx lang list` to see what's installed.
-~~~
+No such hand-authored cx usage file is required by this spec. If one is added later, it must be
+positive, actionable guidance. It must not list unavailable or rejected product surfaces merely to
+explain historical design decisions.
 
-When this text is included in generated actor context, `svvy` may replace "Read tool" with
-"raw file reads through `exec_command`" and "Edit tool" with "`apply_patch`" so the instruction names
-match the `svvy` runtime. The command reference and usage ladder must remain cx-owned.
+## Upstream Skill Source
 
-`cx lang add`, `cx lang remove`, and cache-management commands mutate cx-owned grammar/support
-state. They are permitted ordinary `exec_command` work under the active shell approval and sandbox
-policy, and they are not the cx CLI requirement install. Installing or upgrading the `cx` binary
-uses the concrete install command returned by inspect/build through ordinary `exec_command`.
+The authoritative source for the generated cx skill is the version-pinned crates.io package
+artifact, not the GitHub default branch, a mutable README, the locally installed `cx` binary, or a
+hand-copied Markdown block.
+
+For `cx-cli@0.7.1`, the source artifact is:
+
+```text
+https://static.crates.io/crates/cx-cli/cx-cli-0.7.1.crate
+```
+
+The generated Markdown is extracted from:
+
+```text
+cx-cli-0.7.1/src/skill.md
+```
+
+The crates.io sparse-index entry for the current version is read from:
+
+```text
+https://index.crates.io/cx/-c/cx-cli
+```
+
+For `0.7.1`, the sparse-index entry must contain:
+
+```json
+{
+  "name": "cx-cli",
+  "vers": "0.7.1",
+  "cksum": "956f63dd7eba71378917dc82932e2e9106dd12d7a4bdd3244b507c11b5954cf1",
+  "yanked": false
+}
+```
+
+The sparse-index JSON contains additional dependency fields. The generator should validate the
+fields above and may ignore unrelated fields.
+
+The package artifact should also be checked for these identity markers:
+
+- `Cargo.toml` package name is `cx-cli`
+- `Cargo.toml` package version equals the requested exact version
+- `Cargo.toml` has a binary named `cx`
+- `src/main.rs` implements the `skill` command by printing the embedded `skill.md` content
+
+A pinned GitHub commit for `ind-igo/cx` may be used only as a secondary cross-check. It is not the
+primary generated-instruction source because the released crates.io artifact is the package actually
+identified by the CLI requirement.
+
+## Generated Script Contract
+
+The cx generated instruction script must be TypeScript:
+
+```text
+scripts/generate-cx-skill.ts
+```
+
+Extension build invokes it through the shared generated-instruction command shape:
+
+```text
+bun scripts/generate-cx-skill.ts --output <absolute-output-path> --version <exact-version>
+```
+
+For the current cx extension, build resolves the `--version` value from:
+
+```json
+"versionCliRequirementId": "cx"
+```
+
+That id refers to the cx CLI requirement declaration whose `version` is currently `0.7.1`.
+
+The script must:
+
+1. Require `--output`.
+2. Require `--version`.
+3. Reject non-exact version values such as ranges, tags, `latest`, empty strings, or versions with
+   leading comparison operators.
+4. Read the crates.io sparse-index entry for `cx-cli`.
+5. Select the entry whose `vers` exactly equals `--version`.
+6. Fail if no matching sparse-index entry exists.
+7. Fail if the matching entry is yanked.
+8. Download `https://static.crates.io/crates/cx-cli/cx-cli-<version>.crate`.
+9. Verify the downloaded artifact SHA-256 exactly matches the sparse-index `cksum`.
+10. Extract `cx-cli-<version>/Cargo.toml`, `cx-cli-<version>/src/main.rs`, and
+    `cx-cli-<version>/src/skill.md`.
+11. Validate the package identity markers listed in this spec.
+12. Validate that `src/skill.md` is non-empty UTF-8 Markdown.
+13. Validate that `src/skill.md` contains the required upstream content markers listed below.
+14. Write the extracted `src/skill.md` bytes to `--output`.
+
+The script must not:
+
+- run `cargo install`
+- run the local `cx` binary
+- run `cx skill` as its primary source
+- read from the GitHub default branch as its primary source
+- fetch the latest package version
+- use an installed binary's detected version instead of the supplied `--version`
+- normalize upstream wording, punctuation, headings, or arrows
+- replace `Read tool`
+- replace `Edit tool`
+- append `svvy` product-boundary notes
+- mention `svvyx cx`, native `cx_*` tools, generated cx clients, or `prompt-only` in the generated
+  Markdown
+- write outside `--output`
+
+The script should write to a temporary file in the destination directory and then atomically replace
+`--output` after all validation passes. If any step fails, the script must exit non-zero and must not
+leave a partially generated Markdown file at `--output`.
+
+Stdout is diagnostic build output only. The generated Markdown content must be written to
+`--output`.
+
+The script needs network access unless the `.crate` artifact and sparse-index entry are vendored or
+provided through a future packaged-app cache. It must not fetch cx instructions dynamically during
+actor prompt generation or at runtime. Fetching is a generated-instruction build step only.
+
+## Generated Output Validation
+
+For `cx-cli@0.7.1`, the generated output must contain these upstream markers:
+
+```text
+# cx
+Semantic Code Navigation
+Quick reference
+cx overview
+cx symbols
+cx definition
+cx references
+cx lang list
+cx lang add
+Aliases
+Kinds
+Key patterns
+Pagination
+Missing grammars
+```
+
+For `cx-cli@0.7.1`, the generated output must preserve upstream generic tool wording:
+
+```text
+Read tool
+Edit tool
+```
+
+Those phrases are cx-owned generic coding-agent wording. cx does not provide tools with those names.
+The generated upstream skill file must not rewrite them to `svvy`-specific tool names. If local
+runtime clarification becomes necessary, it belongs in a separate hand-authored cx instruction file.
+
+For `cx-cli@0.7.1`, the generated output must not contain `svvy` product-boundary prose, including:
+
+```text
+svvyx cx
+cx_overview
+extensions.cx
+api.cx
+prompt-only
+```
+
+## Updating cx Instructions
+
+Updating the generated cx instructions is a deliberate product update. The update process is:
+
+1. Change the cx CLI requirement version in this spec and the builtin cx manifest source.
+2. Keep `versionCliRequirementId: "cx"` so the generator receives that exact declared version.
+3. Run `scripts/generate-cx-skill.ts` for the new exact version.
+4. Verify the sparse-index checksum, yanked status, package identity, and extracted `src/skill.md`
+   markers.
+5. Inspect the generated diff as upstream cx-owned instruction changes.
+6. Update tests that depend on changed cx command syntax or skill wording.
+7. Update this spec only for product-contract changes, not merely to paste the generated Markdown.
+
+Do not update generated cx instructions from:
+
+- `latest`
+- the GitHub default branch
+- a copied chat answer
+- a local `cx` binary whose version was not provided by the manifest's exact CLI requirement
+- a rewritten or summarized version of the upstream skill
 
 ## cx CLI Command Surface
 
-Agents may call these cx commands through `exec_command` when the cx extension is loaded:
+The cx extension permits these official cx CLI commands as shell commands when the cx extension is
+loaded:
 
 ```bash
 cx overview PATH
@@ -259,20 +383,13 @@ cx d
 cx r
 ```
 
-The normal `svvy` inspection ladder is:
+`cx lang add`, `cx lang remove`, and cache-management commands mutate cx-owned grammar/support
+state. They are permitted ordinary shell-command work under the active shell approval and sandbox
+policy, and they are not the cx CLI requirement install. Installing or upgrading the `cx` binary
+uses the concrete install command returned by inspect/build through the normal shell command path.
 
-```text
-cx overview -> cx symbols -> cx definition / cx references -> exec_command with rg/sed/cat/ls/find
-```
-
-Use raw shell inspection when:
-
-- cx does not support the language or file type
-- raw text, exact surrounding context, generated files, config files, or non-code files are needed
-- a command failure, missing grammar, or parse limitation makes cx insufficient
-- the agent is verifying exact file content before a patch
-
-Use `apply_patch` for edits. cx does not edit files.
+cx does not edit files. File edits remain ordinary editing work through the direct editing surface
+available to the actor.
 
 ## Product Boundary
 
@@ -307,7 +424,12 @@ cx must not inspect or mutate `svvy` product state:
 - app logs
 
 cx must not mutate repository source files, git state, or workflow assets. Those operations remain
-ordinary shell/git/`apply_patch`/Smithers operations according to their own extension boundaries.
+ordinary shell, git, editing, or Smithers operations according to their own extension boundaries.
+
+This product-boundary section is normative implementation guidance and test guidance. Its negative
+statements must not be copied into the generated upstream cx skill file. They should appear in
+agent-facing cx instruction files only when there is a current, concrete, user-relevant behavior to
+prevent, not as historical design explanation.
 
 ## `execute_typescript`
 
@@ -324,7 +446,7 @@ ordinary coding-agent behavior does not need.
 
 If a future product decision adopts a cx TypeScript client, it must be specified separately with a
 concrete repeated use case, exact generated API, command-fact recording rules, and actor-specific
-availability. Until then, agents use `cx` through `exec_command`.
+availability. Until then, cx remains direct CLI guidance.
 
 ## Testing
 
@@ -332,35 +454,53 @@ Required doc/extension tests:
 
 - cx is represented as `category: "builtin"` and `interface: "instructions"`.
 - cx is default-loaded for orchestrator, handler-thread, and workflow task-agent actors.
-- Generated actor context includes the vendored `cx skill` guidance plus only the bounded `svvy`
-  appendix.
+- cx declares `cx-cli@0.7.1` as a CLI requirement with binary `cx`.
+- cx declares `instructions/full/010-cx-skill.generated.md` as a generated instruction file.
+- cx declares `scripts/generate-cx-skill.ts` as the generated instruction script.
+- cx generated instruction declaration uses `versionCliRequirementId: "cx"`.
+- `scripts/generate-cx-skill.ts` is invoked as
+  `bun <script.ts> --output <absolute-output-path> --version 0.7.1`.
+- the generated cx skill file is read-only to agents and regenerated by extension build.
+- the generated cx skill file is byte-for-byte identical to `cx-cli-0.7.1/src/skill.md` extracted
+  from the verified crates.io artifact.
+- the generated cx skill file contains no `svvy` appendix, preface, product-boundary note, or
+  generated-client guidance.
+- the generated cx skill file preserves upstream `Read tool` and `Edit tool` wording.
+- the generated cx skill file does not contain `svvyx cx`, `cx_overview`, `extensions.cx`,
+  `api.cx`, or `prompt-only`.
+- Generated actor context includes the generated upstream cx skill guidance when cx is loaded.
 - Generated actor context does not include native `cx_*` tool declarations.
 - Generated actor context does not include `svvyx cx` guidance.
 - Generated `execute_typescript` declarations do not include cx clients.
-- cx declares `cx-cli@0.7.1` as a CLI requirement with binary `cx`.
 - Missing cx does not remove the prompt-only cx extension from generated actor context.
-- cx instructions do not contain agent-run install commands.
+- cx instructions do not contain agent-facing commands to install the `cx` binary. The only binary
+  install command is the concrete CLI requirement install command returned by inspect/build.
 
 Optional live verification:
 
 - install the declared cx CLI requirement when it is missing or the wrong version
 - run `cx --version`
 - run `cx skill`
+- compare `cx skill` output with the generated upstream skill file
 - run `cx lang list`
 - run `cx overview .`
 - run `cx symbols --kinds --json`
-- update this spec and the vendored instructions if cx-owned behavior changes materially
+- update this spec and the generated instructions if cx-owned behavior changes materially
 
 ## Invariants
 
 - cx v1 is a prompt-only builtin extension.
 - cx v1 is default-loaded for all adopted actor kinds.
-- cx v1 teaches direct use of the official `cx` CLI through `exec_command`.
+- cx v1 loads the official upstream `cx skill` content from a versioned crates.io artifact.
+- cx v1 uses `scripts/generate-cx-skill.ts` to generate
+  `instructions/full/010-cx-skill.generated.md`.
+- cx v1 does not rewrite upstream `Read tool` or `Edit tool` wording in the generated skill file.
+- cx v1 keeps `svvy` product-boundary notes out of the generated upstream skill file.
 - cx v1 does not expose native `cx_*` tools.
 - cx v1 does not expose `svvyx cx`.
 - cx v1 does not expose generated cx TypeScript clients.
 - cx v1 does not expose an Incur wrapper to agents.
 - cx v1 does not create a custom editing or writing surface.
 - cx v1 does not own product navigation or product state.
-- cx v1 depends on declared CLI requirement resolution for missing binaries, not
-  agent-run installation instructions.
+- cx v1 depends on declared CLI requirement resolution for missing binaries, not agent-facing
+  binary installation instructions.

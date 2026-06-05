@@ -811,7 +811,7 @@ Manifest shape:
 type GeneratedInstructionDeclaration = {
   output: string;
   script: string;
-  versionFromCliRequirement?: string;
+  versionCliRequirementId?: string;
 };
 ```
 
@@ -821,23 +821,26 @@ Rules:
   `instructions/full/`.
 - generated instruction outputs are part of the ordered full-instruction file set, using the same
   lexicographic order as hand-authored Markdown files.
-- `script` is a path relative to the extension source root and must point at an editable script under
-  `scripts/`.
-- `versionFromCliRequirement` is optional. When present, it names a CLI requirement whose exact
+- `script` is a path relative to the extension source root and must point at an editable TypeScript
+  script under `scripts/` with a `.ts` extension.
+- `versionCliRequirementId` is optional. When present, it names a CLI requirement whose exact
   `version` is passed to the script.
-- if `versionFromCliRequirement` is present and that CLI requirement has no `version`, build fails.
+- if `versionCliRequirementId` is present and that CLI requirement has no `version`, build fails.
 - build runs generated instruction scripts after CLI requirement checks and before context/build
   activation.
 - build invokes generated instruction scripts as:
 
 ```text
-bun <script> --output <absolute-output-path> [--version <exact-version>]
+bun <script.ts> --output <absolute-output-path> [--version <exact-version>]
 ```
 
 - the script must write the generated Markdown file at `--output`; stdout is diagnostic only and is
   captured as build output
 - generated instruction output files are read-only to agents even though they live under the
   extension source root; agents edit the script or manifest, then rerun build
+- a generated instruction output is one generated artifact; it must not be used as a container for
+  hand-authored local prefaces, appendices, or product-boundary notes. Add separate ordered Markdown
+  instruction files for hand-authored guidance.
 - inspect reports generated metadata inline on the corresponding instruction file:
 
 ```json
@@ -1252,11 +1255,13 @@ Ownership:
   actor prompt receives their concatenated content as one loaded extension instruction block.
 - generated instruction outputs also live under `instructions/full/` so their final ordering is
   visible in the same file list, but they are read-only to agents; agents edit their associated
-  scripts or manifest declarations and rerun `svvyx extensions build`
+  TypeScript scripts or manifest declarations and rerun `svvyx extensions build`. Hand-authored
+  local guidance belongs in separate ordered Markdown instruction files, not inside generated
+  instruction outputs.
 - `instructions/minimal.md` contains the single minimal loading hint used while the extension is
   available but not loaded.
 - `scripts/` contains editable extension-owned helper scripts, including generated-instruction
-  scripts.
+  TypeScript scripts.
 - `source/` exists only for extensions with editable executable source; prompt-only extensions omit
   it or return `source: null` from `inspect`.
 - builtin defaults live in packaged app resources and are read-only.
