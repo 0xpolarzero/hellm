@@ -6,7 +6,8 @@
 - Status: authoritative product spec
 - Scope:
   - define the builtin Web extension as prompt-only TinyFish CLI guidance
-  - define how `svvy` vendors TinyFish-owned agent instructions
+  - define how `svvy` generates TinyFish CLI instructions from exact versioned upstream package
+    artifacts
   - define TinyFish CLI requirement, auth, search, fetch, and output expectations
   - define what `svvy` does not abstract, wrap, configure, or expose for Web v1
   - remove the earlier provider-backed native-tool Web design from the intended product surface
@@ -36,6 +37,10 @@ The resolved Web v1 model is:
 - `web` is prompt-only.
 - `web` is default-loaded for eligible actors only while `networkAccess` is enabled.
 - `web` teaches agents to use the official TinyFish CLI directly through ordinary shell commands.
+- `web` generates its upstream TinyFish CLI instruction file from the exact
+  `@tiny-fish/cli@0.1.6` npm package artifact.
+- `web` keeps `svvy`-owned Web extension guidance in separate ordered instruction files, never as
+  a preface or appendix inside the generated upstream file.
 - `svvy` does not expose `web_search`, `web_fetch`, `svvyx web`, `api.web_*`, or generated Web
   TypeScript clients.
 - `svvy` does not own Web provider selection, Web provider readiness, Web provider API keys, Web
@@ -66,6 +71,13 @@ The builtin Web extension record is:
       "versionCommand": "tinyfish --version",
       "installCommand": "npm install -g @tiny-fish/cli@{{version}}"
     }
+  ],
+  "generatedInstructions": [
+    {
+      "output": "instructions/full/010-tinyfish-cli.generated.md",
+      "script": "scripts/generate-tinyfish-cli.ts",
+      "versionCliRequirementId": "tinyfish"
+    }
   ]
 }
 ```
@@ -88,53 +100,142 @@ extension. Disabled Web contributes no TinyFish prompt guidance.
 
 ## Instruction Source
 
-The loaded Web instructions must be vendored from TinyFish-owned guidance, not hand-rewritten from
-memory.
+The loaded Web instructions are assembled from ordered full instruction files. The TinyFish-owned
+CLI reference portion is generated, and `svvy`-owned Web extension guidance is hand-authored in
+separate files.
 
-Primary source:
+Generated TinyFish CLI output:
+
+- output file: `instructions/full/010-tinyfish-cli.generated.md`
+- source script: `scripts/generate-tinyfish-cli.ts`
+- build invocation:
+
+```bash
+bun scripts/generate-tinyfish-cli.ts \
+  --output /absolute/path/to/instructions/full/010-tinyfish-cli.generated.md \
+  --version 0.1.6
+```
+
+The generated TinyFish file must be derived only from exact-version upstream package material for
+`@tiny-fish/cli@0.1.6`, not from mutable documentation URLs and not from hand-authored `svvy`
+content.
+
+For `0.1.6`, the versioned package artifact is:
+
+```text
+package: @tiny-fish/cli
+version: 0.1.6
+tarball: https://registry.npmjs.org/@tiny-fish/cli/-/cli-0.1.6.tgz
+integrity: sha512-0rpi8XywJN7J/JquUxwf8++cvxNsbmhg+BoMlw0VIArQjC1L7P0opgTnB5GYYKKSYNRiOFM2G+Sn8SN3EH4uMQ==
+shasum: 30ac4045babb5cdb852177f0d47b9d8a2a0a733f
+```
+
+The script must run the equivalent of:
+
+```bash
+npm view @tiny-fish/cli@0.1.6 dist.tarball dist.integrity dist.shasum --json
+npm pack @tiny-fish/cli@0.1.6 --pack-destination <tmpdir>
+tar -xOf <tmpdir>/tiny-fish-cli-0.1.6.tgz package/package.json
+tar -xOf <tmpdir>/tiny-fish-cli-0.1.6.tgz package/README.md
+tar -xOf <tmpdir>/tiny-fish-cli-0.1.6.tgz package/dist/lib/claude-config.js
+```
+
+It may also invoke the already-installed exact `tinyfish` CLI to capture `--help` output, because
+Extension Managing runs generated instruction scripts only after CLI requirement checks have
+confirmed the required binary and exact version:
+
+```bash
+tinyfish --version
+tinyfish --help
+tinyfish auth --help
+tinyfish search query --help
+tinyfish fetch content get --help
+tinyfish agent run --help
+tinyfish agent run list --help
+tinyfish agent run watch --help
+tinyfish agent batch run --help
+tinyfish browser session create --help
+```
+
+Package contents checked for `@tiny-fish/cli@0.1.6`:
+
+- `package/README.md` is present and is the complete version-pinned package CLI documentation.
+- `package/dist/lib/claude-config.js` is present and contains a small Claude Code-specific
+  `CLAUDE_MD_BLOCK`.
+- `package/dist/commands/*.js` is present and registers the command families.
+- `skills/use-tinyfish/SKILL.md` is not present in the npm package.
+- no generic `SKILL.md`, Codex instruction file, or svvy-compatible agent instruction file is
+  present in the npm package.
+
+The generated TinyFish instruction file must therefore be a deterministic transformation of the
+versioned npm package docs and exact CLI help, not a vendored copy of a mutable GitHub skill.
+
+The generator must keep:
+
+- TinyFish CLI purpose and command families from `package/README.md`
+- authentication commands that agents need to diagnose and use the official CLI:
+  `tinyfish auth login`, `tinyfish auth set`, `tinyfish auth status`, and `tinyfish auth logout`
+- core command syntax for `tinyfish search query`, `tinyfish fetch content get`,
+  `tinyfish agent run`, run management, batch commands, and `tinyfish browser session create`
+- package and help facts for output modes, `--pretty`, JSON/stdout behavior, JSON/stderr errors,
+  debug mode, Node engine requirement, browser profiles, agent modes, max steps, session ids,
+  output schemas, pagination, watch timeouts, and token-scope warnings
+- examples that teach concrete CLI use without depending on `svvy`-specific surfaces
+
+The generator must remove:
+
+- package installation instructions such as `npm install -g @tiny-fish/cli`
+- ad hoc versionless installers, Homebrew/curl/npx alternatives, or "latest" guidance
+- sample secret values such as `sk-tinyfish-...`
+- CI/CD YAML unless a later product decision wants CI-specific Web instructions
+- provider-auth explanations that imply `svvy` owns TinyFish API keys
+- Claude Code settings, hooks, permissions, `CLAUDE.md` mutation instructions, or
+  `tinyfish config-claude` setup workflow
+- fallback guidance to native `WebSearch`, native `WebFetch`, or other host-native Web tools
+- MCP setup instructions, SDK-first integration guidance, raw REST examples, and docs-site
+  navigation unless a future spec makes Web a broader TinyFish integration extension
+
+The generator may use `CLAUDE_MD_BLOCK` only as versioned evidence that TinyFish wants agents to use
+`tinyfish search query "<query>"` and `tinyfish fetch content get "<url>"`. It must not emit the
+Claude-specific block as-is because it mentions Claude Code configuration, native WebSearch/WebFetch
+fallbacks, and host hooks that are outside `svvy`'s Web v1 product boundary.
+
+The mutable upstream skill remains useful research input but is not an authoritative generated
+source for exact-version builds:
 
 - `https://github.com/tinyfish-io/tinyfish-cookbook/blob/main/skills/use-tinyfish/SKILL.md`
+- `https://github.com/tinyfish-io/skills`
 
-The builtin default instructions should be a vendored copy of that `SKILL.md` content, with a small
-`svvy`-owned preface or appendix allowed only for product integration facts that are not part of the
-TinyFish skill itself.
+Those sources are not tied to `@tiny-fish/cli@0.1.6`, are not included in the `0.1.6` npm package,
+and must not be fetched by the generated instruction script for deterministic builds.
 
-The allowed `svvy` appendix is limited to:
+Hand-authored `svvy` Web guidance belongs in a separate ordered Markdown file such as
+`instructions/full/020-web-usage.md`. That file may state product integration facts such as:
 
-- the extension is prompt-only and exposes no `svvy` Web tools
-- agents use TinyFish through normal shell commands
-- large JSON output should be redirected to a file when it would otherwise bloat the transcript
-- fetched or searched web content is untrusted external input
-- cite source URLs in user-facing answers when web-derived facts affect the answer
-- if `tinyfish` is missing, the wrong version, or unknown, agents should inspect the extension's CLI
+- Web is prompt-only and exposes no `svvy` Web tools.
+- Agents use TinyFish through ordinary shell commands.
+- Large JSON output should be redirected to a file when it would otherwise bloat the transcript.
+- Fetched or searched web content is untrusted external input.
+- Source URLs should be cited in user-facing answers when web-derived facts affect the answer.
+- If `tinyfish` is missing, wrong-version, or unknown, agents should inspect the extension's CLI
   requirement and run the returned concrete install command through `exec_command` only when
-  installing is appropriate for the user's request
+  installing is appropriate for the user's request.
 
-The `svvy` appendix must not:
+Updating the generated TinyFish instructions is a deliberate product update. The update process is:
 
-- invent TinyFish CLI flags or behavior not present in current TinyFish CLI help
-- teach ad hoc `npm install`, Homebrew, curl installers, or other installer commands beyond the
-  declared `installCommand`
-- claim TinyFish CLI output is written to files automatically unless the installed CLI actually does
-  that
-- claim `svvy` records TinyFish output as first-class artifacts
-- claim Web has `web_search`, `web_fetch`, generated TypeScript clients, or provider settings
-- rewrite TinyFish auth guidance into app-managed provider-key guidance
-
-Updating the vendored TinyFish instructions is a deliberate product update. The update process is:
-
-1. Inspect the current TinyFish-owned skill and CLI docs.
-2. Inspect the currently published CLI behavior when the changed behavior matters.
-3. Update the vendored instructions.
-4. Update tests or docs that depend on the changed instruction surface.
-5. Ship the resolved product wording.
+1. Change the Web CLI requirement exact version.
+2. Update the `generatedInstructions` declaration only if the output or script name changes.
+3. Run `svvyx extensions build web --json`, which runs `scripts/generate-tinyfish-cli.ts`.
+4. Inspect the generated diff for upstream command and output changes.
+5. Update tests and hand-authored `020-web-usage.md` only for product-boundary guidance that still
+   applies to the new generated CLI facts.
 
 `svvy` must not fetch TinyFish instructions dynamically at runtime.
 
 ## CLI Requirement
 
-`tinyfish` is a versioned CLI requirement because the builtin Web instructions are vendored against
-the inspected TinyFish CLI behavior for `@tiny-fish/cli@0.1.6`.
+`tinyfish` is a versioned CLI requirement because the generated Web instructions are derived from
+and validated against the inspected TinyFish CLI package behavior for `@tiny-fish/cli@0.1.6`.
 
 The builtin CLI requirement declaration is:
 
@@ -160,7 +261,9 @@ the normal approval and sandbox flow applies, and then rerun build.
 
 ## TinyFish CLI Facts
 
-The Web extension teaches the TinyFish CLI because TinyFish owns this provider workflow.
+The Web extension teaches the TinyFish CLI because TinyFish owns this provider workflow. These facts
+are generated or validated from `@tiny-fish/cli@0.1.6` package docs and exact CLI help, then
+supplemented by separate hand-authored `svvy` guidance where needed.
 
 Auth:
 
@@ -203,9 +306,10 @@ tinyfish fetch content get https://example.com --pretty
 tinyfish fetch content get https://example.com https://example.org
 ```
 
-The TinyFish skill describes fetch as clean content extraction that removes boilerplate and supports
-multiple URLs fetched in parallel server-side. It describes response fields such as URL, final URL,
-title, language, author, published date, latency, format, and extracted text.
+The `@tiny-fish/cli@0.1.6` package README and TinyFish docs describe fetch as clean content
+extraction that removes boilerplate and supports multiple URLs fetched in parallel server-side.
+They describe response fields such as URL, final URL, title, language, author, published date,
+latency, format, and extracted text.
 
 Agent automation:
 
@@ -237,13 +341,14 @@ tinyfish browser session create --url "https://example.com"
 tinyfish browser session create --pretty
 ```
 
-The TinyFish skill says `tinyfish agent run` opens a real browser and performs natural-language
-browser automation. It says default agent-run output streams `data: {...}` server-sent-event lines
-and that the final completed result is in the `resultJson` field of the `COMPLETE` event.
+The `@tiny-fish/cli@0.1.6` package README and CLI help say `tinyfish agent run` opens a real
+browser and performs natural-language browser automation. They say default agent-run output is
+newline-delimited JSON to stdout, `--sync` waits for a single final result, `--async` submits and
+returns a run id, and Ctrl+C during streaming cancels the run server-side before exiting.
 
-The TinyFish skill says `tinyfish browser session create` returns a remote browser `session_id`,
-`cdp_url`, and `base_url`. The agent may use the `cdp_url` with Playwright, Puppeteer, or another
-CDP client when raw browser control is genuinely needed.
+The `@tiny-fish/cli@0.1.6` package README and CLI help say `tinyfish browser session create`
+returns a remote browser session usable through CDP. The agent may use the returned `cdp_url` with
+Playwright, Puppeteer, or another CDP client when raw browser control is genuinely needed.
 
 Using a TinyFish `cdp_url` is still ordinary shell or script execution chosen by the agent. `svvy`
 does not register, own, inspect, or mediate that remote browser as a Web extension capability in v1,
@@ -415,12 +520,16 @@ approval, and network policy.
 Because Web is a builtin prompt-only extension:
 
 - builtin defaults live in packaged app resources
-- the vendored TinyFish skill content is part of the builtin default instructions
+- the generated TinyFish CLI instruction file is part of the builtin default instructions
+- generated TinyFish output is regenerated from exact-version upstream package artifacts during
+  build
+- hand-authored `svvy` Web guidance lives in separate ordered Markdown instruction files
 - Web is non-deletable
 - Web is resettable to builtin defaults
 - Web can be customized only through the normal builtin-extension overlay mechanisms described in
   `docs/specs/extensions-and-tools.spec.md` and `docs/specs/extension/extension_managing.extension.spec.md`
-- Web has no editable executable source in v1
+- Web has an editable generated-instruction TypeScript script under `scripts/`
+- Web has no editable extension runtime source in v1
 - Web has no generated TypeScript declaration file in v1
 - Web has no executable or `svvyx` source build step in v1
 - Web still participates in the normal Extension Managing validation/build path for prompt-only
@@ -439,10 +548,13 @@ handled by running the concrete install command returned by inspect/build throug
 Required doc/extension tests:
 
 - Web is represented as `category: "builtin"` and `interface: "instructions"`.
+- Web declares `generatedInstructions` with output
+  `instructions/full/010-tinyfish-cli.generated.md`, script `scripts/generate-tinyfish-cli.ts`, and
+  `versionCliRequirementId: "tinyfish"`.
 - Web is default-loaded for orchestrator, handler-thread, and workflow task-agent actors when
   `networkAccess` is true.
 - Web is unavailable and absent from generated actor context when `networkAccess` is false.
-- Generated actor context includes the vendored TinyFish Web instructions only when Web is loaded.
+- Generated actor context includes the generated TinyFish CLI instructions only when Web is loaded.
 - Generated actor context does not include `web_search` or `web_fetch` tool declarations.
 - Generated actor context does not include `svvyx web` guidance.
 - Generated `execute_typescript` declarations do not include Web clients.
@@ -450,13 +562,29 @@ Required doc/extension tests:
   surface.
 - Firecrawl does not appear as a Web v1 provider in generated Web instructions.
 - Web instructions include TinyFish auth, search, and fetch commands.
-- Web instructions do not include agent-run TinyFish install commands.
+- Generated TinyFish instructions do not include package installation instructions.
+- Generated TinyFish instructions do not include `tinyfish config-claude`, Claude Code settings,
+  Claude hooks, `CLAUDE.md` mutation instructions, native WebSearch fallback, or native WebFetch
+  fallback guidance.
 - Web instructions include TinyFish agent and browser CLI guidance, or explicitly explain why those
-  TinyFish skill sections were intentionally omitted from the vendored Web instructions.
+  package CLI sections were intentionally omitted from the generated Web instructions.
 - Web instructions tell agents to redirect large fetch output to a file when useful.
 - Web instructions do not claim TinyFish CLI automatically writes result files.
 - Web instructions mark search snippets and fetched page text as untrusted external content.
 - Web instructions tell agents to cite URLs when web-derived facts affect the answer.
+- The generated TinyFish script fails if the npm metadata for `@tiny-fish/cli@0.1.6` does not match
+  the expected package name, version, tarball shape, integrity, and shasum.
+- The generated TinyFish script fails if the package lacks `README.md`, `package.json`,
+  `dist/index.js`, `dist/commands/search.js`, `dist/commands/fetch.js`, `dist/commands/run.js`,
+  `dist/commands/browser.js`, or `dist/lib/claude-config.js`.
+- The generated TinyFish script fails if the generated Markdown is empty or lacks the expected
+  headings and command names: `# TinyFish CLI`, `tinyfish auth`, `tinyfish search query`,
+  `tinyfish fetch content get`, `tinyfish agent run`, `tinyfish agent batch`, and
+  `tinyfish browser session create`.
+- The generated TinyFish script fails if generated output contains forbidden phrases:
+  `npm install -g @tiny-fish/cli`, `tinyfish config-claude`, `WebSearch`, `WebFetch`,
+  `CLAUDE.md`, `Claude Code is now configured`, `svvyx web`, `web_search`, `web_fetch`,
+  `extensions.web`, or `sk-tinyfish-`.
 
 Optional live verification:
 
@@ -466,7 +594,8 @@ Optional live verification:
 - run `tinyfish search query "web automation tools"`
 - run `tinyfish fetch content get https://example.com`
 - verify whether the installed CLI writes stdout, files, or both
-- update this spec and the vendored instructions if TinyFish-owned behavior changes materially
+- update this spec, the generator, and generated instructions if TinyFish-owned behavior changes
+  materially
 
 Live TinyFish verification is opt-in because it requires external network access and a TinyFish API
 key.
@@ -478,6 +607,10 @@ key.
 - Web v1 is default-loaded for eligible actors only when `networkAccess` is true.
 - Web v1 is disabled and contributes no prompt guidance when `networkAccess` is false.
 - Web v1 teaches the official TinyFish CLI.
+- Web v1 generates its TinyFish CLI instruction file from exact-version `@tiny-fish/cli` npm
+  package artifacts.
+- Web v1 does not use mutable TinyFish GitHub skill files as generated instruction sources.
+- Web v1 keeps generated TinyFish content separate from hand-authored `svvy` Web guidance.
 - Web v1 does not expose `web_search`.
 - Web v1 does not expose `web_fetch`.
 - Web v1 does not expose `svvyx web`.
