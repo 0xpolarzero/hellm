@@ -2,11 +2,11 @@
 
 This document is a companion to the [PRD](./prd.md).
 
-It describes the current product-level request flow for `svvy`.
+It describes the product-level request flow for `svvy`.
 
 ## Core Shape
 
-The adopted model is one shared command system:
+The model is one shared command system:
 
 ```text
 message -> target surface -> turn -> tool call -> command -> handler -> events -> structured state -> UI

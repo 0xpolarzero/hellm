@@ -149,7 +149,7 @@ The best model is:
 
 ## Recommended API Semantics
 
-The API should remain:
+The API contract is:
 
 ```ts
 type ThreadStartHistoryMode = "isolated" | "forked";

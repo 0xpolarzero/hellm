@@ -94,7 +94,7 @@ exec_command({
 })
 ```
 
-There is no separate `svvyx` tool. Do not invent an app client or a custom shell wrapper.
+`svvyx` extensions are invoked only as ordinary `exec_command` shell commands.
 
 Use the specific loaded extension instructions for domain command names and examples. Use this
 generic guidance for common Incur CLI behavior.

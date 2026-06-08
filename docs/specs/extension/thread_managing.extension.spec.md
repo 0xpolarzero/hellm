@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-06-08
-- Status: adopted direction
+- Status: authoritative product spec
 
 ## Scope
 
@@ -158,9 +158,10 @@ Rules:
 - ordinary handler replies do not create episodes
 - the orchestrator reconciles reports through a typed queue notification
 
-## Rejected Shapes
+## Public API Boundary
 
-The current design rejects:
+The thread-control API surface is limited to the orchestrator and handler-thread tools defined in
+this spec. The public thread API excludes:
 
 - `thread_handoff`
 - `thread_resume`

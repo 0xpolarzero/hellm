@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-06-02
-- Status: future product spec for explicit prompt macros
+- Status: product spec for explicit prompt macros
 - Related specs:
   - `docs/specs/ambient-agent-resources-baseline.spec.md`
   - `docs/specs/composer-mention-links.spec.md`
@@ -51,8 +51,8 @@ Pi prompt template files:
 - user templates: `~/.pi/agent/prompts/*.md`
 - workspace templates: `<workspace>/.pi/prompts/*.md`
 
-Pi prompt-template directory discovery is non-recursive. `svvy` must not scan arbitrary nested
-directories under a pi `prompts` directory unless a later explicit integration adds that behavior.
+Pi prompt-template directory discovery is non-recursive. Nested directories under a pi `prompts`
+directory are unsupported by this spec.
 
 Codex baseline:
 
@@ -60,8 +60,8 @@ Codex baseline:
 - do not parse `SKILL.md` as a Snippet source
 - do not reinterpret Codex plugins, skill bundles, or generated skill commands as Snippets
 
-If Codex exposes a supported standalone Markdown prompt-snippet or custom-command path that is not a
-skill, plugin, or executable package interface, it can be added to this discovery list later.
+Codex standalone Markdown prompt-snippet or custom-command paths are outside this spec until a
+supported non-skill, non-plugin, non-executable package interface is specified.
 
 ## Discovered Versus Managed Snippets
 

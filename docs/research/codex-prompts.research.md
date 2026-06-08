@@ -174,7 +174,7 @@ Codex tool definitions carry a large amount of behavioral policy. The companion 
 
 Important examples:
 
-- Shell tools tell the agent to use the working-directory parameter, avoid `cd` unless needed, use `bash -lc` for legacy shell, and follow PowerShell-specific examples on Windows.
+- Shell tools tell the agent to use the working-directory parameter, avoid `cd` unless needed, use `bash -lc` for POSIX-style shell execution, and follow PowerShell-specific examples on Windows.
 - Exec tools expose `sandbox_permissions`, `justification`, `prefix_rule`, `yield_time_ms`, `max_output_tokens`, PTY options, and login-shell behavior.
 - `apply_patch` uses either a freeform grammar tool or JSON tool depending on model/tool mode. The JSON description includes the full patch language, file operation headers, hunk rules, and the reminder that file paths must be relative.
 - `update_plan` requires a list of steps and statuses and enforces at most one `in_progress` item.
@@ -223,9 +223,10 @@ Memory read injects a developer prompt that tells normal agents when to consult 
 
 The inspected commit also includes goal continuation and budget-limit templates, an agent orchestrator template, and an older experimental multi-agent prompt. These are not the normal base prompt but they are behavior-shaping prompt assets and are preserved in the corpus.
 
-## Legacy Or Standalone Prompt Files
+## Standalone Or Reference Prompt Files
 
-The repository still contains standalone prompt markdowns under `codex-rs/core/`, including:
+The inspected repository snapshot contains standalone prompt markdowns under `codex-rs/core/`,
+including:
 
 - `gpt_5_codex_prompt.md`
 - `gpt_5_1_prompt.md`
@@ -234,7 +235,10 @@ The repository still contains standalone prompt markdowns under `codex-rs/core/`
 - `gpt-5.2-codex_prompt.md`
 - `prompt_with_apply_patch_instructions.md`
 
-At this snapshot, the active runtime catalog is `codex-rs/models-manager/models.json`; these standalone files are best treated as legacy, tests/reference material, or historical prompt assets unless a specific call path references them. They are still included verbatim in the companion corpus because they document prior behavior and may matter for migrations or comparisons.
+At this snapshot, the active runtime catalog is `codex-rs/models-manager/models.json`; these
+standalone files are inactive reference prompt assets unless a specific call path references them.
+They are included verbatim in the companion corpus because they document prompt material that may
+matter for source comparison.
 
 ## Implications For svvy
 

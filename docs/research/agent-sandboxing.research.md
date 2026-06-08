@@ -725,7 +725,7 @@ If hostile repo content, web content, issue text, or tool output can persuade th
 
 ## Design Implications for `svvy`
 
-`svvy` already has a strong conceptual advantage because the PRD distinguishes:
+The PRD distinguishes:
 
 - orchestrator
 - handler threads
@@ -873,15 +873,16 @@ The mental model is:
 3. Prefer brokered outbound auth where possible.
 4. Distinguish model-provider auth from tool-provider auth from git auth.
 
-The current extension design uses app-managed env values injected only into the specific trusted
-extension command or generated extension-client invocation. It deliberately defers egress proxying,
-per-run proxy tokens, and network-policy enforcement for extension secrets.
+The v1 extension secret scope uses app-managed env values injected only into the specific trusted
+extension command or generated extension-client invocation. Egress proxying, per-run proxy tokens,
+and network-policy enforcement for extension secrets are outside the v1 scope unless added to the
+PRD.
 
 ### Recommended trust model for repo assets
 
 Before workspace trust is established, `svvy` should not auto-run or auto-load:
 
-- `.svvy` workflow assets
+- workspace `.smithers/` Smithers assets
 - repo-local MCP server config
 - hooks
 - shell rc modifications
@@ -925,13 +926,15 @@ Another useful short version is:
 
 `svvy` should let the model write code against narrow typed APIs, run that code inside an isolated task runtime, and keep secrets, egress, approvals, and sync-back under host policy rather than model control.
 
-## Follow-up Questions
+## Open Product Decisions
 
-The research suggests several product decisions still need explicit resolution:
+The research identifies product decisions that belong in PRD or progress docs before they become
+requirements:
 
 1. When should `svvy` prefer local worktree execution versus remote task sandboxes?
 2. Will `execute_typescript` be a host API over the local machine, a guest API inside the sandbox, or a policy front-end that can target both?
-3. Will handler threads own sandbox lifecycle directly, or will Smithers own the sandbox and expose it through `smithers_*` tools?
+3. How should handler threads, workflow task agents, and official Smithers CLI execution divide
+   sandbox lifecycle ownership?
 4. What is the minimum viable secret-brokering model for the first shipped version?
 5. Which operations are never permitted from workflow task agents regardless of approval state?
 6. What is the default sync mode for code changes produced by autonomous workflows?

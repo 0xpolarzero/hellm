@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-06-08
-- Status: adopted direction
+- Status: authoritative product spec
 
 ## Scope
 

@@ -11,9 +11,9 @@
   - define user-answer queue delivery and side-panel behavior
   - define which state is file-backed extension source and which state is product-state-backed
 
-This spec replaces the previous draft/native `wait` tool as the model-facing way for orchestrator
-and handler-thread agents to ask the user for missing intent. Generic waiting state remains product
-state, but there is no builtin model-facing native tool named `wait`.
+`request_user_input` is the model-facing way for orchestrator and handler-thread agents to ask the
+user for missing intent. Generic waiting state remains product state, and model-facing clarification
+uses this tool.
 
 ## Source References
 
@@ -444,7 +444,7 @@ The active variant instructions must tell agents:
 - ask one to three short questions
 - always provide the default through exactly one recommended option or a freeform `defaultAnswer`
 - continue using the returned default result
-- treat any later deferred answer as normal queued answer follow-up and reassess if it materially changes the
+- treat any later queued answer as normal answer follow-up and reassess if it materially changes the
   work
 
 ## Blocking Variant Semantics
@@ -475,7 +475,7 @@ Blocking requests must:
 
 Blocking requests must not:
 
-- create later deferred answer queue items after the tool result is delivered
+- create queued answer items after the tool result is delivered
 - expose timeout settings in the tool result
 - ask the agent to poll for answers
 - model timeout as a Smithers wait
@@ -540,14 +540,14 @@ Submission controls:
 - Enter queues the answer immediately with steering semantics
 - Cmd+Enter queues the answer for after-turn delivery
 - visible buttons provide the same two actions
-- in blocking mode, either action resolves the waiting tool call; there is no later queued deferred
+- in blocking mode, either action resolves the waiting tool call; there is no later queued
   answer
 - in nonblocking mode, either action creates a durable `request_user_input_answer` queue item
 
 The panel must keep unanswered requests visible even if no Dockview panel currently shows the owning
 surface. Ownership is by surface, not by panel.
 
-## Deferred Answer Queue Item
+## Queued Answer Item
 
 In nonblocking mode, a later user answer becomes a durable surface queue item:
 
@@ -852,9 +852,10 @@ Minimal available instructions should explain that loading the extension provide
 `request_user_input` tool for bounded user clarification. They must not mention inactive variant
 behavior.
 
-## Rejected Shapes
+## Public API Boundary
 
-These shapes are not part of the current design:
+The accepted model-facing API is the `request_user_input` schema defined in this spec. The runtime
+rejects inputs outside that schema, including these invalid shapes:
 
 ```ts
 wait({ reason, resumeWhen });
@@ -865,7 +866,7 @@ request_user_input({ questions: [{ title, question, options, defaultAnswer }] })
 request_user_input({ questions: [{ title, question, options: [{ label: "Other" }] }] });
 ```
 
-Rejected behavior:
+Invalid behavior:
 
 - agent-authored question ids
 - generated question titles
@@ -873,5 +874,5 @@ Rejected behavior:
 - model-visible `userMayRespondLater`
 - renderer-only answer state without durable records
 - a second non-queue steering path
-- keeping a model-facing `wait` alias for compatibility
+- model-facing `wait` aliases
 - workflow task agents asking the user directly by default

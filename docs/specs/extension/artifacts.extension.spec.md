@@ -243,7 +243,7 @@ Rules:
 - active artifact names must be unique within the same `(sessionId, immutable)` storage scope.
   Creating an artifact whose target artifact path already belongs to an active artifact or already
   exists on disk returns `ARTIFACT_EXISTS`.
-- deleted artifact names may be reused only after the old artifact file is absent and no active
+- deleted artifact names may be reused only after the prior artifact file is absent and no active
   artifact record owns the target path.
 - ordinary command sandboxes receive write access only to the active session artifact directory for
   the current session. They do not receive write access to any other session's artifact directory.
@@ -783,7 +783,8 @@ Rules:
 - Explicit `create --path` copies exact source bytes into the artifact store. It does not transform or
   redact artifact file content, and `sha256` is computed over the artifact bytes after copy.
 - Explicit `create --name` without `--path` creates an empty artifact file. Its initial `sha256` is
-  the SHA-256 digest of the empty file unless a later ordinary file edit changes the artifact content.
+  the SHA-256 digest of the empty file and changes only when ordinary artifact editing changes the
+  artifact content.
 - Command output, errors, logs, command facts, generated TypeScript declarations, generated-client
   results, and metadata pass through the same extension redaction layer as other `svvyx` extension
   invocations.

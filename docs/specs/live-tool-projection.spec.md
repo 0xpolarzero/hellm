@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-06-08
-- Status: adopted direction
+- Status: authoritative product spec
 
 ## Scope
 
@@ -61,8 +61,7 @@ Final facts include changed files, created files, deleted files, and errors.
 `execute_typescript` is one parent command.
 
 Generated extension-client calls inside the snippet are child commands under that parent. Child
-commands do not become top-level transcript cards unless a later UX decision explicitly promotes
-them.
+commands render only under their parent command and do not create top-level transcript cards.
 
 ## Workflows Commands
 

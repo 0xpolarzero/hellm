@@ -8,7 +8,7 @@ Ship `svvy` as an Electrobun desktop coding app with a pi-backed runtime, a visi
 
 - Date: 2026-04-22
 - Status: target product PRD
-- Scope: this document defines the intended shipped product, not just the current bootstrap implementation
+- Scope: this document defines the intended shipped product
 
 ## Product Summary
 
@@ -41,7 +41,7 @@ The intended feel is closer to Slate than to stock pi:
 The shipped product must let a user:
 
 - open a local repository in a native desktop app and work in long-lived coding sessions
-- keep important sessions visible through pinning, move old sessions into a single collapsed archive without deleting their history, and expose a confirmed hard-delete action only from the session row context menu
+- keep important sessions visible through pinning, move archived sessions into a single collapsed archive without deleting their history, and expose a confirmed hard-delete action only from the session row context menu
 - understand what the system is doing without reconstructing state from raw logs
 - inspect structured app logs with unread counts, filters, virtualized long-scroll browsing, explicit Live/Frozen tail behavior, redacted details, normalized errors, and related product links when app behavior needs attention
 - inspect durable outputs from each meaningful unit of work
@@ -170,7 +170,7 @@ Workspace-local Smithers authoring lives in:
 <workspace>/.smithers/
 ```
 
-This is the only workspace workflow source location in the adopted base design. `svvy` must not create or preserve workspace-local svvy workflow source layouts.
+This is the only workspace workflow source location.
 
 The handler thread remains the normal delegated surface for workflow work because it owns the delegated objective and can use Shell, Apply Patch, Smithers prompt guidance, and the Workflows extension together.
 
@@ -383,8 +383,7 @@ objective should begin with a non-default extension state. `thread_start` owns t
 override on each `threads[]` item and starts normal handler threads with the default handler runtime
 shape plus the requested extension binding before each first turn. `thread_start` always returns a
 durable `threadGroupId` at top level; individual returned thread rows do not repeat it. Exact input,
-output, and rejected legacy shapes are defined in
-`docs/specs/extension/thread_managing.extension.spec.md`.
+and output are defined in `docs/specs/extension/thread_managing.extension.spec.md`.
 
 Smithers and Workflows are different from native control tools.
 
@@ -662,7 +661,7 @@ Rules:
 
 - backend RPC calls and backend-to-renderer surface payloads must carry an explicit surface target rather than overloading `session.id`
 - `session.id` inside session summaries means `workspaceSessionId`
-- if the orchestrator surface currently happens to reuse the same string for `workspaceSessionId` and `surfacePiSessionId`, callers must treat that as an implementation detail rather than a shared identity contract
+- `workspaceSessionId` and `surfacePiSessionId` are distinct contract fields even when two values happen to match
 - `panelId` must never be used as a session id, surface id, or thread id
 
 ### Live Surface Runtime
@@ -936,7 +935,7 @@ Agent-facing artifact listing defaults to the current thread or session and may 
 Command-addressed artifact lookup remains a product selector and inspector concern rather than a
 primary `svvyx artifacts list` flag.
 
-They may later be surfaced through an episode or another read model, but they should not depend on transcript parsing.
+Episode and read-model projections must not depend on transcript parsing.
 
 ### Worktree
 
@@ -972,7 +971,15 @@ Read APIs and renderer code must not compensate for missing lifecycle writes wit
 
 If the target surface already has an active prompt lock, the composer submit does not enter this flow immediately. It creates a surface-local queued-message record and waits for the same `surfacePiSessionId` to become available. Delivery of that queued message then enters the normal flow as a real user message and normal turn for that surface.
 
-Committed user transcript messages expose a copy action for their visible text and a separate edit action. When the user edits a committed user transcript message, the selected transcript message stays visibly marked while its text is loaded into the composer. If the composer already contains text or attachments, `svvy` opens an app dialog warning that the edit will replace the current draft and includes a `TODO:` note pointing toward preserving it through the planned backlog flow before continuing. The edited send targets the same `surfacePiSessionId` and uses pi's session tree semantics to move the active surface leaf to the parent of the original user message before submitting the revised user message. The old branch remains historical session data, but the visible live surface continues from the new edited branch. This is not a fork, queued-message restore, transcript rewrite, or hidden prose reconstruction.
+Committed user transcript messages expose a copy action for their visible text and a separate edit
+action. When the user edits a committed user transcript message, the selected transcript message
+stays visibly marked while its text is loaded into the composer. If the composer already contains
+text or attachments, `svvy` opens an app dialog warning that the edit will replace the current draft
+before continuing. The edited send targets the same `surfacePiSessionId` and uses pi's session tree
+semantics to move the active surface leaf to the parent of the original user message before
+submitting the revised user message. The original branch remains historical session data, and the
+visible live surface continues from the edited message branch. This is not a fork, queued-message
+restore, transcript rewrite, or hidden prose reconstruction.
 
 ### Main Orchestrator Loop
 
@@ -1031,7 +1038,7 @@ If a thread already handed control back earlier:
 
 - a direct follow-up question may be answered inside that same thread without reopening the orchestrator loop
 - explicit orchestrator re-engagement through `thread_followup({ activate: true })` may move the concluded thread back to an active objective state for a new objective span
-- a later return to the orchestrator should produce another conclusion episode
+- each return to the orchestrator should produce another conclusion episode
 
 ### Clarification And Waiting
 
@@ -1095,15 +1102,22 @@ Active row subtitles blink only for agent work that is currently running, not fo
 
 The palette has one shell, one input, and one result interaction model. The leading `>` input prefix selects command mode. `Cmd+Shift+P` opens the shared palette with `>` already inserted, and command mode discovers and executes product actions, including New orchestrator creation and session switching, session pin/archive actions, opening focused session/thread/artifact/Workflows surfaces, handler-thread surfaces, pane and layout actions when panes exist, settings and Agents profile actions when those features exist, and future product actions as they are added.
 
-`Cmd+P` opens the same shared palette with an empty input for file quick-open search mode. For now, file quick-open is intentionally a no-op or placeholder because file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces are not yet implemented. It must not fabricate file surfaces or introduce an ad hoc file browsing path. Typing `>` into the quick-open input switches the already-open palette into command mode, and deleting the prefix switches it back to quick-open behavior.
+`Cmd+P` opens the same shared palette with an empty input for reserved file quick-open mode. File
+quick-open has disabled or empty results until file surfaces are part of the product contract.
+Typing `>` into the quick-open input switches the already-open palette into command mode, and
+deleting the prefix switches it back to quick-open behavior.
 
-When implemented, the command palette UI should use `cmdk-sv` from `https://www.cmdk-sv.com/` as the Svelte command menu primitive. Its docs describe it as a "fast, composable, unstyled command menu for Svelte." `cmdk-sv` is the renderer menu primitive, not the source of product routing, runtime behavior, or command semantics.
+The command palette UI should use `cmdk-sv` from `https://www.cmdk-sv.com/` as the Svelte command menu primitive. Its docs describe it as a "fast, composable, unstyled command menu for Svelte." `cmdk-sv` is the renderer menu primitive, not the source of product routing, runtime behavior, or command semantics.
 
 The command palette is a prefix-driven shell/action surface within the shared palette. It is not an alternate execution engine, standalone shell, custom terminal loop, readline loop, alternate TUI stack, or parallel workflow abstraction. Palette actions route into the existing product model: sessions, panes, surfaces, orchestrator and handler turns, durable state, settings, Workflows visibility, and Agents profiles.
 
 Shell action controls that expose command-palette, quick-open, New orchestrator, sidebar, or pane actions use the product shortcut registry for user feedback and dispatch metadata. The registry owns stable shortcut action ids, labels, platform chords, compact and readable display strings, scope, input-typing policy, availability, and command routing metadata. TanStack Hotkeys is the renderer binding primitive that subscribes scoped shortcuts and applies the registry input policy; it is not the source of product command semantics. App launcher and shell command chords such as `Cmd+Shift+P`, `Cmd+P`, `Cmd+N` for New orchestrator in the focused pane, `Cmd+Shift+N` for New orchestrator in a new pane, sidebar toggle, `Cmd+Shift+1` for Logs, `Cmd+Shift+2` for Agents, `Cmd+Shift+3` for Context, and `Cmd+Shift+4` for Workflows remain available while workspace text inputs such as the composer are focused. Explicit labeled sidebar actions reveal compact in-button shortcuts immediately on hover or focus; the New orchestrator control also shows a delayed tooltip that explains click, `Cmd+N`, `Cmd`-click, `Cmd+Shift+N` placement, and profile-picker behavior. Icon-only or ambiguous controls may show explanatory action tooltips after 500 ms and include the readable shortcut when one exists. Native browser `title` tooltips are not the product feedback layer for these controls. Command palette and quick-open launchers live in the sidebar rather than duplicated in the top-right workspace chrome.
 
-When the shared palette is in command mode and the text after `>` does not match an existing command or action, pressing Enter creates a New orchestrator session and uses the text after `>` as the initial prompt. That prompt enters the normal orchestrator turn model; it does not bypass system prompt loading, prompt history, structured turn state, or live surface runtime ownership. Text entered without the leading `>` remains quick-open search text and must not create prompt sessions while file quick-open is still a placeholder.
+When the shared palette is in command mode and the text after `>` does not match an existing command
+or action, pressing Enter creates a New orchestrator session and uses the text after `>` as the
+initial prompt. That prompt enters the normal orchestrator turn model; it does not bypass system
+prompt loading, prompt history, structured turn state, or live surface runtime ownership. Text
+entered without the leading `>` remains quick-open search text and does not create prompt sessions.
 
 The default command-palette behavior is defined before choosing a Dockview target as normal current workspace and session routing. Once Dockview layout exists, placement rules belong to the pane-layout spec: command palette results that open sessions or surfaces default to a new Dockview panel, and `Cmd+Enter` opens into the currently focused panel.
 

@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-06-08
-- Status: adopted direction for workflow authoring support and saved Workflows visibility
+- Status: authoritative product spec
 - Scope of this document:
   - define how agents author Smithers workflows inside a workspace
   - define the app-global reusable Workflows source library
@@ -55,8 +55,8 @@ When an agent works on a repository workflow, ordinary Smithers files live under
   preload.ts
 ```
 
-This follows Smithers' own workflow-pack model. `svvy` must not create or preserve a separate
-workspace-local svvy authoring library for workflow source.
+This follows Smithers' own workflow-pack model. Workspace workflow authoring lives in `.smithers/`;
+reusable source lives in the app-global Workflows source library.
 
 Agents may freely inspect and edit workspace `.smithers/` source according to the active filesystem
 policy. They use normal coding tools such as shell inspection and `apply_patch`; they do not call a
@@ -173,15 +173,14 @@ operation. It must not rely on ambient global package resolution, `NODE_PATH`, p
 The app also links generated `@svvy/extensions` into `.smithers/node_modules` when workflow source
 imports extension objects from that package.
 
-If the link is stale or missing, app startup, workspace open, and `svvyx workflows build` should
-repair it when possible. A diagnostic or repair command may exist later, but agents should not need
-to run a manual link command during ordinary workflow authoring.
+If the link is stale or missing, app startup, workspace open, and `svvyx workflows build` repair it
+when possible. Agents do not run a manual link command during ordinary workflow authoring.
 
 ## Workflows Extension
 
 The Workflows extension is an Incur-backed builtin `svvyx` extension.
 
-It is the only app-owned Workflows command surface in this redesign. It does not run Smithers
+It is the only app-owned Workflows command surface. It does not run Smithers
 workflows.
 
 The command family is:
@@ -563,9 +562,9 @@ Generated Workflows guidance may mention:
 Generated Workflows guidance must not mention product workflow wrapper tools or workspace-local svvy
 workflow source layouts.
 
-## Rejected Shapes
+## Public API Boundary
 
-The following are explicitly not part of the adopted design:
+The Workflows public API is limited to the source-library command family defined above. It excludes:
 
 - workspace-local svvy source/runtime layouts as the reusable workflow base
 - model-facing workflow wrapper tools

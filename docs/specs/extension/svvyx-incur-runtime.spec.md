@@ -315,9 +315,11 @@ When a successful extension build changes actor-facing command contracts, instru
 declaration metadata, or generated TypeScript declarations, the normal extension context fingerprint
 and generated agent context refresh pipeline applies.
 
-## Rejected Runtime Designs
+## Runtime Boundary
 
-These designs are not adopted:
+The runtime contract is one stable app-owned `svvyx <extension-id> ...` dispatcher, actor-specific
+generated context, invocation-local explicit env injection, and generated TypeScript clients exposed
+only under `extensions.<id>` or `extensions["<id>"]`. The runtime boundary excludes:
 
 - generating a different `svvyx` executable per actor
 - treating `svvyx --help` as an actor-scoped available-extension catalog

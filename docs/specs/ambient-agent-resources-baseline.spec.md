@@ -3,14 +3,14 @@
 ## Status
 
 - Date: 2026-05-19
-- Status: working baseline for ambient agent resource handling
+- Status: product contract for ambient agent resource handling
 - Scope of this document:
   - define `svvy`-owned external instruction discovery
   - define ignored native prompt replacement files
   - define disabled ambient callable capabilities
   - define disabled runtime extensions and packages
   - define disabled ambient skills
-  - explicitly defer prompt macros and snippets
+  - define Snippets as explicit user-inserted prompt macros
   - define disabled ambient commands and hooks
   - define host UI and interaction resources as unsupported
   - define provider and model adapters as app-owned
@@ -19,10 +19,8 @@
   - define ambient runtime state import as unsupported
   - define the pi opt-outs needed for orchestrator, handler-thread, and workflow task-agent surfaces
 
-This is the narrow baseline. It intentionally does not design general settings UI for extensions,
-skills, packages, host plugins, MCP imports, provider adapters, credentials, themes, prompt macros,
-or execution policy. Other integrations can become separate first-class integrations later if there
-is demand.
+This baseline keeps behavior-changing ambient resources disabled unless a resource category has an
+explicit `svvy` integration, settings model, generated-context path, and actor/profile binding.
 
 ## Product Intent
 
@@ -251,10 +249,8 @@ separate manual warning or update flow.
 
 ### Pi Standards Opt-Out
 
-Pi currently has its own standards discovery. It checks `AGENTS.md` and `CLAUDE.md` through
-`getAgentsFiles()`, and its current helper chooses only the first matching candidate per directory.
-
-`svvy` does not use pi's standards as source of truth for external instructions.
+`svvy` uses its own external-instruction records as the source of truth for discovered standards
+files.
 
 For every pi-backed `svvy` actor, the pi resource loader must receive:
 
@@ -276,15 +272,13 @@ For pi, this includes:
 - `APPEND_SYSTEM.md`
 - `.pi/APPEND_SYSTEM.md`
 
-Baseline decision:
+Product contract:
 
 - ignore them completely
 - do not import them
-- do not show them as a supported compatibility surface
 - do not let pi append or replace prompt text with them
 
-Rationale: pi compatibility is not important enough to support this behavior. The product should
-focus on explicit `svvy` prompts and practical compatibility with Codex and Claude-style standards.
+Supported prompt sources are `svvy` generated prompts and supported external instruction records.
 
 For every pi-backed `svvy` actor, the resource loader must receive:
 
@@ -309,7 +303,7 @@ Examples:
 - extension-provided tools
 - host built-in tools
 
-Baseline decision:
+Product contract:
 
 - callable capabilities are product-owned
 - actors receive only tools explicitly registered by `svvy`
@@ -360,9 +354,9 @@ Baseline decision:
 - do not scan package directories for behavior
 - do not execute package code for discovery
 - do not expose package-provided tools, prompts, skills, themes, commands, hooks, UI, or providers
-- do not build package enable/disable UI yet
+- package enablement UI exists only for explicitly integrated package categories
 
-Future support must be a first-class `svvy` integration with explicit install and enablement UX.
+Package support requires a first-class `svvy` integration with explicit install and enablement UX.
 
 Pi risk:
 
@@ -422,8 +416,8 @@ Baseline decision:
 - do not execute or suggest skill scripts
 - do not import skills into Extensions or generated agent context automatically
 
-Future support should be explicit, likely as an import or enable flow that shows the source path and
-exact included files.
+Skill support requires an explicit import or enable flow that shows the source path and exact
+included files.
 
 Pi risk:
 
@@ -467,7 +461,7 @@ For pi-backed actors:
   available
 
 Claude and Codex runtimes are not invoked for prompt macro discovery or expansion. `svvy` reads
-supported Markdown files directly when the Snippets feature is implemented.
+supported Markdown files directly through the Snippets product contract.
 
 ## 7. Commands And Hooks
 
@@ -476,8 +470,8 @@ Commands are runtime actions registered by a host or extension.
 Hooks are automatic lifecycle handlers that run before, during, or after agent events such as prompt
 submission, tool calls, session start, compaction, provider requests, or shutdown.
 
-They are different from prompt macros, which are deferred in this design. Commands and hooks can
-execute code, route work, mutate input, block operations, modify tool
+They are different from Snippets prompt macros. Commands and hooks can execute code, route work,
+mutate input, block operations, modify tool
   arguments, modify tool results, inject context, or change UI/runtime behavior.
 
 Examples:
@@ -508,8 +502,8 @@ Baseline decision:
 palette actions, pane actions, sidebar actions, session actions, and explicit workflow or Smithers
 actions routed through `svvy` tools.
 
-Future support for host commands or hooks must be a separate first-class integration. It must show the
-source, lifecycle event, command text or handler identity, trust state, affected agent/profile
+Host command or hook support requires a separate first-class integration. It must show the source,
+lifecycle event, command text or handler identity, trust state, affected agent/profile
 configuration, and exact behavior surface before anything can run.
 
 ### Pi Commands And Hooks Opt-Out
@@ -581,8 +575,8 @@ Pi-specific rule:
 - keep `themesOverride: () => ({ themes: [], diagnostics: [] })`
 - keep `noExtensions: true` so extension-provided UI cannot load
 
-Future support is not planned. If the product ever wants theme or keybinding customization, it should
-be designed as native `svvy` settings rather than host compatibility.
+Theme and keybinding customization, when present, belongs in native `svvy` settings rather than host
+compatibility.
 
 ## 9. Provider And Model Adapters
 
@@ -619,8 +613,8 @@ registry and stream normalization surface. Supported provider choices and auth r
 metadata, modality metadata, and provider request quirks come from pi's normalized `Model` metadata
 and pi runtime APIs rather than a parallel `svvy` provider/model table.
 
-Future support should be an explicit import or native provider integration, not ambient host
-compatibility.
+Provider adapter support requires an explicit import or native provider integration, not ambient
+host compatibility.
 
 Pi-specific rule:
 
@@ -659,11 +653,11 @@ Baseline decision:
 - do not allow extensions, packages, hooks, or provider adapters to supply credentials
 
 Supported provider readiness must come from `svvy` settings and product-owned auth integrations.
-Settings UI must distinguish between credentials stored by `svvy` and any future explicit integration
-that intentionally connects to an existing host credential.
+Settings UI must distinguish between credentials stored by `svvy` and explicit integrations that
+connect to existing host credentials.
 
-Future support for using an existing host login or credential store must be a deliberate provider auth
-integration with clear provenance and user confirmation. It must not be discovered by file presence.
+Using an existing host login or credential store requires a deliberate provider auth integration with
+clear provenance and user confirmation. It must not be discovered by file presence.
 
 Pi-specific rule:
 
@@ -813,9 +807,9 @@ The override functions are belt-and-suspenders. The important invariant is that 
 extensions, skills, prompt templates, themes, or agent files for `svvy` actor surfaces, and that the
 only prompt text comes from `svvy`.
 
-## Current Implementation Checkpoints
+## Runtime Checkpoints
 
-When implementing this baseline, audit every `DefaultResourceLoader` and `createAgentSession` call.
+Every `DefaultResourceLoader` and `createAgentSession` call must satisfy these checks.
 
 Required checks:
 
@@ -871,7 +865,7 @@ Required checks:
 - Do not expose ambient host commands, plugin commands, extension commands, skill commands, or MCP
   prompts.
 - Do not load or execute pi, Claude, Codex, plugin, MCP, or managed hook configuration.
-- Do not treat this baseline as a final design for future explicit integrations.
+- Explicit integrations require their own product specs and generated-context rules.
 
 ## Acceptance Criteria
 

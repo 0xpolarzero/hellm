@@ -37,7 +37,7 @@ This document uses three labels:
 
 - `Fact`: directly supported by a cited source
 - `Decision`: adopted `svvy` behavior
-- `Deferred`: intentionally not part of the first implementation
+- `Out of scope`: unsupported by this spec
 
 ## Adopted Decisions
 
@@ -74,7 +74,7 @@ Section 13 must not ship:
 - special orchestrator or handler-thread behavior for mentioned paths
 - context budget accounting based on mentions
 
-Those are separate product surfaces if adopted later.
+Those require separate product specs.
 
 ## External Interaction Patterns
 
@@ -131,7 +131,6 @@ Sources:
 - searchable files and folders
 - clear path disambiguation for duplicate basenames
 - folder/file visual distinction
-- later compatibility with drag-and-drop path insertion
 
 `svvy` should not adopt full-folder-content behavior in section 13.
 
@@ -243,7 +242,8 @@ Sent mentions render as actionable workspace path links.
 
 File links reveal the file in the OS file browser. Folder links open the folder in the OS file browser. Missing paths render with unavailable styling and do not claim to open.
 
-The transcript link action is intentionally native path navigation, not an in-app file editor. Dedicated file surfaces can adopt these links later without changing the message semantics.
+The transcript link action is native path navigation, not an in-app file editor. Dedicated file
+surfaces can use the same link identity without changing message semantics.
 
 ## Agent Contract
 
@@ -298,9 +298,9 @@ The implementation must not traverse the full workspace tree on every keypress.
 
 The index should prefer existing repository listing and ignore behavior where available, so generated files, dependency folders, and ignored paths do not dominate results.
 
-### Deferred
+### Out Of Scope
 
-The following can come later:
+This spec does not define:
 
 - file-system watcher invalidation
 - semantic ranking

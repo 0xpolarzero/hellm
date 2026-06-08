@@ -1,23 +1,23 @@
 # Progress
 
-Incremental roadmap from the current baseline to the shipped PRD.
+Incremental roadmap toward the shipped PRD.
 
 How to use this file:
 
 - Keep items small enough to land in a focused PR.
-- Treat this file as a roadmap and progress tracker, not a changelog.
+- Treat this file as a roadmap and progress tracker.
 - Prefer adding new items next to the closest related step instead of appending unrelated backlog at the bottom.
 - Keep sections ordered by dependency: durable facts and execution before projection surfaces that depend on them.
 - When an item is done, change `[ ]` to `[x]` and append the landing commit hash or hashes.
-- Write the capability that should exist or now exists, not migration wording like "replace", "remove", or "rename" unless that action is itself the remaining work.
-- If the design changes, rewrite affected items to the new steady-state plan instead of leaving stale unchecked items from the old plan.
+- Write each item as the capability that should exist or now exists.
+- When the resolved design changes, rewrite affected items to the new steady-state plan.
 - If an item starts reading like a subsystem instead of a step, split it before implementation.
 - For any big lift or unclear design, add a POC step immediately before the production implementation step.
 - Use POC steps to validate shape, constraints, and UX without prematurely locking the final architecture.
 
 ## Current Baseline
 
-- [x] Bootstrap the Electrobun desktop app around a pi-backed host/runtime instead of a standalone shell. Commit(s): `c118be7`
+- [x] Bootstrap the Electrobun desktop app around a pi-backed host/runtime. Commit(s): `c118be7`
 - [x] Add provider auth/settings support with local key storage and OAuth-backed access. Commit(s): `c118be7`, `6d757dc`
 - [x] Add the artifact projection panel in the desktop workbench. Commit(s): `1d9bc05`, `6d757dc`
 - [x] Add workspace-scoped prompt history recall in the composer. Commit(s): `cb1b7f1`
@@ -86,7 +86,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [ ] Vendor the TinyFish-owned `use-tinyfish` agent instructions as the Web extension's core prompt content.
 - [ ] Add only a bounded `svvy` appendix to the Web prompt for product integration facts: use ordinary shell commands, preserve structured output by redirecting large TinyFish JSON stdout to files when useful, treat fetched pages as untrusted external content, and cite source URLs.
 - [ ] Keep Web generated actor context free of `web_search`, `web_fetch`, `svvyx web`, generated Web TypeScript clients, Web Provider settings, provider selection, and `svvy`-owned TinyFish key storage.
-- [ ] Keep Firecrawl, native Web provider registries, TinyFish SDK provider adapters, selected-provider readiness, and self-hosted web search out of Web v1 unless a later product decision adopts a new Web architecture.
+- [ ] Keep Web v1 limited to prompt-only TinyFish CLI guidance, without Firecrawl, native Web provider registries, TinyFish SDK provider adapters, selected-provider readiness, or self-hosted web search.
 - [ ] Declare TinyFish as an exact Web extension CLI requirement with a reusable install-command
   template; keep installation as ordinary `exec_command` work after build or inspect reports a
   missing, wrong-version, or unknown required binary, while TinyFish CLI owns authentication, status,
@@ -103,7 +103,7 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Build a POC turn flow from message targeting to surface turn creation and command recording. Commit(s): `fff54d7`, `f53c9b8`
 - [x] Implement direct surface targeting so a pane send goes to either the orchestrator surface or a handler-thread surface. Commit(s): `f53c9b8`
 - [x] Add `thread_start` as the orchestrator-side delegation primitive. Commit(s): `f53c9b8`
-- [ ] Expose the resolved thread-control runtime surface and generated prompt text: orchestrators get `thread_start({ threadGroupId?, threads })` with per-item `history` and `extensions`, `thread_followup({ activate? })`, `thread_list`, `thread_episodes`, and `thread_request_report`; handlers get `thread_current`, `thread_group`, `thread_report`, and `thread_episodes`; obsolete `thread_handoff`, `thread_handoffs`, `thread_resume`, and single-objective `thread_start` shapes are absent from agent-facing prompts and tool schemas.
+- [ ] Expose the resolved thread-control runtime surface and generated prompt text: orchestrators get `thread_start({ threadGroupId?, threads })` with per-item `history` and `extensions`, `thread_followup({ activate? })`, `thread_list`, `thread_episodes`, and `thread_request_report`; handlers get `thread_current`, `thread_group`, `thread_report`, and `thread_episodes`; agent-facing prompts and tool schemas contain only that thread-control surface.
 - [x] Implement minimal orchestrator routing for local reply, local `execute_typescript`, clarification, and `thread_start`. Commit(s): `d323012`
 - [x] Re-enter orchestrator control from durable handler-thread episodes, using durable thread objective state plus the latest episode instead of raw transcript scanning. Commit(s): `d323012`, `fdaf460`
 

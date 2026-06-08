@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-06-05
-- Status: accepted working spec extracted from `docs/specs/extensions-and-tools.spec.md`
+- Status: authoritative product spec
 - Scope of this document:
   - define the builtin Extension Managing extension surface
   - define which extension source discovery happens through Extension Managing
@@ -178,10 +178,9 @@ Workspace-local extensions do not exist in v1. Extension files are app-owned fil
 files. They are still normal filesystem paths so agents can inspect them through shell commands and
 edit editable paths through `apply_patch`.
 
-This storage root intentionally does not reuse pi's `~/.pi/agent/extensions/` or project-local
-`.pi/extensions/` discovery paths, and it does not reuse Smithers `.smithers/` workflow or hot-reload
-directories. Those systems remain runtime references; `svvy` owns extension source, generated
-aggregate cache, dependency state, and build output under `~/.config/svvy/extensions/`.
+`svvy` owns extension source, generated aggregate cache, dependency state, and build output under
+`~/.config/svvy/extensions/`. Pi extension paths and Smithers `.smithers/` workflow directories are
+runtime references, not `svvy` extension storage roots.
 
 Editable file-backed content includes:
 
@@ -432,7 +431,7 @@ dependency request state. `bun.lock` is inspectable lock state and is not an edi
 `svvy` should not use git to implement extension revert. App-owned extension files may live outside a
 repository, and the product only needs local app-history reversibility. `svvy` records structured
 change records for lifecycle commands and records patch/preimage data for app-owned extension files
-touched by `apply_patch`. Those records are retained indefinitely for now.
+touched by `apply_patch`. Those records are retained indefinitely.
 
 ## Change History And Revert Contract
 

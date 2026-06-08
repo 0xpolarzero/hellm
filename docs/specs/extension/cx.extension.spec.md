@@ -43,8 +43,8 @@ The resolved cx v1 model is:
 - `svvy` does not wrap cx in an Incur CLI or expose Incur to agents for cx.
 
 These product-boundary statements are specification and test requirements. They are not themselves
-agent-facing cx instruction text. The agent-facing generated cx skill file must teach positive cx
-usage only, without listing old, rejected, unavailable, or implementation-only product surfaces.
+agent-facing cx instruction text. The agent-facing generated cx skill file teaches official cx CLI
+usage only and does not list product-boundary inventory or implementation-only surfaces.
 
 cx already has a small agent-facing CLI and an agent-facing `cx skill` instruction. The product
 boundary is to load that upstream skill as a generated instruction file and let the normal shell
@@ -153,9 +153,8 @@ hand-authored instruction file that sorts after the generated upstream skill, fo
 instructions/full/020-cx-svvy-usage.md
 ```
 
-No such hand-authored cx usage file is required by this spec. If one is added later, it must be
-positive, actionable guidance. It must not list unavailable or rejected product surfaces merely to
-explain historical design decisions.
+No such hand-authored cx usage file is required by this spec. Hand-authored cx guidance, when
+present, must be positive, actionable runtime guidance only.
 
 ## Upstream Skill Source
 
@@ -427,8 +426,7 @@ ordinary shell, git, editing, or Smithers operations according to their own exte
 
 This product-boundary section is normative implementation guidance and test guidance. Its negative
 statements must not be copied into the generated upstream cx skill file. They should appear in
-agent-facing cx instruction files only when there is a current, concrete, user-relevant behavior to
-prevent, not as historical design explanation.
+agent-facing cx instruction files only when there is a concrete, user-relevant behavior to prevent.
 
 ## `execute_typescript`
 
@@ -439,9 +437,8 @@ The following generated clients are explicitly not part of the intended product 
 - `api.cx_*`
 - `extensions.cx.*`
 
-This is a deliberate simplification. A cx TypeScript SDK would reintroduce a wrapper surface around a
-small CLI and raise command-fact, child-command, caching, env, and install-boundary questions that
-ordinary coding-agent behavior does not need.
+cx has no generated TypeScript SDK in v1 because the product surface is prompt-only official CLI
+guidance.
 
 If a future product decision adopts a cx TypeScript client, it must be specified separately with a
 concrete repeated use case, exact generated API, command-fact recording rules, and actor-specific

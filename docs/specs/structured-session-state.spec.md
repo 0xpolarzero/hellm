@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-06-08
-- Status: adopted direction for the structured session state model
+- Status: authoritative product spec
 
 ## Scope
 
@@ -221,9 +221,9 @@ Read models derive:
 Read APIs must not repair lifecycle state heuristically from transcript replay, ad hoc refresh
 loops, or renderer polling.
 
-## Rejected State
+## State Boundary
 
-The current base design rejects:
+Structured session state excludes:
 
 - Smithers bridge lifecycle projection
 - workspace-local svvy workflow source/runtime state

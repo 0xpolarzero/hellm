@@ -3,11 +3,11 @@
 ## Status
 
 - Date: 2026-06-08
-- Status: current UI direction
+- Status: UI product requirements
 
 ## Scope
 
-The current UI scope includes sessions, handler threads, commands, artifacts, Logs, Agents,
+UI scope includes sessions, handler threads, commands, artifacts, Logs, Agents,
 Extensions, Settings, and read-only saved Workflows visibility.
 
 ## Workflows Pane

@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-06-08
-- Status: adopted direction
+- Status: authoritative product spec
 - Scope:
   - define the builtin Workflows `svvyx` extension record
   - define the `svvyx workflows ...` command family
@@ -198,9 +198,8 @@ Loaded Workflows instructions must teach:
 - generated output and `.smithers/node_modules/@svvy/workflows` are read-only plumbing
 - Smithers execution uses official Smithers CLI commands through Shell, not Workflows commands
 
-Loaded Workflows instructions must not teach workspace-local svvy workflow source layouts, product
-workflow wrapper tools, install/retrieve/promote command names, direct generated-package edits,
-public metadata APIs, or public export manifests.
+Loaded Workflows instructions cover only app-global source-library commands, generated imports,
+read-only generated output, and the official Smithers CLI execution boundary.
 
 ## Workflows Pane Relationship
 

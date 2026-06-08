@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-05-18
-- Status: adopted direction for startup, default workspace tabs, and workspace-opening commands
+- Status: authoritative product spec
 - Scope:
   - define the svvy-owned default workspace runtime
   - define the `Open Workspace` surface shown inside that default workspace
@@ -21,9 +21,7 @@ This keeps the app usable before a user chooses a repository while preserving th
 
 ## Source Boundaries
 
-This spec supersedes older wording in `docs/prd.md` and `docs/progress.md` that says a startup with no restored tabs shows a standalone workspace picker.
-
-The adopted model is:
+The startup model is:
 
 - startup with no restored tabs opens a default workspace tab
 - the default workspace tab shows an `Open Workspace` surface by default
@@ -223,10 +221,10 @@ If the current tab is already a user workspace, `Open Workspace` still opens the
 When a current-tab retarget happens from one user workspace to another:
 
 - preserve the visual tab id and tab order
-- close the old visual tab attachment
-- release the old workspace runtime if no other tab or background work references it
+- close the prior visual tab attachment
+- release the prior workspace runtime if no other tab or background work references it
 - initialize the new user workspace view from the tab's active layout id and the selected workspace's durable layout slot when available, otherwise use the selected workspace's default layout
-- do not mutate or delete the old workspace's durable sessions, app logs, workflows, or Context state
+- do not mutate or delete the prior workspace's durable sessions, app logs, workflows, or Context state
 
 ### New Tab Behavior
 
@@ -416,20 +414,18 @@ Rules:
 
 ### Runtime Registry
 
-The workspace runtime registry should support acquiring an existing runtime for a cwd instead of always throwing when the runtime is already open.
+The workspace runtime registry supports acquiring an existing runtime for a cwd.
 
 Needed operations:
 
 ```ts
-openWorkspace(cwd, { workspaceId? })          // current create-only behavior
+openWorkspace(cwd, { workspaceId? })          // create a runtime for callers that require uniqueness
 acquireWorkspace(cwd, { workspaceId? })       // create or return existing runtime
 releaseWorkspace(workspaceId)                 // release visual owner, dispose only when unused
 getDefaultWorkspace()                         // create or return default runtime
 ```
 
-The implementation may keep `openWorkspace` create-only for tests and add a separate acquire operation for tab flows.
-
-Duplicate visual tabs must not create duplicate backend runtimes for the same canonical cwd unless a future product decision explicitly introduces separate runtime profiles.
+Duplicate visual tabs share one backend runtime for the same canonical cwd.
 
 ### Default Workspace Bootstrap
 
@@ -448,9 +444,7 @@ The default workspace should be created by product startup logic, not by treatin
 
 ### Open Workspace RPCs
 
-The existing `openWorkspace` RPC opens a picker when no cwd is provided. Its semantics should be split or made explicit.
-
-Adopted request shape:
+Resolved request shape:
 
 ```ts
 type OpenWorkspacePlacement = "current-tab" | "new-tab";
@@ -552,7 +546,7 @@ runtime for workspace-specific files. This spec does not require moving those pr
 separate global runtime before default-workspace launch because the default workspace provides a
 valid `workspaceId` for operations that need one.
 
-Default-workspace launch removes the need for a disabled Extensions row in the startup state.
+Extensions are available in the default workspace startup state.
 
 ### Workflows
 
@@ -586,10 +580,10 @@ Menu and shortcut actions resolve as follows:
 
 Opening, replacing, or closing a visual workspace tab must not interrupt running work in another tab.
 
-If current-tab `Open Workspace` retargets a tab whose old workspace has running prompts or handler threads:
+If current-tab `Open Workspace` retargets a tab whose prior workspace has running prompts or handler threads:
 
 - do not cancel them automatically
-- keep the old backend runtime alive while running work or other tabs reference it
+- keep the prior backend runtime alive while running work or other tabs reference it
 - surface running counts on any remaining tabs for that runtime
 - if no visual tab remains but background work continues, retain runtime ownership until work reaches a safe terminal or waiting state
 
@@ -641,27 +635,9 @@ Default workspace cannot be created:
 
 Retarget fails after runtime acquisition:
 
-- preserve previous tab binding when possible
+- preserve prior tab binding when possible
 - release the newly acquired runtime if no tab uses it
 - log the failure
-
-## Implementation Plan
-
-1. Add `workspace.open`, `workspace.newTab`, and `workspace.openInNewTab` to the shortcut registry, app menu action union, native menu, and command palette.
-2. Add a stable default workspace cwd helper under Bun workspace/runtime utilities.
-3. Add workspace kind metadata to workspace info and tab info contracts.
-4. Split visual tab identity from runtime identity by adding `workspaceTabId` and migrating app workspace tabs persistence to a new version.
-5. Add runtime registry acquire/release semantics so duplicate same-cwd tabs share one backend runtime and current-tab retargeting can release old runtimes safely.
-6. Change startup restore so no restored tabs creates a default workspace tab instead of rendering a standalone picker page.
-7. Add an `open-workspace` pane target and panel host surface.
-8. Initialize default workspace tabs with exactly one `Open Workspace` pane and no durable layout slot writes.
-9. Implement current-tab open replacement from the `Open Workspace` panel and `workspace.open` action.
-10. Implement `New Tab` as a new default workspace visual tab.
-11. Implement `Open Workspace in New Tab` as picker plus new user workspace visual tab.
-12. Update sidebar, command palette, and layout controls so default workspace capabilities are enabled rather than greyed out.
-13. Update known-workspaces persistence and recent-workspace filtering to exclude default workspace from user recents.
-14. Update tests across tab restore, runtime registry, shortcut registry, command palette, menu dispatch, and renderer startup.
-15. Update `docs/prd.md`, `docs/features.ts`, and `docs/progress.md` when implementation lands.
 
 ## Testing Requirements
 
@@ -674,7 +650,7 @@ Unit tests:
 - current-tab open preserves `workspaceTabId` and changes `workspaceId`
 - open in new tab creates a new `workspaceTabId`
 - duplicate same-cwd tabs share one backend runtime
-- retargeting a tab releases the previous runtime only when unused and idle
+- retargeting a tab releases the prior runtime only when unused and idle
 - known workspaces exclude default workspace from user recents
 - shortcut registry exposes correct accelerators for workspace actions
 - command palette exposes workspace actions with correct availability

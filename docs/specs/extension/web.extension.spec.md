@@ -9,8 +9,7 @@
   - define how `svvy` generates TinyFish CLI instructions from exact versioned upstream package
     artifacts
   - define TinyFish CLI requirement, auth, search, fetch, and output expectations
-  - define what `svvy` does not abstract, wrap, configure, or expose for Web v1
-  - remove the earlier provider-backed native-tool Web design from the intended product surface
+  - define the Web v1 public API boundary
 
 This document is the source of truth for the resolved Web extension direction.
 
@@ -30,7 +29,7 @@ Related specs:
 and fetch without inventing a product-owned Web abstraction where the provider already ships a good
 agent-facing CLI.
 
-The resolved Web v1 model is:
+The Web v1 model is:
 
 - `web` is a builtin extension.
 - `web` uses `interface: "instructions"`.
@@ -187,13 +186,13 @@ The generator must remove:
 - package installation instructions such as `npm install -g @tiny-fish/cli`
 - ad hoc versionless installers, Homebrew/curl/npx alternatives, or "latest" guidance
 - sample secret values such as `sk-tinyfish-...`
-- CI/CD YAML unless a later product decision wants CI-specific Web instructions
+- CI/CD YAML
 - provider-auth explanations that imply `svvy` owns TinyFish API keys
 - Claude Code settings, hooks, permissions, `CLAUDE.md` mutation instructions, or
   `tinyfish config-claude` setup workflow
 - fallback guidance to native `WebSearch`, native `WebFetch`, or other host-native Web tools
 - MCP setup instructions, SDK-first integration guidance, raw REST examples, and docs-site
-  navigation unless a future spec makes Web a broader TinyFish integration extension
+  navigation
 
 The generator may use `CLAUDE_MD_BLOCK` only as versioned evidence that TinyFish wants agents to use
 `tinyfish search query "<query>"` and `tinyfish fetch content get "<url>"`. It must not emit the
@@ -230,7 +229,8 @@ Updating the generated TinyFish instructions is a deliberate product update. The
 5. Update tests and hand-authored `020-web-usage.md` only for product-boundary guidance that still
    applies to the new generated CLI facts.
 
-`svvy` must not fetch TinyFish instructions dynamically at runtime.
+TinyFish instruction generation is a build-time process. Runtime actor-context loading reads the
+packaged generated instruction file.
 
 ## CLI Requirement
 
@@ -446,9 +446,9 @@ TinyFish CLI calls obey the resolved shell/network policy from
 `docs/specs/extensions-and-tools.spec.md`. That policy is part of the shared execution boundary, not a
 Web extension-specific native-tool boundary.
 
-## What `svvy` Does Not Expose In Web v1
+## Public API Boundary
 
-Web v1 has no `svvy`-owned Web tools.
+Web v1 is prompt-only TinyFish CLI guidance. It has no `svvy`-owned Web tools.
 
 The following tool names are not part of the intended product surface:
 
@@ -478,9 +478,7 @@ The following runtime boundary is not part of the intended product surface:
 - `src/bun/web-runtime/` as a provider registry, provider adapter, native Web tool, schema, or
   generated-client runtime
 
-Current implementation may still contain older provider-backed Web code until implementation is
-updated. That code is obsolete relative to this spec and should be removed or rewritten when the Web
-implementation is brought back in line with the product docs.
+Implementation work for Web v1 must conform to this boundary.
 
 ## Firecrawl
 
@@ -495,10 +493,8 @@ Firecrawl is not part of Web v1.
 - a default-loaded Web instruction source
 - a hidden fallback when TinyFish is unavailable
 
-Firecrawl may be reconsidered later only through a new product decision. If adopted later, it should
-not automatically resurrect the old provider-backed native-tool abstraction. The product must first
-decide whether Firecrawl should be prompt-only CLI guidance, a `svvyx` extension, native tools, or
-some other concrete surface.
+Future Firecrawl support requires a separate product decision that names its concrete surface:
+prompt-only CLI guidance, a `svvyx` extension, native tools, or another explicit integration model.
 
 ## Browser-Like Tooling
 

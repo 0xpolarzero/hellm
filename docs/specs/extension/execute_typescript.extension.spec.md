@@ -3,15 +3,14 @@
 ## Status
 
 - Date: 2026-06-04
-- Status: resolved direction for `execute_typescript` under the Extensions architecture
+- Status: authoritative product spec
 - Related specs:
   - `docs/specs/extensions-and-tools.spec.md`
   - `docs/specs/live-tool-projection.spec.md`
   - `docs/specs/extension/svvyx-incur-runtime.spec.md`
   - `docs/specs/extension/cx.extension.spec.md`
 
-This spec replaces the older direct-tool helper model. `execute_typescript` is now a native
-extension capability.
+This spec defines `execute_typescript` as a native extension capability.
 
 ## Product Contract
 
@@ -33,7 +32,8 @@ Ordinary one-shot repository work should use the Shell and Apply Patch native ex
 - continue long-running processes with `write_stdin`
 - edit files with `apply_patch`
 
-`execute_typescript` does not replace `exec_command`, `write_stdin`, or `apply_patch`.
+Repository inspection, shell execution, long-running command interaction, and file edits remain
+owned by the Shell and Apply Patch native extensions.
 
 ## Authority
 
@@ -166,11 +166,12 @@ files teach base `execute_typescript` usage plus the generic `extensions["<id>"]
 examples. The Execute TypeScript instruction files must not inline every generated declaration or
 every extension command schema.
 
-## Removed Surfaces
+## Public API Boundary
 
-The final spec must not preserve a broad hand-written helper API for ordinary repo primitives.
+`execute_typescript` exposes generated loaded-extension clients only. It has no broad hand-written
+helper API for ordinary repository primitives.
 
-These old duplicated helper families are removed:
+The public snippet environment excludes hand-written namespaces for:
 
 - read helpers
 - search helpers
@@ -181,9 +182,9 @@ These old duplicated helper families are removed:
 - workflow discovery helpers as a hand-written namespace
 - web helpers as a hand-written namespace
 
-When an equivalent operation is useful from TypeScript, it must come from a loaded-extension client
-backed by the same source contract as the actual extension command. Do not keep a second manually
-maintained helper API beside the generated client interface.
+When an equivalent operation is useful from TypeScript, it comes from a loaded-extension client
+backed by the same source contract as the actual extension command. The generated client interface
+is the only extension-command abstraction available inside snippets.
 
 ## Runtime Rules
 
@@ -210,7 +211,7 @@ maintained helper API beside the generated client interface.
   belongs to that extension, and extension code receives them through Incur `c.env`, not through
   broad TypeScript process env.
 - Already emitted generated-client calls finish against the loaded tool/client set that produced
-  them.
+  their declarations.
 - If `load_extension` succeeds earlier in the same turn, the next model call in that same turn sees
   refreshed `execute_typescript` declarations including the newly loaded extension.
 
@@ -317,7 +318,7 @@ Prefer Shell and Apply Patch for ordinary repository work:
 - continue long-running processes with `write_stdin`
 - edit files with `apply_patch`
 
-`execute_typescript` does not replace `exec_command`, `write_stdin`, or `apply_patch`.
+Repository primitives are handled by their native tools.
 
 The submitted TypeScript source is the tool input:
 

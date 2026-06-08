@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-06-08
-- Status: adopted direction for Smithers prompt guidance
+- Status: authoritative product spec
 - Scope:
   - define the builtin Smithers extension record
   - define the agent-facing Smithers CLI boundary
@@ -146,7 +146,8 @@ The generator must keep the core authoring and CLI concepts needed for direct Sm
 - approvals and resume as Smithers concepts
 - stable task ids, outputs, schemas, and render-loop behavior
 
-The generator must remove or exclude content that would confuse the adopted `svvy` boundary:
+The generator emits only content that fits the adopted `svvy` boundary. Generated Smithers guidance
+excludes:
 
 - Smithers GUI as a `svvy` UI requirement
 - Smithers Gateway, MCP, HTTP server, OpenTelemetry, DevTools, or event-streaming instructions as
@@ -173,7 +174,8 @@ That hand-authored file must stay small and positive. It should say only:
   library
 - generated Workflows output is read-only; edit source and rebuild
 
-It must not describe Smithers bridge tools, product UI surfaces, or obsolete workspace source paths.
+It covers only the current Smithers boundary and omits Smithers bridge tools, product UI surfaces,
+and non-current workspace source paths.
 
 ## Memory Fragment
 
@@ -194,9 +196,12 @@ Memory is not part of the default shipped Smithers prompt. A user or an agent wi
 Managing access may enable it by changing the instruction file bypass state through normal
 Extension Managing commands.
 
-## Rejected Shapes
+## Smithers Product Boundary
 
-The following are explicitly rejected in the current Smithers redesign:
+Smithers is prompt-only official CLI guidance for handler-thread workflow work. The Smithers product
+boundary is workspace `.smithers/` authoring, official Smithers CLI commands through Shell,
+`@svvy/workflows` imports for reusable material, and no native or `svvyx` Smithers runtime surface.
+The Smithers product boundary excludes:
 
 - Smithers as a builtin native-tool extension
 - Smithers as an Incur-backed `svvyx smithers` extension

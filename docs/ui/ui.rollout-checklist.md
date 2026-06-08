@@ -1,6 +1,7 @@
-# UI Rollout Verification Checklist
+# UI Verification Checklist
 
-Use this checklist before marking UI rollout work complete. Capture manual verification screenshots in repo-root `screenshots/` and keep the filename tied to the state under review.
+Use this checklist for product UI verification. Capture manual verification screenshots in repo-root
+`screenshots/` and keep the filename tied to the state under review.
 
 ## Production States
 
@@ -22,13 +23,13 @@ Use this checklist before marking UI rollout work complete. Capture manual verif
 
 1. Launch the app through the dev/e2e/manual-inspection lane that enables `electrobun-browser-tools`, and record the printed `appId` or inspection `bridgeUrl`.
 2. Run `electrobun-browser-tools doctor`, `status`, or `tree` against the inspection-enabled app before taking screenshots.
-3. Drive the real app with `electrobun-browser-tools page ...` commands for UI states that are already reachable.
+3. Drive the real app with `electrobun-browser-tools page ...` commands for production-reachable UI states.
 4. Capture screenshots with `electrobun-browser-tools capture screenshot --path screenshots/<state>.png`.
 5. Inspect each screenshot for horizontal overflow, clipped labels, overlapping controls, focus visibility, accessible names, color contrast, reduced-motion behavior, and screen-reader-critical state.
 6. Only use fixture or preview states as supplemental visual evidence; they do not replace verification of reachable production behavior.
 
 ## Automated Verification
 
-- Run focused unit tests for renderer helpers and selectors that changed or could regress the rollout surface.
+- Run focused unit tests for affected renderer helpers and selectors.
 - Run `bun run test:e2e` only through the configured OrbStack machine lane.
 - Do not add retries, broad waits, selector churn, test-only behavior, or alternate desktop/Docker e2e paths to force a pass.

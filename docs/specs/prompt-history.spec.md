@@ -7,7 +7,7 @@
 - Scope of this document:
   - define the expected prompt-history behavior for the `svvy` composer
   - capture the external interaction patterns that informed the design
-  - make explicit what is adopted now versus what is intentionally deferred
+  - make explicit the supported behavior and unsupported behavior
 
 ## Purpose
 
@@ -50,7 +50,7 @@ This document uses three labels:
 
 - `Fact`: directly supported by a cited source
 - `Decision`: adopted `svvy` behavior
-- `Deferred`: intentionally not part of the first implementation
+- `Out of scope`: unsupported by this spec
 
 ## Adopted Decisions
 
@@ -91,7 +91,7 @@ Sources:
 - `Up` means older entry
 - `Down` means newer entry
 - moving "past the newest history item" returns to the user's live draft
-- `Ctrl+R` is the right future path for history search
+- `Ctrl+R` is reserved for history search
 
 ## Claude Code
 
@@ -188,7 +188,7 @@ Implications:
 
 ### Decision
 
-The first implementation stores only prompts that are:
+Prompt history stores only prompts that are:
 
 - user-authored
 - explicitly submitted
@@ -209,7 +209,7 @@ Failed sends and provider-blocked sends should still create history entries.
 
 ### Decision
 
-The first implementation should preserve chronological history, including duplicates.
+Prompt history preserves chronological history, including duplicates.
 
 If a user sends the same prompt twice, both sends remain recallable in order.
 
@@ -324,13 +324,13 @@ The critical requirement is that no user-authored text is lost.
 
 Prompt history search is a separate feature from plain arrow recall.
 
-The intended future binding is:
+The product binding is:
 
 - `Ctrl+R`: reverse search through prompt history
 
-### Deferred
+### Out Of Scope
 
-The first implementation does not need:
+This spec does not define:
 
 - incremental reverse search
 - fuzzy search
@@ -343,7 +343,7 @@ The first implementation does not need:
 
 Prompt history is shared across sessions in the same workspace.
 
-This is the adopted behavior, not a possible future option.
+This is product behavior.
 
 Examples:
 
@@ -368,7 +368,7 @@ The persistence boundary should match workspace identity.
 
 The exact storage backend is an implementation detail and is not specified here.
 
-### Deferred
+### Out Of Scope
 
 This spec does not define:
 
@@ -378,7 +378,7 @@ This spec does not define:
 - encryption or redaction policy
 - private mode
 
-Those may be specified separately later.
+Those require separate product specs.
 
 ## Non-Goals
 
@@ -407,12 +407,12 @@ The composer should receive a linear history view that is already filtered to th
 
 This keeps the keyboard logic simple and avoids coupling the composer to session-loading policy.
 
-## Open Details
+## Storage Boundary
 
-These points are intentionally left open:
+These storage details are implementation choices:
 
 - the exact workspace identity key
 - the exact local storage format and file location
 - whether duplicate compaction should ever exist as an optional setting
 - whether "private" or "do not persist this prompt" modes should exist
-- whether future reverse search should be inline, modal, or popover-based
+- whether reverse search should be inline, modal, or popover-based

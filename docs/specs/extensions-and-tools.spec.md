@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-06-08
-- Status: adopted direction
+- Status: authoritative product spec
 
 ## Scope
 
@@ -56,7 +56,7 @@ Generated actor context is composed from the current agent profile plus loaded e
 | `artifacts` | svvyx | default_loaded | default_loaded | default_loaded |
 | external instructions | instructions | configurable | configurable | configurable |
 
-There is no separate builtin CI workflow extension in the current base design.
+The builtin extension inventory above is exhaustive for the base design.
 
 ## Smithers Boundary
 
