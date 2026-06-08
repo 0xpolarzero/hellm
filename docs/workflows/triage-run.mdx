@@ -1,0 +1,36 @@
+---
+title: triage-run
+description: Diagnose one failed or stuck Smithers run and propose a fix, rewind, retry, or escalation.
+---
+
+`triage-run` takes a single run id, pulls that run's state and recent event log,
+diagnoses the most likely root cause, and recommends the exact next move — fix,
+rewind, retry, or escalate. Reach for it when a run failed or stalled and you
+want a grounded read plus a concrete command instead of eyeballing the logs.
+
+```bash
+bunx smithers-orchestrator workflow run triage-run --input '{"runId":"<runId>"}'
+```
+
+## Stages
+
+1. **gather** — deterministic (no agent): shells `inspect <runId> --json` and `events <runId>`, returning the run `state`, its `failingNodes`, the tail of `lastEvents`, and a one-line `summary`.
+2. **diagnose** — an agent reads the gathered evidence and names the single most likely `rootCauseHypothesis`, with supporting `evidence` and a `confidence` level.
+3. **recommend** — an agent proposes one `recommendedAction` (`fix` \| `rewind` \| `retry` \| `escalate`), the exact `command` to run next, and a `rationale`.
+
+It does not mutate the run — every stage is read-only, so the recommended command is yours to run.
+
+## Inputs
+
+| Input | Type | Default |
+| --- | --- | --- |
+| `runId` | string | (required) the failed or stuck run to triage |
+
+## Monitor it
+
+```bash
+bunx smithers-orchestrator workflow run triage-run --input '{"runId":"<runId>"}' -d   # detach
+bunx smithers-orchestrator ps                                                          # active / paused / recent
+bunx smithers-orchestrator logs <runId> -f                                             # follow events
+bunx smithers-orchestrator output <runId> --node recommend                             # read the recommendation
+```

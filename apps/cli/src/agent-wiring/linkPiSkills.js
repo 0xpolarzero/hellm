@@ -19,11 +19,12 @@ import { join } from "node:path";
  */
 export function linkPiSkills({ global = true, cwd = process.cwd(), homeDir = homedir() }) {
   const piRoot = join(homeDir, ".pi");
+  const piMarker = global ? piRoot : join(cwd, ".pi");
   const targetDir = global ? join(piRoot, "agent", "skills") : join(cwd, ".pi", "skills");
   const sourceDir = global ? join(homeDir, ".agents", "skills") : join(cwd, ".agents", "skills");
 
-  // Detect Pi by the presence of its config directory.
-  if (!existsSync(piRoot)) {
+  // Detect Pi by the presence of its config directory (scope-matched).
+  if (!existsSync(piMarker)) {
     return { agent: "Pi", linked: [], path: targetDir, reason: "not-detected" };
   }
   if (!existsSync(sourceDir)) {

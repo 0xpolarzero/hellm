@@ -23,10 +23,14 @@
  * Run: bun scripts/optimize-llms-full.ts
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 const TARGET = resolve(import.meta.dir, "../docs/llms-full.txt");
+const MIRRORS = [
+  resolve(import.meta.dir, "../skills/smithers/llms-full.txt"),
+  resolve(import.meta.dir, "../apps/cli/docs/llms-full.txt"),
+];
 const before = readFileSync(TARGET, "utf8");
 let text = before;
 
@@ -386,12 +390,20 @@ text = text
   .join("\n");
 text = text.replace(/\n{4,}/g, "\n\n\n");
 
-if (text === before) {
-  console.log("No changes.");
-  process.exit(0);
+// Always write TARGET and the packaged mirrors, even on a no-op against
+// TARGET: generate-llms.ts overwrites the mirrors with the UN-optimized
+// bundle, so only this loop brings them to the optimized form. Skipping it
+// when TARGET is already optimized would leave the CLI/skill mirrors stale.
+writeFileSync(TARGET, text);
+for (const mirror of MIRRORS) {
+  mkdirSync(dirname(mirror), { recursive: true });
+  writeFileSync(mirror, text);
 }
 
-writeFileSync(TARGET, text);
+if (text === before) {
+  console.log("No changes to docs/llms-full.txt; mirrors refreshed.");
+  process.exit(0);
+}
 const beforeBytes = before.length;
 const afterBytes = text.length;
 const beforeTokens = Math.round(beforeBytes / 4);
@@ -400,3 +412,6 @@ const pct = (((beforeBytes - afterBytes) / beforeBytes) * 100).toFixed(1);
 console.log(`docs/llms-full.txt`);
 console.log(`  bytes:  ${beforeBytes.toLocaleString()} -> ${afterBytes.toLocaleString()}  (-${(beforeBytes - afterBytes).toLocaleString()}, -${pct}%)`);
 console.log(`  ~tokens: ${beforeTokens.toLocaleString()} -> ${afterTokens.toLocaleString()}  (-${(beforeTokens - afterTokens).toLocaleString()})`);
+for (const mirror of MIRRORS) {
+  console.log(`  mirrored: ${mirror.replace(resolve(import.meta.dir, "..") + "/", "")}`);
+}

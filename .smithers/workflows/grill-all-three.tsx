@@ -14,18 +14,18 @@ const WORKFLOW_ID = "grill-all-three";
 // engineering) until none have open questions, folding each decision back into
 // the docs as it goes. One grill+fold-in agent turn per loop iteration: the agent
 // asks one question via ask-user.ts (blocking) and edits the spec in the same
-// turn, so the user's answer is in-context for the fold-in. Modeled on grill-me /
-// write-a-prd. `resolved` flips true only when every spec is clean.
+// turn, so the user's answer is in-context for the fold-in. Modeled on grill-me.
+// `resolved` flips true only when every spec is clean.
 const { Workflow, Task, smithers, outputs } = createSmithers({
   input: z.object({
-    docsDir: z.string().default("apps/smithers-studio-2/docs"),
+    docsDir: z.string().default(".smithers/specs"),
     maxIterations: z.number().int().default(24),
   }),
   grill: grillOutputSchema,
 });
 
 export default smithers((ctx) => {
-  const docsDir = ctx.input.docsDir || "apps/smithers-studio-2/docs";
+  const docsDir = ctx.input.docsDir || ".smithers/specs";
   const history = ctx.outputs.grill || [];
   const latest = history[history.length - 1];
   const resolved = latest?.resolved === true;

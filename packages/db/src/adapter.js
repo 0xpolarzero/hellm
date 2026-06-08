@@ -14,6 +14,7 @@ import { getTableName } from "drizzle-orm";
 import { Effect, Exit, FiberId, Metric } from "effect";
 import { toSmithersError } from "@smithers-orchestrator/errors/toSmithersError";
 import { getSqlMessageStorage } from "./sql-message-storage.js";
+import { POSTGRES, beginTransactionSql } from "./dialect.js";
 import { alertsAcknowledgedTotal, alertsActive, alertsFiredTotal, dbQueryDuration, dbTransactionDuration, dbTransactionRollbacks, } from "@smithers-orchestrator/observability/metrics";
 import { assertOptionalStringMaxLength, assertPositiveFiniteNumber, } from "./input-bounds.js";
 import { FRAME_KEYFRAME_INTERVAL, applyFrameDeltaJson, encodeFrameDelta, normalizeFrameEncoding, serializeFrameDelta, } from "./frame-codec.js";
@@ -410,6 +411,23 @@ function getSqliteTransactionState(client) {
     return state;
 }
 /**
+ * Resolve a Drizzle output table's on-disk name. The name lives on the
+ * `Symbol(drizzle:Name)` slot, which `getTableName` reads; `table["_"].name` is
+ * `undefined` for these tables, so the raw-SQL Postgres path must not depend on
+ * it. Mirrors how the Drizzle `db.insert(table)` path resolves the name on
+ * SQLite.
+ * @param {unknown} table
+ * @returns {string}
+ */
+function resolveOutputTableName(table) {
+    try {
+        return getTableName(/** @type {Table} */ (table));
+    }
+    catch {
+        return "output";
+    }
+}
+/**
  * @param {unknown} db
  * @returns {{ run: (sql: string) => unknown; query: (sql: string) => { run: (...args: unknown[]) => unknown; get: (...args: unknown[]) => Record<string, unknown> | null | undefined; all: () => Array<Record<string, unknown>> }; exec: (sql: string) => unknown; $client?: unknown }}
  */
@@ -505,6 +523,9 @@ export class SmithersDb {
                 }),
             });
             return yield* self.read(`raw query ${validatedQuery.slice(0, 20)}`, () => {
+                if (self.internalStorage.dialect === POSTGRES) {
+                    return self.internalStorage.queryAllRaw(validatedQuery);
+                }
                 const client = self.db.session.client;
                 const stmt = client.query(validatedQuery);
                 return Promise.resolve(stmt.all());
@@ -648,7 +669,18 @@ export class SmithersDb {
             const transactionState = getSqliteTransactionState(resolveSqliteClientKey(self.db));
             const start = performance.now();
             return yield* Effect.gen(function* () {
-                const client = yield* self.getSqliteTransactionClient();
+                const isPostgres = self.internalStorage.dialect === POSTGRES;
+                const client = isPostgres ? null : yield* self.getSqliteTransactionClient();
+                /**
+                 * Run a transaction-control statement on the active connection,
+                 * dialect-appropriately: synchronous bun:sqlite client.run for
+                 * SQLite, async @effect/sql execute (same connection) for Postgres.
+                 * @param {string} sql
+                 * @returns {Promise<unknown>}
+                 */
+                const runControl = (sql) => isPostgres
+                    ? self.internalStorage.execute(sql)
+                    : Promise.resolve(client.run(sql));
                 /**
      * @param {"operation" | "commit"} phase
      * @param {unknown} error
@@ -660,18 +692,11 @@ export class SmithersDb {
                         phase,
                         error: String(error),
                     }));
-                    yield* Effect.sync(() => {
-                        try {
-                            client.run("ROLLBACK");
-                        }
-                        catch {
-                            // ignore rollback failures
-                        }
-                    });
+                    yield* Effect.promise(() => runControl("ROLLBACK").then(() => undefined, () => undefined));
                 });
-                yield* Effect.try({
-                    try: () => {
-                        client.run("BEGIN IMMEDIATE");
+                yield* Effect.tryPromise({
+                    try: async () => {
+                        await runControl(beginTransactionSql(self.internalStorage.dialect));
                         transactionState.depth += 1;
                         transactionState.ownerThread = currentFiberThread;
                         self.transactionDepth = transactionState.depth;
@@ -688,10 +713,8 @@ export class SmithersDb {
                     yield* rollback("operation", operationExit.cause);
                     return yield* Effect.failCause(operationExit.cause);
                 }
-                const commitExit = yield* Effect.exit(Effect.try({
-                    try: () => {
-                        client.run("COMMIT");
-                    },
+                const commitExit = yield* Effect.exit(Effect.tryPromise({
+                    try: () => runControl("COMMIT"),
                     catch: (cause) => toSmithersError(cause, "commit sqlite transaction", {
                         code: "DB_WRITE_FAILED",
                         details: { writeGroup, phase: "commit" },
@@ -884,9 +907,34 @@ export class SmithersDb {
    */
     claimRunForResume(params) {
         return this.write(`claim stale run ${params.runId}`, () => {
-            const client = this.db.session.client;
             const expectedStatus = params.expectedStatus ?? "running";
             const requireStale = params.requireStale ?? expectedStatus === "running";
+            if (this.internalStorage.dialect === POSTGRES) {
+                // Null-safe heartbeat compare without wrapping the bigint param in a
+                // numeric COALESCE(?, -1): the int4 `-1` literal would force the
+                // ms-timestamp param to int4 and overflow. Compare against the
+                // bigint column directly so Postgres infers bigint.
+                return this.internalStorage
+                    .queryAllRaw(`UPDATE _smithers_runs
+             SET runtime_owner_id = ?, heartbeat_at_ms = ?
+             WHERE run_id = ?
+               AND status = ?
+               AND COALESCE(runtime_owner_id, '') = COALESCE(?, '')
+               AND (heartbeat_at_ms IS NOT DISTINCT FROM ?)
+               AND (? = 0 OR heartbeat_at_ms IS NULL OR heartbeat_at_ms < ?)
+             RETURNING run_id`, [
+                        params.claimOwnerId,
+                        params.claimHeartbeatAtMs,
+                        params.runId,
+                        expectedStatus,
+                        params.expectedRuntimeOwnerId,
+                        params.expectedHeartbeatAtMs,
+                        requireStale ? 1 : 0,
+                        params.staleBeforeMs,
+                    ])
+                    .then((rows) => rows.length > 0);
+            }
+            const client = this.db.session.client;
             client
                 .query(`UPDATE _smithers_runs
            SET runtime_owner_id = ?, heartbeat_at_ms = ?
@@ -924,19 +972,33 @@ export class SmithersDb {
     updateClaimedRun(params) {
         validateRunPatch(params.patch);
         return this.write(`update claimed run ${params.runId}`, () => {
-            const client = this.db.session.client;
             const patchEntries = Object.entries(params.patch);
             if (patchEntries.length === 0) {
                 return Promise.resolve(true);
             }
             const assignments = patchEntries.map(([key]) => `${camelToSnake(key)} = ?`);
+            const setArgs = patchEntries.map(([, value]) => value);
+            if (this.internalStorage.dialect === POSTGRES) {
+                // Null-safe heartbeat compare (see claimRunForResume): IS NOT
+                // DISTINCT FROM keeps the bigint param from being coerced to int4
+                // by an int4 `-1` sentinel.
+                return this.internalStorage
+                    .queryAllRaw(`UPDATE _smithers_runs
+             SET ${assignments.join(", ")}
+             WHERE run_id = ?
+               AND runtime_owner_id = ?
+               AND (heartbeat_at_ms IS NOT DISTINCT FROM ?)
+             RETURNING run_id`, [...setArgs, params.runId, params.expectedRuntimeOwnerId, params.expectedHeartbeatAtMs])
+                    .then((rows) => rows.length > 0);
+            }
+            const client = this.db.session.client;
             client
                 .query(`UPDATE _smithers_runs
            SET ${assignments.join(", ")}
            WHERE run_id = ?
              AND runtime_owner_id = ?
              AND COALESCE(heartbeat_at_ms, -1) = COALESCE(?, -1)`)
-                .run(...patchEntries.map(([, value]) => value), params.runId, params.expectedRuntimeOwnerId, params.expectedHeartbeatAtMs);
+                .run(...setArgs, params.runId, params.expectedRuntimeOwnerId, params.expectedHeartbeatAtMs);
             return this.internalStorage
                 .queryOne("SELECT changes() AS count")
                 .then((row) => Number(row?.count ?? 0) > 0);
@@ -1005,14 +1067,22 @@ export class SmithersDb {
         const target = cols.iteration
             ? [cols.runId, cols.nodeId, cols.iteration]
             : [cols.runId, cols.nodeId];
-        const tableName = table?.["_"]?.name ?? "output";
-        return this.write(`upsert output ${tableName}`, () => this.db
-            .insert(table)
-            .values(values)
-            .onConflictDoUpdate({
-            target: target,
-            set: values,
-        }));
+        const tableName = resolveOutputTableName(table);
+        const conflictColumns = cols.iteration
+            ? ["runId", "nodeId", "iteration"]
+            : ["runId", "nodeId"];
+        return this.write(`upsert output ${tableName}`, () => {
+            if (this.internalStorage.dialect === POSTGRES) {
+                return this.internalStorage.upsert(tableName, values, conflictColumns);
+            }
+            return this.db
+                .insert(table)
+                .values(values)
+                .onConflictDoUpdate({
+                target: target,
+                set: values,
+            });
+        });
     }
     /**
    * @param {Table} table
@@ -1030,6 +1100,14 @@ export class SmithersDb {
    */
     deleteOutputRow(tableName, key) {
         return this.write(`delete output ${tableName}`, () => {
+            if (this.internalStorage.dialect === POSTGRES) {
+                // PostgreSQL output tables are created from the Zod schema with
+                // snake_case run_id/node_id/iteration columns, so no PRAGMA-based
+                // column discovery is needed.
+                const escapedPg = tableName.replaceAll(`"`, `""`);
+                return this.internalStorage.execute(`DELETE FROM "${escapedPg}"
+             WHERE run_id = ? AND node_id = ? AND iteration = ?`, [key.runId, key.nodeId, key.iteration ?? 0]);
+            }
             const client = this.db.session.client;
             let resolvedTableName = tableName;
             let escapedTableName = resolvedTableName.replaceAll(`"`, `""`);
@@ -1112,6 +1190,11 @@ export class SmithersDb {
     getRawNodeOutput(tableName, runId, nodeId) {
         return runnableEffect(this.read(`get raw node output ${tableName}`, () => {
             const escaped = tableName.replaceAll(`"`, `""`);
+            if (this.internalStorage.dialect === POSTGRES) {
+                return this.internalStorage
+                    .queryOneRaw(`SELECT * FROM "${escaped}" WHERE run_id = ? AND node_id = ? ORDER BY iteration DESC LIMIT 1`, [runId, nodeId])
+                    .then((row) => row ?? null);
+            }
             const client = this.db.session.client;
             const stmt = client.query(`SELECT * FROM "${escaped}" WHERE run_id = ? AND node_id = ? ORDER BY iteration DESC LIMIT 1`);
             const row = stmt.get(runId, nodeId);
@@ -1128,6 +1211,11 @@ export class SmithersDb {
     getRawNodeOutputForIteration(tableName, runId, nodeId, iteration) {
         return runnableEffect(this.read(`get raw node output ${tableName} iteration ${iteration}`, () => {
             const escaped = tableName.replaceAll(`"`, `""`);
+            if (this.internalStorage.dialect === POSTGRES) {
+                return this.internalStorage
+                    .queryOneRaw(`SELECT * FROM "${escaped}" WHERE run_id = ? AND node_id = ? AND iteration = ? LIMIT 1`, [runId, nodeId, iteration])
+                    .then((row) => row ?? null);
+            }
             const client = this.db.session.client;
             const stmt = client.query(`SELECT * FROM "${escaped}" WHERE run_id = ? AND node_id = ? AND iteration = ? LIMIT 1`);
             const row = stmt.get(runId, nodeId, iteration);
@@ -1808,6 +1896,75 @@ export class SmithersDb {
          FROM _smithers_tool_calls
          WHERE run_id = ? AND node_id = ? AND iteration = ?
          ORDER BY attempt ASC, seq ASC`, [runId, nodeId, iteration]));
+    }
+    /**
+   * Record a distinct working-copy state (deduped by jj commit id). Upsert so a
+   * re-snapshot of the same tree refreshes the operation handle.
+   * @param {Record<string, unknown>} row
+   * @returns {RunnableEffect<void, SmithersError>}
+   */
+    upsertWorkspaceState(row) {
+        return this.write(`upsert workspace state ${row.jjCommitId}`, () => this.internalStorage.upsert("_smithers_workspace_states", row, ["runId", "jjCwd", "jjCommitId"]));
+    }
+    /**
+   * @param {string} runId
+   * @returns {RunnableEffect<Array<Record<string, unknown>>, SmithersError>}
+   */
+    listWorkspaceStates(runId) {
+        return this.read(`list workspace states ${runId}`, () => this.internalStorage.queryAll(`SELECT *
+         FROM _smithers_workspace_states
+         WHERE run_id = ?
+         ORDER BY created_at_ms ASC`, [runId]));
+    }
+    /**
+   * Record a snapshot checkpoint event. One row per tool/watch boundary; never
+   * deduped, so a Tier 1 boundary always has a seq to bind a resume to.
+   * @param {Record<string, unknown>} row
+   * @returns {RunnableEffect<void, SmithersError>}
+   */
+    insertWorkspaceCheckpoint(row) {
+        return this.write(`insert workspace checkpoint ${row.nodeId}#${row.seq}`, () => this.internalStorage.insertIgnore("_smithers_workspace_checkpoints", row));
+    }
+    /**
+   * @param {string} runId
+   * @returns {RunnableEffect<Array<Record<string, unknown>>, SmithersError>}
+   */
+    listWorkspaceCheckpoints(runId) {
+        return this.read(`list workspace checkpoints ${runId}`, () => this.internalStorage.queryAll(`SELECT *
+         FROM _smithers_workspace_checkpoints
+         WHERE run_id = ?
+         ORDER BY seq ASC`, [runId]));
+    }
+    /**
+   * Prune old workspace states for a run, keeping the most recent maxKeep by
+   * created_at_ms. The latest rows are always kept. Row-value NOT IN avoids the
+   * string-concat collision a naive key would have; portable to SQLite + Postgres.
+   * @param {string} runId
+   * @param {number} [maxKeep]
+   * @returns {RunnableEffect<void, SmithersError>}
+   */
+    pruneWorkspaceStates(runId, maxKeep = 50) {
+        const keep = Math.max(1, maxKeep);
+        return this.write(`prune workspace states ${runId}`, () => this.internalStorage.deleteWhere("_smithers_workspace_states", `run_id = ? AND (jj_cwd, jj_commit_id) NOT IN (
+           SELECT jj_cwd, jj_commit_id FROM _smithers_workspace_states
+           WHERE run_id = ? ORDER BY created_at_ms DESC LIMIT ?)`, [runId, runId, keep]));
+    }
+    /**
+   * Prune old workspace checkpoints, keeping the most recent maxKeepPerScope per
+   * (node_id, iteration, attempt) via a window function. The latest checkpoint per
+   * scope is always kept, so resume-restore targets survive.
+   * @param {string} runId
+   * @param {number} [maxKeepPerScope]
+   * @returns {RunnableEffect<void, SmithersError>}
+   */
+    pruneWorkspaceCheckpoints(runId, maxKeepPerScope = 100) {
+        const keep = Math.max(1, maxKeepPerScope);
+        return this.write(`prune workspace checkpoints ${runId}`, () => this.internalStorage.deleteWhere("_smithers_workspace_checkpoints", `run_id = ? AND (node_id, iteration, attempt, seq) NOT IN (
+           SELECT node_id, iteration, attempt, seq FROM (
+             SELECT node_id, iteration, attempt, seq,
+                    ROW_NUMBER() OVER (PARTITION BY node_id, iteration, attempt ORDER BY seq DESC) AS rn
+             FROM _smithers_workspace_checkpoints WHERE run_id = ?
+           ) sub WHERE rn <= ?)`, [runId, runId, keep]));
     }
     /**
    * @param {Record<string, unknown>} row

@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, memo, type ReactNode } from "react";
 
 // Inline tokens: `code`, **bold**, *italic*. Order matters — bold is matched
 // before italic so `**x**` doesn't get eaten by the single-asterisk rule.
@@ -45,8 +45,12 @@ const isHeading = (line: string) => /^#{1,6}\s+/.test(line);
  * A small, dependency-free Markdown renderer covering what a chat model
  * actually emits: fenced code blocks, headings, ordered/unordered lists, inline
  * code, bold, and italics. Anything else falls through as plain paragraphs.
+ *
+ * Wrapped in React.memo so a streaming transcript only re-parses the bubble
+ * whose `content` actually changed. The sole prop is a primitive string, so the
+ * default shallow comparison is an exact equality check.
  */
-export function Markdown({ content }: { content: string }): ReactNode {
+function MarkdownImpl({ content }: { content: string }): ReactNode {
   const lines = content.split("\n");
   const blocks: ReactNode[] = [];
   let i = 0;
@@ -144,3 +148,7 @@ export function Markdown({ content }: { content: string }): ReactNode {
 
   return <>{blocks}</>;
 }
+
+export const Markdown = memo(MarkdownImpl) as (props: {
+  content: string;
+}) => ReactNode;

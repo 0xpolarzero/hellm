@@ -77,5 +77,9 @@ export function renderSmithersAgentPromptGuidance(contract, options = {}) {
     if (destructiveTools.length > 0) {
         lines.push(`Potentially destructive tools: ${joinToolNames(destructiveTools, prefix)}. Confirm intent before using them unless the user already asked for that action.`);
     }
+    const askHumanTool = contract.tools.find((tool) => tool.name === "ask_human");
+    if (askHumanTool) {
+        lines.push(`When you are blocked, uncertain, missing information, or about to take an irreversible or destructive action, you MUST call ${displayToolName(askHumanTool, prefix)} (or run \`smithers ask-human "<question>"\`) to ask a human and wait for the decision. Never guess or proceed on an assumption — if the request comes back blocked (cancelled/expired), stop and do not proceed.`);
+    }
     return lines.join("\n");
 }

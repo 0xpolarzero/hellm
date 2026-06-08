@@ -5,13 +5,16 @@
 /** @typedef {import("./WorkspaceAddOptions.js").WorkspaceAddOptions} WorkspaceAddOptions */
 /** @typedef {import("./WorkspaceInfo.js").WorkspaceInfo} WorkspaceInfo */
 /** @typedef {import("./WorkspaceResult.js").WorkspaceResult} WorkspaceResult */
+/** @typedef {import("./WorkspaceSnapshot.js").WorkspaceSnapshot} WorkspaceSnapshot */
 // @smithers-type-exports-end
 
 import * as Command from "@effect/platform/Command";
 import { Duration, Effect, Fiber, Metric, Stream } from "effect";
 import { vcsDuration } from "@smithers-orchestrator/observability/metrics";
+import { resolveJjBinary } from "./resolveJjBinary.js";
 
 const JJ_POINTER_TIMEOUT_MS = 1_500;
+const WORKSPACE_SNAPSHOT_TIMEOUT_MS = 1_500;
 /**
  * @param {Stream.Stream<Uint8Array, unknown, never>} stream
  * @returns {Effect.Effect<string, unknown, never>}
@@ -29,7 +32,7 @@ function collectUtf8(stream) {
  * @returns {Effect.Effect<RunJjResult, never, import("@effect/platform/CommandExecutor").CommandExecutor>}
  */
 export function runJj(args, opts = {}) {
-    let command = Command.make("jj", ...args);
+    let command = Command.make(resolveJjBinary().path, ...args);
     if (opts.cwd) {
         command = Command.workingDirectory(command, opts.cwd);
     }
@@ -87,6 +90,55 @@ export function getJjPointer(cwd) {
         const out = res.stdout.trim();
         return out ? out : null;
     }), Effect.annotateLogs({ cwd: cwd ?? "" }), Effect.withLogSpan("vcs:jj-pointer"));
+}
+/**
+ * Wrap a snapshot jj call with a bounded timeout so a slow or hung jj cannot
+ * block the agent. On timeout it returns a sentinel non-zero result, which the
+ * caller treats as a durability gap rather than a value.
+ *
+ * @param {Effect.Effect<RunJjResult, never, import("@effect/platform/CommandExecutor").CommandExecutor>} effect
+ * @param {string} label
+ * @returns {Effect.Effect<RunJjResult, never, import("@effect/platform/CommandExecutor").CommandExecutor>}
+ */
+function withSnapshotTimeout(effect, label) {
+    return effect.pipe(Effect.timeoutTo({
+        duration: Duration.millis(WORKSPACE_SNAPSHOT_TIMEOUT_MS),
+        onSuccess: (res) => res,
+        onTimeout: () => ({
+            code: 124,
+            stdout: "",
+            stderr: `${label} timed out after ${WORKSPACE_SNAPSHOT_TIMEOUT_MS}ms`,
+        }),
+    }));
+}
+/**
+ * Capture the current working-copy state as a restorable handle.
+ *
+ * Step 1 (`jj log -r @`) forces exactly one working-copy snapshot and returns the
+ * resulting `commit_id` and `change_id`. Step 2 reads the latest operation id
+ * WITHOUT taking a second snapshot (`--ignore-working-copy`), so both ids describe
+ * the same snapshot from step 1. Returns null on any failure or timeout (a
+ * durability gap the caller records); it never throws into the agent path.
+ *
+ * @param {string} [cwd]
+ * @returns {Effect.Effect<WorkspaceSnapshot | null, never, import("@effect/platform/CommandExecutor").CommandExecutor>}
+ */
+export function captureWorkspaceSnapshot(cwd) {
+    return Effect.gen(function* () {
+        const logRes = yield* withSnapshotTimeout(runJj(["log", "-r", "@", "--no-graph", "-T", 'commit_id ++ "\\n" ++ change_id'], { cwd }), "jj snapshot log");
+        if (logRes.code !== 0)
+            return null;
+        const [commitId, changeId] = logRes.stdout.split("\n").map((part) => part.trim());
+        if (!commitId)
+            return null;
+        const opRes = yield* withSnapshotTimeout(runJj(["--ignore-working-copy", "operation", "log", "--no-graph", "--limit", "1", "-T", "self.id()"], { cwd }), "jj snapshot op");
+        if (opRes.code !== 0)
+            return null;
+        const operationId = opRes.stdout.trim();
+        if (!operationId)
+            return null;
+        return { commitId, changeId: changeId ?? "", operationId };
+    }).pipe(Effect.annotateLogs({ cwd: cwd ?? "" }), Effect.withLogSpan("vcs:jj-snapshot"));
 }
 /**
  * Restore the working copy to a previously recorded jujutsu `change_id`.

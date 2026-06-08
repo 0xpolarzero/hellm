@@ -243,7 +243,10 @@ function App() {
     [workerActivity],
   );
 
-  // Interleave the user's sent messages with worker activity, ordered by seq.
+  // Interleave the user's sent messages with worker activity, ordered by the
+  // gateway event seq. Both kinds must share the same scale: user rows carry the
+  // max worker seq observed at send time plus a fractional offset, so a directive
+  // sorts after the activity that preceded it and before the turn it spawns.
   const feed = useMemo(() => {
     const userRows = sent.map((m) => ({ kind: "me" as const, seq: m.seq, text: m.text }));
     const actRows = workerActivity.map((w) => ({ kind: "act" as const, seq: w.seq, idx: w.idx, state: w.state }));
@@ -270,7 +273,11 @@ function App() {
     setBusy(true);
     try {
       await actions.submitSignal({ runId: activeRunId, signalName: "utterance", correlationKey: "utterance", payload: { text, end: false } });
-      setSent((s) => [...s, { seq: Date.now(), text }]);
+      // Stamp the directive on the same scale as worker activity: the max worker
+      // event seq seen so far plus 0.5, so it sorts after prior activity and
+      // before the (higher-seq) worker turn this directive spawns.
+      const maxSeq = workerActivity.length ? Math.max(...workerActivity.map((w) => w.seq)) : 0;
+      setSent((s) => [...s, { seq: maxSeq + 0.5, text }]);
       setDraft("");
     } finally {
       setBusy(false);

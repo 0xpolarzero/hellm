@@ -1,0 +1,21 @@
+{
+  "name": "@smithers-orchestrator/jj-linux-arm64",
+  "version": "0.23.0",
+  "description": "Vendored jj (Jujutsu) binary for linux-arm64, used by @smithers-orchestrator/vcs. Installed automatically as an optional dependency; not meant to be depended on directly.",
+  "license": "Apache-2.0",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepublishOnly": "node -e \"if(!require('fs').existsSync(__dirname+'/bin/jj'))throw new Error('jj missing — run pnpm fetch:jj before releasing')\""
+  }
+}

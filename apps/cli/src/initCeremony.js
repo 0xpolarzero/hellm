@@ -12,18 +12,20 @@ import { initWorkflowPack } from "./workflow-pack.js";
  * Only call this in interactive TTY mode; piped/agent callers should use
  * {@link initWorkflowPack} directly so structured output is preserved.
  *
- * @param {{ force?: boolean; agentsOnly?: boolean; install?: boolean; env?: NodeJS.ProcessEnv }} opts
+ * @param {{ force?: boolean; agentsOnly?: boolean; install?: boolean; global?: boolean; env?: NodeJS.ProcessEnv }} opts
  * @returns {import("./workflow-pack.js").InitResult}
  */
 export function runInitCeremony(opts = {}) {
     const env = opts.env ?? process.env;
     const agentsOnly = Boolean(opts.agentsOnly);
+    const global = Boolean(opts.global);
 
-    intro(`${pc.bgCyan(pc.black(" smithers "))} ${pc.dim("init")}`);
+    intro(`${pc.bgCyan(pc.black(" smithers "))} ${pc.dim(global ? "init --global" : "init")}`);
 
     const reporter = {
         scaffolded({ writtenCount, skippedCount }) {
-            const target = pc.cyan(agentsOnly ? ".smithers/agents/" : ".smithers/");
+            const base = global ? "~/.smithers/" : ".smithers/";
+            const target = pc.cyan(agentsOnly ? `${base}agents/` : base);
             log.success(`Scaffolded ${agentsOnly ? "agent config" : "workflow pack"} into ${target}`);
             const parts = [];
             if (writtenCount > 0) parts.push(`${pc.bold(String(writtenCount))} ${pc.dim(`file${writtenCount === 1 ? "" : "s"} created`)}`);
@@ -48,6 +50,7 @@ export function runInitCeremony(opts = {}) {
     return initWorkflowPack({
         force: opts.force,
         agentsOnly,
+        global,
         skipInstall: agentsOnly || opts.install === false,
         reporter,
     });

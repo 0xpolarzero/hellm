@@ -2,7 +2,7 @@ import { WORKFLOW_SEGMENTS, type WorkflowSegment } from "./WorkflowSegment";
 
 /**
  * The Local / Remote / Prompts / Schedules segmented control. These are SEGMENTS
- * inside the Workflows surface, not separate nav rows (docs/UX.md).
+ * inside the Workflows surface, not separate nav rows (.smithers/specs/UX.md).
  */
 export function WorkflowSegmentTabs({
   active,

@@ -1,0 +1,59 @@
+# Bring the real Plue stack up locally so apps/smithers can run its e2e and dev
+# server against true backends, not the deterministic fake host. Opt-in — the
+# default Playwright + dev wiring keeps using the in-process fake.
+#
+# Usage (from the Plue checkout at /Users/williamcory/plue):
+#
+#   docker compose up postgres migrate seed repo-host api
+#
+# Then, from this worktree:
+#
+#   SMITHERS_AUTH_PROXY_TARGET=http://127.0.0.1:4000 \
+#   SMITHERS_PLATFORM_PROXY_TARGET=http://127.0.0.1:4000 \
+#   pnpm -C apps/smithers dev
+#
+# Or, for Playwright with real Plue (instead of the fake-plue webServer):
+#
+#   SMITHERS_FAKE_PLUE_TEST_PORT=4000 \
+#   FAKE_PLUE_PORT=4000 \
+#   PLAYWRIGHT_REAL_PLUE=1 \
+#   pnpm -C apps/smithers e2e
+#
+# This file is a thin override that does NOT mount Plue's volumes or rebuild its
+# containers — it expects the Plue stack to be already up on its standard ports
+# and just exposes an apps/smithers dev runner alongside it. Use Plue's own
+# `docker-compose.yml` for the real services.
+#
+# Variables:
+#   PLUE_API_BASE_URL     defaults to http://host.docker.internal:4000
+#   PLUE_REPO_HOST_URL    defaults to http://host.docker.internal:8080
+
+services:
+  apps-smithers-dev:
+    image: oven/bun:1.3.12
+    working_dir: /workspace/apps/smithers
+    # Read-only bind for the worktree so the container can't scribble inside it;
+    # the dev server writes only to a vite cache volume.
+    volumes:
+      - ../../..:/workspace:ro
+      - apps_smithers_vite_cache:/workspace/apps/smithers/node_modules/.vite
+    environment:
+      SMITHERS_AUTH_PROXY_TARGET: "${PLUE_API_BASE_URL:-http://host.docker.internal:4000}"
+      SMITHERS_PLATFORM_PROXY_TARGET: "${PLUE_API_BASE_URL:-http://host.docker.internal:4000}"
+      SMITHERS_GATEWAY_PROXY_TARGET: "${SMITHERS_GATEWAY_PROXY_TARGET:-}"
+    # The bind mount is read-only, so install once into a writable layer.
+    command: >-
+      bash -lc "set -euo pipefail
+      && mkdir -p /tmp/apps-smithers
+      && cp -r /workspace/apps/smithers/. /tmp/apps-smithers/
+      && cp /workspace/package.json /tmp/package.json || true
+      && cd /tmp/apps-smithers
+      && bun install --no-save
+      && bun x vite --host 0.0.0.0 --port 5175"
+    ports:
+      - "5175:5175"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  apps_smithers_vite_cache: {}

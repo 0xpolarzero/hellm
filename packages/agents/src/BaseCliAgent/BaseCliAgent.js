@@ -14,6 +14,7 @@ import { extractTextFromJsonValue } from "./extractTextFromJsonValue.js";
 import { createAgentStdoutTextEmitter } from "./createAgentStdoutTextEmitter.js";
 import { buildGenerateResult } from "./buildGenerateResult.js";
 import { runCommandEffect } from "./runCommandEffect.js";
+import { taskContextEnv } from "./taskContextEnv.js";
 /** @typedef {import("./AgentCliEvent.ts").AgentCliEvent} AgentCliEvent */
 
 /** @typedef {import("./AgentGenerateOptions.ts").AgentGenerateOptions} AgentGenerateOptions */
@@ -628,7 +629,11 @@ export class BaseCliAgent {
             idleMs: this.idleTimeoutMs,
         });
         const cwd = this.cwd ?? options?.rootDir ?? process.cwd();
-        const env = { ...process.env, ...this.env };
+        const env = {
+            ...process.env,
+            ...this.env,
+            ...taskContextEnv(options?.taskContext),
+        };
         const combinedSystem = combineNonEmpty([
             this.systemPrompt,
             systemFromMessages,

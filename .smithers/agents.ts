@@ -1,14 +1,24 @@
 // smithers-source: generated
-// Source of truth: ~/.smithers/accounts.json (managed via `smithers agent add|list|remove`)
-import { type AgentLike, ClaudeCodeAgent as SmithersClaudeCodeAgent } from "smithers-orchestrator";
+// Account providers (camelCase labels) come from ~/.smithers/accounts.json — managed via `smithers agent add|list|remove`.
+import { homedir } from "node:os";
+import path from "node:path";
+import { type AgentLike, ClaudeCodeAgent as SmithersClaudeCodeAgent, CodexAgent as SmithersCodexAgent, OpenCodeAgent as SmithersOpenCodeAgent, PiAgent as SmithersPiAgent, KimiAgent as SmithersKimiAgent, AmpAgent as SmithersAmpAgent, GeminiAgent as SmithersGeminiAgent } from "smithers-orchestrator";
 
 export const providers = {
-  claude1: new SmithersClaudeCodeAgent({ cwd: process.cwd(), yolo: true }),
+  claude: new SmithersClaudeCodeAgent({ model: "claude-opus-4-7", cwd: process.cwd() }),
+  codex: new SmithersCodexAgent({ model: "gpt-5.3-codex", cwd: process.cwd(), skipGitRepoCheck: true }),
+  opencode: new SmithersOpenCodeAgent({ model: "anthropic/claude-opus-4-20250514", cwd: process.cwd() }),
+  pi: new SmithersPiAgent({ provider: "openai", model: "gpt-5.3-codex" }),
+  kimi: new SmithersKimiAgent({ model: "kimi-latest" }),
+  amp: new SmithersAmpAgent(),
+  claudeSonnet: new SmithersClaudeCodeAgent({ model: "claude-sonnet-4-7", cwd: process.cwd() }),
+  kimi1: new SmithersKimiAgent({ model: "kimi-latest", configDir: path.join(homedir(), ".smithers/accounts/kimi-1"), cwd: process.cwd() }),
+  codex1: new SmithersCodexAgent({ model: "gpt-5.3-codex", configDir: path.join(homedir(), ".codex"), skipGitRepoCheck: true, cwd: process.cwd() }),
+  gemini1: new SmithersGeminiAgent({ model: "gemini-3.1-pro-preview", configDir: path.join(homedir(), ".gemini"), cwd: process.cwd() }),
 } as const;
 
 export const agents = {
-  claude: [providers.claude1],
-  cheapFast: [providers.claude1],
-  smart: [providers.claude1],
-  smartTool: [providers.claude1],
+  cheapFast: [providers.kimi, providers.claudeSonnet, providers.kimi1, providers.gemini1],
+  smart: [providers.codex, providers.opencode, providers.claude, providers.kimi1, providers.codex1, providers.gemini1],
+  smartTool: [providers.claude, providers.codex, providers.opencode, providers.kimi1, providers.codex1, providers.gemini1],
 } as const satisfies Record<string, AgentLike[]>;

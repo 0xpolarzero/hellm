@@ -78,11 +78,12 @@ test.describe("Chat-first shell", () => {
     await expect(page.getByTestId("chat-stream")).toContainText("refund webhook");
   });
 
-  test("the gear drops back to the classic tabbed shell", async ({ page }) => {
+  test("/studio drops back to the classic tabbed shell", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("chat-shell")).toBeVisible();
 
-    await page.getByTestId("shell-gear").click();
+    await page.getByTestId("chat-composer-input").fill("/studio");
+    await page.getByTestId("chat-composer-send").click();
 
     // Classic shell mounts (sidebar brand is studio-only chrome).
     await expect(page.getByTestId("chat-shell")).toHaveCount(0);

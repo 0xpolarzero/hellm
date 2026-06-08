@@ -20,5 +20,17 @@ export type AgentGenerateOptions = {
   isRetry?: unknown;
   retryAttempt?: unknown;
   schemaRetry?: unknown;
+  /**
+   * Run context for the task this agent invocation belongs to. Surfaced to the
+   * spawned agent process (and its subprocesses) as SMITHERS_RUN_ID / NODE_ID /
+   * ITERATION / ATTEMPT so the agent can address its own run — e.g. to raise a
+   * blocking `smithers ask-human` request.
+   */
+  taskContext?: {
+    runId?: string;
+    nodeId?: string;
+    iteration?: number;
+    attempt?: number;
+  };
   [key: string]: unknown;
 };

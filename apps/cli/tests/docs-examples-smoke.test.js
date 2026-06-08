@@ -154,8 +154,6 @@ function createDocsSnippetProject() {
 function findDocsWorkflowSnippets() {
     const docFiles = Array.from(new Bun.Glob("docs/**/*.{mdx,md}").scanSync({ cwd: REPO_ROOT }))
         .filter((file) => !file.startsWith("docs/changelogs/"))
-        .filter((file) => !file.startsWith("docs/design-prompts/"))
-        .filter((file) => !file.startsWith("docs/planning/"))
         .sort();
     const snippets = [];
     for (const file of docFiles) {
@@ -181,8 +179,6 @@ function findDocsWorkflowSnippets() {
 function findWorkflowLikeSnippetLabels() {
     const docFiles = Array.from(new Bun.Glob("docs/**/*.{mdx,md}").scanSync({ cwd: REPO_ROOT }))
         .filter((file) => !file.startsWith("docs/changelogs/"))
-        .filter((file) => !file.startsWith("docs/design-prompts/"))
-        .filter((file) => !file.startsWith("docs/planning/"))
         .sort();
     const labels = [];
     for (const file of docFiles) {

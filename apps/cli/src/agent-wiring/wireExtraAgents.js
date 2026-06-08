@@ -9,6 +9,22 @@ export const EXTRA_MCP_AGENTS = ["hermes", "openclaw"];
 export const EXTRA_SKILL_AGENTS = ["pi"];
 
 /**
+ * Detects the package-manager runner (`npx`, `pnpx`, `bunx`) the same way the
+ * underlying MCP framework (incur) does, so Hermes/OpenClaw get the launcher that
+ * actually exists on this host instead of a hardcoded `bunx` that may be absent.
+ * Mirrors incur's `detectRunner` (env-based, no extra deps).
+ *
+ * @returns {"npx" | "pnpx" | "bunx"}
+ */
+function detectRunner() {
+  const userAgent = process.env.npm_config_user_agent ?? "";
+  const execPath = process.env.npm_execpath ?? "";
+  if (userAgent.includes("pnpm") || execPath.includes("pnpm")) return "pnpx";
+  if (userAgent.includes("bun") || execPath.includes("bun")) return "bunx";
+  return "npx";
+}
+
+/**
  * Wires Smithers into agents the underlying skill/MCP framework does not cover —
  * Hermes and OpenClaw (native MCP config) and Pi (skills directory). Run as a
  * supplementary step after `mcp add` / `skills add`.
@@ -16,7 +32,7 @@ export const EXTRA_SKILL_AGENTS = ["pi"];
  * @param {object} opts
  * @param {"mcp" | "skills"} opts.kind Which install ran.
  * @param {string} [opts.name] MCP server name (default `"smithers"`).
- * @param {string} [opts.command] MCP launch executable (default `"bunx"`).
+ * @param {string} [opts.command] MCP launch executable (default: the detected runner — `npx`/`pnpx`/`bunx` — matching what incur registers for other agents).
  * @param {string[]} [opts.args] MCP launch args (default `["smithers-orchestrator", "--mcp"]`).
  * @param {boolean} [opts.global] Install globally (default `true`).
  * @param {string} [opts.cwd] Working directory for project-scoped installs.
@@ -27,7 +43,7 @@ export const EXTRA_SKILL_AGENTS = ["pi"];
 export function wireExtraAgents({
   kind,
   name = "smithers",
-  command = "bunx",
+  command = detectRunner(),
   args = ["smithers-orchestrator", "--mcp"],
   global = true,
   cwd = process.cwd(),

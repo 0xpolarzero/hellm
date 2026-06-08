@@ -1,0 +1,103 @@
+---
+title: "Get Started in 5 Minutes"
+description: "Make your coding agent fluent in Smithers, then ask it for an outcome and watch it pick the right workflow."
+---
+
+The fastest path is to make your coding agent fluent in Smithers, then talk to it.
+
+You don't write `.tsx` workflows by hand. You don't memorize CLI verbs. You install one skill set into the agent you already use, then ask for an outcome (*"add rate limiting and keep iterating until the tests pass"*), and the agent reaches for Smithers, picks a ready-made recipe, and drives a durable, multi-step run on your behalf. You drive it through your agent.
+
+Three steps. Each is one line your agent runs under the hood, then a sentence you say out loud.
+
+<Steps>
+
+<Step title="Make every agent fluent in Smithers">
+
+Two commands wire Smithers into every coding agent on your machine (Claude Code, Codex, Cursor, Copilot, and ~20 more), no per-agent config by hand.
+
+```bash
+bunx smithers-orchestrator skills add   # one skill per CLI verb, so the agent can run any command
+bunx smithers-orchestrator mcp add      # register Smithers as an MCP server in each one
+```
+
+`skills add` drops a skill for each Smithers command (`smithers ps`, `smithers up`, `smithers inspect`, …) so the agent runs any verb without reading `--help` first; `mcp add` wires in the Smithers MCP server. Together they make the agent *able* to operate Smithers.
+
+For the mental model (*when* to reach for Smithers, the rule that the agent is an **orchestrator** that runs real work *through* Smithers rather than its own subagents, plus the full docs bundle it reads on demand), also install the curated `smithers` skill:
+
+```bash
+mkdir -p ~/.claude/skills/smithers
+curl -fsSL https://raw.githubusercontent.com/smithersai/smithers/main/skills/smithers/SKILL.md \
+  -o ~/.claude/skills/smithers/SKILL.md
+curl -fsSL https://smithers.sh/llms-full.txt \
+  -o ~/.claude/skills/smithers/llms-full.txt
+```
+
+The full per-agent matrix and this curated onboarding skill are covered in [Installation](/installation) and [Agent Support](/agents/overview).
+
+<Frame caption="Proof the agent is now Smithers-fluent: the installed skill surfaces inside the agent, so asking for an outcome routes straight to a workflow.">
+  <img src="/images/workflow-ui/workflow-skill.png" alt="The Smithers workflow skill loaded inside a coding agent, ready to drive a run from a plain-English request" />
+</Frame>
+
+</Step>
+
+<Step title="Initialize the repo so the ready-made workflows exist">
+
+From inside your project, scaffold the local workflow pack.
+
+```bash
+bunx smithers-orchestrator init
+```
+
+This drops a `.smithers/` folder with task-specific and project-specific workflows already built: `implement`, `plan`, `research-plan-implement`, `review`, `debug`, `ralph`, and more. These are the recipes your agent will pick from. Nothing to author yet.
+
+</Step>
+
+<Step title="Ask for an outcome, and watch the agent pick a recipe">
+
+This is the magic moment. You describe what you want done. The agent matches it to a workflow and starts a durable run.
+
+> **You:** Orchestrate an agent to add rate limiting and keep iterating until the tests pass.
+
+The agent reaches for the `implement` workflow, wraps it in a loop that re-runs until your test command is green, and reports back when it lands. It survives a crash mid-run. Every finished step is persisted, so a restart resumes from the last completed frame instead of starting over.
+
+> **You:** Give me an ordered plan for adding account-level billing limits. Don't touch the code.
+
+The agent picks the `plan` workflow: research and a structured, prioritized plan, no edits to your tree. Approve it, then ask it to implement.
+
+| You ask for | The agent reaches for | What you get |
+|---|---|---|
+| Build it and don't stop until tests pass | `implement` (looped) | A durable run that iterates to green |
+| A plan only, no code changes | `plan` | An ordered, prioritized plan to approve |
+| Research, then plan, then build | `research-plan-implement` | The full chain, gated for your review |
+
+</Step>
+
+</Steps>
+
+<Note>
+You can also drive the CLI yourself instead of going through your agent. The
+[Quickstart](/quickstart) runs a seeded workflow in two commands, and
+[Starters](/starters) lists every plain-English recipe with a copy-paste
+command. The agent path is the gentlest first impression; the CLI is there when
+you want the controls directly.
+</Note>
+
+That's the whole loop: install the skill, init the repo, ask for an outcome. Any agent, any model, any machine, and the durability comes for free. From here you watch the run unfold and steer it without dropping back to prose.
+
+<Frame caption="Proof the agent layer is portable: the same Smithers skill drives Claude Code, Codex, Cursor, and the rest from one install.">
+  <img src="/images/why/any-agent.png" alt="Smithers driving many different coding agents from a single skill install (any agent, any model, any machine)" />
+</Frame>
+
+## Read next
+
+<CardGroup cols={2}>
+  <Card title="Talk to Your Agent" href="/guide/talk-to-your-agent">
+    The phrasing that gets the right workflow every time.
+  </Card>
+  <Card title="Watch and Steer" href="/guide/watch-and-steer">
+    Follow a live run, clear approvals, and redirect without touching code.
+  </Card>
+  <Card title="Installation" href="/installation">
+    The full per-agent matrix and the curated onboarding skill.
+  </Card>
+</CardGroup>

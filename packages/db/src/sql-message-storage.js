@@ -4,7 +4,16 @@ import { SqlError } from "@effect/sql/SqlError";
 import * as Statement from "@effect/sql/Statement";
 import { Database } from "bun:sqlite";
 import { Context, Effect, Layer, ManagedRuntime, Scope, Stream } from "effect";
-import { runSmithersSchemaMigrations } from "./schema-migrations.js";
+import {
+    POSTGRES,
+    SQLITE,
+    jsonExtractText,
+    translatePlaceholders,
+} from "./dialect.js";
+import {
+    runSmithersSchemaMigrations,
+    runSmithersSchemaInitPostgres,
+} from "./schema-migrations.js";
 import { camelToSnake } from "./utils/camelToSnake.js";
 /** @typedef {import("drizzle-orm/bun-sqlite").BunSQLiteDatabase} BunSQLiteDatabase */
 /** @typedef {import("./SqlMessageStorageEventHistoryQuery.ts").SqlMessageStorageEventHistoryQuery} SqlMessageStorageEventHistoryQuery */
@@ -206,6 +215,30 @@ const CREATE_TABLE_STATEMENTS = [
     error_json TEXT,
     PRIMARY KEY (run_id, node_id, iteration, attempt, seq)
   )`,
+    `CREATE TABLE IF NOT EXISTS _smithers_workspace_states (
+    run_id TEXT NOT NULL,
+    jj_cwd TEXT NOT NULL,
+    jj_commit_id TEXT NOT NULL,
+    jj_operation_id TEXT NOT NULL,
+    jj_change_id TEXT,
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (run_id, jj_cwd, jj_commit_id)
+  )`,
+    `CREATE TABLE IF NOT EXISTS _smithers_workspace_checkpoints (
+    run_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    iteration INTEGER NOT NULL DEFAULT 0,
+    attempt INTEGER NOT NULL,
+    seq INTEGER NOT NULL,
+    jj_cwd TEXT NOT NULL,
+    jj_commit_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    tier INTEGER NOT NULL,
+    label TEXT,
+    tool_use_id TEXT,
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (run_id, node_id, iteration, attempt, seq)
+  )`,
     `CREATE TABLE IF NOT EXISTS _smithers_events (
     run_id TEXT NOT NULL,
     seq INTEGER NOT NULL,
@@ -393,14 +426,17 @@ function applyBooleanColumns(row, booleanColumns) {
  * @param {Record<string, unknown>} row
  * @param {{ orIgnore?: boolean; conflictColumns?: readonly string[]; updateColumns?: readonly string[]; }} [options]
  */
-function buildInsertSql(table, row, options) {
+function buildInsertSql(table, row, options, dialect = SQLITE) {
     const entries = Object.entries(row).filter(([, value]) => value !== undefined);
     const columns = entries.map(([key]) => camelToSnake(key));
     const params = entries.map(([, value]) => encodeParam(value));
     const tableSql = quoteIdentifier(table);
     const columnSql = columns.map(quoteIdentifier).join(", ");
     const placeholderSql = columns.map(() => "?").join(", ");
-    let statement = `INSERT${options?.orIgnore ? " OR IGNORE" : ""} INTO ${tableSql} (${columnSql}) ` +
+    // SQLite spells the ignore-on-conflict shorthand `INSERT OR IGNORE`;
+    // PostgreSQL has no such prefix and instead appends `ON CONFLICT DO NOTHING`.
+    const orIgnorePrefix = options?.orIgnore && dialect !== POSTGRES ? " OR IGNORE" : "";
+    let statement = `INSERT${orIgnorePrefix} INTO ${tableSql} (${columnSql}) ` +
         `VALUES (${placeholderSql})`;
     if (options?.conflictColumns && options.conflictColumns.length > 0) {
         const conflictSql = options.conflictColumns.map(camelToSnake).map(quoteIdentifier).join(", ");
@@ -416,6 +452,9 @@ function buildInsertSql(table, row, options) {
                 .join(", ");
             statement += ` ON CONFLICT (${conflictSql}) DO UPDATE SET ${updateSql}`;
         }
+    }
+    else if (options?.orIgnore && dialect === POSTGRES) {
+        statement += ` ON CONFLICT DO NOTHING`;
     }
     return { statement, params };
 }
@@ -524,18 +563,118 @@ function makeSqlClientEffect(sqlite) {
 function makeSqlClientLayer(sqlite) {
     return Layer.scoped(SqlClient.SqlClient, makeSqlClientEffect(sqlite));
 }
+/**
+ * @param {SqliteParam} value
+ * @returns {unknown}
+ */
+function toPostgresParam(value) {
+    // node-postgres maps Buffer → bytea; a bare Uint8Array does not round-trip.
+    if (value instanceof Uint8Array || Buffer.isBuffer(value)) {
+        return Buffer.isBuffer(value) ? value : Buffer.from(value);
+    }
+    // Smithers mirrors SQLite's storage model on Postgres: JSON lives in TEXT
+    // columns. SQLite/Drizzle stringify objects automatically; node-postgres does
+    // not, so do it here to keep a single encoding contract across dialects.
+    if (value !== null && typeof value === "object" && !(value instanceof Date)) {
+        return JSON.stringify(value);
+    }
+    return value;
+}
+/**
+ * A `@effect/sql` connection backed by a single node-postgres connection (any
+ * object exposing `query({ text, values, rowMode })` — a `pg.Client`, or a
+ * PGlite socket connection). Smithers writes SQL with `?` placeholders; this
+ * connection rewrites them to PostgreSQL's `$n` on the way out, mirroring the
+ * SQLite connection so the rest of the adapter is dialect-agnostic.
+ * @param {{ query: (config: { text: string; values?: ReadonlyArray<unknown>; rowMode?: "array" }) => Promise<{ rows?: ReadonlyArray<any> }> }} pgConn
+ * @returns {Connection}
+ */
+function createPostgresConnection(pgConn) {
+    const run = (statement, params, transformRows) => Effect.tryPromise({
+        try: async () => {
+            const text = translatePlaceholders(POSTGRES, statement);
+            const result = await pgConn.query({ text, values: params.map(toPostgresParam) });
+            const rows = result.rows ?? [];
+            return transformRows ? transformRows(rows) : rows;
+        },
+        catch: (cause) => new SqlError({ cause, message: "Failed to execute Postgres statement" }),
+    });
+    return {
+        execute: (statement, params, transformRows) => run(statement, params, transformRows),
+        executeRaw: (statement, params) => run(statement, params, undefined),
+        executeValues: (statement, params) => Effect.tryPromise({
+            try: async () => {
+                const text = translatePlaceholders(POSTGRES, statement);
+                const result = await pgConn.query({
+                    text,
+                    values: params.map(toPostgresParam),
+                    rowMode: "array",
+                });
+                return result.rows ?? [];
+            },
+            catch: (cause) => new SqlError({ cause, message: "Failed to execute Postgres values statement" }),
+        }),
+        executeUnprepared: (statement, params, transformRows) => run(statement, params, transformRows),
+        executeStream: (statement, params, transformRows) => Stream.fromIterableEffect(run(statement, params, transformRows)),
+    };
+}
+/**
+ * @param {object} pgConn
+ * @returns {Effect.Effect<SqlClient.SqlClient, never>}
+ */
+function makePostgresSqlClientEffect(pgConn) {
+    // The compiler is only exercised by the `sql``` tagged template, which this
+    // storage never uses — every query is a pre-built string run through the raw
+    // connection, where the `?`→`$n` rewrite happens. So the SQLite compiler is
+    // an inert placeholder here.
+    const compiler = Statement.makeCompilerSqlite(camelToSnake);
+    const connection = createPostgresConnection(pgConn);
+    return Effect.gen(function* () {
+        const semaphore = yield* Effect.makeSemaphore(1);
+        const acquirer = semaphore.withPermits(1)(Effect.succeed(connection));
+        const transactionAcquirer = Effect.uninterruptibleMask((restore) => Effect.as(Effect.zipRight(restore(semaphore.take(1)), Effect.tap(Effect.scope, (scope) => Scope.addFinalizer(scope, semaphore.release(1)))), connection));
+        const reactivity = yield* Reactivity.make;
+        return yield* SqlClient.make({
+            acquirer,
+            compiler,
+            transactionAcquirer,
+            spanAttributes: [[ATTR_DB_SYSTEM_NAME, "postgresql"]],
+            transformRows: transformRowKeys,
+        }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
+    });
+}
+/**
+ * @param {object} pgConn
+ */
+function makePostgresSqlClientLayer(pgConn) {
+    return Layer.scoped(SqlClient.SqlClient, makePostgresSqlClientEffect(pgConn));
+}
 export class SqlMessageStorage {
     sqlite;
+    /** @type {import("./dialect.js").Dialect} */
+    dialect;
+    /** @type {object | null} */
+    pgConn;
     // TODO(Phase 8): Keep this per-DB runtime until the unified runtime can
     // inject a scoped SqlClient without rebuilding the per-connection semaphore.
     runtime;
     tableColumnsCache = new Map();
     /**
-   * @param {BunSQLiteDatabase<any> | Database} db
+   * @param {BunSQLiteDatabase<any> | Database | { dialect: "postgres"; connection: object }} db
    */
     constructor(db) {
-        this.sqlite = resolveSqliteDatabase(db);
-        this.runtime = ManagedRuntime.make(makeSqlClientLayer(this.sqlite));
+        if (db && typeof db === "object" && /** @type {any} */ (db).dialect === POSTGRES) {
+            this.dialect = POSTGRES;
+            this.pgConn = /** @type {any} */ (db).connection;
+            this.sqlite = null;
+            this.runtime = ManagedRuntime.make(makePostgresSqlClientLayer(this.pgConn));
+        }
+        else {
+            this.dialect = SQLITE;
+            this.sqlite = resolveSqliteDatabase(db);
+            this.pgConn = null;
+            this.runtime = ManagedRuntime.make(makeSqlClientLayer(this.sqlite));
+        }
     }
     /**
    * @param {string} table
@@ -545,6 +684,13 @@ export class SqlMessageStorage {
         const cached = this.tableColumnsCache.get(table);
         if (cached) {
             return cached;
+        }
+        if (this.dialect === POSTGRES) {
+            // A fresh PostgreSQL schema has no historical column drift to defend
+            // against, and PRAGMA is unavailable. Returning null tells
+            // filterKnownColumns to skip filtering, so a genuinely missing column
+            // surfaces as a loud insert error rather than a silently dropped field.
+            return null;
         }
         const rows = this.sqlite
             .query(`PRAGMA table_info(${quoteIdentifier(table)})`)
@@ -562,7 +708,7 @@ export class SqlMessageStorage {
    */
     filterKnownColumns(table, row) {
         const knownColumns = this.getTableColumns(table);
-        return Object.fromEntries(Object.entries(row).filter(([key, value]) => value !== undefined && knownColumns.has(key)));
+        return Object.fromEntries(Object.entries(row).filter(([key, value]) => value !== undefined && (knownColumns === null || knownColumns.has(key))));
     }
     /**
    * @template A, E
@@ -584,6 +730,16 @@ export class SqlMessageStorage {
    * @returns {Effect.Effect<void, never>}
    */
     ensureSchemaEffect() {
+        if (this.dialect === POSTGRES) {
+            const pgConn = this.pgConn;
+            return Effect.tryPromise({
+                try: () => runSmithersSchemaInitPostgres(pgConn, {
+                    createTableStatements: CREATE_TABLE_STATEMENTS,
+                    createIndexStatements: CREATE_INDEX_STATEMENTS,
+                }),
+                catch: (cause) => new SqlError({ cause, message: "Failed to initialize Postgres schema" }),
+            });
+        }
         const sqlite = this.sqlite;
         return Effect.sync(() => {
             runSmithersSchemaMigrations(sqlite, {
@@ -622,6 +778,28 @@ export class SqlMessageStorage {
         return rows[0];
     }
     /**
+   * Like {@link queryAll} but returns rows with their on-disk column names (no
+   * snake→camel transform). Used for "raw" output-table reads where callers
+   * expect the storage column names verbatim.
+   * @template T
+   * @param {string} statement
+   * @param {ReadonlyArray<SqliteParam>} [params]
+   * @returns {Promise<Array<T>>}
+   */
+    queryAllRaw(statement, params = []) {
+        return this.withConnection((connection) => connection.execute(statement, params.map(encodeParam), undefined));
+    }
+    /**
+   * @template T
+   * @param {string} statement
+   * @param {ReadonlyArray<SqliteParam>} [params]
+   * @returns {Promise<T | undefined>}
+   */
+    async queryOneRaw(statement, params = []) {
+        const rows = await this.queryAllRaw(statement, params);
+        return rows[0];
+    }
+    /**
    * @param {string} statement
    * @param {ReadonlyArray<SqliteParam>} [params]
    * @returns {Promise<void>}
@@ -636,7 +814,7 @@ export class SqlMessageStorage {
    */
     insertIgnore(table, row) {
         const filteredRow = this.filterKnownColumns(table, row);
-        const { statement, params } = buildInsertSql(table, filteredRow, { orIgnore: true });
+        const { statement, params } = buildInsertSql(table, filteredRow, { orIgnore: true }, this.dialect);
         return this.execute(statement, params);
     }
     /**
@@ -651,7 +829,7 @@ export class SqlMessageStorage {
         const { statement, params } = buildInsertSql(table, filteredRow, {
             conflictColumns,
             updateColumns,
-        });
+        }, this.dialect);
         return this.execute(statement, params);
     }
     /**
@@ -694,7 +872,7 @@ export class SqlMessageStorage {
             params.push(...query.types);
         }
         if (query.nodeId) {
-            clauses.push("json_extract(payload_json, '$.nodeId') = ?");
+            clauses.push(`${jsonExtractText(this.dialect, "payload_json", "$.nodeId")} = ?`);
             params.push(query.nodeId);
         }
         return {

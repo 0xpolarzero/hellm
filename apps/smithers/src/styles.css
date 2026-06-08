@@ -6,8 +6,8 @@
   --bg: #ffffff;
   --text: #0a0a0a;
   --text-muted: #525252;
-  --text-faint: #8a8a8a;
-  --text-placeholder: #a3a3a3;
+  --text-faint: #6f6f6f;
+  --text-placeholder: #767676;
   --surface: #ffffff;
   --surface-glass: rgba(255, 255, 255, 0.72);
   --surface-glass-strong: rgba(255, 255, 255, 0.85);
@@ -40,6 +40,13 @@
   --node-muted: #607087;
   --node-shadow: rgb(30 42 60 / 10%);
 
+  /* Fixed brand-mark colors. The Smithers glyph is theme-invariant (the same in
+     light and dark), so these have no dark-mode override — one source of truth
+     for both the persistent corner logo and the first-run splash mark. */
+  --logo-bg: #10151f;
+  --logo-ring: #ffffff;
+  --logo-stem: #78d7ba;
+
   color: var(--text);
   background: var(--bg);
   font-family:
@@ -66,6 +73,35 @@ button {
   font: inherit;
 }
 
+/* Shared high-contrast keyboard focus ring. The custom glass/colored controls
+   suppress or wash out the UA ring, so they get an explicit brand outline.
+   border-radius is preserved by each control's own rule; the offset keeps the
+   ring clear of rounded corners. */
+.nav-button:focus-visible,
+.command-pill:focus-visible,
+.command-option:focus-visible,
+.project-option:focus-visible,
+.ghost-pill:focus-visible,
+.mic-button:focus-visible,
+.store-card:focus-visible,
+.toast-main:focus-visible,
+.toast-action:focus-visible,
+.auth-link:focus-visible,
+.login-provider:focus-visible,
+.login-row input:focus-visible,
+.login-row button:focus-visible,
+.login-secondary:focus-visible,
+.signin-close:focus-visible,
+.btn-brand:focus-visible,
+.ob-goal-send:focus-visible,
+.ob-begin:focus-visible,
+.ob-create:focus-visible,
+.remote-controls input:focus-visible,
+.remote-controls button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
 .app-shell {
   display: flex;
   flex-direction: column;
@@ -77,6 +113,269 @@ button {
 .app-shell[data-mode="home"] {
   justify-content: center;
 }
+
+.app-shell[data-mode="login"] {
+  min-height: 100vh;
+}
+
+/* Remote/auth chrome shared by normal and sidebar layouts. */
+.auth-status {
+  position: fixed;
+  top: 12px;
+  /* Top-left: the brand mark owns the top-right corner (see CornerLogo). */
+  left: 12px;
+  right: auto;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  max-width: min(calc(100vw - 24px), 360px);
+  min-height: 36px;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-glass-strong);
+  box-shadow: 0 10px 30px rgb(var(--shadow-rgb) / 0.1);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: blur(18px) saturate(180%);
+}
+
+.auth-avatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--inverse-bg);
+  color: var(--inverse-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.auth-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.auth-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-link {
+  flex: none;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.auth-link:hover {
+  background: var(--hover);
+}
+
+.app-shell[data-mode="sidebar"] .auth-status {
+  top: auto;
+  bottom: 12px;
+  /* The left rail owns the bottom-left; keep auth clear of it, bottom-right. */
+  left: auto;
+  right: 12px;
+}
+
+/* Login */
+.login-page {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-panel {
+  display: flex;
+  width: min(100%, 430px);
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 18px 50px rgb(var(--shadow-rgb) / 0.12);
+}
+
+.login-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.login-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  background: var(--inverse-bg);
+  color: var(--inverse-text);
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.login-head h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.login-head p {
+  margin: 3px 0 0;
+  color: var(--text-faint);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.login-error {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.login-actions,
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.login-provider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.login-provider:hover {
+  border-color: var(--border-strong);
+  background: var(--hover-subtle);
+}
+
+.provider-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.login-form label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.login-row {
+  display: flex;
+  gap: 8px;
+}
+
+.login-row input {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 40px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.login-row button,
+.login-secondary {
+  flex: none;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--inverse-bg);
+  color: var(--inverse-text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.login-row button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.login-secondary {
+  width: 100%;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.login-secondary:hover {
+  background: var(--hover);
+}
+
+/* The sign-in modal's own styles (.signin-backdrop/.signin-dialog/.signin-close)
+   live colocated in auth/auth.css, imported by SignInModal — feature CSS stays
+   out of the shared stylesheet. The shared login-* panel rules above back both
+   the /login page and the modal's reused .login-panel. */
 
 /* Chat state: scrollable transcript with the composer floating over the bottom. */
 .conversation {
@@ -296,9 +595,12 @@ button {
     box-shadow 0.15s ease;
 }
 
+/* On focus the card lifts with a soft brand-tinted glow instead of a hard
+   outline: a visible focus cue that reads as a halo, not a border. */
 .composer-card:focus-within {
-  border-color: var(--border-strong);
+  border-color: color-mix(in srgb, var(--brand) 32%, var(--border));
   box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--brand) 12%, transparent),
     0 1px 2px rgb(var(--shadow-rgb) / 0.05),
     0 20px 48px rgb(var(--shadow-rgb) / 0.14);
 }
@@ -374,6 +676,18 @@ button {
 
 .project-control {
   position: relative;
+}
+
+/* Full-viewport click-catcher behind an open menu (see MenuBackdrop). Sits
+   under every menu's z-index so a click outside lands here and closes it. */
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: default;
 }
 
 .project-menu {
@@ -712,6 +1026,11 @@ button {
   flex-direction: column;
   gap: 2px;
   min-width: 240px;
+  /* Opens upward from a pill that can sit mid-screen (home view), so cap to the
+     space above it and scroll the rest — 16 rows would otherwise clip off-top. */
+  max-height: min(46vh, 440px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px;
   border: 1px solid var(--border-solid);
   border-radius: 14px;
@@ -719,6 +1038,31 @@ button {
   box-shadow:
     0 1px 2px rgb(var(--shadow-rgb) / 0.04),
     0 12px 32px rgb(var(--shadow-rgb) / 0.14);
+}
+
+.command-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Uppercase section label inside the menu (Mode, Go to). */
+.command-section {
+  padding: 8px 10px 4px;
+  font: 700 10px/1 ui-monospace, Menlo, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.command-group:first-child .command-section {
+  padding-top: 4px;
+}
+
+.command-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
 }
 
 .command-option {
@@ -761,6 +1105,34 @@ button {
   height: 15px;
   margin-left: auto;
   color: var(--cmd-color);
+}
+
+/* Leading glyph for the "Go to" and Find rows (muted, not a colored dot). */
+.command-go-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--text-faint);
+}
+
+.command-go-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.command-option:hover .command-go-icon {
+  color: var(--text-muted);
+}
+
+/* Monospace shortcut chip pinned to the row's right edge (e.g. Find ⌘K). */
+.command-shortcut {
+  margin-left: auto;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: var(--hover);
+  color: var(--text-muted);
+  font: 600 11px/1 ui-monospace, Menlo, monospace;
 }
 
 /* View transition: each back/forward/select replays a fast directional slide. */
@@ -919,6 +1291,118 @@ button {
   font-size: 0.95rem;
 }
 
+.remote-panel {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin: 0 0 24px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.remote-panel h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.98rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.remote-panel p {
+  margin: 4px 0 0;
+  color: var(--text-faint);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.remote-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.remote-controls input {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.remote-controls button {
+  flex: none;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--inverse-bg);
+  color: var(--inverse-text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.remote-controls button:hover {
+  background: var(--inverse-bg-hover);
+}
+
+.remote-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--text-muted);
+  font: 700 10px/1.4 ui-monospace, Menlo, monospace;
+  text-transform: uppercase;
+}
+
+.remote-meta span {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--hover-subtle);
+}
+
+@media (min-width: 760px) {
+  .remote-panel {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+    align-items: center;
+  }
+
+  .remote-meta {
+    grid-column: 1 / -1;
+  }
+}
+
+.store-section {
+  margin-bottom: 30px;
+}
+
+.store-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.store-section-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.store-section-count {
+  color: var(--text-faint);
+  font-size: 0.8rem;
+}
+
 .store-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
@@ -992,7 +1476,287 @@ button {
   font-weight: 600;
 }
 
+/* Available (not-yet-installed) cards aren't clickable as a whole; the Install
+   button is the action, so no lift-on-hover. */
+.store-card--available {
+  cursor: default;
+}
+
+.store-card--available:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.store-install {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border: 1px solid color-mix(in srgb, var(--card-color) 45%, var(--border));
+  border-radius: 999px;
+  color: var(--card-color);
+  background: color-mix(in srgb, var(--card-color) 12%, transparent);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.store-install:hover {
+  background: color-mix(in srgb, var(--card-color) 20%, transparent);
+  border-color: var(--card-color);
+}
+
+.store-install span {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+/* ---- Arc-style sidebar layout ----
+   The chat (transcript + composer) lives in a fixed-width left rail; the main
+   canvas to its right hosts whatever view is active (store, graph, …). */
+.app-shell[data-mode="sidebar"] {
+  flex-direction: row;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.chat-rail {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  /* Width is owned by the drag handle, fed in as --rail-width. A custom
+     property (not an inline width) lets the narrow-screen media query below
+     still override to 100% when the rail stacks above the canvas. */
+  width: var(--rail-width, 320px);
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  background: var(--surface-glass);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  transition: width 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* `.chat-rail { display: flex }` outranks the UA [hidden] rule, so collapse
+   has to re-assert display: none explicitly. */
+.chat-rail[hidden] {
+  display: none;
+}
+
+/* While dragging, lock the cursor across the whole shell, suppress text
+   selection, and drop the rail's eased transition so it tracks the pointer. */
+.app-shell.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.app-shell.is-resizing .chat-rail {
+  transition: none;
+}
+
+/* The drag handle sits on the seam between rail and canvas. Negative margins
+   straddle the 7px hit area over the border so it contributes no layout width.
+   A hairline reveals on hover (and throughout a drag) to signal it's grabbable. */
+.rail-resizer {
+  position: relative;
+  z-index: 5;
+  flex: none;
+  width: 7px;
+  margin: 0 -3.5px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.rail-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.rail-resizer:hover::after,
+.app-shell.is-resizing .rail-resizer::after {
+  background: var(--brand);
+}
+
+/* Reopen affordance for a fully collapsed rail: a slim tab pinned to the
+   canvas's left edge, vertically centered so it never collides with a view's
+   header. Overrides the square .nav-button shape. */
+.rail-restore {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 52px;
+  border-left: 0;
+  border-radius: 0 10px 10px 0;
+  z-index: 6;
+}
+
+.rail-restore:active:not(:disabled) {
+  /* Don't shrink-translate away from the edge on press. */
+  transform: translateY(-50%) scale(0.92);
+}
+
+.rail-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rail-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.rail-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--brand);
+}
+
+/* The transcript scrolls between the rail head and the docked composer. */
+.chat-rail .conversation {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.chat-rail .messages {
+  width: 100%;
+  gap: 14px;
+  padding: 16px 14px;
+}
+
+.chat-rail .composer-dock {
+  flex: none;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.chat-rail .composer-card {
+  width: 100%;
+  padding: 12px;
+  border-radius: 16px;
+  box-shadow: none;
+}
+
+/* The rail is narrow — let the input keep its line and the controls wrap. */
+.chat-rail .composer-top-row {
+  flex-wrap: wrap;
+}
+
+/* The main canvas holds the active view and lets it own its scroll. position
+   is the anchor for the floating "show chat" button when the rail is shut. */
+.main-canvas {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  animation: view-in 150ms ease-out both;
+}
+
+.main-canvas[data-dir="back"] {
+  animation-name: view-in-back;
+}
+
+.main-canvas .store {
+  flex: 1 1 auto;
+}
+
+.main-canvas .askme-graph-full {
+  flex: 1 1 auto;
+  height: auto;
+  border-bottom: 0;
+}
+
+/* Narrow screens: stack the rail above the canvas instead of side by side. */
+@media (max-width: 720px) {
+  .app-shell[data-mode="sidebar"] {
+    flex-direction: column;
+  }
+
+  .chat-rail {
+    flex: 1 1 55%;
+    /* Stacked vertically — ignore the dragged width. */
+    width: 100%;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Horizontal resize is meaningless once the panes stack. */
+  .rail-resizer {
+    display: none;
+  }
+
+  .main-canvas {
+    flex: 1 1 45%;
+    height: auto;
+  }
+}
+
 @media (max-width: 520px) {
+  .auth-status {
+    right: 10px;
+    left: 10px;
+    justify-content: space-between;
+    max-width: none;
+  }
+
+  /* The auth bar spans the top edge on phones — no room for the corner mark. */
+  .corner-logo {
+    display: none;
+  }
+
+  .app-shell:not([data-mode="sidebar"]) .view {
+    padding-top: 54px;
+  }
+
+  .login-page {
+    padding: 14px;
+  }
+
+  .login-panel {
+    padding: 18px;
+  }
+
+  .login-head {
+    align-items: flex-start;
+  }
+
+  .login-row,
+  .remote-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .login-row button,
+  .remote-controls button {
+    width: 100%;
+  }
+
   .messages {
     padding: 24px 14px 124px;
   }
@@ -1028,9 +1792,33 @@ button {
   .bubble.typing span,
   .mic-button.is-listening,
   .view,
+  .view[data-dir="back"],
   .toast,
-  .toast-detail {
+  .toast-detail,
+  .toast-spinner,
+  .main-canvas,
+  .main-canvas[data-dir="back"] {
     animation: none;
+  }
+
+  /* The store-card lift is a transform, not a keyframe, so cancel it directly. */
+  .store-card:hover {
+    transform: none;
+  }
+
+  .store-card {
+    transition: none;
+  }
+
+  /* Safety net: clamp any remaining animation/transition to effectively instant
+     so nothing slipped through replays for a reduced-motion user. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -1043,8 +1831,8 @@ button {
   --bg: #0b0b0d;
   --text: #f4f4f5;
   --text-muted: #a1a1aa;
-  --text-faint: #8b8b93;
-  --text-placeholder: #6b6b73;
+  --text-faint: #b0b0b8;
+  --text-placeholder: #a6a6ad;
   --surface: #18181b;
   --surface-glass: rgba(24, 24, 27, 0.72);
   --surface-glass-strong: rgba(24, 24, 27, 0.85);
@@ -1083,8 +1871,8 @@ button {
     --bg: #0b0b0d;
     --text: #f4f4f5;
     --text-muted: #a1a1aa;
-    --text-faint: #8b8b93;
-    --text-placeholder: #6b6b73;
+    --text-faint: #b0b0b8;
+    --text-placeholder: #a6a6ad;
     --surface: #18181b;
     --surface-glass: rgba(24, 24, 27, 0.72);
     --surface-glass-strong: rgba(24, 24, 27, 0.85);
@@ -1116,4 +1904,244 @@ button {
     --node-muted: #9a9aa6;
     --node-shadow: rgb(0 0 0 / 45%);
   }
+}
+
+/* ── Context Engineering Console (Concierge view) ───────────────────────────
+   Five-panel console: Script · Context Contract · Questions · Workflow · Evidence.
+   Card aesthetic matches the store/askme surfaces; the workflow-graph panel
+   spans the full row regardless of DOM order. */
+.concierge {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.concierge-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.concierge-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.concierge-title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.concierge-subtitle {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+
+.concierge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.concierge-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  min-width: 0;
+}
+
+/* The workflow DAG always gets its own full-width row. */
+.concierge-panel--workflow {
+  grid-column: 1 / -1;
+}
+
+.concierge-panel-title {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.concierge-panel-hint {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-faint);
+}
+
+.concierge-script {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.concierge-script:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.concierge-start {
+  align-self: flex-start;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 9px;
+  background: var(--inverse-bg);
+  color: var(--inverse-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.concierge-start:hover {
+  background: var(--inverse-bg-hover);
+}
+
+.concierge-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.concierge-field-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.concierge-field-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.concierge-field-empty {
+  font-size: 0.88rem;
+  color: var(--text-placeholder);
+  font-style: italic;
+}
+
+.concierge-graph {
+  height: clamp(220px, 34vh, 360px);
+  border: 1px solid var(--graph-border);
+  border-radius: 10px;
+  background: var(--graph-bg);
+  overflow: hidden;
+}
+
+.concierge-graph .react-flow {
+  height: 100%;
+}
+
+.concierge-doctor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.concierge-issue {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.concierge-issue-severity {
+  flex: none;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--hover);
+  color: var(--text-muted);
+}
+
+.concierge-issue--error .concierge-issue-severity {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.concierge-issue--warning .concierge-issue-severity {
+  background: color-mix(in srgb, #c98a00 16%, transparent);
+  color: #9a6b00;
+}
+
+.concierge-issue--ok .concierge-issue-severity {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
+}
+
+.concierge-issue-message {
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.concierge-issue-detail {
+  font-size: 0.82rem;
+  color: var(--text-faint);
+}
+
+.concierge-recs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.concierge-rec {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.concierge-rec-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.concierge-rec-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.concierge-rec-score {
+  font-size: 0.8rem;
+  color: var(--brand);
+  font-variant-numeric: tabular-nums;
+}
+
+.concierge-rec-reason {
+  font-size: 0.85rem;
+  color: var(--text-muted);
 }

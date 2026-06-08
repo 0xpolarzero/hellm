@@ -29,7 +29,7 @@ export class HermesAgent extends OpenAIAgent {
       nativeStructuredOutput = false,
       ...rest
     } = opts;
-    if (baseURL === undefined) {
+    if (baseURL === undefined || baseURL.trim() === "") {
       throw new SmithersError(
         "AGENT_CONFIG_INVALID",
         "HermesAgent requires a baseURL (or the HERMES_BASE_URL env var) pointing at the Hermes OpenAI-compatible API, e.g. http://127.0.0.1:5123/v1.",

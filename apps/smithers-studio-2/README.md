@@ -19,9 +19,9 @@ approved), never decoration.
 
 ## Design docs (read these first — docs define the contract)
 
-- [`docs/DESIGN.md`](docs/DESIGN.md) — the dark design system: color / spacing /
+- [`.smithers/specs/DESIGN.md`](../../.smithers/specs/DESIGN.md) — the dark design system: color / spacing /
   typography / radius / motion tokens, plus the verbatim CSS custom-property block.
-- [`docs/UX.md`](docs/UX.md) — the information architecture: primary / secondary /
+- [`.smithers/specs/UX.md`](../../.smithers/specs/UX.md) — the information architecture: primary / secondary /
   developer nav, the WELCOME → FOCUS → DETAIL model, the welcome/home flow, the
   command-palette behavior, the responsive live-run layout, and the stable e2e test
   hooks. Explains *why* this avoids the spaceship failure.

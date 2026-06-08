@@ -1,4 +1,5 @@
 import "@xyflow/react/dist/style.css";
+import { memo } from "react";
 import {
   Background,
   Controls,
@@ -24,8 +25,13 @@ function SmithersTaskNode({ data }: NodeProps<SmithersFlowNode>) {
 
 const nodeTypes = { smithersTask: SmithersTaskNode };
 
+// Hoisted so ReactFlow receives the same object reference on every render and
+// doesn't treat each parent re-render as a prop change.
+const FIT_VIEW_OPTIONS = { padding: 0.18 };
+const PRO_OPTIONS = { hideAttribution: true };
+
 /** A static, read-only n8n-style render of a Smithers workflow. */
-export function WorkflowGraph({
+function WorkflowGraphImpl({
   nodes,
   edges,
   theme = "light",
@@ -41,14 +47,16 @@ export function WorkflowGraph({
       nodeTypes={nodeTypes}
       colorMode={theme}
       fitView
-      fitViewOptions={{ padding: 0.18 }}
+      fitViewOptions={FIT_VIEW_OPTIONS}
       minZoom={0.35}
       nodesDraggable={false}
       nodesConnectable={false}
-      proOptions={{ hideAttribution: true }}
+      proOptions={PRO_OPTIONS}
     >
       <Background gap={26} color={theme === "dark" ? "#2a2a2e" : "#e2e7ef"} />
       <Controls showInteractive={false} />
     </ReactFlow>
   );
 }
+
+export const WorkflowGraph = memo(WorkflowGraphImpl);

@@ -1,29 +1,14 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
-
-export type CommandId = "chat" | "askme" | "store";
-
-export type Command = {
-  id: CommandId;
-  label: string;
-  color: string;
-  hint: string;
-};
-
-export const COMMANDS: Command[] = [
-  { id: "chat", label: "Chat", color: "#356fd2", hint: "Talk to Smithers" },
-  {
-    id: "askme",
-    label: "Ask Me",
-    color: "#6d56d8",
-    hint: "Smithers grills you to sharpen an idea",
-  },
-  {
-    id: "store",
-    label: "Store",
-    color: "#bf5b16",
-    hint: "Browse the workflow app store",
-  },
-];
+import {
+  useRef,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
+import { goToView, openSurface } from "./app/navigation";
+import { useRouteStore } from "./app/routeStore";
+import { useUiStore } from "./app/uiStore";
+import { COMMANDS, type CommandId } from "./commands";
+import { NAV_LINKS } from "./navMenu";
+import { MenuBackdrop } from "./components/MenuBackdrop";
 
 const ChevronDown = () => (
   <svg aria-hidden="true" className="chevron" fill="none" viewBox="0 0 24 24">
@@ -37,50 +22,114 @@ const ChevronDown = () => (
   </svg>
 );
 
-/** A colored dropdown pill that selects the active command/view. */
-export function CommandMenu({
-  active,
-  onSelect,
-}: {
-  active: CommandId;
-  onSelect: (id: CommandId) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+const ChevronRight = () => (
+  <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+    <path
+      d="m9 6 6 6-6 6"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </svg>
+);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const onPointerDown = (event: PointerEvent) => {
-      if (!ref.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
+const Magnifier = () => (
+  <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+    <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+    <path d="m20 20-3.5-3.5" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+  </svg>
+);
 
+const Check = () => (
+  <svg aria-hidden="true" className="check" fill="none" viewBox="0 0 24 24">
+    <path
+      d="m5 13 4 4L19 7"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </svg>
+);
+
+/** Focus the checked item on open, else the first (APG menu pattern). */
+function focusChecked(menu: HTMLDivElement | null): void {
+  if (!menu) {
+    return;
+  }
+  const items = Array.from(
+    menu.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
+  );
+  const checked = items.find((item) => item.getAttribute("aria-checked") === "true");
+  (checked ?? items[0])?.focus();
+}
+
+/**
+ * A colored dropdown pill that selects the active mode and navigates the app. The
+ * menu has three groups: the three modes as a radio set (Chat / Ask Me / Store),
+ * a "Go to" list that opens each canvas surface, and a Find row that opens the
+ * command palette.
+ */
+export function CommandMenu() {
+  const view = useRouteStore((state) => state.view);
+  const open = useUiStore((state) => state.openMenuId === "command");
+  const toggleMenu = useUiStore((state) => state.toggleMenu);
+  const setOpenMenu = useUiStore((state) => state.setOpenMenu);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const active: CommandId =
+    view === "askme" || view === "store" || view === "concierge" ? view : "chat";
   const current = COMMANDS.find((command) => command.id === active) ?? COMMANDS[0];
 
+  const close = (): void => {
+    setOpenMenu(null);
+    triggerRef.current?.focus();
+  };
+
+  const onMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === "Escape") {
+      close();
+      return;
+    }
+    const items = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
+    );
+    if (items.length === 0) {
+      return;
+    }
+    const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+    let nextIndex: number | null = null;
+    switch (event.key) {
+      case "ArrowDown":
+        nextIndex = (currentIndex + 1) % items.length;
+        break;
+      case "ArrowUp":
+        nextIndex = (currentIndex - 1 + items.length) % items.length;
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = items.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    items[nextIndex].focus();
+  };
+
   return (
-    <div className="command-menu" ref={ref}>
+    <div className="command-menu">
       <button
         aria-expanded={open}
         aria-haspopup="menu"
         className="command-pill"
+        ref={triggerRef}
         style={{ "--cmd-color": current.color } as CSSProperties}
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => toggleMenu("command")}
       >
         <span className="command-dot" />
         <span>{current.label}</span>
@@ -88,44 +137,85 @@ export function CommandMenu({
       </button>
 
       {open ? (
-        <div className="command-list" role="menu">
-          {COMMANDS.map((command) => (
+        <>
+          <MenuBackdrop />
+          <div
+            className="command-list"
+            ref={focusChecked}
+            role="menu"
+            onKeyDown={onMenuKeyDown}
+          >
+            <div className="command-group" role="group" aria-label="Mode">
+              <div className="command-section" aria-hidden="true">
+                Mode
+              </div>
+              {COMMANDS.map((command) => (
+                <button
+                  aria-checked={command.id === active}
+                  className="command-option"
+                  key={command.id}
+                  role="menuitemradio"
+                  style={{ "--cmd-color": command.color } as CSSProperties}
+                  type="button"
+                  onClick={() => {
+                    goToView(command.id === "chat" ? "home" : command.id);
+                    close();
+                  }}
+                >
+                  <span className="command-dot" />
+                  <span className="command-text">
+                    <span className="command-label">{command.label}</span>
+                    <span className="command-hint">{command.hint}</span>
+                  </span>
+                  {command.id === active ? <Check /> : null}
+                </button>
+              ))}
+            </div>
+
+            <div className="command-divider" role="separator" />
+
+            <div className="command-group" role="group" aria-label="Go to">
+              <div className="command-section" aria-hidden="true">
+                Go to
+              </div>
+              {NAV_LINKS.map((link) => (
+                <button
+                  className="command-option"
+                  key={link.id}
+                  role="menuitem"
+                  type="button"
+                  onClick={() => {
+                    openSurface(link.surface);
+                    close();
+                  }}
+                >
+                  <span className="command-go-icon">
+                    <ChevronRight />
+                  </span>
+                  <span className="command-label">{link.label}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="command-divider" role="separator" />
+
             <button
-              aria-checked={command.id === active}
               className="command-option"
-              key={command.id}
-              role="menuitemradio"
-              style={{ "--cmd-color": command.color } as CSSProperties}
+              role="menuitem"
               type="button"
               onClick={() => {
-                onSelect(command.id);
-                setOpen(false);
+                openSurface({ kind: "palette" });
+                close();
               }}
             >
-              <span className="command-dot" />
-              <span className="command-text">
-                <span className="command-label">{command.label}</span>
-                <span className="command-hint">{command.hint}</span>
+              <span className="command-go-icon">
+                <Magnifier />
               </span>
-              {command.id === active ? (
-                <svg
-                  aria-hidden="true"
-                  className="check"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    d="m5 13 4 4L19 7"
-                    stroke="currentColor"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                  />
-                </svg>
-              ) : null}
+              <span className="command-label">Find…</span>
+              <span className="command-shortcut">⌘K</span>
             </button>
-          ))}
-        </div>
+          </div>
+        </>
       ) : null}
     </div>
   );

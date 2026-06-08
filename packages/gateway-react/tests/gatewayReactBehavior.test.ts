@@ -4,7 +4,9 @@
 // / rpc contracts and we observe the hooks' real reactions to real inputs.
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
-GlobalRegistrator.register();
+// Other test files in this package also call register(); the second call
+// throws "already registered". Idempotent guard keeps test order independent.
+try { GlobalRegistrator.register(); } catch { /* already registered */ }
 
 import { describe, expect, test } from "bun:test";
 import { act, createElement, useEffect, useState, type ReactElement } from "react";
@@ -347,6 +349,60 @@ describe("useGatewayRpc", () => {
       resolvers.get("run-2")?.({ run: { id: "run-2" } });
     });
     expect(snapshot?.data).toEqual({ run: { id: "run-2" } });
+
+    await harness.unmount();
+  });
+
+  test("a late response from the previous key never repopulates cleared state", async () => {
+    // The stale-data-free model documented in /guides/custom-workflow-ui leans
+    // on a generation-tagged drop: when inputs change, the hook clears data and
+    // bumps a generation counter, so a still-in-flight response for the prior
+    // inputs is dropped on arrival rather than overwriting the new state. This
+    // is the exact failure mode an iframe-embedded custom UI would otherwise
+    // hit when the host swaps `runId` while the previous run's RPC is mid-air.
+    const resolvers = new Map<string, (value: unknown) => void>();
+    const client = {
+      rpc: (_method: string, params: { runId: string }) =>
+        new Promise((resolve) => {
+          resolvers.set(params.runId, resolve);
+        }),
+    } as unknown as SmithersGatewayClient;
+
+    let snapshot: ReturnType<typeof useGatewayRpc> | undefined;
+    function Probe(props: { runId: string }) {
+      snapshot = useGatewayRpc("getRun", { runId: props.runId }, { deps: [props.runId] });
+      return null;
+    }
+
+    const harness = await mountHarness();
+    // Mount with run-1; do NOT resolve its request — it stays in flight.
+    await harness.render(
+      createElement(SmithersGatewayProvider, { client }, createElement(Probe, { runId: "run-1" })),
+    );
+    expect(snapshot?.loading).toBe(true);
+
+    // Switch to run-2 BEFORE run-1 resolves. The hook must clear data and
+    // remain in loading; the run-1 promise is now "stale".
+    await harness.render(
+      createElement(SmithersGatewayProvider, { client }, createElement(Probe, { runId: "run-2" })),
+    );
+    expect(snapshot?.data).toBeUndefined();
+    expect(snapshot?.loading).toBe(true);
+
+    // Now resolve the STALE run-1 request. It must not repopulate the
+    // cleared state — the run-2 hook generation has moved past it.
+    await act(async () => {
+      resolvers.get("run-1")?.({ run: { id: "run-1" } });
+    });
+    expect(snapshot?.data).toBeUndefined();
+    expect(snapshot?.loading).toBe(true);
+
+    // The new request resolves last and is the one that wins.
+    await act(async () => {
+      resolvers.get("run-2")?.({ run: { id: "run-2" } });
+    });
+    expect(snapshot?.data).toEqual({ run: { id: "run-2" } });
+    expect(snapshot?.loading).toBe(false);
 
     await harness.unmount();
   });

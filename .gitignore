@@ -18,6 +18,9 @@ logs
 *.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 examples/run-*.log
+# Tracked source directory: the smithers app's logs surface lives here.
+!apps/smithers/src/logs/
+!apps/smithers/src/logs/**
 
 # dotenv environment variable files
 .env
@@ -49,6 +52,7 @@ tui-buffer.txt
 .claude/
 .claude/scheduled_tasks.lock
 .kanban-reports/
+pg_durable-smithers-report.html
 
 # Profiling artifacts
 default.profraw
@@ -61,6 +65,7 @@ deno.lock
 **/.smithers/executions/
 .tui-test/
 .worktrees/
+worktrees/
 reference/
 !docs/reference/
 !docs/reference/*.mdx
@@ -70,7 +75,7 @@ codex/
 ghostty/
 burns
 observability/data/
-tmp/verification/
+**/tmp/verification/
 .context/
 
 # External reference repos

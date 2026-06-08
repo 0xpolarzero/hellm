@@ -56,6 +56,11 @@ Most applications should import from `smithers-orchestrator`. The scoped workspa
 | `@smithers-orchestrator/gateway-client` | Browser/client SDK for Gateway RPC requests and event streams | [Gateway](/integrations/gateway) |
 | `@smithers-orchestrator/gateway-react` | React hooks and root helpers for Gateway-backed UIs | [Gateway](/integrations/gateway) |
 | `@smithers-orchestrator/graph` | Framework-neutral workflow graph model, XML nodes, task descriptors, and graph snapshots | [Planner Internals](/concepts/planner-internals), [Types](/reference/types) |
+| `@smithers-orchestrator/jj-darwin-arm64` | Vendored jj (Jujutsu) binary for darwin-arm64; auto-installed as an optional dependency of `@smithers-orchestrator/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
+| `@smithers-orchestrator/jj-darwin-x64` | Vendored jj (Jujutsu) binary for darwin-x64; auto-installed as an optional dependency of `@smithers-orchestrator/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
+| `@smithers-orchestrator/jj-linux-arm64` | Vendored jj (Jujutsu) binary for linux-arm64; auto-installed as an optional dependency of `@smithers-orchestrator/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
+| `@smithers-orchestrator/jj-linux-x64` | Vendored jj (Jujutsu) binary for linux-x64; auto-installed as an optional dependency of `@smithers-orchestrator/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
+| `@smithers-orchestrator/jj-win32-x64` | Vendored jj (Jujutsu) binary for win32-x64; auto-installed as an optional dependency of `@smithers-orchestrator/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
 | `@smithers-orchestrator/memory` | Cross-run facts, message history, processors, namespaces, service layer, and metrics | [Memory](/concepts/memory), [Memory Quickstart](/guides/memory-quickstart) |
 | `@smithers-orchestrator/observability` | Event types, logging, tracing, metrics, Prometheus rendering, and runtime observability layers | [Events](/runtime/events), [Event Types](/reference/event-types) |
 | `@smithers-orchestrator/openapi` | OpenAPI parsing, operation extraction, AI SDK tool generation, schema conversion, and metrics | [OpenAPI Tools](/concepts/openapi-tools), [OpenAPI Quickstart](/guides/openapi-tools-quickstart) |
@@ -66,10 +71,13 @@ Most applications should import from `smithers-orchestrator`. The scoped workspa
 | `@smithers-orchestrator/scheduler` | Pure workflow state machine: task state, scheduler decisions, retry/cache policies, wait reasons, and workflow session services | [Workflow State](/concepts/workflow-state), [Suspend and Resume](/concepts/suspend-and-resume) |
 | `@smithers-orchestrator/scorers` | Scorer definitions, LLM judges, batch execution, aggregation, persistence schema, and metrics | [Evals](/concepts/evals), [Evals Quickstart](/guides/evals-quickstart) |
 | `@smithers-orchestrator/server` | HTTP, WebSocket, Gateway, cron, webhook, metrics, and single-workflow serving APIs | [Server](/integrations/server), [Serve](/integrations/serve) |
+| `@smithers-orchestrator/smithers` | Cerebras chat PWA and workflow graph demo application | [CLI Overview](/cli/overview) |
 | `@smithers-orchestrator/smithers-demo` | Interactive Smithers workflow generator demo with React Flow visualization | [CLI Overview](/cli/overview) |
 | `@smithers-orchestrator/smithers-studio-2` | Next Smithers Studio UI shell for browsing and driving workflow runs | [CLI Overview](/cli/overview) |
 | `@smithers-orchestrator/smithers-tui-demo` | Private React TUI demo app for terminal workflow interaction experiments | [CLI Overview](/cli/overview) |
 | `@smithers-orchestrator/time-travel` | Snapshots, diffs, forks, replay, timelines, VCS tags, rewind locks/audits, and time-travel metrics | [Time Travel](/concepts/time-travel), [Time Travel Quickstart](/guides/time-travel-quickstart) |
+| `@smithers-orchestrator/tool-context` | AsyncLocalStorage tool-execution context (run/node/idempotency keys, durability snapshot hook) shared by the engine and `smithers-orchestrator` without a dependency cycle | [Execution Model](/concepts/execution-model) |
+| `@smithers-orchestrator/usage` | Account quota and rate-limit usage reporting for Smithers providers | [CLI Overview](/cli/overview) |
 | `@smithers-orchestrator/vcs` | VCS discovery and jj workspace operations such as `runJj`, `workspaceAdd`, `workspaceList`, and pointer reverts | [VCS Helpers](/reference/vcs-helpers), [VCS Guide](/guides/vcs) |
 
 ### Usage

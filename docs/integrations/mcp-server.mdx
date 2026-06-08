@@ -383,6 +383,44 @@ Zero matches errors with `INVALID_INPUT`. More than one match errors with `INVAL
 
 ---
 
+### ask_human
+
+Block the current run and ask a human to make a decision, then wait for their answer. Use this whenever the agent is blocked, uncertain, missing information, or about to take an irreversible or destructive action — instead of guessing. The tool creates a durable, pending human request and returns only once it is resolved.
+
+When run inside a Smithers task, the run/node context is taken from the `SMITHERS_RUN_ID` / `SMITHERS_NODE_ID` / `SMITHERS_ITERATION` environment variables Smithers injects into the agent; pass `runId`/`nodeId`/`iteration` explicitly to override, or rely on single-active-run autodetection.
+
+An operator resolves the request with `smithers human answer <requestId> --value '<json>'` (or `smithers human cancel <requestId>`); `smithers human inbox` lists everything waiting.
+
+**Input:**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `prompt` | `string` | required — the decision or question to put to a human |
+| `context` | `string` | Extra context appended to the prompt |
+| `choices` | `string[]` | Fixed choices; restricts the human's answer to one of these |
+| `runId` | `string` | Run to attach to (default: `SMITHERS_RUN_ID` or the single active run) |
+| `nodeId` | `string` | Node to attach to (default: `SMITHERS_NODE_ID`) |
+| `iteration` | `number` | Loop iteration (default: `SMITHERS_ITERATION` or 0) |
+| `timeoutSeconds` | `number` | Seconds before the request expires (0/unset = no timeout) |
+| `pollSeconds` | `number` | Poll interval while blocking (default 3s) |
+
+**Output:**
+
+```ts
+{
+  requestId: string;
+  runId: string;
+  nodeId: string;
+  iteration: number;
+  status: "answered" | "cancelled" | "expired" | "missing" | "aborted";
+  decision: "approved" | "blocked";   // "blocked" => do not proceed
+  response: unknown | null;            // the human's answer when status is "answered"
+  answeredBy: string | null;
+}
+```
+
+---
+
 ### get_node_detail
 
 Get enriched detail for a single node, including all attempts, tool calls, token usage, scorer results, and validated output.

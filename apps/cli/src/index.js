@@ -3,8 +3,8 @@ import { setJsonMode } from "./util/logger.ts";
 import { findFirstPositionalIndex, parseMcpSurfaceArgv, rewriteBareResumeFlagArgv } from "./argv-utils.js";
 import { CLI_JSON_ARGUMENT_MAX_BYTES, parseJsonArgument, parseJsonInput } from "./json-args.js";
 import { resolve, dirname, basename } from "node:path";
-import { pathToFileURL } from "node:url";
-import { readFileSync, existsSync, openSync, statSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { readFileSync, existsSync, openSync, statSync, writeSync } from "node:fs";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Effect, Fiber } from "effect";
 import { Cli, Mcp as IncurMcp, z } from "incur";
@@ -20,19 +20,21 @@ import { SmithersCtx } from "@smithers-orchestrator/driver";
 import { toSmithersError } from "@smithers-orchestrator/errors/toSmithersError";
 import { runFork, runPromise } from "./smithersRuntime.js";
 import { trackEvent } from "@smithers-orchestrator/observability/metrics";
+import { vcsToolingStatus } from "@smithers-orchestrator/vcs/vcsToolingStatus";
 import { revertToAttempt } from "@smithers-orchestrator/time-travel/revert";
 import { retryTask } from "@smithers-orchestrator/time-travel/retry-task";
 import { timeTravel } from "@smithers-orchestrator/time-travel/timetravel";
 import { runSync } from "./smithersRuntime.js";
 import { spawn } from "node:child_process";
-import { isHumanRequestPastTimeout, validateHumanRequestValue } from "@smithers-orchestrator/engine/human-requests";
+import { buildAgentAskRequestRow, isHumanRequestPastTimeout, validateHumanRequestValue, waitForHumanAnswer, } from "@smithers-orchestrator/engine/human-requests";
 import { SmithersError } from "@smithers-orchestrator/errors";
 import { assertMaxBytes, assertMaxStringLength } from "@smithers-orchestrator/db/input-bounds";
 import { findAndOpenDb } from "./find-db.js";
+import { buildAskKindFields, buildAskPromptText, buildAskUniqueToken, formatAskHumanResolveHelp, parseChoices, resolveAskHumanContext, } from "./ask-human.js";
 import { chatAttemptKey, formatChatAttemptHeader, formatChatBlock, parseAgentEvent, parseChatAttemptMeta, parseNodeOutputEvent, selectChatAttempts, } from "./chat.js";
 import { buildHijackLaunchSpec, isNativeHijackCandidate, launchHijackSession, resolveHijackCandidate, waitForHijackCandidate, } from "./hijack.js";
 import { parseAgentWiringArgv } from "./agent-wiring/parseAgentWiringArgv.js";
-import { wireExtraAgents } from "./agent-wiring/wireExtraAgents.js";
+import { EXTRA_MCP_AGENTS, EXTRA_SKILL_AGENTS, wireExtraAgents } from "./agent-wiring/wireExtraAgents.js";
 import { launchConversationHijackSession, persistConversationHijackHandoff, } from "./hijack-session.js";
 import { colorizeEventText, formatAge, formatElapsedCompact, formatEventLine, formatRelativeOffset, } from "./format.js";
 import { EVENT_CATEGORY_VALUES, eventTypesForCategory, normalizeEventCategory, } from "./event-categories.js";
@@ -44,7 +46,7 @@ import { getUsageForAccounts, formatUsageReports } from "@smithers-orchestrator/
 import { runAgentAdd, pingAccount } from "./agent-commands/runAgentAdd.js";
 import { agentAddWizard } from "./agent-commands/agentAddWizard.js";
 import { getWorkflowFollowUpCtas } from "./workflow-pack.js";
-import { discoverWorkflows, resolveWorkflow, createWorkflowFile, renderWorkflowSkill, writeWorkflowSkillFiles } from "./workflows.js";
+import { discoverWorkflows, resolveWorkflow, createWorkflowFile, renderWorkflowSkill, writeWorkflowSkillFiles, resolvePackDirs } from "./workflows.js";
 import {
     assertEvalRunIdsAvailable,
     assertEvalReportWritable,
@@ -67,6 +69,7 @@ import { parseDurationMs, supervisorLoopEffect, } from "./supervisor.js";
 import { WATCH_MIN_INTERVAL_MS, runWatchLoop, watchIntervalSecondsToMs, } from "./watch.js";
 import { createSemanticMcpServer } from "./mcp/semantic-server.js";
 import { parseTokenScopes, readSmithersTokenStore, smithersTokenStorePath, writeSmithersTokenStore, } from "./token-store.js";
+import { resolveSmithersDocsSource } from "./docs-command.js";
 import pc from "picocolors";
 import crypto from "node:crypto";
 import React from "react";
@@ -422,36 +425,73 @@ function isRunStatusTerminal(status) {
         status !== "waiting-event");
 }
 /**
- * Fetch a docs file from smithers.sh and write it to stdout.
+ * Fetch a docs file and write it to stdout.
  * Honors --json (global) by emitting `{ url, content }`.
  *
  * @param {{ error: Function; ok: Function; format?: string; options?: { json?: boolean } }} c
- * @param {string} url
+ * @param {string} file
  * @param {string} errorCode
  */
-async function printSmithersDocs(c, url, errorCode) {
-    let body;
+async function printSmithersDocs(c, file, errorCode) {
+    const cliSourceRoot = dirname(fileURLToPath(import.meta.url));
+    const localDocsRoots = [
+        resolve(cliSourceRoot, "../docs"),
+        resolve(cliSourceRoot, "../../../docs"),
+    ];
+    let source;
     try {
-        const res = await fetch(url);
-        if (!res.ok) {
-            return c.error({
-                code: errorCode,
-                message: `Failed to fetch ${url}: HTTP ${res.status}`,
-                exitCode: 1,
-            });
-        }
-        body = await res.text();
+        source = resolveSmithersDocsSource({
+            file,
+            latest: Boolean(c.options?.latest),
+            version: typeof c.options?.docsVersion === "string" ? c.options.docsVersion : undefined,
+            packageVersion: readPackageVersion(),
+            localDocsRoots,
+        });
     }
     catch (err) {
         return c.error({
-            code: errorCode,
-            message: `Failed to fetch ${url}: ${err?.message ?? String(err)}`,
+            code: "DOCS_OPTIONS_INVALID",
+            message: err?.message ?? String(err),
             exitCode: 1,
         });
     }
+
+    let body;
+    if (source.kind === "local") {
+        try {
+            body = readFileSync(source.path, "utf8");
+        }
+        catch (err) {
+            return c.error({
+                code: errorCode,
+                message: `Failed to read ${source.path}: ${err?.message ?? String(err)}`,
+                exitCode: 1,
+            });
+        }
+    }
+    else {
+        try {
+            const res = await fetch(source.url);
+            if (!res.ok) {
+                return c.error({
+                    code: errorCode,
+                    message: `Failed to fetch ${source.url}: HTTP ${res.status}`,
+                    exitCode: 1,
+                });
+            }
+            body = await res.text();
+        }
+        catch (err) {
+            return c.error({
+                code: errorCode,
+                message: `Failed to fetch ${source.url}: ${err?.message ?? String(err)}`,
+                exitCode: 1,
+            });
+        }
+    }
     const wantsJson = Boolean(c.options?.json) || c.format === "json";
     if (wantsJson) {
-        return c.ok({ url, content: body });
+        return c.ok({ url: source.url, content: body });
     }
     process.stdout.write(body.endsWith("\n") ? body : `${body}\n`);
     return c.ok(undefined);
@@ -1357,6 +1397,18 @@ const humanOptions = z.object({
     value: z.string().optional().describe("JSON response for smithers human answer"),
     by: z.string().optional().describe("Name or identifier of the human operator"),
 });
+const askHumanArgs = z.object({
+    prompt: z.string().describe("The decision or question to put to a human"),
+});
+const askHumanOptions = z.object({
+    context: z.string().optional().describe("Extra context appended to the prompt"),
+    choices: z.string().optional().describe("Comma-separated choices; makes this a fixed-choice decision"),
+    runId: z.string().optional().describe("Run to attach to (default: SMITHERS_RUN_ID or the single active run)"),
+    node: z.string().optional().describe("Node id to attach to (default: SMITHERS_NODE_ID or 'agent-ask')"),
+    iteration: z.number().int().min(0).optional().describe("Loop iteration (default: SMITHERS_ITERATION or 0)"),
+    timeout: z.number().min(0).optional().describe("Seconds to wait before the request expires (0/unset = no timeout)"),
+    poll: z.number().min(0.25).optional().describe("Poll interval in seconds while blocking (default 3)"),
+});
 const alertsArgs = z.object({
     action: z.string().describe("Alert action: list, ack, resolve, or silence"),
     alertId: z.string().optional().describe("Alert ID for ack/resolve/silence"),
@@ -1404,6 +1456,10 @@ const workflowSkillArgs = z.object({
 const workflowSkillOptions = z.object({
     output: z.string().optional().describe("Output file for one workflow, or output directory for all workflows"),
     force: z.boolean().default(false).describe("Overwrite existing skill files"),
+    global: z.boolean().default(false).describe("Write skills into the global ~/.smithers pack (honors SMITHERS_HOME) instead of the local .smithers"),
+});
+const workflowCreateOptions = z.object({
+    global: z.boolean().default(false).describe("Create the workflow in the global ~/.smithers pack (honors SMITHERS_HOME) instead of the local .smithers"),
 });
 const workflowRunOptions = upOptions.extend({
     prompt: z.string().optional().describe("Prompt text mapped to input.prompt when --input is omitted"),
@@ -1894,15 +1950,16 @@ const workflowCli = Cli.create({
     },
 })
     .command("create", {
-    description: "Create a new flat workflow scaffold in .smithers/workflows.",
+    description: "Create a new flat workflow scaffold in .smithers/workflows (or the global ~/.smithers with --global).",
     args: workflowPathArgs,
+    options: workflowCreateOptions,
     run(c) {
         const fail = (opts) => {
             commandExitOverride = opts.exitCode ?? 1;
             return c.error(opts);
         };
         try {
-            return c.ok(createWorkflowFile(c.args.name, process.cwd()));
+            return c.ok(createWorkflowFile(c.args.name, process.cwd(), { global: c.options.global }));
         }
         catch (err) {
             if (err instanceof SmithersError) {
@@ -1945,6 +2002,7 @@ const workflowCli = Cli.create({
                 workflowId: c.args.name ?? "all",
                 output: c.options.output,
                 force: c.options.force,
+                global: c.options.global,
             }));
         }
         catch (err) {
@@ -1970,15 +2028,39 @@ const workflowCli = Cli.create({
         const workflows = c.args.name
             ? [resolveWorkflow(c.args.name, process.cwd())]
             : discoverWorkflows(process.cwd());
-        const workflowRoot = resolve(process.cwd(), ".smithers");
-        return c.ok({
-            workflowRoot,
-            workflows,
+        const packs = resolvePackDirs(process.cwd()).map(({ scope, packDir }) => ({
+            scope,
+            packDir,
             preload: {
+                path: resolve(packDir, "preload.ts"),
+                exists: existsSync(resolve(packDir, "preload.ts")),
+            },
+            bunfig: {
+                path: resolve(packDir, "bunfig.toml"),
+                exists: existsSync(resolve(packDir, "bunfig.toml")),
+            },
+        }));
+        // Primary local pack (nearest .smithers, walking up) for back-compat fields.
+        const localPack = packs.find((pack) => pack.scope === "local");
+        const workflowRoot = localPack?.packDir ?? resolve(process.cwd(), ".smithers");
+        const vcs = vcsToolingStatus();
+        if (!vcs.ok && c.format !== "json") {
+            process.stderr.write(
+                `${pc.yellow("⚠ No jj or git found.")} Smithers needs one to snapshot and isolate agent work.\n` +
+                `  Smithers bundles jj via the optional @smithers-orchestrator/jj-<platform> package; if it could not\n` +
+                `  install for your platform, install jj (https://github.com/jj-vcs/jj) or git, or set SMITHERS_JJ_PATH.\n`,
+            );
+        }
+        return c.ok({
+            vcs,
+            workflowRoot,
+            packs,
+            workflows,
+            preload: localPack?.preload ?? {
                 path: resolve(workflowRoot, "preload.ts"),
                 exists: existsSync(resolve(workflowRoot, "preload.ts")),
             },
-            bunfig: {
+            bunfig: localPack?.bunfig ?? {
                 path: resolve(workflowRoot, "bunfig.toml"),
                 exists: existsSync(resolve(workflowRoot, "bunfig.toml")),
             },
@@ -3942,6 +4024,143 @@ const cli = Cli.create({
     },
 })
     // =========================================================================
+    // smithers ask-human <prompt>
+    // =========================================================================
+    .command("ask-human", {
+    description: "Raise a blocking human-approval request from inside a run and wait for the decision. Use when blocked, uncertain, or about to do something irreversible — never guess.",
+    args: askHumanArgs,
+    options: askHumanOptions,
+    alias: { runId: "r", node: "n" },
+    async run(c) {
+        const fail = (opts) => {
+            commandExitOverride = opts.exitCode ?? 1;
+            return c.error(opts);
+        };
+        const prompt = c.args.prompt?.trim();
+        if (!prompt) {
+            return fail({
+                code: "ASK_HUMAN_PROMPT_REQUIRED",
+                message: "smithers ask-human requires a prompt (the decision to put to a human).",
+                exitCode: 4,
+            });
+        }
+        try {
+            const { adapter, cleanup } = await findAndOpenDb();
+            try {
+                let context;
+                try {
+                    context = await resolveAskHumanContext(adapter, {
+                        runId: c.options.runId,
+                        nodeId: c.options.node,
+                        iteration: c.options.iteration,
+                    });
+                }
+                catch (err) {
+                    return fail({
+                        code: err?.code ?? "ASK_HUMAN_CONTEXT_FAILED",
+                        message: err?.message ?? String(err),
+                        exitCode: 4,
+                    });
+                }
+                const choices = parseChoices(c.options.choices);
+                const kindFields = buildAskKindFields(choices);
+                const requestedAtMs = Date.now();
+                const timeoutAtMs = typeof c.options.timeout === "number" && c.options.timeout > 0
+                    ? requestedAtMs + Math.floor(c.options.timeout * 1_000)
+                    : null;
+                const row = buildAgentAskRequestRow({
+                    runId: context.runId,
+                    nodeId: context.nodeId,
+                    iteration: context.iteration,
+                    prompt: buildAskPromptText(prompt, c.options.context),
+                    unique: buildAskUniqueToken(),
+                    requestedAtMs,
+                    kind: kindFields.kind,
+                    optionsJson: kindFields.optionsJson,
+                    schemaJson: kindFields.schemaJson,
+                    timeoutAtMs,
+                });
+                await adapter.insertHumanRequest(row);
+                // Operator instructions go to stderr so --format json stdout stays clean
+                // for the calling agent to parse. Use a synchronous fd write: when stderr
+                // is a pipe, process.exit() at command end would truncate a buffered
+                // (async) stream write.
+                writeSync(2, `${formatAskHumanResolveHelp(row.requestId, choices)}\n`);
+                const pollIntervalMs = typeof c.options.poll === "number" && c.options.poll > 0
+                    ? Math.floor(c.options.poll * 1_000)
+                    : undefined;
+                const abortController = new AbortController();
+                const onSignal = () => abortController.abort();
+                process.once("SIGINT", onSignal);
+                process.once("SIGTERM", onSignal);
+                let outcome;
+                try {
+                    outcome = await waitForHumanAnswer(adapter, row.requestId, {
+                        pollIntervalMs,
+                        signal: abortController.signal,
+                    });
+                }
+                finally {
+                    process.removeListener("SIGINT", onSignal);
+                    process.removeListener("SIGTERM", onSignal);
+                }
+                const base = {
+                    requestId: row.requestId,
+                    runId: context.runId,
+                    nodeId: context.nodeId,
+                    iteration: context.iteration,
+                    status: outcome.status,
+                };
+                if (outcome.status === "answered") {
+                    let response = null;
+                    try {
+                        response = outcome.responseJson != null
+                            ? JSON.parse(outcome.responseJson)
+                            : null;
+                    }
+                    catch {
+                        response = outcome.responseJson ?? null;
+                    }
+                    return c.ok({
+                        ...base,
+                        decision: "approved",
+                        response,
+                        answeredBy: outcome.answeredBy ?? null,
+                    });
+                }
+                const exitCodeByStatus = {
+                    cancelled: 2,
+                    aborted: 2,
+                    expired: 3,
+                    missing: 4,
+                };
+                const messageByStatus = {
+                    cancelled: `Human request ${row.requestId} was cancelled — do not proceed.`,
+                    aborted: `Waiting on ${row.requestId} was interrupted — do not proceed.`,
+                    expired: `Human request ${row.requestId} expired before a human responded — do not proceed.`,
+                    missing: `Human request ${row.requestId} disappeared from the store.`,
+                };
+                return fail({
+                    code: `ASK_HUMAN_${String(outcome.status).toUpperCase()}`,
+                    message: messageByStatus[outcome.status] ??
+                        `Human request ${row.requestId} ended as ${outcome.status}.`,
+                    exitCode: exitCodeByStatus[outcome.status] ?? 1,
+                });
+            }
+            finally {
+                cleanup();
+            }
+        }
+        catch (err) {
+            return fail({
+                code: "ASK_HUMAN_COMMAND_FAILED",
+                message: err?.message ?? String(err),
+                exitCode: 1,
+            });
+        }
+    },
+})
+    // =========================================================================
     // smithers alerts list|ack|resolve|silence
     // =========================================================================
     .command("alerts", {
@@ -4424,6 +4643,78 @@ const cli = Cli.create({
         catch (err) {
             return fail({ code: "GRAPH_FAILED", message: err?.message ?? String(err), exitCode: 1 });
         }
+    },
+})
+    // =========================================================================
+    // smithers snapshots <runId>  /  smithers restore <runId> --node <id>
+    // =========================================================================
+    .command("snapshots", {
+    description: "List durability snapshots (workspace checkpoints) for a run.",
+    args: z.object({
+        runId: z.string().describe("Run ID to list snapshots for"),
+    }),
+    options: z.object({
+        json: z.boolean().default(false).describe("Emit rows as JSON"),
+    }),
+    run(c) {
+        return runDevtoolsCommandWithTelemetry("snapshots", c, async () => {
+            const { runSnapshotsOnce } = await import("./snapshots.js");
+            const { adapter, cleanup } = await findAndOpenDb();
+            try {
+                const result = await runSnapshotsOnce({
+                    adapter,
+                    runId: c.args.runId,
+                    json: c.options.json,
+                    stdout: process.stdout,
+                });
+                return result.exitCode;
+            } finally {
+                cleanup();
+            }
+        });
+    },
+})
+    .command("restore", {
+    description: "Restore a worktree to a durability checkpoint (latest for the node, or --seq).",
+    args: z.object({
+        runId: z.string().describe("Run ID containing the checkpoint"),
+        nodeId: z.string().describe("Node ID whose worktree to restore"),
+    }),
+    options: z.object({
+        iteration: z.number().int().min(0).optional().describe("Loop iteration"),
+        seq: z.number().int().min(0).optional().describe("Checkpoint seq (default: latest)"),
+    }),
+    run(c) {
+        return runDevtoolsCommandWithTelemetry("restore", c, async () => {
+            const { runRestoreOnce } = await import("./restore.js");
+            const { adapter, cleanup } = await findAndOpenDb();
+            try {
+                const result = await runRestoreOnce({
+                    adapter,
+                    runId: c.args.runId,
+                    nodeId: c.args.nodeId,
+                    iteration: c.options.iteration,
+                    seq: c.options.seq,
+                    stdout: process.stdout,
+                    stderr: process.stderr,
+                });
+                return result.exitCode;
+            } finally {
+                cleanup();
+            }
+        });
+    },
+})
+    .command("snapshot-hook", {
+    description: "Internal: PostToolUse hook that requests a Tier 1 durability snapshot.",
+    args: z.object({}),
+    options: z.object({}),
+    run() {
+        return (async () => {
+            const { runSnapshotHookOnce } = await import("./snapshot-hook.js");
+            const result = await runSnapshotHookOnce({});
+            return result.exitCode;
+        })();
     },
 })
     // =========================================================================
@@ -5219,18 +5510,26 @@ const cli = Cli.create({
 })
     // =========================================================================
     // smithers docs / smithers docs-full
-    // Print the published llms.txt / llms-full.txt from smithers.sh.
+    // Print the llms.txt / llms-full.txt docs for this CLI version by default.
     // =========================================================================
     .command("docs", {
-    description: "Print llms.txt (concise docs index for LLMs) from smithers.sh.",
+    description: "Print llms.txt (concise docs index for LLMs) for this CLI version.",
+    options: z.object({
+        latest: z.boolean().default(false).describe("Fetch the latest docs from smithers.sh instead of docs for this CLI version"),
+        docsVersion: z.string().optional().describe("Fetch docs for a specific Smithers version, e.g. 0.22.0 or v0.22.0"),
+    }),
     async run(c) {
-        return printSmithersDocs(c, "https://smithers.sh/llms.txt", "DOCS_FETCH_FAILED");
+        return printSmithersDocs(c, "llms.txt", "DOCS_FETCH_FAILED");
     },
 })
     .command("docs-full", {
-    description: "Print llms-full.txt (full docs bundle for LLMs) from smithers.sh.",
+    description: "Print llms-full.txt (full docs bundle for LLMs) for this CLI version.",
+    options: z.object({
+        latest: z.boolean().default(false).describe("Fetch the latest docs from smithers.sh instead of docs for this CLI version"),
+        docsVersion: z.string().optional().describe("Fetch docs for a specific Smithers version, e.g. 0.22.0 or v0.22.0"),
+    }),
     async run(c) {
-        return printSmithersDocs(c, "https://smithers.sh/llms-full.txt", "DOCS_FULL_FETCH_FAILED");
+        return printSmithersDocs(c, "llms-full.txt", "DOCS_FULL_FETCH_FAILED");
     },
 })
     .command("usage", {
@@ -5725,17 +6024,27 @@ async function main() {
     // `mcp add` / `skills add` register Smithers into the agents the underlying
     // framework knows about. Reach the rest — Hermes/OpenClaw (native MCP config)
     // and Pi (skills dir) — as a best-effort supplementary step on success.
-    if (exitCodeFromServe === undefined || exitCodeFromServe === 0) {
+    const wiring = parseAgentWiringArgv(argv);
+    // incur's `mcp add` / `skills add` doesn't know about Hermes/OpenClaw (native
+    // MCP config) or Pi (skills dir). When the user explicitly targets ONLY those
+    // agents, incur exits non-zero for the "unknown agent" — but those are exactly
+    // the agents wired here, so that failure must not skip our wiring. Once we
+    // wire them, the command has succeeded, so clear the spurious exit code.
+    const extraIds = wiring?.kind === "skills" ? EXTRA_SKILL_AGENTS : EXTRA_MCP_AGENTS;
+    const targetsOnlyExtra = Boolean(wiring?.agents?.length && wiring.agents.every((id) => extraIds.includes(id)));
+    const serveSucceeded = exitCodeFromServe === undefined || exitCodeFromServe === 0;
+    if (wiring && (serveSucceeded || targetsOnlyExtra)) {
         try {
-            const wiring = parseAgentWiringArgv(argv);
-            if (wiring) {
-                const results = wireExtraAgents(wiring);
-                for (const r of results) {
-                    if (r.registered) console.error(`✓ ${r.agent}: ${r.path}`);
-                    else if (Array.isArray(r.linked) && r.linked.length) console.error(`✓ ${r.agent}: ${r.path} (${r.linked.length} skill${r.linked.length === 1 ? "" : "s"})`);
-                    else if (r.reason && r.reason !== "not-detected" && r.reason !== "no-source-skills") console.error(`⚠ ${r.agent}: skipped (${r.reason})`);
-                }
+            const results = wireExtraAgents(wiring);
+            for (const r of results) {
+                if (r.registered) console.error(`✓ ${r.agent}: ${r.path}`);
+                else if (Array.isArray(r.linked) && r.linked.length) console.error(`✓ ${r.agent}: ${r.path} (${r.linked.length} skill${r.linked.length === 1 ? "" : "s"})`);
+                else if (r.reason && r.reason !== "not-detected" && r.reason !== "no-source-skills") console.error(`⚠ ${r.agent}: skipped (${r.reason})`);
             }
+            // The command targeted only agents incur cannot handle; our wiring is
+            // the real work, so a serve failure caused solely by the unknown agent
+            // is a success once the wiring step has run.
+            if (targetsOnlyExtra && !serveSucceeded) exitCodeFromServe = 0;
         }
         catch (err) {
             console.error(`⚠ Smithers agent wiring skipped: ${err?.message ?? String(err)}`);

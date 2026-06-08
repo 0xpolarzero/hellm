@@ -329,9 +329,9 @@ curl http://localhost:8080/health
 
 ## Gateway
 
-> WebSocket / RPC gateway for connecting clients to Smithers runs.
+> WebSocket / RPC gateway for connecting clients and custom UIs to Smithers runs, providing pushed updates, subscriptions, metrics, and resilient reconnection.
 
-`Gateway` is Smithers' headless control plane. Reach for it (instead of [`startServer()`](/integrations/server)) when long-lived clients — bots, dashboards, schedulers — need to authenticate once, stream events over WebSocket, decide [approvals](/concepts/approvals), inject [signals](/runtime/events), and manage cron schedules across many registered workflows. For the single-workflow Hono-based HTTP surface, see [Serve Mode](/integrations/serve) (`createServeApp()` / `smithers up --serve`).
+`Gateway` is Smithers' headless control plane. Reach for it (instead of [`startServer()`](/integrations/server)) when long-lived clients — bots, dashboards, schedulers, and custom UIs — need to authenticate once, stream events over WebSocket with resilient reconnection, decide [approvals](/concepts/approvals), inject [signals](/runtime/events), access metrics, and manage cron schedules across many registered workflows. Custom UIs, whether using the vanilla SDK or React hooks, rely on the Gateway to provide pushed updates and a stale-data-free model. For the single-workflow Hono-based HTTP surface, see [Serve Mode](/integrations/serve) (`createServeApp()` / `smithers up --serve`).
 
 ## Quick start
 
@@ -378,79 +378,29 @@ ws.onopen = () => ws.send(JSON.stringify({
 }));
 ```
 
-## Operator Console
+## Gateway client SDK
 
-Gateway serves a built-in operator console at `/console`. It gives non-coding operators a same-origin surface for health, workflow launch, active runs, pending approvals, and run inspection. Selecting a run opens a Run Chronicle view backed by `streamDevTools`, `streamRunEvents`, `getNodeOutput`, and `getNodeDiff`, so operators can inspect the live task tree, event history, output, and diff without leaving the Gateway. The console uses the Gateway RPC API and accepts the same bearer tokens as programmatic clients.
-
-Disable or move it when embedding Smithers behind another app:
-
-```ts
-new Gateway({ operatorUi: false });
-new Gateway({ operatorUi: { path: "/ops", title: "Ops Console" } });
-```
-
-## Custom React UI
-
-Gateway can also serve a browser React app from the same origin as the RPC and WebSocket API. Use this when a workflow needs a custom operator surface instead of the built-in console.
-
-```tsx
-const gateway = new Gateway({
-  ui: {
-    entry: "./src/gateway-ui.tsx",
-    path: "/console",
-    title: "Operations Console",
-    props: { environment: "prod" },
-  },
-});
-
-gateway.register("deploy", deploy, {
-  ui: {
-    entry: "./src/deploy-ui.tsx",
-    title: "Deploy Workflow",
-  },
-});
-```
-
-Gateway-level UI defaults to `/`. Workflow-level UI defaults to `/workflows/<workflowKey>`, so the example above serves the workflow UI at `/workflows/deploy`. Gateway generates the HTML shell, bundles the entry with Bun for the browser, serves the bundle from `<mount>/__smithers_ui/client.js`, and injects `globalThis.__SMITHERS_GATEWAY_UI__` with the mount, workflow key, RPC path, WebSocket path, and `props`.
-
-Use the browser client SDK directly:
+Programmatic clients — bots, schedulers, dashboards, third-party UIs — talk to the Gateway through the typed client SDK over the same RPC and WebSocket API. For the full custom-UI guide (declarative queries, pushed updates, stale guards, reconnect/resume, backpressure, optimistic mutations, auth, vanilla JS + React hooks) see [Custom UIs](/integrations/custom-ui).
 
 ```ts
 import { SmithersGatewayClient } from "smithers-orchestrator/gateway-client";
 
 const gateway = new SmithersGatewayClient();
-const workflows = await gateway.listWorkflows({ filter: { hasUi: true } });
-```
+const workflows = await gateway.listWorkflows();
 
-Or use the React hook package:
-
-```tsx
-import {
-  createGatewayReactRoot,
-  useGatewayActions,
-  useGatewayWorkflows,
-} from "smithers-orchestrator/gateway-react";
-
-function App() {
-  const workflows = useGatewayWorkflows();
-  const { launchRun } = useGatewayActions();
-
-  return (
-    <button onClick={() => launchRun({ workflow: "deploy", input: {} })}>
-      Run {workflows.data?.[0]?.key ?? "workflow"}
-    </button>
-  );
+// Resilient pushed updates: backoff + jitter on reconnect, resume from the last
+// observed seq via run.gap_resync, stop on run.completed or abort.
+for await (const frame of gateway.streamRunEventsResilient({ runId: "run-1" })) {
+  if (frame.event === "run.completed") break;
 }
-
-createGatewayReactRoot(<App />);
 ```
 
 Gateway client exports:
 
 | Package | Exports |
 |---|---|
-| `smithers-orchestrator/gateway-client` | `SmithersGatewayClient`, `SmithersGatewayConnection`, `GatewayRpcError`, RPC frame/type-map types, `GatewayUiBootConfig`, `SmithersGatewayClientOptions` |
-| `smithers-orchestrator/gateway-react` | `createGatewayReactRoot`, `SmithersGatewayContext`, `SmithersGatewayProvider`, `useSmithersGateway`, `useGatewayRpc`, `useGatewayActions`, `useGatewayRuns`, `useGatewayRun`, `useGatewayRunEvents`, `useGatewayNodeOutput`, `useGatewayApprovals`, `useGatewayWorkflows` |
+| `smithers-orchestrator/gateway-client` | `SmithersGatewayClient`, `SmithersGatewayConnection`, `GatewayRpcError`, `gatewayBackoffDelay`, RPC frame/type-map types, `GatewayUiBootConfig`, `SmithersGatewayClientOptions` |
+| `smithers-orchestrator/gateway-react` | `SmithersGatewayProvider`, `createGatewayReactRoot`, `useGatewayRun`, `useGatewayRuns`, `useGatewayWorkflows`, `useGatewayApprovals`, `useGatewayNodeOutput`, `useGatewayRunEvents`, `useGatewayActions`, `useGatewayRpc`, `useSmithersGateway` |
 
 ## RPC methods (TOON)
 
@@ -1145,6 +1095,44 @@ Zero matches errors with `INVALID_INPUT`. More than one match errors with `INVAL
   action: "approve" | "deny";
   approval: PendingApproval;   // with updated status, decidedAtMs, note, decidedBy
   run: RunSummary | null;
+}
+```
+
+---
+
+### ask_human
+
+Block the current run and ask a human to make a decision, then wait for their answer. Use this whenever the agent is blocked, uncertain, missing information, or about to take an irreversible or destructive action — instead of guessing. The tool creates a durable, pending human request and returns only once it is resolved.
+
+When run inside a Smithers task, the run/node context is taken from the `SMITHERS_RUN_ID` / `SMITHERS_NODE_ID` / `SMITHERS_ITERATION` environment variables Smithers injects into the agent; pass `runId`/`nodeId`/`iteration` explicitly to override, or rely on single-active-run autodetection.
+
+An operator resolves the request with `smithers human answer <requestId> --value '<json>'` (or `smithers human cancel <requestId>`); `smithers human inbox` lists everything waiting.
+
+**Input:**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `prompt` | `string` | required — the decision or question to put to a human |
+| `context` | `string` | Extra context appended to the prompt |
+| `choices` | `string[]` | Fixed choices; restricts the human's answer to one of these |
+| `runId` | `string` | Run to attach to (default: `SMITHERS_RUN_ID` or the single active run) |
+| `nodeId` | `string` | Node to attach to (default: `SMITHERS_NODE_ID`) |
+| `iteration` | `number` | Loop iteration (default: `SMITHERS_ITERATION` or 0) |
+| `timeoutSeconds` | `number` | Seconds before the request expires (0/unset = no timeout) |
+| `pollSeconds` | `number` | Poll interval while blocking (default 3s) |
+
+**Output:**
+
+```ts
+{
+  requestId: string;
+  runId: string;
+  nodeId: string;
+  iteration: number;
+  status: "answered" | "cancelled" | "expired" | "missing" | "aborted";
+  decision: "approved" | "blocked";   // "blocked" => do not proceed
+  response: unknown | null;            // the human's answer when status is "answered"
+  answeredBy: string | null;
 }
 ```
 

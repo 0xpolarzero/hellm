@@ -16,17 +16,24 @@ export const initOptions = z.object({
     agentsOnly: z.boolean().default(false).describe("Only create .smithers/agents/ and leave the rest of the workflow pack untouched"),
     install: z.boolean().default(true).describe("Run `bun install` inside .smithers/ after scaffolding (--no-install to skip)"),
     addAgents: z.boolean().default(false).describe("After scaffolding, launch the interactive `agents add` wizard to register one or more accounts."),
+    global: z.boolean().default(false).describe("Scaffold the global pack in ~/.smithers (honors SMITHERS_HOME) instead of ./.smithers. Global workflows run from any repo; a repo's local pack takes precedence."),
     template: initTemplateOption,
 });
 
 /**
  * Whether this invocation is an interactive human terminal. Piped/agent runs
- * (and explicit `--json`) keep the structured output untouched.
+ * (and any explicit `--format`) keep the structured output untouched.
  *
- * @param {{ options?: { json?: boolean }; format?: string }} c
+ * The incur framework renders the structured dump under this command's
+ * agent-only policy exactly when `formatExplicit` is set (Cli renderOutput =
+ * !(human && !formatExplicit && policy === 'agent-only')). So the ceremony must
+ * stand down whenever an explicit format was passed, otherwise both the
+ * interactive ceremony and the raw structured output hit stdout.
+ *
+ * @param {{ options?: { json?: boolean }; format?: string; formatExplicit?: boolean }} c
  */
 function isHumanTty(c) {
-    if (c.options?.json || c.format === "json" || c.format === "jsonl") return false;
+    if (c.options?.json || c.formatExplicit) return false;
     return process.stdout.isTTY === true;
 }
 
@@ -66,11 +73,13 @@ export async function runInitCommand(c, fail) {
                 force: c.options.force,
                 agentsOnly: c.options.agentsOnly,
                 install: c.options.install,
+                global: c.options.global,
             })
             : initWorkflowPack({
                 force: c.options.force,
                 agentsOnly: c.options.agentsOnly,
                 skipInstall: c.options.agentsOnly || !c.options.install,
+                global: c.options.global,
             });
         const templateResult = selectedTemplate
             ? buildStarterGallery({ id: selectedTemplate.id }).selected
@@ -92,7 +101,10 @@ export async function runInitCommand(c, fail) {
         if (human) {
             // The ceremony already narrated the work; render the CTA inline and
             // suppress the structured dump via the command's agent-only policy.
-            if (cta) renderInitNextSteps(cta);
+            // Always terminate the ceremony: renderInitNextSteps emits the
+            // closing clack outro() (even for an empty CTA, e.g. --agents-only),
+            // matching the unconditional intro() in runInitCeremony.
+            renderInitNextSteps(cta ?? { commands: [] });
             return c.ok(result);
         }
         return c.ok(result, cta ? { cta: { ...cta, description: "Next steps:" } } : undefined);
