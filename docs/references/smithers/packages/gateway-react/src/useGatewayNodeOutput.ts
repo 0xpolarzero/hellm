@@ -10,7 +10,7 @@ export function useGatewayNodeOutput(params: {
     {
       runId: params.runId ?? "",
       nodeId: params.nodeId ?? "",
-      ...(typeof params.iteration === "number" ? { iteration: params.iteration } : {}),
+      iteration: params.iteration ?? 0,
     },
     {
       enabled: Boolean(params.runId && params.nodeId),

@@ -136,7 +136,7 @@ importers:
         version: 9.0.0
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.13)
+        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.13)(pg@8.21.0)
       effect:
         specifier: 3.21.1
         version: 3.21.1
@@ -258,12 +258,15 @@ importers:
       '@smithers-orchestrator/usage':
         specifier: workspace:*
         version: link:../../packages/usage
+      '@smithers-orchestrator/vcs':
+        specifier: workspace:*
+        version: link:../../packages/vcs
       cron-parser:
         specifier: ^5.5.0
         version: 5.5.0
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)
+        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)
       effect:
         specifier: 3.21.1
         version: 3.21.1
@@ -320,6 +323,12 @@ importers:
 
   apps/smithers:
     dependencies:
+      '@smithers-orchestrator/gateway-client':
+        specifier: workspace:*
+        version: link:../../packages/gateway-client
+      '@smithers-orchestrator/gateway-react':
+        specifier: workspace:*
+        version: link:../../packages/gateway-react
       '@tanstack/ai':
         specifier: ^0.27.0
         version: 0.27.0(@opentelemetry/api@1.9.0)
@@ -329,6 +338,9 @@ importers:
       '@tanstack/ai-react':
         specifier: ^0.15.3
         version: 0.15.3(@opentelemetry/api@1.9.0)(@tanstack/ai@0.27.0(@opentelemetry/api@1.9.0))(@types/react@19.2.14)(react@19.2.5)
+      '@tanstack/react-router':
+        specifier: ^1.135.5
+        version: 1.170.12(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       '@xyflow/react':
         specifier: ^12.10.2
         version: 12.10.2(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -341,6 +353,9 @@ importers:
       react-dom:
         specifier: ^19.2.5
         version: 19.2.5(react@19.2.5)
+      zustand:
+        specifier: ^5.0.13
+        version: 5.0.14(@types/react@19.2.14)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.39.2
@@ -348,6 +363,12 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4.20260604.1
         version: 4.20260604.1
+      '@happy-dom/global-registrator':
+        specifier: ^20.9.0
+        version: 20.9.0
+      '@playwright/test':
+        specifier: ^1.60.0
+        version: 1.60.0
       '@types/dagre':
         specifier: ^0.7.54
         version: 0.7.54
@@ -362,10 +383,13 @@ importers:
         version: 6.0.2(vite@8.0.14(@types/node@25.6.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.8.3))
       alchemy:
         specifier: ^0.93.11
-        version: 0.93.11(@cloudflare/vite-plugin@1.39.2(vite@8.0.14(@types/node@25.6.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.8.3))(workerd@1.20260601.1)(wrangler@4.97.0(@cloudflare/workers-types@4.20260604.1)))(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(vite@8.0.14(@types/node@25.6.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.8.3))(workerd@1.20260601.1)
+        version: 0.93.11(@cloudflare/vite-plugin@1.39.2(vite@8.0.14(@types/node@25.6.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.8.3))(workerd@1.20260601.1)(wrangler@4.97.0(@cloudflare/workers-types@4.20260604.1)))(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)(vite@8.0.14(@types/node@25.6.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.8.3))(workerd@1.20260601.1)
       cloudflare:
         specifier: ^6.3.0
         version: 6.3.0
+      playwright:
+        specifier: ^1.60.0
+        version: 1.60.0
       tsx:
         specifier: ^4.22.4
         version: 4.22.4
@@ -502,7 +526,7 @@ importers:
         version: 11.10.0
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)
+        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)
       effect:
         specifier: 3.21.1
         version: 3.21.1
@@ -544,6 +568,9 @@ importers:
       '@ai-sdk/openai':
         specifier: ^3.0.53
         version: 3.0.53(zod@4.3.6)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)
       '@smithers-orchestrator/driver':
         specifier: workspace:*
         version: link:../driver
@@ -623,7 +650,7 @@ importers:
         version: 1.3.14
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)
+        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)
       effect:
         specifier: 3.21.1
         version: 3.21.1
@@ -666,10 +693,10 @@ importers:
         version: link:../scheduler
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)
+        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)
       drizzle-zod:
         specifier: ^0.8.3
-        version: 0.8.3(drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14))(zod@4.3.6)
+        version: 0.8.3(drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0))(zod@4.3.6)
       effect:
         specifier: 3.21.1
         version: 3.21.1
@@ -677,9 +704,18 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: 0.5.1
+        version: 0.5.1
+      '@electric-sql/pglite-socket':
+        specifier: 0.2.1
+        version: 0.2.1(@electric-sql/pglite-age@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_hashids@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_ivm@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_textsearch@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_uuidv7@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pgtap@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pgvector@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite@0.5.1)
       '@types/bun':
         specifier: latest
         version: 1.3.14
+      pg:
+        specifier: ^8.13.1
+        version: 8.21.0
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
@@ -783,6 +819,9 @@ importers:
       '@smithers-orchestrator/time-travel':
         specifier: workspace:*
         version: link:../time-travel
+      '@smithers-orchestrator/tool-context':
+        specifier: workspace:*
+        version: link:../tool-context
       '@smithers-orchestrator/vcs':
         specifier: workspace:*
         version: link:../vcs
@@ -791,7 +830,7 @@ importers:
         version: 9.0.0
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)
+        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)
       effect:
         specifier: 3.21.1
         version: 3.21.1
@@ -811,6 +850,16 @@ importers:
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
+    optionalDependencies:
+      '@electric-sql/pglite':
+        specifier: 0.5.1
+        version: 0.5.1
+      '@electric-sql/pglite-socket':
+        specifier: 0.2.1
+        version: 0.2.1(@electric-sql/pglite-age@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_hashids@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_ivm@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_textsearch@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_uuidv7@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pgtap@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pgvector@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite@0.5.1)
+      pg:
+        specifier: ^8.13.1
+        version: 8.21.0
 
   packages/errors:
     dependencies:
@@ -885,7 +934,7 @@ importers:
         version: link:../errors
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)
+        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -896,6 +945,16 @@ importers:
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
+
+  packages/jj-darwin-arm64: {}
+
+  packages/jj-darwin-x64: {}
+
+  packages/jj-linux-arm64: {}
+
+  packages/jj-linux-x64: {}
+
+  packages/jj-win32-x64: {}
 
   packages/memory:
     dependencies:
@@ -916,7 +975,7 @@ importers:
         version: link:../scheduler
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)
+        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)
       effect:
         specifier: 3.21.1
         version: 3.21.1
@@ -1126,7 +1185,7 @@ importers:
         version: link:../scheduler
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)
+        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)
       effect:
         specifier: 3.21.1
         version: 3.21.1
@@ -1184,7 +1243,7 @@ importers:
         version: 5.5.0
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)
+        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)
       effect:
         specifier: 3.21.1
         version: 3.21.1
@@ -1276,6 +1335,9 @@ importers:
       '@smithers-orchestrator/time-travel':
         specifier: workspace:*
         version: link:../time-travel
+      '@smithers-orchestrator/tool-context':
+        specifier: workspace:*
+        version: link:../tool-context
       '@smithers-orchestrator/vcs':
         specifier: workspace:*
         version: link:../vcs
@@ -1287,7 +1349,7 @@ importers:
         version: 9.0.0
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)
+        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)
       effect:
         specifier: 3.21.1
         version: 3.21.1
@@ -1307,6 +1369,16 @@ importers:
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
+    optionalDependencies:
+      '@electric-sql/pglite':
+        specifier: 0.5.1
+        version: 0.5.1
+      '@electric-sql/pglite-socket':
+        specifier: 0.2.1
+        version: 0.2.1(@electric-sql/pglite-age@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_hashids@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_ivm@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_textsearch@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_uuidv7@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pgtap@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pgvector@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite@0.5.1)
+      pg:
+        specifier: ^8.13.1
+        version: 8.21.0
 
   packages/time-travel:
     dependencies:
@@ -1333,7 +1405,7 @@ importers:
         version: link:../vcs
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)
+        version: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)
       effect:
         specifier: 3.21.1
         version: 3.21.1
@@ -1347,6 +1419,15 @@ importers:
       react:
         specifier: ^19.2.5
         version: 19.2.5
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  packages/tool-context:
+    devDependencies:
+      '@types/bun':
+        specifier: latest
+        version: 1.3.14
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
@@ -1388,6 +1469,22 @@ importers:
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
+    optionalDependencies:
+      '@smithers-orchestrator/jj-darwin-arm64':
+        specifier: workspace:*
+        version: link:../jj-darwin-arm64
+      '@smithers-orchestrator/jj-darwin-x64':
+        specifier: workspace:*
+        version: link:../jj-darwin-x64
+      '@smithers-orchestrator/jj-linux-arm64':
+        specifier: workspace:*
+        version: link:../jj-linux-arm64
+      '@smithers-orchestrator/jj-linux-x64':
+        specifier: workspace:*
+        version: link:../jj-linux-x64
+      '@smithers-orchestrator/jj-win32-x64':
+        specifier: workspace:*
+        version: link:../jj-win32-x64
 
 packages:
 
@@ -1855,6 +1952,57 @@ packages:
       '@effect/platform': ^0.96.0
       '@effect/rpc': ^0.75.0
       effect: 3.21.1
+
+  '@electric-sql/pglite-age@0.0.2':
+    resolution: {integrity: sha512-0Q+QnbSSZjJt3aF/wycuXpC1HxyemkAumYSodKlIkjobx/Cu/U9a9lazuwlAzB1GOZuCuB6JUiYjGcJMnvN7zA==}
+    peerDependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-pg_hashids@0.0.2':
+    resolution: {integrity: sha512-fg+V4XOpmMyNyVq21+Cmxi9ZYX6LHPFRBSvMSm69mv4/0xpBCQcUpo9t4pV0os2FACpUIvFDzB+0CUDTvylcTg==}
+    peerDependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-pg_ivm@0.0.2':
+    resolution: {integrity: sha512-S84QSgUyVuworFPs3W+hQhQa3zhKd9egQvBordM60gryo7zZBa3rMbf4PRYtb/aX44yybzI42WKinC7z3REC6g==}
+    peerDependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-pg_textsearch@0.0.2':
+    resolution: {integrity: sha512-hqGo0imL0fDVDsc182wB8+tfvNWZWj9unNqjVu2X2M/2wuOzk/6uWsFjLdOHsnRHMjcRhI8X5k/LK4mtZA1j7g==}
+    peerDependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-pg_uuidv7@0.0.2':
+    resolution: {integrity: sha512-DqV70JhIUY8vGYwTQRlshZyxyxS9i0ThdegJLfyi3T5rw1ov3HoLlCvLZhroI2/MAvF0s4mBH9Op/wSMzjr8Ew==}
+    peerDependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-pgtap@0.0.2':
+    resolution: {integrity: sha512-5nEhiMxS9qK+Yxnx8pnKLREDXymLba7cevTRpQL4hvcW0W4Y+spJbMV2gRwC9qWLQFrEIWlYucP+EBdVUucXSQ==}
+    peerDependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-pgvector@0.0.2':
+    resolution: {integrity: sha512-Gu9Nv7JHlg6BgOLqPCR6lCjI+3xlb7ej5qUtHWmzEYA0ZKzuNgeDK16nRO0ELInwzhLptLqX7VdWyYRElSXjdQ==}
+    peerDependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-socket@0.2.1':
+    resolution: {integrity: sha512-i/vxFji/crDNIEEwwDcIH0Y7dShG039+uepAyHZqvAM/o+LCnM3LXcoIxtQoo2fUIThaUDVF5NMy7NAQkq79FQ==}
+    hasBin: true
+    peerDependencies:
+      '@electric-sql/pglite': 0.5.1
+      '@electric-sql/pglite-age': 0.0.2
+      '@electric-sql/pglite-pg_hashids': 0.0.2
+      '@electric-sql/pglite-pg_ivm': 0.0.2
+      '@electric-sql/pglite-pg_textsearch': 0.0.2
+      '@electric-sql/pglite-pg_uuidv7': 0.0.2
+      '@electric-sql/pglite-pgtap': 0.0.2
+      '@electric-sql/pglite-pgvector': 0.0.2
+
+  '@electric-sql/pglite@0.5.1':
+    resolution: {integrity: sha512-h2Vc+qkQqsEL5kvyN5nBAxn3Vbyvka7QfDW7Io+CdcwU1+X8JbCAN2og+5dI11S3eJuDfroUCxzJaap6k+ezEw==}
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -3689,6 +3837,10 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
+  '@tanstack/history@1.162.0':
+    resolution: {integrity: sha512-79pf/RkhteYZTRgcR4F9kbk84P2N8rugQJswxfIqovlbRiT3yI7eBE+5QorIrZaOKktsgzRlXh1l/du/xpl4iA==}
+    engines: {node: '>=20.19'}
+
   '@tanstack/openai-base@0.7.0':
     resolution: {integrity: sha512-x/lr6t0G52NukXC7gjJDFfgCj/086q2sthbLV2G+iIvkSVIOMxBqPm3acp4/ITstbA2u9ynWevVcT7hpRUENEQ==}
     peerDependencies:
@@ -3701,6 +3853,26 @@ packages:
     resolution: {integrity: sha512-akg5GdwW70lvJvCqVHZ7tizGyc+TATjUzKX9RuF1xknhEe/1leofXk7YLYbrbRsuhNbHJBAayaQUMvvOFZ5L5g==}
     peerDependencies:
       react: ^18 || ^19
+
+  '@tanstack/react-router@1.170.12':
+    resolution: {integrity: sha512-3QSX1kTBFCHV1pMePdLhcmxl2E7io8W59a5f+jDQs+BZjZuRLUDtOuGFiHUGaUCsYHxv6z2dCqWvwxaU6WJpyA==}
+    engines: {node: '>=20.19'}
+    peerDependencies:
+      react: '>=18.0.0 || >=19.0.0'
+      react-dom: '>=18.0.0 || >=19.0.0'
+
+  '@tanstack/react-store@0.9.3':
+    resolution: {integrity: sha512-y2iHd/N9OkoQbFJLUX1T9vbc2O9tjH0pQRgTcx1/Nz4IlwLvkgpuglXUx+mXt0g5ZDFrEeDnONPqkbfxXJKwRg==}
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+      react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  '@tanstack/router-core@1.171.10':
+    resolution: {integrity: sha512-EOOvTUBUS2W/DtyqG0A0HW6RLbsbZBVTu3nsWdFpUoAfDxHPjOqRNjz3xwq5KhjMlYuqtHNgaajAd18aebd0ZQ==}
+    engines: {node: '>=20.19'}
+
+  '@tanstack/store@0.9.3':
+    resolution: {integrity: sha512-8reSzl/qGWGGVKhBoxXPMWzATSbZLZFWhwBAFO9NAyp0TxzfBP0mIrGb8CP8KrQTmvzXlR/vFPPUrHTLBGyFyw==}
 
   '@tokenizer/inflate@0.4.1':
     resolution: {integrity: sha512-2mAv+8pkG6GIZiF1kNg1jAjh27IDxEPKwdGul3snfztFerfPGI1LjDezZp3i7BElXompqEtPmoPx6c2wgtWsOA==}
@@ -4242,6 +4414,9 @@ packages:
 
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
+
+  cookie-es@3.1.1:
+    resolution: {integrity: sha512-UaXxwISYJPTr9hwQxMFYZ7kNhSXboMXP+Z3TRX6f1/NyaGPfuNUZOWP1pUEb75B2HjfklIYLVRfWiFZJyC6Npg==}
 
   cookie-signature@1.2.2:
     resolution: {integrity: sha512-D76uU73ulSXrD1UXF4KE2TMxVVwhsnCgfAyTg9k8P6KGZjlXKrOLe4dJQKI3Bxi5wjesZoFXJWElNWBjPZMbhg==}
@@ -5048,6 +5223,10 @@ packages:
   isarray@1.0.0:
     resolution: {integrity: sha512-VLghIWNM6ELQzo7zwmcg0NmTVyWKYjvIeM83yjp0wRDTmUnrM678fQbcKBo6n2CJEF0szoG//ytg+TKla89ALQ==}
 
+  isbot@5.1.41:
+    resolution: {integrity: sha512-9WFV/Vhh0FEj6CQ7MoHweEL9/vLKPjeoD2I2htbAjX7kbW7VJs3OCpWOVyd+JraNTWVU6/DRx2MZy2KaUNXHcg==}
+    engines: {node: '>=18'}
+
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
 
@@ -5644,6 +5823,40 @@ packages:
   pend@1.2.0:
     resolution: {integrity: sha512-F3asv42UuXchdzt+xXqfW1OGlVBe+mxa2mqI0pg5yAHZPvFmY3Y6drSf/GQ1A86WgWEN9Kzh/WrgKa6iGcHXLg==}
 
+  pg-cloudflare@1.4.0:
+    resolution: {integrity: sha512-Vo7z/6rrQYxpNRylp4Tlob2elzbh+N/MOQbxFVWCxS7oEx6jF53GTJFxK2WWpKuBRkmiin4Mt+xofFDjx09R0A==}
+
+  pg-connection-string@2.13.0:
+    resolution: {integrity: sha512-EMnU9E2fSULdsbErBbMaXJvFeD9B4+nPcM3f+4lsiCR0BHLPrLVjv3DbyM2hgQQviKJaTWIRRTjKjWlHg3p2ig==}
+
+  pg-int8@1.0.1:
+    resolution: {integrity: sha512-WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw==}
+    engines: {node: '>=4.0.0'}
+
+  pg-pool@3.14.0:
+    resolution: {integrity: sha512-gKtPkFdQPU3DksooVLi9LsjZxrsBUZIpa+7aVx+LV5pNh0KzP4Zleud2po+ConrxbuXGBJ6Hfer6hdgpIBpBaw==}
+    peerDependencies:
+      pg: '>=8.0'
+
+  pg-protocol@1.14.0:
+    resolution: {integrity: sha512-n5taZ1kO3s9ngDTVxsEznOqCyToTgz0FLuPq0B33COy5pPpuWJpY3/2oRBVETuOgzdqRXfWpM9HIhp2LBBT1BA==}
+
+  pg-types@2.2.0:
+    resolution: {integrity: sha512-qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA==}
+    engines: {node: '>=4'}
+
+  pg@8.21.0:
+    resolution: {integrity: sha512-AUP1EYJuHraQGsVoCQVIcM7TEJVGtDzxWtGFZd8rds9d+CCXlU5Js1rYgfLNvxy9iJrpHjGrRjoi/3BT9fRyiA==}
+    engines: {node: '>= 16.0.0'}
+    peerDependencies:
+      pg-native: '>=3.0.1'
+    peerDependenciesMeta:
+      pg-native:
+        optional: true
+
+  pgpass@1.0.5:
+    resolution: {integrity: sha512-FdW9r/jQZhSeohs1Z3sI1yxFQNFvMcnmfuj4WBMUTxOrAyLMaTcE1aAMBiTlbMNaXvBCQuVi0R7hd8udDSP7ug==}
+
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
 
@@ -5706,6 +5919,22 @@ packages:
   postcss@8.5.15:
     resolution: {integrity: sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A==}
     engines: {node: ^10 || ^12 || >=14}
+
+  postgres-array@2.0.0:
+    resolution: {integrity: sha512-VpZrUqU5A69eQyW2c5CA1jtLecCsN2U/bD6VilrFDWq5+5UIEVO7nazS3TEcHf1zuPYO/sqGvUvW62g86RXZuA==}
+    engines: {node: '>=4'}
+
+  postgres-bytea@1.0.1:
+    resolution: {integrity: sha512-5+5HqXnsZPE65IJZSMkZtURARZelel2oXUEO8rH83VS/hxH5vv1uHquPg5wZs8yMAfdv971IU+kcPUczi7NVBQ==}
+    engines: {node: '>=0.10.0'}
+
+  postgres-date@1.0.7:
+    resolution: {integrity: sha512-suDmjLVQg78nMK2UZ454hAG+OAW+HQPZ6n++TNDUX+L0+uUlLywnoxJKDou51Zm+zTCjrCl0Nq6J9C5hP9vK/Q==}
+    engines: {node: '>=0.10.0'}
+
+  postgres-interval@1.2.0:
+    resolution: {integrity: sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ==}
+    engines: {node: '>=0.10.0'}
 
   prebuild-install@7.1.3:
     resolution: {integrity: sha512-8Mf2cbV7x1cXPUILADGI3wuhfqWvtiLA1iclTDbFRZkgRQS0NqsPZphna9V+HyTEadheuPmjaJMsbzKQFOzLug==}
@@ -5907,6 +6136,16 @@ packages:
     resolution: {integrity: sha512-1gnZf7DFcoIcajTjTwjwuDjzuz4PPcY2StKPlsGAQ1+YH20IRVrBaXSWmdjowTJ6u8Rc01PoYOGHXfP1mYcZNQ==}
     engines: {node: '>= 18'}
 
+  seroval-plugins@1.5.4:
+    resolution: {integrity: sha512-S0xQPhUTefAhNvNWFg0c1J8qJArHt5KdtJ/cFAofo06KD1MVSeFWyl4iiu+ApDIuw0WhjpOfCdgConOfAnLgkw==}
+    engines: {node: '>=10'}
+    peerDependencies:
+      seroval: ^1.0
+
+  seroval@1.5.4:
+    resolution: {integrity: sha512-46uFvgrXTVxZcUorgSSRZ4y+ieqLLQRMlG4bnCZKW3qI6BZm7Rg4ntMW4p1mILEEBZWrFlcpp0AyIIlM6jD9iw==}
+    engines: {node: '>=10'}
+
   serve-static@2.2.1:
     resolution: {integrity: sha512-xRXBn0pPqQTVQiC8wyQrKs2MOlX24zQ0POGaj0kultvoOCstBQM5yvOhAVSUwOMjQtTvsPWoNCHfPGwaaQJhTw==}
     engines: {node: '>= 18'}
@@ -6002,6 +6241,10 @@ packages:
 
   space-separated-tokens@2.0.2:
     resolution: {integrity: sha512-PEGlAwrG8yXGXRjW32fGbg66JAlOAwbObuqVoJpv/mRgoWDQfgH1wDPvtzWyUSNAXBGSk8h755YDbbcEy3SH2Q==}
+
+  split2@4.2.0:
+    resolution: {integrity: sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg==}
+    engines: {node: '>= 10.x'}
 
   stackback@0.0.2:
     resolution: {integrity: sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==}
@@ -6472,6 +6715,10 @@ packages:
   xml-naming@0.1.0:
     resolution: {integrity: sha512-k8KO9hrMyNk6tUWqUfkTEZbezRRpONVOzUTnc97VnCvyj6Tf9lyUR9EDAIeiVLv56jsMcoXEwjW8Kv5yPY52lw==}
     engines: {node: '>=16.0.0'}
+
+  xtend@4.0.2:
+    resolution: {integrity: sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==}
+    engines: {node: '>=0.4'}
 
   y18n@5.0.8:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
@@ -7369,6 +7616,47 @@ snapshots:
       '@effect/platform': 0.96.0(effect@3.21.1)
       '@effect/rpc': 0.75.0(@effect/platform@0.96.0(effect@3.21.1))(effect@3.21.1)
       effect: 3.21.1
+
+  '@electric-sql/pglite-age@0.0.2(@electric-sql/pglite@0.5.1)':
+    dependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-pg_hashids@0.0.2(@electric-sql/pglite@0.5.1)':
+    dependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-pg_ivm@0.0.2(@electric-sql/pglite@0.5.1)':
+    dependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-pg_textsearch@0.0.2(@electric-sql/pglite@0.5.1)':
+    dependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-pg_uuidv7@0.0.2(@electric-sql/pglite@0.5.1)':
+    dependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-pgtap@0.0.2(@electric-sql/pglite@0.5.1)':
+    dependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-pgvector@0.0.2(@electric-sql/pglite@0.5.1)':
+    dependencies:
+      '@electric-sql/pglite': 0.5.1
+
+  '@electric-sql/pglite-socket@0.2.1(@electric-sql/pglite-age@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_hashids@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_ivm@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_textsearch@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pg_uuidv7@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pgtap@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite-pgvector@0.0.2(@electric-sql/pglite@0.5.1))(@electric-sql/pglite@0.5.1)':
+    dependencies:
+      '@electric-sql/pglite': 0.5.1
+      '@electric-sql/pglite-age': 0.0.2(@electric-sql/pglite@0.5.1)
+      '@electric-sql/pglite-pg_hashids': 0.0.2(@electric-sql/pglite@0.5.1)
+      '@electric-sql/pglite-pg_ivm': 0.0.2(@electric-sql/pglite@0.5.1)
+      '@electric-sql/pglite-pg_textsearch': 0.0.2(@electric-sql/pglite@0.5.1)
+      '@electric-sql/pglite-pg_uuidv7': 0.0.2(@electric-sql/pglite@0.5.1)
+      '@electric-sql/pglite-pgtap': 0.0.2(@electric-sql/pglite@0.5.1)
+      '@electric-sql/pglite-pgvector': 0.0.2(@electric-sql/pglite@0.5.1)
+
+  '@electric-sql/pglite@0.5.1': {}
 
   '@emnapi/core@1.10.0':
     dependencies:
@@ -8906,6 +9194,8 @@ snapshots:
 
   '@tanstack/devtools-event-client@0.4.3': {}
 
+  '@tanstack/history@1.162.0': {}
+
   '@tanstack/openai-base@0.7.0(@tanstack/ai@0.27.0(@opentelemetry/api@1.9.0))(ws@8.20.1)(zod@4.3.6)':
     dependencies:
       '@tanstack/ai': 0.27.0(@opentelemetry/api@1.9.0)
@@ -8921,6 +9211,31 @@ snapshots:
     dependencies:
       '@tanstack/query-core': 5.99.1
       react: 19.2.5
+
+  '@tanstack/react-router@1.170.12(react-dom@19.2.5(react@19.2.5))(react@19.2.5)':
+    dependencies:
+      '@tanstack/history': 1.162.0
+      '@tanstack/react-store': 0.9.3(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      '@tanstack/router-core': 1.171.10
+      isbot: 5.1.41
+      react: 19.2.5
+      react-dom: 19.2.5(react@19.2.5)
+
+  '@tanstack/react-store@0.9.3(react-dom@19.2.5(react@19.2.5))(react@19.2.5)':
+    dependencies:
+      '@tanstack/store': 0.9.3
+      react: 19.2.5
+      react-dom: 19.2.5(react@19.2.5)
+      use-sync-external-store: 1.6.0(react@19.2.5)
+
+  '@tanstack/router-core@1.171.10':
+    dependencies:
+      '@tanstack/history': 1.162.0
+      cookie-es: 3.1.1
+      seroval: 1.5.4
+      seroval-plugins: 1.5.4(seroval@1.5.4)
+
+  '@tanstack/store@0.9.3': {}
 
   '@tokenizer/inflate@0.4.1':
     dependencies:
@@ -9182,7 +9497,7 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
-  alchemy@0.93.11(@cloudflare/vite-plugin@1.39.2(vite@8.0.14(@types/node@25.6.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.8.3))(workerd@1.20260601.1)(wrangler@4.97.0(@cloudflare/workers-types@4.20260604.1)))(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(vite@8.0.14(@types/node@25.6.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.8.3))(workerd@1.20260601.1):
+  alchemy@0.93.11(@cloudflare/vite-plugin@1.39.2(vite@8.0.14(@types/node@25.6.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.8.3))(workerd@1.20260601.1)(wrangler@4.97.0(@cloudflare/workers-types@4.20260604.1)))(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)(vite@8.0.14(@types/node@25.6.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.8.3))(workerd@1.20260601.1):
     dependencies:
       '@aws-sdk/credential-providers': 3.1061.0
       '@cloudflare/unenv-preset': 2.7.7(unenv@2.0.0-rc.21)(workerd@1.20260601.1)
@@ -9192,7 +9507,7 @@ snapshots:
       '@smithy/node-config-provider': 4.3.14
       '@smithy/types': 4.14.3
       aws4fetch: 1.0.20
-      drizzle-orm: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)
+      drizzle-orm: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)
       env-paths: 3.0.0
       esbuild: 0.25.12
       execa: 9.6.1
@@ -9469,6 +9784,8 @@ snapshots:
 
   convert-source-map@2.0.0: {}
 
+  cookie-es@3.1.1: {}
+
   cookie-signature@1.2.2: {}
 
   cookie@0.7.2: {}
@@ -9600,25 +9917,29 @@ snapshots:
 
   diff@9.0.0: {}
 
-  drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.13):
+  drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.13)(pg@8.21.0):
     optionalDependencies:
       '@cloudflare/workers-types': 4.20260604.1
+      '@electric-sql/pglite': 0.5.1
       '@opentelemetry/api': 1.9.0
       '@types/better-sqlite3': 7.6.13
       better-sqlite3: 11.10.0
       bun-types: 1.3.13
+      pg: 8.21.0
 
-  drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14):
+  drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0):
     optionalDependencies:
       '@cloudflare/workers-types': 4.20260604.1
+      '@electric-sql/pglite': 0.5.1
       '@opentelemetry/api': 1.9.0
       '@types/better-sqlite3': 7.6.13
       better-sqlite3: 11.10.0
       bun-types: 1.3.14
+      pg: 8.21.0
 
-  drizzle-zod@0.8.3(drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14))(zod@4.3.6):
+  drizzle-zod@0.8.3(drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0))(zod@4.3.6):
     dependencies:
-      drizzle-orm: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)
+      drizzle-orm: 0.45.2(@cloudflare/workers-types@4.20260604.1)(@electric-sql/pglite@0.5.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(bun-types@1.3.14)(pg@8.21.0)
       zod: 4.3.6
 
   dunder-proto@1.0.1:
@@ -10380,6 +10701,8 @@ snapshots:
       is-inside-container: 1.0.0
 
   isarray@1.0.0: {}
+
+  isbot@5.1.41: {}
 
   isexe@2.0.0: {}
 
@@ -11151,6 +11474,41 @@ snapshots:
 
   pend@1.2.0: {}
 
+  pg-cloudflare@1.4.0:
+    optional: true
+
+  pg-connection-string@2.13.0: {}
+
+  pg-int8@1.0.1: {}
+
+  pg-pool@3.14.0(pg@8.21.0):
+    dependencies:
+      pg: 8.21.0
+
+  pg-protocol@1.14.0: {}
+
+  pg-types@2.2.0:
+    dependencies:
+      pg-int8: 1.0.1
+      postgres-array: 2.0.0
+      postgres-bytea: 1.0.1
+      postgres-date: 1.0.7
+      postgres-interval: 1.2.0
+
+  pg@8.21.0:
+    dependencies:
+      pg-connection-string: 2.13.0
+      pg-pool: 3.14.0(pg@8.21.0)
+      pg-protocol: 1.14.0
+      pg-types: 2.2.0
+      pgpass: 1.0.5
+    optionalDependencies:
+      pg-cloudflare: 1.4.0
+
+  pgpass@1.0.5:
+    dependencies:
+      split2: 4.2.0
+
   picocolors@1.1.1: {}
 
   picomatch@2.3.2: {}
@@ -11196,6 +11554,16 @@ snapshots:
       nanoid: 3.3.12
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  postgres-array@2.0.0: {}
+
+  postgres-bytea@1.0.1: {}
+
+  postgres-date@1.0.7: {}
+
+  postgres-interval@1.2.0:
+    dependencies:
+      xtend: 4.0.2
 
   prebuild-install@7.1.3:
     dependencies:
@@ -11516,6 +11884,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  seroval-plugins@1.5.4(seroval@1.5.4):
+    dependencies:
+      seroval: 1.5.4
+
+  seroval@1.5.4: {}
+
   serve-static@2.2.1:
     dependencies:
       encodeurl: 2.0.0
@@ -11641,6 +12015,8 @@ snapshots:
   source-map@0.7.6: {}
 
   space-separated-tokens@2.0.2: {}
+
+  split2@4.2.0: {}
 
   stackback@0.0.2: {}
 
@@ -12055,6 +12431,8 @@ snapshots:
       is-wsl: 3.1.1
 
   xml-naming@0.1.0: {}
+
+  xtend@4.0.2: {}
 
   y18n@5.0.8: {}
 

@@ -21,7 +21,7 @@ The default CI workflow (`.github/workflows/ci.yml`) runs `check:effect`, `check
 
 ## Persistence
 
-Use one SQLite database file per deployment and place it on durable storage. The internal tables are created and migrated idempotently on startup.
+Use one SQLite database file per deployment and place it on durable storage, or run against PostgreSQL for managed, multi-connection storage (see PostgreSQL and PGlite below). The internal tables are created and migrated idempotently on startup on either backend.
 
 Recommended database practices:
 
@@ -30,6 +30,12 @@ Recommended database practices:
 - Keep run IDs stable across resume attempts.
 - Use the Gateway event stream sequence numbers for reconnects; clients should resume from the last seen `seq`.
 - Avoid manually deleting internal rows. Delete whole runs through supported administrative paths so dependent frames, node diffs, and audit rows stay consistent.
+
+### PostgreSQL and PGlite
+
+`createSmithersPostgres(schemas, opts)` runs the same durable engine, and the same crash-and-resume guarantees, on PostgreSQL or an embedded PGlite through the SQL dialect seam in `packages/db/src/dialect.js`. Point it at managed Postgres with `{ provider: "postgres", connectionString }`, or at an in-process PGlite with `{ provider: "pglite", dataDir }`. The factory is async and returns the same `createSmithers` API plus a `close()` teardown.
+
+`pg`, `@electric-sql/pglite`, and `@electric-sql/pglite-socket` are optional dependencies installed only when you take this path; the default synchronous `bun:sqlite` path needs none of them. On Postgres, take database-native backups and connection-pool sizing in place of the SQLite file-and-WAL backup guidance above.
 
 ## Access Control
 
@@ -112,5 +118,5 @@ Before a production release:
 - Database backups have been restored in a staging environment.
 - Gateway tokens are scoped and have bounded TTLs.
 - Sandbox runtime enforcement has been tested against the intended threat model.
-- Approval paths have a named owner and a fallback owner (see [Approvals](/workflows/approvals)).
+- Approval paths have a named owner and a fallback owner (see [Approval](/components/approval)).
 - Logs are retained long enough to investigate delayed workflow failures.

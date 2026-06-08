@@ -1,0 +1,46 @@
+---
+title: context-doctor
+description: Run deterministic checks over a context contract and report missing goals, inputs, verification, approvals, and report specs.
+---
+
+`context-doctor` lints a context contract. It deterministically parses the
+contract JSON and runs seven structural checks (goal, output spec, acceptance
+criteria, blocking-criteria verification, required-input sources, side-effect
+approvals, report spec), then an agent suggests how to fix each finding. Reach
+for it before handing a contract to an agent, to catch missing inputs, ungated
+side effects, or absent acceptance criteria up front.
+
+```bash
+bunx smithers-orchestrator workflow run context-doctor \
+  --input '{"contract":"{\"goal\":\"Add CSP headers\",\"acceptanceCriteria\":[{\"text\":\"headers present\",\"blocking\":true,\"verification\":\"curl -I\"}],\"inputs\":[{\"name\":\"repo\",\"required\":true,\"source\":\"arg\"}],\"sideEffects\":[{\"name\":\"deploy\",\"approval\":true}],\"outputSpec\":\"patch\",\"reportSpec\":\"summary\"}"}'
+```
+
+## Stages
+
+1. **check** — deterministic (no agent): `JSON.parse` the contract and run the structural checks, returning `{ issues, summary, score }`.
+2. **advise** — an agent reads the diagnosis and writes one concrete fix per non-ok issue, ordered error → warning → info.
+
+## Checks
+
+- **hasGoal** — a non-empty `goal` is declared.
+- **hasOutputSpec** — an `outputSpec` (or `output`) describes the produced artifact.
+- **hasAcceptanceCriteria** — at least one acceptance criterion is listed.
+- **allBlockingCriteriaHaveVerification** — every criterion marked `blocking` names a `verification`.
+- **allRequiredInputsHaveSource** — every input marked `required` declares a `source`.
+- **allSideEffectsHaveApproval** — every entry in `sideEffects` is gated by an `approval`.
+- **reportSpecExists** — a `reportSpec` describes how results are reported.
+
+## Inputs
+
+| Input | Type | Default |
+| --- | --- | --- |
+| `contract` | string (JSON of a context contract) | `"{}"` |
+
+## Monitor it
+
+```bash
+bunx smithers-orchestrator workflow run context-doctor --input '{"contract":"…"}' -d   # detach
+bunx smithers-orchestrator ps                                                          # active / paused / recent
+bunx smithers-orchestrator logs <runId> -f                                             # follow events
+bunx smithers-orchestrator output <runId> --node check                                 # inspect the deterministic diagnosis
+```

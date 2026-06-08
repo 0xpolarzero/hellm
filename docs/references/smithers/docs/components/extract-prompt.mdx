@@ -3,6 +3,13 @@ title: <ExtractPrompt>
 description: Resolve a workflow's prompt from a provided string, a cached entry, or an interactive Socratic extraction loop.
 ---
 
+<Note>
+  `<ExtractPrompt>` is **not** an importable runtime export of `smithers-orchestrator`.
+  It ships as an example/pack composition pattern — a component you scaffold into your own
+  `.smithers/components/extract-prompt/` (via `init`) and import relative to your workflow,
+  as shown below. Copy and adapt it; it is not available from the published package.
+</Note>
+
 ```ts
 import { ExtractPrompt } from "../components/extract-prompt";
 

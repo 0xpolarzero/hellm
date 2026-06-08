@@ -1,0 +1,70 @@
+---
+title: Context Engineering
+description: The layered control system behind a reliable agent workflow, and how Smithers does it for you.
+---
+
+Writing a better prompt is the smallest lever. Getting an agent to reliably finish
+real work is a **layered control system**, and most of those layers live *around*
+the model, not inside the prompt. Smithers owns the outer layers so you can
+describe an outcome and let the system assemble the rest.
+
+## The layers
+
+| Layer | What it controls | Where it lives in Smithers |
+| --- | --- | --- |
+| **Prompt engineering** | instructions, examples, role, output format, success criteria | the prompt `.mdx` a `<Task>` renders |
+| **Context engineering** | what information, tools, memory, schemas, and state enter the model each step | the workflow graph + [memory](/concepts/memory) + typed outputs |
+| **Harness engineering** | runtime, tools, conventions, permissions, retries, fresh-context loops | `agents.ts`, [sandboxes](/components/sandbox), tools, `repoCommands` |
+| **Workflow engineering** | order, parallelism, review loops, approvals, resumability, artifacts | the Smithers runtime itself |
+| **Backpressure** | every desired behavior becomes a gate, test, eval, schema, reviewer, approval, or loop condition | Zod outputs, `smithers eval`, `<ReviewLoop>`, `<Approval>`, traces |
+
+The first four shape what the agent *can* do; **backpressure** decides whether the
+work is allowed to move forward. A workflow that just "tries its best and moves on"
+has no backpressure, and that is where unreliable agents come from.
+
+## Backpressure, concretely
+
+Turn each success criterion into a verification signal, and pick the Smithers
+primitive that enforces it:
+
+- **Schema**: the step must return a shape: a Zod `output={...}` on the `<Task>`.
+- **Test**: generated code must pass: a function task shelling out to `repoCommands.test`.
+- **Eval**: an answer must satisfy examples/rubrics: `smithers eval` + [scorers](/concepts/evals).
+- **Review**: another agent (or human) must approve: [`<ReviewLoop>`](/components/loop) / `<Panel>`.
+- **Approval**: a human signs off before a risky action: [`<Approval>`](/concepts/approvals).
+- **Dependency**: step B can't start until step A produced a field: gate on `ctx.outputMaybe(...)`.
+- **Trace**: tool calls, retries, and handoffs must be visible: [observability](/concepts/evals) + `smithers events`.
+
+Loop until the gate passes (`<Loop>` / `<Ralph until={…}>`) rather than running once
+and hoping.
+
+## Smithers does the context engineering for you
+
+You should not need to know any of the above to get a workflow. The
+[`create-workflow`](/workflows/create-workflow) workflow is the entry point to the
+"context engineering for you" layer:
+
+```bash
+bunx smithers-orchestrator workflow run create-workflow \
+  --prompt "Watch a landing request and auto-land it once CI is green"
+```
+
+It clarifies your ask into a spec, **provisions the docs and skills the work needs**
+(pulls the relevant `llms-*.txt`, finds the closest `examples/` template, and
+installs worker skills via `smithers skills add`), designs the graph, pauses for
+your approval, scaffolds the files, verifies the graph renders, and documents the
+result. You answer product questions; it produces the prompts, context, components,
+and gates.
+
+This is the direction Smithers is heading: a concierge that takes a vague script,
+interrogates it, routes it to the right skills and workflows, adds backpressure, runs
+as much as it can, and reports legibly. The durable, observable, gated workflow
+is something you *describe* rather than hand-build.
+
+## Further reading
+
+The field this builds on: Anthropic and OpenAI on prompting and on evaluating the
+model *and* the harness together; LangChain and LlamaIndex on context engineering;
+HumanLayer on harness engineering for coding agents; the Ralph loop on
+acceptance-driven, fresh-context iteration; and BAML on treating structured output
+as schema engineering.

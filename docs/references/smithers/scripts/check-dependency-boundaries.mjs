@@ -203,6 +203,7 @@ function isDevOnlyFile(file) {
   const base = basename(file);
   const parts = file.split(sep);
   return (
+    parts.includes("test") ||
     parts.includes("tests") ||
     parts.includes("__tests__") ||
     parts.includes("__type-tests__") ||

@@ -10,7 +10,10 @@
  *
  * Required env: CEREBRAS_API_KEY (stored as a Cloudflare secret) and Cloudflare
  * credentials (CLOUDFLARE_API_TOKEN, and CLOUDFLARE_ACCOUNT_ID if you have more
- * than one account).
+ * than one account). Optional remote-mode env: AUTH_API_BASE_URL,
+ * AUTH_CALLBACK_BASE_URL, GATEWAY_BASE_URL, GATEWAY_AUTH_TOKEN,
+ * GO_API_BASE_URL, AUTH_REQUIRED, GATEWAY_TRUSTED_PROXY_SCOPES,
+ * GATEWAY_TRUSTED_PROXY_ROLE.
  */
 import alchemy from "alchemy";
 import { Website } from "alchemy/cloudflare";
@@ -23,6 +26,26 @@ if (!cerebrasApiKey) {
     "CEREBRAS_API_KEY is required to deploy. Set it in your environment or pass --env-file.",
   );
 }
+
+const optionalBindingNames = [
+  "AUTH_API_BASE_URL",
+  "PLUE_API_BASE_URL",
+  "AUTH_CALLBACK_BASE_URL",
+  "GATEWAY_BASE_URL",
+  "GO_API_BASE_URL",
+  "AUTH_REQUIRED",
+  "GATEWAY_TRUSTED_PROXY_SCOPES",
+  "GATEWAY_TRUSTED_PROXY_ROLE",
+] as const;
+
+const optionalBindings = Object.fromEntries(
+  optionalBindingNames.flatMap((name) => {
+    const value = process.env[name]?.trim();
+    return value ? [[name, value]] : [];
+  }),
+);
+
+const gatewayAuthToken = process.env.GATEWAY_AUTH_TOKEN?.trim();
 
 export const site = await Website("smithers", {
   // The Worker entry that serves /api/chat. Static assets come from `assets`.
@@ -37,6 +60,8 @@ export const site = await Website("smithers", {
   compatibilityFlags: ["nodejs_compat"],
   bindings: {
     CEREBRAS_API_KEY: alchemy.secret(cerebrasApiKey),
+    ...(gatewayAuthToken ? { GATEWAY_AUTH_TOKEN: alchemy.secret(gatewayAuthToken) } : {}),
+    ...optionalBindings,
   },
 });
 

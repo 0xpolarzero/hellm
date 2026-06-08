@@ -1,5 +1,5 @@
 /**
- * Per docs/UX.md, Workflows merges prompts + triggers/schedules in as SEGMENTS
+ * Per .smithers/specs/UX.md, Workflows merges prompts + triggers/schedules in as SEGMENTS
  * (not separate nav rows). These are the four segment ids; the order here is the
  * order the tabs render in.
  */

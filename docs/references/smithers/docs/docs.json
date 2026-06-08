@@ -11,11 +11,30 @@
     "options": ["copy", "view", "chatgpt", "claude"]
   },
   "navigation": {
-    "groups": [
+    "tabs": [
+      {
+        "tab": "For Humans",
+        "groups": [
+          {
+            "group": "Human Guide",
+            "pages": [
+              "index",
+              "guide/what-is-smithers",
+              "guide/what-you-can-do",
+              "guide/get-started",
+              "guide/talk-to-your-agent",
+              "guide/concepts",
+              "guide/watch-and-steer"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "For Agents",
+        "groups": [
       {
         "group": "Start",
         "pages": [
-          "index",
           "introduction",
           "installation",
           "quickstart",
@@ -24,9 +43,10 @@
         ]
       },
       {
-        "group": "But... Why?",
+        "group": "Articles",
         "pages": [
           "why/background-agents",
+          "why/durable-open-orchestration",
           "why-react"
         ]
       },
@@ -34,6 +54,7 @@
         "group": "Learn",
         "pages": [
           "how-it-works",
+          "guides/context-engineering",
           "recipes"
         ]
       },
@@ -49,9 +70,11 @@
         "pages": [
           "cli/quickstart",
           "cli/overview",
+          "guides/agent-operating-playbook",
           "guides/evals-quickstart",
           "guides/workflow-optimization",
           "guides/tui",
+          "guides/custom-workflow-ui",
           "guides/alerting",
           "guides/agent-trace-otel-verification",
           "deployment/reference",
@@ -72,6 +95,12 @@
               "workflows/kanban",
               "workflows/ralph",
               "workflows/workflow-skill",
+              "workflows/create-workflow",
+              "workflows/create-skill",
+              "workflows/context-engineer",
+              "workflows/route-task",
+              "workflows/extract-skill",
+              "workflows/vcs",
               "workflows/catalog"
             ]
           },
@@ -81,7 +110,6 @@
               "workflows/research",
               "workflows/plan",
               "workflows/grill-me",
-              "workflows/write-a-prd",
               "workflows/ticket-create",
               "workflows/tickets-create"
             ]
@@ -93,7 +121,13 @@
               "workflows/debug",
               "workflows/improve-test-coverage",
               "workflows/feature-enum",
-              "workflows/audit"
+              "workflows/audit",
+              "workflows/context-doctor",
+              "workflows/backpressure-plan",
+              "workflows/triage-run",
+              "workflows/report-slideshow",
+              "workflows/monitor-smithers",
+              "workflows/eval-author"
             ]
           }
         ]
@@ -244,6 +278,13 @@
             ]
           },
           {
+            "group": "Custom Workflow UI",
+            "pages": [
+              "examples/workflow-ui-react",
+              "examples/workflow-ui-vanilla"
+            ]
+          },
+          {
             "group": "Worktree Feature Template",
             "pages": [
               "examples/worktree-feature-workflow",
@@ -279,6 +320,7 @@
       {
         "group": "Changelog",
         "pages": [
+          "changelogs/0.23.0",
           "changelogs/0.22.0",
           "changelogs/0.21.0",
           "changelogs/0.20.4",
@@ -302,6 +344,8 @@
           "changelogs/0.15.1",
           "changelogs/0.15.0",
           "changelogs/0.14.0"
+        ]
+      }
         ]
       }
     ]

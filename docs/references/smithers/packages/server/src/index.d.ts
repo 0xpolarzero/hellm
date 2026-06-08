@@ -242,6 +242,186 @@ type EventFrame$1 = {
 };
 
 /**
+ * Build the canonical extension method name. Useful in tests and tooling.
+ * @param {string} namespace
+ * @param {"resource" | "action" | "stream"} kind
+ * @param {string} key
+ */
+declare function extensionMethodName(namespace: string, kind: "resource" | "action" | "stream", key: string): string;
+/**
+ * @param {string} method
+ */
+declare function isExtensionMethod(method: string): boolean;
+/**
+ * Hard ceiling on a single extension response payload byte size after JSON
+ * serialization. Keeps a runaway extension from blowing through the gateway's
+ * inbound `maxPayload` on the wire and from monopolizing the per-connection
+ * outbound buffer. Mirrors the spirit of `NODE_OUTPUT_MAX_BYTES` (8 MiB) but is
+ * a hair smaller so a misbehaving extension surfaces an `ExtensionPayloadTooLarge`
+ * before it pegs the WS backpressure limit and gets the connection killed.
+ */
+declare const EXTENSION_PAYLOAD_MAX_BYTES: number;
+/**
+ * Per-stream outbound event queue ceiling. Mirrors the devtools slow-consumer
+ * guard. Once the queue grows beyond this size the gateway raises a typed
+ * `BackpressureDisconnect` and tears the stream down so a single chatty
+ * extension cannot starve other consumers on the same socket.
+ */
+declare const EXTENSION_STREAM_OUTBOUND_QUEUE_LIMIT: 1000;
+/**
+ * Outbound WebSocket buffer high-water threshold. Same constant the devtools
+ * stream uses — when the underlying ws.bufferedAmount exceeds this, we pause
+ * the per-stream drain and back off via a microtask + timer.
+ */
+declare const EXTENSION_WS_BUFFERED_HIGH_WATER_BYTES: number;
+/**
+ * Typed error codes the gateway emits for extension-RPC routing failures.
+ * Keeps METHOD_NOT_FOUND reserved for builtin RPCs so a UI can tell "the
+ * extension namespace/key was wrong" apart from "the builtin route was
+ * misnamed" without parsing the message text.
+ */
+declare const EXTENSION_METHOD_NOT_FOUND_CODE: "EXTENSION_METHOD_NOT_FOUND";
+declare const EXTENSION_BACKPRESSURE_DISCONNECT_CODE: "BackpressureDisconnect";
+declare class GatewayExtensions {
+    /** @type {Map<string, GatewayExtensionDefinition>} */
+    namespaces: Map<string, GatewayExtensionDefinition>;
+    /** Track resource + action keys per namespace so namespaced collisions are caught at register time. */
+    /** @type {Map<string, Set<string>>} */
+    invocableKeys: Map<string, Set<string>>;
+    /** @type {Map<string, Set<string>>} */
+    streamKeys: Map<string, Set<string>>;
+    /**
+     * @param {string} namespace
+     * @param {GatewayExtensionDefinition} definition
+     */
+    register(namespace: string, definition: GatewayExtensionDefinition): this;
+    /**
+     * @param {string} method
+     * @returns {ResolvedExtension | undefined}
+     */
+    resolve(method: string): ResolvedExtension | undefined;
+    /**
+     * Pre-flight scope lookup for a method name, used by `requiredScopeForMethod`
+     * in the gateway so the standard auth pipeline can refuse an unauthorized
+     * extension RPC before the handler runs.
+     * @param {string} method
+     * @returns {GatewayScope | undefined}
+     */
+    requiredScopeForMethod(method: string): GatewayScope | undefined;
+    /**
+     * Enumerate registered extensions (for diagnostics / introspection).
+     */
+    list(): {
+        namespace: string;
+        title: string | undefined;
+        description: string | undefined;
+        defaultScope: GatewayScope | undefined;
+        resources: string[];
+        actions: string[];
+        streams: string[];
+    }[];
+}
+type GatewayScope = "run:read" | "run:write" | "run:admin" | "approval:submit" | "signal:submit" | "cron:read" | "cron:write" | "observability:read";
+type GatewayExtensionContext = {
+    namespace: string;
+    key: string;
+    kind: "resource" | "action" | "stream";
+    /**
+     * Scopes granted to the calling connection.
+     */
+    scopes: readonly string[];
+    userId: string | null;
+    tokenId: string | null;
+    connectionId: string | null;
+    /**
+     * Aborted when the connection drops or the
+     * stream is unsubscribed. Resource/action handlers should respect it on long
+     * work so a stale request cannot stomp a fresh one.
+     */
+    signal: AbortSignal;
+};
+type GatewayExtensionStreamContext = {
+    namespace: string;
+    key: string;
+    kind: "stream";
+    /**
+     * Stable per-subscription id (used to fence stale
+     * replies on reconnect / fast-toggle).
+     */
+    streamId: string;
+    scopes: readonly string[];
+    userId: string | null;
+    tokenId: string | null;
+    connectionId: string | null;
+    signal: AbortSignal;
+    /**
+     * Push a frame to this subscriber.
+     * Drops silently if the connection has closed; backpressure on the underlying
+     * WS is enforced by the existing slow-consumer guard in Gateway.
+     */
+    send: (payload: unknown) => void;
+};
+type GatewayExtensionResource = {
+    /**
+     * Required scope; defaults to namespace
+     * `defaultScope`, then `run:read`.
+     */
+    scope?: GatewayScope | undefined;
+    /**
+     * Human-readable label (for diagnostics).
+     */
+    title?: string | undefined;
+    handler: (params: Record<string, unknown>, ctx: GatewayExtensionContext) => Promise<unknown> | unknown;
+};
+type GatewayExtensionAction = {
+    /**
+     * Defaults to namespace `defaultScope`, then `run:write`.
+     */
+    scope?: GatewayScope | undefined;
+    title?: string | undefined;
+    handler: (params: Record<string, unknown>, ctx: GatewayExtensionContext) => Promise<unknown> | unknown;
+};
+type GatewayExtensionStream = {
+    /**
+     * Defaults to namespace `defaultScope`, then `run:read`.
+     */
+    scope?: GatewayScope | undefined;
+    title?: string | undefined;
+    /**
+     *   Called once when a subscriber attaches. Returns either a `cleanup` callable
+     *   (no replay frame) or an `{initial, cleanup}` envelope where `initial` is
+     *   the first frame delivered to the subscriber (replay snapshot used for
+     *   resume after a reconnect).
+     */
+    subscribe: (params: Record<string, unknown>, ctx: GatewayExtensionStreamContext) => Promise<{
+        initial?: unknown;
+        cleanup?: () => void | Promise<void>;
+    } | (() => void | Promise<void>) | void>;
+};
+type GatewayExtensionDefinition = {
+    title?: string | undefined;
+    description?: string | undefined;
+    defaultScope?: GatewayScope | undefined;
+    resources?: Record<string, GatewayExtensionResource> | undefined;
+    /**
+     *   Alias for `resources`; both surfaces route the same way. Useful when an
+     *   extension wants to draw a read/write line in code.
+     */
+    queries?: Record<string, GatewayExtensionResource> | undefined;
+    actions?: Record<string, GatewayExtensionAction> | undefined;
+    streams?: Record<string, GatewayExtensionStream> | undefined;
+};
+type ResolvedExtension = {
+    kind: "resource" | "action" | "stream";
+    namespace: string;
+    key: string;
+    scope: GatewayScope;
+    entry: GatewayExtensionResource | GatewayExtensionAction | GatewayExtensionStream;
+};
+declare const EXTENSION_METHOD_PREFIX: "ext.";
+declare const EXTENSION_STREAM_METHOD_PREFIX: "ext.stream.";
+
+/**
  * @param {unknown} method
  * @returns {string}
  */
@@ -304,6 +484,35 @@ declare class Gateway {
     /** Flagged subscriber IDs that should force a snapshot on their next emit. */
     devtoolsInvalidateFlags: Set<any>;
     uiAssetCache: Map<any, any>;
+    /** @type {GatewayExtensions} */
+    extensions: GatewayExtensions;
+    /**
+     * Per-connection extension stream subscriptions. Lets us tear them down on
+     * close and fence stale subscriber callbacks behind a per-stream
+     * AbortController, so a slow extension handler emitting after disconnect
+     * never reaches a dead socket.
+     * @type {WeakMap<GatewayRequestContext, Map<string, {
+     *   namespace: string;
+     *   key: string;
+     *   abort: AbortController;
+     *   cleanup: () => Promise<void>;
+     * }>>}
+     */
+    extensionStreamSubscriptions: WeakMap<GatewayRequestContext, Map<string, {
+        namespace: string;
+        key: string;
+        abort: AbortController;
+        cleanup: () => Promise<void>;
+    }>>;
+    /**
+     * Per-connection in-flight resource/action handler aborts. A long-running
+     * extension RPC (LLM call, remote API hit) must NOT keep running after the
+     * client cancels or disconnects — `cleanupExtensionPendingHandlers` fires
+     * the abort signal on connection close so handlers that observe `ctx.signal`
+     * can stop work immediately instead of completing into a dead socket.
+     * @type {WeakMap<GatewayRequestContext, Set<AbortController>>}
+     */
+    extensionPendingHandlers: WeakMap<GatewayRequestContext, Set<AbortController>>;
     server: null;
     wsServer: null;
     schedulerTimer: null;
@@ -554,11 +763,30 @@ declare class Gateway {
    */
     handleWebhook(req: IncomingMessage, res: ServerResponse$1, workflowKey: string): Promise<void>;
     /**
-   * @param {string} key
-   * @param {SmithersWorkflow} workflow
-   * @param {GatewayRegisterOptions} [options]
-   * @returns {this}
-   */
+     * Register a typed extension namespace exposing declarative resources,
+     * actions, and streams. See `./GatewayExtensions.js` for the surface; this
+     * shim exists so callers can keep their fluent `gateway.register(...).extend(...)`
+     * chain on the Gateway instance instead of reaching into the registry.
+     *
+     * Namespace collisions throw, so two extensions cannot silently take over
+     * the same name on hot-reload — the host must explicitly tear the previous
+     * gateway down. See `.smithers/specs/gateway-extensions-sync-backplane.md`.
+     *
+     * @param {string} namespace
+     * @param {import("./GatewayExtensions.js").GatewayExtensionDefinition} definition
+     * @returns {this}
+     */
+    extend(namespace: string, definition: GatewayExtensionDefinition): this;
+    /**
+     * Register a workflow under `key`. Wires up its DB tables, schedule, webhook
+     * config, and embedded UI bundle. Returns `this` so callers can chain
+     * `gateway.register(...).register(...).extend(...)` fluently.
+     *
+     * @param {string} key
+     * @param {SmithersWorkflow} workflow
+     * @param {GatewayRegisterOptions} [options]
+     * @returns {this}
+     */
     register(key: string, workflow: SmithersWorkflow, options?: GatewayRegisterOptions): this;
     /**
    * @param {{ port?: number; host?: string; path?: string }} [options]
@@ -751,6 +979,75 @@ declare class Gateway {
    * @returns {Promise<ResponseFrame>}
    */
     routeRequest(connection: GatewayRequestContext, frame: RequestFrame): Promise<ResponseFrame>;
+    /**
+     * Dispatch an `ext.*` RPC. Resources/actions are resolved to a handler that
+     * gets the validated params plus a context bundle (scopes, ids, abort
+     * signal); streams allocate a stream id, attach the subscriber, and replay
+     * any `initial` snapshot before deferring further frames to `ctx.send`.
+     *
+     * Errors are normalized into the same wire envelope as built-in RPCs.
+     * Handler-thrown SmithersErrors keep their code/summary; everything else
+     * surfaces as `EXTENSION_HANDLER_ERROR` with the message text but no stack
+     * (leaking handler internals to the wire would be a security regression).
+     *
+     * @param {GatewayRequestContext} connection
+     * @param {RequestFrame} frame
+     * @param {Record<string, unknown>} params
+     * @returns {Promise<ResponseFrame>}
+     */
+    routeExtensionRequest(connection: GatewayRequestContext, frame: RequestFrame, params: Record<string, unknown>): Promise<ResponseFrame>;
+    /**
+     * Register a pending handler abort controller against a connection so the
+     * disconnect / cleanup path can fire its `.abort()` and stop in-flight work
+     * even if the handler never resolves.
+     *
+     * @param {GatewayRequestContext} connection
+     * @param {AbortController} abort
+     */
+    trackExtensionPendingHandler(connection: GatewayRequestContext, abort: AbortController): void;
+    /**
+     * Remove a pending handler abort from the per-connection set. Safe to call
+     * even when the connection has already been cleaned up.
+     *
+     * @param {GatewayRequestContext} connection
+     * @param {AbortController} abort
+     */
+    untrackExtensionPendingHandler(connection: GatewayRequestContext, abort: AbortController): void;
+    /**
+     * Fire the abort signal on every pending resource/action handler for a
+     * connection. Called from the disconnect path so handlers respecting
+     * `ctx.signal` stop work immediately instead of returning into a dead
+     * socket and racing the cleanup of dependent resources.
+     *
+     * @param {GatewayRequestContext} connection
+     */
+    cleanupExtensionPendingHandlers(connection: GatewayRequestContext): void;
+    /**
+     * Attach a subscriber to an extension stream. The wire response carries the
+     * allocated `streamId` (and any `initial` snapshot for resume semantics).
+     * Further frames flow as `ext.stream` events tagged with `streamId` so a
+     * stale subscriber on the same connection can fence late frames after it
+     * unsubscribed and re-subscribed.
+     *
+     * @param {GatewayRequestContext} connection
+     * @param {RequestFrame} frame
+     * @param {Record<string, unknown>} params
+     * @param {import("./GatewayExtensions.js").ResolvedExtension & { kind: "stream", entry: import("./GatewayExtensions.js").GatewayExtensionStream }} resolved
+     * @returns {Promise<ResponseFrame>}
+     */
+    subscribeExtensionStream(connection: GatewayRequestContext, frame: RequestFrame, params: Record<string, unknown>, resolved: ResolvedExtension & {
+        kind: "stream";
+        entry: GatewayExtensionStream;
+    }): Promise<ResponseFrame>;
+    /**
+     * Tear down every extension stream attached to a connection. Called from
+     * the existing socket cleanup path so a disconnect releases handler-owned
+     * resources (subscriptions, db cursors, ElectricSQL shape handles, etc.)
+     * even if the handler never observed the abort signal.
+     *
+     * @param {GatewayRequestContext} connection
+     */
+    cleanupExtensionSubscriptions(connection: GatewayRequestContext): Promise<void>;
 }
 type EventFrame = EventFrame$1;
 type GatewayDefaults = GatewayDefaults$1;
@@ -1212,4 +1509,4 @@ type RunRow = _smithers_orchestrator_db_adapter_RunRow.RunRow;
 type ServerResponse = node_http.ServerResponse;
 type ServerOptions = ServerOptions$1;
 
-export { type AttemptRow, type ConnectRequest, type ConnectionState, DEVTOOLS_BACKPRESSURE_LIMIT, DEVTOOLS_EMPTY_ROOT_ID, DEVTOOLS_MAX_FRAME_NO, DEVTOOLS_POLL_INTERVAL_MS, DEVTOOLS_REBASELINE_INTERVAL, DEVTOOLS_RUN_ID_PATTERN, DEVTOOLS_TREE_MAX_DEPTH, type DevToolsEvent, type DevToolsNode, type DevToolsNodeType, DevToolsRouteError, type DiffSummary, type EventFrame, GATEWAY_FRAME_ID_MAX_LENGTH, GATEWAY_METHOD_NAME_MAX_LENGTH, GATEWAY_RPC_INPUT_MAX_BYTES, GATEWAY_RPC_INPUT_MAX_DEPTH, GATEWAY_RPC_MAX_ARRAY_LENGTH, GATEWAY_RPC_MAX_DEPTH, GATEWAY_RPC_MAX_PAYLOAD_BYTES, GATEWAY_RPC_MAX_STRING_LENGTH, Gateway, type GatewayAuthConfig, type GatewayDefaults, type GatewayMetricLabels, type GatewayOperatorUiConfig, type GatewayOptions, type GatewayRegisterOptions, type GatewayRequestContext, type GatewayTokenGrant, type GatewayTransport, type GatewayUiConfig, type GatewayUiMount, type GatewayWebhookConfig, type GatewayWebhookRunConfig, type GatewayWebhookSignalConfig, type GetNodeDiffRouteResult, type HelloResponse, ITERATION_MAX, type IncomingMessage, type JumpResult, NODE_ID_PATTERN, NODE_OUTPUT_MAX_BYTES, NODE_OUTPUT_WARN_BYTES, type NodeOutputErrorCode, type NodeOutputResponse, NodeOutputRouteError, RUN_ID_PATTERN, type RegisteredWorkflow, type RequestFrame, type ResolvedGatewayUiConfig, type ResolvedRun, type ResponseFrame, type RunRow, type RunStartAuthContext, type ServeOptions, type ServerOptions, type ServerResponse, type SmithersWorkflow, assertGatewayInputDepthWithinBounds, createServeApp, emptyDevToolsRoot, getDevToolsSnapshotRoute, getGatewayInputDepth, getNodeDiffRoute, getNodeOutputRoute, jumpToFrameRoute, parseGatewayRequestFrame, parseXmlToDevToolsRoot, runFork, runPromise, runSync, snapshotFromFrameRow, startServer, startServerEffect, statusForRpcError, streamDevToolsRoute, summarizeBundle, validateFrameNoInput, validateFromSeqInput, validateGatewayMethodName, validateRequestedFrameNo, validateRunId };
+export { type AttemptRow, type ConnectRequest, type ConnectionState, DEVTOOLS_BACKPRESSURE_LIMIT, DEVTOOLS_EMPTY_ROOT_ID, DEVTOOLS_MAX_FRAME_NO, DEVTOOLS_POLL_INTERVAL_MS, DEVTOOLS_REBASELINE_INTERVAL, DEVTOOLS_RUN_ID_PATTERN, DEVTOOLS_TREE_MAX_DEPTH, type DevToolsEvent, type DevToolsNode, type DevToolsNodeType, DevToolsRouteError, type DiffSummary, EXTENSION_BACKPRESSURE_DISCONNECT_CODE, EXTENSION_METHOD_NOT_FOUND_CODE, EXTENSION_METHOD_PREFIX, EXTENSION_PAYLOAD_MAX_BYTES, EXTENSION_STREAM_METHOD_PREFIX, EXTENSION_STREAM_OUTBOUND_QUEUE_LIMIT, EXTENSION_WS_BUFFERED_HIGH_WATER_BYTES, type EventFrame, GATEWAY_FRAME_ID_MAX_LENGTH, GATEWAY_METHOD_NAME_MAX_LENGTH, GATEWAY_RPC_INPUT_MAX_BYTES, GATEWAY_RPC_INPUT_MAX_DEPTH, GATEWAY_RPC_MAX_ARRAY_LENGTH, GATEWAY_RPC_MAX_DEPTH, GATEWAY_RPC_MAX_PAYLOAD_BYTES, GATEWAY_RPC_MAX_STRING_LENGTH, Gateway, type GatewayAuthConfig, type GatewayDefaults, type GatewayExtensionAction, type GatewayExtensionContext, type GatewayExtensionDefinition, type GatewayExtensionResource, type GatewayExtensionStream, type GatewayExtensionStreamContext, GatewayExtensions, type GatewayMetricLabels, type GatewayOperatorUiConfig, type GatewayOptions, type GatewayRegisterOptions, type GatewayRequestContext, type GatewayScope, type GatewayTokenGrant, type GatewayTransport, type GatewayUiConfig, type GatewayUiMount, type GatewayWebhookConfig, type GatewayWebhookRunConfig, type GatewayWebhookSignalConfig, type GetNodeDiffRouteResult, type HelloResponse, ITERATION_MAX, type IncomingMessage, type JumpResult, NODE_ID_PATTERN, NODE_OUTPUT_MAX_BYTES, NODE_OUTPUT_WARN_BYTES, type NodeOutputErrorCode, type NodeOutputResponse, NodeOutputRouteError, RUN_ID_PATTERN, type RegisteredWorkflow, type RequestFrame, type ResolvedExtension, type ResolvedGatewayUiConfig, type ResolvedRun, type ResponseFrame, type RunRow, type RunStartAuthContext, type ServeOptions, type ServerOptions, type ServerResponse, type SmithersWorkflow, assertGatewayInputDepthWithinBounds, createServeApp, emptyDevToolsRoot, extensionMethodName, getDevToolsSnapshotRoute, getGatewayInputDepth, getNodeDiffRoute, getNodeOutputRoute, isExtensionMethod, jumpToFrameRoute, parseGatewayRequestFrame, parseXmlToDevToolsRoot, runFork, runPromise, runSync, snapshotFromFrameRow, startServer, startServerEffect, statusForRpcError, streamDevToolsRoute, summarizeBundle, validateFrameNoInput, validateFromSeqInput, validateGatewayMethodName, validateRequestedFrameNo, validateRunId };

@@ -2,7 +2,7 @@ import { makeWorkflowSession, } from "@smithers-orchestrator/scheduler";
 import { ReactWorkflowDriver } from "@smithers-orchestrator/react-reconciler/driver";
 import { SmithersRenderer } from "@smithers-orchestrator/react-reconciler/dom/renderer";
 import { SmithersCtx } from "@smithers-orchestrator/driver/SmithersCtx";
-import { loadInput, loadOutputs } from "@smithers-orchestrator/db/snapshot";
+import { loadInput, loadOutputs, loadRunOutputRowsEffect } from "@smithers-orchestrator/db/snapshot";
 import { ensureSmithersTables } from "@smithers-orchestrator/db/ensure";
 import { SmithersDb } from "@smithers-orchestrator/db/adapter";
 import { selectOutputRow, validateOutput, validateExistingOutput, describeSchemaShape, buildOutputRow, stripAutoColumns, } from "@smithers-orchestrator/db/output";
@@ -24,6 +24,10 @@ import { EventBus } from "./events.js";
 import { AgentTraceCollector } from "./AgentTraceCollector.js";
 import { getJjPointer, runJj, workspaceAdd } from "@smithers-orchestrator/vcs/jj";
 import { findVcsRoot } from "@smithers-orchestrator/vcs/find-root";
+import { startDurability } from "./startDurability.js";
+import { restoreWorkspaceToLatestCheckpoint } from "./restoreWorkspace.js";
+import { runWithToolContext } from "@smithers-orchestrator/tool-context";
+import { vcsToolingStatus } from "@smithers-orchestrator/vcs/vcsToolingStatus";
 import * as BunContext from "@effect/platform-bun/BunContext";
 import { eq, getTableName } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
@@ -51,6 +55,7 @@ import { createWorkflowVersioningRuntime, getWorkflowPatchDecisions, withWorkflo
 import { runWithCorrelationContext, updateCurrentCorrelationContext, withCorrelationContext, } from "@smithers-orchestrator/observability/correlation";
 import { extractWorkflowImportSpecifiers, getWorkflowImportScanLoader, readWorkflowEntryHash, readWorkflowGraphHash, resolveWorkflowImport, sha256Hex, } from "./workflow-hash.js";
 import { applyOptimizationArtifactToTasks } from "./optimization-artifact.js";
+import { extractBalancedJson, extractLastBalancedJson } from "./json-extraction.js";
 /** @typedef {import("@smithers-orchestrator/graph/GraphSnapshot").GraphSnapshot} GraphSnapshot */
 /** @typedef {import("./HijackState.ts").HijackState} HijackState */
 /** @typedef {import("@smithers-orchestrator/driver/RunOptions").RunOptions} RunOptions */
@@ -588,7 +593,12 @@ async function ensureWorktree(rootDir, worktreePath, branch, baseBranch) {
     // Walk up from rootDir to find the actual VCS root
     const vcs = Effect.runSync(findVcsRoot(rootDir));
     if (!vcs) {
-        throw new SmithersError("VCS_NOT_FOUND", `Cannot create worktree: no git or jj repository found from ${rootDir}`, { rootDir });
+        // Distinguish "no VCS tooling installed" from "tooling present, but not
+        // inside a repo" so the error tells the user what to actually fix.
+        if (!vcsToolingStatus().ok) {
+            throw new SmithersError("VCS_NOT_FOUND", `Cannot create worktree: no jj or git found. Smithers bundles jj via the optional @smithers-orchestrator/jj-<platform> package; if it could not install for your platform, install jj (https://github.com/jj-vcs/jj) or git, or set SMITHERS_JJ_PATH.`, { rootDir });
+        }
+        throw new SmithersError("VCS_NOT_FOUND", `Cannot create worktree: no git or jj repository found from ${rootDir}. Run Smithers inside a git or jj repository (or initialize one first).`, { rootDir });
     }
     // Best effort: refresh remote refs for git so origin/main can be used as a
     // base when local main is absent.
@@ -837,6 +847,29 @@ function buildInputRow(inputTable, runId, input) {
     return { runId, ...input };
 }
 /**
+ * Insert the input row, ignoring an existing row (ON CONFLICT DO NOTHING).
+ * Dialect-aware: Drizzle/bun:sqlite for SQLite, the @effect/sql adapter for a
+ * Postgres connection descriptor (which exposes no Drizzle query builder).
+ * @param {any} db
+ * @param {SmithersDb} adapter
+ * @param {SQLiteTable} inputTable
+ * @param {Record<string, unknown>} inputRow
+ * @param {string} [label]
+ */
+async function insertInputRowIgnore(db, adapter, inputTable, inputRow, label = "insert input row") {
+    if (db && typeof db === "object" && db.dialect === "postgres") {
+        await adapter.internalStorage.insertIgnore(getTableName(inputTable), inputRow);
+        return;
+    }
+    const insertQuery = db.insert(inputTable).values(inputRow);
+    if (typeof insertQuery.onConflictDoNothing === "function") {
+        await withSqliteWriteRetry(() => db.insert(inputTable).values(inputRow).onConflictDoNothing(), { label });
+    }
+    else {
+        await withSqliteWriteRetry(() => db.insert(inputTable).values(inputRow), { label });
+    }
+}
+/**
  * @param {any} row
  * @returns {Record<string, unknown>}
  */
@@ -896,13 +929,18 @@ async function restoreDurableStateFromSnapshot(adapter, db, schema, inputTable, 
         });
     }
     const inputCols = getTableColumns(inputTable);
-    await withSqliteWriteRetry(() => db
-        .insert(inputTable)
-        .values(inputRow)
-        .onConflictDoUpdate({
-        target: inputCols.runId,
-        set: inputRow,
-    }), { label: "restore input row from snapshot" });
+    if (db && typeof db === "object" && db.dialect === "postgres") {
+        await adapter.internalStorage.upsert(getTableName(inputTable), inputRow, ["runId"]);
+    }
+    else {
+        await withSqliteWriteRetry(() => db
+            .insert(inputTable)
+            .values(inputRow)
+            .onConflictDoUpdate({
+            target: inputCols.runId,
+            set: inputRow,
+        }), { label: "restore input row from snapshot" });
+    }
     for (const node of Object.values(parsed.nodes)) {
         await Effect.runPromise(adapter.insertNode({
             runId,
@@ -961,13 +999,21 @@ async function restoreDurableStateFromSnapshot(adapter, db, schema, inputTable, 
             const target = outputCols.iteration
                 ? [outputCols.runId, outputCols.nodeId, outputCols.iteration]
                 : [outputCols.runId, outputCols.nodeId];
-            await withSqliteWriteRetry(() => db
-                .insert(table)
-                .values(restoredRow)
-                .onConflictDoUpdate({
-                target: target,
-                set: restoredRow,
-            }), { label: `restore output ${tableName} from snapshot` });
+            if (db && typeof db === "object" && db.dialect === "postgres") {
+                const conflictColumns = outputCols.iteration
+                    ? ["runId", "nodeId", "iteration"]
+                    : ["runId", "nodeId"];
+                await adapter.internalStorage.upsert(tableName, restoredRow, conflictColumns);
+            }
+            else {
+                await withSqliteWriteRetry(() => db
+                    .insert(table)
+                    .values(restoredRow)
+                    .onConflictDoUpdate({
+                    target: target,
+                    set: restoredRow,
+                }), { label: `restore output ${tableName} from snapshot` });
+            }
         }
     }
     return true;
@@ -1102,6 +1148,130 @@ function buildCarriedInputRow(inputTable, newRunId, sourceInputRow, continuation
     return row;
 }
 /**
+ * Postgres sibling of the synchronous bun:sqlite continue-as-new handoff. Runs
+ * the same sequence — spawn child run, carry input, copy run-scoped output rows,
+ * carry ralph state, record the branch, mark the source run `continued`, and
+ * append the RunContinuedAsNew event — atomically via the dialect-aware adapter
+ * transaction + @effect/sql storage (no bun:sqlite client).
+ *
+ * @param {{
+ *   adapter: SmithersDb;
+ *   inputTableName: string;
+ *   inputRow: Record<string, unknown>;
+ *   outputTables: Array<unknown>;
+ *   carriedRalphState: RalphStateMap;
+ *   runId: string;
+ *   targetRunId: string;
+ *   sourceRun: Record<string, unknown>;
+ *   workflowPath: string | null;
+ *   runMetadata: RunDurabilityMetadata;
+ *   currentFrameNo: number;
+ *   continuation: ContinueAsNewRequest;
+ *   nextConfigJson: string;
+ *   continuationEvent: Record<string, unknown>;
+ *   ts: number;
+ * }} params
+ * @returns {Promise<void>}
+ */
+async function continueRunAsNewPostgres(params) {
+    const { adapter, inputTableName, inputRow, outputTables, carriedRalphState, runId, targetRunId, sourceRun, workflowPath, runMetadata, currentFrameNo, continuation, nextConfigJson, continuationEvent, ts, } = params;
+    const storage = adapter.internalStorage;
+    await Effect.runPromise(adapter.withTransactionEffect("continue-as-new handoff", Effect.gen(function* () {
+        // Re-check cancellation inside the transaction (matches the sqlite path).
+        const cancelState = yield* Effect.tryPromise({
+            try: () => storage.queryOne("SELECT cancel_requested_at_ms AS cancelRequestedAtMs FROM _smithers_runs WHERE run_id = ? LIMIT 1", [runId]),
+            catch: (cause) => toSmithersError(cause, "check cancel state", { code: "DB_QUERY_FAILED", details: { runId } }),
+        });
+        if (cancelState?.cancelRequestedAtMs) {
+            return yield* Effect.fail(new SmithersError("RUN_CANCELLED", `Run ${runId} was cancelled before continue-as-new handoff`, { runId }));
+        }
+        // Spawn the child run (a brand-new runId, so insertIgnore is exact).
+        yield* adapter.insertRun({
+            runId: targetRunId,
+            parentRunId: runId,
+            workflowName: sourceRun.workflowName ?? "workflow",
+            workflowPath: workflowPath ?? sourceRun.workflowPath ?? null,
+            workflowHash: runMetadata.workflowHash ?? sourceRun.workflowHash ?? null,
+            status: "running",
+            createdAtMs: ts,
+            startedAtMs: ts,
+            finishedAtMs: null,
+            heartbeatAtMs: null,
+            runtimeOwnerId: null,
+            cancelRequestedAtMs: null,
+            hijackRequestedAtMs: null,
+            hijackTarget: null,
+            vcsType: runMetadata.vcsType ?? sourceRun.vcsType ?? null,
+            vcsRoot: runMetadata.vcsRoot ?? sourceRun.vcsRoot ?? null,
+            vcsRevision: runMetadata.vcsRevision ?? sourceRun.vcsRevision ?? null,
+            errorJson: null,
+            configJson: nextConfigJson,
+        });
+        // Carry the input row.
+        yield* Effect.tryPromise({
+            try: () => storage.insertIgnore(inputTableName, inputRow),
+            catch: (cause) => toSmithersError(cause, "carry continuation input", { code: "DB_WRITE_FAILED", details: { runId: targetRunId } }),
+        });
+        // Copy run-scoped output rows, remapping run_id to the child. INSERT…SELECT
+        // is valid in both dialects; column names are identical.
+        for (const table of outputTables) {
+            const tableName = getTableName(table);
+            const columnEntries = getTableColumnEntries(table);
+            const runIdColumn = columnEntries.find((entry) => entry.key === "runId");
+            if (!runIdColumn) continue;
+            const insertColumnsSql = columnEntries.map((entry) => quoteSqlIdent(entry.sqlName)).join(", ");
+            const selectColumnsSql = columnEntries
+                .map((entry) => (entry.key === "runId" ? "?" : quoteSqlIdent(entry.sqlName)))
+                .join(", ");
+            yield* Effect.tryPromise({
+                try: () => storage.execute(`INSERT INTO ${quoteSqlIdent(tableName)} (${insertColumnsSql}) SELECT ${selectColumnsSql} FROM ${quoteSqlIdent(tableName)} WHERE ${quoteSqlIdent(runIdColumn.sqlName)} = ?`, [targetRunId, runId]),
+                catch: (cause) => toSmithersError(cause, `copy output ${tableName}`, { code: "DB_WRITE_FAILED", details: { runId: targetRunId, tableName } }),
+            });
+        }
+        // Carry ralph state.
+        for (const [ralphId, state] of carriedRalphState.entries()) {
+            yield* adapter.insertOrUpdateRalph({
+                runId: targetRunId,
+                ralphId,
+                iteration: state.iteration,
+                done: Boolean(state.done),
+                updatedAtMs: ts,
+            });
+        }
+        // Record the fork relationship.
+        yield* Effect.tryPromise({
+            try: () => storage.upsert("_smithers_branches", {
+                runId: targetRunId,
+                parentRunId: runId,
+                parentFrameNo: currentFrameNo,
+                branchLabel: "continue-as-new",
+                forkDescription: `continue-as-new:${continuation.reason}`,
+                createdAtMs: ts,
+            }, ["runId"]),
+            catch: (cause) => toSmithersError(cause, "record continuation branch", { code: "DB_WRITE_FAILED", details: { runId: targetRunId } }),
+        });
+        // Mark the source run as continued.
+        yield* Effect.tryPromise({
+            try: () => storage.execute(`UPDATE _smithers_runs
+             SET status = ?, finished_at_ms = ?, heartbeat_at_ms = NULL, runtime_owner_id = NULL,
+                 cancel_requested_at_ms = NULL, hijack_requested_at_ms = NULL, hijack_target = NULL
+             WHERE run_id = ?`, ["continued", ts, runId]),
+            catch: (cause) => toSmithersError(cause, "mark run continued", { code: "DB_WRITE_FAILED", details: { runId } }),
+        });
+        // Append the RunContinuedAsNew event with the next sequence number.
+        const seqRow = yield* Effect.tryPromise({
+            try: () => storage.queryOne("SELECT COALESCE(MAX(seq), -1) + 1 AS seq FROM _smithers_events WHERE run_id = ?", [runId]),
+            catch: (cause) => toSmithersError(cause, "compute next event seq", { code: "DB_QUERY_FAILED", details: { runId } }),
+        });
+        const nextEventSeq = Number(seqRow?.seq ?? 0);
+        yield* Effect.tryPromise({
+            try: () => storage.execute(`INSERT INTO _smithers_events (run_id, seq, timestamp_ms, type, payload_json)
+             VALUES (?, ?, ?, ?, ?)`, [runId, nextEventSeq, ts, continuationEvent.type, JSON.stringify(continuationEvent)]),
+            catch: (cause) => toSmithersError(cause, "append continuation event", { code: "DB_WRITE_FAILED", details: { runId } }),
+        });
+    })));
+}
+/**
  * @param {{ db: BunSQLiteDatabase; adapter: SmithersDb; schema: Record<string, unknown>; inputTable: SQLiteTable; runId: string; workflowPath: string | null; runMetadata: RunDurabilityMetadata; currentFrameNo: number; continuation: ContinueAsNewRequest; ralphState: RalphStateMap; }} params
  * @returns {Promise<ContinueAsNewTransition>}
  */
@@ -1179,6 +1349,30 @@ async function continueRunAsNew(params) {
         ancestryDepth: ancestryDepth + 1,
         timestampMs: ts,
     };
+    if (db && typeof db === "object" && db.dialect === "postgres") {
+        await continueRunAsNewPostgres({
+            adapter,
+            inputTableName,
+            inputRow,
+            outputTables,
+            carriedRalphState,
+            runId,
+            targetRunId,
+            sourceRun,
+            workflowPath,
+            runMetadata,
+            currentFrameNo,
+            continuation,
+            nextConfigJson,
+            continuationEvent,
+            ts,
+        });
+        return {
+            newRunId: targetRunId,
+            ancestryDepth: ancestryDepth + 1,
+            carriedStateBytes,
+        };
+    }
     await withSqliteWriteRetry(async () => {
         const client = db.$client;
         if (!client || typeof client.run !== "function" || typeof client.query !== "function") {
@@ -2766,6 +2960,16 @@ async function legacyExecuteTask(adapter, db, runId, desc, descriptorMap, inputT
                 const resumeSession = priorContinuation?.mode === "native-cli"
                     ? priorContinuation.resume
                     : checkpointResumeSession;
+                // Fallback: we should be resuming (the same agent ran before) but
+                // no session id was captured. Continue the latest session in this
+                // worktree via --continue. CLI agents that support it read
+                // params.options.continueSession; others ignore it. Caveat: if the
+                // worktree is shared by concurrent tasks, --continue is cwd-scoped
+                // and may attach the most recent session.
+                const continueSession = !resumeSession
+                    && heartbeatCheckpointUsable
+                    && typeof heartbeatCheckpoint?.agentEngine === "string"
+                    && attempts.length > 0;
                 const resumeMessages = priorContinuation?.mode === "conversation"
                     ? (cloneJsonValue(priorContinuation.messages) ?? priorContinuation.messages)
                     : (cloneJsonValue(checkpointResumeMessages) ??
@@ -2780,7 +2984,19 @@ async function legacyExecuteTask(adapter, db, runId, desc, descriptorMap, inputT
                 let forkSeedMessages = null;
                 if (desc.forkSource && !(guidedResumeMessages?.length)) {
                     const forkSourceAttempts = await Effect.runPromise(adapter.listAttemptsForRun(runId));
-                    forkSeedMessages = resolveForkSessionMessages(forkSourceAttempts, desc.forkSource, desc.nodeId);
+                    try {
+                        forkSeedMessages = resolveForkSessionMessages(forkSourceAttempts, desc.forkSource, desc.nodeId);
+                    }
+                    catch (err) {
+                        // The fork source is terminal (the scheduler only runs a
+                        // forked task once its source reaches a terminal state) but
+                        // produced no usable session — it was skipped, cancelled,
+                        // or a continueOnFail/non-agent source. Retrying can never
+                        // make it forkable, so fail fast instead of burning the
+                        // retry budget on a deterministic failure.
+                        attemptMeta.failureRetryable = false;
+                        throw err;
+                    }
                     attemptMeta.forkedFromSource = desc.forkSource;
                 }
                 if (desc.hijack) {
@@ -3024,6 +3240,47 @@ async function legacyExecuteTask(adapter, db, runId, desc, descriptorMap, inputT
                     })
                     : null;
                 if (traceCollector) traceCollector.begin();
+                // Durable resume: when continuing a prior session, restore the
+                // worktree to its last checkpoint so the agent's files match its
+                // transcript before it resumes. Runs before the watcher starts so
+                // we don't snapshot the pre-restore tree. No-op when disabled or
+                // when there is no prior checkpoint.
+                if (process.env.SMITHERS_DURABILITY_SNAPSHOTS === "1" && resumeSession) {
+                    await restoreWorkspaceToLatestCheckpoint({
+                        adapter,
+                        runId,
+                        nodeId: desc.nodeId,
+                        iteration: desc.iteration,
+                    });
+                }
+                // Tier 2 durability: watch the worktree for the life of this
+                // attempt and snapshot settled writes. Env-gated, default off, so
+                // the handle is an inert no-op unless explicitly enabled. Gap
+                // reporting (durable spool) lands with the CLI-hook phase.
+                const durability = await startDurability({
+                    enabled: process.env.SMITHERS_DURABILITY_SNAPSHOTS === "1",
+                    adapter,
+                    runId,
+                    nodeId: desc.nodeId,
+                    iteration: desc.iteration,
+                    attempt: attemptNo,
+                    cwd: taskRoot,
+                    withSocket: true,
+                });
+                // Tier 1 for in-process SDK agents: give their tools an ambient
+                // context (run/node/cwd + a Tier 1 snapshot hook) so defineTool
+                // snapshots after each side-effect tool. Only when durability is
+                // active; null leaves the generate call exactly as before.
+                const toolCtx = durability.active
+                    ? {
+                        runId,
+                        nodeId: desc.nodeId,
+                        iteration: desc.iteration,
+                        attempt: attemptNo,
+                        rootDir: taskRoot,
+                        durabilitySnapshot: (label, toolUseId) => durability.snapshot({ source: "wrap", tier: 1, label, toolUseId }),
+                    }
+                    : null;
                 let result;
                 try {
                     try {
@@ -3040,13 +3297,21 @@ async function legacyExecuteTask(adapter, db, runId, desc, descriptorMap, inputT
                                         : {
                                             prompt: effectivePrompt,
                                         };
-                                return effectiveAgent.generate({
+                                const doGenerate = () => effectiveAgent.generate({
                                     options: undefined,
                                     abortSignal: taskSignal,
                                     ...agentCall,
                                     resumeSession,
+                                    continueSession,
+                                    durabilitySocket: durability.socketPath,
                                     lastHeartbeat: previousHeartbeat,
                                     rootDir: taskRoot,
+                                    taskContext: {
+                                        runId,
+                                        nodeId: desc.nodeId,
+                                        iteration: desc.iteration,
+                                        attempt: attemptNo,
+                                    },
                                     maxOutputBytes: toolConfig.maxOutputBytes,
                                     timeout: desc.timeoutMs
                                         ? { totalMs: desc.timeoutMs }
@@ -3065,6 +3330,7 @@ async function legacyExecuteTask(adapter, db, runId, desc, descriptorMap, inputT
                                     onStepFinish: handleSdkStepFinish,
                                     outputSchema: desc.outputSchema,
                                 });
+                                return toolCtx ? runWithToolContext(toolCtx, doGenerate) : doGenerate();
                             },
                             catch: (error) => error,
                         }), {
@@ -3079,6 +3345,9 @@ async function legacyExecuteTask(adapter, db, runId, desc, descriptorMap, inputT
                         if (hijackPollingInterval) {
                             clearInterval(hijackPollingInterval);
                         }
+                        // Close the watcher and flush a final snapshot of the
+                        // attempt's last settled write. No-op when disabled.
+                        await durability.stop();
                     }
                 }
                 catch (error) {
@@ -3184,62 +3453,6 @@ async function legacyExecuteTask(adapter, db, runId, desc, descriptorMap, inputT
                     }
                     catch {
                         // Not valid JSON, try extraction
-                    }
-                    // Helper to extract balanced JSON from text (first occurrence)
-                    /**
-           * @param {string} str
-           * @returns {string | null}
-           */
-                    function extractBalancedJson(str) {
-                        const start = str.indexOf("{");
-                        if (start === -1)
-                            return null;
-                        let depth = 0;
-                        let inString = false;
-                        let escape = false;
-                        for (let i = start; i < str.length; i++) {
-                            const c = str[i];
-                            if (escape) {
-                                escape = false;
-                                continue;
-                            }
-                            if (c === "\\") {
-                                escape = true;
-                                continue;
-                            }
-                            if (c === '"' && !escape) {
-                                inString = !inString;
-                                continue;
-                            }
-                            if (inString)
-                                continue;
-                            if (c === "{")
-                                depth++;
-                            else if (c === "}") {
-                                depth--;
-                                if (depth === 0) {
-                                    return str.slice(start, i + 1);
-                                }
-                            }
-                        }
-                        return null;
-                    }
-                    // Helper to extract the LAST balanced JSON object in text.
-                    // Agents like Kimi emit all intermediate tool output before the final
-                    // required JSON, so searching from the end finds the right object.
-                    /**
-           * @param {string} str
-           * @returns {string | null}
-           */
-                    function extractLastBalancedJson(str) {
-                        let pos = str.lastIndexOf("{");
-                        while (pos >= 0) {
-                            const json = extractBalancedJson(str.slice(pos));
-                            if (json !== null)
-                                return json;
-                            pos = str.lastIndexOf("{", pos - 1);
-                        }
-                        return null;
                     }
                     // Try to extract JSON from code fence (```json ... ```)
                     if (output === undefined) {
@@ -4900,18 +5113,7 @@ async function runWorkflowBodyDriver(workflow, opts) {
         const outputTable = schema.output;
         let output = undefined;
         if (outputTable) {
-            const cols = getTableColumns(outputTable);
-            const runIdCol = cols.runId;
-            if (runIdCol) {
-                const rows = await db
-                    .select()
-                    .from(outputTable)
-                    .where(eq(runIdCol, runId));
-                output = rows;
-            }
-            else {
-                output = await db.select().from(outputTable);
-            }
+            output = await Effect.runPromise(loadRunOutputRowsEffect(db, outputTable, runId));
         }
         return { runId, status: "finished", output };
     };
@@ -4996,15 +5198,7 @@ async function runWorkflowBodyDriver(workflow, opts) {
                     issues: validation.error?.issues,
                 });
             }
-            const insertQuery = db.insert(inputTable).values(inputRow);
-            if (typeof insertQuery.onConflictDoNothing === "function") {
-                await withSqliteWriteRetry(() => db.insert(inputTable).values(inputRow).onConflictDoNothing(), { label: "insert input row" });
-            }
-            else {
-                await withSqliteWriteRetry(() => db.insert(inputTable).values(inputRow), {
-                    label: "insert input row",
-                });
-            }
+            await insertInputRowIgnore(db, adapter, inputTable, inputRow);
         }
         else {
             let existingInput = await loadInput(db, inputTable, runId);
@@ -5019,7 +5213,7 @@ async function runWorkflowBodyDriver(workflow, opts) {
                 // (run_id, payload) table. Insert an empty row so resume can proceed.
                 const fallbackRow = buildInputRow(inputTable, runId, {});
                 try {
-                    await withSqliteWriteRetry(() => db.insert(inputTable).values(fallbackRow).onConflictDoNothing(), { label: "insert fallback input row for resume" });
+                    await insertInputRowIgnore(db, adapter, inputTable, fallbackRow, "insert fallback input row for resume");
                     existingInput = await loadInput(db, inputTable, runId);
                 }
                 catch {
@@ -5553,15 +5747,7 @@ async function runWorkflowBodyLegacy(workflow, opts) {
                     issues: validation.error?.issues,
                 });
             }
-            const insertQuery = db.insert(inputTable).values(inputRow);
-            if (typeof insertQuery.onConflictDoNothing === "function") {
-                await withSqliteWriteRetry(() => db.insert(inputTable).values(inputRow).onConflictDoNothing(), { label: "insert input row" });
-            }
-            else {
-                await withSqliteWriteRetry(() => db.insert(inputTable).values(inputRow), {
-                    label: "insert input row",
-                });
-            }
+            await insertInputRowIgnore(db, adapter, inputTable, inputRow);
         }
         else {
             let existingInput = await loadInput(db, inputTable, runId);
@@ -5576,7 +5762,7 @@ async function runWorkflowBodyLegacy(workflow, opts) {
                 // (run_id, payload) table. Insert an empty row so resume can proceed.
                 const fallbackRow = buildInputRow(inputTable, runId, {});
                 try {
-                    await withSqliteWriteRetry(() => db.insert(inputTable).values(fallbackRow).onConflictDoNothing(), { label: "insert fallback input row for resume" });
+                    await insertInputRowIgnore(db, adapter, inputTable, fallbackRow, "insert fallback input row for resume");
                     existingInput = await loadInput(db, inputTable, runId);
                 }
                 catch {
@@ -6923,18 +7109,7 @@ async function runWorkflowBodyLegacy(workflow, opts) {
                 const outputTable = schema.output;
                 let output = undefined;
                 if (outputTable) {
-                    const cols = getTableColumns(outputTable);
-                    const runIdCol = cols.runId;
-                    if (runIdCol) {
-                        const rows = await db
-                            .select()
-                            .from(outputTable)
-                            .where(eq(runIdCol, runId));
-                        output = rows;
-                    }
-                    else {
-                        output = await db.select().from(outputTable);
-                    }
+                    output = await Effect.runPromise(loadRunOutputRowsEffect(db, outputTable, runId));
                 }
                 return {
                     type: "return",

@@ -1,0 +1,1073 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Smithers · feature gap & mockups</title>
+<style>
+  /* ───────────────────────── Deck chrome (dark presentation) ───────────────────────── */
+  :root{
+    --ink:#e9e9f1; --ink-2:#aeb0c4; --ink-3:#7c7e96; --line:rgba(255,255,255,.09);
+    --panel:#14141b; --panel-2:#1b1b24; --brand:#8b78e6; --brand-2:#6d56d8;
+    --ok:#2ec9a8; --warn:#e29a3c; --fail:#f2555a; --info:#5b8def;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; color:var(--ink); background:#08080c;
+    font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; overflow:hidden;
+  }
+  .bg{position:fixed; inset:0; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(900px 540px at 18% -8%, rgba(139,120,230,.20), transparent 60%),
+      radial-gradient(820px 520px at 110% 116%, rgba(46,201,168,.10), transparent 55%),
+      linear-gradient(180deg,#0a0a10,#08080c);
+  }
+  .grain{position:fixed; inset:0; z-index:0; opacity:.5; pointer-events:none;
+    background-image:radial-gradient(rgba(255,255,255,.025) 1px, transparent 1px);
+    background-size:3px 3px;}
+
+  .deck{position:relative; z-index:2; height:100vh; display:flex; flex-direction:column}
+  .top{display:flex; align-items:center; justify-content:space-between; padding:18px 30px 0}
+  .wordmark{display:flex; align-items:center; gap:10px; font-size:13px; letter-spacing:.02em; color:var(--ink-2)}
+  .wordmark b{color:var(--ink); font-weight:650}
+  .glyph{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;
+    background:linear-gradient(140deg,var(--brand),var(--brand-2)); box-shadow:0 4px 14px rgba(109,86,216,.45)}
+  .glyph svg{width:12px;height:12px;color:#fff}
+  .counter{font:600 12px/1 ui-monospace,Menlo,monospace; color:var(--ink-3); letter-spacing:.08em}
+  .counter b{color:var(--ink)}
+
+  .stage{position:relative; flex:1 1 auto; min-height:0}
+  .slide{position:absolute; inset:0; display:none; padding:18px 56px 30px;
+    opacity:0; transition:opacity .32s ease}
+  .slide.active{display:flex; opacity:1}
+  .slide-inner{margin:auto; width:min(1220px,100%)}
+
+  .kicker{display:inline-flex; align-items:center; gap:9px; font:700 11px/1 ui-monospace,Menlo,monospace;
+    letter-spacing:.16em; color:var(--brand); text-transform:uppercase}
+  .kicker .n{color:var(--ink-3)}
+  .kicker .bar{width:26px;height:2px;border-radius:2px;background:linear-gradient(90deg,var(--brand),transparent)}
+
+  h1.title{margin:18px 0 14px; font-size:clamp(30px,4.6vw,56px); line-height:1.02; letter-spacing:-.03em; font-weight:680}
+  h1.title .em{background:linear-gradient(120deg,var(--brand),#c4b6ff 70%); -webkit-background-clip:text; background-clip:text; color:transparent}
+  h2.head{margin:14px 0 6px; font-size:clamp(22px,2.7vw,34px); line-height:1.06; letter-spacing:-.02em; font-weight:660}
+  .lede{max-width:760px; color:var(--ink-2); font-size:16px; line-height:1.55}
+
+  /* feature slide grid */
+  .fgrid{display:grid; grid-template-columns:1.42fr 1fr; gap:42px; align-items:center; height:100%}
+  .notes{display:flex; flex-direction:column; gap:14px}
+  .fname{font-size:clamp(22px,2.5vw,30px); font-weight:670; letter-spacing:-.02em; line-height:1.05; margin:6px 0 2px}
+  .row{display:flex; gap:11px}
+  .row .lbl{flex:none; width:74px; font:700 10px/1.5 ui-monospace,Menlo,monospace; letter-spacing:.1em; color:var(--ink-3); padding-top:2px; text-transform:uppercase}
+  .row .val{color:var(--ink-2); font-size:14.5px; line-height:1.5}
+  .row .val b{color:var(--ink); font-weight:600}
+  .chips{display:flex; flex-wrap:wrap; gap:8px; margin-top:4px}
+  .chip{display:inline-flex; align-items:center; gap:6px; height:26px; padding:0 11px; border-radius:999px;
+    font:600 12px/1 Inter,sans-serif; color:var(--ink-2); background:var(--panel-2); border:1px solid var(--line)}
+  .chip code{font:600 11px/1 ui-monospace,Menlo,monospace; color:var(--brand)}
+  .chip.s{color:var(--ink); border-color:rgba(139,120,230,.4); background:rgba(139,120,230,.12)}
+  .chip .cdot{width:7px;height:7px;border-radius:50%}
+  .seen{font-size:12.5px; color:var(--ink-3); line-height:1.5; border-top:1px dashed var(--line); padding-top:12px}
+  .seen b{color:var(--ink-2)}
+
+  /* ───────────────────────── App window (light, faithful to apps/smithers) ───────────────────────── */
+  .appwin{
+    --bg:#fff; --text:#0a0a0a; --muted:#525252; --faint:#8a8a8a; --ph:#a3a3a3;
+    --surface:#fff; --glass:rgba(255,255,255,.74); --border:rgba(10,10,10,.09); --border2:rgba(10,10,10,.14);
+    --hover:#f4f4f4; --hovs:rgba(10,10,10,.03);
+    --brand:#6d56d8; --ok:#0f8f78; --warn:#bf5b16; --danger:#e5484d; --info:#356fd2;
+    --code-bg:#0a0a0a; --code-tx:#e8e8ec;
+    --node-border:#d7e0eb; --node-title:#182230; --node-muted:#607087;
+    color:var(--text); background:var(--bg);
+    border-radius:16px; overflow:hidden; border:1px solid rgba(0,0,0,.5);
+    box-shadow:0 30px 80px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.04);
+    display:flex; flex-direction:column; height:clamp(420px,62vh,560px);
+    font-size:14px;
+  }
+  .appbar{display:flex; align-items:center; gap:12px; height:38px; padding:0 14px;
+    background:#fbfbfc; border-bottom:1px solid var(--border)}
+  .appbar .dots{display:flex; gap:7px}
+  .appbar .dots i{width:11px;height:11px;border-radius:50%;display:block}
+  .appbar .dots i:nth-child(1){background:#ff5f57} .appbar .dots i:nth-child(2){background:#febc2e} .appbar .dots i:nth-child(3){background:#28c840}
+  .appbar .addr{margin:0 auto; font:600 12px/1 Inter,sans-serif; color:#9a9aa3; display:flex; align-items:center; gap:7px}
+  .appbar .addr .g{width:14px;height:14px;border-radius:4px;background:linear-gradient(140deg,#6d56d8,#8b78e6)}
+  .appbar .cmd{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;
+    font:600 12px/1 Inter,sans-serif; --c:#6d56d8; color:var(--c);
+    background:color-mix(in srgb,var(--c) 12%, #fff); border:1px solid color-mix(in srgb,var(--c) 32%, transparent)}
+  .appbar .cmd .cd{width:7px;height:7px;border-radius:50%;background:var(--c)}
+  .appbody{flex:1 1 auto; min-height:0; position:relative; display:flex; flex-direction:column}
+
+  /* chat surface */
+  .thread{flex:1 1 auto; min-height:0; overflow:hidden; padding:20px 22px 8px}
+  .thread .wrap{width:min(100%,560px); margin:0 auto; display:flex; flex-direction:column; gap:14px}
+  .msg{display:flex}
+  .msg.user{justify-content:flex-end}
+  .msg.assistant{justify-content:flex-start}
+  .b{max-width:78%; padding:9px 13px; border-radius:16px; font-size:13.5px; line-height:1.45}
+  .msg.user .b{background:#0a0a0a; color:#fff; border-bottom-right-radius:5px}
+  .msg.assistant .b{background:#f4f4f5; color:#0a0a0a; border-bottom-left-radius:5px}
+
+  .composer{padding:12px 22px 16px; display:flex; justify-content:center}
+  .composer .cc{width:min(100%,560px); border:1px solid var(--border); border-radius:18px;
+    background:var(--glass); backdrop-filter:blur(14px); box-shadow:0 12px 30px rgba(10,10,10,.08);
+    padding:11px 12px; display:flex; align-items:center; gap:10px}
+  .composer .cc input{flex:1; border:0; outline:0; background:transparent; font:400 14px/1.4 Inter,sans-serif; color:var(--text)}
+  .composer .cc input::placeholder{color:var(--ph)}
+  .composer .mic{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#0a0a0a;color:#fff;flex:none}
+  .composer .mic svg{width:14px;height:14px}
+
+  /* rich card in the assistant lane */
+  .card{width:100%; max-width:100%; border:1px solid var(--border); border-radius:15px; background:var(--surface);
+    box-shadow:0 1px 2px rgba(10,10,10,.04), 0 10px 26px rgba(10,10,10,.07); overflow:hidden}
+  .msg.assistant .card{max-width:100%}
+  .ch{display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--border)}
+  .ch .ic{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;flex:none;
+    background:color-mix(in srgb,var(--brand) 12%,#fff); color:var(--brand)}
+  .ch .ic svg{width:15px;height:15px}
+  .ct{font-weight:650; font-size:14px; letter-spacing:-.01em}
+  .csub{font-size:12px; color:var(--muted)}
+  .ch .right{margin-left:auto; display:flex; align-items:center; gap:8px}
+  .cb{padding:12px 14px}
+  .cf{display:flex; align-items:center; gap:8px; padding:10px 14px; border-top:1px solid var(--border); background:#fcfcfd}
+
+  /* pills */
+  .pill{display:inline-flex; align-items:center; gap:6px; height:22px; padding:0 9px; border-radius:999px;
+    font:600 11px/1 Inter,sans-serif; border:1px solid}
+  .pill .pd{width:6px;height:6px;border-radius:50%}
+  .pill.run{ --c:#6d56d8; color:#5a44c4; background:color-mix(in srgb,var(--c) 11%,#fff); border-color:color-mix(in srgb,var(--c) 30%,transparent)}
+  .pill.wait{ --c:#bf5b16; color:#a84e12; background:color-mix(in srgb,var(--c) 11%,#fff); border-color:color-mix(in srgb,var(--c) 30%,transparent)}
+  .pill.ok{  --c:#0f8f78; color:#0c7d69; background:color-mix(in srgb,var(--c) 11%,#fff); border-color:color-mix(in srgb,var(--c) 30%,transparent)}
+  .pill.fail{--c:#e5484d; color:#cf3a40; background:color-mix(in srgb,var(--c) 11%,#fff); border-color:color-mix(in srgb,var(--c) 30%,transparent)}
+  .pill .pd{background:var(--c)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .pill.run .pd{animation:pulse 1.2s ease-in-out infinite}
+
+  /* buttons */
+  .gbtn{height:30px; padding:0 13px; border-radius:9px; border:1px solid var(--border); background:#fff; color:var(--text);
+    font:600 12.5px/1 Inter,sans-serif; cursor:pointer; display:inline-flex; align-items:center; gap:6px}
+  .gbtn:hover{background:var(--hover)}
+  .pbtn{height:30px; padding:0 14px; border-radius:9px; border:1px solid transparent; background:#0a0a0a; color:#fff;
+    font:600 12.5px/1 Inter,sans-serif; cursor:pointer}
+  .pbtn.brand{background:var(--brand)}
+  .abtn{height:30px; padding:0 14px; border-radius:9px; border:1px solid var(--warn); color:#a84e12; background:color-mix(in srgb,var(--warn) 10%,#fff); font:600 12.5px/1 Inter,sans-serif; cursor:pointer}
+  .lnk{margin-left:auto; color:var(--brand); font:600 12.5px/1 Inter,sans-serif}
+
+  /* step list */
+  .steps{display:flex; flex-direction:column; gap:9px}
+  .step{display:flex; align-items:center; gap:10px; font-size:13px}
+  .step .sd{width:14px;height:14px;border-radius:50%; flex:none; display:grid; place-items:center}
+  .sd.done{background:color-mix(in srgb,var(--ok) 16%,#fff)} .sd.done::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok)}
+  .sd.run{background:color-mix(in srgb,var(--brand) 16%,#fff)} .sd.run::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--brand);animation:pulse 1.2s ease-in-out infinite}
+  .sd.idle{background:#eee} .sd.idle::after{content:"";width:5px;height:5px;border-radius:50%;background:#c4c4cc}
+  .step .lab{color:var(--text)} .step.dim .lab{color:var(--faint)}
+  .step .meta{margin-left:auto; font:500 11px/1 ui-monospace,Menlo,monospace; color:var(--faint)}
+
+  /* split (rail + canvas) */
+  .split{flex:1 1 auto; min-height:0; display:grid; grid-template-columns:188px 1fr}
+  .rail{border-right:1px solid var(--border); background:#fbfbfc; padding:14px 12px; display:flex; flex-direction:column; gap:10px; overflow:hidden}
+  .rail .rmsg{font-size:12px; line-height:1.4}
+  .rail .rmsg.u{align-self:flex-end; background:#0a0a0a; color:#fff; padding:6px 10px; border-radius:11px; border-bottom-right-radius:4px; max-width:90%}
+  .rail .rmsg.a{align-self:flex-start; color:var(--muted); padding:2px 0}
+  .rail .rcomposer{margin-top:auto; border:1px solid var(--border); border-radius:12px; padding:7px 9px; color:var(--ph); font-size:12px; background:#fff}
+  .canvas{min-height:0; overflow:hidden; display:flex; flex-direction:column; background:#fff}
+  .cvtop{display:flex; align-items:center; gap:10px; padding:11px 16px; border-bottom:1px solid var(--border)}
+  .cvtop .cvt{font-weight:650; font-size:13.5px}
+  .seg{display:inline-flex; border:1px solid var(--border); border-radius:9px; overflow:hidden; margin-left:auto}
+  .seg button{border:0; background:#fff; color:var(--muted); font:600 12px/1 Inter,sans-serif; padding:7px 12px; cursor:pointer}
+  .seg button.on{background:#0a0a0a; color:#fff}
+  .cvbody{flex:1 1 auto; min-height:0; display:grid; grid-template-columns:1.05fr 1fr}
+  .treepane{border-right:1px solid var(--border); padding:12px 12px; overflow:hidden}
+  .inspect{padding:0; display:flex; flex-direction:column; min-height:0}
+
+  /* run tree */
+  .tree{display:flex; flex-direction:column; gap:3px}
+  .trow{display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:8px; font-size:13px}
+  .trow.sel{background:color-mix(in srgb,var(--brand) 10%,#fff)}
+  .trow .chev{color:var(--faint); width:10px; flex:none; font-size:10px}
+  .trow .nm{color:var(--text)}
+  .trow .tg{margin-left:auto; font:600 10px/1 ui-monospace,Menlo,monospace; padding:3px 7px; border-radius:5px}
+  .tg.run{color:#5a44c4; background:color-mix(in srgb,#6d56d8 12%,#fff)}
+  .tg.ok{color:#0c7d69; background:color-mix(in srgb,#0f8f78 12%,#fff)}
+  .tg.wait{color:#a84e12; background:color-mix(in srgb,#bf5b16 12%,#fff)}
+  .tg.fail{color:#cf3a40; background:color-mix(in srgb,#e5484d 12%,#fff)}
+  .ind1{padding-left:22px} .ind2{padding-left:38px}
+
+  /* inspector tabs */
+  .tabs{display:flex; gap:2px; padding:8px 12px; border-bottom:1px solid var(--border)}
+  .tabs button{border:0; background:transparent; color:var(--muted); font:600 12px/1 Inter,sans-serif; padding:7px 11px; border-radius:7px; cursor:pointer}
+  .tabs button.on{background:#f1eefb; color:var(--brand)}
+  .insp-body{padding:12px 14px; overflow:hidden; font-size:13px; color:var(--text)}
+  .kv{display:flex; gap:8px; font:500 12px/1.7 ui-monospace,Menlo,monospace; color:var(--muted)}
+  .kv b{color:var(--text); font-weight:600}
+  .toolcall{display:flex; align-items:center; gap:8px; padding:7px 9px; border:1px solid var(--border); border-radius:8px; margin-top:8px; font:600 11.5px/1 ui-monospace,Menlo,monospace}
+  .toolcall .tdot{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+
+  /* diff */
+  .diff{border-radius:10px; overflow:hidden; border:1px solid var(--border); font:500 12px/1.65 ui-monospace,Menlo,monospace; background:#fff}
+  .dl{display:flex; gap:0; padding:0 10px}
+  .dl .ln{width:30px; color:#c0c0c8; text-align:right; padding-right:10px; flex:none; user-select:none}
+  .dl.add{background:color-mix(in srgb,var(--ok) 9%,#fff); color:#0c6f5d} .dl.add .ln{color:#7fc4b4}
+  .dl.del{background:color-mix(in srgb,var(--danger) 8%,#fff); color:#c23b40} .dl.del .ln{color:#e09aa0}
+  .dl .sg{width:14px; flex:none}
+  .filetabs{display:flex; gap:6px; flex-wrap:wrap}
+  .ftab{font:600 11px/1 ui-monospace,Menlo,monospace; padding:5px 9px; border-radius:7px; background:#f4f4f5; color:var(--muted)}
+  .ftab.on{background:#0a0a0a; color:#fff}
+
+  /* transcript */
+  .ttoolbar{display:flex; align-items:center; gap:7px; padding:9px 12px; border-bottom:1px solid var(--border)}
+  .tch{height:26px; padding:0 10px; border:1px solid var(--border); border-radius:8px; background:#fff; color:var(--muted); font:600 11.5px/1 Inter,sans-serif; display:inline-flex; align-items:center; gap:6px}
+  .tch.on{background:#f1eefb; color:var(--brand); border-color:color-mix(in srgb,var(--brand) 30%,transparent)}
+  .tsearch{margin-left:auto; height:26px; min-width:120px; border:1px solid var(--border); border-radius:8px; color:var(--ph); font-size:11.5px; display:flex; align-items:center; padding:0 9px}
+  .stream{flex:1; padding:12px 14px; font:500 12px/1.7 ui-monospace,Menlo,monospace; color:#2b2b32; overflow:hidden}
+  .stream .role{color:var(--brand); font-weight:700}
+  .stream .tool{color:var(--info)}
+  .stream .redact{background:#eee; color:#9a9aa3; padding:0 6px; border-radius:4px}
+  .stream .noise{color:#bdbdc6}
+
+  /* node graph (reuses their colored left-border node) */
+  .pipe{display:flex; flex-direction:column; gap:0; padding:6px 8px}
+  .pnode-wrap{display:flex; flex-direction:column; align-items:center}
+  .pnode{width:min(300px,84%); border:1px solid var(--node-border); border-left:3px solid #999; border-radius:11px; background:#fff;
+    box-shadow:0 6px 16px rgb(30 42 60 / 9%); padding:10px 13px; text-align:left}
+  .pnode .kick{color:var(--node-muted); font:800 10px/1 Inter,sans-serif; text-transform:uppercase; letter-spacing:.04em}
+  .pnode .ti{color:var(--node-title); font:800 14px/1.2 Inter,sans-serif; margin-top:3px}
+  .pnode .ou{color:var(--node-muted); font:500 11px/1.3 ui-monospace,Menlo,monospace; margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .pnode.agent{border-left-color:#0f8f78} .pnode.compute{border-left-color:#356fd2} .pnode.approval{border-left-color:#bf5b16}
+  .pnode.loop{border-left-color:#6d56d8} .pnode.merge{border-left-color:#2670a9} .pnode.human{border-left-color:#a34d9f}
+  .pnode.cur{box-shadow:0 0 0 3px color-mix(in srgb,#6d56d8 22%,transparent), 0 6px 16px rgb(30 42 60 / 12%)}
+  .conn{width:2px; height:16px; background:linear-gradient(#cfd6e2,#cfd6e2)}
+  .branchrow{display:flex; gap:14px; justify-content:center; width:100%}
+
+  /* timeline / scrubber */
+  .tl{padding:18px 18px}
+  .tlbanner{display:inline-flex; align-items:center; gap:8px; font:600 12px/1 Inter,sans-serif; color:#a84e12;
+    background:color-mix(in srgb,var(--warn) 10%,#fff); border:1px solid color-mix(in srgb,var(--warn) 28%,transparent); padding:6px 11px; border-radius:999px}
+  .track{position:relative; margin:26px 6px 10px; height:3px; background:#e6e6ee; border-radius:3px}
+  .track .fill{position:absolute; left:0; top:0; bottom:0; width:55%; background:var(--brand); border-radius:3px}
+  .tldot{position:absolute; top:50%; width:11px; height:11px; border-radius:50%; background:#fff; border:2px solid #c7c7d2; transform:translate(-50%,-50%)}
+  .tldot.done{border-color:var(--ok); background:var(--ok)}
+  .tldot.head{width:17px;height:17px;border:3px solid var(--brand); background:#fff; box-shadow:0 3px 10px rgba(109,86,216,.4)}
+  .fork{position:absolute; left:55%; top:50%; width:90px; height:30px; border-left:2px solid #d3b3ec; border-bottom:2px solid #d3b3ec; border-radius:0 0 0 10px}
+  .forktag{position:absolute; left:calc(55% + 92px); top:calc(50% + 26px); font:600 11px/1 ui-monospace,Menlo,monospace; color:#a34d9f}
+
+  /* agents / rows */
+  .lrow{display:flex; align-items:center; gap:11px; padding:10px 4px; border-bottom:1px solid var(--border)}
+  .lrow:last-child{border-bottom:0}
+  .lrow .av{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font:800 12px/1 Inter,sans-serif;color:#fff;flex:none}
+  .lrow .nm{font-weight:600; font-size:13.5px}
+  .lrow .meta{font-size:12px; color:var(--muted)}
+  .lrow .tags{margin-left:auto; display:flex; gap:6px; align-items:center}
+  .mini{font:600 10.5px/1 ui-monospace,Menlo,monospace; padding:3px 7px; border-radius:5px; background:#f4f4f5; color:var(--muted)}
+  .mini.ok{background:color-mix(in srgb,var(--ok) 12%,#fff); color:#0c7d69}
+  .statusdot{width:8px;height:8px;border-radius:50%;flex:none}
+  .statusdot.on{background:var(--ok)} .statusdot.off{background:#cdced6}
+  .lrow.off{opacity:.5}
+
+  /* memory facts */
+  .fact{display:flex; gap:10px; padding:9px 2px; border-bottom:1px solid var(--border)}
+  .fact:last-child{border-bottom:0}
+  .nschip{flex:none; align-self:flex-start; font:700 10px/1 ui-monospace,Menlo,monospace; padding:4px 7px; border-radius:5px; background:color-mix(in srgb,var(--brand) 10%,#fff); color:var(--brand)}
+  .fact .ftxt{font-size:13px; color:var(--text); line-height:1.4}
+  .sim{margin-left:auto; flex:none; font:600 11px/1 ui-monospace,Menlo,monospace; color:var(--ok)}
+  .srchbar{display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:10px; padding:8px 11px; font-size:13px; color:var(--text); margin-bottom:6px}
+  .srchbar svg{width:14px;height:14px;color:var(--faint)}
+
+  /* score tiles */
+  .tiles{display:grid; grid-template-columns:repeat(5,1fr); gap:8px}
+  .tile{border:1px solid var(--border); border-radius:10px; padding:9px 10px; background:#fff}
+  .tile .tn{font:700 9.5px/1 ui-monospace,Menlo,monospace; color:var(--faint); text-transform:uppercase; letter-spacing:.06em}
+  .tile .tvv{font:680 18px/1 Inter,sans-serif; letter-spacing:-.02em; margin-top:6px}
+  .spark{display:flex; align-items:flex-end; gap:3px; height:34px; margin-top:10px}
+  .spark i{flex:1; background:color-mix(in srgb,var(--brand) 28%,#fff); border-radius:2px 2px 0 0}
+
+  /* input rows */
+  .field{display:flex; flex-direction:column; gap:5px; margin-bottom:10px}
+  .field label{font:600 11px/1 ui-monospace,Menlo,monospace; color:var(--muted); text-transform:uppercase; letter-spacing:.05em}
+  .field .inp{border:1px solid var(--border); border-radius:9px; padding:9px 11px; font-size:13px; color:var(--text); background:#fff}
+  .field .inp.ph{color:var(--ph)}
+  .field .inp.area{min-height:42px}
+  .optrow{display:flex; gap:8px; flex-wrap:wrap}
+  .opt{height:30px; padding:0 13px; border-radius:9px; border:1px solid var(--border); background:#fff; font:600 12.5px/1 Inter,sans-serif; color:var(--text); display:inline-flex; align-items:center}
+  .opt.pick{border-color:var(--brand); background:color-mix(in srgb,var(--brand) 8%,#fff); color:var(--brand)}
+
+  /* corner toast inside app */
+  .apptoast{position:absolute; top:12px; right:12px; width:230px; border:1px solid var(--border); border-radius:12px;
+    background:rgba(255,255,255,.92); backdrop-filter:blur(10px); box-shadow:0 12px 30px rgba(10,10,10,.14); padding:11px 12px; display:flex; gap:10px; align-items:center}
+  .apptoast .sp{width:15px;height:15px;border:2px solid color-mix(in srgb,#6d56d8 25%,transparent); border-top-color:#6d56d8; border-radius:50%; animation:spin .8s linear infinite; flex:none}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .apptoast .tt{font:600 12.5px/1.3 Inter,sans-serif}
+  .apptoast .td{font-size:11.5px; color:var(--muted)}
+
+  /* principle slide */
+  .three{display:grid; grid-template-columns:repeat(3,1fr); gap:18px; margin-top:26px}
+  .pcard{border:1px solid var(--line); border-radius:16px; background:linear-gradient(180deg,var(--panel),#101018); padding:20px; display:flex; flex-direction:column; gap:12px}
+  .pcard .pnum{font:700 11px/1 ui-monospace,Menlo,monospace; color:var(--brand); letter-spacing:.1em}
+  .pcard h3{margin:0; font-size:18px; letter-spacing:-.01em}
+  .pcard p{margin:0; color:var(--ink-2); font-size:13.5px; line-height:1.5}
+  .demo{margin-top:auto; border-radius:12px; border:1px solid var(--line); background:#0c0c12; padding:14px; min-height:104px; display:flex; align-items:center; justify-content:center}
+  /* mini demo bits (dark) */
+  .d-card{width:100%; background:#fff; border-radius:10px; padding:9px 11px; color:#0a0a0a; box-shadow:0 6px 18px rgba(0,0,0,.3)}
+  .d-card .dh{display:flex;align-items:center;gap:7px;font:650 12px/1 Inter;}
+  .d-card .ds{font-size:11px;color:#666; margin-top:6px}
+  .d-split{display:flex; width:100%; height:78px; border-radius:8px; overflow:hidden; border:1px solid rgba(255,255,255,.12)}
+  .d-split .l{width:34%; background:#fbfbfc} .d-split .r{flex:1; background:#fff; border-left:1px solid #eee; padding:8px}
+  .d-split .r .bar{height:8px; background:#eef0f3; border-radius:4px; margin-bottom:6px} .d-split .r .bar.s{width:60%}
+  .d-toast{width:100%; background:rgba(255,255,255,.95); border-radius:10px; padding:9px 11px; color:#0a0a0a; display:flex; gap:9px; align-items:center; box-shadow:0 6px 18px rgba(0,0,0,.3)}
+  .d-toast .sp{width:13px;height:13px;border:2px solid rgba(109,86,216,.3); border-top-color:#6d56d8; border-radius:50%; animation:spin .8s linear infinite}
+  .legend{display:flex; gap:16px; margin-top:22px; flex-wrap:wrap}
+  .legend .li{display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--ink-2)}
+  .legend .li .sw{width:11px;height:11px;border-radius:3px}
+
+  /* title slide deco */
+  .float{position:relative; height:300px; margin-top:8px}
+  .fnode{position:absolute; background:#fff; color:#0a0a0a; border-radius:12px; padding:10px 13px; border-left:3px solid #6d56d8;
+    box-shadow:0 18px 40px rgba(0,0,0,.4); font:800 13px/1.2 Inter,sans-serif}
+  .fnode small{display:block; font:800 9px/1 Inter; color:#607087; text-transform:uppercase; margin-bottom:3px}
+  .fnode.a{left:2%; top:40px; border-left-color:#0f8f78; transform:rotate(-4deg)}
+  .fnode.b{left:33%; top:0; border-left-color:#6d56d8; transform:rotate(2deg)}
+  .fnode.c{left:62%; top:64px; border-left-color:#bf5b16; transform:rotate(-2deg)}
+  .fnode.d{left:20%; top:150px; border-left-color:#356fd2; transform:rotate(3deg)}
+  .fnode.e{left:54%; top:188px; border-left-color:#a34d9f; transform:rotate(-3deg)}
+
+  /* summary table */
+  .matrix{width:100%; border-collapse:separate; border-spacing:0 6px; font-size:13px}
+  .matrix th{text-align:left; font:700 10px/1 ui-monospace,Menlo,monospace; letter-spacing:.1em; color:var(--ink-3); text-transform:uppercase; padding:0 12px 4px}
+  .matrix td{background:var(--panel); padding:10px 12px; color:var(--ink-2)}
+  .matrix td:first-child{border-radius:9px 0 0 9px; color:var(--ink); font-weight:600}
+  .matrix td:last-child{border-radius:0 9px 9px 0}
+  .pri{font:700 10px/1 ui-monospace,Menlo,monospace; padding:4px 8px; border-radius:5px}
+  .pri.p0{color:#fff; background:var(--brand-2)} .pri.p1{color:var(--brand); background:rgba(139,120,230,.16)} .pri.p2{color:var(--ink-3); background:rgba(255,255,255,.06)}
+  .sgn{display:inline-flex; align-items:center; gap:6px; font-size:12px}
+  .sgn .b{width:8px;height:8px;border-radius:2px}
+
+  /* bottom bar */
+  .bottom{display:flex; align-items:center; gap:18px; padding:0 30px 18px}
+  .progress{flex:1; height:3px; background:rgba(255,255,255,.08); border-radius:3px; overflow:hidden}
+  .progress i{display:block; height:100%; background:linear-gradient(90deg,var(--brand-2),var(--brand)); width:0; transition:width .32s ease}
+  .dots{display:flex; gap:6px}
+  .dots button{width:7px;height:7px;border-radius:50%;border:0;background:rgba(255,255,255,.18);cursor:pointer;padding:0}
+  .dots button.on{background:var(--brand); transform:scale(1.25)}
+  .nav{display:flex; gap:8px}
+  .nav button{width:34px;height:34px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink-2);cursor:pointer;display:grid;place-items:center}
+  .nav button:hover{background:var(--panel-2); color:var(--ink)}
+  .hint{position:fixed; bottom:64px; right:34px; z-index:5; font:600 11px/1 ui-monospace,Menlo,monospace; color:var(--ink-3); opacity:.8}
+  kbd{font:600 10px/1 ui-monospace,Menlo,monospace; background:rgba(255,255,255,.08); border:1px solid var(--line); border-radius:4px; padding:3px 5px; color:var(--ink-2)}
+
+  @media (max-width:980px){ .fgrid{grid-template-columns:1fr; gap:18px} .notes{order:-1} .appwin{height:46vh} .three{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="bg"></div><div class="grain"></div>
+
+<div class="deck">
+  <div class="top">
+    <div class="wordmark">
+      <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 3l-1 7h6l-9 11 1-7H5l9-11z"/></svg></span>
+      <span><b>Smithers</b> · feature gap &amp; mockups</span>
+    </div>
+    <div class="counter"><b id="cur">01</b> / <span id="tot">18</span></div>
+  </div>
+
+  <div class="stage" id="stage">
+
+    <!-- ───────────── 00 TITLE ───────────── -->
+    <section class="slide active">
+      <div class="slide-inner">
+        <div class="kicker"><span class="bar"></span> Smithers · UI gap study</div>
+        <h1 class="title">The Smithers features we're missing —<br><span class="em">and where each one goes.</span></h1>
+        <p class="lede">A walkthrough of the workflow capabilities the original <code style="color:#c4b6ff">~/gui</code> exposes that <b style="color:#fff">apps/smithers</b> does not yet, each paired with a mockup that fits a chat-first, low-chrome surface. The rule throughout: features become <b style="color:#fff">cards in the conversation</b> or <b style="color:#fff">one focused canvas</b>, never another dashboard.</p>
+        <div class="chips" style="margin-top:18px">
+          <span class="chip s">Target&nbsp; <code>apps/smithers</code></span>
+          <span class="chip">Reference&nbsp; <code style="color:#aeb0c4">~/gui</code> (Swift) + <code style="color:#aeb0c4">studio-2</code> (React)</span>
+          <span class="chip">Out of scope&nbsp; jj / git · terminals / TUIs</span>
+        </div>
+        <div class="float">
+          <div class="fnode a"><small>Agent</small>implement</div>
+          <div class="fnode b"><small>Loop</small>review · fix</div>
+          <div class="fnode c"><small>Approval</small>deploy?</div>
+          <div class="fnode d"><small>Compute</small>run tests</div>
+          <div class="fnode e"><small>Human</small>pick target</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────── 01 PRINCIPLE ───────────── -->
+    <section class="slide">
+      <div class="slide-inner">
+        <div class="kicker"><span class="n">00</span> · The principle</div>
+        <h2 class="head">One rule: features become cards, not screens.</h2>
+        <p class="lede"><code>~/gui</code> is a 25-section operations console with a sidebar, tabs, tables, and toolbars. That density is exactly what we are moving away from. Every feature in this deck lands in one of three surfaces, and nothing earns a permanent nav slot.</p>
+        <div class="three">
+          <div class="pcard">
+            <span class="pnum">SURFACE 01</span>
+            <h3>Inline card</h3>
+            <p>The default. The agent answers with a rich card right in the thread where you asked. Runs, diffs, gates, schedules, facts, all render as a card in the assistant lane.</p>
+            <div class="demo"><div class="d-card"><div class="dh"><span style="width:7px;height:7px;border-radius:50%;background:#6d56d8;display:inline-block"></span> Implement · auth refactor</div><div class="ds">plan ✓ · editing files… · tests pending</div></div></div>
+          </div>
+          <div class="pcard">
+            <span class="pnum">SURFACE 02</span>
+            <h3>One focused canvas</h3>
+            <p>For things you study, the tree, the graph, the diff, the timeline, a single canvas slides in beside a slim chat rail. One at a time. Drag the seam, share the URL.</p>
+            <div class="demo"><div class="d-split"><div class="l"></div><div class="r"><div class="bar"></div><div class="bar s"></div><div class="bar"></div></div></div></div>
+          </div>
+          <div class="pcard">
+            <span class="pnum">SURFACE 03</span>
+            <h3>Corner toast</h3>
+            <p>Ambient only. A background run, a waiting approval, a finished job. It nudges from the corner and gets out of the way. Click to jump back to its card.</p>
+            <div class="demo"><div class="d-toast"><span class="sp"></span><div><div style="font:650 12px/1 Inter">Open Code Review</div><div style="font-size:11px;color:#666;margin-top:3px">running · 1m02s</div></div></div></div>
+          </div>
+        </div>
+        <div class="legend">
+          <span style="font:700 10px/1 ui-monospace,Menlo;color:#7c7e96;letter-spacing:.1em">COLOR = STATE, NEVER DECORATION</span>
+          <span class="li"><span class="sw" style="background:#6d56d8"></span> running</span>
+          <span class="li"><span class="sw" style="background:#bf5b16"></span> waiting / approval</span>
+          <span class="li"><span class="sw" style="background:#0f8f78"></span> succeeded</span>
+          <span class="li"><span class="sw" style="background:#e5484d"></span> failed</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────── 02 RUNS ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers</div><div class="cmd"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody">
+            <div class="apptoast"><span class="sp"></span><div><div class="tt">Open Code Review</div><div class="td">running · 1m02s</div></div></div>
+            <div class="thread"><div class="wrap">
+              <div class="msg user"><div class="b">ship the auth refactor</div></div>
+              <div class="msg assistant"><div class="card">
+                <div class="ch">
+                  <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg></div>
+                  <div><div class="ct">Implement · auth refactor</div><div class="csub">claude-opus · run 4821</div></div>
+                  <div class="right"><span class="pill run"><span class="pd"></span> running</span><span class="csub">2m14s</span></div>
+                </div>
+                <div class="cb"><div class="steps">
+                  <div class="step"><span class="sd done"></span><span class="lab">Plan the change</span><span class="meta">8s</span></div>
+                  <div class="step"><span class="sd run"></span><span class="lab">Edit 6 files</span><span class="meta">running</span></div>
+                  <div class="step dim"><span class="sd idle"></span><span class="lab">Run test suite</span><span class="meta">queued</span></div>
+                </div></div>
+                <div class="cf"><button class="pbtn brand">Open</button><button class="gbtn">Logs</button><button class="gbtn">Cancel</button><span class="lnk">2 more runs ›</span></div>
+              </div></div>
+            </div></div>
+            <div class="composer"><div class="cc"><input placeholder="Message, or / for a command" /><span class="mic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 003-3V6a3 3 0 00-6 0v5a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.9V21h2v-3.1A7 7 0 0019 11h-2z"/></svg></span></div></div>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">01</span> · Runs</div>
+          <div class="fname">Live runs, where you launched them</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">A full <b>Runs</b> table: status / workflow / date filters, search, SSE stream, expand-per-row, cancel, watch.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">apps/smithers has <b>no view of runs at all</b>. Chat is single-turn Cerebras with no gateway link.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val">A run is a <b>live card in the thread</b> where it was started. It updates in place; tap <b>Open</b> to expand into the canvas. Background runs live only in the corner toast. No runs tab, no table.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#6d56d8"></span> inline card + toast</span>
+            <span class="chip">launched from chat / Store</span>
+          </div>
+          <div class="seen"><b>studio-2</b> already ships a real gateway-wired runs list and history rail; here we keep the data, drop the table.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 03 RUN INSPECTOR ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers · run 4821</div><div class="cmd"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody"><div class="split">
+            <div class="rail">
+              <div class="rmsg u">ship the auth refactor</div>
+              <div class="rmsg a">Opened the run inspector →</div>
+              <div class="rcomposer">Message…</div>
+            </div>
+            <div class="canvas">
+              <div class="cvtop"><span class="cvt">Implement · auth refactor</span><span class="pill run" style="margin-left:8px"><span class="pd"></span> running</span><div class="seg"><button class="on">Tree</button><button>Graph</button></div></div>
+              <div class="cvbody">
+                <div class="treepane"><div class="tree">
+                  <div class="trow"><span class="chev">▾</span><span class="nm">workflow</span><span class="tg run">running</span></div>
+                  <div class="trow ind1"><span class="chev">▾</span><span class="nm">plan</span><span class="tg ok">ok</span></div>
+                  <div class="trow ind1 sel"><span class="chev">▾</span><span class="nm">edit-files</span><span class="tg run">running</span></div>
+                  <div class="trow ind2"><span class="chev">·</span><span class="nm">auth/session.ts</span><span class="tg ok">ok</span></div>
+                  <div class="trow ind2"><span class="chev">·</span><span class="nm">auth/token.ts</span><span class="tg run">running</span></div>
+                  <div class="trow ind1"><span class="chev">·</span><span class="nm">run-tests</span><span class="tg wait">queued</span></div>
+                </div></div>
+                <div class="inspect">
+                  <div class="tabs"><button class="on">Output</button><button>Logs</button><button>Diff</button><button>Props</button></div>
+                  <div class="insp-body">
+                    <div class="kv"><span>node</span><b>edit-files</b></div>
+                    <div class="kv"><span>agent</span><b>claude-opus-4-8</b></div>
+                    <div class="toolcall"><span class="tdot"></span> Edit&nbsp; auth/session.ts&nbsp; <span style="color:#0c7d69">+18 −4</span></div>
+                    <div class="toolcall"><span class="tdot" style="background:#6d56d8;animation:pulse 1.2s infinite"></span> Write&nbsp; auth/token.ts</div>
+                    <div style="margin-top:12px"><button class="gbtn">↻ Retry node</button></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div></div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">02</span> · Inspector</div>
+          <div class="fname">Tree + node detail, in the canvas</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">LiveRunView + NodeInspector: live tree, selectable nodes, tabs for <b>Output / Logs / Diff / Props</b>, tool-call list, error banner with retry, output iteration picker.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">No node-level inspection anywhere.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val"><b>Open</b> on a run card slides the canvas in: tree on the left, one node's detail on the right. Four quiet tabs, nothing more. <b>Retry</b> and <b>tool calls</b> live inside the node, not on a toolbar.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#6d56d8"></span> canvas (split)</span>
+            <span class="chip">Tree / Graph toggle</span>
+          </div>
+          <div class="seen"><b>studio-2</b> has this exact split (RunTree + RunInspector, responsive to a modal sheet on narrow). Lift it, restyle to the lighter card language.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 04 APPROVALS ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers</div><div class="cmd" style="--c:#bf5b16"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody">
+            <div class="apptoast" style="border-color:color-mix(in srgb,#bf5b16 30%,transparent)"><span style="width:8px;height:8px;border-radius:50%;background:#bf5b16;flex:none"></span><div><div class="tt">1 approval waiting</div><div class="td">deploy · 40s</div></div></div>
+            <div class="thread"><div class="wrap">
+              <div class="msg assistant"><div class="b">Tests passed. The next step deploys to production and is gated.</div></div>
+              <div class="msg assistant"><div class="card" style="border-left:3px solid #bf5b16">
+                <div class="ch">
+                  <div class="ic" style="background:color-mix(in srgb,#bf5b16 12%,#fff);color:#bf5b16"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></div>
+                  <div><div class="ct">Approval needed</div><div class="csub">gate · deploy-to-prod</div></div>
+                  <div class="right"><span class="pill wait"><span class="pd"></span> waiting · 40s</span></div>
+                </div>
+                <div class="cb">
+                  <div style="font-size:13px;color:#525252;line-height:1.5;margin-bottom:10px">Deploy <b style="color:#0a0a0a">auth refactor</b> to <b style="color:#0a0a0a">production</b>. 8 files changed, all checks green.</div>
+                  <div class="field"><div class="inp ph">Add a note (optional)…</div></div>
+                </div>
+                <div class="cf"><button class="pbtn brand">Approve</button><button class="abtn" style="border-color:#e5484d;color:#cf3a40;background:color-mix(in srgb,#e5484d 9%,#fff)">Deny</button><span class="lnk">why is this gated? ›</span></div>
+              </div></div>
+            </div></div>
+            <div class="composer"><div class="cc"><input placeholder="Message, or / for a command" /><span class="mic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 003-3V6a3 3 0 00-6 0v5a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.9V21h2v-3.1A7 7 0 0019 11h-2z"/></svg></span></div></div>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">03</span> · Approvals</div>
+          <div class="fname">The gate asks you in the conversation</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">ApprovalsView: a pending list + history, approve / deny with confirmation, live wait-time counter, plus inline gates in the run.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">No approval concept in apps/smithers.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val">A blocked run <b>pauses and asks in chat</b> as an amber gate card with an optional note and Approve / Deny. If you're elsewhere, the corner toast nudges. <code style="color:#6d56d8">/approvals</code> stacks all pending gates as the same cards. No separate screen.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#bf5b16"></span> inline card + toast</span>
+            <span class="chip"><code>/approvals</code></span>
+          </div>
+          <div class="seen"><b>studio-2</b> renders the gate inline in the inspector (Approve / Deny + note) and a nav badge; same model, brought into the thread.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 05 DIFF ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers</div><div class="cmd"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody"><div class="thread"><div class="wrap">
+            <div class="msg user"><div class="b">show me what changed</div></div>
+            <div class="msg assistant"><div class="card">
+              <div class="ch">
+                <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v12a3 3 0 0 0 3 3h6M6 3a2 2 0 1 0 0 .01M18 21a2 2 0 1 0 0-.01M18 9v6"/></svg></div>
+                <div><div class="ct">Changes · auth refactor</div><div class="csub">8 files · <span style="color:#0c7d69">+214</span> <span style="color:#cf3a40">−63</span></div></div>
+                <div class="right"><span class="lnk">Review in canvas ›</span></div>
+              </div>
+              <div class="cb">
+                <div class="filetabs" style="margin-bottom:10px"><span class="ftab on">auth/session.ts</span><span class="ftab">auth/token.ts</span><span class="ftab">auth/index.ts</span><span class="ftab">+5</span></div>
+                <div class="diff">
+                  <div class="dl"><span class="ln">41</span><span class="sg"> </span>export function createSession(user: User) {</div>
+                  <div class="dl del"><span class="ln">42</span><span class="sg">-</span>  const token = sign(user.id)</div>
+                  <div class="dl add"><span class="ln">42</span><span class="sg">+</span>  const token = sign(user.id, { ttl: ROTATE_TTL })</div>
+                  <div class="dl add"><span class="ln">43</span><span class="sg">+</span>  schedule(rotate, ROTATE_TTL)</div>
+                  <div class="dl"><span class="ln">44</span><span class="sg"> </span>  return { token, user }</div>
+                </div>
+              </div>
+            </div></div>
+          </div></div>
+          <div class="composer"><div class="cc"><input placeholder="Message, or / for a command" /><span class="mic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 003-3V6a3 3 0 00-6 0v5a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.9V21h2v-3.1A7 7 0 0019 11h-2z"/></svg></span></div></div>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">04</span> · Diff</div>
+          <div class="fname">Edits surface as a diff card</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">DiffTab: unified diff with line numbers and syntax coloring, per-file view, hunk navigation.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">The Markdown renderer has no diff handling; agent edits are invisible.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val">Whatever an agent changed renders as a compact <b>diff card</b>: file pills + a few hunks, with totals. <b>Review in canvas</b> opens the full unified diff. Reuses the existing dark <code>code-bg</code> styling.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#0f8f78"></span> inline card → canvas</span>
+            <span class="chip"><code>/diff</code></span>
+          </div>
+          <div class="seen"><b>studio-2</b> has a Diff tab in its inspector and a DiffBundle renderer; same data, presented as a thread card here.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 06 TRANSCRIPT / LOGS ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers · logs</div><div class="cmd"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody"><div class="split">
+            <div class="rail">
+              <div class="rmsg u">show the agent's logs</div>
+              <div class="rmsg a">Streaming the transcript →</div>
+              <div class="rcomposer">Message…</div>
+            </div>
+            <div class="canvas">
+              <div class="ttoolbar">
+                <span class="tch on">Follow ▾</span>
+                <span class="tch">Hide noise</span>
+                <span class="tch on">Redact</span>
+                <span class="tsearch"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#a3a3a3" stroke-width="2" style="margin-right:6px"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>search transcript</span>
+              </div>
+              <div class="stream">
+                <div><span class="role">agent ›</span> Reading auth/session.ts to map the token flow.</div>
+                <div><span class="tool">tool ›</span> grep "sign(" → 3 matches</div>
+                <div class="noise">› spawned pid 48213 · pty attach · heartbeat ok</div>
+                <div><span class="role">agent ›</span> Rotating tokens; setting ttl from env <span class="redact">ROTATE_TTL=•••••</span></div>
+                <div><span class="tool">tool ›</span> Edit auth/session.ts (+18 −4)</div>
+                <div><span class="role">agent ›</span> Done. Running the suite next.</div>
+              </div>
+            </div>
+          </div></div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">05</span> · Transcript</div>
+          <div class="fname">The agent's stream, filtered &amp; private</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">LogsTab: live SSE chat, follow-to-bottom, <b>hide-noise</b> filter, <b>privacy / redact</b> mode, transcript search, copy, block merging.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">Chat shows only the final reply; no raw stream, no tool calls, no controls.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val">A <b>Logs canvas</b> off any run. Controls are quiet ghost chips: <b>Follow</b>, <b>Hide noise</b>, <b>Redact</b> (on by default), search. Monospace, calm, no chrome.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#356fd2"></span> canvas</span>
+            <span class="chip"><code>/logs</code></span>
+          </div>
+          <div class="seen">Redact-by-default keeps secrets out of view; matches the studio-2 "color = state, quiet by default" ethos.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 07 WORKFLOW LAUNCH ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers</div><div class="cmd"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody"><div class="thread"><div class="wrap">
+            <div class="msg user"><div class="b">/research</div></div>
+            <div class="msg assistant"><div class="card">
+              <div class="ch">
+                <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg></div>
+                <div><div class="ct">Launch · Deep Research</div><div class="csub">workflow · fan-out + verify + synthesize</div></div>
+              </div>
+              <div class="cb">
+                <div class="field"><label>Question</label><div class="inp area ph">What changed in the OAuth spec since 2.0?</div></div>
+                <div class="field"><label>Depth</label><div class="optrow"><span class="opt">Quick</span><span class="opt pick">Standard</span><span class="opt">Exhaustive</span></div></div>
+              </div>
+              <div class="cf"><button class="pbtn brand">Launch ▸</button><span class="csub" style="margin-left:auto">becomes a run card</span></div>
+            </div></div>
+          </div></div>
+          <div class="composer"><div class="cc"><input value="/research" /><span class="mic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 003-3V6a3 3 0 00-6 0v5a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.9V21h2v-3.1A7 7 0 0019 11h-2z"/></svg></span></div></div>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">06</span> · Launch</div>
+          <div class="fname">Filling inputs is a tiny inline form</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">Workflows view with a <b>Launch</b> tab: input fields per workflow, trigger execution, plus an optional workflow frontend.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">The Store has 15 read-only cards that only prefill chat. None launch a real run with typed inputs.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val">A slash command or a Store card opens a <b>small form card</b> with just the inputs that workflow needs. <b>Launch</b> turns it into the run card from slide 01. The Store deep-links straight here.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#6d56d8"></span> inline card → run card</span>
+            <span class="chip"><code>/&lt;workflow&gt;</code> or Store</span>
+          </div>
+          <div class="seen"><b>studio-2</b> has WorkflowLaunchForm + a launch→Runs handoff; the field logic is already written.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 08 WORKFLOW GRAPH ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers · graph</div><div class="cmd"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody"><div class="split">
+            <div class="rail">
+              <div class="rmsg u">show the workflow graph</div>
+              <div class="rmsg a">Live DAG, bound to the run →</div>
+              <div class="rcomposer">Message…</div>
+            </div>
+            <div class="canvas">
+              <div class="cvtop"><span class="cvt">Implement · auth refactor</span><div class="seg"><button>Tree</button><button class="on">Graph</button></div></div>
+              <div style="flex:1;overflow:hidden;background:#fafbfc;background-image:radial-gradient(#e2e7ef 1px,transparent 1px);background-size:16px 16px">
+                <div class="pipe">
+                  <div class="pnode-wrap"><div class="pnode agent"><div class="kick">Agent</div><div class="ti">plan</div><div class="ou">3 steps drafted</div></div></div>
+                  <div class="conn"></div>
+                  <div class="pnode-wrap"><div class="pnode loop cur"><div class="kick">Loop</div><div class="ti">edit · review</div><div class="ou">pass 2 of 3…</div></div></div>
+                  <div class="conn"></div>
+                  <div class="pnode-wrap"><div class="pnode compute"><div class="kick">Compute</div><div class="ti">run-tests</div><div class="ou">queued</div></div></div>
+                  <div class="conn"></div>
+                  <div class="pnode-wrap"><div class="pnode approval"><div class="kick">Approval</div><div class="ti">deploy?</div><div class="ou">gated</div></div></div>
+                </div>
+              </div>
+            </div>
+          </div></div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">07</span> · Graph</div>
+          <div class="fname">The DAG you already built, now live</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">Workflow DAG visualization of node structure with per-node state.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">apps/smithers <b>already has</b> the ReactFlow node cards (agent / compute / approval / loop / merge / human, color-coded), but only as a static prop for grill-me.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val">Bind those same node cards to a <b>real run</b>. It's just the second tab of the run canvas: <b>Tree | Graph</b>. The running node gets the cursor ring. Almost nothing new to build.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#6d56d8"></span> canvas (Graph tab)</span>
+            <span class="chip">reuses WorkflowGraph.tsx</span>
+          </div>
+          <div class="seen">The node component, dagre layout, and kind colors already exist in <code>src/askme/</code>. This is the cheapest high-impact win.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 09 TIME TRAVEL ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers · timeline</div><div class="cmd"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody"><div class="split">
+            <div class="rail">
+              <div class="rmsg u">go back to before the tests broke</div>
+              <div class="rmsg a">Scrub the timeline →</div>
+              <div class="rmsg a" style="color:#a34d9f">Forked run 4822 ↗</div>
+              <div class="rcomposer">Message…</div>
+            </div>
+            <div class="canvas">
+              <div class="cvtop"><span class="cvt">Time travel</span><span class="csub" style="margin-left:8px">12 snapshots</span></div>
+              <div class="tl">
+                <span class="tlbanner"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7M3 5v4h4"/></svg> viewing frame 7 / 12 · 2 tasks were running</span>
+                <div class="track">
+                  <div class="fill"></div>
+                  <div class="tldot done" style="left:8%"></div>
+                  <div class="tldot done" style="left:22%"></div>
+                  <div class="tldot done" style="left:38%"></div>
+                  <div class="tldot head" style="left:55%"></div>
+                  <div class="tldot" style="left:70%"></div>
+                  <div class="tldot" style="left:86%"></div>
+                  <div class="fork"></div>
+                  <div class="forktag">run 4822</div>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:30px"><button class="pbtn brand">Fork from here</button><button class="gbtn">Replay</button><button class="gbtn">Rewind run to here</button></div>
+              </div>
+            </div>
+          </div></div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">08</span> · Time travel</div>
+          <div class="fname">Snapshots, fork, replay, rewind</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">Snapshots list + FrameScrubber: browse checkpoints, <b>Fork</b> a new run from a snapshot, <b>Replay</b> / resume, <b>Rewind</b> to a frame with a banner showing running-task count.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">No time-travel surface at all.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val">One <b>timeline strip</b> at the top of the run canvas. Drag the head to a frame; <b>Fork</b> branches a new run card into the thread, <b>Replay</b> resumes, <b>Rewind</b> moves the live run. The deepest gateway feature, made one control.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#6d56d8"></span> canvas strip</span>
+            <span class="chip"><code>/timeline</code> · <code>/fork</code></span>
+          </div>
+          <div class="seen">Backed by <code>smithers fork / replay / rewind / timeline</code>. studio-2 has placeholders; the CLI verbs are stable.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 10 AGENTS ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers</div><div class="cmd"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody"><div class="thread"><div class="wrap">
+            <div class="msg user"><div class="b">/agents</div></div>
+            <div class="msg assistant"><div class="card">
+              <div class="ch"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a5 5 0 0 1 5 5v2a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5zM4 21a8 8 0 0 1 16 0"/></svg></div><div><div class="ct">Agents &amp; providers</div><div class="csub">3 ready · 1 not detected</div></div></div>
+              <div class="cb" style="padding-top:4px;padding-bottom:4px">
+                <div class="lrow"><div class="av" style="background:#0f8f78">C</div><div><div class="nm">Claude Code</div><div class="meta">claude-opus-4-8 · code, review</div></div><div class="tags"><span class="mini ok">oauth</span><span class="statusdot on"></span></div></div>
+                <div class="lrow"><div class="av" style="background:#356fd2">X</div><div><div class="nm">Codex</div><div class="meta">gpt-5.5 · code</div></div><div class="tags"><span class="mini ok">key set</span><span class="statusdot on"></span></div></div>
+                <div class="lrow"><div class="av" style="background:#bf5b16">Cb</div><div><div class="nm">Cerebras</div><div class="meta">gpt-oss-120b · chat</div></div><div class="tags"><span class="mini ok">key set</span><span class="statusdot on"></span></div></div>
+                <div class="lrow off"><div class="av" style="background:#9a9aa3">G</div><div><div class="nm">Gemini</div><div class="meta">not detected</div></div><div class="tags"><span class="mini">no key</span><span class="statusdot off"></span></div></div>
+              </div>
+            </div></div>
+          </div></div>
+          <div class="composer"><div class="cc"><input value="/agents" /><span class="mic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 003-3V6a3 3 0 00-6 0v5a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.9V21h2v-3.1A7 7 0 0019 11h-2z"/></svg></span></div></div>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">09</span> · Agents</div>
+          <div class="fname">Which providers are wired up</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">AgentsView: available / unavailable agents, roles, command + binary path, auth status, API-key presence.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">No notion of multiple agents; chat is Cerebras-only.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val"><code style="color:#6d56d8">/agents</code> returns a compact card: one row per provider, status dot for availability, auth / key badges. Rarely needed, so a card on demand, not a nav item.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#0f8f78"></span> inline card</span>
+            <span class="chip"><code>/agents</code></span>
+          </div>
+          <div class="seen">Backed by <code>smithers agents</code>. Pairs with a Settings canvas for registering keys / subscriptions.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 11 MEMORY ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers</div><div class="cmd"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody"><div class="thread"><div class="wrap">
+            <div class="msg user"><div class="b">/memory why did the auth tests flake?</div></div>
+            <div class="msg assistant"><div class="card">
+              <div class="ch"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a4 4 0 0 0-4 4 4 4 0 0 0-1 7 3 3 0 0 0 5 2 3 3 0 0 0 5-2 4 4 0 0 0-1-7 4 4 0 0 0-4-4z"/></svg></div><div><div class="ct">Memory · recall</div><div class="csub">top 3 of 214 facts</div></div></div>
+              <div class="cb">
+                <div class="srchbar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg> why did the auth tests flake?</div>
+                <div class="fact"><span class="nschip">ci</span><div class="ftxt">Token TTL races the clock skew on CI; rotation must use a fixed ROTATE_TTL, not wall time.</div><span class="sim">0.94</span></div>
+                <div class="fact"><span class="nschip">auth</span><div class="ftxt">session.ts signs tokens synchronously; the suite assumed async and flaked under load.</div><span class="sim">0.88</span></div>
+                <div class="fact"><span class="nschip">infra</span><div class="ftxt">Bun mock.module leaks across concurrent test files; prefer DI seams over module mocks.</div><span class="sim">0.81</span></div>
+              </div>
+            </div></div>
+          </div></div>
+          <div class="composer"><div class="cc"><input value="/memory why did the auth tests flake?" /><span class="mic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 003-3V6a3 3 0 00-6 0v5a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.9V21h2v-3.1A7 7 0 0019 11h-2z"/></svg></span></div></div>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">10</span> · Memory</div>
+          <div class="fname">Cross-run facts, by similarity</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">MemoryView: browse facts, filter by namespace, semantic <b>recall</b> with a top-K slider and similarity scores.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">No persistent memory beyond the current chat.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val"><code style="color:#6d56d8">/memory &lt;query&gt;</code> returns a recall card: fact rows with a namespace chip and a similarity score. Browsing all facts is the same card without a query. Reads naturally as a chat answer.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#6d56d8"></span> inline card</span>
+            <span class="chip"><code>/memory</code></span>
+          </div>
+          <div class="seen">Backed by <code>smithers memory</code> (vector recall). Mirrors the agent-facing memory you already keep on disk.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 12 SCORES ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers</div><div class="cmd"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody"><div class="thread"><div class="wrap">
+            <div class="msg user"><div class="b">/eval review-suite</div></div>
+            <div class="msg assistant"><div class="card">
+              <div class="ch"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l3-4 3 3 5-7"/></svg></div><div><div class="ct">Scores · review-suite</div><div class="csub">24 cases · regression vs last run</div></div><div class="right"><span class="pill ok"><span class="pd"></span> +0.06</span></div></div>
+              <div class="cb">
+                <div class="tiles">
+                  <div class="tile"><div class="tn">evals</div><div class="tvv">24</div></div>
+                  <div class="tile"><div class="tn">mean</div><div class="tvv">0.82</div></div>
+                  <div class="tile"><div class="tn">tokens</div><div class="tvv">1.2M</div></div>
+                  <div class="tile"><div class="tn">p95</div><div class="tvv">8.3s</div></div>
+                  <div class="tile"><div class="tn">cost</div><div class="tvv">$0.74</div></div>
+                </div>
+                <div class="spark"><i style="height:40%"></i><i style="height:55%"></i><i style="height:48%"></i><i style="height:70%"></i><i style="height:62%"></i><i style="height:80%"></i><i style="height:74%"></i><i style="height:88%"></i></div>
+              </div>
+            </div></div>
+          </div></div>
+          <div class="composer"><div class="cc"><input value="/eval review-suite" /><span class="mic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 003-3V6a3 3 0 00-6 0v5a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.9V21h2v-3.1A7 7 0 0019 11h-2z"/></svg></span></div></div>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">11</span> · Scores</div>
+          <div class="fname">Eval results as a scorecard</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">ScoresView: summary stats, per-scorer breakdown, token / latency / cost metrics, recent-score trends.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">No evaluation or metrics surface.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val"><code style="color:#6d56d8">/eval &lt;suite&gt;</code> runs a suite and answers with a <b>scorecard card</b>: five metric tiles, a small trend spark, a regression pill. No analytics dashboard, just the numbers that matter.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#0f8f78"></span> inline card</span>
+            <span class="chip"><code>/eval</code> · <code>/scores</code></span>
+          </div>
+          <div class="seen">Backed by <code>smithers eval / scores / optimize</code> (GEPA). The optimize artifact can attach to the same card.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 13 CRONS ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers</div><div class="cmd"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody"><div class="thread"><div class="wrap">
+            <div class="msg user"><div class="b">/cron</div></div>
+            <div class="msg assistant"><div class="card">
+              <div class="ch"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div><div><div class="ct">Schedules</div><div class="csub">2 active triggers</div></div></div>
+              <div class="cb" style="padding-top:4px">
+                <div class="lrow"><div><div class="nm">Nightly audit</div><div class="meta"><code style="color:#356fd2;font-size:11px">0 3 * * *</code> · security-audit</div></div><div class="tags"><span class="mini">next 03:00</span><span class="statusdot on"></span></div></div>
+                <div class="lrow"><div><div class="nm">Weekly retro</div><div class="meta"><code style="color:#356fd2;font-size:11px">0 9 * * 1</code> · retro</div></div><div class="tags"><span class="mini">next Mon 9:00</span><span class="statusdot on"></span></div></div>
+                <div class="lrow" style="border:0"><div style="display:flex;align-items:center;gap:9px;color:#6d56d8;font-weight:600;font-size:13px"><span style="width:28px;height:28px;border-radius:8px;display:grid;place-items:center;border:1px dashed #cfc6ef">＋</span> New schedule</div></div>
+              </div>
+            </div></div>
+          </div></div>
+          <div class="composer"><div class="cc"><input value="/cron" /><span class="mic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 003-3V6a3 3 0 00-6 0v5a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.9V21h2v-3.1A7 7 0 0019 11h-2z"/></svg></span></div></div>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">12</span> · Schedules</div>
+          <div class="fname">Cron triggers, listed and added inline</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">TriggersView: list scheduled triggers (pattern, workflow, next run), create new with validation, delete with confirm.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">No scheduling surface.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val"><code style="color:#6d56d8">/cron</code> returns a <b>schedules card</b>: a row per trigger with its pattern and next run. <b>＋ New schedule</b> expands inline into pattern + workflow. No calendar, no separate page.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#356fd2"></span> inline card</span>
+            <span class="chip"><code>/cron</code></span>
+          </div>
+          <div class="seen">Backed by <code>smithers cron</code>. Scheduled runs surface as ordinary run cards + toasts when they fire.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 14 HUMAN TASKS & SIGNALS ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers</div><div class="cmd"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody"><div class="thread"><div class="wrap">
+            <div class="msg assistant"><div class="card" style="border-left:3px solid #a34d9f">
+              <div class="ch"><div class="ic" style="background:color-mix(in srgb,#a34d9f 12%,#fff);color:#a34d9f"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 9h8M8 13h5M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><div><div class="ct">The run needs your input</div><div class="csub">human task · deploy target</div></div></div>
+              <div class="cb"><div style="font-size:13px;color:#525252;margin-bottom:11px">Which environment should I deploy to?</div><div class="optrow"><span class="opt pick">staging</span><span class="opt">production</span><span class="opt">cancel</span></div></div>
+            </div></div>
+            <div class="msg assistant"><div class="card">
+              <div class="ch"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16M5 19a1 1 0 1 0 0 .01"/></svg></div><div><div class="ct">Waiting for event</div><div class="csub">run 4830 · <code style="color:#356fd2;font-size:11px">pr-merged</code></div></div><div class="right"><span class="pill wait"><span class="pd"></span> blocked</span></div></div>
+              <div class="cf"><button class="pbtn brand">Deliver signal</button><span class="csub" style="margin-left:auto">or fires on the real event</span></div>
+            </div></div>
+          </div></div>
+          <div class="composer"><div class="cc"><input placeholder="Message, or / for a command" /><span class="mic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 003-3V6a3 3 0 00-6 0v5a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.9V21h2v-3.1A7 7 0 0019 11h-2z"/></svg></span></div></div>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">13</span> · Human &amp; signals</div>
+          <div class="fname">The run asks; you answer in chat</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">Human-request gates and Signal / WaitForEvent nodes: a run blocks for a human decision or an external event.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">No human-task or signal handling.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val">A human task is just the agent <b>asking a question card</b> with option chips. A run waiting on an event shows a <b>blocked chip</b> you can satisfy with <b>Deliver signal</b> or <code style="color:#6d56d8">/signal</code>, or let the real event fire.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#a34d9f"></span> inline card</span>
+            <span class="chip"><code>/signal</code> · <code>/human</code></span>
+          </div>
+          <div class="seen">Backed by <code>smithers human / signal</code>. This is the most natural fit for a chat-first UI: a question is a message.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 15 PROMPTS ───────────── -->
+    <section class="slide">
+      <div class="slide-inner"><div class="fgrid">
+        <div class="appwin">
+          <div class="appbar"><div class="dots"><i></i><i></i><i></i></div><div class="addr"><span class="g"></span> smithers</div><div class="cmd"><span class="cd"></span> Chat ▾</div></div>
+          <div class="appbody"><div class="thread"><div class="wrap">
+            <div class="msg user"><div class="b">/prompt</div></div>
+            <div class="msg assistant"><div class="card">
+              <div class="ch"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h7"/></svg></div><div><div class="ct">Prompts</div><div class="csub">pick a template to fill the composer</div></div></div>
+              <div class="cb">
+                <div class="filetabs" style="margin-bottom:12px"><span class="ftab on">Refactor</span><span class="ftab">Bugfix</span><span class="ftab">Write spec</span><span class="ftab">Review</span></div>
+                <div class="field"><label>target</label><div class="inp ph">file or module…</div></div>
+                <div style="border:1px solid #ededed;border-radius:10px;background:#fafafb;padding:11px 13px;font:500 12px/1.6 ui-monospace,Menlo;color:#525252">Refactor <span style="background:#efeafd;color:#6d56d8;border-radius:4px;padding:0 4px">{target}</span> for clarity. Keep behaviour identical; add no new deps.</div>
+              </div>
+              <div class="cf"><button class="pbtn brand">Use prompt</button><span class="lnk" style="margin-left:auto">edit templates ›</span></div>
+            </div></div>
+          </div></div>
+          <div class="composer"><div class="cc"><input value="/prompt" /><span class="mic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 003-3V6a3 3 0 00-6 0v5a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.9V21h2v-3.1A7 7 0 0019 11h-2z"/></svg></span></div></div>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="kicker"><span class="n">14</span> · Prompts</div>
+          <div class="fname">Reusable templates, into the composer</div>
+          <div class="row"><span class="lbl">In ~/gui</span><span class="val">PromptsView: template library, source editor, input definitions, live preview with filled inputs.</span></div>
+          <div class="row"><span class="lbl">Gap</span><span class="val">No saved prompts; every message is from scratch.</span></div>
+          <div class="row"><span class="lbl">Our take</span><span class="val"><code style="color:#6d56d8">/prompt</code> opens a <b>picker card</b> with a live preview. Pick one and it <b>fills the composer</b>, ready to send. Editing the templates themselves is a Settings canvas, kept out of the way.</span></div>
+          <div class="chips">
+            <span class="chip"><span class="cdot" style="background:#6d56d8"></span> inline card → composer</span>
+            <span class="chip"><code>/prompt</code></span>
+          </div>
+          <div class="seen">Complements the Store: Store launches workflows, Prompts seed a single message.</div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- ───────────── 16 ROADMAP ───────────── -->
+    <section class="slide">
+      <div class="slide-inner">
+        <div class="kicker"><span class="n">15</span> · Putting it together</div>
+        <h2 class="head">Build the live-run core first; the rest are cards.</h2>
+        <p class="lede" style="margin-bottom:8px">Every feature lands on one of three surfaces and is reachable by a slash command or by the agent surfacing it. Suggested order: the run lifecycle (P0), then the study tools (P1), then the on-demand cards (P2).</p>
+        <table class="matrix">
+          <thead><tr><th style="width:24%">Feature</th><th style="width:22%">Surface</th><th style="width:26%">Invoked by</th><th style="width:16%">Reuse</th><th style="width:12%">Priority</th></tr></thead>
+          <tbody>
+            <tr><td>Runs (live card)</td><td><span class="sgn"><span class="b" style="background:#6d56d8"></span> inline + toast</span></td><td>launched from chat / Store</td><td>studio-2 runs</td><td><span class="pri p0">P0</span></td></tr>
+            <tr><td>Inspector (tree + node)</td><td><span class="sgn"><span class="b" style="background:#6d56d8"></span> canvas</span></td><td>Open on a run card</td><td>studio-2 RunTree</td><td><span class="pri p0">P0</span></td></tr>
+            <tr><td>Approvals</td><td><span class="sgn"><span class="b" style="background:#bf5b16"></span> inline + toast</span></td><td>gate pauses · <code style="color:#8b78e6">/approvals</code></td><td>studio-2 gate</td><td><span class="pri p0">P0</span></td></tr>
+            <tr><td>Diff</td><td><span class="sgn"><span class="b" style="background:#0f8f78"></span> inline → canvas</span></td><td><code style="color:#8b78e6">/diff</code> · agent edits</td><td>DiffBundle</td><td><span class="pri p0">P0</span></td></tr>
+            <tr><td>Workflow launch</td><td><span class="sgn"><span class="b" style="background:#6d56d8"></span> inline form</span></td><td><code style="color:#8b78e6">/&lt;workflow&gt;</code> · Store</td><td>LaunchForm</td><td><span class="pri p0">P0</span></td></tr>
+            <tr><td>Transcript / logs</td><td><span class="sgn"><span class="b" style="background:#356fd2"></span> canvas</span></td><td><code style="color:#8b78e6">/logs</code></td><td>—</td><td><span class="pri p1">P1</span></td></tr>
+            <tr><td>Workflow graph</td><td><span class="sgn"><span class="b" style="background:#6d56d8"></span> canvas (tab)</span></td><td>Graph tab on canvas</td><td><b style="color:#8b78e6">already built</b></td><td><span class="pri p1">P1</span></td></tr>
+            <tr><td>Time travel</td><td><span class="sgn"><span class="b" style="background:#6d56d8"></span> canvas strip</span></td><td><code style="color:#8b78e6">/timeline</code> · <code style="color:#8b78e6">/fork</code></td><td>CLI verbs</td><td><span class="pri p1">P1</span></td></tr>
+            <tr><td>Human &amp; signals</td><td><span class="sgn"><span class="b" style="background:#a34d9f"></span> inline</span></td><td>run asks · <code style="color:#8b78e6">/signal</code></td><td>—</td><td><span class="pri p1">P1</span></td></tr>
+            <tr><td>Agents · Memory · Scores · Crons · Prompts</td><td><span class="sgn"><span class="b" style="background:#525252"></span> inline cards</span></td><td><code style="color:#8b78e6">/agents /memory /eval /cron /prompt</code></td><td>CLI verbs</td><td><span class="pri p2">P2</span></td></tr>
+          </tbody>
+        </table>
+        <p class="lede" style="margin-top:18px; color:#aeb0c4">The thesis in one line: <b style="color:#fff">the conversation is the console.</b> Smithers' 25 sections collapse into cards the agent raises when they matter, one canvas when you want to study, and the corner when it's just keeping you posted.</p>
+      </div>
+    </section>
+
+  </div>
+
+  <div class="bottom">
+    <div class="nav"><button id="prev" aria-label="Previous">‹</button></div>
+    <div class="progress"><i id="bar"></i></div>
+    <div class="dots" id="dots"></div>
+    <div class="nav"><button id="next" aria-label="Next">›</button></div>
+  </div>
+</div>
+<div class="hint">Navigate with <kbd>←</kbd> <kbd>→</kbd> · <kbd>space</kbd> · <kbd>1</kbd>–<kbd>9</kbd> jump</div>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const total = slides.length;
+  let i = 0;
+  const curEl = document.getElementById('cur');
+  const totEl = document.getElementById('tot');
+  const bar = document.getElementById('bar');
+  const dotsWrap = document.getElementById('dots');
+  totEl.textContent = String(total).padStart(2,'0');
+
+  slides.forEach((_,n)=>{
+    const b = document.createElement('button');
+    b.addEventListener('click',()=>go(n));
+    dotsWrap.appendChild(b);
+  });
+  const dots = Array.from(dotsWrap.children);
+
+  function go(n){
+    i = Math.max(0, Math.min(total-1, n));
+    slides.forEach((s,n2)=>s.classList.toggle('active', n2===i));
+    dots.forEach((d,n2)=>d.classList.toggle('on', n2===i));
+    curEl.textContent = String(i+1).padStart(2,'0');
+    bar.style.width = ((i+1)/total*100) + '%';
+  }
+  function next(){ go(i+1); }
+  function prev(){ go(i-1); }
+
+  document.getElementById('next').addEventListener('click',next);
+  document.getElementById('prev').addEventListener('click',prev);
+
+  const stage = document.getElementById('stage');
+
+  window.addEventListener('keydown',(e)=>{
+    if(['ArrowRight',' ','PageDown','l','j'].includes(e.key)){ e.preventDefault(); next(); }
+    else if(['ArrowLeft','PageUp','h','k'].includes(e.key)){ e.preventDefault(); prev(); }
+    else if(e.key==='Home'){ go(0); }
+    else if(e.key==='End'){ go(total-1); }
+    else if(e.key>='1'&&e.key<='9'){ go(parseInt(e.key,10)-1); }
+  });
+
+  // click left/right thirds to navigate (ignore clicks on interactive bits)
+  stage.addEventListener('click',(e)=>{
+    if(e.target.closest('button,a,input,.appwin')) return;
+    const x = e.clientX / window.innerWidth;
+    if(x>0.5) next(); else prev();
+  });
+
+  go(0);
+</script>
+</body>
+</html>

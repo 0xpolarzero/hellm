@@ -383,7 +383,7 @@ export class ClaudeCodeAgent extends BaseCliAgent {
             args.push("--chrome");
         if (this.opts.noChrome)
             args.push("--no-chrome");
-        if (this.opts.continue)
+        if (this.opts.continue || params.options?.continueSession)
             args.push("--continue");
         if (this.opts.debug === true) {
             args.push("--debug");
@@ -445,9 +445,27 @@ export class ClaudeCodeAgent extends BaseCliAgent {
             args.push("--verbose");
         if (this.extraArgs?.length)
             args.push(...this.extraArgs);
+        // Durability: inject a PostToolUse hook that calls back into smithers for a
+        // strict Tier 1 snapshot at each file-edit / Bash boundary. Only when the
+        // engine passes a socket path (durability enabled); additive --settings.
+        const durabilitySocket = typeof params.options?.durabilitySocket === "string"
+            ? params.options.durabilitySocket
+            : undefined;
+        if (durabilitySocket) {
+            args.push("--settings", JSON.stringify({
+                hooks: {
+                    PostToolUse: [{
+                        matcher: "Write|Edit|MultiEdit|NotebookEdit|Bash",
+                        hooks: [{ type: "command", command: "smithers snapshot-hook" }],
+                    }],
+                },
+            }));
+        }
         if (params.prompt)
             args.push(params.prompt);
         const accountEnv = {};
+        if (durabilitySocket)
+            accountEnv.SMITHERS_SNAPSHOT_SOCK = durabilitySocket;
         if (this.opts.configDir)
             accountEnv.CLAUDE_CONFIG_DIR = this.opts.configDir;
         if (this.opts.apiKey)

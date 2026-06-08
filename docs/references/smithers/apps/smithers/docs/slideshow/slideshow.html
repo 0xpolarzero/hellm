@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Smithers — feature validation slideshow</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root {
+    --bg: #0d1117; --fg: #f1f5f9; --muted: #94a3b8;
+    --card: #161b22; --border: #30363d; --accent: #6d56d8;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f8fafc; --fg:#0f172a; --muted:#475569; --card:#fff; --border:#e2e8f0; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  header.top { position: sticky; top: 0; z-index: 5; padding: 12px 16px; background: var(--card); border-bottom: 1px solid var(--border); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  header.top h1 { font-size: 16px; margin: 0; }
+  header.top nav { display: flex; gap: 8px; flex-wrap: wrap; overflow-x: auto; max-width: 60vw; }
+  header.top nav a { color: var(--muted); text-decoration: none; padding: 4px 8px; border-radius: 6px; }
+  header.top nav a:hover, header.top nav a.active { color: var(--fg); background: var(--bg); }
+  .filters { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+  .filters .group { display: inline-flex; gap: 4px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+  .filters button { font: inherit; color: var(--muted); background: transparent; border: 0; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+  .filters button[aria-pressed="true"] { background: var(--card); color: var(--fg); }
+  .filters .label { font-size: 12px; color: var(--muted); margin-right: 4px; }
+  main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+  section.slide { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 16px 0; }
+  section.slide h2 { margin: 0 0 8px; font-size: 20px; }
+  section.slide .desc { color: var(--fg); margin: 0 0 6px; }
+  section.slide .val { color: var(--muted); margin: 0 0 16px; font-size: 13px; }
+  .shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  .shot { margin: 0; border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--bg); }
+  .shot img { width: 100%; height: auto; display: block; border-radius: 4px; }
+  .shot figcaption { font-size: 12px; color: var(--muted); margin-top: 6px; text-align: center; }
+  .shot.placeholder { display: grid; place-items: center; min-height: 180px; color: var(--muted); border-style: dashed; }
+  .shot.placeholder .ph { font-size: 13px; text-align: center; padding: 12px; }
+  .shot[hidden] { display: none; }
+  .motion { margin-top: 8px; display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 6px; }
+  .motion strong { grid-column: 1 / -1; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .motion-frame { margin: 0; }
+  .motion-frame img { width: 100%; height: auto; border: 1px solid var(--border); border-radius: 4px; display: block; }
+  .motion-frame figcaption { font-size: 10px; color: var(--muted); text-align: center; margin-top: 2px; }
+  footer { padding: 24px 16px; text-align: center; color: var(--muted); font-size: 12px; }
+  .keys { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Smithers — feature validation slideshow</h1>
+  <nav><a href="#home" data-jump="0">Home — composer &amp; hero</a><a href="#store" data-jump="1">Workflow store</a><a href="#askme" data-jump="2">Ask Me</a><a href="#runs" data-jump="3">Runs list</a><a href="#approvals" data-jump="4">Approvals queue</a><a href="#agents" data-jump="5">Agents &amp; providers</a><a href="#memory" data-jump="6">Memory</a><a href="#prompts" data-jump="7">Prompts</a><a href="#scores" data-jump="8">Scores</a><a href="#crons" data-jump="9">Crons</a><a href="#issues" data-jump="10">Issues</a><a href="#tickets" data-jump="11">Tickets</a><a href="#landings" data-jump="12">Landings</a><a href="#vcs" data-jump="13">Changes (VCS)</a><a href="#palette" data-jump="14">Palette</a><a href="#login" data-jump="15">Sign in</a></nav>
+  <span class="keys">← / → to navigate</span>
+  <div class="filters" role="toolbar" aria-label="Slide filters">
+    <span class="label">Theme</span>
+    <div class="group" data-filter="theme">
+      <button type="button" data-value="all" aria-pressed="true">All</button>
+      <button type="button" data-value="light" aria-pressed="false">Light</button>
+      <button type="button" data-value="dark" aria-pressed="false">Dark</button>
+    </div>
+    <span class="label">Device</span>
+    <div class="group" data-filter="device">
+      <button type="button" data-value="all" aria-pressed="true">All</button>
+      <button type="button" data-value="desktop" aria-pressed="false">Desktop</button>
+      <button type="button" data-value="mobile" aria-pressed="false">Mobile</button>
+    </div>
+  </div>
+</header>
+<main><section class="slide" data-index="0" id="home">
+        <header>
+          <h2>Home — composer &amp; hero</h2>
+          <p class="desc">Centered chat-first shell. The composer is the entry point for every feature; slash commands open cards or canvases without leaving home.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/smoke.spec.ts — boots without uncaught errors; composer + hero render.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/home.desktop.light.png" alt="Home — composer &amp; hero — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/home.desktop.dark.png" alt="Home — composer &amp; hero — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/home.mobile.light.png" alt="Home — composer &amp; hero — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="1" id="store">
+        <header>
+          <h2>Workflow store</h2>
+          <p class="desc">Browse and pick from the workflow app store. Each card opens a workflow editor or launches a run.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/store.spec.ts — store route renders the catalog and lets users open a workflow.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/store.desktop.light.png" alt="Workflow store — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/store.desktop.dark.png" alt="Workflow store — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/store.mobile.light.png" alt="Workflow store — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="2" id="askme">
+        <header>
+          <h2>Ask Me</h2>
+          <p class="desc">Reverse interview: Smithers grills you to sharpen an idea before you commit to a workflow.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/askme.spec.ts — opens askme route and walks through the grill prompts.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/askme.desktop.light.png" alt="Ask Me — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/askme.desktop.dark.png" alt="Ask Me — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/askme.mobile.light.png" alt="Ask Me — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="3" id="runs">
+        <header>
+          <h2>Runs list</h2>
+          <p class="desc">Every recent workflow execution. Each row drills into the run inspector, logs, timeline, diff, and changes.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/surfaces.spec.ts — `/runs` surface renders rows; row navigation lands on the inspector.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/runs.desktop.light.png" alt="Runs list — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/runs.desktop.dark.png" alt="Runs list — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/runs.mobile.light.png" alt="Runs list — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="4" id="approvals">
+        <header>
+          <h2>Approvals queue</h2>
+          <p class="desc">Pending human-gate approvals across runs. Approve/deny inline; live-updated via the gateway.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/approvals.spec.ts — pending gates list and approve/deny actions work.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/approvals.desktop.light.png" alt="Approvals queue — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/approvals.desktop.dark.png" alt="Approvals queue — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/approvals.mobile.light.png" alt="Approvals queue — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="5" id="agents">
+        <header>
+          <h2>Agents &amp; providers</h2>
+          <p class="desc">Registry of every agent the workspace can talk to. Each row shows availability and the underlying provider.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/featureCards.spec.ts → /agents card — provider availability counts match the catalog.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/agents.desktop.light.png" alt="Agents &amp; providers — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/agents.desktop.dark.png" alt="Agents &amp; providers — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/agents.mobile.light.png" alt="Agents &amp; providers — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="6" id="memory">
+        <header>
+          <h2>Memory</h2>
+          <p class="desc">Cross-run memory facts with namespaces, recall search, and per-fact detail panes.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/featureCards.spec.ts → /memory card — recall hits the seeded fact set.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/memory.desktop.light.png" alt="Memory — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/memory.desktop.dark.png" alt="Memory — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/memory.mobile.light.png" alt="Memory — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="7" id="prompts">
+        <header>
+          <h2>Prompts</h2>
+          <p class="desc">All prompt templates in the workspace, sourced from PROMPT_TEMPLATES with their imports inlined.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/featureCards.spec.ts → /prompts card — templates render with imports.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/prompts.desktop.light.png" alt="Prompts — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/prompts.desktop.dark.png" alt="Prompts — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/prompts.mobile.light.png" alt="Prompts — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="8" id="scores">
+        <header>
+          <h2>Scores</h2>
+          <p class="desc">Scorer dashboard. Summary, metrics, and recent reports tabs; empty-state when nothing has run.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/featureCards.spec.ts → /scores card — score report rows render.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/scores.desktop.light.png" alt="Scores — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/scores.desktop.dark.png" alt="Scores — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/scores.mobile.light.png" alt="Scores — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="9" id="crons">
+        <header>
+          <h2>Crons</h2>
+          <p class="desc">Scheduled triggers. Each cron summary is derived from SEEDED_CRONS — adding a cron updates the list.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/featureCards.spec.ts → /crons card — sorted cron summary lines up.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/crons.desktop.light.png" alt="Crons — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/crons.desktop.dark.png" alt="Crons — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/crons.mobile.light.png" alt="Crons — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="10" id="issues">
+        <header>
+          <h2>Issues</h2>
+          <p class="desc">Code-host issues mocked from the vcs template. Filter by state/labels; opens detail in a side rev.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/reviewSurfaces.spec.ts — `/issues` renders and filters correctly.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/issues.desktop.light.png" alt="Issues — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/issues.desktop.dark.png" alt="Issues — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/issues.mobile.light.png" alt="Issues — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="11" id="tickets">
+        <header>
+          <h2>Tickets</h2>
+          <p class="desc">Linear-style ticket queue with status pills and assignee chips. Drills into a ticket detail view.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/reviewSurfaces.spec.ts — `/tickets` rows render with status pills.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/tickets.desktop.light.png" alt="Tickets — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/tickets.desktop.dark.png" alt="Tickets — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/tickets.mobile.light.png" alt="Tickets — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="12" id="landings">
+        <header>
+          <h2>Landings</h2>
+          <p class="desc">Pull-request landings feed. Filter by repo / state; preview the changed surface.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/reviewSurfaces.spec.ts — `/landings` filter segment toggles state.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/landings.desktop.light.png" alt="Landings — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/landings.desktop.dark.png" alt="Landings — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/landings.mobile.light.png" alt="Landings — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="13" id="vcs">
+        <header>
+          <h2>Changes (VCS)</h2>
+          <p class="desc">Working-tree changes across the project, grouped by repo. Pairs with the diff viewer.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/diffVcs.spec.ts — `/vcs` lists changed files; opens the diff.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/vcs.desktop.light.png" alt="Changes (VCS) — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/vcs.desktop.dark.png" alt="Changes (VCS) — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/vcs.mobile.light.png" alt="Changes (VCS) — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="14" id="palette">
+        <header>
+          <h2>Palette</h2>
+          <p class="desc">Command palette modal hosted as a route. Keyboard-first launcher for any feature.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/featureCards.spec.ts → palette — opens the palette modal from /palette.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/palette.desktop.light.png" alt="Palette — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/palette.desktop.dark.png" alt="Palette — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/palette.mobile.light.png" alt="Palette — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section>
+<section class="slide" data-index="15" id="login">
+        <header>
+          <h2>Sign in</h2>
+          <p class="desc">Sign-in page. Used when entering the remote-mode wiring; otherwise the app runs fully local.</p>
+          <p class="val"><strong>Validation:</strong> tests/e2e/signIn.spec.ts — login form mounts and validates basic input.</p>
+        </header>
+        <div class="shots"><figure class="shot light desktop" data-theme="light" data-device="desktop">
+              <img loading="lazy" src="assets/login.desktop.light.png" alt="Sign in — light · desktop">
+              <figcaption>light · desktop</figcaption>
+              
+            </figure>
+<figure class="shot dark desktop" data-theme="dark" data-device="desktop">
+              <img loading="lazy" src="assets/login.desktop.dark.png" alt="Sign in — dark · desktop">
+              <figcaption>dark · desktop</figcaption>
+              
+            </figure>
+<figure class="shot light mobile" data-theme="light" data-device="mobile">
+              <img loading="lazy" src="assets/login.mobile.light.png" alt="Sign in — light · mobile">
+              <figcaption>light · mobile</figcaption>
+              
+            </figure></div>
+      </section></main>
+<footer>
+  16 surfaces · captured against <code>http://127.0.0.1:5175</code>
+  
+</footer>
+<script>
+  // Keyboard prev/next between slides.
+  const slides = Array.from(document.querySelectorAll('section.slide'));
+  let active = 0;
+  function go(i) {
+    active = Math.max(0, Math.min(slides.length - 1, i));
+    slides[active].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); go(active + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(active - 1); }
+  });
+  // Track which slide is in view to highlight the nav link.
+  const links = Array.from(document.querySelectorAll('header.top nav a'));
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting) {
+        const idx = slides.indexOf(e.target);
+        if (idx >= 0) {
+          active = idx;
+          links.forEach((l, i) => l.classList.toggle('active', i === idx));
+        }
+      }
+    }
+  }, { threshold: 0.4 });
+  slides.forEach((s) => io.observe(s));
+  // Theme + device filter toggles — hide shots that do not match the
+  // selected combination. "all" matches anything.
+  const state = { theme: 'all', device: 'all' };
+  function apply() {
+    document.querySelectorAll('.shot').forEach((el) => {
+      const theme = el.getAttribute('data-theme');
+      const device = el.getAttribute('data-device');
+      const matchTheme = state.theme === 'all' || theme === state.theme;
+      const matchDevice = state.device === 'all' || device === state.device;
+      if (matchTheme && matchDevice) el.removeAttribute('hidden');
+      else el.setAttribute('hidden', '');
+    });
+  }
+  document.querySelectorAll('.filters .group').forEach((group) => {
+    const kind = group.getAttribute('data-filter');
+    group.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button');
+      if (!btn) return;
+      group.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'));
+      state[kind] = btn.getAttribute('data-value');
+      apply();
+    });
+  });
+</script>
+</body>
+</html>

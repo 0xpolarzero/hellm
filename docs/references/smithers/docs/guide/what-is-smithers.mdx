@@ -1,0 +1,85 @@
+---
+title: "What Smithers Is (For Humans)"
+description: "Hand your coding agent real, multi-step work and trust it to finish — durably, with retries, approvals, and full visibility."
+---
+
+Smithers lets you hand your coding agent real, multi-step work and trust it to finish — surviving crashes, retries, and review loops.
+
+You already talk to a coding agent. You ask for a change, it works for a few minutes, you read the result. That loop is great for small, synchronous edits. It falls apart the moment the work gets long.
+
+## The treadmill
+
+A single agent in a chat window is a black box on a treadmill. It forgets what it decided ten steps ago. It stalls halfway through a long job and waits for you to nudge it. And if the process crashes — a closed laptop, a dropped connection, a flaky tool — the work is gone. You start over.
+
+The problem isn't the model. The model is good. The problem is that nothing underneath it is durable. There's no record of what finished, so there's nothing to resume from.
+
+## The shift: from chat to durable background work
+
+Smithers moves the work off the treadmill and into a durable runtime. Instead of one agent grinding synchronously while you watch, you describe a real job and it runs in the background — for minutes or for days.
+
+Every step that finishes is persisted the moment it completes. So the runtime always knows what's done and what to run next. A crash isn't lost work; it's a resume point. A long job isn't a stall; it's a run you can walk away from. And the whole thing is observable, so you're never staring at a black box.
+
+<Frame caption="Smithers is the durable layer between you and the models — the part that doesn't change when the agent topology does.">
+  <img src="/images/why/three-layer-stack.svg" alt="Three-layer diagram: your prompt on top, Smithers as the durable orchestration layer in the middle, and interchangeable agents and models at the bottom" />
+</Frame>
+
+## You don't write workflows. You talk to your agent.
+
+Here's the part that matters: you don't click a GUI, and you don't write code.
+
+You install the `smithers` skill into your coding agent, and from then on **you drive it through your agent.** You say what you want in plain language. Your agent picks the right workflow, starts the run, watches it, and brings you back the result — or pauses to ask when it needs a decision. Smithers is the engine; your agent is the driver; you stay in the chat you already use.
+
+The TSX workflows and the CLI exist, and you can read them. But the primary path is a sentence to your agent.
+
+## What you get
+
+Four guarantees a single agent in a chat window can't give you. You get all of them for free, on any agent, any model, any machine.
+
+| You get | What it means for you |
+| --- | --- |
+| **Durable runs** | Work persists every step. A crash, a closed laptop, or a flaky tool is a resume point, not lost work. Runs go for minutes or days. |
+| **Any agent, any model** | Point each step at whichever agent and model is best — Claude Code, Codex, and more. Swap them without redoing the work. |
+| **Review loops and approvals** | Tasks retry on failure, loops run until tests pass or a reviewer signs off, and the run pauses for your approval on anything that matters. |
+| **Dozens of ready-made recipes** | Task-specific and project-specific workflows ship in the box — `implement`, `kanban`, `research-plan-implement`, `review`, `audit`, and more. Your agent picks the right one. |
+
+<Frame caption="The same job runs across different agents and models without rewriting the work — proof that Smithers isn't tied to one lab or one harness.">
+  <img src="/images/why/any-agent.png" alt="One Smithers workflow running tasks across multiple different coding agents and models side by side" />
+</Frame>
+
+## The magic moment
+
+Try this. Open your coding agent and say:
+
+> "Add rate limiting to the API and don't stop until it builds, validates, and a reviewer signs off."
+
+Your agent starts a durable run that writes the code, runs the build and tests, loops back to fix what fails, and only finishes once a reviewer approves — pausing for your sign-off at the gate.
+
+A few more things you can just say:
+
+> "Keep working on reducing our flaky tests and don't stop until I tell you to."
+
+A long-horizon run that grinds on test flakiness in the background and keeps going across crashes until you call it.
+
+> "Migrate the dashboard to the new gateway APIs. Show me the milestone plan before you start, then work through it."
+
+Plans the migration, pauses so you can approve the plan, then executes it milestone by milestone — resuming exactly where it left off if anything interrupts it.
+
+<Frame caption="A run survives a hard crash mid-task and picks up exactly where it left off — no lost work, no restart from scratch.">
+  <img src="/images/why/crash-resume.gif" alt="A Smithers run is killed partway through, then resumes from the last persisted step instead of starting over" />
+</Frame>
+
+None of these need you to write a workflow or touch a terminal. You ask. Smithers runs it durably. You get higher-quality output than a one-shot prompt, with the structure real work demands.
+
+## Read next
+
+<CardGroup cols={3}>
+  <Card title="What you can do" icon="sparkles" href="/guide/what-you-can-do">
+    The outcome catalog — the real jobs you can hand off, and what to say to get them.
+  </Card>
+  <Card title="Get started" icon="rocket" href="/guide/get-started">
+    Install the skill and run your first durable job through your agent.
+  </Card>
+  <Card title="Concepts" icon="book-open" href="/guide/concepts">
+    The handful of ideas — runs, frames, approvals — behind everything above.
+  </Card>
+</CardGroup>

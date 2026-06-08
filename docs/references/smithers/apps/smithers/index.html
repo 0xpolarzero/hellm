@@ -3,7 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#ffffff" />
+    <meta
+      name="theme-color"
+      content="#ffffff"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#0b0b0d"
+      media="(prefers-color-scheme: dark)"
+    />
     <meta
       name="description"
       content="Smithers — describe what you want to build."
@@ -15,14 +24,54 @@
       // Resolve the theme before first paint so there's no flash of the wrong
       // mode. The React app keeps data-theme in sync afterwards.
       (function () {
+        var LIGHT = "#ffffff";
+        var DARK = "#0b0b0d";
+        // Mirror the resolved theme onto a single active theme-color meta so the
+        // mobile browser chrome matches even when the in-app toggle overrides the
+        // OS preference. The media-scoped metas above cover the pre-script paint.
+        function syncThemeColor(theme) {
+          var meta = document.querySelector(
+            'meta[name="theme-color"]:not([media])',
+          );
+          if (!meta) {
+            meta = document.createElement("meta");
+            meta.setAttribute("name", "theme-color");
+            document.head.appendChild(meta);
+            // Drop the media-scoped metas (they only covered the pre-script
+            // paint). They sit earlier in tree order, so the browser would pick
+            // one of them over this dynamic meta whenever the in-app toggle
+            // disagrees with the OS preference.
+            document
+              .querySelectorAll('meta[name="theme-color"][media]')
+              .forEach(function (m) {
+                m.parentNode.removeChild(m);
+              });
+          }
+          meta.setAttribute("content", theme === "dark" ? DARK : LIGHT);
+        }
         try {
-          var t = localStorage.getItem("smithers.theme");
+          // Resolve the theme from the persisted preferences store
+          // ("smithers.prefs" blob, written by zustand persist) before React
+          // boots, so there is no flash of the wrong mode.
+          var t;
+          try {
+            t = JSON.parse(localStorage.getItem("smithers.prefs")).state.theme;
+          } catch (e) {}
           if (t !== "light" && t !== "dark") {
             t = matchMedia("(prefers-color-scheme: dark)").matches
               ? "dark"
               : "light";
           }
           document.documentElement.dataset.theme = t;
+          syncThemeColor(t);
+          // The React toggle writes data-theme on <html>; follow it so the chrome
+          // updates the moment the user switches modes.
+          new MutationObserver(function () {
+            syncThemeColor(document.documentElement.dataset.theme);
+          }).observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ["data-theme"],
+          });
         } catch (e) {}
       })();
     </script>

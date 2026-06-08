@@ -8,12 +8,28 @@
  * your browser, and stays alive until you Ctrl-C. The worker is a real agent
  * working directly in this repo (shared-repo model), so it will read/edit files.
  */
-import { Gateway, SmithersDb, mdxPlugin } from "smithers-orchestrator";
+import { Gateway, mdxPlugin } from "smithers-orchestrator";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { createServer } from "node:net";
 
 mdxPlugin();
+
+/**
+ * Verify the port is free before launching. The gateway's listen() attaches no
+ * "error" listener to its http server, so an EADDRINUSE there crashes the
+ * process with a raw stack instead of rejecting. We probe the port ourselves
+ * (catchable) and surface a friendly message.
+ */
+function assertPortFree(checkHost: string, checkPort: number): Promise<void> {
+  return new Promise((resolvePort, rejectPort) => {
+    const probe = createServer();
+    probe.once("error", rejectPort);
+    probe.once("listening", () => probe.close(() => resolvePort()));
+    probe.listen(checkPort, checkHost);
+  });
+}
 
 const here = dirname(fileURLToPath(import.meta.url)); // .smithers/scripts
 const packDir = resolve(here, ".."); // .smithers
@@ -32,15 +48,25 @@ const gateway = new Gateway({ heartbeatMs: 250 });
 gateway.register("ultragrill", workflow, { ui: { entry: uiEntry, title: "UltraGrill" } });
 
 const auth = { triggeredBy: "cli", scopes: ["*"], role: "operator", tokenId: null };
-await gateway.startRun(
-  "ultragrill",
-  { goal, artifactPath },
-  auth as Parameters<typeof gateway.startRun>[2],
-  runId,
-  { resume: false },
-);
-await gateway.resumeRunIfNeeded(runId, "ultragrill", new SmithersDb(workflow.db), auth as never);
-await gateway.listen({ port, host });
+try {
+  // Verify the port is free first so a conflict fails before we launch the run.
+  await assertPortFree(host, port);
+  await gateway.listen({ port, host });
+  await gateway.startRun(
+    "ultragrill",
+    { goal, artifactPath },
+    auth as Parameters<typeof gateway.startRun>[2],
+    runId,
+    { resume: false },
+  );
+} catch (error) {
+  await gateway.close().catch(() => {});
+  const reason = (error as { code?: string })?.code === "EADDRINUSE"
+    ? `port ${port} is already in use (set PORT=… to pick another)`
+    : error instanceof Error ? error.message : String(error);
+  console.error(`\n  ✖ UltraGrill failed to start: ${reason}\n`);
+  process.exit(1);
+}
 
 const url = `http://${host}:${port}/workflows/ultragrill?runId=${runId}`;
 console.log(`\n  ✨ UltraGrill is live → ${url}`);

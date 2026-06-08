@@ -1,0 +1,7 @@
+# Dry-run plan artifacts — produced by `pnpm capture:dry` and the matching
+# generator output. Live capture artifacts (manifest.json, SLIDESHOW.md,
+# slideshow.html) ARE tracked; dry-run siblings are transient and would
+# otherwise surface as spurious diffs.
+manifest.dry-run.json
+SLIDESHOW.dry-run.md
+slideshow.dry-run.html

@@ -1,6 +1,6 @@
 {
   "name": "smithers-orchestrator",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "Public Smithers facade for durable coding-agent workflows and Gateway operation",
   "type": "module",
   "sideEffects": false,
@@ -77,6 +77,7 @@
     "@smithers-orchestrator/scorers": "workspace:*",
     "@smithers-orchestrator/server": "workspace:*",
     "@smithers-orchestrator/time-travel": "workspace:*",
+    "@smithers-orchestrator/tool-context": "workspace:*",
     "@smithers-orchestrator/vcs": "workspace:*",
     "@mdx-js/esbuild": "^3.1.1",
     "ai": "^6.0.168",
@@ -86,6 +87,11 @@
     "incur": "^0.4.1",
     "react": "^19.2.5",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "@electric-sql/pglite": "0.5.1",
+    "@electric-sql/pglite-socket": "0.2.1",
+    "pg": "^8.13.1"
   },
   "devDependencies": {
     "@types/bun": "latest",

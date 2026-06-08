@@ -178,17 +178,6 @@
     "verifyOutput": false
   },
   {
-    "key": "write-a-prd",
-    "title": "Write a PRD",
-    "runnable": false,
-    "launchArgs": [],
-    "primaryTestId": "write-a-prd-ui",
-    "populatedTestId": "",
-    "expectedText": [],
-    "mountOnlyReason": "does not complete deterministically with a trivial stub prompt (interview/input-driven or errors on stub output); UI is asserted to mount + boot",
-    "verifyOutput": false
-  },
-  {
     "key": "feature-enum",
     "title": "Feature Enum",
     "runnable": false,
@@ -213,11 +202,11 @@
       "hello"
     ],
     "primaryTestId": "audit-ui",
-    "populatedTestId": "audit-runid",
+    "populatedTestId": "audit-report-summary",
     "expectedText": [
-      "Audit",
-      "Feature groups",
-      "Consolidated report"
+      "No feature groups were provided.",
+      "# Feature Audit",
+      "0 groups audited"
     ],
     "verifyOutput": true
   },
@@ -245,5 +234,17 @@
     "expectedText": [],
     "mountOnlyReason": "does not complete deterministically with a trivial stub prompt (interview/input-driven or errors on stub output); UI is asserted to mount + boot",
     "verifyOutput": false
+  },
+  {
+    "key": "vcs",
+    "title": "VCS",
+    "runnable": true,
+    "launchArgs": ["vcs"],
+    "primaryTestId": "vcs-ui",
+    "populatedTestId": "vcs-status-summary",
+    "expectedText": [
+      "Not a git repository"
+    ],
+    "verifyOutput": true
   }
 ]

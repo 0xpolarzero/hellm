@@ -202,11 +202,16 @@ describe("streamRunEventsResilient reconnect-resume (real WS server)", () => {
     const client = new SmithersGatewayClient({ baseUrl: running.baseUrl });
     const controller = new AbortController();
     const seen: Array<{ seq: number; event: string }> = [];
+    const reconnects: Array<Record<string, unknown>> = [];
 
     await (async () => {
       for await (const frame of client.streamRunEventsResilient(
         { runId: "run-1" },
-        { signal: controller.signal, backoff: { baseMs: 1, maxMs: 5, random: () => 0.5 } },
+        {
+          signal: controller.signal,
+          backoff: { baseMs: 1, maxMs: 5, random: () => 0.5 },
+          onReconnect: (event) => reconnects.push(event),
+        },
       )) {
         const payload = frame.payload as { seq: number; event: string };
         seen.push({ seq: payload.seq, event: payload.event });
@@ -220,6 +225,15 @@ describe("streamRunEventsResilient reconnect-resume (real WS server)", () => {
     expect(seen.at(-1)?.event).toBe("task.completed");
     expect(running.connectionCount).toBe(2);
     expect(running.afterSeqLog).toEqual([-1, 2]);
+    expect(reconnects).toEqual([
+      {
+        runId: "run-1",
+        afterSeq: 2,
+        attempt: 0,
+        backoffMs: 1,
+        reason: "stream_closed",
+      },
+    ]);
   });
 
   test("stops cleanly when the run reaches a terminal run.completed frame (no reconnect)", async () => {

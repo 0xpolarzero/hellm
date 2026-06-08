@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, } from "node:fs";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { SmithersError } from "@smithers-orchestrator/errors";
+import { accountsRoot } from "@smithers-orchestrator/accounts";
 
 /** @typedef {import("./DiscoveredWorkflow.ts").DiscoveredWorkflow} DiscoveredWorkflow */
 
@@ -12,10 +13,71 @@ const WORKFLOW_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const WORKFLOW_METADATA_VERSION = 1;
 /**
- * @param {string} root
+ * Workflows live directly under a pack directory: `<packDir>/workflows`. A pack
+ * directory is the `.smithers` folder itself — for a repo that's `<repo>/.smithers`,
+ * for the global pack that's `~/.smithers` (the canonical user-level root).
+ *
+ * @param {string} packDir
  */
-function workflowsDir(root) {
-    return join(root, ".smithers", "workflows");
+function workflowsDirForPack(packDir) {
+    return join(packDir, "workflows");
+}
+/**
+ * The global (user-level) pack directory: `~/.smithers`, or `$SMITHERS_HOME`.
+ * Same canonical root that holds `accounts.json`.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+function globalPackDir(env = process.env) {
+    return accountsRoot(env);
+}
+/**
+ * Walk up from `from` to the nearest directory containing a `.smithers/` pack and
+ * return that pack dir (the `.smithers` folder), or undefined. Mirrors the upward
+ * walk in find-db.js so `smithers workflow` works from any subdirectory of a repo.
+ *
+ * @param {string} from
+ * @returns {string | undefined}
+ */
+function findLocalPackDir(from) {
+    let dir = resolve(from);
+    const fsRoot = resolve("/");
+    while (true) {
+        const candidate = join(dir, ".smithers");
+        if (existsSync(candidate) && statSync(candidate).isDirectory()) {
+            return candidate;
+        }
+        if (dir === fsRoot) {
+            return undefined;
+        }
+        dir = dirname(dir);
+    }
+}
+/**
+ * Ordered pack directories to search, highest precedence first: the nearest local
+ * `.smithers` (walking up from `from`), then the global `~/.smithers`. The global
+ * dir is skipped when it doesn't exist; a local dir equal to the global dir
+ * collapses to a single global entry (e.g. when cwd is the home directory itself,
+ * or a home-subdir project with no closer pack), so it's labeled correctly.
+ *
+ * @param {string} [from]
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {{ scope: "local" | "global"; packDir: string }[]}
+ */
+export function resolvePackDirs(from = process.cwd(), env = process.env) {
+    const global = globalPackDir(env);
+    const globalAbs = resolve(global);
+    /** @type {{ scope: "local" | "global"; packDir: string }[]} */
+    const dirs = [];
+    const local = findLocalPackDir(from);
+    if (local && resolve(local) !== globalAbs) {
+        dirs.push({ scope: "local", packDir: local });
+    }
+    if (existsSync(global)) {
+        dirs.push({ scope: "global", packDir: global });
+    }
+    return dirs;
 }
 /**
  * @param {string} id
@@ -87,17 +149,19 @@ function parseMetadata(source, id) {
 }
 /**
  * @param {string} file
- * @param {string} root
+ * @param {string} packDir
+ * @param {"local" | "global"} scope
  * @returns {DiscoveredWorkflow}
  */
-function workflowFromFile(file, root) {
+function workflowFromFile(file, packDir, scope) {
     const id = file.replace(/\.tsx$/, "");
-    const entryFile = join(workflowsDir(root), file);
+    const entryFile = join(workflowsDirForPack(packDir), file);
     const metadata = parseMetadata(readFileSync(entryFile, "utf8"), id);
     return {
         id,
         metadataVersion: metadata.metadataVersion,
         displayName: metadata.displayName,
+        scope,
         sourceType: metadata.sourceType,
         description: metadata.description,
         tags: metadata.tags,
@@ -117,18 +181,36 @@ function displayNameFromWorkflowName(name) {
         .join(" ");
 }
 /**
- * @param {string} root
+ * Discover workflows visible from `from`, merging the nearest local `.smithers`
+ * pack with the global `~/.smithers` pack. Local workflows take precedence: on an
+ * id collision the local file wins and the global one is hidden. The result is
+ * sorted by id; each entry carries its `scope`.
+ *
+ * @param {string} [from] Directory to search from (default: cwd).
+ * @param {NodeJS.ProcessEnv} [env]
  * @returns {DiscoveredWorkflow[]}
  */
-export function discoverWorkflows(root) {
-    const dir = workflowsDir(root);
-    if (!existsSync(dir))
-        return [];
-    return readdirSync(dir)
-        .filter((file) => file.endsWith(".tsx"))
-        .filter((file) => statSync(join(dir, file)).isFile())
-        .sort()
-        .map((file) => workflowFromFile(file, root));
+export function discoverWorkflows(from = process.cwd(), env = process.env) {
+    /** @type {DiscoveredWorkflow[]} */
+    const discovered = [];
+    const seen = new Set();
+    for (const { scope, packDir } of resolvePackDirs(from, env)) {
+        const dir = workflowsDirForPack(packDir);
+        if (!existsSync(dir))
+            continue;
+        const files = readdirSync(dir)
+            .filter((file) => file.endsWith(".tsx"))
+            .filter((file) => statSync(join(dir, file)).isFile())
+            .sort();
+        for (const file of files) {
+            const id = file.replace(/\.tsx$/, "");
+            if (seen.has(id))
+                continue; // local pack shadows the global one
+            seen.add(id);
+            discovered.push(workflowFromFile(file, packDir, scope));
+        }
+    }
+    return discovered.sort((a, b) => a.id.localeCompare(b.id));
 }
 /**
  * @param {string} name
@@ -139,28 +221,41 @@ export function validateWorkflowName(name) {
     }
 }
 /**
+ * Resolve a workflow id to its discovered entry, searching local then global
+ * (local wins). Throws RUN_NOT_FOUND when no pack defines the id.
+ *
  * @param {string} id
- * @param {string} root
+ * @param {string} [from] Directory to search from (default: cwd).
+ * @param {NodeJS.ProcessEnv} [env]
  * @returns {DiscoveredWorkflow}
  */
-export function resolveWorkflow(id, root) {
-    const workflow = discoverWorkflows(root).find((candidate) => candidate.id === id);
+export function resolveWorkflow(id, from = process.cwd(), env = process.env) {
+    const workflow = discoverWorkflows(from, env).find((candidate) => candidate.id === id);
     if (!workflow) {
         throw new SmithersError("RUN_NOT_FOUND", `Workflow not found: ${id}`, {
             id,
-            root,
+            root: from,
         });
     }
     return workflow;
 }
 /**
+ * Create a new flat workflow scaffold. Without `global`, the file is written to
+ * the nearest local pack (walking up from `from`, falling back to
+ * `<from>/.smithers`); with `global: true` it goes to the canonical `~/.smithers`.
+ *
  * @param {string} name
- * @param {string} root
+ * @param {string} [from] Directory to create relative to (default: cwd).
+ * @param {{ global?: boolean }} [options]
  * @returns {DiscoveredWorkflow}
  */
-export function createWorkflowFile(name, root) {
+export function createWorkflowFile(name, from = process.cwd(), options = {}) {
     validateWorkflowName(name);
-    const dir = workflowsDir(root);
+    const scope = options.global ? "global" : "local";
+    const packDir = options.global
+        ? globalPackDir()
+        : (findLocalPackDir(from) ?? join(from, ".smithers"));
+    const dir = workflowsDirForPack(packDir);
     mkdirSync(dir, { recursive: true });
     const entryFile = join(dir, `${name}.tsx`);
     if (existsSync(entryFile)) {
@@ -181,7 +276,7 @@ export function createWorkflowFile(name, root) {
         `export default smithers(() => <Workflow name="${name}" />);`,
         "",
     ].join("\n"));
-    return workflowFromFile(`${name}.tsx`, root);
+    return workflowFromFile(`${name}.tsx`, packDir, scope);
 }
 /**
  * @param {string} root
@@ -264,7 +359,7 @@ export function renderWorkflowSkill(workflow, options = {}) {
 }
 /**
  * @param {string} root
- * @param {{ workflowId?: string; output?: string; force?: boolean }} [options]
+ * @param {{ workflowId?: string; output?: string; force?: boolean; global?: boolean }} [options]
  */
 export function writeWorkflowSkillFiles(root, options = {}) {
     const workflowId = options.workflowId ?? "all";
@@ -273,7 +368,10 @@ export function writeWorkflowSkillFiles(root, options = {}) {
         ? discoverWorkflows(root).filter((workflow) => workflow.id !== "workflow-skill")
         : [resolveWorkflow(workflowId, root)];
     const output = options.output;
-    const defaultOutputDir = join(root, ".smithers", "skills");
+    const packDir = options.global
+        ? globalPackDir()
+        : (findLocalPackDir(root) ?? join(root, ".smithers"));
+    const defaultOutputDir = join(packDir, "skills");
     const outputPath = output ? resolveOutputPath(root, output) : defaultOutputDir;
     const outputLooksDirectory = output !== undefined &&
         (output.endsWith("/") || (existsSync(outputPath) && statSync(outputPath).isDirectory()));

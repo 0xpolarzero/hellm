@@ -44,8 +44,10 @@ export async function getUsageForAccounts(accounts, options = {}) {
     const cache = readUsageCache(env);
     const decisions = accounts.map((account) => {
         const entry = cache.entries[account.label];
-        const age = entry ? nowMs - Date.parse(entry.report.fetchedAt) : Infinity;
-        const useCache = Boolean(entry) && (
+        const fetchedAt = entry?.report?.fetchedAt;
+        const parsed = typeof fetchedAt === "string" ? nowMs - Date.parse(fetchedAt) : Number.NaN;
+        const age = Number.isFinite(parsed) ? parsed : Infinity;
+        const useCache = Number.isFinite(parsed) && (
             age < hardFloorMs(account.provider) ||
             (!fresh && age < refreshIntervalMs(account.provider))
         );

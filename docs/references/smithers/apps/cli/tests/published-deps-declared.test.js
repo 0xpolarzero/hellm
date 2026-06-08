@@ -151,7 +151,9 @@ for (const pkg of PACKAGES) {
         const selfName = manifest.name;
 
         const srcDir = join(pkgDir, "src");
-        const files = walkSourceFiles(srcDir);
+        // Binary-only published packages (e.g. the vendored jj platform packages)
+        // ship a bin/ payload with no src/ tree, so there are no imports to check.
+        const files = existsSync(srcDir) ? walkSourceFiles(srcDir) : [];
 
         /** @type {Map<string, string[]>} */
         const missing = new Map();

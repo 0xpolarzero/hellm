@@ -158,6 +158,14 @@ test("seeded workflow docs cover current init workflow pack", () => {
         seededWorkflowIds.add("kanban");
     }
 
+    // Generator-seeded workflows (emitted by scripts/generate-workflow-pack.ts and
+    // spliced in via GENERATED_SEEDED_FILES) must satisfy the same docs invariant —
+    // otherwise the generator becomes a way to bypass docs coverage.
+    const generatedSeeds = readRepoFile("apps/cli/src/seeded-workflow-pack.generated.js");
+    for (const match of generatedSeeds.matchAll(/\.smithers\/workflows\/([^"]+)\.tsx/g)) {
+        seededWorkflowIds.add(match[1]);
+    }
+
     for (const workflowId of seededWorkflowIds) {
         expect(workflowDocs.has(workflowId)).toBe(true);
     }

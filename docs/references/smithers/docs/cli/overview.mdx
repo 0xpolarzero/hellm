@@ -11,7 +11,7 @@ Always invoke as `bunx smithers-orchestrator <command>` (see [Installation](/ins
 - Boolean flags accept either bare form (`--watch`) or explicit `--watch true|false`.
 - Global options: `--format toon|json|yaml|md|jsonl`, `--filter-output <key.path>`, `--full-output`, `--token-count`, `--token-limit N`, `--token-offset N`, `--schema`, `--llms`, `--llms-full`, `--mcp`, `--help`, `--version`.
 - MCP stdio mode: pass `--mcp` to start Smithers as an MCP server. Add `--surface semantic|raw|both` to choose the exposed tool surface.
-- Workflow resolution: `up`, `graph`, `revert`, `replay`, `fork`, `retry-task`, and `timetravel` take a workflow file path. `eval` accepts either a workflow path or a discovered workflow ID. `workflow run <name>` resolves IDs from `.smithers/workflows/<name>.tsx`.
+- Workflow resolution: `up`, `graph`, `revert`, `replay`, `fork`, `retry-task`, and `timetravel` take a workflow file path. `eval` accepts either a workflow path or a discovered workflow ID. `workflow run <name>` resolves IDs from the nearest local `.smithers/workflows/<name>.tsx` (walking up from the working directory) and from the global `~/.smithers/workflows/` pack. Local workflows take precedence: on an id collision the local file wins. The global pack honors `SMITHERS_HOME`. So global workflows run from any directory, while a repo's own pack can override them by name.
 - Rewrites: `smithers workflow <id>` runs a discovered workflow when `<id>` resolves; `smithers workflow.tsx` behaves like `smithers up workflow.tsx`; `smithers chat create` behaves like `smithers chat-create`.
 - JSON arguments are preflighted before workflow modules load. `--input` and `--annotations` accept an inline JSON value or `-` to read JSON from stdin, capped at 1 MiB.
 
@@ -32,14 +32,15 @@ Always invoke as `bunx smithers-orchestrator <command>` (see [Installation](/ins
 Commands listed by dotted name. `human` and `alerts` use an action positional instead of nested subcommands.
 
 ```toon
-commands[65]:
+commands[66]:
   - name: init
-    purpose: Install the local workflow pack into .smithers/
-    flags[5]{name,short,type,default,desc}:
+    purpose: Install the workflow pack into .smithers/ (local) or ~/.smithers/ (--global)
+    flags[6]{name,short,type,default,desc}:
       force,,boolean,false,Overwrite existing scaffold files
       agents-only,,boolean,false,Only create .smithers/agents/ and leave workflow pack untouched
-      install,,boolean,true,Run bun install inside .smithers/ after scaffolding
+      install,,boolean,true,Run bun install inside the pack after scaffolding
       add-agents,,boolean,false,Launch the account registration wizard after scaffolding
+      global,,boolean,false,Scaffold the global pack in ~/.smithers (honors SMITHERS_HOME) instead of ./.smithers
       template,,string,,Show next steps for a canonical starter template ID after init
   - name: starters
     purpose: Show plain-English starter workflows with copy-paste commands
@@ -217,6 +218,18 @@ commands[65]:
     flags[2]{name,short,type,default,desc}:
       value,,string,,JSON response for answer
       by,,string,,Human operator identifier
+  - name: ask-human
+    purpose: Raise a blocking human-approval request from inside a run and wait for the decision
+    args[1]{name,type,required,desc}:
+      prompt,string,true,The decision or question to put to a human
+    flags[7]{name,short,type,default,desc}:
+      context,,string,,Extra context appended to the prompt
+      choices,,string,,Comma-separated choices for a fixed-choice decision
+      run-id,r,string,,Run to attach to (SMITHERS_RUN_ID or single active run)
+      node,n,string,,Node id to attach to (SMITHERS_NODE_ID)
+      iteration,,number,0,Loop iteration (SMITHERS_ITERATION or 0)
+      timeout,,number,,Seconds before the request expires
+      poll,,number,3,Poll interval in seconds while blocking
   - name: alerts
     purpose: List and manage durable alert instances
     args[2]{name,type,required,desc}:
@@ -378,6 +391,22 @@ commands[65]:
     flags[2]{name,short,type,default,desc}:
       yes,,boolean,false,Skip confirmation prompt
       json,j,boolean,false,Emit JumpResult JSON
+  - name: snapshots
+    purpose: List durability snapshots (workspace checkpoints) for a run
+    args[1]{name,type,required,desc}:
+      runId,string,true,Run ID to list snapshots for
+    flags[1]{name,short,type,default,desc}:
+      json,,boolean,false,Emit rows as JSON
+  - name: restore
+    purpose: Restore a worktree to a durability checkpoint (latest for the node, or --seq)
+    args[2]{name,type,required,desc}:
+      runId,string,true,Run ID containing the checkpoint
+      nodeId,string,true,Node ID whose worktree to restore
+    flags[2]{name,short,type,default,desc}:
+      iteration,,number,,Loop iteration
+      seq,,number,,Checkpoint seq; latest if omitted
+  - name: snapshot-hook
+    purpose: "Internal: PostToolUse hook that requests a Tier 1 durability snapshot"
   - name: observability
     purpose: Start or stop the local Docker Compose observability stack
     flags[2]{name,short,type,default,desc}:
@@ -400,10 +429,22 @@ commands[65]:
       runId,string,true,Run ID
     flags[1]{name,short,type,default,desc}:
       node,,string,,Filter scores to a specific node ID
+  - name: usage
+    purpose: Show how much rate limit or subscription quota each registered account has used
+    flags[3]{name,short,type,default,desc}:
+      account,,string,,Only report this account label
+      provider,,string,,Only report accounts for this provider
+      fresh,,boolean,false,Bypass the short usage cache while respecting provider rate-limit floors
   - name: docs
-    purpose: Print published llms.txt from smithers.sh
+    purpose: Print llms.txt for this CLI version
+    flags[2]{name,short,type,default,desc}:
+      latest,,boolean,false,Fetch the latest docs from smithers.sh instead of docs for this CLI version
+      docs-version,,string,,Fetch docs for a specific Smithers version, e.g. 0.22.0 or v0.22.0
   - name: docs-full
-    purpose: Print published llms-full.txt from smithers.sh
+    purpose: Print llms-full.txt for this CLI version
+    flags[2]{name,short,type,default,desc}:
+      latest,,boolean,false,Fetch the latest docs from smithers.sh instead of docs for this CLI version
+      docs-version,,string,,Fetch docs for a specific Smithers version, e.g. 0.22.0 or v0.22.0
   - name: agents.capabilities
     purpose: Print JSON capability registry for built-in CLI agents
   - name: agents.doctor
@@ -435,7 +476,7 @@ commands[65]:
     args[1]{name,type,required,desc}:
       label,string,true,Account label
   - name: workflow.list
-    purpose: List discovered workflows in .smithers/workflows/
+    purpose: List discovered workflows (local .smithers/workflows/ plus the global ~/.smithers/workflows/; each entry reports its scope, local shadows global)
   - name: workflow.run
     purpose: Run a discovered workflow by ID
     args[1]{name,type,required,desc}:
@@ -452,16 +493,19 @@ commands[65]:
     args[1]{name,type,required,desc}:
       name,string,true,Workflow ID
   - name: workflow.create
-    purpose: Create a new flat workflow scaffold in .smithers/workflows/
+    purpose: Create a new flat workflow scaffold in .smithers/workflows/ (or ~/.smithers with --global)
     args[1]{name,type,required,desc}:
       name,string,true,New workflow ID
+    flags[1]{name,short,type,default,desc}:
+      global,,boolean,false,Create in the global ~/.smithers pack (honors SMITHERS_HOME) instead of the local .smithers
   - name: workflow.skills
-    purpose: Generate agent-facing skill docs for local workflows
+    purpose: Generate agent-facing skill docs for discovered workflows
     args[1]{name,type,required,desc}:
       name,string,false,Workflow ID; omit for all workflows
-    flags[2]{name,short,type,default,desc}:
+    flags[3]{name,short,type,default,desc}:
       output,,string,,Output file for one workflow, or output directory for all
       force,,boolean,false,Overwrite existing skill files
+      global,,boolean,false,Write skills into the global ~/.smithers pack instead of the local .smithers
   - name: workflow.doctor
     purpose: Inspect workflow discovery, preload files, bunfig, and detected agents
     args[1]{name,type,required,desc}:

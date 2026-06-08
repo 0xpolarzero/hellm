@@ -23,6 +23,8 @@ describe("ensureSmithersTables", () => {
         expect(tableNames).toContain("_smithers_tool_calls");
         expect(tableNames).toContain("_smithers_events");
         expect(tableNames).toContain("_smithers_ralph");
+        expect(tableNames).toContain("_smithers_workspace_states");
+        expect(tableNames).toContain("_smithers_workspace_checkpoints");
         sqlite.close();
     });
     test("is idempotent (can be called twice)", () => {
@@ -94,6 +96,34 @@ describe("ensureSmithersTables", () => {
             .all();
         const runIndexNames = runIndexes.map((idx) => idx.name);
         expect(runIndexNames).toContain("_smithers_runs_status_heartbeat_idx");
+        const stateCols = sqlite
+            .query('PRAGMA table_info("_smithers_workspace_states")')
+            .all();
+        expect(stateCols.map((c) => c.name)).toEqual(expect.arrayContaining([
+            "run_id",
+            "jj_cwd",
+            "jj_commit_id",
+            "jj_operation_id",
+            "jj_change_id",
+            "created_at_ms",
+        ]));
+        const checkpointCols = sqlite
+            .query('PRAGMA table_info("_smithers_workspace_checkpoints")')
+            .all();
+        expect(checkpointCols.map((c) => c.name)).toEqual(expect.arrayContaining([
+            "run_id",
+            "node_id",
+            "iteration",
+            "attempt",
+            "seq",
+            "jj_cwd",
+            "jj_commit_id",
+            "source",
+            "tier",
+            "label",
+            "tool_use_id",
+            "created_at_ms",
+        ]));
         sqlite.close();
     });
     test("adds frame encoding column for legacy databases", () => {

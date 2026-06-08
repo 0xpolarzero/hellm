@@ -1,6 +1,6 @@
 {
   "name": "@smithers-orchestrator/vcs",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "VCS discovery and jj workspace operations for Smithers",
   "type": "module",
   "sideEffects": false,
@@ -33,5 +33,12 @@
     "@effect/platform-bun": "^0.89.0",
     "@types/bun": "latest",
     "typescript": "~5.9.3"
+  },
+  "optionalDependencies": {
+    "@smithers-orchestrator/jj-darwin-arm64": "workspace:*",
+    "@smithers-orchestrator/jj-darwin-x64": "workspace:*",
+    "@smithers-orchestrator/jj-linux-arm64": "workspace:*",
+    "@smithers-orchestrator/jj-linux-x64": "workspace:*",
+    "@smithers-orchestrator/jj-win32-x64": "workspace:*"
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@smithers-orchestrator/engine",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "Concrete Smithers workflow execution engine",
   "type": "module",
   "sideEffects": false,
@@ -44,6 +44,7 @@
     "@smithers-orchestrator/scheduler": "workspace:*",
     "@smithers-orchestrator/scorers": "workspace:*",
     "@smithers-orchestrator/time-travel": "workspace:*",
+    "@smithers-orchestrator/tool-context": "workspace:*",
     "@smithers-orchestrator/vcs": "workspace:*",
     "diff": "^9.0.0",
     "drizzle-orm": "^0.45.2",
@@ -51,6 +52,11 @@
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "@electric-sql/pglite": "0.5.1",
+    "@electric-sql/pglite-socket": "0.2.1",
+    "pg": "^8.13.1"
   },
   "devDependencies": {
     "@types/bun": "latest",

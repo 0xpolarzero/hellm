@@ -1,0 +1,681 @@
+{
+  "baseUrl": "http://127.0.0.1:5175",
+  "outDir": "/Users/williamcory/smithers/worktrees/smithers-ui-slideshow-capture-20260607/apps/smithers/docs/slideshow/assets",
+  "startedAt": 1780854930798,
+  "finishedAt": 1780854944990,
+  "dryRun": false,
+  "shots": [
+    {
+      "id": "home-light-desktop",
+      "surfaceId": "home",
+      "title": "Home — composer & hero",
+      "filename": "home.desktop.light.png",
+      "description": "Centered chat-first shell. The composer is the entry point for every feature; slash commands open cards or canvases without leaving home.",
+      "validation": "tests/e2e/smoke.spec.ts — boots without uncaught errors; composer + hero render.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 72211
+    },
+    {
+      "id": "home-dark-desktop",
+      "surfaceId": "home",
+      "title": "Home — composer & hero",
+      "filename": "home.desktop.dark.png",
+      "description": "Centered chat-first shell. The composer is the entry point for every feature; slash commands open cards or canvases without leaving home.",
+      "validation": "tests/e2e/smoke.spec.ts — boots without uncaught errors; composer + hero render.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 70553
+    },
+    {
+      "id": "home-light-mobile",
+      "surfaceId": "home",
+      "title": "Home — composer & hero",
+      "filename": "home.mobile.light.png",
+      "description": "Centered chat-first shell. The composer is the entry point for every feature; slash commands open cards or canvases without leaving home.",
+      "validation": "tests/e2e/smoke.spec.ts — boots without uncaught errors; composer + hero render.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 48072
+    },
+    {
+      "id": "store-light-desktop",
+      "surfaceId": "store",
+      "title": "Workflow store",
+      "filename": "store.desktop.light.png",
+      "description": "Browse and pick from the workflow app store. Each card opens a workflow editor or launches a run.",
+      "validation": "tests/e2e/store.spec.ts — store route renders the catalog and lets users open a workflow.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 349563
+    },
+    {
+      "id": "store-dark-desktop",
+      "surfaceId": "store",
+      "title": "Workflow store",
+      "filename": "store.desktop.dark.png",
+      "description": "Browse and pick from the workflow app store. Each card opens a workflow editor or launches a run.",
+      "validation": "tests/e2e/store.spec.ts — store route renders the catalog and lets users open a workflow.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 401715
+    },
+    {
+      "id": "store-light-mobile",
+      "surfaceId": "store",
+      "title": "Workflow store",
+      "filename": "store.mobile.light.png",
+      "description": "Browse and pick from the workflow app store. Each card opens a workflow editor or launches a run.",
+      "validation": "tests/e2e/store.spec.ts — store route renders the catalog and lets users open a workflow.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 123119
+    },
+    {
+      "id": "askme-light-desktop",
+      "surfaceId": "askme",
+      "title": "Ask Me",
+      "filename": "askme.desktop.light.png",
+      "description": "Reverse interview: Smithers grills you to sharpen an idea before you commit to a workflow.",
+      "validation": "tests/e2e/askme.spec.ts — opens askme route and walks through the grill prompts.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 122635
+    },
+    {
+      "id": "askme-dark-desktop",
+      "surfaceId": "askme",
+      "title": "Ask Me",
+      "filename": "askme.desktop.dark.png",
+      "description": "Reverse interview: Smithers grills you to sharpen an idea before you commit to a workflow.",
+      "validation": "tests/e2e/askme.spec.ts — opens askme route and walks through the grill prompts.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 103058
+    },
+    {
+      "id": "askme-light-mobile",
+      "surfaceId": "askme",
+      "title": "Ask Me",
+      "filename": "askme.mobile.light.png",
+      "description": "Reverse interview: Smithers grills you to sharpen an idea before you commit to a workflow.",
+      "validation": "tests/e2e/askme.spec.ts — opens askme route and walks through the grill prompts.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 59639
+    },
+    {
+      "id": "runs-light-desktop",
+      "surfaceId": "runs",
+      "title": "Runs list",
+      "filename": "runs.desktop.light.png",
+      "description": "Every recent workflow execution. Each row drills into the run inspector, logs, timeline, diff, and changes.",
+      "validation": "tests/e2e/surfaces.spec.ts — `/runs` surface renders rows; row navigation lands on the inspector.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 219774
+    },
+    {
+      "id": "runs-dark-desktop",
+      "surfaceId": "runs",
+      "title": "Runs list",
+      "filename": "runs.desktop.dark.png",
+      "description": "Every recent workflow execution. Each row drills into the run inspector, logs, timeline, diff, and changes.",
+      "validation": "tests/e2e/surfaces.spec.ts — `/runs` surface renders rows; row navigation lands on the inspector.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 249925
+    },
+    {
+      "id": "runs-light-mobile",
+      "surfaceId": "runs",
+      "title": "Runs list",
+      "filename": "runs.mobile.light.png",
+      "description": "Every recent workflow execution. Each row drills into the run inspector, logs, timeline, diff, and changes.",
+      "validation": "tests/e2e/surfaces.spec.ts — `/runs` surface renders rows; row navigation lands on the inspector.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 83344
+    },
+    {
+      "id": "approvals-light-desktop",
+      "surfaceId": "approvals",
+      "title": "Approvals queue",
+      "filename": "approvals.desktop.light.png",
+      "description": "Pending human-gate approvals across runs. Approve/deny inline; live-updated via the gateway.",
+      "validation": "tests/e2e/approvals.spec.ts — pending gates list and approve/deny actions work.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 165197
+    },
+    {
+      "id": "approvals-dark-desktop",
+      "surfaceId": "approvals",
+      "title": "Approvals queue",
+      "filename": "approvals.desktop.dark.png",
+      "description": "Pending human-gate approvals across runs. Approve/deny inline; live-updated via the gateway.",
+      "validation": "tests/e2e/approvals.spec.ts — pending gates list and approve/deny actions work.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 202974
+    },
+    {
+      "id": "approvals-light-mobile",
+      "surfaceId": "approvals",
+      "title": "Approvals queue",
+      "filename": "approvals.mobile.light.png",
+      "description": "Pending human-gate approvals across runs. Approve/deny inline; live-updated via the gateway.",
+      "validation": "tests/e2e/approvals.spec.ts — pending gates list and approve/deny actions work.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 73599
+    },
+    {
+      "id": "agents-light-desktop",
+      "surfaceId": "agents",
+      "title": "Agents & providers",
+      "filename": "agents.desktop.light.png",
+      "description": "Registry of every agent the workspace can talk to. Each row shows availability and the underlying provider.",
+      "validation": "tests/e2e/featureCards.spec.ts → /agents card — provider availability counts match the catalog.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 158793
+    },
+    {
+      "id": "agents-dark-desktop",
+      "surfaceId": "agents",
+      "title": "Agents & providers",
+      "filename": "agents.desktop.dark.png",
+      "description": "Registry of every agent the workspace can talk to. Each row shows availability and the underlying provider.",
+      "validation": "tests/e2e/featureCards.spec.ts → /agents card — provider availability counts match the catalog.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 171374
+    },
+    {
+      "id": "agents-light-mobile",
+      "surfaceId": "agents",
+      "title": "Agents & providers",
+      "filename": "agents.mobile.light.png",
+      "description": "Registry of every agent the workspace can talk to. Each row shows availability and the underlying provider.",
+      "validation": "tests/e2e/featureCards.spec.ts → /agents card — provider availability counts match the catalog.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 99018
+    },
+    {
+      "id": "memory-light-desktop",
+      "surfaceId": "memory",
+      "title": "Memory",
+      "filename": "memory.desktop.light.png",
+      "description": "Cross-run memory facts with namespaces, recall search, and per-fact detail panes.",
+      "validation": "tests/e2e/featureCards.spec.ts → /memory card — recall hits the seeded fact set.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 270876
+    },
+    {
+      "id": "memory-dark-desktop",
+      "surfaceId": "memory",
+      "title": "Memory",
+      "filename": "memory.desktop.dark.png",
+      "description": "Cross-run memory facts with namespaces, recall search, and per-fact detail panes.",
+      "validation": "tests/e2e/featureCards.spec.ts → /memory card — recall hits the seeded fact set.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 305336
+    },
+    {
+      "id": "memory-light-mobile",
+      "surfaceId": "memory",
+      "title": "Memory",
+      "filename": "memory.mobile.light.png",
+      "description": "Cross-run memory facts with namespaces, recall search, and per-fact detail panes.",
+      "validation": "tests/e2e/featureCards.spec.ts → /memory card — recall hits the seeded fact set.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 84648
+    },
+    {
+      "id": "prompts-light-desktop",
+      "surfaceId": "prompts",
+      "title": "Prompts",
+      "filename": "prompts.desktop.light.png",
+      "description": "All prompt templates in the workspace, sourced from PROMPT_TEMPLATES with their imports inlined.",
+      "validation": "tests/e2e/featureCards.spec.ts → /prompts card — templates render with imports.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 143642
+    },
+    {
+      "id": "prompts-dark-desktop",
+      "surfaceId": "prompts",
+      "title": "Prompts",
+      "filename": "prompts.desktop.dark.png",
+      "description": "All prompt templates in the workspace, sourced from PROMPT_TEMPLATES with their imports inlined.",
+      "validation": "tests/e2e/featureCards.spec.ts → /prompts card — templates render with imports.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 153418
+    },
+    {
+      "id": "prompts-light-mobile",
+      "surfaceId": "prompts",
+      "title": "Prompts",
+      "filename": "prompts.mobile.light.png",
+      "description": "All prompt templates in the workspace, sourced from PROMPT_TEMPLATES with their imports inlined.",
+      "validation": "tests/e2e/featureCards.spec.ts → /prompts card — templates render with imports.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 89101
+    },
+    {
+      "id": "scores-light-desktop",
+      "surfaceId": "scores",
+      "title": "Scores",
+      "filename": "scores.desktop.light.png",
+      "description": "Scorer dashboard. Summary, metrics, and recent reports tabs; empty-state when nothing has run.",
+      "validation": "tests/e2e/featureCards.spec.ts → /scores card — score report rows render.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 142536
+    },
+    {
+      "id": "scores-dark-desktop",
+      "surfaceId": "scores",
+      "title": "Scores",
+      "filename": "scores.desktop.dark.png",
+      "description": "Scorer dashboard. Summary, metrics, and recent reports tabs; empty-state when nothing has run.",
+      "validation": "tests/e2e/featureCards.spec.ts → /scores card — score report rows render.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 145416
+    },
+    {
+      "id": "scores-light-mobile",
+      "surfaceId": "scores",
+      "title": "Scores",
+      "filename": "scores.mobile.light.png",
+      "description": "Scorer dashboard. Summary, metrics, and recent reports tabs; empty-state when nothing has run.",
+      "validation": "tests/e2e/featureCards.spec.ts → /scores card — score report rows render.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 82946
+    },
+    {
+      "id": "crons-light-desktop",
+      "surfaceId": "crons",
+      "title": "Crons",
+      "filename": "crons.desktop.light.png",
+      "description": "Scheduled triggers. Each cron summary is derived from SEEDED_CRONS — adding a cron updates the list.",
+      "validation": "tests/e2e/featureCards.spec.ts → /crons card — sorted cron summary lines up.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 118975
+    },
+    {
+      "id": "crons-dark-desktop",
+      "surfaceId": "crons",
+      "title": "Crons",
+      "filename": "crons.desktop.dark.png",
+      "description": "Scheduled triggers. Each cron summary is derived from SEEDED_CRONS — adding a cron updates the list.",
+      "validation": "tests/e2e/featureCards.spec.ts → /crons card — sorted cron summary lines up.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 123609
+    },
+    {
+      "id": "crons-light-mobile",
+      "surfaceId": "crons",
+      "title": "Crons",
+      "filename": "crons.mobile.light.png",
+      "description": "Scheduled triggers. Each cron summary is derived from SEEDED_CRONS — adding a cron updates the list.",
+      "validation": "tests/e2e/featureCards.spec.ts → /crons card — sorted cron summary lines up.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 83453
+    },
+    {
+      "id": "issues-light-desktop",
+      "surfaceId": "issues",
+      "title": "Issues",
+      "filename": "issues.desktop.light.png",
+      "description": "Code-host issues mocked from the vcs template. Filter by state/labels; opens detail in a side rev.",
+      "validation": "tests/e2e/reviewSurfaces.spec.ts — `/issues` renders and filters correctly.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 132008
+    },
+    {
+      "id": "issues-dark-desktop",
+      "surfaceId": "issues",
+      "title": "Issues",
+      "filename": "issues.desktop.dark.png",
+      "description": "Code-host issues mocked from the vcs template. Filter by state/labels; opens detail in a side rev.",
+      "validation": "tests/e2e/reviewSurfaces.spec.ts — `/issues` renders and filters correctly.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 145092
+    },
+    {
+      "id": "issues-light-mobile",
+      "surfaceId": "issues",
+      "title": "Issues",
+      "filename": "issues.mobile.light.png",
+      "description": "Code-host issues mocked from the vcs template. Filter by state/labels; opens detail in a side rev.",
+      "validation": "tests/e2e/reviewSurfaces.spec.ts — `/issues` renders and filters correctly.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 94529
+    },
+    {
+      "id": "tickets-light-desktop",
+      "surfaceId": "tickets",
+      "title": "Tickets",
+      "filename": "tickets.desktop.light.png",
+      "description": "Linear-style ticket queue with status pills and assignee chips. Drills into a ticket detail view.",
+      "validation": "tests/e2e/reviewSurfaces.spec.ts — `/tickets` rows render with status pills.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 243069
+    },
+    {
+      "id": "tickets-dark-desktop",
+      "surfaceId": "tickets",
+      "title": "Tickets",
+      "filename": "tickets.desktop.dark.png",
+      "description": "Linear-style ticket queue with status pills and assignee chips. Drills into a ticket detail view.",
+      "validation": "tests/e2e/reviewSurfaces.spec.ts — `/tickets` rows render with status pills.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 255216
+    },
+    {
+      "id": "tickets-light-mobile",
+      "surfaceId": "tickets",
+      "title": "Tickets",
+      "filename": "tickets.mobile.light.png",
+      "description": "Linear-style ticket queue with status pills and assignee chips. Drills into a ticket detail view.",
+      "validation": "tests/e2e/reviewSurfaces.spec.ts — `/tickets` rows render with status pills.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 102365
+    },
+    {
+      "id": "landings-light-desktop",
+      "surfaceId": "landings",
+      "title": "Landings",
+      "filename": "landings.desktop.light.png",
+      "description": "Pull-request landings feed. Filter by repo / state; preview the changed surface.",
+      "validation": "tests/e2e/reviewSurfaces.spec.ts — `/landings` filter segment toggles state.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 173221
+    },
+    {
+      "id": "landings-dark-desktop",
+      "surfaceId": "landings",
+      "title": "Landings",
+      "filename": "landings.desktop.dark.png",
+      "description": "Pull-request landings feed. Filter by repo / state; preview the changed surface.",
+      "validation": "tests/e2e/reviewSurfaces.spec.ts — `/landings` filter segment toggles state.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 182481
+    },
+    {
+      "id": "landings-light-mobile",
+      "surfaceId": "landings",
+      "title": "Landings",
+      "filename": "landings.mobile.light.png",
+      "description": "Pull-request landings feed. Filter by repo / state; preview the changed surface.",
+      "validation": "tests/e2e/reviewSurfaces.spec.ts — `/landings` filter segment toggles state.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 85140
+    },
+    {
+      "id": "vcs-light-desktop",
+      "surfaceId": "vcs",
+      "title": "Changes (VCS)",
+      "filename": "vcs.desktop.light.png",
+      "description": "Working-tree changes across the project, grouped by repo. Pairs with the diff viewer.",
+      "validation": "tests/e2e/diffVcs.spec.ts — `/vcs` lists changed files; opens the diff.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 180626
+    },
+    {
+      "id": "vcs-dark-desktop",
+      "surfaceId": "vcs",
+      "title": "Changes (VCS)",
+      "filename": "vcs.desktop.dark.png",
+      "description": "Working-tree changes across the project, grouped by repo. Pairs with the diff viewer.",
+      "validation": "tests/e2e/diffVcs.spec.ts — `/vcs` lists changed files; opens the diff.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 189476
+    },
+    {
+      "id": "vcs-light-mobile",
+      "surfaceId": "vcs",
+      "title": "Changes (VCS)",
+      "filename": "vcs.mobile.light.png",
+      "description": "Working-tree changes across the project, grouped by repo. Pairs with the diff viewer.",
+      "validation": "tests/e2e/diffVcs.spec.ts — `/vcs` lists changed files; opens the diff.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 98825
+    },
+    {
+      "id": "palette-light-desktop",
+      "surfaceId": "palette",
+      "title": "Palette",
+      "filename": "palette.desktop.light.png",
+      "description": "Command palette modal hosted as a route. Keyboard-first launcher for any feature.",
+      "validation": "tests/e2e/featureCards.spec.ts → palette — opens the palette modal from /palette.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 276789
+    },
+    {
+      "id": "palette-dark-desktop",
+      "surfaceId": "palette",
+      "title": "Palette",
+      "filename": "palette.desktop.dark.png",
+      "description": "Command palette modal hosted as a route. Keyboard-first launcher for any feature.",
+      "validation": "tests/e2e/featureCards.spec.ts → palette — opens the palette modal from /palette.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 325170
+    },
+    {
+      "id": "palette-light-mobile",
+      "surfaceId": "palette",
+      "title": "Palette",
+      "filename": "palette.mobile.light.png",
+      "description": "Command palette modal hosted as a route. Keyboard-first launcher for any feature.",
+      "validation": "tests/e2e/featureCards.spec.ts → palette — opens the palette modal from /palette.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 103467
+    },
+    {
+      "id": "login-light-desktop",
+      "surfaceId": "login",
+      "title": "Sign in",
+      "filename": "login.desktop.light.png",
+      "description": "Sign-in page. Used when entering the remote-mode wiring; otherwise the app runs fully local.",
+      "validation": "tests/e2e/signIn.spec.ts — login form mounts and validates basic input.",
+      "variant": {
+        "theme": "light",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 96824
+    },
+    {
+      "id": "login-dark-desktop",
+      "surfaceId": "login",
+      "title": "Sign in",
+      "filename": "login.desktop.dark.png",
+      "description": "Sign-in page. Used when entering the remote-mode wiring; otherwise the app runs fully local.",
+      "validation": "tests/e2e/signIn.spec.ts — login form mounts and validates basic input.",
+      "variant": {
+        "theme": "dark",
+        "device": "desktop"
+      },
+      "status": "captured",
+      "bytes": 94383
+    },
+    {
+      "id": "login-light-mobile",
+      "surfaceId": "login",
+      "title": "Sign in",
+      "filename": "login.mobile.light.png",
+      "description": "Sign-in page. Used when entering the remote-mode wiring; otherwise the app runs fully local.",
+      "validation": "tests/e2e/signIn.spec.ts — login form mounts and validates basic input.",
+      "variant": {
+        "theme": "light",
+        "device": "mobile"
+      },
+      "status": "captured",
+      "bytes": 73364
+    }
+  ]
+}

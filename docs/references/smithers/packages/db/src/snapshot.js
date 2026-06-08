@@ -28,6 +28,29 @@ function getBooleanColumnKeys(table) {
     }
 }
 /**
+ * Keys of every json-mode column on the table. zodToTable maps any
+ * array/object/union/complex Zod field to a Drizzle `text(col,{mode:'json'})`
+ * column, which Drizzle's bun:sqlite reader auto-decodes on read. The Postgres
+ * path stores those as TEXT, so we must JSON.parse them to match.
+ * @param {_Table} table
+ * @returns {string[]}
+ */
+export function getJsonColumnKeys(table) {
+    try {
+        const cols = getTableColumns(table);
+        const keys = [];
+        for (const [key, col] of Object.entries(cols)) {
+            const c = /** @type {Record<string, unknown> & { config?: { mode?: string } }} */ (/** @type {unknown} */ (col));
+            if (c?.columnType === "SQLiteTextJson" || c?.config?.mode === "json" || c?.mode === "json" || c?.dataType === "json") {
+                keys.push(key);
+            }
+        }
+        return keys;
+    } catch {
+        return [];
+    }
+}
+/**
  * @param {ReadonlyArray<Record<string, unknown>>} rows
  * @param {readonly string[]} boolKeys
  * @returns {Array<Record<string, unknown>>}
@@ -52,12 +75,64 @@ function coerceBooleanColumns(rows, boolKeys) {
  * @param {string} runId
  * @returns {Effect.Effect<Record<string, unknown> | undefined, SmithersError>}
  */
+/**
+ * @param {unknown} db
+ * @returns {boolean}
+ */
+export function isPostgresDb(db) {
+    return Boolean(db && typeof db === "object" && /** @type {any} */ (db).dialect === "postgres" && /** @type {any} */ (db).connection);
+}
+/**
+ * Map a raw node-postgres row (snake_case columns, JSON stored as TEXT) into the
+ * shape Drizzle's bun:sqlite reader returns (camelCase keys, json-mode columns
+ * decoded), so input/output consumers stay dialect-agnostic. `jsonKeys` is the
+ * set of camelCase json-mode column keys (from getJsonColumnKeys); every TEXT
+ * value for those columns is JSON.parsed to match Drizzle's mode:'json' read.
+ * The literal `payload` column is always decoded so callers that omit `jsonKeys`
+ * (single-value outputs) keep working.
+ * @param {Record<string, unknown>} row
+ * @param {readonly string[]} [jsonKeys]
+ * @returns {Record<string, unknown>}
+ */
+export function pgRowToDrizzle(row, jsonKeys) {
+    /** @type {Record<string, unknown>} */
+    const out = {};
+    const jsonSet = new Set(jsonKeys ?? []);
+    for (const [columnName, value] of Object.entries(row)) {
+        const camel = columnName.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+        if ((camel === "payload" || jsonSet.has(camel)) && typeof value === "string") {
+            try {
+                out[camel] = JSON.parse(value);
+            }
+            catch {
+                out[camel] = value;
+            }
+        }
+        else {
+            out[camel] = value;
+        }
+    }
+    return out;
+}
 export function loadInputEffect(db, inputTable, runId) {
     return Effect.suspend(() => {
         const cols = getTableColumns(inputTable);
         const runIdCol = cols.runId;
         if (!runIdCol) {
             return Effect.fail(new SmithersError("DB_MISSING_COLUMNS", "schema.input must include runId column"));
+        }
+        if (isPostgresDb(db)) {
+            const tableName = getTableName(inputTable).replaceAll(`"`, `""`);
+            const jsonKeys = getJsonColumnKeys(inputTable);
+            return Effect.tryPromise({
+                try: () => db.connection
+                    .query({ text: `SELECT * FROM "${tableName}" WHERE run_id = $1 LIMIT 1`, values: [runId] })
+                    .then((result) => (result.rows[0] ? pgRowToDrizzle(result.rows[0], jsonKeys) : undefined)),
+                catch: (cause) => toSmithersError(cause, "load input", {
+                    code: "DB_QUERY_FAILED",
+                    details: { runId },
+                }),
+            });
         }
         return Effect.tryPromise({
             try: () => db.select().from(inputTable).where(eq(runIdCol, runId)).limit(1),
@@ -104,8 +179,13 @@ export function loadOutputsEffect(db, schema, runId) {
             }).pipe(Effect.option);
             if (Option.isNone(tableNameOpt)) continue;
             const tableName = tableNameOpt.value;
+            const jsonKeys = getJsonColumnKeys(/** @type {_Table} */ (table));
             const rawRows = yield* Effect.tryPromise({
-                try: () => db.select().from(/** @type {_Table} */ (table)).where(eq(runIdCol, runId)),
+                try: () => isPostgresDb(db)
+                    ? db.connection
+                        .query({ text: `SELECT * FROM "${tableName.replaceAll(`"`, `""`)}" WHERE run_id = $1`, values: [runId] })
+                        .then((result) => result.rows.map((r) => pgRowToDrizzle(r, jsonKeys)))
+                    : db.select().from(/** @type {_Table} */ (table)).where(eq(runIdCol, runId)),
                 catch: (cause) => toSmithersError(cause, `load outputs ${tableName}`, { code: "DB_QUERY_FAILED", details: { runId, tableName } }),
             });
             const boolKeys = getBooleanColumnKeys(/** @type {_Table} */ (table));
@@ -124,4 +204,44 @@ export function loadOutputsEffect(db, schema, runId) {
  */
 export function loadOutputs(db, schema, runId) {
     return Effect.runPromise(loadOutputsEffect(db, schema, runId));
+}
+/**
+ * Read every row of a single output table for a run, returning Drizzle-shaped
+ * rows (camelCase keys, boolean columns coerced to JS booleans). Dialect-aware:
+ * Drizzle for bun:sqlite, a raw `$n` query for the Postgres descriptor.
+ * @param {unknown} db
+ * @param {_Table} table
+ * @param {string} [runId]
+ * @returns {Effect.Effect<Array<Record<string, unknown>>, SmithersError>}
+ */
+export function loadRunOutputRowsEffect(db, table, runId) {
+    return Effect.gen(function* () {
+        const cols = getTableColumns(table);
+        const runIdCol = cols.runId;
+        const tableName = getTableName(table);
+        const boolKeys = getBooleanColumnKeys(table);
+        const jsonKeys = getJsonColumnKeys(table);
+        const rawRows = yield* Effect.tryPromise({
+            try: () => {
+                if (isPostgresDb(db)) {
+                    const escaped = tableName.replaceAll(`"`, `""`);
+                    const text = runId && runIdCol
+                        ? `SELECT * FROM "${escaped}" WHERE run_id = $1`
+                        : `SELECT * FROM "${escaped}"`;
+                    const values = runId && runIdCol ? [runId] : [];
+                    return db.connection
+                        .query({ text, values })
+                        .then((result) => result.rows.map((r) => pgRowToDrizzle(r, jsonKeys)));
+                }
+                return runId && runIdCol
+                    ? db.select().from(table).where(eq(runIdCol, runId))
+                    : db.select().from(table);
+            },
+            catch: (cause) => toSmithersError(cause, `load run output ${tableName}`, {
+                code: "DB_QUERY_FAILED",
+                details: { runId, tableName },
+            }),
+        });
+        return coerceBooleanColumns(rawRows, boolKeys);
+    }).pipe(Effect.annotateLogs({ runId: runId ?? "" }), Effect.withLogSpan("db:load-run-output"));
 }

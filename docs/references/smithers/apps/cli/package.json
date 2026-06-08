@@ -1,6 +1,6 @@
 {
   "name": "@smithers-orchestrator/cli",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "Smithers command-line interface, MCP server, and local workflow tools",
   "type": "module",
   "sideEffects": false,
@@ -18,7 +18,8 @@
   },
   "files": [
     "src/",
-    "dist/"
+    "dist/",
+    "docs/"
   ],
   "scripts": {
     "test": "bun test --timeout=120000 --max-concurrency=1 tests",
@@ -46,6 +47,7 @@
     "@smithers-orchestrator/scheduler": "workspace:*",
     "@smithers-orchestrator/server": "workspace:*",
     "@smithers-orchestrator/time-travel": "workspace:*",
+    "@smithers-orchestrator/vcs": "workspace:*",
     "smithers-orchestrator": "workspace:*",
     "cron-parser": "^5.5.0",
     "drizzle-orm": "^0.45.2",

@@ -2,7 +2,7 @@ export type WorkspaceSegmentId = "terminal" | "chat";
 
 /**
  * Segmented control that swaps the Workspace pane between the existing Ghostty
- * terminal and the agent chat. Visual contract per docs/DESIGN.md: pill radius,
+ * terminal and the agent chat. Visual contract per .smithers/specs/DESIGN.md: pill radius,
  * accent fill on the selected segment, quiet otherwise.
  */
 export function WorkspaceSegment({

@@ -254,6 +254,23 @@ describe("gateway query hooks", () => {
     expect(observed.disabledOutput).toMatchObject({ loading: false });
   });
 
+  test("useGatewayNodeOutput defaults iteration to zero", async () => {
+    const { client, calls } = createRpcClient();
+    let output: ReturnType<typeof useGatewayNodeOutput> | undefined;
+
+    function Probe() {
+      output = useGatewayNodeOutput({ runId: "run-1", nodeId: "ship" });
+      return null;
+    }
+
+    renderToString(createElement(SmithersGatewayProvider, { client }, createElement(Probe)));
+
+    await output?.refetch();
+    expect(calls).toEqual([
+      { method: "getNodeOutput", params: { runId: "run-1", nodeId: "ship", iteration: 0 } },
+    ]);
+  });
+
   test("run event hook exposes initial streaming state", () => {
     const { client } = createRpcClient();
     let active: ReturnType<typeof useGatewayRunEvents> | undefined;

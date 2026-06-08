@@ -40,6 +40,7 @@ const vcs = {
     workspaceClose: (name, opts) => runVcs(vcsEffects.workspaceClose(name, opts)),
     getJjPointer: (cwd) => runVcs(vcsEffects.getJjPointer(cwd)),
     revertToJjPointer: (pointer, cwd) => runVcs(vcsEffects.revertToJjPointer(pointer, cwd)),
+    captureWorkspaceSnapshot: (cwd) => runVcs(vcsEffects.captureWorkspaceSnapshot(cwd)),
 };
 
 /**
@@ -299,6 +300,57 @@ describeIfJj("symlinks in workspace", () => {
             expect(stat.isSymbolicLink()).toBe(true);
         } finally {
             await repo.cleanup();
+        }
+    }, 30_000);
+});
+
+describeIfJj("captureWorkspaceSnapshot against real jj", () => {
+    test("captures commit/change/operation ids; commit_id advances per write while change_id is stable", async () => {
+        const repo = await makeRepo();
+        try {
+            await commitFile(repo, "a.txt", "hello\n", "seed");
+            await fs.writeFile(path.join(repo.dir, "work.txt"), "v1\n");
+            const s1 = await vcs.captureWorkspaceSnapshot(repo.dir);
+            expect(s1).not.toBeNull();
+            expect(s1.commitId.length).toBeGreaterThan(0);
+            expect(s1.changeId.length).toBeGreaterThan(0);
+            expect(s1.operationId.length).toBeGreaterThan(0);
+
+            // A second write to the same working copy: change_id is stable,
+            // commit_id (the per-state key) advances, and the operation differs.
+            await fs.writeFile(path.join(repo.dir, "work.txt"), "v2\n");
+            const s2 = await vcs.captureWorkspaceSnapshot(repo.dir);
+            expect(s2).not.toBeNull();
+            expect(s2.changeId).toBe(s1.changeId);
+            expect(s2.commitId).not.toBe(s1.commitId);
+            expect(s2.operationId).not.toBe(s1.operationId);
+        } finally {
+            await repo.cleanup();
+        }
+    }, 30_000);
+
+    test("re-capturing an unchanged working copy yields the same commit_id (dedup key is stable)", async () => {
+        const repo = await makeRepo();
+        try {
+            await commitFile(repo, "a.txt", "hello\n", "seed");
+            await fs.writeFile(path.join(repo.dir, "work.txt"), "v1\n");
+            const s1 = await vcs.captureWorkspaceSnapshot(repo.dir);
+            const s2 = await vcs.captureWorkspaceSnapshot(repo.dir);
+            expect(s1).not.toBeNull();
+            expect(s2).not.toBeNull();
+            expect(s2.commitId).toBe(s1.commitId);
+        } finally {
+            await repo.cleanup();
+        }
+    }, 30_000);
+
+    test("returns null in a non-jj directory (durability gap, never throws)", async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), "not-jj-"));
+        try {
+            const snap = await vcs.captureWorkspaceSnapshot(dir);
+            expect(snap).toBeNull();
+        } finally {
+            await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
         }
     }, 30_000);
 });

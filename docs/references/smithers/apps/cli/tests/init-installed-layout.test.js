@@ -79,6 +79,7 @@ function buildFakeInstallTree() {
     cpSync(join(CLI_SRC, "workflow-pack.js"), join(cliDir, "src/workflow-pack.js"));
     cpSync(join(CLI_SRC, "workflowUiSources.js"), join(cliDir, "src/workflowUiSources.js"));
     cpSync(join(CLI_SRC, "agent-detection.js"), join(cliDir, "src/agent-detection.js"));
+    cpSync(join(CLI_SRC, "seeded-workflow-pack.generated.js"), join(cliDir, "src/seeded-workflow-pack.generated.js"));
 
     // Stub out the errors package so agent-detection.js can import it.
     writeFile(
@@ -114,7 +115,16 @@ function buildFakeInstallTree() {
     );
     writeFile(
         join(accountsDir, "src/index.js"),
-        "export function listAccounts() { return []; }\n",
+        [
+            'import { homedir } from "node:os";',
+            'import { join } from "node:path";',
+            "export function listAccounts() { return []; }",
+            "export function accountsRoot(env = process.env) {",
+            "  if (env.SMITHERS_HOME) return env.SMITHERS_HOME;",
+            '  return join(env.HOME ?? homedir(), ".smithers");',
+            "}",
+            "",
+        ].join("\n"),
     );
 
     // Fake zod + typescript so require.resolve finds versions.

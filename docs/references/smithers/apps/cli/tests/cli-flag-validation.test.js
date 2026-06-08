@@ -157,7 +157,7 @@ describe("--annotations streaming via stdin", () => {
         expect(result.json?.logFile).toBeString();
 
         let status;
-        for (let attempt = 0; attempt < 100; attempt += 1) {
+        for (let attempt = 0; attempt < 240; attempt += 1) {
             if (existsSync(repo.path("smithers.db"))) {
                 const sqlite = new Database(repo.path("smithers.db"), { readonly: true });
                 try {
@@ -165,7 +165,15 @@ describe("--annotations streaming via stdin", () => {
                         status = sqlite.query("select status from _smithers_runs where run_id = ?").get(result.json.runId)?.status;
                     }
                     catch (err) {
-                        if (!String(err?.message ?? err).includes("no such table: _smithers_runs")) {
+                        // The detached child writes this SQLite DB concurrently, so a
+                        // read can race the early CREATE TABLE (no such table) or hit the
+                        // writer's lock (database is locked). Both are transient
+                        // — keep polling rather than failing the test.
+                        const message = String(err?.message ?? err);
+                        const transient =
+                            message.includes("no such table: _smithers_runs") ||
+                            message.includes("database is locked");
+                        if (!transient) {
                             throw err;
                         }
                     }

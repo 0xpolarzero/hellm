@@ -268,3 +268,5 @@ export const smithersSchemaMigrations = sqliteTable("_smithers_schema_migrations
         .default(false),
     detailsJson: text("details_json"),
 });
+export { smithersWorkspaceStates } from "./internal-schema/smithersWorkspaceStates.js";
+export { smithersWorkspaceCheckpoints } from "./internal-schema/smithersWorkspaceCheckpoints.js";

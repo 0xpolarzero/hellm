@@ -23,7 +23,7 @@ export function AgentChat({ active }: { active: boolean }) {
 
   // Pin to the newest block as the transcript grows or streams — but only when
   // the viewer is already at the bottom. If they've scrolled up to read earlier
-  // turns mid-stream, don't yank them back down (a calm console, per docs/UX.md).
+  // turns mid-stream, don't yank them back down (a calm console, per .smithers/specs/UX.md).
   useLayoutEffect(() => {
     const list = listRef.current;
     if (list && pinnedRef.current) list.scrollTop = list.scrollHeight;

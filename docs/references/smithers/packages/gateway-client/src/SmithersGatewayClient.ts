@@ -7,6 +7,15 @@ import { gatewayBackoffDelay, type GatewayBackoffOptions } from "./gatewayBackof
 import { SmithersGatewayConnection } from "./SmithersGatewayConnection.ts";
 import type { SmithersGatewayClientOptions } from "./SmithersGatewayClientOptions.ts";
 import type { GatewayRpcParams, GatewayRpcPayload } from "./GatewayRpcTypeMap.ts";
+import {
+  GATEWAY_EXTENSION_STREAM_ERROR,
+  GATEWAY_EXTENSION_STREAM_EVENT,
+  extensionMethodName,
+  extensionStreamMethodName,
+  type GatewayExtensionStreamErrorFrame,
+  type GatewayExtensionStreamFrame,
+  type GatewayExtensionSubscribeResponse,
+} from "./GatewayExtensionEnvelope.ts";
 
 type StreamRunEventPayload = {
   streamId?: string;
@@ -21,6 +30,22 @@ type StreamDevToolsEventPayload = {
   runId?: string;
   event?: unknown;
   error?: unknown;
+};
+
+export type GatewayStreamReconnectEvent = {
+  runId: string;
+  afterSeq?: number;
+  attempt: number;
+  backoffMs: number;
+  reason: "stream_closed" | "transport_error";
+  error?: unknown;
+};
+
+type StreamRunEventsResilientOptions = {
+  signal?: AbortSignal;
+  backoff?: GatewayBackoffOptions;
+  healthyAfterMs?: number;
+  onReconnect?: (event: GatewayStreamReconnectEvent) => void;
 };
 
 declare global {
@@ -336,7 +361,7 @@ export class SmithersGatewayClient {
    */
   async *streamRunEventsResilient(
     params: GatewayRpcParams<"streamRunEvents">,
-    options: { signal?: AbortSignal; backoff?: GatewayBackoffOptions; healthyAfterMs?: number } = {},
+    options: StreamRunEventsResilientOptions = {},
   ): AsyncGenerator<GatewayEventFrame<StreamRunEventPayload>> {
     const signal = options.signal;
     const healthyAfterMs = options.healthyAfterMs ?? 1_000;
@@ -344,6 +369,8 @@ export class SmithersGatewayClient {
     let attempt = 0;
     while (!signal?.aborted) {
       let reachedTerminal = false;
+      let reconnectReason: GatewayStreamReconnectEvent["reason"] = "stream_closed";
+      let reconnectError: unknown;
       // Mark when this connection's inner stream began so we only zero the
       // backoff counter once the connection proves sustained liveness.
       const connectionStart = Date.now();
@@ -378,9 +405,11 @@ export class SmithersGatewayClient {
         if (reachedTerminal) {
           return;
         }
-      } catch {
+      } catch (error) {
         // A thrown drop (error frame, invalid frame, connect failure). Fall
         // through to the shared backoff + reconnect below unless aborted.
+        reconnectReason = "transport_error";
+        reconnectError = error;
       }
       // Either the stream threw or ended silently with the run still live. Stop
       // if the caller aborted; otherwise back off and reconnect (resuming from
@@ -388,7 +417,16 @@ export class SmithersGatewayClient {
       if (signal?.aborted) {
         return;
       }
-      await sleepWithSignal(gatewayBackoffDelay(attempt, options.backoff), signal);
+      const backoffMs = gatewayBackoffDelay(attempt, options.backoff);
+      options.onReconnect?.({
+        runId: params.runId,
+        ...(typeof lastSeq === "number" ? { afterSeq: lastSeq } : {}),
+        attempt,
+        backoffMs,
+        reason: reconnectReason,
+        ...(reconnectError === undefined ? {} : { error: reconnectError }),
+      });
+      await sleepWithSignal(backoffMs, signal);
       attempt += 1;
     }
   }
@@ -485,5 +523,81 @@ export class SmithersGatewayClient {
 
   cronRun(params: GatewayRpcParams<"cronRun">) {
     return this.rpc("cronRun", params);
+  }
+
+  /**
+   * Invoke an extension resource or action over HTTP RPC. The wire method is
+   * `ext.<namespace>.<key>`; the server-side `GatewayExtensions` registry
+   * routes it to the matching handler. Stale-response guards are the caller's
+   * job (signal-based abort) since this is a one-shot call; see
+   * `useGatewayExtensionResource` for the React-side stale guard.
+   */
+  extensionRpc<T = unknown>(
+    namespace: string,
+    key: string,
+    params: Record<string, unknown> = {},
+    options: { signal?: AbortSignal } = {},
+  ): Promise<T> {
+    return this.rpcRaw(extensionMethodName(namespace, key), params, options) as Promise<T>;
+  }
+
+  /**
+   * Subscribe to an extension stream. Returns an async iterable of payloads
+   * filtered to the allocated `streamId`, so a stale subscriber re-using the
+   * same connection cannot see frames intended for the new one. Resume after
+   * a drop is the caller's responsibility — pass a fresh `params.afterSeq` (or
+   * extension-specific cursor) when re-subscribing.
+   *
+   * Error frames from the gateway (`ext.stream.error`) throw, mirroring how
+   * `streamRunEvents` surfaces `run.error`. A clean WS close ends the iterator
+   * gracefully.
+   *
+   * If ElectricSQL Shapes are useful for the *read-source* under the hood, an
+   * extension can adapt them inside its `subscribe()` handler (server-side)
+   * and stream rows through `ctx.send`. The client API stays the same and
+   * writes still flow through actions, never through the shape — see
+   * https://electric-sql.com/docs/api/clients/typescript#shape for the upstream
+   * model.
+   */
+  async *streamExtension<T = unknown>(
+    namespace: string,
+    key: string,
+    params: Record<string, unknown> = {},
+    options: { signal?: AbortSignal } = {},
+  ): AsyncGenerator<T, void, void> {
+    const connection = await this.connect({ signal: options.signal });
+    const method = extensionStreamMethodName(namespace, key);
+    try {
+      const response = (await connection.requestRaw(method, params)) as
+        | GatewayExtensionSubscribeResponse<T>
+        | undefined;
+      if (!isObject(response) || typeof response.streamId !== "string") {
+        throw invalidGatewayResponse(method, undefined, response);
+      }
+      if (response.initial !== undefined) {
+        yield response.initial as T;
+      }
+      for await (const frame of connection.events(options.signal)) {
+        if (frame.event === GATEWAY_EXTENSION_STREAM_EVENT) {
+          const payload = frame.payload as GatewayExtensionStreamFrame<T> | undefined;
+          if (payload?.streamId === response.streamId) {
+            yield payload.payload;
+          }
+          continue;
+        }
+        if (frame.event === GATEWAY_EXTENSION_STREAM_ERROR) {
+          const errPayload = frame.payload as GatewayExtensionStreamErrorFrame | undefined;
+          if (errPayload?.streamId === response.streamId) {
+            throw new GatewayRpcError({
+              method,
+              code: errPayload.error.code,
+              message: errPayload.error.message,
+            });
+          }
+        }
+      }
+    } finally {
+      connection.close();
+    }
   }
 }

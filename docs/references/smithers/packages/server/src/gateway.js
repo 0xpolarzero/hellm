@@ -39,6 +39,7 @@ import { writeRewindAuditRow } from "@smithers-orchestrator/time-travel/writeRew
 import { recoverInProgressRewindAudits } from "@smithers-orchestrator/time-travel/recoverInProgressRewindAudits";
 import { GATEWAY_EVENT_WINDOW_DEFAULT, SMITHERS_API_VERSION, getRequiredScopeForGatewayMethod, } from "@smithers-orchestrator/gateway/rpc";
 import { hasGatewayScope } from "@smithers-orchestrator/gateway/auth/scopes";
+import { EXTENSION_BACKPRESSURE_DISCONNECT_CODE, EXTENSION_METHOD_NOT_FOUND_CODE, EXTENSION_PAYLOAD_MAX_BYTES, EXTENSION_STREAM_OUTBOUND_QUEUE_LIMIT, EXTENSION_WS_BUFFERED_HIGH_WATER_BYTES, GatewayExtensions, isExtensionMethod, } from "./GatewayExtensions.js";
 import { createGatewayUiApp } from "./gatewayUi/createGatewayUiApp.js";
 import { renderDefaultConsoleClient } from "./gatewayUi/defaultConsole.js";
 import { authorizeGatewayUiRequest } from "./gatewayUi/auth.js";
@@ -627,10 +628,11 @@ function responseError(id, code, message, details = {}) {
 /**
  * @param {string} id
  * @param {string} method
+ * @param {{ requiredScopeForMethod?: (method: string) => import("@smithers-orchestrator/gateway/auth/scopes").GatewayScope | undefined }} [registry]
  * @returns {ResponseFrame}
  */
-function responseForbidden(id, method) {
-    const requiredScope = requiredScopeForMethod(method);
+function responseForbidden(id, method, registry) {
+    const requiredScope = requiredScopeForMethod(method, registry);
     return responseError(id, "FORBIDDEN", `Missing required scope ${requiredScope} for ${method}`, {
         requiredScope,
     });
@@ -847,9 +849,10 @@ function normalizeGrantedScope(scope) {
 }
 /**
  * @param {string} method
+ * @param {{ requiredScopeForMethod?: (method: string) => import("@smithers-orchestrator/gateway/auth/scopes").GatewayScope | undefined }} [registry]
  * @returns {import("@smithers-orchestrator/gateway/auth/scopes").GatewayScope}
  */
-function requiredScopeForMethod(method) {
+function requiredScopeForMethod(method, registry) {
     if (method === "run:read" ||
         method === "run:write" ||
         method === "run:admin" ||
@@ -863,15 +866,22 @@ function requiredScopeForMethod(method) {
     if (method.startsWith("config.")) {
         return "run:admin";
     }
+    if (registry && isExtensionMethod(method)) {
+        const extScope = registry.requiredScopeForMethod(method);
+        if (extScope) {
+            return extScope;
+        }
+    }
     return getRequiredScopeForGatewayMethod(method) ?? "run:read";
 }
 /**
  * @param {string[]} scopes
  * @param {string} method
+ * @param {{ requiredScopeForMethod?: (method: string) => import("@smithers-orchestrator/gateway/auth/scopes").GatewayScope | undefined }} [registry]
  * @returns {boolean}
  */
-function hasScope(scopes, method) {
-    return hasGatewayScope(scopes.map(normalizeGrantedScope), requiredScopeForMethod(method), method);
+function hasScope(scopes, method, registry) {
+    return hasGatewayScope(scopes.map(normalizeGrantedScope), requiredScopeForMethod(method, registry), method);
 }
 /**
  * @param {unknown} value
@@ -1245,6 +1255,30 @@ export class Gateway {
     /** Flagged subscriber IDs that should force a snapshot on their next emit. */
     devtoolsInvalidateFlags = new Set();
     uiAssetCache = new Map();
+    /** @type {GatewayExtensions} */
+    extensions = new GatewayExtensions();
+    /**
+     * Per-connection extension stream subscriptions. Lets us tear them down on
+     * close and fence stale subscriber callbacks behind a per-stream
+     * AbortController, so a slow extension handler emitting after disconnect
+     * never reaches a dead socket.
+     * @type {WeakMap<GatewayRequestContext, Map<string, {
+     *   namespace: string;
+     *   key: string;
+     *   abort: AbortController;
+     *   cleanup: () => Promise<void>;
+     * }>>}
+     */
+    extensionStreamSubscriptions = new WeakMap();
+    /**
+     * Per-connection in-flight resource/action handler aborts. A long-running
+     * extension RPC (LLM call, remote API hit) must NOT keep running after the
+     * client cancels or disconnects — `cleanupExtensionPendingHandlers` fires
+     * the abort signal on connection close so handlers that observe `ctx.signal`
+     * can stop work immediately instead of completing into a dead socket.
+     * @type {WeakMap<GatewayRequestContext, Set<AbortController>>}
+     */
+    extensionPendingHandlers = new WeakMap();
     server = null;
     wsServer = null;
     schedulerTimer = null;
@@ -2131,11 +2165,33 @@ export class Gateway {
         }
     }
     /**
-   * @param {string} key
-   * @param {SmithersWorkflow} workflow
-   * @param {GatewayRegisterOptions} [options]
-   * @returns {this}
-   */
+     * Register a typed extension namespace exposing declarative resources,
+     * actions, and streams. See `./GatewayExtensions.js` for the surface; this
+     * shim exists so callers can keep their fluent `gateway.register(...).extend(...)`
+     * chain on the Gateway instance instead of reaching into the registry.
+     *
+     * Namespace collisions throw, so two extensions cannot silently take over
+     * the same name on hot-reload — the host must explicitly tear the previous
+     * gateway down. See `.smithers/specs/gateway-extensions-sync-backplane.md`.
+     *
+     * @param {string} namespace
+     * @param {import("./GatewayExtensions.js").GatewayExtensionDefinition} definition
+     * @returns {this}
+     */
+    extend(namespace, definition) {
+        this.extensions.register(namespace, definition);
+        return this;
+    }
+    /**
+     * Register a workflow under `key`. Wires up its DB tables, schedule, webhook
+     * config, and embedded UI bundle. Returns `this` so callers can chain
+     * `gateway.register(...).register(...).extend(...)` fluently.
+     *
+     * @param {string} key
+     * @param {SmithersWorkflow} workflow
+     * @param {GatewayRegisterOptions} [options]
+     * @returns {this}
+     */
     register(key, workflow, options) {
         ensureSmithersTables(workflow.db);
         const ui = resolveGatewayUiConfig(options?.ui, `/workflows/${encodeURIComponent(key)}`);
@@ -2567,8 +2623,8 @@ export class Gateway {
                     if (frame.method === "connect") {
                         return this.handleConnect(connection, req, frame.id, frame.params);
                     }
-                    if (!hasScope(connection.scopes, frame.method)) {
-                        return responseForbidden(frame.id, frame.method);
+                    if (!hasScope(connection.scopes, frame.method, this.extensions)) {
+                        return responseForbidden(frame.id, frame.method, this.extensions);
                     }
                     return this.routeRequest(connection, frame);
                 });
@@ -2607,6 +2663,9 @@ export class Gateway {
             this.connections.delete(connection);
             this.cleanupDevToolsSubscribers(connection);
             this.cleanupRunEventSubscribers(connection);
+            // Async cleanup runs detached: a malicious or buggy extension
+            // cleanup that hangs cannot block the gateway's disconnect path.
+            void this.cleanupExtensionSubscriptions(connection);
             emitGatewayEffect(Effect.all([
                 updateMetric(gatewayConnectionsActive, -1, { transport: "ws" }),
                 incrementMetric(gatewayConnectionsClosedTotal, {
@@ -2928,8 +2987,8 @@ export class Gateway {
                 params: forcedMethod && body.method === undefined ? body : body.params,
             };
             const response = await this.executeRpc(context, frame, async () => {
-                if (!hasScope(context.scopes, method)) {
-                    return responseForbidden(bodyId, method);
+                if (!hasScope(context.scopes, method, this.extensions)) {
+                    return responseForbidden(bodyId, method, this.extensions);
                 }
                 return this.routeRequest(context, frame);
             });
@@ -3372,6 +3431,9 @@ export class Gateway {
    */
     async routeRequest(connection, frame) {
         const params = asObject(frame.params) ?? {};
+        if (isExtensionMethod(frame.method)) {
+            return this.routeExtensionRequest(connection, frame, params);
+        }
         switch (frame.method) {
             case "health":
                 return responseOk(frame.id, {
@@ -4215,5 +4277,345 @@ export class Gateway {
             default:
                 return responseError(frame.id, "METHOD_NOT_FOUND", `Unknown method: ${frame.method}`);
         }
+    }
+    /**
+     * Dispatch an `ext.*` RPC. Resources/actions are resolved to a handler that
+     * gets the validated params plus a context bundle (scopes, ids, abort
+     * signal); streams allocate a stream id, attach the subscriber, and replay
+     * any `initial` snapshot before deferring further frames to `ctx.send`.
+     *
+     * Errors are normalized into the same wire envelope as built-in RPCs.
+     * Handler-thrown SmithersErrors keep their code/summary; everything else
+     * surfaces as `EXTENSION_HANDLER_ERROR` with the message text but no stack
+     * (leaking handler internals to the wire would be a security regression).
+     *
+     * @param {GatewayRequestContext} connection
+     * @param {RequestFrame} frame
+     * @param {Record<string, unknown>} params
+     * @returns {Promise<ResponseFrame>}
+     */
+    async routeExtensionRequest(connection, frame, params) {
+        const resolved = this.extensions.resolve(frame.method);
+        if (!resolved) {
+            // Typed `EXTENSION_METHOD_NOT_FOUND` distinguishes a bad ext.*
+            // dispatch from a missing builtin RPC method; UI code can tell the
+            // user "no such extension" without parsing the message text.
+            return responseError(frame.id, EXTENSION_METHOD_NOT_FOUND_CODE, `Unknown extension method: ${frame.method}`, {
+                method: frame.method,
+            });
+        }
+        // Per-extension scope is re-checked here even though the gateway
+        // handleSocket / handleHttpRpc paths already gate the connection. This
+        // belt-and-braces re-check exists so a future refactor that bypasses
+        // `hasScope` cannot accidentally elevate an extension RPC.
+        if (!hasScope(connection.scopes, frame.method, this.extensions)) {
+            return responseForbidden(frame.id, frame.method, this.extensions);
+        }
+        if (resolved.kind === "stream") {
+            return this.subscribeExtensionStream(connection, frame, params, resolved);
+        }
+        const abort = new AbortController();
+        // Track the pending handler so a connection drop can abort it without
+        // waiting for the handler to notice. This is the difference between
+        // honouring AbortSignal "on disconnect" (correct) and only aborting in
+        // the local `finally` after the handler resolves (review blocker).
+        this.trackExtensionPendingHandler(connection, abort);
+        const ctx = {
+            namespace: resolved.namespace,
+            key: resolved.key,
+            kind: resolved.kind,
+            scopes: [...connection.scopes],
+            userId: connection.userId ?? null,
+            tokenId: connection.tokenId ?? null,
+            connectionId: connection.connectionId ?? null,
+            signal: abort.signal,
+        };
+        try {
+            const result = await resolved.entry.handler(params, ctx);
+            // Guard against oversized payloads BEFORE shipping back to the wire.
+            // A misbehaving extension shouldn't be able to OOM a UI client or
+            // wedge the WS backpressure queue.
+            const serialized = JSON.stringify(result ?? null);
+            if (Buffer.byteLength(serialized, "utf8") > EXTENSION_PAYLOAD_MAX_BYTES) {
+                return responseError(frame.id, "PayloadTooLarge", `Extension ${frame.method} payload exceeds ${EXTENSION_PAYLOAD_MAX_BYTES} bytes.`, {
+                    maxBytes: EXTENSION_PAYLOAD_MAX_BYTES,
+                });
+            }
+            return responseOk(frame.id, result ?? null);
+        }
+        catch (error) {
+            if (isSmithersError(error)) {
+                return responseError(frame.id, error.code, error.summary, asObject(error.details) ?? {});
+            }
+            return responseError(frame.id, "EXTENSION_HANDLER_ERROR", error?.message ?? "Extension handler failed.");
+        }
+        finally {
+            abort.abort();
+            this.untrackExtensionPendingHandler(connection, abort);
+        }
+    }
+    /**
+     * Register a pending handler abort controller against a connection so the
+     * disconnect / cleanup path can fire its `.abort()` and stop in-flight work
+     * even if the handler never resolves.
+     *
+     * @param {GatewayRequestContext} connection
+     * @param {AbortController} abort
+     */
+    trackExtensionPendingHandler(connection, abort) {
+        let set = this.extensionPendingHandlers.get(connection);
+        if (!set) {
+            set = new Set();
+            this.extensionPendingHandlers.set(connection, set);
+        }
+        set.add(abort);
+    }
+    /**
+     * Remove a pending handler abort from the per-connection set. Safe to call
+     * even when the connection has already been cleaned up.
+     *
+     * @param {GatewayRequestContext} connection
+     * @param {AbortController} abort
+     */
+    untrackExtensionPendingHandler(connection, abort) {
+        const set = this.extensionPendingHandlers.get(connection);
+        if (!set) {
+            return;
+        }
+        set.delete(abort);
+        if (set.size === 0) {
+            this.extensionPendingHandlers.delete(connection);
+        }
+    }
+    /**
+     * Fire the abort signal on every pending resource/action handler for a
+     * connection. Called from the disconnect path so handlers respecting
+     * `ctx.signal` stop work immediately instead of returning into a dead
+     * socket and racing the cleanup of dependent resources.
+     *
+     * @param {GatewayRequestContext} connection
+     */
+    cleanupExtensionPendingHandlers(connection) {
+        const set = this.extensionPendingHandlers.get(connection);
+        if (!set) {
+            return;
+        }
+        this.extensionPendingHandlers.delete(connection);
+        for (const abort of set) {
+            try { abort.abort(); } catch { /* swallow */ }
+        }
+    }
+    /**
+     * Attach a subscriber to an extension stream. The wire response carries the
+     * allocated `streamId` (and any `initial` snapshot for resume semantics).
+     * Further frames flow as `ext.stream` events tagged with `streamId` so a
+     * stale subscriber on the same connection can fence late frames after it
+     * unsubscribed and re-subscribed.
+     *
+     * @param {GatewayRequestContext} connection
+     * @param {RequestFrame} frame
+     * @param {Record<string, unknown>} params
+     * @param {import("./GatewayExtensions.js").ResolvedExtension & { kind: "stream", entry: import("./GatewayExtensions.js").GatewayExtensionStream }} resolved
+     * @returns {Promise<ResponseFrame>}
+     */
+    async subscribeExtensionStream(connection, frame, params, resolved) {
+        if (connection.transport !== "ws" || !connection.ws) {
+            return responseError(frame.id, "INVALID_REQUEST", `Extension stream ${frame.method} is only supported over websocket connections.`);
+        }
+        const streamId = randomUUID();
+        const abort = new AbortController();
+        let cleanupFn = async () => {};
+        // Per-subscriber outbound queue + WS-level backpressure detection.
+        // Mirrors the devtools slow-consumer guard so a chatty extension cannot
+        // monopolize the shared outbound buffer or evict frames for other
+        // subscribers on the same connection. Overflow raises a typed
+        // BackpressureDisconnect that tears down ONLY this stream.
+        /** @type {Array<Record<string, unknown>>} */
+        const outboundQueue = [];
+        let flushPending = false;
+        let backpressureDisconnected = false;
+        const drainOutboundQueue = () => {
+            if (flushPending) return;
+            flushPending = true;
+            queueMicrotask(() => {
+                try {
+                    while (outboundQueue.length > 0 && connection.ws.readyState === connection.ws.OPEN && !abort.signal.aborted) {
+                        const ws = connection.ws;
+                        if (typeof ws.bufferedAmount === "number" && ws.bufferedAmount > EXTENSION_WS_BUFFERED_HIGH_WATER_BYTES) {
+                            setTimeout(() => {
+                                flushPending = false;
+                                drainOutboundQueue();
+                            }, 10);
+                            return;
+                        }
+                        const envelope = outboundQueue.shift();
+                        if (!envelope) continue;
+                        this.sendEvent(connection, "ext.stream.event", envelope);
+                    }
+                }
+                finally {
+                    flushPending = false;
+                }
+            });
+        };
+        const tearDownForBackpressure = () => {
+            if (backpressureDisconnected) return;
+            backpressureDisconnected = true;
+            this.sendEvent(connection, "ext.stream.error", {
+                streamId,
+                namespace: resolved.namespace,
+                key: resolved.key,
+                error: {
+                    version: SMITHERS_API_VERSION,
+                    code: EXTENSION_BACKPRESSURE_DISCONNECT_CODE,
+                    message: `Extension stream outbound queue exceeded ${EXTENSION_STREAM_OUTBOUND_QUEUE_LIMIT} events.`,
+                },
+            });
+            abort.abort();
+            const map = this.extensionStreamSubscriptions.get(connection);
+            if (map) {
+                map.delete(streamId);
+                if (map.size === 0) {
+                    this.extensionStreamSubscriptions.delete(connection);
+                }
+            }
+            // Cleanup callback runs detached so a hung extension cleanup
+            // cannot wedge this disconnect path.
+            const c = cleanupFn;
+            void (async () => { try { await c(); } catch { /* swallow */ } })();
+        };
+        const send = (payload) => {
+            if (abort.signal.aborted || backpressureDisconnected) {
+                return;
+            }
+            const envelope = {
+                streamId,
+                namespace: resolved.namespace,
+                key: resolved.key,
+                payload,
+            };
+            // Bounded payload check on each stream frame too. A streaming
+            // extension is the more likely OOM vector — a slow UI consumer can
+            // sit on a 4 MiB JSON every 100 ms.
+            const serialized = JSON.stringify(envelope);
+            if (Buffer.byteLength(serialized, "utf8") > EXTENSION_PAYLOAD_MAX_BYTES) {
+                this.sendEvent(connection, "ext.stream.error", {
+                    streamId,
+                    namespace: resolved.namespace,
+                    key: resolved.key,
+                    error: {
+                        version: SMITHERS_API_VERSION,
+                        code: "PayloadTooLarge",
+                        message: `Extension stream frame exceeds ${EXTENSION_PAYLOAD_MAX_BYTES} bytes.`,
+                    },
+                });
+                return;
+            }
+            if (outboundQueue.length >= EXTENSION_STREAM_OUTBOUND_QUEUE_LIMIT) {
+                tearDownForBackpressure();
+                return;
+            }
+            outboundQueue.push(envelope);
+            drainOutboundQueue();
+        };
+        const streamCtx = {
+            namespace: resolved.namespace,
+            key: resolved.key,
+            kind: "stream",
+            streamId,
+            scopes: [...connection.scopes],
+            userId: connection.userId ?? null,
+            tokenId: connection.tokenId ?? null,
+            connectionId: connection.connectionId ?? null,
+            signal: abort.signal,
+            send,
+        };
+        try {
+            const result = await resolved.entry.subscribe(params, streamCtx);
+            let initial;
+            if (typeof result === "function") {
+                cleanupFn = async () => { await result(); };
+            }
+            else if (result && typeof result === "object") {
+                if (typeof result.cleanup === "function") {
+                    const c = result.cleanup;
+                    cleanupFn = async () => { await c(); };
+                }
+                if ("initial" in result) {
+                    initial = result.initial;
+                }
+            }
+            // Size-bound the initial snapshot the same way ctx.send frames are
+            // bounded. An extension that crams 100 MiB into `initial` would
+            // otherwise sail past EXTENSION_PAYLOAD_MAX_BYTES because the
+            // initial replay is delivered on the response frame, not via
+            // sendEvent. Reject early + clean up.
+            if (initial !== undefined) {
+                const serializedInitial = JSON.stringify(initial);
+                if (Buffer.byteLength(serializedInitial, "utf8") > EXTENSION_PAYLOAD_MAX_BYTES) {
+                    abort.abort();
+                    try { await cleanupFn(); } catch { /* swallow */ }
+                    return responseError(frame.id, "PayloadTooLarge", `Extension ${frame.method} initial payload exceeds ${EXTENSION_PAYLOAD_MAX_BYTES} bytes.`, {
+                        maxBytes: EXTENSION_PAYLOAD_MAX_BYTES,
+                    });
+                }
+            }
+            if (!this.extensionStreamSubscriptions.has(connection)) {
+                this.extensionStreamSubscriptions.set(connection, new Map());
+            }
+            const map = this.extensionStreamSubscriptions.get(connection);
+            map.set(streamId, {
+                namespace: resolved.namespace,
+                key: resolved.key,
+                abort,
+                cleanup: cleanupFn,
+            });
+            return responseOk(frame.id, {
+                streamId,
+                namespace: resolved.namespace,
+                key: resolved.key,
+                ...(initial !== undefined ? { initial } : {}),
+            });
+        }
+        catch (error) {
+            abort.abort();
+            try { await cleanupFn(); } catch { /* swallow */ }
+            if (isSmithersError(error)) {
+                return responseError(frame.id, error.code, error.summary, asObject(error.details) ?? {});
+            }
+            return responseError(frame.id, "EXTENSION_HANDLER_ERROR", error?.message ?? "Extension subscribe failed.");
+        }
+    }
+    /**
+     * Tear down every extension stream attached to a connection. Called from
+     * the existing socket cleanup path so a disconnect releases handler-owned
+     * resources (subscriptions, db cursors, ElectricSQL shape handles, etc.)
+     * even if the handler never observed the abort signal.
+     *
+     * @param {GatewayRequestContext} connection
+     */
+    async cleanupExtensionSubscriptions(connection) {
+        // Also abort any in-flight resource/action handlers so they observe
+        // ctx.signal and stop work — long-running RPCs must not keep running
+        // after the connection drops.
+        this.cleanupExtensionPendingHandlers(connection);
+        const map = this.extensionStreamSubscriptions.get(connection);
+        if (!map) {
+            return;
+        }
+        this.extensionStreamSubscriptions.delete(connection);
+        // Abort every stream up front so callbacks see the signal immediately,
+        // then await all cleanups concurrently with allSettled. A single hung
+        // cleanup must not block tearing down the other streams or returning
+        // from the disconnect path — every cleanup gets its own detached
+        // microtask, isolated from its peers.
+        for (const { abort } of map.values()) {
+            try { abort.abort(); } catch { /* swallow */ }
+        }
+        await Promise.allSettled(
+            Array.from(map.values()).map(({ cleanup }) =>
+                Promise.resolve().then(() => cleanup()),
+            ),
+        );
     }
 }

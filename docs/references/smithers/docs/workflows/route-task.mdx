@@ -1,0 +1,48 @@
+---
+title: route-task
+description: Classify a plain-English script and either run it as a single task or recommend the right durable workflow.
+---
+
+`route-task` is the concierge entry point to the pack. Describe what you want in
+plain English and it decides whether the work is a quick one-shot task it should
+just do, or a durable job that belongs in a real workflow — then it either runs it
+or hands you the best-fit workflow to run instead.
+
+```bash
+bunx smithers-orchestrator workflow run route-task \
+  --prompt "Summarize what changed in the last 10 commits"
+```
+
+Use this when you have a task but aren't sure which workflow to reach for. The
+classifier is cheap and fast; only the chosen path spends a smart agent.
+
+## Stages
+
+1. **classify** — sort the script into a task `mode` and decide `durable` (does it
+   need ordering, crash-recovery, approval, or loops?). Cheap/fast agent.
+2. **execute** — non-durable path: a tool-using agent actually does the work in a
+   single pass and reports `{ summary, done }`.
+3. **recommend** — durable path: a smart agent points at the single best-fit
+   seeded workflow (`implement`, `research-plan-implement`, `review`, `plan`,
+   `research`, `grill-me`, `ralph`, `debug`, `audit`, `create-workflow`,
+   `context-doctor`, `monitor-smithers`) and explains why.
+
+Only one of `execute` or `recommend` runs, gated on the classifier's `durable`
+verdict.
+
+## Inputs
+
+| Input | Type | Default |
+| --- | --- | --- |
+| `prompt` | string | `"Describe the task you want Smithers to handle, in plain English."` |
+
+## Monitor it
+
+```bash
+bunx smithers-orchestrator workflow run route-task --prompt "…" -d   # detach
+bunx smithers-orchestrator ps                                        # active / paused / recent
+bunx smithers-orchestrator logs <runId> -f                           # follow events
+```
+
+When `route-task` recommends a durable workflow, run it directly — for example
+`bunx smithers-orchestrator workflow run implement --prompt "…"`.

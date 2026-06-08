@@ -12,6 +12,8 @@ import { WATCH_MIN_INTERVAL_MS } from "../watch.js";
 import { discoverWorkflows, resolveWorkflow } from "../workflows.js";
 import { mdxPlugin } from "../mdx-plugin.js";
 import { approveNode, denyNode } from "@smithers-orchestrator/engine/approvals";
+import { buildAgentAskRequestRow, waitForHumanAnswer, } from "@smithers-orchestrator/engine/human-requests";
+import { buildAskKindFields, buildAskPromptText, buildAskUniqueToken, resolveAskHumanContext, } from "../ask-human.js";
 import { runWorkflow } from "@smithers-orchestrator/engine";
 import { revertToAttempt } from "@smithers-orchestrator/time-travel/revert";
 import { runPromise } from "../smithersRuntime.js";
@@ -34,6 +36,7 @@ export const SEMANTIC_TOOL_NAMES = [
     "explain_run",
     "list_pending_approvals",
     "resolve_approval",
+    "ask_human",
     "get_node_detail",
     "revert_attempt",
     "list_artifacts",
@@ -44,6 +47,7 @@ const workflowSummarySchema = z.object({
     id: z.string(),
     metadataVersion: z.number().int(),
     displayName: z.string(),
+    scope: z.enum(["local", "global"]),
     entryFile: z.string(),
     sourceType: z.string(),
     description: z.string(),
@@ -332,6 +336,26 @@ const resolveApprovalDataSchema = z.object({
     action: z.enum(["approve", "deny"]),
     approval: pendingApprovalSchema,
     run: runSummarySchema.nullable(),
+});
+const askHumanInputSchema = z.object({
+    prompt: z.string().describe("The decision or question to put to a human."),
+    context: z.string().optional().describe("Extra context appended to the prompt."),
+    choices: z.array(z.string()).optional().describe("Fixed choices; restricts the human's answer to one of these."),
+    runId: z.string().optional().describe("Run to attach to (defaults to SMITHERS_RUN_ID or the single active run)."),
+    nodeId: z.string().optional().describe("Node to attach to (defaults to SMITHERS_NODE_ID)."),
+    iteration: z.number().int().min(0).optional().describe("Loop iteration (defaults to SMITHERS_ITERATION or 0)."),
+    timeoutSeconds: z.number().min(0).optional().describe("Seconds before the request expires (0/unset = no timeout)."),
+    pollSeconds: z.number().min(0.25).optional().describe("Poll interval while blocking (default 3s)."),
+});
+const askHumanDataSchema = z.object({
+    requestId: z.string(),
+    runId: z.string(),
+    nodeId: z.string(),
+    iteration: z.number().int(),
+    status: z.enum(["answered", "cancelled", "expired", "missing", "aborted"]),
+    decision: z.enum(["approved", "blocked"]),
+    response: z.unknown().nullable(),
+    answeredBy: z.string().nullable(),
 });
 const getNodeDetailInputSchema = z.object({
     runId: z.string(),
@@ -629,6 +653,7 @@ async function loadWorkflowById(workflowId, cwd) {
             id: discovered.id,
             metadataVersion: discovered.metadataVersion,
             displayName: discovered.displayName,
+            scope: discovered.scope,
             entryFile: discovered.entryFile,
             sourceType: discovered.sourceType,
             description: discovered.description,
@@ -774,7 +799,7 @@ export function createSemanticToolDefinitions(options = {}) {
     return [
         {
             name: "list_workflows",
-            description: "List discovered local Smithers workflows.",
+            description: "List discovered Smithers workflows (local repo .smithers pack plus the global ~/.smithers pack; local shadows global on id collisions).",
             inputSchema: listWorkflowsInputSchema,
             outputSchema: resultSchema(listWorkflowsDataSchema),
             annotations: { readOnlyHint: true },
@@ -1025,6 +1050,69 @@ export function createSemanticToolDefinitions(options = {}) {
                     run: run != null
                         ? await buildRunSummary(adapter, run)
                         : null,
+                };
+            })),
+        },
+        {
+            name: "ask_human",
+            description: "Block this run and ask a human to make a decision, then wait for their answer. Use whenever you are blocked, uncertain, missing information, or about to do something irreversible/destructive — never guess. Returns once a human answers (decision 'approved') or the request is cancelled/expired (decision 'blocked'); on 'blocked' you must not proceed.",
+            inputSchema: askHumanInputSchema,
+            outputSchema: resultSchema(askHumanDataSchema),
+            annotations: {
+                readOnlyHint: false,
+                openWorldHint: true,
+                idempotentHint: false,
+            },
+            handler: (input) => executeSemanticTool("ask_human", async () => withDb(context, async (adapter) => {
+                const ctx = await resolveAskHumanContext(adapter, {
+                    runId: input.runId,
+                    nodeId: input.nodeId,
+                    iteration: input.iteration,
+                });
+                const choices = Array.isArray(input.choices) && input.choices.length > 0
+                    ? input.choices
+                    : null;
+                const kindFields = buildAskKindFields(choices);
+                const requestedAtMs = Date.now();
+                const timeoutAtMs = typeof input.timeoutSeconds === "number" && input.timeoutSeconds > 0
+                    ? requestedAtMs + Math.floor(input.timeoutSeconds * 1_000)
+                    : null;
+                const row = buildAgentAskRequestRow({
+                    runId: ctx.runId,
+                    nodeId: ctx.nodeId,
+                    iteration: ctx.iteration,
+                    prompt: buildAskPromptText(input.prompt, input.context),
+                    unique: buildAskUniqueToken(),
+                    requestedAtMs,
+                    kind: kindFields.kind,
+                    optionsJson: kindFields.optionsJson,
+                    schemaJson: kindFields.schemaJson,
+                    timeoutAtMs,
+                });
+                await adapter.insertHumanRequest(row);
+                const outcome = await waitForHumanAnswer(adapter, row.requestId, {
+                    pollIntervalMs: typeof input.pollSeconds === "number" && input.pollSeconds > 0
+                        ? Math.floor(input.pollSeconds * 1_000)
+                        : undefined,
+                });
+                let response = null;
+                if (outcome.status === "answered" && outcome.responseJson != null) {
+                    try {
+                        response = JSON.parse(outcome.responseJson);
+                    }
+                    catch {
+                        response = outcome.responseJson;
+                    }
+                }
+                return {
+                    requestId: row.requestId,
+                    runId: ctx.runId,
+                    nodeId: ctx.nodeId,
+                    iteration: ctx.iteration,
+                    status: outcome.status,
+                    decision: outcome.status === "answered" ? "approved" : "blocked",
+                    response,
+                    answeredBy: outcome.answeredBy ?? null,
                 };
             })),
         },

@@ -29,6 +29,21 @@ Studio 2 / context:
 - [0028](smithers/0028-vector-memories-context-management.md) — Vector memories: background-embedded agent memories + cross-session semantic recall (lights up `_smithers_vectors` + `SemanticRecallConfig`)
 - [0029](smithers/0029-global-settings-and-global-workflows.md) — Global settings + global workflows (OS-convention config home, à la Claude Code / Codex)
 
+jjhub parity — bring `apps/smithers` (the new chat-first UI) to feature parity
+with the jjhub cloud platform. Plan: [`../plans/jjhub-parity.md`](../plans/jjhub-parity.md).
+Already shipped: transport seam, Worker platform proxy, backend selector, WS/SSE
+ticket helper; issues + landings list-views wired to live Plue. Remaining:
+
+- [0030](smithers/0030-jjhub-sse-seam.md) — Authenticated SSE seam (blocked on jjhub reference impl)
+- [0031](smithers/0031-jjhub-owner-repo-route-vocabulary.md) — owner/repo route vocabulary + repo-context
+- [0032](smithers/0032-jjhub-notifications-inbox.md) — Notifications inbox surface
+- [0033](smithers/0033-jjhub-repos-and-source.md) — Repos list + dashboard + source browser
+- [0034](smithers/0034-jjhub-workspaces-and-terminal.md) — Cloud workspaces + in-browser terminal (WS bypasses the Worker)
+- [0035](smithers/0035-jjhub-vcs-live.md) — jj VCS live (changes/operations/stacks) + tickets
+- [0036](smithers/0036-jjhub-review-and-tracker-depth.md) — Landings PR review + issues comments/metadata depth
+- [0037](smithers/0037-jjhub-runs-parity-and-sessions.md) — Runs parity + durable agent sessions
+- [0038](smithers/0038-jjhub-platform-breadth.md) — Settings, repo config, wiki/releases, search, integrations (umbrella)
+
 ## `jjhub/` — `/Users/williamcory/jjhub`
 
 Make JJHub the blessed Smithers runtime:

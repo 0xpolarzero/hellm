@@ -11,7 +11,7 @@ import { useWorkflowLaunchHandoff } from "./workflowLaunchHandoff";
 /**
  * Workflows surface. Browse a list of launchable things across four SEGMENTS
  * (Local / Remote / Prompts / Schedules — prompts and triggers/schedules merged
- * in per docs/UX.md), view a selected workflow's source/summary, and LAUNCH it
+ * in per .smithers/specs/UX.md), view a selected workflow's source/summary, and LAUNCH it
  * with arguments. Launching creates a run, stores the new run id in this folder's
  * handoff slice, and routes to the Runs surface with that run selected — without
  * touching useStudioStore beyond the shared setActiveView entrypoint.
