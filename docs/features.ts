@@ -114,7 +114,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Live Tool Projection",
     status: "in-progress",
     summary:
-      "Adopts Codex's turn item model for live tool rendering: show the tool card as soon as the tool name is known, stream large argument snapshots before runtime execution, render `apply_patch` as structured file-change snapshots rather than many tiny patch calls, stream `exec_command` output and runtime progress through durable command events, nest `execute_typescript` generated-client child commands under the parent, keep `svvyx ...` and prompt-only CLIs as command-family projections over `exec_command`, project adopted Smithers-native handler tools through the same turn/item/command lifecycle, and treat final command facts plus authoritative Smithers rereads as the recovery source without a workflow-specific renderer.",
+      "Adopts Codex's turn item model for live tool rendering: show the tool card as soon as the tool name is known, stream large argument snapshots before runtime execution, render `apply_patch` as structured file-change snapshots rather than many tiny patch calls, stream `exec_command` output and runtime progress through durable command events, nest `execute_typescript` generated-client child commands under the parent, and keep `svvyx ...` and prompt-only CLIs such as Smithers as command-family projections over `exec_command` without a workflow-specific renderer.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/live-tool-projection.spec.md",
@@ -166,7 +166,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Delegated Handler Thread Surfaces",
     status: "in-progress",
     summary:
-      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that supervise delegated objectives, with one shared native implementation exposed as `thread-orchestration` for orchestrators (`thread_start`, `thread_followup`, `thread_list`, `thread_episodes`, `thread_request_report`) and `thread-handling` for handlers (`thread_current`, `thread_group`, `thread_report`, `thread_episodes`) while workflow task agents receive neither extension; `thread_start` takes a required `threads[]` array, normally with one item, creates or appends to one durable `threadGroupId`, defaults each item's `history` to `isolated` so handlers start from handler prompt, tools, extension binding, and delegated objective without inherited orchestrator chat, allows explicit `forked` starts only for conservative continuity cases where the user asks for current conversation context, unresolved design nuance cannot be captured in durable files or a compact objective, or multiple approaches must start from the exact same conversational point, allows multiple items only for separate user-visible handler conversations rather than ordinary workflow parallelism, and optionally applies each item's `extensions` override over the `threadHandler` profile with `default_loaded`, `available`, or `unavailable` states such as setting `project-ci` to `default_loaded`; the thread API keeps handler-thread UI titles outside agent results, leaves threads multi-turn and directly messageable before and after objective conclusion, exposes group identity through `thread_current`, `thread_list`, and `thread_group`, lets the orchestrator send corrections or later work through `thread_followup` by exact thread ids or group id, lets `thread_followup({ activate: true })` reactivate concluded objectives in the same delegated context while active targets keep their current objective, lets the orchestrator request one-handler updates through `thread_request_report`, lets handlers emit intermediate update episodes or sibling-forwarding requests through `thread_report`, rejects `thread_report` conclusions while the thread still owns active workflow runs for the current objective or referenced evidence is not yet durable and inspectable, routes workflow attention back to the owning handler surface rather than the focused Dockview panel, and returns control to the orchestrator only through explicit `thread_report` calls with `outcome` that append ordered conclusion episodes and schedule typed orchestrator reconciliation notifications.",
+      "Lets the orchestrator open pi-backed delegated handler threads as fully interactive conversation surfaces that own delegated objectives, with one shared native implementation exposed as `thread-orchestration` for orchestrators (`thread_start`, `thread_followup`, `thread_list`, `thread_episodes`, `thread_request_report`) and `thread-handling` for handlers (`thread_current`, `thread_group`, `thread_report`, `thread_episodes`) while workflow task agents receive neither extension; `thread_start` takes a required `threads[]` array, normally with one item, creates or appends to one durable `threadGroupId`, defaults each item's `history` to `isolated`, allows explicit `forked` starts only for conservative continuity cases, allows multiple items only for separate user-visible handler conversations, and optionally applies each item's `extensions` override over the `threadHandler` profile with `default_loaded`, `available`, or `unavailable` states; the thread API keeps handler-thread UI titles outside agent results, leaves threads multi-turn and directly messageable before and after objective conclusion, exposes group identity, lets the orchestrator send corrections or later work through `thread_followup`, request one-handler updates through `thread_request_report`, lets handlers emit intermediate update episodes or sibling-forwarding requests through `thread_report`, and returns control to the orchestrator only through explicit `thread_report` calls with `outcome` that append ordered conclusion episodes and schedule typed orchestrator reconciliation notifications.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/extension/thread_managing.extension.spec.md",
@@ -191,36 +191,33 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
       "docs/specs/extension/github.extension.spec.md",
       "docs/specs/extension/external_instructions.extension.spec.md",
       "docs/specs/extension/extension_loading.extension.spec.md",
-      "docs/specs/extension/project_ci.extension.spec.md",
       "docs/specs/extension/artifacts.extension.spec.md",
-      "docs/specs/project-ci.spec.md",
       "docs/specs/structured-session-state.spec.md",
     ],
   },
   {
-    id: "smithers-tool-surface",
-    name: "Smithers-Native Extension Interface",
+    id: "smithers-cli-guidance",
+    name: "Prompt-Only Smithers CLI Guidance",
     status: "in-progress",
     summary:
-      "Exposes Smithers-native semantic workflow control and inspection tools through the Bun bridge for handler-thread surfaces, with normal startup discovering only configured saved entries under `.svvy/workflows/entries/` and artifact entries under `.svvy/artifacts/workflows/`, a stable `smithers_run_workflow({ workflowId, input, runId? })` tool validated against each entry's real TypeScript or Zod launch schema where supplied `runId` resumes exactly that run, omitted `runId` requests a fresh launch, omitted `runId` is rejected when the same handler already owns a nonterminal run with the same `workflowId`, and different `workflowId` values can run concurrently under one handler, `smithers_list_workflows({ workflowId?, productKind? })` returning full runnable-entry contract metadata including `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, `launchInputSchema`, and optional product metadata such as Project CI `productKind` and result schema, `smithers_list_runs` returning workspace-global compact run summaries enriched with svvy `sessionId` and `threadId` ownership when known, and the rest of the handler-thread surface using prefixed model-facing names such as `smithers_get_run`, `smithers_watch_run`, `smithers_explain_run`, `smithers_list_pending_approvals`, `smithers_resolve_approval`, `smithers_get_node_detail`, `smithers_list_artifacts`, `smithers_get_chat_transcript`, `smithers_get_run_events`, `smithers_runs_cancel`, `smithers_signals_send`, `smithers_frames_list`, `smithers_get_devtools_snapshot`, and `smithers_stream_devtools` instead of inventing a parallel svvy `workflow_*` abstraction, while preserving raw Smithers operation names, transport, and invocation metadata in command facts, maintaining an exact global `smithers-orchestrator@0.22.0` CLI requirement plus generated filtered Smithers core, observability, events, and memory instruction fragments derived from `smithers docs-full --json`, bypassing the memory fragment in shipped config until explicitly enabled, normalizing retained upstream CLI examples to `smithers <command>`, deleting upstream SDK/agent/tool integration sections and dropping OpenAPI/Effect fragments from default loaded output, and loading a separate svvy-specific Smithers boundary instruction file, returning an empty workflow list when no real entries are configured, and avoiding any dependency on the repo authoring workspace under `workflows/`.",
+      "Defines Smithers as a builtin prompt-only extension for handler-thread workflow authoring, generated from the pinned official Smithers documentation with a small svvy boundary appendix; agents use official Smithers CLI commands through Shell against workspace `.smithers/` packages, import reusable svvy values from `@svvy/workflows`, and do not receive product workflow wrapper tools, native Smithers bridge tools, generated Smithers TypeScript clients, or workspace-local svvy workflow source guidance.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/extension/smithers.extension.spec.md",
-      "docs/specs/workflow-supervision.spec.md",
       "docs/specs/workflow-library.spec.md",
     ],
   },
   {
-    id: "workflow-task-agents",
-    name: "Workflow Task Agents",
+    id: "workflow-task-agent-parameters",
+    name: "Reusable Workflow Task-Agent Parameters",
     status: "in-progress",
     summary:
-      "Defines lower-level Smithers workflow task agents as Smithers-owned task-attempt agents with their own workflow-agent profile extension states, optional invocation-time partial extension overrides, task-local prompt-only cx CLI guidance through `exec_command`, direct tools, Extension Loading, and `execute_typescript`, prompt-only Git default-loaded, prompt-only GitHub available for task objectives that explicitly require GitHub work, no ambient pi built-ins or extension-tool leakage, no extension-state derivation from owning handler profile, `thread_start` overrides, or handler report facts, task-root or worktree execution aligned to the active Smithers attempt, the same svvy runtime sandboxing and approval-mode behavior as orchestrators and handlers for task-local shell, patch, network, parent `execute_typescript`, and generated loaded-extension client boundaries, first-class svvy workflow-task-attempt UI projection rows keyed by exact Smithers attempt identity before task-local tool calls run, Smithers-owned message-native retry and hijack continuation, live task-agent activity streaming, and svvy command/artifact/usage projections linked to the Smithers attempt, while keeping Smithers attempt lifecycle, workflow approval, wait, output, transcript, and hijack execution facts in Smithers and outside ordinary task-agent tools.",
+      "Represents reusable Smithers task-agent configuration as structured `TaskAgentParameters` records under `~/.config/svvy/workflows/agents`, generated as `Agents.*` exports in `@svvy/workflows`, with `Agents.defineTaskAgent` and `Agents.TaskAgentParameters` also exported under the same namespace; Agents-pane edits and `svvyx workflows save --kind agent` write the same structured source, and build validates provider/model/reasoning and extension references against pi-normalized provider metadata and generated `@svvy/extensions` instead of accepting freeform agent code.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/extensions-and-tools.spec.md",
-      "docs/specs/workflow-supervision.spec.md",
-      "docs/specs/extension/execute_typescript.extension.spec.md",
+      "docs/specs/workflow-library.spec.md",
+      "docs/specs/extension/workflows.extension.spec.md",
     ],
   },
   {
@@ -232,19 +229,23 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     sourceSpecs: ["docs/prd.md", "docs/specs/context-budget-observability.spec.md"],
   },
   {
-    id: "workflow-library",
-    name: "Workflow Authoring And Artifact Workflows",
+    id: "workflows-extension",
+    name: "Workflows Source Library Extension",
     status: "in-progress",
     summary:
-      "Centers workflow execution around authored artifact workflows stored under `.svvy/artifacts/workflows/`, with handler threads using the loaded Smithers extension and generated workflow-authoring TypeScript contracts, checking saved entries and reusable assets before authoring, using `workflow_list_models` to inspect available provider/model/reasoning choices when creating fresh task-agent configuration, authoring through reusable definitions, prompts, and components when needed, and launching concrete saved or artifact entries through the Smithers-native runtime interface.",
-    sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
+      "Provides the builtin Incur-backed `svvyx workflows ...` command family for app-global reusable Smithers source: `list` reports generated export names and source/generated paths, `save` copies or extracts reusable agents, prompts, components, or workflows from a workspace path with strict overwrite handling and automatic build, `build` first builds Extensions and generated `@svvy/extensions`, then validates Workflows source and generates `@svvy/workflows`, and `models list` reports pi-backed provider/model/reasoning options for task-agent parameter authoring; it never runs, resumes, approves, or inspects active Smithers workflows.",
+    sourceSpecs: [
+      "docs/prd.md",
+      "docs/specs/workflow-library.spec.md",
+      "docs/specs/extension/workflows.extension.spec.md",
+    ],
   },
   {
-    id: "saved-workflow-library",
-    name: "Workspace Workflows Library",
+    id: "saved-workflows-generated-surface",
+    name: "Saved Workflows Generated Surface",
     status: "shipped",
     summary:
-      "Stores reusable workflow source assets under `.svvy/workflows/definitions`, `prompts`, and `components`, stores launchable saved entries under `.svvy/workflows/entries`, exposes minimal asset index metadata from required JSDoc and MDX frontmatter, reserves workflow-agent component conventions for future packaged-app-safe Workflows behavior rather than repo-root `workflows/` runtime state, supports optional product metadata and result schemas on entries such as Project CI, lets handlers inspect saved asset source through `exec_command`, validates `apply_patch` writes under `.svvy/workflows/...` automatically through structured tool output, and presents a read-only Workflows surface with source previews, diagnostics, deletion controls, and open-in-editor handoff to the user's configured external editor, with all workspace-affecting Workflows operations routed by explicit `workspaceId` instead of active workspace state.",
+      "Surfaces the latest successful generated `@svvy/workflows` package in a read-only Workflows pane with namespace, export name, qualified name, generated code, generated-file link, and source-file link for `Agents`, `Components`, `Prompts`, and `Workflows`; `Agents.*` rows also show the generated parameter object and a human UI link into the Agents pane for customization.",
     sourceSpecs: ["docs/prd.md", "docs/specs/workflow-library.spec.md"],
   },
   {
@@ -260,7 +261,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Queued Surface Messages",
     status: "in-progress",
     summary:
-      "Lets a user, orchestrator, or backend coordinator submit prompt-bearing and surface-control work to an orchestrator or handler-thread surface by placing it in a durable FIFO queue owned by the target `surfacePiSessionId`; ordinary sends, idle sends, `thread_followup` requests, initial handler starts, report requests, workflow-attention wake-ups, and agent context refreshes do not bypass the queue manager, while a row-level `Steer` action promotes a durable row to the front for ordered next-turn delivery rather than injecting a direct pi steering prompt; the queue is a typed surface queue where all interactive surfaces accept `user_message`, `agent_context_refresh`, `initial_handler_start`, and `workflow_attention` items, handler surfaces also accept `thread_followup` items created by `thread_followup` and `report_request` items created by `thread_request_report`, and the orchestrator also accepts `thread_report` notification items created after durable `thread_report` recording; `thread_followup({ activate: true })` reactivates concluded targets before queue delivery and delivers a runtime-authored preface that tells the handler it has been reopened in the same delegated context, queued items are claimed atomically by one shared queue runner per `surfacePiSessionId`, active-surface follow-ups stay visible as editable queued rows until claimed, idle-surface items are claimed before renderer-visible queued state so their first visible state is pending or active work, committed user transcript messages expose copy plus edit-and-resend with a visible transcript highlight for the message under edit and a draft-replacement warning before overwriting non-empty composer input, then move the same pi surface back to the original message's parent state before continuing from the edited message, queue rows remain structured product state until delivered as real pi input, thread follow-up, report request, thread report notification, or agent context refresh, survive panel focus changes and duplicated panels, write user prompt history once at queue time only for user messages, and stay recoverable across restart, cancellation, restore-to-composer, and pre-accept delivery failure.",
+      "Lets a user, orchestrator, or backend coordinator submit prompt-bearing and surface-control work to an orchestrator or handler-thread surface by placing it in a durable FIFO queue owned by the target `surfacePiSessionId`; ordinary sends, idle sends, `thread_followup` requests, initial handler starts, report requests, thread report notifications, request-user-input answers, and agent context refreshes do not bypass the queue manager, while a row-level `Steer` action promotes a durable row to the front for ordered next-turn delivery rather than injecting a direct pi steering prompt; queued items are claimed atomically by one shared queue runner per `surfacePiSessionId`, active-surface follow-ups stay visible as editable queued rows until claimed, idle-surface items are claimed before renderer-visible queued state so their first visible state is pending or active work, committed user transcript messages expose copy plus edit-and-resend with a visible transcript highlight for the message under edit and a draft-replacement warning before overwriting non-empty composer input, then move the same pi surface back to the original message's parent state before continuing from the edited message, queue rows remain structured product state until delivered, survive panel focus changes and duplicated panels, write user prompt history once at queue time only for user messages, and stay recoverable across restart, cancellation, restore-to-composer, and pre-accept delivery failure.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/queued-messages.spec.md",
@@ -288,14 +289,13 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workspace Navigation And Core Projection",
     status: "shipped",
     summary:
-      "Keeps each workspace tab navigable with pinned, regular Sessions, and Archived session groups in a shared sidebar band between creation/search actions and reference panes; each group uses the same collapsible accordion header style, keeps its own independently scrollable and resizable space, persists collapsed state and size across restart, and keeps Archived collapsed by default. It also provides durable session-level unread dots that appear when assistant turns finish outside the focused pane surface and clear on session-pane focus or explicit mark-read action, layered sidebar rows where orchestrator session state, handler-thread state, and workflow-run state stay local to their owning rows, session row context menus for mark read or unread, pin, rename, archive, and a menu-local Confirm delete action, normal session-row clicks that open in the focused Dockview panel with Cmd-click opening a new pane, compact running indicators, tone-aware open-pane highlighting, context-budget rails for open orchestrator and handler rows, a sidebar footer that shows the current git branch with a branch icon and opens a local-branch switcher when the workspace is a git repo, compact thread and workflow-run artifact blocks backed by durable artifact records, compact latest Project CI projection near the focused surface or relevant handler thread, and restart restoration for stable Dockview panel bindings, static inspector pane targets, focus, panel-local scroll, display preferences, durable composer drafts, and session-group layout while deliberately excluding transient UI, transcript selections, and stale live stream state.",
+      "Keeps each workspace tab navigable with pinned, regular Sessions, and Archived session groups in a shared sidebar band between creation/search actions and reference panes; each group uses the same collapsible accordion header style, keeps its own independently scrollable and resizable space, persists collapsed state and size across restart, and keeps Archived collapsed by default. It also provides durable session-level unread dots that appear when assistant turns finish outside the focused pane surface and clear on session-pane focus or explicit mark-read action, layered sidebar rows where orchestrator session state and handler-thread state stay local to their owning rows, session row context menus for mark read or unread, pin, rename, archive, and a menu-local Confirm delete action, normal session-row clicks that open in the focused Dockview panel with Cmd-click opening a new pane, compact running indicators, tone-aware open-pane highlighting, context-budget rails for open orchestrator and handler rows, a sidebar footer that shows the current git branch with a branch icon and opens a local-branch switcher when the workspace is a git repo, compact thread artifact blocks backed by durable artifact records, and restart restoration for stable Dockview panel bindings, static inspector pane targets, focus, panel-local scroll, display preferences, durable composer drafts, and session-group layout while deliberately excluding transient UI, transcript selections, and stale live stream state.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/pane-layout.spec.md",
       "docs/specs/workspace-navigation-core-projection.spec.md",
       "docs/specs/multi-session-support.spec.md",
       "docs/specs/structured-session-state.spec.md",
-      "docs/specs/project-ci.spec.md",
     ],
   },
   {
@@ -303,7 +303,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Command Palette And Quick Open",
     status: "in-progress",
     summary:
-      "Defines a VS Code-like shared palette where `Cmd+Shift+P` opens the same input as `Cmd+P` with `>` prefilled, those launcher chords remain available while text inputs are focused and switch the focused palette between command and quick-open modes when it is already open, the leading `>` live-switches quick-open search into command/action mode, command mode discovers and executes product actions through existing session, surface, orchestrator, handler-thread, workflow task-agent projection, Project CI, Smithers-native, Dockview panel, settings, Agents profile routing, and Extensions routing, including profile-specific New orchestrator actions, a product shortcut registry backed by TanStack Hotkeys owns scoped renderer dispatch, input policy, and shared shortcut display, sidebar shell actions reveal compact shortcut hints instantly on hover or focus, New orchestrator uses `Cmd+N` for the focused pane and `Cmd+Shift+N` for a new pane, Logs, Agents, Extensions, and Workflows open from `Cmd+Shift+1/2/3/4` in sidebar order, icon-only or ambiguous action controls show faster delayed explanatory tooltips with consistent keycap chips, open-session results show visually distinct kind badges across orchestrator, handler-thread, and task-agent categories, `Cmd+P` remains a file quick-open placeholder until file surfaces exist, `cmdk-sv` is the intended Svelte UI primitive, and unmatched non-empty command-mode text creates a normal new orchestrator initial prompt without the `>` prefix or a parallel runtime, shell, terminal loop, or workflow abstraction.",
+      "Defines a VS Code-like shared palette where `Cmd+Shift+P` opens the same input as `Cmd+P` with `>` prefilled, those launcher chords remain available while text inputs are focused and switch the focused palette between command and quick-open modes when it is already open, the leading `>` live-switches quick-open search into command/action mode, command mode discovers and executes product actions through existing session, surface, orchestrator, handler-thread, Dockview panel, settings, Agents profile routing, Extensions routing, and read-only Workflows visibility, including profile-specific New orchestrator actions, a product shortcut registry backed by TanStack Hotkeys owns scoped renderer dispatch, input policy, and shared shortcut display, sidebar shell actions reveal compact shortcut hints instantly on hover or focus, New orchestrator uses `Cmd+N` for the focused pane and `Cmd+Shift+N` for a new pane, Logs, Agents, Extensions, and Workflows open from `Cmd+Shift+1/2/3/4` in sidebar order, icon-only or ambiguous action controls show faster delayed explanatory tooltips with consistent keycap chips, open-session results show visually distinct kind badges across orchestrator and handler-thread categories, `Cmd+P` remains a file quick-open placeholder until file surfaces exist, `cmdk-sv` is the intended Svelte UI primitive, and unmatched non-empty command-mode text creates a normal new orchestrator initial prompt without the `>` prefix or a parallel runtime, shell, terminal loop, or workflow abstraction.",
     sourceSpecs: ["docs/prd.md", "docs/specs/command-palette.spec.md"],
   },
   {
@@ -334,7 +334,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Multi-Surface Live Runtime",
     status: "in-progress",
     summary:
-      "Separates integrated app-chrome workspace tabs, shared durable workspace state, live surface runtimes, and Dockview-backed user workspace layout slots, using one backend workspace runtime per canonical cwd with explicit `workspaceId` routing for every workspace-scoped request and sync event, never active workspace routing; keeps workspace tabs as chrome state that select `workspaceId` plus active layout id instead of owning durable layouts; opens a real svvy-owned default workspace tab with exactly one `Open Workspace` pane when no user workspace tabs restore; lets `Open Workspace` retarget the current visual tab, `New Tab` create another default workspace tab with exactly one `Open Workspace` pane and no durable layout slots, and `Open Workspace in New Tab` create a selected user workspace tab; allows opening the same cwd in multiple visual workspace tabs that share the same runtime, session catalog, pi sessions, structured state, prompt queues, handler threads, workflow runs, app logs, workspace read models, and fixed durable layout slots keyed by `(workspaceId, layoutId)`; keeps workspace tabs left-aligned at the start of the main chrome, horizontally scrollable when crowded, draggable for user reordering, durably restored in user-defined order, and paired with compact icon controls plus colored running, unread, waiting, and error count badges shown only above zero with hover context; uses Dockview core for panels, groups, tabs, tab groups, splitters, drag/drop overlays, edge groups, floating groups, popouts, and serialized layout restore inside fixed user workspace layout slots A, B, and C pinned at the far right while svvy stores panel-to-surface bindings and panel-local metadata in those slots; keeps empty user workspace layout slots muted but selectable, manages live pi surfaces in a shared registry keyed by `surfacePiSessionId`, gives each surface its own prompt lock, model or reasoning lifecycle, pending user message, queued follow-up messages, and surface-owned live assistant stream state, supports explicit open and close semantics, sidebar panel-location indicators, compact thread and workflow-run projections, and lets zero, one, or multiple panels attach to the same streaming surface without duplicating or cancelling the underlying runtime while keeping panel-local scroll independent per panel.",
+      "Separates integrated app-chrome workspace tabs, shared durable workspace state, live surface runtimes, and Dockview-backed user workspace layout slots, using one backend workspace runtime per canonical cwd with explicit `workspaceId` routing for every workspace-scoped request and sync event, never active workspace routing; keeps workspace tabs as chrome state that select `workspaceId` plus active layout id instead of owning durable layouts; opens a real svvy-owned default workspace tab with exactly one `Open Workspace` pane when no user workspace tabs restore; lets `Open Workspace` retarget the current visual tab, `New Tab` create another default workspace tab with exactly one `Open Workspace` pane and no durable layout slots, and `Open Workspace in New Tab` create a selected user workspace tab; allows opening the same cwd in multiple visual workspace tabs that share the same runtime, session catalog, pi sessions, structured state, prompt queues, handler threads, app logs, workspace read models, saved Workflows generated-state visibility, and fixed durable layout slots keyed by `(workspaceId, layoutId)`; keeps workspace tabs left-aligned at the start of the main chrome, horizontally scrollable when crowded, draggable for user reordering, durably restored in user-defined order, and paired with compact icon controls plus colored running, unread, waiting, and error count badges shown only above zero with hover context; uses Dockview core for panels, groups, tabs, tab groups, splitters, drag/drop overlays, edge groups, floating groups, popouts, and serialized layout restore inside fixed user workspace layout slots A, B, and C pinned at the far right while svvy stores panel-to-surface bindings and panel-local metadata in those slots; keeps empty user workspace layout slots muted but selectable, manages live pi surfaces in a shared registry keyed by `surfacePiSessionId`, gives each surface its own prompt lock, model or reasoning lifecycle, pending user message, queued follow-up messages, and surface-owned live assistant stream state, supports explicit open and close semantics, sidebar panel-location indicators, compact thread projections, and lets zero, one, or multiple panels attach to the same streaming surface without duplicating or cancelling the underlying runtime while keeping panel-local scroll independent per panel.",
     sourceSpecs: [
       "docs/prd.md",
       "docs/specs/default-workspace-and-open-workspace.spec.md",
@@ -349,7 +349,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Workspace Runtime Recovery Coordinator",
     status: "in-progress",
     summary:
-      "Defines one backend-owned recovery coordinator per acquired workspace runtime, with duplicate same-cwd tabs sharing recovery state, app-wide auth/preferences kept outside workspace recovery, Smithers durable-state bootstrap before surface work, durable scheduler records with transactional claims and idempotency keys for prompts, queues, initial handler starts, thread report notifications, report requests, request-user-input records and answer queue items, waits, title jobs, workflow attention, Project CI projection, and recovery observability, while renderer layout restore remains only a consumer of backend snapshots.",
+      "Defines one backend-owned recovery coordinator per acquired workspace runtime, with duplicate same-cwd tabs sharing recovery state, app-wide auth/preferences kept outside workspace recovery, durable scheduler records with transactional claims and idempotency keys for prompts, queues, initial handler starts, thread report notifications, report requests, request-user-input records and answer queue items, waits, title jobs, Workflows build/link refresh, and recovery observability, while renderer layout restore remains only a consumer of backend snapshots.",
     sourceSpecs: ["docs/specs/workspace-runtime-recovery.spec.md"],
   },
   {
@@ -357,7 +357,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Session State Overlay",
     status: "in-progress",
     summary:
-      "Adds a workspace-scoped svvy-owned product state layer above pi and Smithers with durable session, surface composer draft, turn, handler thread, workflow-run binding/projection, workflow-task-attempt UI projection, command, episode, artifact, Project CI run/check result, attention, and lifecycle projection records, explicit surface-target identity (`workspaceSessionId`, `surfacePiSessionId`, `threadId`), exact Smithers identifiers for workflow/task projection rows, and workspace-level metadata projection that survives reload, while leaving Smithers execution facts such as run/node/attempt/wait/output/approval/timer/event state in Smithers and live-surface transcript updates separate from durable workspace read models.",
+      "Adds a workspace-scoped svvy-owned product state layer above pi with durable session, surface composer draft, turn, handler thread, command, episode, artifact, saved Workflows generated metadata, attention, and lifecycle projection records, explicit surface-target identity (`workspaceSessionId`, `surfacePiSessionId`, `threadId`), and workspace-level metadata projection that survives reload while leaving live-surface transcript updates separate from durable workspace read models.",
     sourceSpecs: [
       "docs/specs/structured-session-state.spec.md",
       "docs/specs/extension/thread_managing.extension.spec.md",
@@ -380,7 +380,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Structured Handler Threads",
     status: "in-progress",
     summary:
-      "Tracks delegated handler threads as durable interactive surfaces keyed separately from workspace session containers and pi surface ids, with durable thread-group topology, objective, objective state, worktree context, explicit orchestrator follow-up and re-engagement of concluded objectives through `thread_followup({ activate: true })`, pending report requests, and linkage to multiple workflow runs and multiple update or conclusion episodes over the thread's lifetime without flattening workflow outcome into thread objective state.",
+      "Tracks delegated handler threads as durable interactive surfaces keyed separately from workspace session containers and pi surface ids, with durable thread-group topology, objective, objective state, worktree context, explicit orchestrator follow-up and re-engagement of concluded objectives through `thread_followup({ activate: true })`, pending report requests, and multiple update or conclusion episodes over the thread's lifetime without flattening delegated-work outcome into thread objective state.",
     sourceSpecs: [
       "docs/specs/structured-session-state.spec.md",
       "docs/specs/extension/thread_managing.extension.spec.md",
@@ -398,36 +398,11 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     ],
   },
   {
-    id: "project-ci-lane",
-    name: "Project CI Lane",
-    status: "in-progress",
-    summary:
-      'Provides Project CI status and result projection over normal saved Smithers entries under `.svvy/workflows/.../ci/`, records svvy-owned CI run and CI check result rows only from entries declaring `productKind = "project-ci"` whose durable Smithers terminal result validates against the declared result schema, derives UI/read models from Smithers result facts plus svvy ownership/product-binding facts rather than process memory or copied svvy output fields, treats terminal events, reconnect, and restart recovery as idempotent triggers to re-read Smithers durable state, records missing or invalid Smithers terminal results as durable svvy projection failure or troubleshooting state, exposes latest CI status in specialized UI, and delivers CI authoring guidance only through the handler-available `project-ci` extension set to `default_loaded` by a `thread_start.threads[].extensions` partial override or loaded by handler-side `load_extension({ extensionId: "project-ci" })`, without a setup launcher, CI-specific orchestrator, or shipped placeholder CI entry.',
-    sourceSpecs: [
-      "docs/specs/project-ci.spec.md",
-      "docs/specs/extension/thread_managing.extension.spec.md",
-      "docs/specs/extensions-and-tools.spec.md",
-      "docs/specs/extension/extension_managing.extension.spec.md",
-      "docs/specs/structured-session-state.spec.md",
-      "docs/specs/workspace-navigation-core-projection.spec.md",
-      "docs/specs/workflow-library.spec.md",
-      "docs/specs/workflow-supervision.spec.md",
-    ],
-  },
-  {
-    id: "workflow-run-records",
-    name: "Delegated Workflow Run Records",
-    status: "in-progress",
-    summary:
-      "Stores one svvy-owned product-binding record for each Smithers workflow run under a handler thread, including workspace/session/thread/surface ownership, Smithers run id, workflow id, workflow source, runnable entry path plus saved-entry linkage when relevant, reconnect or snapshot cursor, pending-versus-delivered handler-attention cursors, lineage reference, projected product status, projected latest Smithers status/wait/heartbeat/event cursor fields written only from bridge events or bootstrap reads, product summary, timestamps, and related svvy artifact, command, Project CI, and UI links; it does not store Smithers node, attempt, approval, timer, output, transcript, or raw event bodies, and lifecycle events or tool results trigger re-reads of Smithers durable state before svvy projection rows are updated.",
-    sourceSpecs: ["docs/specs/structured-session-state.spec.md"],
-  },
-  {
     id: "session-wait-state",
     name: "Session Wait And User Input State",
     status: "in-progress",
     summary:
-      "Represents handler-owned blocking conditions, request-user-input clarification records, and Smithers-derived workflow attention explicitly through surface-local request/wait or attention state and whole-session frontier state, preserving the product meaning of user input, approval, signal, timer, or other external dependency while requiring user clarification waits to point at real request-user-input records and leaving the authoritative Smithers wait, approval, signal, and timer records in Smithers for re-read by Smithers id.",
+      "Represents handler-owned blocking conditions and request-user-input clarification records explicitly through surface-local request/wait state and whole-session frontier state, preserving the product meaning of user input, approval, or other external dependency while requiring user clarification waits to point at real request-user-input records.",
     sourceSpecs: [
       "docs/specs/structured-session-state.spec.md",
       "docs/specs/extension/request_user_input.extension.spec.md",
@@ -438,22 +413,10 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Metadata-First Session Read Models",
     status: "in-progress",
     summary:
-      "Derives orchestrator-local idle, running, waiting, and error session status, pinned and archived navigation fields, row-local handler-thread and workflow-run sidebar projections, pending attention, and compact summary data from structured state for workspace navigation and restart recovery without rolling child handler or workflow lifecycle state into the parent session row, transcript replay, transcript-file heuristics, or any global active-surface overlay.",
+      "Derives orchestrator-local idle, running, waiting, and error session status, pinned and archived navigation fields, row-local handler-thread projections, pending attention, saved Workflows generated-state visibility, and compact summary data from structured state for workspace navigation and restart recovery without rolling child handler lifecycle state into the parent session row, transcript replay, transcript-file heuristics, or any global active-surface overlay.",
     sourceSpecs: [
       "docs/specs/structured-session-state.spec.md",
       "docs/specs/workspace-navigation-core-projection.spec.md",
-    ],
-  },
-  {
-    id: "workflow-inspector",
-    name: "Workflow Inspector Surface",
-    status: "shipped",
-    summary:
-      "Provides a durable tree-first Dockview panel surface for Smithers runs, modeled after React DevTools and the Smithers GUI live-run tree, with searchable expandable rows, selected and expanded node state, svvy product projection beside current Smithers status read from Smithers, launch arguments and props, Smithers DevTools snapshot and event-cursor streaming, historical frame inspection, selected-node status, output, partial output, artifact, workflow-agent, task-attempt, command, worktree, timing, wait-reason, output/diff/log/transcript/command/event/raw detail, Project CI check rows only for declared CI entries, and related handler-thread, task-agent, command, CI check, and artifact Dockview targets without forcing the orchestrator to absorb raw workflow history.",
-    sourceSpecs: [
-      "docs/prd.md",
-      "docs/specs/workflow-supervision.spec.md",
-      "docs/specs/workflow-inspector.spec.md",
     ],
   },
   {

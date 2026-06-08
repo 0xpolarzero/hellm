@@ -303,7 +303,7 @@ Examples:
 - `write_stdin`
 - `apply_patch`
 - `thread_start`
-- `smithers_run_workflow`
+- `svvyx workflows build` through Shell or a generated Workflows client when loaded
 - `execute_typescript`
 - MCP tools
 - extension-provided tools
@@ -702,7 +702,7 @@ Baseline decision:
 - do not let host hooks or extensions act as policy gates
 - do not let external instructions or future prompt assets change execution policy
 
-Actor execution policy must come from `svvy` product settings, actor contracts, Smithers run
+Actor execution policy must come from `svvy` product settings, actor contracts, Smithers
 configuration where applicable, and product-owned tool registries.
 
 Adding a host config file must not silently change whether shell commands are allowed, whether network
@@ -751,7 +751,6 @@ Examples:
 - compaction state
 - approval state
 - tool-call facts
-- workflow run ids
 - artifacts and logs
 - cwd and workspace bindings
 - resume handles
@@ -759,14 +758,13 @@ Examples:
 Baseline decision:
 
 - `svvy` owns product runtime state
-- `svvy` may reference state it created intentionally, such as pi sessions backing `svvy` surfaces or
-  Smithers runs started by `svvy`
+- `svvy` may reference state it created intentionally, such as pi sessions backing `svvy` surfaces
 - `svvy` may attach to runtime state only through an explicit product flow
 - do not import unrelated host sessions, threads, histories, queues, approvals, compactions,
   artifacts, logs, or resume handles just because they exist on disk
 - do not merge host runtime state into `svvy` session state automatically
 - do not infer actor ownership from ambient host state
-- do not use heuristic scans of host runtime state to bind workflow attempts, sessions, or threads
+- do not use heuristic scans of host runtime state to bind sessions or threads
 
 The product-owned rule is simple: state belongs to the system that produced it, and `svvy` stores only
 the facts it needs to project, resume, or supervise product-owned work. External runtime state is not
@@ -776,14 +774,8 @@ Pi-specific rule:
 
 - use only pi sessions created or explicitly adopted by `svvy`
 - do not import arbitrary pi session history from host session directories
-- do not let pi session state decide actor type, workspace ownership, tools, generated agent context
-  bindings, or
-  workflow ownership
-
-Smithers-specific rule:
-
-- use Smithers run state only for product-owned workflow runs and explicitly attached runs
-- bind workflow task attempts by exact persisted identifiers, not by scanning recent runtime state
+- do not let pi session state decide actor type, workspace ownership, tools, or generated agent
+  context bindings
 
 ## Required Pi Resource Loader Shape
 
@@ -873,7 +865,7 @@ Required checks:
   denylists, retry settings, timeout settings, network settings, shell settings, concurrency settings,
   or permission gates.
 - Do not import unrelated host runtime state, sessions, histories, queued messages, approvals,
-  compactions, artifacts, logs, workflow runs, or resume handles.
+  compactions, artifacts, logs, or resume handles.
 - Do not auto-start MCP servers from host configs.
 - Do not create a general marketplace or enable/disable UI for packages.
 - Do not expose ambient host commands, plugin commands, extension commands, skill commands, or MCP
@@ -918,6 +910,6 @@ Required checks:
 - Adding host execution policy files or settings does not change `svvy` sandboxing, approvals,
   network access, tool permissions, shell behavior, command policy, retries, timeouts, concurrency, or
   worktree behavior.
-- Adding unrelated host session, thread, queue, compaction, approval, artifact, log, workflow-run, or
+- Adding unrelated host session, thread, queue, compaction, approval, artifact, log, or
   resume state does not attach it to any `svvy` surface.
 - Every pi-backed actor receives only `svvy`-registered tools and `svvy`-composed prompt text.

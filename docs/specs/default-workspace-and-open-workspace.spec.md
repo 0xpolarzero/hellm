@@ -61,9 +61,9 @@ User workspaces keep the existing product meaning:
 - path index
 - sessions
 - handler threads
-- workflow runs
 - app logs
 - workspace read models
+- saved Workflows generated-state visibility
 - discovered external instruction records
 
 ### Workspace Tab
@@ -180,14 +180,13 @@ The default workspace supports:
 The default workspace does not support:
 
 - repository-specific branch switching unless the default workspace is intentionally initialized as a git repository, which is not the adopted direction
-- meaningful Project CI execution by default
 - workspace workflow assets under a user repository
 - treating default workspace files as user source files
 - assuming Smithers saved entries exist
 
-Workflows may be visible in the default workspace, but it should normally show an empty workspace workflow library unless the default workspace contains real `.svvy/workflows/...` assets. The UI must not fabricate workflow entries for the default workspace.
-
-Project CI actions should be disabled in the default workspace with a reason such as `Open a repository workspace before running Project CI.` unless a future product decision explicitly gives the default workspace its own CI behavior.
+Workflows may be visible in the default workspace because saved Workflows are app-global generated
+state. The UI must not fabricate workspace-local Smithers source or runnable entries for the default
+workspace.
 
 ### Open Workspace Surface Behavior
 
@@ -520,13 +519,12 @@ Enabled:
 - Logs
 - Agents
 - Context
-- Workflows, if it opens the default workspace's real workflow library
+- Workflows, as app-global generated Workflows visibility
 - Settings
 
 Disabled or unavailable:
 
 - branch switcher when the default workspace is not a git repository
-- Project CI actions by default
 
 Session sections show real default-workspace sessions. If no sessions exist, the sections show zero counts.
 
@@ -558,9 +556,10 @@ Default-workspace launch removes the need for a disabled Extensions row in the s
 
 ### Workflows
 
-Workflows are enabled if the default workspace runtime can serve the normal saved-workflow library contract.
+Workflows are enabled when the app can serve the generated `@svvy/workflows` visibility contract.
 
-The default workspace should normally show no saved workflow assets unless assets exist under its `.svvy/workflows/...` tree.
+The default workspace does not imply workspace-local `.smithers/` source. It can still show
+app-global generated Workflows exports.
 
 No sample workflows should be fabricated just because the default workspace is open.
 
@@ -587,7 +586,7 @@ Menu and shortcut actions resolve as follows:
 
 Opening, replacing, or closing a visual workspace tab must not interrupt running work in another tab.
 
-If current-tab `Open Workspace` retargets a tab whose old workspace has running prompts, handler threads, or workflow runs:
+If current-tab `Open Workspace` retargets a tab whose old workspace has running prompts or handler threads:
 
 - do not cancel them automatically
 - keep the old backend runtime alive while running work or other tabs reference it
@@ -714,7 +713,6 @@ Run e2e through the OrbStack machine lane with `bun run test:e2e`.
 - Do not create a separate no-workspace shell state.
 - Do not make Logs app-global.
 - Do not fabricate workflow entries in the default workspace.
-- Do not make Project CI meaningful in the default workspace by default.
 - Do not route workspace RPCs through process cwd or active runtime instead of explicit `workspaceId`.
 - Do not introduce a standalone terminal, alternate TUI, or shell loop.
 - Do not store default workspace state under repo-root `workflows/` or any source-checkout-relative Smithers path.

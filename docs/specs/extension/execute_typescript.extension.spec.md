@@ -115,8 +115,8 @@ There is no global `svvy` client and no broad injected `api` object.
 
 `LoadedExtensionsClient` contains only loaded `svvyx` extensions that opted into TypeScript API
 generation. If the current actor has loaded TypeScript-enabled extensions `a`, `b`, and
-`project-ci`, the generated declaration contains string-literal properties `extensions.a`,
-`extensions.b`, and `extensions["project-ci"]`, plus only those extensions' command map types. It
+`workflows`, the generated declaration contains string-literal properties `extensions.a`,
+`extensions.b`, and `extensions.workflows`, plus only those extensions' command map types. It
 must not contain `extensions.c`, command types for unavailable extensions, or docs for
 available-but-not-loaded extensions.
 
@@ -127,8 +127,8 @@ extensions["<extensionId>"].run(commandId, input)
 ```
 
 Dot access such as `extensions.artifacts.run(...)` is valid shorthand only for extension ids that
-are also TypeScript identifiers. Hyphenated ids such as `project-ci` must use bracket access:
-`extensions["project-ci"].run(...)`.
+are also TypeScript identifiers. Hyphenated extension ids, when present, must use bracket access:
+`extensions["some-extension"].run(...)`.
 
 Command ids are the extension's Incur command paths. Inputs use Incur `args`, `options`, and output
 controls. Non-streaming results use the Incur `Run.Result` envelope with `ok`, `data`, `output`, and
@@ -220,7 +220,7 @@ Every `execute_typescript` invocation creates one parent command record.
 
 The parent record includes:
 
-- owning turn or workflow task attempt
+- owning turn
 - actor kind
 - generated context fingerprint used for the submitted program
 - submitted TypeScript source artifact id

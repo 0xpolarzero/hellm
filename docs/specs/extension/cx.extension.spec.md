@@ -413,7 +413,6 @@ cx must not inspect or mutate `svvy` product state:
 
 - sessions
 - handler threads
-- workflow runs
 - app panes
 - Dockview layout
 - generated agent context bindings

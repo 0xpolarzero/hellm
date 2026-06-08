@@ -1,505 +1,582 @@
-# Workflow Library And Artifact Workflow Authoring
+# Workflows Source, Build, And Generated Surface Spec
 
 ## Status
 
-- Date: 2026-04-23
-- Status: adopted direction for handler-owned workflow authoring, saved-library discovery, saved-library writes, product entry metadata, and runtime validation feedback
+- Date: 2026-06-08
+- Status: adopted direction for workflow authoring support and saved Workflows visibility
 - Scope of this document:
-  - define the workspace-owned workflow library shape under `.svvy/workflows/`
-  - define the authored artifact-workflow shape under `.svvy/artifacts/workflows/`
-  - define handler-side workflow authoring guidance, generated contracts, and discovery
-  - define the runnable entry contract consumed by `smithers_list_workflows`
-  - define optional product metadata and result schemas for special product lanes such as Project CI
-  - define how saved workflow files are written and validated
+  - define how agents author Smithers workflows inside a workspace
+  - define the app-global reusable Workflows source library
+  - define the generated `@svvy/workflows` package and workspace package-linking contract
+  - define the `svvyx workflows ...` extension commands
+  - define how workflow agents are represented as structured parameters
+  - define the read-only Workflows pane as generated-output visibility
 
-Related extension specs:
+This spec defines reusable source, generated imports, and saved Workflows visibility only.
 
-- `docs/specs/extension/smithers.extension.spec.md` defines the builtin Smithers native-tool
-  extension surface that launches and supervises runnable workflow entries.
-- `docs/specs/extension/artifacts.extension.spec.md` defines the Artifacts extension API; artifact
-  workflows here are persisted workflow source artifacts under `.svvy/artifacts/workflows/`, not
-  copied files in the configured Artifacts extension store.
+## Product Boundary
 
-## Purpose
+Smithers is the workflow runtime.
 
-`svvy` needs one clear split between:
+`svvy` does not wrap Smithers workflow execution behind a parallel workflow-control abstraction in
+the agent-facing API. Agents that need to create, run,
+resume, inspect, or repair Smithers workflows use the official Smithers CLI directly through the
+normal Shell extension.
 
-- reusable workflow source assets kept in the workspace library
-- short-lived artifact workflows authored for one delegated objective
-- runnable entries used by handler threads to launch Smithers workflows
+The Workflows extension is not a workflow runner. It is the app-owned bridge for reusable workflow
+authoring assets and task-agent configuration.
 
-The product should optimize for:
+The resolved split is:
 
-- using direct tools when a workflow is unnecessary
-- reusing a saved runnable entry when one clearly fits
-- authoring a short-lived artifact workflow when saved entries do not fit
-- writing reusable saved workflow files only when the user explicitly asks for that
-- surfacing validation feedback automatically when saved workflow files are written
-- keeping exact handler-authored workflow and workflow task-agent shapes in generated TypeScript declarations
-- exposing available provider/model/reasoning choices when a handler must author a fresh workflow
-  task-agent configuration
+- workspace-local Smithers authoring lives in the workspace `.smithers/` package
+- app-global reusable source lives under `~/.config/svvy/workflows/`
+- generated reusable imports live under `~/.config/svvy/workflows/generated/`
+- the generated package is linked into each opened workspace's `.smithers/node_modules`
+- agents run Smithers through the official Smithers CLI and import reusable svvy assets from
+  `@svvy/workflows`
 
-## Core Model
+The repo-root `workflows/` directory is still a source-checkout authoring workspace used to build
+and maintain `svvy` itself. It is not the shipped product workflow runtime, not the app-global
+Workflows source library, and not evidence of packaged-app runtime paths.
 
-`svvy` uses three related but different workflow concepts:
+## Workspace Smithers Authoring
 
-- reusable saved workflow assets for authoring
-- runnable workflow entries for launch and supervision
-- authored artifact workflows as durable filesystem source for one delegated objective
-
-The naming rule is:
-
-- the Workflows library read model provides authoring-time asset discovery
-- `workflow_list_models` provides handler authoring-time provider/model/reasoning discovery
-- `apply_patch` is the handler's file-modification interface for saved workflow files
-- `smithers_*` is the handler's launch and supervision capability set
-
-This split is intentional.
-
-Asset discovery and saved-library writes are not workflow launch.
-
-This spec does not define a Workflows `svvyx` extension or an `execute_typescript`
-`extensions.workflows.*` client. Do not expose the Workflows library read model through
-`extensions.workflows.run(...)` unless a future spec adds a real loaded TypeScript-enabled `svvyx`
-Workflows extension contract.
-
-Exact native-tool and `execute_typescript` shapes are provided by generated tool schemas and TypeScript declarations. Exact handler-authored runnable entry and workflow task-agent shapes are provided by the generated workflow-authoring declaration.
-
-## Handler-Owned Authoring
-
-Handler threads own workflow authoring.
-
-Each handler thread receives generated workflow-authoring TypeScript declarations plus the loaded Smithers extension guidance for workflow authoring and supervision.
-
-The handler owns:
-
-- deciding whether direct work is enough
-- checking saved runnable entries
-- checking reusable saved assets
-- authoring a new artifact workflow when needed
-- deciding whether reusable saved workflow files should be written
-- writing those saved workflow files directly into `.svvy/workflows/...`
-- checking the returned validation feedback before considering the write complete
-
-The generated workflow-authoring declaration is the prompt source of truth for:
-
-- runnable entry modules
-- runtime entry factory return values
-- source scope and product lane metadata
-- grouped asset refs
-- workflow task agents
-- `AgentLike` task-agent usage
-
-## Adopted Layout
-
-### Saved Workflow Library
-
-The workspace-owned saved workflow library lives under:
+When an agent works on a repository workflow, ordinary Smithers files live under:
 
 ```text
-.svvy/workflows/
-  definitions/
+<workspace>/.smithers/
+  workflows/
   prompts/
   components/
-  entries/
+  agents/
+  package.json
+  tsconfig.json
+  bunfig.toml
+  preload.ts
 ```
 
-The folders mean:
+This follows Smithers' own workflow-pack model. `svvy` must not create or preserve a separate
+workspace-local svvy authoring library for workflow source.
 
-- `definitions/`: reusable workflow factories and builders
-- `prompts/`: reusable prompt assets
-- `components/`: reusable helpers and future packaged-app-safe workflow-agent components
-- `entries/`: launchable saved workflow entry wrappers
+Agents may freely inspect and edit workspace `.smithers/` source according to the active filesystem
+policy. They use normal coding tools such as shell inspection and `apply_patch`; they do not call a
+`svvy` workflow wrapper to edit workflow files.
 
-Product-specific saved assets use subdirectories inside the same library rather than a separate workflow system.
+Workspace `.smithers/` source is workspace-owned. It may be committed or discarded according to the
+repository's normal policy.
 
-Project CI assets use:
+## App-Global Workflows Source Library
 
-```text
-.svvy/workflows/
-  definitions/ci/
-  prompts/ci/
-  components/ci/
-  entries/ci/
-```
-
-This preserves one workflow library while allowing the UI and runtime to recognize declared product lanes through entry metadata.
-
-### Artifact Workflows
-
-Artifact workflows live under:
+Reusable workflow assets live under one app-global root:
 
 ```text
-.svvy/artifacts/workflows/<artifact_workflow_id>/
-  definitions/
+~/.config/svvy/workflows/
+  agents/
   prompts/
   components/
-  entries/
-  metadata.json
+  workflows/
+  generated/
 ```
 
-An artifact workflow folder may contain only the files and subdirectories relevant to that authored workflow.
+The editable source directories are:
 
-It does not need to populate every folder if the workflow only needs some of them.
+| Directory | Source kind | Canonical source shape |
+| --- | --- | --- |
+| `agents/` | reusable task-agent parameter records | structured JSON files ending in `.agent.json` |
+| `prompts/` | reusable prompt assets | direct MDX files |
+| `components/` | reusable Smithers components and helpers | direct TypeScript or TSX files |
+| `workflows/` | reusable Smithers workflow modules | direct TSX files |
 
-Artifact workflows are durable filesystem source.
+The generated directory is build output:
 
-Saved workflow files stand on their own as ordinary workspace files under `.svvy/workflows/...`.
+```text
+~/.config/svvy/workflows/generated/
+  package/
+```
 
-### Artifact Metadata
+`generated/` is outside the safe writable boundary for ordinary agent file editing. Agents must not
+edit generated Workflows output, generated package files, or workspace links that point to that
+output. To change reusable material, agents edit source files in `agents/`, `prompts/`,
+`components/`, or `workflows/` and run `svvyx workflows build`, or they use
+`svvyx workflows save` to promote workspace-authored Smithers material into the app-global source
+library.
 
-`metadata.json` is the filesystem-side provenance record for the artifact workflow itself.
+The automatic approval reviewer must treat writes to generated Workflows output as invalid ordinary
+edits. If a command attempts to mutate `~/.config/svvy/workflows/generated/` or
+`.smithers/node_modules/@svvy/workflows`, the expected remediation is to edit the source item and
+rebuild, not to approve a direct generated-file change.
 
-It should include at least:
+## Generated Package
 
-- `artifactWorkflowId`
-- `schemaVersion`
-- `sessionId`
-- `threadId`
-- `objectiveSummary`
-- `createdAt`
-- `updatedAt`
-- `entryPaths`
+`svvyx workflows build` generates a real Bun/TypeScript package at:
 
-## Saved File Kinds
+```text
+~/.config/svvy/workflows/generated/package/
+```
 
-### Definitions
+The package name is:
 
-Definitions are reusable workflow structure.
+```text
+@svvy/workflows
+```
 
-The normal pattern is:
-
-- export a workflow factory or builder
-- accept prompt, workflow agent, or config inputs where variation is expected
-- avoid closing over objective-specific state when the definition is meant to be reused
-
-### Prompts
-
-Prompt assets are `mdx` files with frontmatter metadata.
-
-They are saved independently so later workflows can:
-
-- reuse them directly
-- layer additional task-specific guidance on top
-- substitute a different prompt without rewriting the definition
-
-### Components
-
-Components are reusable TS or TSX files that are not themselves runnable entries.
-
-Examples:
-
-- helpers
-- schema utilities
-- workflow building blocks
-- future workflow-agent values or factories
-
-Workflow-agent component files are future packaged-app-safe Workflows assets. When adopted, they should be ordinary component files that export values conforming to the generated `WorkflowTaskAgentConfig` contract. Provider/model capability metadata used by those controls must come from pi's normalized `Model` records and Agents/workflow-agent configuration; `svvy` must not maintain a second table of provider-specific reasoning quirks or Codex-specific request behavior. Workflow definitions and entries use Smithers `AgentLike` values for adaptive task execution, with the workflow agent configuration describing the svvy task-agent model, prompt, reasoning, and task-local capability set. At runtime, `toolSurface` is selected from the generated ordered task-tool registry; when the cx extension is loaded for a workflow task agent, it contributes prompt-only instructions for running official `cx` CLI commands through `exec_command`, not native `cx_*` tools.
-
-Future workflow-agent component settings are workspace-affecting behavior. Any request that writes or validates workflow-agent component files must carry the target `workspaceId` and resolve that workspace's runtime from the request, not from the active workspace.
-
-A handler lists component assets and reads candidate component files before using their exported values.
-
-### Entries
-
-Entry files are launchable workflow wrappers under `entries/`.
-
-They are not returned by Workflows asset discovery.
-
-They are returned by `smithers_list_workflows`.
-
-## Discovery Metadata Contract
-
-### TS Or TSX Asset Headers
-
-Saved definitions and components must start with the minimal JSDoc metadata required for discovery and validation.
-
-Normative example:
+The package root exports exactly four public namespaces:
 
 ```ts
-/**
- * @svvyAssetKind definition
- * @svvyId create_implement_review
- * @svvyTitle Create Implement Review
- * @svvySummary Reusable workflow factory for implement and review stages.
- */
+export * as Agents from "./agents";
+export * as Components from "./components";
+export * as Prompts from "./prompts";
+export * as Workflows from "./workflows";
 ```
 
-For component assets, the same pattern applies with `@svvyAssetKind component`.
+Agent-facing usage should look like:
 
-The header is a compact index. Handlers inspect the file through `exec_command` when they need
-source context.
+```ts
+import { Agents, Components, Prompts, Workflows } from "@svvy/workflows";
 
-### MDX Prompt Frontmatter
-
-Prompt files should use frontmatter metadata.
-
-Normative example:
-
-```mdx
----
-svvyAssetKind: prompt
-svvyId: review_base
-title: Review Base
-summary: Base review instructions reusable across review-oriented workflows.
----
+const reviewer = Agents.defineTaskAgent(Agents.reviewerAgent);
 ```
 
-Prompt frontmatter is also a compact index. Handlers read the prompt file before using its body.
+Everything agent-related lives under `Agents.*`, including:
 
-## Runnable Entry Contract
+- `Agents.defineTaskAgent`
+- `Agents.TaskAgentParameters` as a type export
+- generated reusable agent parameter exports such as `Agents.defaultAgent` and
+  `Agents.reviewerAgent`
 
-Each runnable entry file conforms to the generated `RunnableWorkflowEntryModule` contract.
+The root package must not export reusable agents, components, prompts, or workflows as flat root
+symbols. The four namespace exports are the public shape.
 
-The grouped asset refs are mandatory.
+The builder generates group indexes from source files so exported source values are not missed
+through manual curation. If a source file has exportable runtime values, the corresponding generated
+group index must re-export them.
 
-They are the source of truth for workflow source inspection.
+## Package Linking Into Workspaces
 
-For saved entries, every grouped asset ref must resolve to `.svvy/workflows/...`.
+Bare imports such as `@svvy/workflows` are reliable only when the package is available through a
+`node_modules` tree visible from the importing workflow file.
 
-For artifact entries, grouped refs may mix saved-library paths and artifact-local paths.
+When `svvy` opens or prepares a workspace with `.smithers/`, it must idempotently ensure:
 
-The flat `assetPaths` value returned by `smithers_list_workflows` is derived from the union of the grouped refs.
+```text
+<workspace>/.smithers/node_modules/@svvy/workflows
+  -> ~/.config/svvy/workflows/generated/package
+```
 
-`entryPath` is derived from the file location in the registry, not handwritten inside the module.
+This link is package-resolution plumbing. It is not an editable workspace copy and not a user-facing
+normal command.
 
-`productKind` is reserved for product lanes that need specialized projection.
+The app may implement the link with direct symlink creation or an equivalent package-manager
+operation. It must not rely on ambient global package resolution, `NODE_PATH`, parent repository
+`node_modules`, or a source-checkout-relative package path as the product contract.
 
-The first adopted product kind is:
+The app also links generated `@svvy/extensions` into `.smithers/node_modules` when workflow source
+imports extension objects from that package.
 
-- `project-ci`
+If the link is stale or missing, app startup, workspace open, and `svvyx workflows build` should
+repair it when possible. A diagnostic or repair command may exist later, but agents should not need
+to run a manual link command during ordinary workflow authoring.
 
-Entries with `productKind = "project-ci"` must also export `resultSchema`.
+## Workflows Extension
 
-That result schema is the only source of Project CI run and check result records.
+The Workflows extension is an Incur-backed builtin `svvyx` extension.
 
-No product lane may be inferred from labels, filenames, logs, node output, or final prose.
+It is the only app-owned Workflows command surface in this redesign. It does not run Smithers
+workflows.
 
-Project CI details are defined in [Project CI Lane Spec](./project-ci.spec.md).
+The command family is:
 
-## Handler Workflow-Authoring Flow
+```bash
+svvyx workflows list [--kind agent|prompt|component|workflow] --json
+svvyx workflows save --from <path> --kind agent|prompt|component|workflow [--export <name>] --as <exportName> [--overwrite] --json
+svvyx workflows build --json
+svvyx workflows models list --json
+```
 
-The adopted handler-side workflow-authoring flow is:
+There is no `install`, `retrieve`, `promote`, `agents list`, `components list`, or `prompts list`
+command. Listing uses one command with an optional `--kind` filter. Saving uses one command with an
+explicit `--kind`.
 
-1. A handler thread decides that direct bounded work is not enough and a workflow is justified.
-2. The handler uses its injected generated workflow-authoring contract, guide, and examples first.
-3. The handler uses the Workflows library read model as needed.
-4. The handler inspects promising saved definitions, prompts, or component files through
-   `exec_command` before relying on implementation details.
-5. The handler may use future packaged-app-safe workflow-agent components when that Workflows behavior is adopted.
-6. The handler calls `workflow_list_models` when it must create or revise a task-agent configuration and no saved configuration clearly fits.
-7. The handler authors a short-lived artifact workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/`, including artifact-local task-agent configuration when needed.
-8. The handler calls `smithers_list_workflows`, inspects the artifact entry, and launches it through `smithers_run_workflow({ workflowId, input, runId? })`.
-9. If the user explicitly asks to keep reusable workflow files, the handler writes those files
-   directly into `.svvy/workflows/...` through `apply_patch`.
-10. The handler reads the returned validation feedback in structured command output and keeps editing until the final saved workflow state validates cleanly.
+`svvyx workflows ...` runs through ordinary `exec_command` command execution and approval policy.
+It may also be available through generated `execute_typescript` clients when the Workflows extension
+is loaded and TypeScript clients are enabled for that actor, following the standard Incur-backed
+extension contract.
 
-## Discovery Interface
+## `svvyx workflows list`
 
-### Authoring-Time Asset Discovery
+`list` reads the latest successful generated package metadata and returns available generated
+exports.
 
-Handlers discover reusable assets through the Workflows library read model. This is not an
-`execute_typescript` generated extension client in this spec.
+It is an orientation command, not full documentation and not a replacement for reading source files.
 
-This is the primary discovery interface for saved and artifact authoring assets.
+It must not invent or infer titles, summaries, descriptions, or usefulness labels. If a value is not
+uniformly and mechanically available for every kind, it must not appear in the list output.
 
-The generated command contract is the exact input and output contract. It returns the enforced asset
-identity metadata plus a workspace-relative `path`.
+Output items include:
 
-Each returned asset has:
+```ts
+type WorkflowListItem = {
+  kind: "agent" | "prompt" | "component" | "workflow";
+  namespace: "Agents" | "Prompts" | "Components" | "Workflows";
+  exportName: string;
+  qualifiedName: string;
+  sourcePath: string;
+  generatedPath: string;
+};
+```
+
+`qualifiedName` is derived from namespace and export name, for example
+`"Agents.reviewerAgent"` or `"Components.ReviewPanel"`.
+
+The list command may include generated validation status and diagnostic counts only when those
+fields come from the latest build result and apply consistently. It must not include stale
+diagnostics from an earlier failed build as if they describe the current generated package.
+
+## `svvyx workflows save`
+
+`save` promotes or copies workspace-authored material into the app-global Workflows source library.
+
+Required arguments:
+
+- `--from <path>`: the source file to save
+- `--kind agent|prompt|component|workflow`: the target source kind
+- `--as <exportName>`: the generated export name to create
+- `--json`: structured output
+
+Optional arguments:
+
+- `--export <name>`: select one export from a TypeScript or TSX source file
+- `--overwrite`: replace an existing source item with the same target id or export name
+
+Default overwrite behavior is strict. If the target source item already exists and `--overwrite` is
+not present, `save` fails with a structured `target_exists` error and performs no partial write.
+
+After a successful save, `save` immediately runs the same build pipeline as
+`svvyx workflows build`. The saved item is not considered available for import until that build
+succeeds.
+
+### Saving Prompts
+
+Saving a prompt copies an MDX source file into:
+
+```text
+~/.config/svvy/workflows/prompts/
+```
+
+The generated package exports the prompt under `Prompts.<exportName>`.
+
+### Saving Components
+
+Saving a component copies or extracts TypeScript/TSX source into:
+
+```text
+~/.config/svvy/workflows/components/
+```
+
+If `--export` is provided, `save` retains only the selected export when it can do so without
+changing behavior unsafely. If extraction is ambiguous, `save` fails with a structured diagnostic
+instead of guessing.
+
+The generated package exports component values under `Components.*`.
+
+### Saving Workflows
+
+Saving a workflow copies or extracts TSX workflow source into:
+
+```text
+~/.config/svvy/workflows/workflows/
+```
+
+The generated package exports workflow values under `Workflows.*`.
+
+Saving a workflow does not create a `svvy` workflow runner or a runnable entry registry. The saved
+workflow is reusable source for Smithers authoring.
+
+### Saving Agents
+
+Saving an agent saves task-agent parameters, not arbitrary executable agent code.
+
+The source being saved must expose a statically extractable call to:
+
+```ts
+Agents.defineTaskAgent({ ... })
+```
+
+or to an imported `defineTaskAgent` value from `@svvy/workflows` where the callee can be resolved
+unambiguously.
+
+Example workspace source:
+
+```ts
+import { Agents } from "@svvy/workflows";
+import { Extensions } from "@svvy/extensions";
+
+const reviewerTaskAgent = Agents.defineTaskAgent({
+  id: "reviewerAgent",
+  label: "Reviewer",
+  provider: "openai",
+  model: "gpt-5.4",
+  reasoningEffort: "medium",
+  instructions: "Review the implementation for correctness.",
+  extensions: [Extensions.git, Extensions.github],
+});
+```
+
+Command:
+
+```bash
+svvyx workflows save \
+  --from .smithers/workflows/review.tsx \
+  --kind agent \
+  --export reviewerTaskAgent \
+  --as reviewerAgent \
+  --json
+```
+
+The command writes a structured source record under:
+
+```text
+~/.config/svvy/workflows/agents/reviewerAgent.agent.json
+```
+
+The saved record contains the task-agent parameters, including extension ids, provider, model,
+reasoning effort, label, and instructions. It does not contain arbitrary TypeScript.
+
+If the selected export cannot be statically parsed into task-agent parameters, `save` fails with a
+structured diagnostic. It must not execute the source file to discover parameters.
+
+Accepted static forms include:
+
+- plain object literal parameters
+- literal string, boolean, number, array, and object values
+- spreads from known saved agents imported from `@svvy/workflows`
+- extension references imported from `@svvy/extensions`
+
+Rejected forms include:
+
+- dynamic provider/model/reasoning expressions
+- function calls that compute required fields
+- unresolved spreads
+- imported arbitrary config objects
+- conditional or environment-dependent values
+- task-agent source that cannot be tied to one selected export
+
+After saving, the agent may replace the local workspace source with:
+
+```ts
+import { Agents } from "@svvy/workflows";
+
+const reviewerTaskAgent = Agents.defineTaskAgent(Agents.reviewerAgent);
+```
+
+## Agent Parameter Records
+
+Reusable workflow agents are data.
+
+Canonical source files are structured JSON:
+
+```json
+{
+  "id": "reviewerAgent",
+  "label": "Reviewer",
+  "provider": "openai",
+  "model": "gpt-5.4",
+  "reasoningEffort": "medium",
+  "instructions": "Review the implementation for correctness.",
+  "extensions": ["git", "github"]
+}
+```
+
+Required fields:
 
 - `id`
-- `kind`: `definition | prompt | component`
-- `title`
-- `summary`
-- `path`
-- `scope`: `saved | artifact`
+- `label`
+- `provider`
+- `model`
+- `reasoningEffort`
+- `instructions`
+- `extensions`
 
-Supported filters are:
+`extensions` is the complete extension composition for that task agent. There is no separate
+`toolSurface` field. Tools, prompt guidance, and generated clients come from extension usage.
 
-- `kind`
-- `pathPrefix`
-- `scope`: `saved | artifact | both`
+The default agent is an ordinary parameter record named `defaultAgent`. Other agents may use it as a
+base at authoring time:
 
-Runnable entries are discovered through `smithers_list_workflows`.
+```ts
+const strictReviewer = Agents.defineTaskAgent({
+  ...Agents.defaultAgent,
+  id: "strictReviewer",
+  label: "Strict Reviewer",
+  reasoningEffort: "high",
+  instructions: "Review strictly and call out missing tests.",
+});
+```
 
-### Provider And Model Discovery
+Agents-pane workflow-agent rows and saved `.agent.json` files are the same source of truth. An agent
+saved by `svvyx workflows save --kind agent` must appear in the Agents pane. A user change in the
+Agents pane writes the same `.agent.json` source file and then builds immediately.
 
-Handlers use:
+The Agents pane is the intended human customization surface for workflow agents. The Workflows pane
+may link a generated `Agents.*` export to the corresponding Agents-pane row for convenience, while
+still exposing the source file link for transparency.
 
-- `workflow_list_models(input?)`
+## Build Pipeline
 
-This is a handler-only, read-only workflow-authoring tool. It exists because a handler writing a
-fresh workflow task-agent configuration needs to know which provider/model/reasoning combinations are
-available before it can emit valid workflow source.
+`svvyx workflows build --json` is deterministic and fail-closed.
 
-`workflow_list_models` returns pi-normalized model metadata. `svvy` must not maintain a second table
-of provider-specific reasoning quirks or Codex-specific request behavior.
+Build order:
 
-The result includes:
+1. build and validate Extensions
+2. generate or refresh `@svvy/extensions`
+3. read and validate Workflows source files
+4. validate workflow agent provider/model/reasoning/extension fields
+5. generate `@svvy/workflows`
+6. link `@svvy/workflows` and `@svvy/extensions` into opened workspace `.smithers/node_modules`
 
-- provider id and display name
-- model id and display name
-- readiness status and missing setup summary when unavailable
-- supported reasoning values
-- default reasoning value when one is configured
-- context window and output limit when known
-- image input support when known
-- suitability flags for workflow task agents when known
+The Workflows build must fail if Extensions are invalid or not buildable. Workflow source that
+imports extension values depends on fully typed generated `@svvy/extensions` output.
 
-Supported filters are:
+The builder must not silently drop invalid source files. A generated package is current only when
+all required validation passes.
 
-- `providerId?`
-- `modelId?`
-- `includeUnavailable?`
+## Provider, Model, And Reasoning Validation
 
-If `workflow_list_models` is ever mirrored into `execute_typescript`, that mirror must be exposed only
-through a loaded TypeScript-enabled `svvyx` extension contract and must use the same input and output
-contract as `workflow_list_models`.
+Build validates every agent parameter record against app-owned provider/model state.
 
-### Runnable Workflow Discovery
+Validation inputs:
 
-`smithers_list_workflows` is reserved for runnable workflow entries.
+- pi's normalized provider list
+- pi's normalized model registry
+- svvy provider auth state
+- pi model reasoning metadata, including `model.reasoning`, `model.thinkingLevelMap`, and xhigh
+  support logic
 
-It should list all runnable entries:
+Validation rules:
 
-- saved entries under `.svvy/workflows/entries/`
-- artifact entries under `.svvy/artifacts/workflows/<artifact_workflow_id>/entries/`
+- `provider` must exist in pi's provider list
+- the provider must be configured through an available auth source such as API key, OAuth, or env
+- `model` must exist for the provider
+- `reasoningEffort` must be supported by the selected model
+- if the model does not support reasoning, the only valid reasoning value is `"off"`
+- if the model supports reasoning, valid values are derived from the same logic as the Agents pane
+- unsupported reasoning values fail build; they are not clamped
 
-It should support optional filters such as:
+Build does not need to make a live provider API request by default. Quota, outage, and remote model
+availability failures may still happen at runtime. Build catches static provider/model/auth/reasoning
+configuration mistakes.
 
-- `workflowId?`
-- `productKind?`
-- `sourceScope?`
+Diagnostics must be field-specific and actionable. A missing model diagnostic should include the
+provider and available model ids when safe to report. A reasoning diagnostic should include the
+allowed reasoning values for that model.
 
-Each returned runnable workflow entry includes the handler-visible launch contract compiled from the generated workflow-authoring contract plus the entry's launch schema.
+## Extension Validation
 
-This preserves the intended split:
+For every agent parameter record, build validates each listed extension id:
 
-- Workflows library read models for authoring-time asset discovery
-- `apply_patch` for saved-library writes
-- `smithers_*` for launch and supervision
+- the extension exists
+- the extension has a successful current build when it needs one
+- the extension can be used by workflow task agents
+- the generated `@svvy/extensions` package exports the referenced extension value
 
-### Workflow Launch Surface
+Build fails on unknown, unavailable, invalid, or not-ready extensions.
 
-`smithers_run_workflow` is the stable handler launch surface.
+Generated agent files import extension values from `@svvy/extensions`, not from string literals:
 
-Handlers call:
+```ts
+import { Extensions } from "@svvy/extensions";
 
-- `smithers_run_workflow({ workflowId, input, runId? })`
+export const reviewerAgent = {
+  id: "reviewerAgent",
+  label: "Reviewer",
+  provider: "openai",
+  model: "gpt-5.4",
+  reasoningEffort: "medium",
+  instructions: "Review the implementation for correctness.",
+  extensions: [Extensions.git, Extensions.github],
+} satisfies TaskAgentParameters;
+```
 
-Where:
+## Internal Metadata
 
-- `workflowId` selects a runnable entry returned by `smithers_list_workflows`
-- `input` is validated against that entry's `launchInputSchema`
-- supplied `runId` is used only when the handler intends to resume that exact Smithers run and Smithers still considers the run resumable
-- omitted `runId` requests a fresh launch and never silently resumes an existing run
-- omitted `runId` is rejected when the same handler already owns a nonterminal run with the same `workflowId`; different `workflowId` values can run concurrently under one handler
+Generated runtime exports may carry internal metadata that lets the app identify:
 
-## Saved Workflow Writes
+- kind
+- namespace
+- export name
+- source path
+- generated path
+- Agents-pane row id for workflow agents
 
-### Write Surface
+This metadata is internal implementation detail. It must not appear in agent-facing examples,
+generated prompt instructions, generated TypeScript snippets, normal import usage, or public
+package docs. It must not require agents to call a metadata API or import an internal symbol.
 
-Handlers write reusable saved workflow files through:
+Implementation may attach metadata with a non-enumerable symbol known only to the app, or another
+equivalent private mechanism. The public runtime value must remain natural to use.
 
-- `apply_patch` for exact file edits
-- `exec_command` for validation, generated inspection, and file-system checks
+There is no public `__exports` array and no public metadata manifest in the agent-facing contract.
 
-The handler edits the final file contents under `.svvy/workflows/...` with `apply_patch`. `svvy`
-does not add a custom workflow write or edit surface when the normal Codex-like filesystem tools
-already solve the write path.
+## Workflows Pane
 
-### Validation Feedback
+The Workflows pane is visibility into the generated package.
 
-Whenever a handler writes under `.svvy/workflows/...`, the runtime automatically validates the current saved workflow library state.
+It is not:
 
-That validation should check:
+- a Smithers execution dashboard
+- a source editor
+- a saved-entry runner
 
-- prompt frontmatter for saved prompt assets
-- JSDoc metadata headers for saved definitions and components
-- TypeScript typecheck across saved definitions, components, and entries
-- runnable entry contract validation for saved entries
-- product entry metadata validation for entries that declare `productKind`
-- result schema validation for entries that declare `productKind = "project-ci"`
-- grouped asset refs for saved entries
+The pane refreshes when Workflows build completes.
 
-Validation feedback is surfaced automatically through structured command output.
+For each generated export, it shows:
 
-That means the handler does not need a separate follow-up tool call just to validate what it wrote.
+- namespace: `Agents`, `Components`, `Prompts`, or `Workflows`
+- export name
+- qualified name
+- read-only generated code
+- link to the generated file
+- link to the source file
 
-### Completion Rule
+For `Agents.*` exports, the pane also shows the generated parameter object and provides a primary
+human UI link to customize that agent in the Agents pane. Agents do not use that UI link; agents use
+`svvyx workflows ...` commands and normal imports.
 
-Saved workflow edits may produce temporary validation errors while related files are being written one by one.
+The Workflows pane should not show title or summary metadata for generated exports unless that data
+is uniformly and mechanically available for every relevant source kind. The default is to show only
+export identity, generated code, and source links.
 
-The final completion rule is:
+## Smithers CLI Guidance
 
-- the handler should not treat the saved workflow state as complete until the returned validation feedback is clean
+The Smithers extension teaches official Smithers CLI usage.
 
-## UI Requirements
+The Workflows extension does not teach agents to run or supervise workflows. Agent-facing workflow
+execution guidance belongs to Smithers instructions and should use official Smithers commands.
 
-The desktop app should expose:
+Generated Workflows guidance may mention:
 
-- a read-only Workflows library view rooted at `.svvy/workflows/`
-- separate groupings for definitions, prompts, components, entries, and artifact workflows
-- asset detail views showing title, summary, kind, path, source preview, validation status, and diagnostics
-- entry detail views showing entry path, summary, launch schema, grouped asset refs, validation status, and diagnostics
-- an open-in-editor action that opens the selected source file in the user's configured external editor
-- delete actions for saved definitions, prompts, components, and entries
-- a save shortcut on relevant workflow surfaces that sends a predefined save request prompt to the handler thread
+- reusable values are imported from `@svvy/workflows`
+- the four namespaces are `Agents`, `Components`, `Prompts`, and `Workflows`
+- app-global reusable source is saved with `svvyx workflows save`
+- generated package output is read-only and changed by rebuilding from source
 
-The UI save affordance is a shortcut prompt to the handler thread.
+Generated Workflows guidance must not mention product workflow wrapper tools or workspace-local svvy
+workflow source layouts.
 
-The Workflows library surface must not block on an in-app source editor. In-app editing, syntax highlighting, inline diagnostics, and file-tree integration are later editor-surface capabilities. Until those exist, this surface owns workflow-library discovery and inspection, while source editing happens through the configured external editor.
+## Rejected Shapes
 
-### Workspace Routing
+The following are explicitly not part of the adopted design:
 
-The Workflows library is workspace-owned state. Reads, source previews, validation refreshes, delete actions, open-in-editor actions, artifact workflow grouping, save-shortcut routing, and future workflow-agent component operations must carry explicit `workspaceId`. The backend must never infer the target workspace from the active workspace, focused tab, focused panel, or active runtime, because Workflows library operations can be issued for a background workspace while another workspace is focused.
-
-App-global settings such as model provider credentials, app appearance, preferred external editor,
-and app-wide agent profiles remain separate. Only settings that read or write workspace workflow
-files, generated workflow diagnostics, or workflow-library projection belong on the workspace-scoped
-lane.
-
-## Handler Guidance
-
-Handler-thread instructions should say:
-
-- prefer direct tools for small one-off work that does not benefit from workflow supervision
-- use generated declarations for exact code-mode, runnable-entry, and workflow task-agent shapes
-- reuse a saved runnable entry when one clearly fits
-- otherwise author a short-lived artifact workflow
-- mix saved definitions, prompts, and components freely when that produces a clearer workflow than reusing one saved entry unchanged
-- use future packaged-app-safe workflow-agent components when that Workflows behavior is adopted
-- define task-specific task-agent configuration inside the current artifact workflow when needed
-- inspect Agents/workflow-agent configuration and pi-normalized model metadata only when no saved task-agent configuration fits or the user explicitly wants a different provider or model
-- write reusable saved workflow files only on explicit request
-- rely on the returned validation feedback after writes under `.svvy/workflows/...`
-- discover and run configured Project CI entries when CI is needed
-- load `project-ci` with `load_extension({ extensionId: "project-ci" })` before configuring or modifying Project CI assets when the extension was not preloaded by `thread_start`
-
-## Selection Policy
-
-The adopted decision order is:
-
-1. if direct bounded work is enough, do that
-2. otherwise, if a saved runnable entry clearly fits, run it
-3. otherwise author a short-lived artifact workflow, usually reusing saved definitions, prompts, and components
-4. run the authored artifact entry through `smithers_run_workflow({ workflowId, input, runId? })`
-5. write reusable saved workflow files only on explicit request
-
-Project CI is a special product lane over this same library.
-
-Normal handlers may select a configured Project CI entry through `smithers_list_workflows({ productKind: "project-ci" })`.
-
-CI configuration is owned by whichever handler thread has loaded the `project-ci` extension, either
-from a `thread_start` creation-time extension override defined in
-`docs/specs/extension/thread_managing.extension.spec.md` or from `load_extension({ extensionId: "project-ci" })`.
-
-## Out Of Scope
-
-This spec does not define:
-
-- remote workflow registries
-- marketplace-style sharing
-- automatic save of all authored workflows into the reusable library
-- a requirement that every saved asset be directly runnable
+- workspace-local svvy source/runtime layouts as the reusable workflow base
+- model-facing workflow wrapper tools
+- separate model-list or asset-list native workflow tools
+- `svvyx workflows install`
+- `svvyx workflows retrieve`
+- `svvyx workflows promote`
+- separate `svvyx workflows agents/components/prompts list` commands
+- generated Workflows output as editable source
+- arbitrary TypeScript as the persisted source of truth for Agents-pane workflow agents
+- bidirectional parsing of unconstrained TypeScript back into Agents-pane state
+- `toolSurface` as a workflow-agent field separate from `extensions`
+- title or summary inference in `svvyx workflows list`
+- public metadata APIs or `__exports` arrays in the `@svvy/workflows` agent-facing surface

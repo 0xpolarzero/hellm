@@ -252,7 +252,7 @@ composition.
 
 Every `svvyx` invocation runs inside a concrete `svvy` runtime context. Before dispatching to the
 extension CLI or generated in-process client, the app-owned dispatcher must attach the current
-session, surface, thread, workflow run, workflow task attempt, parent command, child command, and
+session, surface, thread, parent command, child command, and
 actor binding facts that are already known to the runtime. These context facts are trusted product
 state inputs, not shell arguments and not prompt text. Extensions that create product records, such
 as Artifacts, must derive ownership and linkage from this dispatcher context rather than accepting

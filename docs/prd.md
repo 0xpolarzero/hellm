@@ -20,9 +20,9 @@ The product combines:
 - a pi-backed interactive runtime and session substrate
 - a `svvy` orchestrator that owns strategy, routing, and final decisions
 - pi-backed delegated handler threads for bounded delegated objectives
-- Smithers-backed workflow runs executed under those handler threads
-- authored artifact workflows plus workspace-saved reusable workflow assets and runnable workflow entries
-- first-class threads, workflow runs, commands, episodes, artifacts, Project CI, and worktree awareness
+- Smithers workflow authoring and execution through direct official Smithers CLI usage inside handler threads
+- an app-global Workflows source library that generates reusable `@svvy/workflows` imports
+- first-class threads, commands, episodes, artifacts, saved Workflows visibility, and worktree awareness
 - live Codex-like tool projection for streamed tool arguments, command output, patch previews,
   approvals, waits, and final command facts
 - first-class workspace app logs for structured, redacted, live product observability
@@ -34,7 +34,7 @@ The intended feel is closer to Slate than to stock pi:
 - bounded delegated work instead of persistent role agents
 - reusable structured outputs instead of transcript-only memory
 - direct inspection of delegated work when needed without bloating the orchestrator by default
-- safe pause and resume across handler threads and workflow runs
+- safe pause and resume across interactive orchestrator and handler-thread surfaces
 
 ## Product Goals
 
@@ -49,8 +49,8 @@ The shipped product must let a user:
 - talk directly inside delegated thread surfaces when that work needs clarification or follow-up
 - queue follow-up user messages against a running orchestrator or handler-thread surface without creating a concurrent turn, losing the prompt, or retargeting it to another surface
 - copy or edit any committed user message in an orchestrator or handler-thread transcript, see which committed message is currently being edited, receive a warning before replacing an existing composer draft, then send the revised text by moving the same pi surface back to that message's parent state and continuing normally from the edited message
-- configure, run, and interpret Project CI as first-class product behavior
-- save a reusable authored workflow into the workspace workflow library and discover it later
+- author Smithers workflows in workspace `.smithers/` packages
+- save reusable agents, prompts, components, and workflows into the app-global Workflows source library and discover generated exports later
 - use `Cmd+Shift+P` to open the shared palette with `>` prefilled for product actions, and `Cmd+P` to open the same palette as the reserved file quick-open entry point
 - pause and resume safely when user input or an external prerequisite is required
 - keep session context and worktree context aligned
@@ -69,11 +69,11 @@ The main orchestrator owns:
 - reconciling final thread outcomes
 - final user-facing decisions in the main orchestrator surface
 
-No worker, handler thread, or workflow run becomes the source of truth for overall strategy.
+No worker or handler thread becomes the source of truth for overall strategy.
 
 ### 2. One Execution Model
 
-`svvy` does not have separate product execution engines for direct work, delegated work, Project CI, and waiting.
+`svvy` does not have separate product execution engines for direct work, delegated work, and waiting.
 
 It has one shared execution model:
 
@@ -112,7 +112,7 @@ Before any target surface runs a turn through pi:
   handler system prompt, and not shared pi transcript state. It does not create shared tools or
   continuing access to orchestrator-only callable surfaces.
 
-Ambient coding-agent resources are default-off unless explicitly enabled through `svvy` settings. This applies to pi resources such as extensions, skills, prompt templates, themes, packages, slash commands, hooks, provider adapters, credentials, and execution-policy settings, and to equivalent resources exposed by other coding-agent hosts. This default-off rule applies to imported or host-ambient resources, not to app-owned builtin extensions whose default usage is explicitly defined in product specs and profile settings. The current builtin prompt-only defaults are cx and Git default-loaded for all adopted agent kinds, Web default-loaded for all adopted agent kinds only while `networkAccess` is enabled, and GitHub default-loaded for orchestrators and handler threads while available for workflow task agents. `svvy` preserves plain external instruction files such as discovered `AGENTS.md` and `CLAUDE.md` as visible generated agent context through read-only extension records, but behavior-changing ambient resources must be enabled by category, source, host, workspace, and target agent/profile configuration before they can affect prompts, tools, commands, UI, provider behavior, auth, or execution policy. Enabled callable resources must still appear in the resolved generated API block for the exact actor session or task attempt that may call them.
+Ambient coding-agent resources are default-off unless explicitly enabled through `svvy` settings. This applies to pi resources such as extensions, skills, prompt templates, themes, packages, slash commands, hooks, provider adapters, credentials, and execution-policy settings, and to equivalent resources exposed by other coding-agent hosts. This default-off rule applies to imported or host-ambient resources, not to app-owned builtin extensions whose default usage is explicitly defined in product specs and profile settings. The current builtin prompt-only defaults are cx and Git default-loaded for all adopted agent kinds, Web default-loaded for all adopted agent kinds only while `networkAccess` is enabled, GitHub default-loaded for orchestrators and handler threads while available for workflow task agents, and Smithers default-loaded for handler threads as prompt-only official CLI guidance. The builtin Workflows extension is default-loaded for handler threads as the app-owned `svvyx workflows ...` source-library command family. `svvy` preserves plain external instruction files such as discovered `AGENTS.md` and `CLAUDE.md` as visible generated agent context through read-only extension records, but behavior-changing ambient resources must be enabled by category, source, host, workspace, and target agent/profile configuration before they can affect prompts, tools, commands, UI, provider behavior, auth, or execution policy. Enabled callable resources must still appear in the resolved generated API block for the exact actor session or task attempt that may call them.
 
 Extension env values are app-managed per extension in v1. Secret values are keyed by `(extensionId, envName)`, entered only through user-owned app UI, stored encrypted by the app or OS keychain, injected only into the specific trusted extension runtime invocation that needs them, and never exposed to agents through prompts, generated docs, tool output, logs, artifacts, transcripts, global pi env, global shell env, or `execute_typescript` snippet env. Agent-facing extension inspection may report only declaration metadata and missing/configured readiness. Workspace-scoped extension env values and egress-proxy credential boundaries are not part of v1.
 
@@ -120,19 +120,17 @@ Agents and Extensions are the user-facing source of reusable prompt material and
 
 The default actor-specific generated context split is:
 
-- the orchestrator prompt knows that handler threads can supervise Smithers workflows, but the default orchestrator extension state does not load the Smithers extension; if it wants workflow action, it normally delegates by calling `thread_start`
-- a handler-thread prompt receives `smithers_*`, `load_extension`, `list_extensions`, `request_user_input`, `thread_current`, `thread_group`, `thread_report`, `thread_episodes`, direct tools, and `execute_typescript` for typed composition by default; `thread_start` is not part of the default adopted handler model
+- the orchestrator prompt knows that workflow action normally belongs in a delegated handler thread; Smithers and Workflows are available to orchestrators but not default-loaded in the default orchestrator profile
+- a handler-thread prompt receives prompt-only Smithers CLI guidance, the Workflows `svvyx` command family, `load_extension`, `list_extensions`, `request_user_input`, `thread_current`, `thread_group`, `thread_report`, `thread_episodes`, direct tools, and `execute_typescript` for typed composition by default; `thread_start` is not part of the default adopted handler model
 - the orchestrator prompt receives `request_user_input`, `thread_start`, `thread_followup`,
   `thread_list`, `thread_episodes`, and `thread_request_report` so user clarification,
   delegated-thread state, durable thread groups, durable episodes, handler follow-ups, handler
   reactivation, and handler status requests are handled through focused tools instead of prompt
   stuffing
-- a workflow-task-agent prompt receives task-local instructions and task-local callable declarations; in the default adopted workflow-agent profile it receives Extension Loading, task-local direct tools, and `execute_typescript`, while Smithers, Extension Managing, and broad handler/orchestrator controls are not default-loaded
+- a workflow-task-agent prompt receives task-local instructions and task-local callable declarations; in the default adopted workflow-agent profile it receives Extension Loading, task-local direct tools, and `execute_typescript`, while Smithers, Workflows, Extension Managing, and broad handler/orchestrator controls are not default-loaded
 - a workflow-task-agent runtime must not load ambient pi built-in tools, extensions, skills, prompt templates, themes, commands, hooks, provider adapters, or equivalent host resources unless the user enables that exact resource category and source for workflow task agents
 - user-configured extension usage state remains the source of truth for loaded, available, and unavailable extensions; Extension Loading is the only fixed always-loaded extension control
-- current Smithers-facing agent APIs are not the source of truth for live tool projection. When the
-  Smithers bridge is revamped, its replacement tools must emit the same turn/item/command projection
-  phases as other native tools rather than creating a workflow-specific rendering path.
+- Smithers execution is not exposed through native `svvy` workflow wrappers. Agents run official Smithers CLI commands through Shell, and those shell commands project as normal command-family `exec_command` work.
 
 ### 3. Handler Threads Are The Delegation Unit
 
@@ -156,103 +154,90 @@ The orchestrator usually talks to the user about:
 
 The detailed clarification and repair loop for that delegated objective normally happens inside the handler thread itself.
 
-### 4. Smithers Workflows Are The Delegated Execution Substrate
+### 4. Smithers Workflows Use Smithers Directly
 
-All substantive delegated execution should go through Smithers workflow runs.
+Smithers is the workflow runtime and authoring model.
+
+`svvy` does not hide Smithers behind a product-specific workflow-control abstraction. Agents that need to initialize, author, run, resume, inspect, approve, or debug Smithers workflows use the official Smithers CLI through the normal Shell extension.
 
 The repo-root `workflows/` package is not the shipped product workflow runtime.
 
-It is an authoring workspace used to build and maintain `svvy` itself.
+It is an authoring workspace used to build and maintain `svvy` itself. Shipped product behavior must work without a source checkout and must not depend on repo-local authoring assets such as `workflows/node_modules/.bin/smithers`, `workflows/smithers.db`, or source-relative paths under repo-root `workflows/`.
 
-The shipped app must supervise product-runtime Smithers workflows that work without a source checkout.
+Workspace-local Smithers authoring lives in:
 
-That includes:
+```text
+<workspace>/.smithers/
+```
 
-- runnable saved entries under `.svvy/workflows/entries/`
-- short-lived authored artifact workflows under `.svvy/artifacts/workflows/`
+This is the only workspace workflow source location in the adopted base design. `svvy` must not create or preserve workspace-local svvy workflow source layouts.
 
-It must not depend on repo-local authoring workflows that rely on `workflows/node_modules/.bin/smithers`, `workflows/smithers.db`, or source-relative paths.
+The handler thread remains the normal delegated surface for workflow work because it owns the delegated objective and can use Shell, Apply Patch, Smithers prompt guidance, and the Workflows extension together.
 
-That means:
+### 5. Reusable Workflows Are App-Global Source Plus Generated Imports
 
-- a short-lived worker is a one-task workflow
-- parallel delegated work is a workflow graph authored from saved or artifact-local assets when needed
-- Project CI uses the same workflow runtime and explicit structured result model rather than a separate engine
-- a custom delegated plan is authored as a workflow and then executed
+Reusable workflow material is app-global, not workspace-local.
 
-The handler thread is not the heavy execution engine.
+Editable reusable source lives under:
 
-It is the supervisor of one delegated objective.
+```text
+~/.config/svvy/workflows/
+  agents/
+  prompts/
+  components/
+  workflows/
+  generated/
+```
 
-The handler thread itself is not a Smithers workflow run.
+The editable source directories are:
 
-It is a pi-backed interactive surface that calls workflow tools and supervises the resulting workflow runs.
+- `agents/` for structured `.agent.json` task-agent parameter records
+- `prompts/` for direct MDX prompt assets
+- `components/` for direct TypeScript or TSX Smithers components and helpers
+- `workflows/` for direct TSX reusable workflow modules
 
-Inside that handler thread, Smithers owns:
+`generated/` is build output outside the safe writable boundary. Agents and auto-review must treat direct edits to generated Workflows output as invalid. The correct edit path is to change source and rebuild, or to use `svvyx workflows save`.
 
-- actual workflow execution
-- task scheduling
-- retries, loops, and internal branches
-- workflow-run pause and resume
-- worktree-isolated execution when needed
+`svvyx workflows build` produces a generated Bun/TypeScript package:
 
-### 5. Workflow Runs Stay Inside The Handler Thread Lifecycle
+```text
+~/.config/svvy/workflows/generated/package/
+```
 
-The orchestrator gives control of the delegated objective to the handler thread for the full duration of that objective.
+The generated package name is `@svvy/workflows`. The root public API exports only:
 
-That means:
+```ts
+import { Agents, Components, Prompts, Workflows } from "@svvy/workflows";
+```
 
-- the handler thread decides whether to reuse a saved runnable entry or author a short-lived artifact workflow
-- the handler thread starts and resumes workflow runs
-- workflow waits, approvals, retries, repairs, and resumptions stay inside that same handler thread instead of escaping back to the orchestrator
-- the handler thread receives control back when a workflow run reaches a terminal outcome or another actionable attention state
-- the handler thread may repair inputs, inspect workflow state, edit the workflow, start a replacement run, resume when the same run is still resumable, or ask the user for clarification
-- the handler thread may call `thread_report` with an `outcome` only after no active workflow run is still owned by the current objective and the handler has repaired, clarified, delivered, or explicitly closed the objective; a failed or cancelled workflow run by itself is not enough to conclude the objective
-- the orchestrator does not sit in the middle of every workflow pause, retry, or repair step
+Reusable values are accessed through those namespaces, for example `Agents.defaultAgent`, `Components.SomeComponent`, `Prompts.somePrompt`, and `Workflows.someWorkflow`. `Agents.defineTaskAgent` and type `Agents.TaskAgentParameters` also live under `Agents.*` so agent usage stays uniform.
 
-A handler thread may launch more than one workflow run over its lifetime.
+When the app opens or prepares a workspace with `.smithers/`, it idempotently links the generated package into:
 
-Examples:
+```text
+<workspace>/.smithers/node_modules/@svvy/workflows
+```
 
-- one run to author an artifact workflow, then another run to execute it
-- one run that fails, followed by a repaired rerun
-- one run that pauses for clarification, then resumes
+This link is internal package-resolution plumbing, not a user-facing command and not an editable workspace copy. The app must not rely on ambient global package resolution, `NODE_PATH`, parent repository `node_modules`, or a source-checkout-relative package path.
 
-Within a workflow run, individual Smithers tasks may use a lower-level workflow task agent.
+The Workflows extension is the only app-owned command surface for this source library:
 
-A workflow task agent is:
+```bash
+svvyx workflows list [--kind agent|prompt|component|workflow] --json
+svvyx workflows save --from <path> --kind agent|prompt|component|workflow [--export <name>] --as <exportName> [--overwrite] --json
+svvyx workflows build --json
+svvyx workflows models list --json
+```
 
-- not an interactive `svvy` surface
-- hosted by Smithers inside one task attempt rather than by `svvy` as a top-level session surface
-- configured with the same broad ingredients as other actors: model, reasoning level, system prompt, and tools
-- a different actor contract from the orchestrator or handler thread because its owner, lifecycle, retries, and output validation come from Smithers task execution
+It is not a Smithers runner. There is no `install`, `retrieve`, `promote`, kind-specific list subcommand, or product workflow wrapper command.
 
-The adopted direction for task agents is:
+`svvyx workflows list` returns mechanically available export identity and paths only. It must not infer titles, summaries, usefulness, or recommendations.
 
-- use a PI-backed workflow task agent by default when a workflow task needs an adaptive coding agent
-- give that task agent a minimal `svvy` workflow-task system prompt rather than the orchestrator or handler-thread prompt
-- expose a task-local generated capability set plus `execute_typescript` for typed composition
-- run task-local shell, patch, network, parent `execute_typescript`, and generated loaded-extension
-  client boundaries through the same `svvy` execution policy as orchestrators and handler threads,
-  including managed sandboxing, `networkAccess`, and the configured approval mode, scoped to the
-  exact Smithers task attempt
-- keep `thread_start`, `thread_followup`, `thread_list`, `thread_current`, `thread_group`,
-  `thread_report`, `thread_request_report`, `thread_episodes`, `request_user_input`, and
-  `smithers_*` out of the default task-agent runtime and tool schema instead of describing absent
-  controls in prompt prose
-- keep Smithers workflow approval and hijack as Smithers runtime or operator controls around the
-  task, not as ordinary task-agent tools
-- execute the task agent and its task-local tool calls from Smithers' current task root, including the active worktree when the task is worktree-bound
-- keep the workflow runtime DB, run ownership, and structured projection workspace-scoped even when the task itself executes in a worktree
-- bind the workflow-task-attempt record before any task-local tool call runs by the exact Smithers task-attempt identity `(runId, nodeId, iteration, attempt)` supplied by the current Smithers context; do not use resume-handle lookup, heuristic recency scans, transcript inference, or multi-stage fallback chains to discover ownership
-- preserve structured message history, step boundaries, and usage across retries, schema repair prompts, and hijack handoff instead of flattening continuation state into role-labelled prose
-- stream live assistant and tool updates so handler wake-ups, UI activity, and heartbeat freshness reflect real task-agent progress rather than only terminal task text
+`svvyx workflows save` copies or extracts reusable source into `~/.config/svvy/workflows/`. It fails if it would overwrite an existing source item unless `--overwrite` is present. A successful save immediately runs the full build pipeline.
 
-This lets `svvy` reuse the same general PI-based agent recipe at three different layers without conflating their responsibilities:
+`svvyx workflows build` first builds and validates Extensions, generates or refreshes `@svvy/extensions`, validates Workflows source, validates workflow-agent provider/model/reasoning and extension references, generates `@svvy/workflows`, and refreshes workspace package links.
 
-- orchestrator
-- handler thread
-- workflow task agent
+`svvyx workflows models list --json` returns provider/model/reasoning choices from the same pi-normalized provider metadata and auth state used by the Agents pane. Build-time validation must fail explicitly when an agent parameter record names a provider/model/reasoning combination or extension reference that is not available under that registry. It must not silently clamp, rewrite, or defer those errors to runtime.
 
 ### 6. Direct Tools And `execute_typescript`
 
@@ -269,7 +254,7 @@ Direct tools cover:
 - running bounded host commands through `exec_command`
 - continuing long-running host commands through `write_stdin`
 - editing files through `apply_patch`
-- handler-owned discovery of workflow assets and workflow-authoring models
+- handler-owned discovery of generated Workflows exports and workflow-agent provider/model/reasoning choices through `svvyx workflows ...`
 - listing the currently bound callable capability set
 
 When a model needs several independent tool results, the prompt should tell it to issue those tool calls together so pi's parallel tool execution can run them concurrently. Sequential tool calls should be reserved for cases where the later call depends on the earlier result.
@@ -316,12 +301,12 @@ Generated extension clients use the Incur-compatible shape
 `incur/client`, including `Client.ClientError`, inside snippets. `MemoryClient` is internal plumbing
 used by the app to invoke current extension builds and is not exposed to agent-authored snippets.
 
-The default orchestrator `execute_typescript` extension set does not include workflow discovery,
+The default orchestrator `execute_typescript` extension set does not include the Workflows generated client,
 Smithers runtime control, or any `workflow` or `smithers` namespace. Workflow action from the
 orchestrator normally goes through `thread_start` into a handler thread.
 
 The default workflow task-agent `execute_typescript` extension set includes only task-local loaded
-extension clients. It does not include workflow discovery, Smithers runtime control, or
+extension clients. It does not include Workflows source-library clients, Smithers runtime control, or
 handler/orchestrator control clients.
 
 File edits use `apply_patch`.
@@ -401,26 +386,15 @@ durable `threadGroupId` at top level; individual returned thread rows do not rep
 output, and rejected legacy shapes are defined in
 `docs/specs/extension/thread_managing.extension.spec.md`.
 
-Workflow supervision is different.
+Smithers and Workflows are different from native control tools.
 
-`svvy` should not invent a parallel product-specific `workflow_*` abstraction layer just to hide Smithers.
+Smithers is prompt-only official CLI guidance. It adds no native tools and no generated TypeScript client. Agents use Smithers by running official Smithers CLI commands through Shell.
 
-Instead, the shipped app should register Smithers-native semantic tools through the Bun-owned bridge, using Smithers' own operation names where the docs already define them and Smithers' own nouns and verbs for the remaining adopted bridge surfaces.
+Workflows is an Incur-backed `svvyx` extension for reusable source-library operations. It exposes `list`, `save`, `build`, and `models list`. It does not run, resume, approve, inspect, or debug Smithers workflows.
 
-That Smithers-native capability set is a product runtime API over configured saved and artifact Smithers workflow entries, not a thin wrapper around the repo authoring workspace under `workflows/`.
+The default orchestrator context should know that workflow action normally belongs in a delegated handler thread, but ordinary orchestrator profiles do not default-load Smithers or Workflows. The default handler context knows that the orchestrator can delegate and reconcile thread episodes, but `thread_start` is not part of the ordinary handler profile unless nested delegation is explicitly adopted as product behavior.
 
-More precisely, this means:
-
-- the agent does not receive a raw Smithers runtime object, raw HTTP client, raw MCP server, or CLI access
-- `svvy` registers first-party agent tools in its own tool registry under a `smithers_*` namespace
-- each `smithers_*` tool is a thin Bun-side adapter around one Smithers operation or one Smithers-aligned control-plane surface
-- when Smithers already publishes a semantic tool name, `svvy` should keep that name and expose it as `smithers_<same_name>`
-- when Smithers exposes only a server route or Gateway method, `svvy` may wrap it, but it should preserve Smithers' nouns and verbs instead of inventing a competing `workflow_*` vocabulary
-- product-specific additions are limited to app-runtime concerns such as implicit current-thread binding, workflow registry lookup, normalized error envelopes, and durable command-fact recording
-- `svvy` should expose only the subset of Smithers capabilities it actually wants the agent to use; unexposed Smithers surfaces remain operator-only or future work rather than getting renamed into parallel `svvy` APIs
-- the default orchestrator context should know that `smithers_*` exists as a handler-thread workflow-supervision capability, but the Smithers extension is not default-loaded in ordinary orchestrator profiles
-- the default handler context should know that the orchestrator can delegate and reconcile thread episodes, but `thread_start` is not part of the ordinary handler profile unless nested delegation is explicitly adopted as a product behavior
-- a workflow task agent should know only its task-local instructions and task-local tools; Smithers workflow approvals and hijack remain Smithers runtime behavior outside the task-agent tool block, while shell/sandbox approvals raised by task-local direct tools use the same `svvy` execution-permission flow as other actors
+A workflow task agent should know only its task-local instructions and task-local tools. It must not receive Smithers, Workflows, handler controls, or orchestrator controls by default.
 
 The intended use of the native control subset is:
 
@@ -442,9 +416,7 @@ The intended use of the native control subset is:
   that include stale plans, speculative reasoning, rejected alternatives, or likely bias
 - the orchestrator uses multiple `thread_start.threads[]` items only for separate user-visible
   handler conversations where the user is invested in each workstream, each objective may need
-  direct follow-up, or the workstreams are clearly independent conversations; ordinary parallel
-  implementation, research, review, and workflow steps belong inside one handler-supervised
-  Smithers workflow
+  direct follow-up, or the workstreams are clearly independent conversations
 - every `thread_start` creates or appends to a durable thread group; the orchestrator may pass a
   prior `threadGroupId` to add later related handler threads to that group
 - the orchestrator uses `thread_followup` to send corrections, clarifications, or later
@@ -452,8 +424,6 @@ The intended use of the native control subset is:
 - the orchestrator uses `thread_followup({ activate: true })` when a handler thread whose current
   objective is concluded already has the right delegated context for follow-up work; active targets
   receiving the same follow-up keep their current objective
-- the orchestrator may pass a `project-ci` extension override to `thread_start` when the delegated objective clearly needs Project CI authoring guidance from the first handler turn
-- a handler thread may call `load_extension({ extensionId: "project-ci" })` when it later discovers that Project CI configuration or modification is required
 - the orchestrator uses `thread_request_report` when it needs an explicit update episode from one
   handler without changing that handler's objective
 - a handler thread may use `thread_group` to inspect the current thread group and sibling objective
@@ -463,23 +433,10 @@ The intended use of the native control subset is:
 - a handler thread that wants a correction, decision, or useful finding forwarded to sibling threads
   uses `thread_report` without `outcome` to ask the orchestrator to forward it; the orchestrator
   decides whether to send a `thread_followup` to the target `threadGroupId` or exact `threadIds`
-- a handler thread uses `thread_report` with `outcome` to conclude the current objective only after no active workflow run still belongs to that objective; the tool call succeeds when `svvy` records the durable conclusion episode and marks the current objective concluded
+- a handler thread uses `thread_report` with `outcome` to conclude the current objective when it has delivered, failed, or explicitly closed the delegated work; the tool call succeeds when `svvy` records the durable conclusion episode and marks the current objective concluded
 - after a durable episode is recorded, `svvy` creates a typed orchestrator queue item so the orchestrator can reconcile the recorded episode in surface-queue order; cancelling or deleting that notification does not roll back the episode or return a tool error to the handler
-- a handler thread normally uses Smithers-native bridge tools such as `smithers_list_workflows`, `smithers_run_workflow`, `smithers_get_run`, `smithers_explain_run`, `smithers_list_pending_approvals`, `smithers_resolve_approval`, `smithers_get_node_detail`, `smithers_list_artifacts`, and `smithers_get_run_events` to supervise Smithers execution
+- a handler thread uses official Smithers CLI commands through Shell for Smithers execution and uses `svvyx workflows ...` only for reusable Workflows source-library operations
 - any interactive orchestrator or handler-thread surface may use `request_user_input` when it needs user clarification and can provide an explicit default answer
-
-`smithers_list_workflows` is the runnable-entry discovery surface and should expose each entry's `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `launchInputSchema`. Handlers launch or explicitly resume through the stable `smithers_run_workflow({ workflowId, input, runId? })` tool: supplied `runId` resumes exactly that run, omitted `runId` requests a fresh launch, omitted `runId` is rejected when the same handler already owns a nonterminal run with the same `workflowId`, and different `workflowId` values can run concurrently under one handler.
-
-Project CI is not a separate native control tool in the adopted model.
-
-Project CI is a dedicated product status and result lane over normal Smithers runnable entries that declare `productKind = "project-ci"` and a CI result schema. CI state is recorded only from terminal output that validates against that declared result schema.
-
-The lane is a projection and UI concept, not a setup launcher, CI-specific orchestrator, or custom CI execution surface.
-
-CI authoring knowledge is delivered through the optional `project-ci` extension.
-
-It may be preloaded by `thread_start` extension overrides or loaded later by a handler through
-`load_extension({ extensionId: "project-ci" })`.
 
 ### 8. Sessions Contain Many Interactive Surfaces
 
@@ -489,10 +446,8 @@ A session is the durable user-facing container for:
 - delegated handler thread conversations
 - turns
 - command history
-- workflow runs
 - episodes
 - artifacts
-- CI run and CI check result records
 - wait state
 
 The main orchestrator surface and a handler thread surface are intentionally similar interaction surfaces:
@@ -513,12 +468,12 @@ Episodes are the main reusable semantic outputs.
 
 In the adopted delegated model:
 
-- a handler thread may run through many internal workflow runs
-- a handler thread may wait, resume, rerun, and repair internally
+- a handler thread may author Smithers source, run official Smithers CLI commands, and repair its delegated work internally
+- a handler thread may wait, resume, rerun commands, and ask for clarification internally
 - ordinary handler-thread replies stay inside the thread and do not emit durable episodes unless the handler calls `thread_report`
 - a handler thread may emit an intermediate update episode with `thread_report` without concluding the current objective
 - a handler thread may be idle between turns while still remaining open, owned, and ready for direct follow-up
-- a handler thread returns control to the orchestrator by explicitly calling `thread_report` with an `outcome`, which marks the current objective concluded and emits a conclusion episode only after the thread no longer owns active workflow runs for that objective
+- a handler thread returns control to the orchestrator by explicitly calling `thread_report` with an `outcome`, which marks the current objective concluded and emits a conclusion episode
 - the thread surface remains open for later inspection, direct follow-up chat, and explicitly
   reactivated work in that same delegated context
 
@@ -535,18 +490,17 @@ The episode should be:
 - compact enough to reuse later
 - semantically richer than raw logs
 
-The machine-readable lifecycle state that drives routing and supervision belongs in turn, thread, and workflow-run records, not in a large bespoke episode schema.
+The machine-readable lifecycle state that drives routing belongs in turn and thread records, not in a large bespoke episode schema.
 
-### 10. Workflow Internals Stay Available But Not Default
+### 10. Detailed Execution Internals Stay Available But Not Default
 
 The orchestrator should normally reason from:
 
 - the handler thread objective
 - the thread's objective state
-- durable workflow-run state
 - the latest episode emitted by that thread
 
-It must still be able to inspect the underlying handler thread, artifacts, and command traces when needed.
+It must still be able to inspect the underlying handler thread, artifacts, command traces, and workspace Smithers source when needed.
 
 That is an escape hatch, not the default reconciliation path.
 
@@ -559,8 +513,8 @@ Every pi-backed agent surface should expose its active context-budget usage as a
 In practice that means:
 
 - useful results are compressed into final thread episodes and artifacts instead of dragging full transcripts forward
-- workflow runs can pause and resume inside a handler thread without forcing the orchestrator to absorb every internal event
-- repeatable structure is pushed into saved definitions, prompts, components, saved runnable entries, and `execute_typescript` instead of repeatedly re-derived in prose
+- delegated work can proceed inside a handler thread without forcing the orchestrator to absorb every internal command or workflow detail
+- repeatable structure is pushed into saved Workflows agents, prompts, components, workflows, and `execute_typescript` instead of repeatedly re-derived in prose
 - raw model reasoning is reserved for ambiguity, synthesis, prioritization, and recovery
 
 ### 12. Codex-Like Execution Policy
@@ -621,7 +575,7 @@ It must not replace pi with a second agent shell.
 - product behavior above the pi seam
 - the orchestrator
 - delegated handler thread creation and supervision policy
-- session, turn, queued-message, thread, workflow-run, command, episode, artifact, Project CI, and wait models
+- session, turn, queued-message, thread, command, episode, artifact, saved Workflows, and wait models
 - reconciliation
 - workspace-runtime restart and crash recovery coordination for `svvy`-owned product work
 - desktop UI product semantics
@@ -631,8 +585,8 @@ It must not replace pi with a second agent shell.
 
 Smithers owns:
 
-- workflow execution under a handler thread
-- durable multi-step workflow runs
+- workflow execution invoked by agents through official Smithers CLI commands
+- durable multi-step workflow state inside Smithers
 - retries, loops, branches, and internal workflow state
 - worktree-isolated execution when delegated work requires it
 
@@ -642,12 +596,6 @@ Smithers is not:
 - the orchestrator
 - the main conversation substrate
 - the owner of session-level routing decisions
-
-When `svvy` needs workflow lifecycle state, the intended seam is write-driven projection from explicit Smithers bridge events, Smithers tool-boundary writes, and official Smithers bootstrap or reconnect control-plane reads that immediately persist workflow-run and thread facts into structured state. Restart recovery must use that same seam: Smithers remains the source of workflow execution, wait, approval, timer, output, transcript, event, artifact, and task-attempt facts, while `svvy` recovers only its product bindings, monitor cursors, attention delivery, Project CI projection, and UI/read-model facts.
-
-Those lifecycle producers are first-class product behavior, not temporary fallback. Operator inspection reads may observe workflow state, but they must not mutate durable lifecycle state as a side effect.
-
-Read paths must not repair workflow state heuristically from transcript replay, ad hoc refresh loops, or renderer polling.
 
 ## Product Model
 
@@ -662,7 +610,7 @@ It includes:
 - available worktrees
 - discovered `AGENTS.md` and `CLAUDE.md` external instruction sources
 
-The desktop shell presents open workspaces as compact tabs inside the app chrome, integrated with the sidebar and workspace control row rather than as a separate top toolbar. Workspace tabs are left-aligned at the start of the main workspace chrome, scroll horizontally when the open tab set exceeds the available space, and can be dragged to reorder them. Workspace tab order is durable workspace-shell chrome state and restores across app restart. A workspace tab is a visual selector for one workspace runtime and one active layout slot id. The canonical workspace runtime, durable workspace state, and durable user workspace layouts belong to the workspace context, not to the visual tab: the session catalog, path index, app logs, live surface registry, pi sessions, structured state, prompt queues, handler threads, workflow runs, workspace read models, and initialized `A`/`B`/`C` layout snapshots are shared by duplicate tabs for the same canonical cwd. Duplicate same-cwd tabs may choose different active layout ids, but they do not own separate durable layout documents or separate panel-local restore state for the same `(workspaceId, layoutId)`. Opening the app with no restored user workspace tabs creates a real svvy-owned default workspace tab whose first focused surface is exactly one `Open Workspace` pane, so normal chat, Context, Logs, command palette, and sessions remain usable before a user chooses a repository. Default workspace tabs have no durable layout slots; any pane changes made inside a default workspace tab are ephemeral and are not restored as workspace layout state. `Open Workspace` retargets the current visual tab to the chosen user workspace, `New Tab` creates another default workspace tab with exactly one `Open Workspace` pane, and `Open Workspace in New Tab` creates a new visual tab for the chosen user workspace. Opening an already-open repository in a new tab creates a separate visual workspace tab for the same cwd instead of focusing the existing tab, without creating an independent workspace runtime, independent session catalog, isolated durable workspace state, or another durable layout owner.
+The desktop shell presents open workspaces as compact tabs inside the app chrome, integrated with the sidebar and workspace control row rather than as a separate top toolbar. Workspace tabs are left-aligned at the start of the main workspace chrome, scroll horizontally when the open tab set exceeds the available space, and can be dragged to reorder them. Workspace tab order is durable workspace-shell chrome state and restores across app restart. A workspace tab is a visual selector for one workspace runtime and one active layout slot id. The canonical workspace runtime, durable workspace state, and durable user workspace layouts belong to the workspace context, not to the visual tab: the session catalog, path index, app logs, live surface registry, pi sessions, structured state, prompt queues, handler threads, workspace read models, saved Workflows generated-state visibility, and initialized `A`/`B`/`C` layout snapshots are shared by duplicate tabs for the same canonical cwd. Duplicate same-cwd tabs may choose different active layout ids, but they do not own separate durable layout documents or separate panel-local restore state for the same `(workspaceId, layoutId)`. Opening the app with no restored user workspace tabs creates a real svvy-owned default workspace tab whose first focused surface is exactly one `Open Workspace` pane, so normal chat, Context, Logs, command palette, and sessions remain usable before a user chooses a repository. Default workspace tabs have no durable layout slots; any pane changes made inside a default workspace tab are ephemeral and are not restored as workspace layout state. `Open Workspace` retargets the current visual tab to the chosen user workspace, `New Tab` creates another default workspace tab with exactly one `Open Workspace` pane, and `Open Workspace in New Tab` creates a new visual tab for the chosen user workspace. Opening an already-open repository in a new tab creates a separate visual workspace tab for the same cwd instead of focusing the existing tab, without creating an independent workspace runtime, independent session catalog, isolated durable workspace state, or another durable layout owner.
 
 Each workspace tab summarizes that workspace's session-level running, unread, waiting, and error counts from the shared durable workspace read models for its cwd. Count badges render only when their value is greater than zero, stay in the stable running, unread, waiting, error order, use status color instead of icons, and expose title or tooltip context on hover. Workspace open and close controls are compact icon controls with accessible labels. Workspace-scoped backend requests and renderer sync events carry an explicit `workspaceId` for the shared workspace runtime and, when layout state is involved, an explicit `layoutId` chosen by the tab. The backend must not route user work through a process-global active cwd, treat cwd alone as the runtime id, or treat duplicate same-cwd tabs as separate durable workspaces or separate durable layout owners.
 
@@ -693,13 +641,13 @@ The adopted navigation model is deliberately small:
 - archived sessions move into one Archived group, and Archived is collapsed by default
 - the Archived group is the only archive-style grouping
 - arbitrary user-created session folders are not part of the product model
-- archiving hides a session from the active list without deleting pi session data, structured state, artifacts, threads, workflow runs, or episodes
+- archiving hides a session from the active list without deleting pi session data, structured state, artifacts, threads, or episodes
 - sessions track durable unread state when an assistant turn finishes outside the currently focused pane surface, show that state as a small dot in place of the session timestamp in the sidebar, and clear it when a pane for that session receives focus
 - normal session-row clicks open the session in the focused Dockview panel, while `Cmd`-click opens the session in a new pane even when the clicked session is already active
 - session rows expose a context menu with Mark as Unread, Pin or Unpin, Rename, and Archive or Unarchive actions while keeping normal row selection as the primary navigation behavior
-- each top-level session row represents the orchestrator layer only; child handler and workflow state must not make the session row appear running, waiting, or broken
-- delegated handler threads appear as nested rows under their parent session, and workflow runs appear as nested rows under their owning handler thread
-- sidebar subtitles are row-local relevance signals: orchestrator rows show orchestrator-local waits, commands, turns, or explicit thread episode summaries; handler rows show handler-local waits and active workflow supervision; workflow rows show workflow-local running and waiting state; workflow troubleshooting is muted because it is handler-owned repair work, while `error` is reserved for row-local unrecoverable state that needs user action
+- each top-level session row represents the orchestrator layer only; child handler state must not make the session row appear running, waiting, or broken
+- delegated handler threads appear as nested rows under their parent session
+- sidebar subtitles are row-local relevance signals: orchestrator rows show orchestrator-local waits, commands, turns, or explicit thread episode summaries; handler rows show handler-local waits, active commands, and recent delegated-work summaries; `error` is reserved for row-local unrecoverable state that needs user action
 
 ### Surface Identity
 
@@ -783,7 +731,6 @@ It owns:
 - one delegated objective
 - the workflow selection or authoring path for that objective
 - the internal clarification loop for that objective
-- workflow run supervision
 - zero or more update or conclusion episodes emitted to the orchestrator over that thread's lifetime
 
 Each handler thread should have:
@@ -794,12 +741,11 @@ Each handler thread should have:
   orchestrator history when started with `history: "forked"`
 - durable objective state
 - loaded and available extension ids, when specialized product guidance or capability has been preloaded or loaded during the session
-- zero or more workflow runs
 - zero or more thread episodes
 
-Available extension ids describe reusable product knowledge loaded into actor prompts by default or requested on demand, such as `project-ci`.
+Available extension ids describe reusable product knowledge loaded into actor prompts by default or requested on demand, such as Workflows source-library guidance.
 
-The current handler objective, current `threadGroupId`, active workflow run ids, pending report requests, and latest episode summary are exposed to the handler through `thread_current`. The orchestrator inspects delegated thread rows through `thread_list`, filters those rows by `threadGroupId` when it needs a related group, requests handler updates through `thread_request_report`, sends follow-ups through `thread_followup`, and reads exact durable episode bodies through `thread_episodes`. Handlers can inspect their current group and sibling objective summaries through `thread_group`, and can read their own durable episodes through `thread_episodes`. These read tools do not include transcripts, workflow summaries, or Smithers internals; handlers use active workflow run ids with `smithers_*` tools when workflow details matter.
+The current handler objective, current `threadGroupId`, pending report requests, and latest episode summary are exposed to the handler through `thread_current`. The orchestrator inspects delegated thread rows through `thread_list`, filters those rows by `threadGroupId` when it needs a related group, requests handler updates through `thread_request_report`, sends follow-ups through `thread_followup`, and reads exact durable episode bodies through `thread_episodes`. Handlers can inspect their current group and sibling objective summaries through `thread_group`, and can read their own durable episodes through `thread_episodes`. These read tools do not include transcripts, command details, or Smithers internals; handlers use Shell and artifacts when execution details matter.
 
 Agent profiles describe the provider, model, reasoning level, extension usage selections, and callable policy used by pi-backed product agents. Base role instructions are selected through builtin `base-*` instruction extensions rather than stored as profile-local prompt blobs. The Agents pane is the product-owned profile surface. It appears in the sidebar between Logs and Extensions, and owns orchestrator profiles, the special handler-thread profile, and workflow-agent profiles rather than burying model behavior in general settings.
 
@@ -822,10 +768,9 @@ reasoning, or prompt-selection settings.
 
 The Agents pane edits app-global agent profiles, including orchestrator profiles, `threadHandler`, and workflow-agent profiles. General settings edit app-global model provider credentials, app appearance (`system`, `light`, or `dark` with `system` as the default), the user's preferred external editor for opening workspace source files from read-only product surfaces, and the artifact directory used for durable session artifact files. The artifact directory defaults to `~/.config/svvy/artifacts` and remains app-owned configuration rather than an agent-supplied command argument. Provider rows use icon-only key, OAuth, and remove controls with explanatory tooltips; remove uses an inline single-confirm action. Web-specific TinyFish CLI auth is owned by TinyFish CLI commands such as `tinyfish auth login`, `tinyfish auth set`, and `tinyfish auth status`, not by `svvy` General settings. Extension definitions, extension instructions, external instruction controls, and generated context previews are edited or inspected in the Extensions pane rather than buried in general settings. Complex settings and configuration editors use TanStack Form for renderer form state where they need validation, dirty state, field-level errors, submit pending state, reset/cancel behavior, and async save errors, while Bun-side settings validation and normalization remain authoritative. Agent profile changes save directly from the setting control rather than through a separate save button. Agent model selection is a constrained picker over models from currently connected providers, and reasoning selection is constrained to the levels supported by the selected model, matching the interactive session controls rather than accepting freeform provider, model, or reasoning text. An orchestrator profile may either keep composer model and reasoning changes local to each session or let sessions using that profile save those composer changes back to the profile for future sessions. The source of truth for provider/model capability metadata is pi's normalized model registry and runtime APIs: `svvy` does not maintain separate provider-specific reasoning tables, Codex reasoning special cases, or request-shape mappings. Visible reasoning output is whatever pi normalizes into assistant `thinking` blocks; for providers such as OpenAI Codex this is a reasoning summary when the provider streams one, not raw chain-of-thought, and encrypted continuation-only reasoning with no visible summary must be labelled unavailable rather than redacted.
 
-Workflow-agent profiles are app-global Agents-pane profiles. Packaged workflow-agent component files,
-when adopted under `.svvy/workflows/components/agents.ts`, are generated or saved Workflows-library
-assets that reference those profiles and must route by explicit `workspaceId`. They must not imply
-that repo-root `workflows/` is the shipped product workflow runtime.
+Workflow-agent profiles are app-global Agents-pane profiles backed by the same structured source
+records generated as `Agents.*` exports in `@svvy/workflows`. UI edits and agent saves both write
+that source shape and trigger a Workflows build.
 
 ### Agents And Extensions
 
@@ -862,69 +807,53 @@ Generated agent context bindings store loaded extension ids, available extension
 
 New top-level sessions, handler threads, and workflow task agents always use the latest context-ready generated agent context from Agents, Extensions, generated contracts, and current external instructions. Existing surfaces store the generated agent context fingerprint they received. When the current context-ready generated context fingerprint differs from the bound fingerprint, `svvy` automatically queues or applies `agent_context_refresh` work labelled `Update agent context`. If the surface is idle, the update is claimed before the next prompt-bearing item runs. If the surface is active, the update is visible in the queue until it applies at the next safe `refreshRunContext` boundary or before the next prompt-bearing item. On success, the affected session records `Agent context updated` with details of what changed. The visible surface identity and transcript stay continuous even if the internal managed pi runtime must be recreated to load the fresh `systemPrompt`.
 
-Top-level session titles are generated through an explicit durable title-generation flow. Before the first turn is submitted, the visible default session title follows the beginning of the live composer draft for that session's orchestrator surface. When the first real user turn starts in a top-level session, the app records a pending title-generation job and runs the configured `namer` agent concurrently with the orchestrator turn; until that generated title lands, the visible title continues to use the first user message summary. The orchestrator must not wait for the namer, and the namer must not wait for the orchestrator response. The namer settings prompt is the title-generation instruction; the one-shot user prompt sent to that agent contains only the first user message context to title, not another naming instruction or extracted keyword list. While that job is pending or running, manual session rename is blocked for that session so the generated title and a user rename cannot race. The generated title is persisted once, auto-title generation stops after that first successful generation, and a manual rename permanently freezes future auto-titling for the session. Handler-thread titles are generated by the same configured `namer` agent from the orchestrator-supplied `thread_start` objective; the orchestrator does not receive or supply a separate handler title field. Workflow runs do not have a separate title concept and use workflow identity or entry metadata for labels.
+Top-level session titles are generated through an explicit durable title-generation flow. Before the first turn is submitted, the visible default session title follows the beginning of the live composer draft for that session's orchestrator surface. When the first real user turn starts in a top-level session, the app records a pending title-generation job and runs the configured `namer` agent concurrently with the orchestrator turn; until that generated title lands, the visible title continues to use the first user message summary. The orchestrator must not wait for the namer, and the namer must not wait for the orchestrator response. The namer settings prompt is the title-generation instruction; the one-shot user prompt sent to that agent contains only the first user message context to title, not another naming instruction or extracted keyword list. While that job is pending or running, manual session rename is blocked for that session so the generated title and a user rename cannot race. The generated title is persisted once, auto-title generation stops after that first successful generation, and a manual rename permanently freezes future auto-titling for the session. Handler-thread titles are generated by the same configured `namer` agent from the orchestrator-supplied `thread_start` objective; the orchestrator does not receive or supply a separate handler title field.
 
-### Workflow Run
+### Workflows Source Library
 
-A workflow run is one Smithers execution launched from a handler thread.
+The Workflows source library is app-global reusable Smithers authoring source.
 
-It has:
+It lives under `~/.config/svvy/workflows/` and has exactly these editable source kinds:
 
-- a Smithers run id
-- a runnable saved entry or authored artifact entry shape
-- status over time
-- artifacts, logs, and related command history
+- `agents/`: structured `.agent.json` task-agent parameter records
+- `prompts/`: direct MDX prompt assets
+- `components/`: direct TypeScript or TSX Smithers components and helpers
+- `workflows/`: direct TSX reusable workflow modules
 
-One handler thread may own many workflow runs over time.
+The `generated/` child is read-only build output outside the safe writable boundary. Agents must not edit it directly.
 
-### Saved Workflow Assets, Runnable Entries, And Artifact Workflows
+`svvyx workflows save` is the promotion path from workspace-authored `.smithers/` files into app-global reusable source. `svvyx workflows build` is the repair and refresh path after source edits. Both are ordinary Shell commands from the agent's perspective.
 
-The delegated workflow library has three layers:
+Workflow-agent records are parameter objects, not arbitrary executable agent source. They are saved as structured data so the Agents pane and Workflows build share one source of truth. UI edits in the Agents pane and agent edits through `svvyx workflows save` both write the same source shape and trigger the same build.
 
-1. generated workflow-authoring contracts plus curated workflow guidance injected into every handler thread
-2. workspace-saved reusable workflow assets under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and launchable saved entries under `.svvy/workflows/entries/`
-3. short-lived authored artifact workflows under `.svvy/artifacts/workflows/`
+The generated `@svvy/workflows` package exports only namespace objects:
 
-The generated workflow-authoring contract is the handler-visible source of truth for runnable entry modules, product lane metadata, grouped asset refs, `createRunnableEntry(...)`, and workflow task agents. The curated guide teaches the Smithers render/task/output model, artifact layout, saved library layout, validation loop, and `AgentLike` task usage without restating generated `execute_typescript` client or workflow contract shapes in prose.
+- `Agents`
+- `Components`
+- `Prompts`
+- `Workflows`
 
-Saved workflow assets are reusable source assets.
+The generated package may attach internal non-enumerable metadata to exported values so the app can map generated exports back to source files and Agents-pane records. That metadata is not part of the agent-facing public API, must not alter normal import usage, and must not appear as public fields, public declarations, public docs, or examples.
 
-They include:
+### Workflows Pane
 
-- definitions
-- prompts
-- components
-- future workflow-agent component assets, when adopted as packaged-app-safe saved workflow components rather than repo-root `workflows/` runtime state
+The Workflows pane is read-only visibility into the latest successful generated `@svvy/workflows` package.
 
-Saved entries are the launchable wrappers in the saved workflow library.
+It is generated-source visibility only. It is not a workflow runner or source editor.
 
-The intended decision order inside a handler thread is:
+For each generated export in `Agents`, `Components`, `Prompts`, and `Workflows`, it shows:
 
-1. can the task be completed directly with direct tools?
-2. if not, does a saved runnable entry clearly fit?
-3. if not, author a short-lived artifact workflow, usually by mixing saved definitions, prompts, and components; future workflow-agent component reuse belongs to packaged-app-safe Workflows assets rather than repo-root `workflows/` runtime state
-4. execute the selected or authored workflow
+- kind
+- namespace
+- export name
+- qualified name
+- read-only generated code
+- link to the generated file
+- link to the source file
 
-Artifact workflows are persisted by default under `.svvy/artifacts/workflows/`.
+For `Agents.*` exports, the pane also shows the generated task-agent parameter object and provides a primary human action that opens the corresponding record in the Agents pane for customization. Agents themselves do not use that UI link; agents use `svvyx workflows ...` and source files.
 
-Saving reusable workflow files means the handler writes those files directly into `.svvy/workflows/` through `apply_patch`.
-
-Writes under `.svvy/workflows/` automatically surface saved-workflow validation feedback in structured tool output.
-
-Workflows library reads, source previews, validation refreshes, delete actions, open-in-editor actions, save-shortcut routing, and future workflow-agent component operations are workspace-affecting operations. Each request must carry the target `workspaceId` and resolve the workspace runtime from that id, not from the active workspace tab.
-
-The UI should expose:
-
-- a save shortcut that sends a predefined save request prompt to the handler thread
-- a read-only Workflows surface where the user can inspect saved definitions, prompts, components, entries, and artifact workflow groups without requiring an in-app source editor
-- an open-in-editor action that opens selected workflow source files in the user's configured external editor
-- delete actions for saved definitions, prompts, components, and entries, while preserving historical artifact workflows that previously referenced them
-- later in-app source editing, syntax highlighting, and inline diagnostics only after dedicated editor primitives exist
-
-Handler-thread instructions should treat saving as explicit reuse curation:
-
-- save reusable workflow assets when the user asks for that
-- otherwise propose saving when a newly authored workflow looks broadly reusable
+The Workflows pane refreshes after successful `svvyx workflows build` and after UI edits that trigger a build. It may use internal build metadata for source/generated links, but it must not expose that metadata as an agent-facing contract.
 
 ### Turn
 
@@ -960,7 +889,7 @@ They remain inspectable through durable links and thread history.
 
 ### Artifact
 
-Artifacts are durable session files produced by commands, workflow runs, and related execution.
+Artifacts are durable session files produced by commands and related execution.
 
 They live under the `svvy` artifact area rather than as normal project source. They are for outputs that should remain inspectable but should not normally be committed into the user's repository tree as product code, source docs, configuration, tests, or assets.
 
@@ -971,11 +900,11 @@ Examples:
 - retained test output, JUnit XML, coverage summaries, or other test-run evidence when the output is worth preserving beyond a compact command summary
 - submitted `execute_typescript` source snippets, including failed attempts
 - screenshots
-- generated audit, benchmark, inspection, or workflow reports that are evidence of agent work rather than requested repository files
+- generated audit, benchmark, inspection, or workflow-authoring reports that are evidence of agent work rather than requested repository files
 - implementation plans, review notes, and other session-local planning or review documents
 - bounded handoff documents intended to be read, reassessed, or modified by another agent without
   inheriting the full conversation that produced them
-- exported workflow details
+- exported Smithers or Workflows details
 
 A normal repository file edited by the agent is not automatically an artifact.
 
@@ -990,15 +919,14 @@ For explicit artifact creation, the agent either calls `svvyx artifacts create -
 artifacts create --path <file> [--name <filename-with-extension>] --json` to copy one existing source
 file into the configured artifact store. `--name` is the exact stored filename and must include the
 extension. `--immutable` stores the artifact under the session `immutable/` artifact directory.
-`svvy` creates the durable artifact record and links it to the current session, thread, workflow run,
-workflow task attempt, and source command from the runtime boundary. For copied artifacts, the source
+`svvy` creates the durable artifact record and links it to the current session, thread, and source command from the runtime boundary. For copied artifacts, the source
 path is not the artifact.
 
 Artifact files live under `<artifactDir>/<sessionId>/`. Ordinary command execution may write only the
 current session artifact directory and must treat `<artifactDir>/<sessionId>/immutable/` as read-only.
 That immutable boundary is enforced by the managed filesystem policy, not by OS-level file flags.
 
-Artifact projection should show durable work outputs linked to threads, workflow runs, commands, and CI checks before relying on transcript reconstruction.
+Artifact projection should show durable work outputs linked to threads and commands before relying on transcript reconstruction.
 
 Visible HTML artifact previews must render inside sandboxed iframes. Script-capable previews may grant `allow-scripts`, but the sandbox policy must not include `allow-same-origin`, top navigation, popups, form submission, or other parent/app escape permissions.
 
@@ -1010,37 +938,6 @@ primary `svvyx artifacts list` flag.
 
 They may later be surfaced through an episode or another read model, but they should not depend on transcript parsing.
 
-### Project CI
-
-Project CI is a first-class product lane for the repository's repeatable confidence checks.
-
-It is represented as normal Smithers workflow execution plus explicit `svvy` CI projection.
-
-In practice that means:
-
-- reusable Project CI assets, when configured, live in the saved workflow library under `.svvy/workflows/{definitions,prompts,components,entries}/ci/`
-- a runnable CI entry is an ordinary saved workflow entry that declares `productKind = "project-ci"` and a `resultSchema`
-- the runtime records CI state only from the terminal output of a declared CI entry after that output validates against the entry's `resultSchema`
-- CI run and CI check result records summarize build, test, lint, typecheck, integration, docs, manual, or repository-specific checks when the configured CI entry returns them
-- the UI exposes a dedicated Project CI status surface or panel for not-configured, configured, running, passed, failed, blocked, and cancelled states
-- the workspace shell exposes a compact latest Project CI summary near the focused surface or session status, and inspected handler threads show CI detail only when that thread launched, configured, modified, or otherwise owns the relevant CI run
-
-Project CI deliberately avoids heuristic inference.
-
-The runtime must not parse arbitrary workflow logs, node outputs, final prose, or command names to guess CI results.
-
-The product must not ship, auto-create, or scaffold a fake passing CI entry for repositories that have not configured real checks.
-
-CI authoring guidance belongs only to handler threads that load the optional `project-ci` extension.
-
-Normal handler threads may discover and run configured CI entries without that pack.
-
-If a normal handler needs to configure or modify Project CI, it should call `load_extension({ extensionId: "project-ci" })` rather than relying on default prompt knowledge.
-
-There is no required Project CI setup wizard or launcher.
-
-Configuration happens organically in a normal handler thread when the user asks for it or when an implementation handler discovers that durable Project CI needs to be created or modified.
-
 ### Worktree
 
 Worktree awareness remains first-class.
@@ -1048,9 +945,8 @@ Worktree awareness remains first-class.
 At minimum:
 
 - a handler thread may be associated with a worktree
-- a workflow run may execute in a worktree
-- a workflow task agent executes from the current Smithers task root or worktree, while `svvy` workflow projection and Smithers runtime storage stay bound to the workspace root
-- delegated workflows should default to the current branch and current worktree rather than spawning worktrees automatically
+- Smithers CLI commands run from the current workspace or selected worktree according to normal Shell execution context
+- delegated work should default to the current branch and current worktree rather than spawning worktrees automatically
 - the UI must make the active worktree legible
 
 ## Execution Model
@@ -1059,14 +955,14 @@ At minimum:
 
 Every user request that can start immediately goes through one orchestrator-controlled product loop:
 
-1. load current workspace, session, thread, workflow-run, episode, artifact, Project CI, and wait context
+1. load current workspace, session, thread, episode, artifact, saved Workflows, and wait context
 2. identify the target surface of the message
 3. drain any earlier queued `agent_context_refresh` control item for the target surface, refreshing the generated agent context binding before prompt-bearing work
 4. compose that surface's actor prompt from its bound generated agent context, including loaded base instruction extensions, loaded capability extension instructions, available extension loading hints, external instruction files, native tool declarations, loaded svvyx guidance, and generated TypeScript client declarations, then load it into pi's true `systemPrompt` channel before sending the new user message
 5. open a new turn for that surface
 6. let that surface choose and persist its top-level turn decision, then decide its next tool call or direct response
 7. execute tools through the correct runtime handler
-8. record commands, events, workflow-run state, artifacts, and wait state
+8. record commands, events, artifacts, and wait state
 9. update structured state
 10. emit explicit workspace-state updates whenever durable summaries or read models change
 11. emit explicit surface-state updates whenever one live surface transcript or runtime snapshot changes
@@ -1096,7 +992,6 @@ When the target surface is the main orchestrator:
    - set `history: "forked"` only when conversational continuity is explicitly requested, materially
      necessary and cannot be captured cleanly in a compact objective or durable handoff file, or
      required to try multiple approaches from the exact same conversational starting point
-   - include handler extension-state overrides such as setting `project-ci` to `default_loaded` only when the objective needs that product guidance from the first handler turn
 5. when a handler thread emits an episode, reconcile the typed `thread_report` notification against durable state: thread durable state plus the latest episode
 6. if the orchestrator needs status while the handler remains active or interactable, call `thread_request_report` and reconcile the resulting episode when the handler answers
 7. if later work belongs in the same delegated context after the objective is concluded, call
@@ -1116,20 +1011,19 @@ When the target surface is a handler thread:
    - use `execute_typescript`
    - request optional product guidance or capability through `load_extension`
    - inspect current group topology and sibling objective summaries through `thread_group` when that context materially helps the current objective
-   - reuse a saved runnable entry
-   - author a short-lived artifact workflow, often by importing saved definitions, prompts, and components
-   - inspect workflow state through Smithers-native bridge tools such as `smithers_get_run`, `smithers_explain_run`, `smithers_get_node_detail`, and `smithers_get_run_events`
-   - resume an existing paused workflow run through the Smithers bridge when Smithers still considers that run resumable
-   - start a replacement workflow run
+   - inspect generated Workflows exports through `svvyx workflows list`
+   - inspect workflow-agent model options through `svvyx workflows models list`
+   - edit workspace `.smithers/` source through ordinary coding tools
+   - run official Smithers CLI commands through Shell
+   - save reusable agents, prompts, components, or workflows through `svvyx workflows save`
+   - rebuild reusable Workflows source through `svvyx workflows build`
    - ask the user for clarification through `request_user_input`
-   - enter a runtime waiting state because of blocking request input, workflow attention, approval, signal, timer, or another external dependency
+   - enter a runtime waiting state because of blocking request input, command approval, or another external dependency
    - emit an important intermediate update with `thread_report`
    - ask the orchestrator through `thread_report` to forward a correction or finding to sibling threads when direct sibling messaging is not available and group-wide coordination is needed
    - conclude the current objective with `thread_report` and `outcome`
-3. run or resume workflow execution as needed
-4. regain control when the workflow run reaches a terminal outcome or another actionable attention state
-5. continue supervising until the objective is truly finished
-6. when appropriate, return control to the orchestrator by explicitly calling `thread_report` with `outcome`
+3. continue local tool, Smithers CLI, and source-library work until the objective is truly finished
+4. when appropriate, return control to the orchestrator by explicitly calling `thread_report` with `outcome`
 
 When conclusion through `thread_report` succeeds, the ownership boundary has crossed because the durable conclusion episode and concluded objective state have been recorded. The orchestrator receives a typed `thread_report` notification in its ordered surface queue and should reconcile that recorded state in a fresh orchestrator turn. Intermediate update episodes use the same notification path without concluding the objective. If the orchestrator is already active, the notification waits in the same ordered surface queue as user follow-up messages.
 
@@ -1159,26 +1053,20 @@ In the adopted delegated model:
 
 There is no separate "wait episode" for delegated handler threads.
 
-Blocking request input, execution approvals, external dependencies, and workflow attention may still
-project as waiting state. The wait belongs in surface and workflow-run state until runnable work
-resumes or the handler thread eventually emits another update or conclusion episode.
+Blocking request input, execution approvals, and external dependencies may still project as waiting
+state. The wait belongs in the owning surface until runnable work resumes or the handler thread
+eventually emits another update or conclusion episode.
 
 ### Failures And Recovery
 
-Workflow failure does not immediately return control to the orchestrator unless the handler thread decides it cannot repair the delegated objective confidently.
+Command or Smithers CLI failure does not immediately return control to the orchestrator unless the handler thread decides it cannot repair the delegated objective confidently.
 
 The intended behavior is:
 
-- a workflow run fails or is cancelled
+- a command or Smithers CLI operation fails
 - the handler thread works through repair locally
-- the handler thread may inspect artifacts, inspect workflow state through Smithers-native bridge tools, edit the workflow, repair inputs, start a replacement run, resume only when Smithers resume preconditions still hold, ask the user, or explicitly close the objective
+- the handler thread may inspect artifacts, inspect Smithers state through official CLI commands, edit `.smithers/` source, repair inputs, rerun commands, ask the user, or explicitly close the objective
 - only explicit handler reports are returned to the orchestrator by default: update episodes or a conclusion episode plus concluded objective state
-
-Duplicate observation of the same terminal workflow state is legitimate during final stream flushes or later bootstrap or reconnect control-plane reads.
-
-That duplication must be handled as idempotent projection, not as a reason to reopen a thread the handler already handed back.
-
-If a workflow run dies before its own planned finalization path, the bridge must still surface durable failure state back to the supervising handler thread.
 
 ## UI And Surface Model
 
@@ -1192,27 +1080,26 @@ It should show:
 - remaining sessions by recency under Sessions
 - one Archived group for archived sessions
 - handler thread rows nested under the session that owns them
-- workflow run rows nested under the handler thread that owns them
 
 Pinned, Sessions, and Archived use the same accordion header treatment. Each group owns a scrollable, vertically resizable space. The Archived group is collapsed by default, and group collapsed state and sizes are persisted per workspace.
 
-Archiving is reversible and non-destructive. It must not delete durable session, thread, workflow-run, episode, artifact, or transcript data.
+Archiving is reversible and non-destructive. It must not delete durable session, thread, episode, artifact, or transcript data.
 
-Session sidebar state is layered. Handler-local waits, active handler turns, and active workflow supervision do not automatically change the parent session row's status or subtitle. A workflow run in `running`, `waiting`, `failed`, or `cancelled` does not automatically change the owning handler's parent session row. Workflow repair is handler-owned local work, not parent-session error. `error` is reserved for row-local unrecoverable state that needs user action. The orchestrator row updates from explicit orchestrator-owned state and explicit `thread_report` reconciliation events.
+Session sidebar state is layered. Handler-local waits and active handler turns do not automatically change the parent session row's status or subtitle. Delegated-work repair is handler-owned local work, not parent-session error. `error` is reserved for row-local unrecoverable state that needs user action. The orchestrator row updates from explicit orchestrator-owned state and explicit `thread_report` reconciliation events.
 
-Active row subtitles blink only for agent or workflow work that is currently running, not for waiting or error rows. If a row is doing agent work but has no useful subtitle to surface, it shows only a compact blinking ellipsis. Rows that are open in Dockview use local border/background treatment instead of a text badge, and that treatment follows the row's waiting or error tone. Open orchestrator and handler rows also show a compact context-budget rail along the bottom of the row.
+Active row subtitles blink only for agent work that is currently running, not for waiting or error rows. If a row is doing agent work but has no useful subtitle to surface, it shows only a compact blinking ellipsis. Rows that are open in Dockview use local border/background treatment instead of a text badge, and that treatment follows the row's waiting or error tone. Open orchestrator and handler rows also show a compact context-budget rail along the bottom of the row.
 
 ### Command Palette And Quick Open
 
 `svvy` should expose a VS Code-like shared palette model as a first-class shell capability.
 
-The palette has one shell, one input, and one result interaction model. The leading `>` input prefix selects command mode. `Cmd+Shift+P` opens the shared palette with `>` already inserted, and command mode discovers and executes product actions, including New orchestrator creation and session switching, session pin/archive actions, opening focused session/thread/workflow/artifact/Project CI surfaces, Project CI run or configuration actions, handler-thread surfaces, workflow-inspector-related surfaces, pane and layout actions when panes exist, settings and Agents profile actions when those features exist, and future product actions as they are added.
+The palette has one shell, one input, and one result interaction model. The leading `>` input prefix selects command mode. `Cmd+Shift+P` opens the shared palette with `>` already inserted, and command mode discovers and executes product actions, including New orchestrator creation and session switching, session pin/archive actions, opening focused session/thread/artifact/Workflows surfaces, handler-thread surfaces, pane and layout actions when panes exist, settings and Agents profile actions when those features exist, and future product actions as they are added.
 
 `Cmd+P` opens the same shared palette with an empty input for file quick-open search mode. For now, file quick-open is intentionally a no-op or placeholder because file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces are not yet implemented. It must not fabricate file surfaces or introduce an ad hoc file browsing path. Typing `>` into the quick-open input switches the already-open palette into command mode, and deleting the prefix switches it back to quick-open behavior.
 
 When implemented, the command palette UI should use `cmdk-sv` from `https://www.cmdk-sv.com/` as the Svelte command menu primitive. Its docs describe it as a "fast, composable, unstyled command menu for Svelte." `cmdk-sv` is the renderer menu primitive, not the source of product routing, runtime behavior, or command semantics.
 
-The command palette is a prefix-driven shell/action surface within the shared palette. It is not an alternate execution engine, standalone shell, custom terminal loop, readline loop, alternate TUI stack, or parallel workflow abstraction. Palette actions route into the existing product model: sessions, panes, surfaces, orchestrator and handler turns, Smithers-native tools, Project CI projection, durable state, settings, and Agents profiles.
+The command palette is a prefix-driven shell/action surface within the shared palette. It is not an alternate execution engine, standalone shell, custom terminal loop, readline loop, alternate TUI stack, or parallel workflow abstraction. Palette actions route into the existing product model: sessions, panes, surfaces, orchestrator and handler turns, durable state, settings, Workflows visibility, and Agents profiles.
 
 Shell action controls that expose command-palette, quick-open, New orchestrator, sidebar, or pane actions use the product shortcut registry for user feedback and dispatch metadata. The registry owns stable shortcut action ids, labels, platform chords, compact and readable display strings, scope, input-typing policy, availability, and command routing metadata. TanStack Hotkeys is the renderer binding primitive that subscribes scoped shortcuts and applies the registry input policy; it is not the source of product command semantics. App launcher and shell command chords such as `Cmd+Shift+P`, `Cmd+P`, `Cmd+N` for New orchestrator in the focused pane, `Cmd+Shift+N` for New orchestrator in a new pane, sidebar toggle, `Cmd+Shift+1` for Logs, `Cmd+Shift+2` for Agents, `Cmd+Shift+3` for Context, and `Cmd+Shift+4` for Workflows remain available while workspace text inputs such as the composer are focused. Explicit labeled sidebar actions reveal compact in-button shortcuts immediately on hover or focus; the New orchestrator control also shows a delayed tooltip that explains click, `Cmd+N`, `Cmd`-click, `Cmd+Shift+N` placement, and profile-picker behavior. Icon-only or ambiguous controls may show explanatory action tooltips after 500 ms and include the readable shortcut when one exists. Native browser `title` tooltips are not the product feedback layer for these controls. Command palette and quick-open launchers live in the sidebar rather than duplicated in the top-right workspace chrome.
 
@@ -1226,8 +1113,7 @@ The default command-palette behavior is defined before choosing a Dockview targe
 
 - the main orchestrator surface can be opened in a Dockview panel
 - a handler thread surface can be opened in a Dockview panel
-- a workflow inspector surface can be opened in a Dockview panel
-- artifact, Project CI, Workflows, Context, and related inspector surfaces can be opened in Dockview panels, tab groups, edge groups, floating groups, or popout groups when valid
+- artifact, Workflows, Context, and related inspector surfaces can be opened in Dockview panels, tab groups, edge groups, floating groups, or popout groups when valid
 
 The main orchestrator surface and a handler thread surface should use the same core interactive UI model:
 
@@ -1265,8 +1151,6 @@ Panel and surface semantics are:
 - duplicated panels share one underlying live surface state but may keep independent scroll position
 - split, resize, close, tab reorder, panel/group drag/drop placement, Dockview focus, bindings, Dockview layout JSON, edge-group state, floating/popout state, and panel-local state persist across restart
 - user workspace active layout choices and all initialized `A`/`B`/`C` layout snapshots keyed by `(workspaceId, layoutId)` persist across restart
-- background workflow attention always targets the owning handler surface, not the currently focused panel
-
 On restart, the workspace shell should restore useful stable UI state:
 
 - pinned and archived session state
@@ -1280,42 +1164,19 @@ It should not restore transient menus or popovers, unsaved inline edits outside 
 
 Composer draft text and chip-only attachments are durable surface state rather than transient UI restore state. They are saved live against the owning `surfacePiSessionId`, survive closing the surface and restarting the app, and clear only when submitted or explicitly emptied.
 
-Backend recovery is separate from workspace shell UI restore. Each acquired workspace runtime owns one durable recovery coordinator for that workspace's sessions, pi surfaces, queues, initial handler starts, thread report notification delivery, report requests, waits, title jobs, Smithers monitor reconnect, workflow attention, Project CI projection, and recovery observability. The coordinator uses durable owner scopes, idempotency keys, and transactional claims rather than active workspace, focused tab, focused panel, process cwd, or renderer state. App-global startup and workspace-tab restore decide which runtimes exist; they do not drain workspace queues or repair workspace product work directly.
-
-## Workflow Inspection
-
-The product exposes workflow runs as inspectable Dockview panel surfaces without forcing the orchestrator to absorb every internal event.
-
-The workflow inspector lets the user inspect:
-
-- active workflow runs
-- completed workflow runs
-- workflow node progress through a searchable expandable tree
-- workflow launch arguments and node props
-- live Smithers DevTools snapshot and event-cursor updates
-- selected-node status, objective or label, output, partial output, related artifacts, workflow agent, task attempt, command linkage, worktree, timing, and wait reason
-- command, task-agent transcript, output, diff, log, event, and raw node detail tabs when those sources exist
-- related artifacts
-- worktree and workflow agent context
-- related handler-thread, task-agent attempt, command, artifact, and Project CI check surfaces opened into chosen Dockview panels
-- historical frames without requiring the handler thread or orchestrator to summarize raw workflow history
-
-The inspector is a durable panel binding keyed by the local workflow-run record. Its run header shows normalized `svvy` status beside raw Smithers status, the Smithers run id, workflow label, owning handler thread, timing, heartbeat or latest event, and current frame state. The tree is the primary navigation model: search, expansion state, selected node, live-versus-historical frame mode, and Dockview placement belong to the inspector surface instead of the orchestrator transcript.
-
-Some workflow categories may justify specialized UI instead of a generic workflow card.
-
-Project CI is the clearest first example because it is backed by declared CI entries and validated CI result records rather than inferred from arbitrary workflow output.
+Backend recovery is separate from workspace shell UI restore. Each acquired workspace runtime owns one durable recovery coordinator for that workspace's sessions, pi surfaces, queues, initial handler starts, thread report notification delivery, report requests, waits, title jobs, and recovery observability. The coordinator uses durable owner scopes, idempotency keys, and transactional claims rather than active workspace, focused tab, focused panel, process cwd, or renderer state. App-global startup and workspace-tab restore decide which runtimes exist; they do not drain workspace queues or repair workspace product work directly.
 
 ## Product Outcomes
 
 The design is successful when:
 
-- the orchestrator remains strategically informed without being bloated by workflow internals
+- the orchestrator remains strategically informed without being bloated by delegated-work internals
 - delegated work happens inside handler threads that feel like real interactive surfaces
-- all substantive delegated execution flows through Smithers workflows
-- handler threads can repair, clarify, and rerun internally before returning control
+- Smithers workflow work uses official Smithers CLI commands and workspace `.smithers/` source without `svvy` wrappers
+- reusable workflow material is saved once under `~/.config/svvy/workflows/` and consumed through generated `@svvy/workflows` namespace imports
+- handler threads can repair, clarify, and rerun commands internally before returning control
 - handed-back threads remain open for follow-up chat and explicit reactivation in the same delegated
   context
-- the user can understand the current state of the session, threads, and workflows from durable state
+- the user can understand the current state of sessions, threads, and saved generated Workflows from durable state
 - meaningful delegated work terminates in reusable episodes instead of transcript archaeology
-- pi remains the runtime substrate and Smithers remains the delegated workflow engine rather than replacing the product shell
+- pi remains the runtime substrate and Smithers remains the workflow engine rather than replacing the product shell

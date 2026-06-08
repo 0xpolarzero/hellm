@@ -10,8 +10,6 @@ Context budget applies to:
 - handler-thread surfaces
 - workflow task-agent attempts
 
-Workflow-run inspector surfaces are not independent model contexts. They show workflow state and link to task-agent attempts, but they do not get their own context budget unless a selected task-agent attempt is opened as its own surface.
-
 ## Metric
 
 The context-budget metric is:

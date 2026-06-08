@@ -25,15 +25,11 @@ How to use this file:
 
 ## 1. Structured Session State
 
-Workflow-inspector UI work remains explicitly out of scope for this section and stays under section 17.
-
 - [x] Build a POC session overlay document and validate how it can sit above pi session data. Commit(s): `c432f4e`
 - [x] Persist a minimal structured session overlay root above pi session data. Commit(s): `b510857`, `fff54d7`
 - [x] Add `surfacePiSessionId` linkage on turns so orchestrator-surface and handler-thread turns use one model. Commit(s): `fff54d7`, `f53c9b8`
-- [x] Persist handler-thread records with title, objective, objective state, backing pi session id, and derived workflow-run linkage. Commit(s): `fff54d7`, `f53c9b8`
-- [x] Support workflow-run records that allow many runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
-- [x] Persist workflow-run product-binding records with run id, workflow name, workflow source, runnable entry path plus saved-entry linkage when relevant, projected product status, Smithers reconnect/attention cursors, summary, and timestamps while keeping raw Smithers execution facts authoritative in Smithers. Commit(s): `8f0e4ec`
-- [x] Persist artifact references independently from transcript parsing at thread, workflow-run, and command scope. Commit(s): `fff54d7`
+- [x] Persist handler-thread records with title, objective, objective state, backing pi session id, and durable thread linkage. Commit(s): `fff54d7`, `f53c9b8`
+- [x] Persist artifact references independently from transcript parsing at thread and command scope. Commit(s): `fff54d7`
 - [ ] Store artifacts under the configured artifact directory as per-session files, with mutable artifacts
   directly under `<artifactDir>/<sessionId>/`, immutable artifacts under
   `<artifactDir>/<sessionId>/immutable/`, exact stored filenames, immutable metadata, refreshed
@@ -47,8 +43,8 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
   approval or wait state, final command facts, and renderer recovery after reload.
 - [ ] Persist and render live tool projection across native direct tools, thread-control tools,
   extension loading, `execute_typescript`, command-family `exec_command` surfaces such as
-  `svvyx ...`, and the adopted Smithers-native handler tools without introducing a
-  workflow-specific rendering or recovery path.
+  `svvyx ...`, and prompt-only CLI usage such as Smithers without introducing a workflow-specific
+  rendering or recovery path.
 
 ## 2. `execute_typescript`
 
@@ -61,7 +57,7 @@ Workflow-inspector UI work remains explicitly out of scope for this section and 
 - [x] Run a simple composed scripted task through `execute_typescript`. Commit(s): `76cc8f3`
 - [x] Build a POC artifact and tracing pipeline for code-mode execution. Commit(s): `76cc8f3`
 - [x] Capture code-mode logs and nested command traces as artifacts and structured command records. Commit(s): `76cc8f3`, `fe53a3b`, `59fc34e`
-- [x] Keep thread orchestration, thread handling, extension loading, and request-user-input as small `svvy`-native control surfaces while exposing Smithers workflow operations through Smithers-native bridge tools. Commit(s): `a02bd48`
+- [x] Keep thread orchestration, thread handling, extension loading, and request-user-input as small `svvy`-native control surfaces while Smithers workflow operations use official CLI commands through Shell. Commit(s): `a02bd48`
 - [ ] Expose generated `svvyx` extension clients as Incur-compatible `extensions["<id>"].run(commandId, input)` clients, with `MemoryClient` and local Incur actions kept internal.
 - [x] Expose Codex-like Shell and Apply Patch extensions, with `exec_command`, `write_stdin`, and `apply_patch` as the normal coding-agent work interface. Commit(s): `76cc8f3`, `29d8452`
 - [ ] Vendor a Codex-derived native Rust sandbox helper that preserves Codex filesystem policy
@@ -125,64 +121,34 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [x] Load the orchestrator and handler-thread instructions through pi's true `systemPrompt` channel before sending each real user message. Commit(s): `8a41d08`
 - [x] Surface the active system prompt as a collapsible transcript item while keeping committed conversation history in pi session history rather than role-labelled prompt reconstruction. Commit(s): `8a41d08`
 - [x] Slice generated capability declarations by actor so the orchestrator prompt receives only orchestrator-callable tools while handler-thread prompts receive only handler-callable tools. Commit(s): `a02bd48`
-- [x] Teach the orchestrator prompt that workflow actions require delegation into a handler thread instead of exposing `smithers_*` directly in the orchestrator API block. Commit(s): `a02bd48`
+- [x] Teach the orchestrator prompt that workflow actions normally require delegation into a handler thread instead of direct Smithers guidance in the orchestrator API block. Commit(s): `a02bd48`
 - [x] Teach handler-thread prompts that the orchestrator owns delegation and reconciliation while omitting orchestrator-only tool declarations such as `thread_start` unless nested delegation is explicitly adopted. Commit(s): `a02bd48`
 
-## 5. Workflow Supervision Foundations
+## 5. Smithers CLI Boundary
 
-- [x] Define the packaged-app Smithers runtime boundary so shipped product workflows are configured saved or artifact entries under `.svvy/` rather than repo-root `workflows/` authoring assets. Commit(s): `a02bd48`
-- [x] Build handler-thread supervision for Smithers runs started from explicit runnable entries, with deterministic test workflows registered only inside tests. Commit(s): `a02bd48`
-- [x] Define the workflow-run request envelope from a handler thread to Smithers. Commit(s): `f53c9b8`
-- [x] Persist workflow-run supervision metadata for svvy product binding and projection, including Smithers run id, product attention kind, reconnect cursor, handler-attention delivery state, and lineage reference, as soon as the supervising handler thread has a concrete Smithers run id. Commit(s): `a02bd48`
-- [x] Build a POC one-task workflow under a handler thread that returns to the thread and then emits a conclusion episode. Commit(s): `f8557d9`
-- [x] Let handler threads call the generated per-workflow Smithers run-launch surface through the Bun bridge for both new and resumed runs. Commit(s): `4674e67`
-- [x] Extend the Smithers-native supervision surface beyond the shipped Step 5 handler-thread/runtime coverage for blocker diagnosis, approvals, signals, cancellation, node detail, artifacts, transcripts, event history, frames, and DevTools inspection, focusing on the remaining operator-only and richer troubleshooting controls. Commit(s): `f8557d9`
-- [x] Define workflow task agents as a lower-level Smithers agent kind distinct from orchestrator and handler-thread surfaces. Commit(s): `a02bd48`
-- [x] Adopt PI-backed svvy workflow task agents with a dedicated task prompt, task-local prompt-only cx CLI guidance, direct tools, and `execute_typescript` for typed composition. Commit(s): `a02bd48`
-- [x] Keep Smithers workflow approval gates and hijack as Smithers runtime or operator controls around workflow task agents rather than exposing them as ordinary task-agent tools. Commit(s): `a02bd48`
-- [x] Build workflow task execution that runs the svvy workflow-task PI configuration with task-local prompt-only cx CLI guidance, direct tools, and code mode. Commit(s): `a02bd48`
-- [x] Wake the supervising handler thread in a background turn only when a workflow run reaches a terminal outcome, an actionable wait, a continuation boundary, or a supervision fault that requires handler judgment, while keeping duplicate terminal reconciliation idempotent after a valid handoff. Commit(s): `a02bd48`
-- [x] Support multiple workflow runs under one handler thread. Commit(s): `f53c9b8`, `43a26cb`
-- [x] Derive active and latest workflow summaries from workflow-run state without a persisted thread-level latest pointer. Commit(s): `a02bd48`
-- [x] Persist durable reconnect cursors plus pending-versus-delivered handler-attention state on workflow runs so restart recovery and wake-up dedupe do not depend on process memory. Commit(s): `2f874a7`
-- [x] Emit explicit Smithers bridge lifecycle events for workflow projection, reconnect bootstrap, and handler-attention delivery. Commit(s): `2f874a7`
-- [x] Bootstrap workflow supervision from durable run state on session restore, rebuilding runtime ownership from workflow-run records and replaying only undelivered handler attention. Commit(s): `2f874a7`
-- [x] Keep `thread_report`, Smithers read APIs, selectors, and renderer reads free of lifecycle repair writes. Commit(s): `2f874a7`
-- [x] Guarantee that a workflow-run failure or cancellation remains handler-owned repair context until explicit user-directed closure or conclusion. Commit(s): `a02bd48`
-- [x] Derive workflow-run execution status, wait kind, heartbeat, finished timestamp, and summary from Smithers durable run state for runtime policy, handler tools, and workspace read models, while keeping `workflow_run` as the svvy ownership, cursor, attention, and product-link binding row. Commit(s): 59d7daf01f
+Current product decisions for this section are specified in `docs/specs/extension/smithers.extension.spec.md`.
 
-## 6. Workflow Authoring And Saved Workflow Files
+- [ ] Keep Smithers as a builtin prompt-only extension that loads official CLI and authoring guidance for handler threads without native Smithers tools, generated TypeScript clients, or product workflow wrappers.
+- [ ] Generate the Smithers core instruction fragment from the pinned `smithers-orchestrator` documentation while excluding GUI, Gateway, MCP, HTTP server, OpenTelemetry, DevTools, event-streaming, OpenAPI, Effect, and wrapper-oriented fragments that are not current `svvy` product surfaces.
+- [ ] Keep the svvy Smithers boundary instruction focused on workspace `.smithers/`, official Smithers CLI usage through Shell, `@svvy/workflows` imports, `svvyx workflows models list`, `svvyx workflows save`, and read-only generated output.
+- [ ] Keep orchestrators aware that workflow action normally delegates into handler threads, while handler threads default-load Smithers prompt guidance and workflow task agents do not default-load Smithers.
 
-- [x] Define the generated workflow-authoring contract plus curated Smithers authoring guide and example bundle injected into every handler-thread context. Commit(s): `0b2d1ff`
-- [x] Build an end-to-end handler-thread flow that checks direct work, saved runnable entries, and reusable assets, then authors and runs a short-lived workflow artifact when needed. Commit(s): `dc1da8c`
-- [x] Persist every authored short-lived workflow under `.svvy/artifacts/workflows/<artifact_workflow_id>/` with `definitions/`, `prompts/`, `components/`, `entries/`, and `metadata.json`. Commit(s): `dc1da8c`
-- [x] Define the saved workflow library layout under `.svvy/workflows/definitions/`, `.svvy/workflows/prompts/`, `.svvy/workflows/components/`, and `.svvy/workflows/entries/`. Commit(s): `37afcb3`, `4515233`
-- [x] Define the discovery metadata contract compiled from JSDoc headers in `ts` or `tsx` files and frontmatter in `mdx` prompt files. Commit(s): `37afcb3`, `4515233`
-- [x] Expose saved workflow asset metadata through the Workflows library read model and handler-readable file paths. Commit(s): `4515233`
-- [x] Expose workflow-agent model choices, provider readiness, and supported reasoning values through the handler-only `workflow_list_models` authoring tool backed by pi-normalized model metadata. Commit(s): `4515233`
-- [x] Build a POC saved definition plus saved entry that are reused by a new short-lived artifact entry with different prompts or config bound at authoring time. Commit(s): `37afcb3`
-- [x] Keep authored workflows artifact-only by default until the handler explicitly writes reusable files into `.svvy/workflows/`. Commit(s): `0b2d1ff`
-- [x] Run automatic saved-workflow validation after direct `write` or `edit` operations under `.svvy/workflows/...`, surfacing diagnostics through structured command records. Commit(s): `0b2d1ff`
-- [x] Surface all runnable saved and artifact entries through `smithers_list_workflows` and `smithers_run_workflow({ workflowId, input, runId? })`, with `smithers_list_workflows` returning each entry's explicit launch contract, `workflowId`, `label`, `summary`, `sourceScope`, `entryPath`, grouped asset refs, derived `assetPaths`, and `workflowId` filter support rather than relying on inferred import graphs. Commit(s): `4515233`, `dc1da8c`
-- [x] Persist workflow agent files as ordinary saved workflow components that handlers discover by path and inspect through file reads. Commit(s): `4515233`
+## 6. Workflows Source, Build, And Generated Surface
 
-## 7. Project CI Lane
+Current product decisions for this section are specified in `docs/specs/workflow-library.spec.md` and `docs/specs/extension/workflows.extension.spec.md`.
 
-- [x] Model Project CI authoring guidance as the handler-available builtin `project-ci` extension. Commit(s): `2a5dbbe`
-- [x] Use `load_extension({ extensionId: "project-ci" })` for handler-side Project CI authoring guidance and store the resulting generated agent context binding. Commit(s): `2a5dbbe`
-- [x] Extend `thread_start` so the orchestrator can create a handler with `project-ci` loaded through extension overrides. Commit(s): `2a5dbbe`
-- [x] Make Project CI configuration happen organically through normal handler-thread work, with the `project-ci` extension loaded when CI authoring guidance is needed, instead of a setup launcher or CI-specific runtime. Commit(s): `2a5dbbe`
-- [x] Define the conventional Project CI saved-workflow layout under `.svvy/workflows/{definitions,prompts,components,entries}/ci/`, without implying a shipped or auto-created default CI entry. Commit(s): `2a5dbbe`
-- [x] Extend runnable workflow entry discovery with optional `productKind` and `resultSchema` metadata. Commit(s): `2a5dbbe`
-- [x] Validate a saved Project CI entry under the conventional `.svvy/workflows/entries/ci/project-ci.tsx` path that declares `productKind = "project-ci"` and returns output that validates against its declared CI result schema. Commit(s): `2a5dbbe`
-- [x] Persist `ci_run` and `ci_check_result` records only from terminal Smithers runs launched from declared Project CI entries. Commit(s): `2a5dbbe`
-- [x] Record CI check results with stable check ids, kind, status, required flag, command, exit code, summary, timestamps, and linked artifacts. Commit(s): `2a5dbbe`
-- [x] Treat invalid CI result output as a CI workflow troubleshooting state instead of parsing logs, node outputs, final prose, or command names. Commit(s): `2a5dbbe`
-- [x] Derive Project CI run/check read models through idempotent reconciliation over durable Smithers result facts and durable `svvy` workflow ownership facts, with terminal events, monitor reconnect, and app restart recovery all triggering the same derivation instead of relying on process-local terminal output memory or copied svvy output fields. Commit(s): a82abd62bc
-- [x] Record missing durable Smithers terminal result output for a declared Project CI entry as a durable svvy projection failure or troubleshooting state instead of silently skipping CI projection. Commit(s): a82abd62bc
-- [x] Let normal handler threads discover and run configured Project CI entries without loading the `project-ci` extension, while using `load_extension({ extensionId: "project-ci" })` before configuring or modifying CI. Commit(s): `2a5dbbe`
-- [x] Render `not configured`, `configured`, `running`, `passed`, `failed`, `blocked`, and `cancelled` Project CI states in a dedicated CI status surface or panel. Commit(s): `ee850fd`
-- [x] Surface the latest Project CI outcome as routing input for orchestrator and handler decisions without making CI a native control tool. Commit(s): `2a5dbbe`
+- [ ] Store app-global reusable Workflows source under `~/.config/svvy/workflows/agents`, `prompts`, `components`, and `workflows`, with generated output under `~/.config/svvy/workflows/generated`.
+- [ ] Treat generated Workflows output and workspace `.smithers/node_modules/@svvy/workflows` links as read-only plumbing outside the safe writable boundary; ordinary edits target source and then build.
+- [ ] Generate `@svvy/workflows` with only `Agents`, `Components`, `Prompts`, and `Workflows` root namespaces, and export `Agents.defineTaskAgent` plus `Agents.TaskAgentParameters` under `Agents`.
+- [ ] Link `@svvy/workflows` and generated `@svvy/extensions` into each opened workspace's `.smithers/node_modules` without relying on ambient global package resolution, `NODE_PATH`, parent repository `node_modules`, or source-checkout-relative paths.
+- [ ] Implement `svvyx workflows list [--kind agent|prompt|component|workflow] --json` with only mechanically available export identity and source/generated paths.
+- [ ] Implement `svvyx workflows save --from <path> --kind agent|prompt|component|workflow [--export <name>] --as <exportName> [--overwrite] --json`, with strict overwrite rejection by default and automatic build after successful save.
+- [ ] Implement `svvyx workflows build --json` so it first builds Extensions, generates `@svvy/extensions`, validates Workflows source, validates workflow-agent provider/model/reasoning and extension references, generates `@svvy/workflows`, and repairs workspace links.
+- [ ] Implement `svvyx workflows models list --json` from the same pi-normalized provider/model/auth/reasoning metadata used by the Agents pane, without a live completion request by default.
+- [ ] Store reusable task-agent parameters as structured `.agent.json` source records that are bidirectionally synchronized with the Agents pane and generated as `Agents.*` exports.
+- [ ] Save `--kind agent` by statically extracting `Agents.defineTaskAgent(...)` or resolvable `defineTaskAgent(...)` parameter literals without executing arbitrary TypeScript; reject dynamic or unresolved inputs with structured diagnostics.
+- [ ] Attach generated export metadata internally for UI source/generated links without exposing public metadata fields, public declarations, `__exports`, or changed import usage to agents.
+- [ ] Render the Workflows pane as read-only visibility into generated `@svvy/workflows`, with export identity, read-only generated code, generated-file link, source-file link, and Agents-pane customization links for `Agents.*`.
 
 ## 8. Workspace Navigation, Live Surfaces, And Core Projection
 
@@ -200,13 +166,12 @@ Current product decisions for this section are specified in `docs/specs/workspac
 - [x] Split workspace-summary updates from live surface transcript updates in the renderer runtime. Commit(s): `9a21f87`, `b0ee858`
 - [x] Manage open live surfaces in a shared registry keyed by `surfacePiSessionId`. Commit(s): `9a21f87`, `b0ee858`
 - [x] Give each live surface its own prompt lock, model state, reasoning state, and cancellation lifecycle. Commit(s): `9a21f87`, `b0ee858`
-- [x] Render handler-thread and workflow-run rows from structured state in the workspace shell while keeping lifecycle subtitles, running indicators, open-pane treatment, and compact context rails local to the owning row. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
-- [x] Show thread objective, objective state, latest workflow-run summary, and row-local derived blocked reason in panel-local thread views. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
+- [x] Render handler-thread rows from structured state in the workspace shell while keeping lifecycle subtitles, running indicators, open-pane treatment, and compact context rails local to the owning row. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
+- [x] Show thread objective, objective state, and row-local derived blocked reason in panel-local thread views. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
 - [x] Render the latest thread episode for an inspected thread while preserving earlier episodes in thread history. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
-- [x] Render thread- and workflow-run-linked artifacts before relying on transcript reconstruction. Commit(s): `3855fe4`
-- [x] Render the latest Project CI summary block for the focused surface or inspected thread. Commit(s): `3855fe4`
+- [x] Render thread-linked artifacts before relying on transcript reconstruction. Commit(s): `3855fe4`
 - [x] Restore focused panel, panel-to-surface bindings, and inspector selection after restart. Commit(s): `3855fe4`
-- [ ] Keep open workspaces as left-aligned, horizontally scrollable, draggable app-chrome tabs with durable user-defined tab order, compact icon controls, >0-only colored status count badges, a svvy-owned default workspace runtime when no user workspace tabs restore, exactly one `Open Workspace` pane as each new default workspace tab's first surface, current-tab `Open Workspace`, `New Tab` as a new default workspace tab with no durable layout slots, and `Open Workspace in New Tab` as picker-backed user workspace tab creation; duplicate same-cwd tabs are separate chrome views over the same backend workspace runtime, session catalog, durable workspace state, live surface registry, queues, threads, workflow runs, app logs, and durable layout slots keyed by `(workspaceId, layoutId)`, while each tab stores only its selected active layout id.
+- [ ] Keep open workspaces as left-aligned, horizontally scrollable, draggable app-chrome tabs with durable user-defined tab order, compact icon controls, >0-only colored status count badges, a svvy-owned default workspace runtime when no user workspace tabs restore, exactly one `Open Workspace` pane as each new default workspace tab's first surface, current-tab `Open Workspace`, `New Tab` as a new default workspace tab with no durable layout slots, and `Open Workspace in New Tab` as picker-backed user workspace tab creation; duplicate same-cwd tabs are separate chrome views over the same backend workspace runtime, session catalog, durable workspace state, live surface registry, queues, threads, app logs, saved Workflows generated-state visibility, and durable layout slots keyed by `(workspaceId, layoutId)`, while each tab stores only its selected active layout id.
 - [ ] Route all workspace-scoped backend requests and renderer sync events through explicit `workspaceId` instead of process-global cwd, active workspace, focused tab, or active runtime; keep app-global settings on separate app-global APIs, and require explicit `workspaceId` for workspace-affecting settings plus generated agent-context projections and Workflows library operations.
 
 ## 9. Command Palette And Quick Open
@@ -215,7 +180,7 @@ Current product decisions for this section are specified in `docs/specs/command-
 
 - [x] Define the product-owned command/action registry shape, including stable ids, labels, aliases, categories, availability, shortcuts, and typed execution targets. Commit(s): `cb319ac`
 - [x] Define the shared VS Code-style palette shell where `Cmd+Shift+P` opens with `>` prefilled and `Cmd+P` opens the same input without a prefix. Commit(s): `cb319ac`
-- [x] Define `>` as the live command-mode prefix for session, surface, Project CI, handler-thread, workflow-inspector, Dockview panel, settings, Agents profile, and future product actions. Commit(s): `cb319ac`
+- [x] Define `>` as the live command-mode prefix for session, surface, handler-thread, Workflows, Dockview panel, settings, Agents profile, and future product actions. Commit(s): `cb319ac`
 - [x] Define unprefixed `Cmd+P` behavior as file quick-open search with placeholder or no-op behavior until file-tree, editor, syntax-highlighting, typecheck, and diagnostics surfaces exist. Commit(s): `cb319ac`
 - [x] Adopt `cmdk-sv` as the Svelte command palette UI primitive while keeping product routing and command semantics owned by `svvy`. Commit(s): `cb319ac`
 - [x] Build a POC command palette over static product actions. Commit(s): `cb319ac`
@@ -245,16 +210,15 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [ ] Restore the focused Dockview panel on app restart.
 - [ ] Show exact Dockview panel-location indicators in the sidebar for open surfaces, including tab, edge-group, floating, and popout locations.
 - [ ] Show a clear highlight for the currently focused Dockview panel surface.
-- [ ] Define the stored shape for compact thread and workflow-run surfaces inside the workspace shell.
+- [ ] Define the stored shape for compact thread surfaces inside the workspace shell.
 - [ ] Render compact thread cards in the workspace shell timeline.
-- [ ] Render compact workflow-run cards in the workspace shell timeline.
 - [ ] Open a selected handler-thread surface in a chosen Dockview panel as a fully interactive surface.
 - [ ] Keep duplicated panel views of the same surface synchronized while allowing independent scroll position.
 
 ## 11. Agents Pane And Agent Profiles
 
 - [x] Define the stored shape for pi-backed agent profile settings used by orchestrator and handler surfaces. Commit(s): `8e19462`
-- [x] Keep agent profiles separate from session-local extension loading so Project CI uses normal handler-thread execution plus the handler-available `project-ci` extension. Commit(s): `2a5dbbe`
+- [x] Keep agent profiles separate from session-local extension loading so specialized handler guidance uses normal handler-thread execution plus loaded extensions. Commit(s): `2a5dbbe`
 - [x] Seed initial app-wide values for the default orchestrator profile, the `threadHandler` profile, and internal title-naming settings. Commit(s): `8e19462`, `354db28`
 - [x] Build a POC settings model for editing app-wide agent profile defaults. Commit(s): `8e19462`
 - [x] Persist app-wide agent profile settings. Commit(s): `8e19462`
@@ -269,8 +233,8 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Keep the `threadHandler` special profile available for delegated handler-thread surfaces. Commit(s): `2b97c46648`, `b714aa26f9`
 - [x] Show the current focused-surface agent profile summary in pane chrome. Commit(s): `8e19462`
 - [ ] Use TanStack Form for complex agent profile, provider key, and app-preference settings forms, including direct-save semantics, validation, dirty state, reset/cancel, pending submit state, async save errors, and pi-normalized provider/model/reasoning constraints.
-- [ ] Expose workflow-agent profiles in the Agents pane and keep extension-provided profile surfaces as future work without coupling shipped product workflow runtime to repo-root `workflows/`.
-- [ ] Define handler guidance for reusable workflow-agent components without coupling shipped product workflow runtime to repo-root `workflows/`.
+- [ ] Expose workflow-agent parameter records in the Agents pane through the same source used for `Agents.*` generated Workflows exports.
+- [ ] Define handler guidance for reusable workflow-agent parameter records without coupling shipped product workflow authoring to repo-root `workflows/`.
 
 ## 12. Session Titles
 
@@ -282,7 +246,7 @@ Current product decisions for this section are specified in `docs/specs/pane-lay
 - [x] Persist generated top-level session titles, title-generation lifecycle state, and the first-turn trigger so app restart cannot duplicate or lose title generation. Commit(s): `354db28`
 - [x] Block manual session rename while a title-generation job is pending or running, then release the lock after success, failure, or cancellation. Commit(s): `354db28`
 - [x] Freeze auto-titling after manual rename or after the first successful generated title. Commit(s): `354db28`
-- [x] Generate handler-thread titles with the same internal title-naming settings used for top-level sessions, using the orchestrator-supplied `thread_start` objective as the naming input, while keeping workflow-run labels derived from the workflow's own name or entry metadata instead of adding a separate workflow-run title. Commit(s): `4d74c78`
+- [x] Generate handler-thread titles with the same internal title-naming settings used for top-level sessions, using the orchestrator-supplied `thread_start` objective as the naming input. Commit(s): `4d74c78`
 
 ## 13. Composer Mention Links
 
@@ -314,16 +278,16 @@ Current product decisions for this section are specified in `docs/specs/queued-m
 
 ## 14. Agents, Extensions, And Generated Agent Context
 
-Current product decisions for this section are specified in `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/extension_managing.extension.spec.md`, `docs/specs/extension/svvyx-incur-runtime.spec.md`, `docs/specs/structured-session-state.spec.md`, `docs/specs/queued-messages.spec.md`, and `docs/specs/project-ci.spec.md`.
+Current product decisions for this section are specified in `docs/specs/extensions-and-tools.spec.md`, `docs/specs/extension/extension_managing.extension.spec.md`, `docs/specs/extension/svvyx-incur-runtime.spec.md`, `docs/specs/structured-session-state.spec.md`, `docs/specs/queued-messages.spec.md`, `docs/specs/extension/smithers.extension.spec.md`, and `docs/specs/extension/workflows.extension.spec.md`.
 
-- [x] Define builtin extensions for Shell, Apply Patch, Execute TypeScript, Extension Loading, Extension Managing, cx, Smithers, Web, Git, GitHub, External Instructions, Artifacts, Request User Input, and Project CI with default usage states for each adopted agent family. Commit(s): `673837a`
-- [x] Load base orchestrator, handler, and workflow-task guidance through builtin `base-*` instruction extensions, with orchestrators aware that workflow action normally delegates into handlers, handlers default-loaded with Smithers supervision tools, and workflow task agents keeping Smithers and handler controls unavailable by default. Commit(s): `673837a`
+- [x] Define builtin extensions for Shell, Apply Patch, Execute TypeScript, Extension Loading, Extension Managing, cx, Smithers, Workflows, Web, Git, GitHub, External Instructions, Artifacts, and Request User Input with default usage states for each adopted agent family. Commit(s): `673837a`
+- [x] Load base orchestrator, handler, and workflow-task guidance through builtin `base-*` instruction extensions, with orchestrators aware that workflow action normally delegates into handlers, handlers default-loaded with prompt-only Smithers guidance and Workflows source-library commands, and workflow task agents keeping Smithers, Workflows, and handler controls unavailable by default. Commit(s): `673837a`
 - [x] Define available extensions as the on-demand product-knowledge and capability layer for specialized handler work. Commit(s): `2a5dbbe`
-- [x] Render loaded and available extension bindings in surface metadata so users can see when extensions such as `project-ci` are active. Commit(s): `2a5dbbe`
+- [x] Render loaded and available extension bindings in surface metadata so users can see when specialized extensions are active. Commit(s): `2a5dbbe`
 - [x] Store app-wide agent profiles, extension usage selections, generated agent-context aggregate references, extension context fingerprints, and app-global extension activation metadata. Commit(s): `118fd39c9f`
 - [x] Add an `Extensions` sidebar surface below `Agents`, with builtin, user, and external-instruction records that manage reusable prompt material and capabilities rather than exposing one raw system-prompt textarea. Commit(s): `118fd39c9f`
 - [ ] Represent common, orchestrator, handler-thread, and workflow task-agent base prompts as builtin instruction-only extensions (`base-common`, `base-orchestrator`, `base-handler`, and `base-workflow-task`) with normal Extensions-pane editing, reset, generated-context preview, fingerprinting, and profile usage-state controls.
-- [x] Seed builtin extension records for base actor instructions, code navigation, handler-only Smithers supervision, workflow task boundaries, Web, Git, GitHub, Artifacts, Request User Input, and Project CI, with per-agent usage states, non-deletable builtin rows, app-global scope, and extension reset behavior. Commit(s): `118fd39c9f`
+- [x] Seed builtin extension records for base actor instructions, code navigation, prompt-only Smithers guidance, Workflows source-library commands, workflow task boundaries, Web, Git, GitHub, Artifacts, and Request User Input, with per-agent usage states, non-deletable builtin rows, app-global scope, and extension reset behavior. Commit(s): `118fd39c9f`
 - [x] Render generated agent-context previews for orchestrator, handler, and workflow task-agent actors, linking loaded and available extension rows back to their extension records and showing generated prompt, `svvyx` guidance, native schemas, and TypeScript declaration previews. Commit(s): `118fd39c9f`
 - [ ] Implement the stable app-owned `svvyx <extension-id> ...` dispatcher that resolves extension current builds, imports default-exported Incur CLIs, invokes `cli.serve` with invocation-local explicit env, records command facts, and treats extension usage state as generated guidance/client visibility rather than shell impossibility.
 - [ ] Store user-named Extension Managing snapshots plus durable generated agent context bindings and agent context fingerprints so historical sessions, handler threads, and workflow task-agent attempts remain inspectable after app restart.
@@ -347,34 +311,16 @@ Current product decisions for this section are specified in `docs/specs/snippets
 - [ ] Persist sent Snippet provenance in product metadata while keeping the agent-facing message as ordinary prompt text.
 - [ ] Keep pi, Claude, Codex, plugin, MCP, and host slash-command expansion disabled so Snippets never grant tools, alter generated agent context, mount commands, or change execution policy.
 
-## 15. Dedicated Workflow Inspector
-
-Current product decisions for this section are specified in `docs/specs/workflow-inspector.spec.md`.
-
-- [x] Define the tree-first workflow-inspector surface model, including run header state, selected node, expanded nodes, live-versus-historical mode, and Dockview panel binding. Commit(s): `ba56647`
-- [x] Build a POC static inspector over one completed workflow run using a React-DevTools-like tree instead of a graph layout. Commit(s): `ba56647`
-- [x] Render workflow root, sequence, parallel, loop, conditional, approval, task-agent, script, Project CI check, wait, retry, and terminal-result rows, with Project CI rows shown only for runs backed by declared Project CI entries. Commit(s): `ba56647`
-- [x] Show launch arguments and node props in the selected-node inspector for workflow containers, executable tasks, approvals, and Project CI checks. Commit(s): `ba56647`
-- [x] Render pending, running, waiting, retrying, completed, failed, cancelled, and skipped states clearly on rows, including collapsed-parent indicators for failed or waiting descendants. Commit(s): `ba56647`
-- [x] Add search, keyboard navigation, row selection, expand/collapse, auto-expansion of active or failed paths, and preservation of user-collapsed paths during live updates. Commit(s): `ba56647`
-- [x] Show selected-node details for status, objective or label, latest output, partial output, related artifacts, workflow agent, task attempt, command linkage, worktree, timing, and wait reason. Commit(s): `625cab4`
-- [x] Add inspector tabs for output, diff, logs, transcript, command, events, and raw JSON when those data sources exist for the selected node. Commit(s): `ba56647`
-- [x] Stream live Smithers snapshot and delta updates into the tree while a workflow is running, including latest activity previews for active leaf rows. Commit(s): `625cab4`
-- [x] Add historical frame inspection with a scrubber and return-to-live behavior without making rewind or replay a default control. Commit(s): `ba56647`
-- [x] Open a selected task-agent session, command record, artifact, Project CI check, or owning handler thread from the workflow inspector into another chosen Dockview panel. Commit(s): `625cab4`
-- [x] Keep completed workflow inspectors available as durable historical Dockview panel surfaces after completion and app restart. Commit(s): `ba56647`
-
 ## 16. Recovery And Test Coverage
 
 Current product decisions for workspace-runtime restart and crash recovery are specified in `docs/specs/workspace-runtime-recovery.spec.md`.
 
 - [x] Build a POC restart or resume flow that restores multiple open surfaces and panel bindings from durable state. Commit(s): `7f84f06`
-- [ ] Complete one workspace-runtime recovery coordinator with durable scheduler records, transactional claims, Smithers-first projection bootstrap, per-surface queue, thread report notification, and report request recovery, typed queued initial handler starts, typed queued workflow-attention wake-ups, title job recovery, Project CI projection recovery, and backend-owned recovery events/logs; the scheduler and coordinator are in place, with remaining work focused on full app-log projection and broader restart integration coverage.
+- [ ] Complete one workspace-runtime recovery coordinator with durable scheduler records, transactional claims, per-surface queue, thread report notification, report request recovery, typed queued initial handler starts, title job recovery, Workflows build/link refresh, and backend-owned recovery events/logs; the scheduler and coordinator are in place, with remaining work focused on full app-log projection and broader restart integration coverage.
 - [x] Restore pending request-user-input clarification and waiting state after app restart. Commit(s): `7f84f06`
-- [x] Restore active workflow-run state after app restart. Commit(s): `7f84f06`
 - [x] Restore pending handler attention queues and per-surface prompt-lock state after app restart. Commit(s): `7f84f06`
 - [x] Add integration tests that exercise the real pi-backed runtime seam for direct work. Commit(s): `b0ee858`
-- [x] Expand from the current real embedded-runtime supervision coverage in `src/bun/smithers-runtime/manager.test.ts` and `src/bun/smithers-tools.test.ts` to full pi-backed handler-thread delegation and workflow-run supervision. Commit(s): `f8557d9`, `b0ee858`, `55963d9`, `097ae47`
+- [x] Expand integration coverage to pi-backed handler-thread delegation and prompt-only Smithers CLI guidance. Commit(s): `f8557d9`, `b0ee858`, `55963d9`, `097ae47`
 - [x] Add integration tests that exercise restart and resume behavior across workspace state, live surface state, and panel bindings. Commit(s): `7f84f06`
 
 ## 17. Context Budget Observability
@@ -391,17 +337,19 @@ Current product decisions for this section are specified in `docs/specs/context-
 
 ## 18. Workflows Library Surface
 
-This UI should land first as a read-only workflow-library browser with an external-editor handoff. Full in-app source editing, syntax highlighting, inline diagnostics, and file-tree integration remain later editor-surface work.
+Current product decisions for this section are specified in `docs/specs/workflow-library.spec.md`.
 
-- [x] Render a save shortcut in relevant thread or workflow surfaces that sends a predefined save request prompt to the handler. Commit(s): `0b2d1ff`
-- [x] Persist the user's preferred external editor in settings and use it for open-in-editor actions from source-backed product surfaces. Commit(s): `ab00e2c`
-- [x] Define the read-only Workflows library surface with external-editor handoff instead of requiring in-app editor primitives. Commit(s): `ab00e2c`
-- [x] Define the workspace read model for saved workflow assets and artifact workflows. Commit(s): `ab00e2c`
-- [x] Render a Workflows library surface with separate definitions, prompts, components, entries, and artifact workflow groupings. Commit(s): `ab00e2c`
-- [x] Show saved asset title, summary, kind, path, source preview, validation status, and diagnostics in the Workflows library surface. Commit(s): `ab00e2c`
-- [x] Add open-in-editor actions for saved workflow source files and artifact workflow source files. Commit(s): `ab00e2c`
-- [x] Allow deleting a saved workflow definition, prompt, component, or entry from the library without deleting historical artifact workflows that previously used it. Commit(s): `ab00e2c`
-- [x] Keep the sidebar Workflows entry pointed at the Workflows library surface for saved workflow assets and artifact workflow groups. Commit(s): `118fd39c9f`
+- [ ] Render the Workflows pane as read-only visibility into the latest successful generated
+  `@svvy/workflows` package.
+- [ ] Show generated `Agents`, `Components`, `Prompts`, and `Workflows` namespace exports with
+  qualified export name, kind, read-only generated code, generated-file link, and source-file link.
+- [ ] For `Agents.*` exports, show the generated task-agent parameter object and provide a primary
+  human navigation action to the corresponding Agents pane record.
+- [ ] Refresh the Workflows pane after successful `svvyx workflows build` and after Agents pane
+  edits that trigger a Workflows build.
+- [ ] Keep the Workflows pane limited to generated `@svvy/workflows` visibility, with no inferred
+  titles, inferred summaries, validation claims beyond build output, source editing, delete actions,
+  or workflow-running controls.
 
 ## 19. App Logs Surface
 
@@ -410,8 +358,8 @@ Current product decisions for this section are specified in `docs/specs/app-logs
 - [x] Build a workspace-scoped app log store with structured info, warning, and error entries, monotonic sequence numbers, unread counts, seen state, bounded retention, SQLite persistence, and secret redaction. Commit(s): `dab04ac`.
 - [x] Expose app log read, summary, mark-seen, and live-update contracts through the Bun bridge and renderer runtime without polling. Commit(s): `dab04ac`.
 - [x] Route production product observability through one app logger without depending on Electrobun browser-tools telemetry. Commit(s): `dab04ac`.
-- [x] Emit targeted app logs for app lifecycle, provider auth, RPC failures, sessions, title generation, surfaces, prompts, handler threads, Smithers workflow supervision, saved workflow validation, direct tools, `execute_typescript`, artifacts, Project CI projection, external editor handoff, and renderer bridge issues. Commit(s): `dab04ac`.
+- [x] Emit targeted app logs for app lifecycle, provider auth, RPC failures, sessions, title generation, surfaces, prompts, handler threads, Smithers CLI guidance, Workflows build validation, direct tools, `execute_typescript`, artifacts, external editor handoff, and renderer bridge issues. Commit(s): `dab04ac`.
 - [x] Add a `Logs` sidebar button directly above the workflow library entry with compact action-worthy unread badges for warning and error app logs, without surfacing info-only unread logs as sidebar badges. Commit(s): `dab04ac`.
-- [x] Render a dense app logs pane with level filters, source filtering, search, mark-all-read, live tail behavior, expandable details, stack traces, and links to related sessions, threads, workflow runs, commands, workflow task attempts, and artifacts where available. Commit(s): `dab04ac`.
+- [x] Render a dense app logs pane with level filters, source filtering, search, mark-all-read, live tail behavior, expandable details, stack traces, and links to related sessions, threads, commands, and artifacts where available. Commit(s): `dab04ac`.
 - [x] Render the app logs row list with TanStack Virtual, preserving variable-height expanded rows, stable row identity, scroll anchors, older-page loading, Live/Frozen tail behavior, and the `New logs` affordance across filtering, search, expansion, and live updates. Commit(s): `ed7e6ea88e`.
 - [x] Add store, RPC, renderer, sidebar, pane, redaction, and representative integration tests for app logs. Commit(s): `dab04ac`.

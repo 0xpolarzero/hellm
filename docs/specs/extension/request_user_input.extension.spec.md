@@ -12,9 +12,8 @@
   - define which state is file-backed extension source and which state is product-state-backed
 
 This spec replaces the previous draft/native `wait` tool as the model-facing way for orchestrator
-and handler-thread agents to ask the user for missing intent. The product may still project generic
-waiting state for blocked surfaces, Smithers runs, approvals, signals, timers, and external
-dependencies, but there is no builtin model-facing native tool named `wait`.
+and handler-thread agents to ask the user for missing intent. Generic waiting state remains product
+state, but there is no builtin model-facing native tool named `wait`.
 
 ## Source References
 
@@ -73,8 +72,7 @@ Default usage state:
 
 Workflow task agents do not receive this extension by default. A workflow task agent runs under
 Smithers task-attempt ownership; user clarification should route through the supervising handler
-thread or workflow attention path instead of letting a task-local agent open independent user-input
-requests.
+thread instead of letting a task-local agent open independent user-input requests.
 
 ## Dual Runtime Variant
 
@@ -795,8 +793,8 @@ type RequestUserInputAnswerRecord = {
 };
 ```
 
-The records above are `svvy` product state. They do not copy Smithers wait records and do not
-replace Smithers run, node, attempt, approval, timer, signal, or wait state.
+The records above are `svvy` product state. They do not copy external wait records or replace
+external wait state.
 
 ## Cancellation And Closure
 

@@ -10,12 +10,12 @@ Use this checklist before marking UI rollout work complete. Capture manual verif
 | Normal session | A settled orchestrator surface shows transcript history, Dockview panel chrome, context budget, and prompt entry. | Transcript is readable, long labels truncate or wrap inside bounds, composer target is clear. |
 | Active stream | A running turn shows pending activity, streaming text or cursor, and stop affordance. | Running status is visible without layout shift, reduced-motion mode does not rely on animation alone. |
 | Waiting thread | A handler-thread or orchestrator wait state asks for user input and routes reply to the owning surface. | Reply control is labelled, disabled/enabled state is obvious, focused panel does not steal the route. |
-| Failed command | A failed turn, command, workflow task, or Project CI check exposes compact failure context. | Error text is contained, retry or inspection actions are discoverable, red state has text/icon backup. |
+| Failed command | A failed turn or command exposes compact failure context. | Error text is contained, retry or inspection actions are discoverable, red state has text/icon backup. |
 | Split panels | Multiple Dockview panels show stable panel bindings, resize affordances, close controls, and duplicated-surface behavior where relevant. | Resize handles are reachable, focused panel is visible, panel-local scroll does not bleed. |
-| Workflow inspector | Tree-first workflow inspector shows rows, selected details, search/tabs, descendants, and failed/waiting states. | Active descendant is exposed, large trees scroll, selected-node details stay readable. |
+| Workflows pane | Read-only generated Workflows visibility shows namespaces, exports, generated code, and source links. | Generated code is readable, source links are visible, agent rows link to Agents pane customization. |
 | Artifact panel | Artifact panel or overlay shows grouped artifacts, preview/raw/metadata modes, missing content, and open-in-editor action. | Large logs/previews scroll, missing artifacts have clear state, paths do not overflow. |
 | Command palette | `Cmd+Shift+P` opens product actions and `Cmd+P` opens the quick-open placeholder state. | Matching, disabled states, shortcuts, Dockview placement, and unmatched prompt creation remain correct. |
-| Settings | Provider auth, agent-profile settings, workflow-agent settings, and app preferences render current persisted state. | Form labels are accessible, destructive actions require confirmation, narrow width remains usable. |
+| Settings | Provider auth, agent-profile settings, workflow-agent parameter settings, and app preferences render current persisted state. | Form labels are accessible, destructive actions require confirmation, narrow width remains usable. |
 | Narrow shell | At 767 px and below, the shell becomes a single-column surface with collapsed navigation and overlay inspectors. | Touch targets are usable, hidden controls are not focusable, text stays inside controls. |
 
 ## Manual Inspection Steps

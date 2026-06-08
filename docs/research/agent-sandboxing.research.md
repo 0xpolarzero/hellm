@@ -788,7 +788,7 @@ This split gives the best combined security and developer experience:
 1. Orchestrator
    - should not receive a raw unrestricted execution surface
    - should decide policy and delegation
-   - should not inherit direct workflow-runtime powers it does not need
+   - should not inherit direct execution powers it does not need
 2. Handler thread
    - should choose sandbox configuration and supervise long-running work
    - should hold approvals and attention routing
@@ -857,7 +857,7 @@ The ideal product flow looks like this:
    - secret injection
    - protected files
    - approval gates
-7. the sandbox returns logs, artifacts, diffs, and Project CI results when the sandboxed work ran a declared CI entry
+7. the sandbox returns logs, artifacts, and diffs
 8. only after that does `svvy` sync approved changes back to the real workspace
 
 The mental model is:

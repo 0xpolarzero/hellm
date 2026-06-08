@@ -158,14 +158,14 @@ minimal available instruction:
 Artifacts can create, inspect, open, list, and delete durable session files through `svvyx artifacts
 ...`; once Artifacts is loaded, `execute_typescript` also receives the generated
 `extensions.artifacts.run(...)` TypeScript client. Load Artifacts when you need to preserve
-implementation plans, review notes, screenshots, logs, reports, previews, workflow exports, CI
-evidence, or other large inspectable outputs outside the repository tree.
+implementation plans, review notes, screenshots, logs, reports, previews, Smithers exports, or
+other large inspectable outputs outside the repository tree.
 ```
 
 ## Product Model
 
-Artifacts are durable session files produced by commands, workflow runs, Project CI,
-`execute_typescript`, and related execution. They support both mutable draft/review files and
+Artifacts are durable session files produced by commands, `execute_typescript`, and related
+execution. They support both mutable draft/review files and
 immutable evidence/final files. They are not a second repository workspace and are not the normal path
 for source files, docs, tests, configuration, or assets the user asked the agent to add to the
 repository.
@@ -174,19 +174,19 @@ Use artifacts for:
 
 - screenshots
 - generated reports, audits, benchmark output, and inspection output
-- retained logs, traces, test output, coverage summaries, JUnit XML, and CI evidence
+- retained logs, traces, test output, coverage summaries, and JUnit XML
 - generated HTML previews that should remain inspectable
 - implementation plans, review notes, and other session-local planning or review documents
 - bounded handoff documents intended to be read, reassessed, or modified by another agent without
   requiring that agent to inherit the full conversation context
 - submitted `execute_typescript` source snippets, including failed attempts
-- workflow exports and other execution evidence
+- Smithers exports and other execution evidence
 
 Do not use artifacts for:
 
 - ordinary repository files the user asked to create or edit
 - small answers that fit naturally in the transcript or command summary
-- reusable workflow source under `.svvy/workflows/...`
+- reusable workflow source under `~/.config/svvy/workflows/...`
 - directories
 
 For a new artifact file, the agent calls `svvyx artifacts create --name <filename-with-extension>
@@ -266,15 +266,12 @@ Artifact creation is a product-state mutation.
 `svvyx artifacts create` must automatically link the artifact to the current runtime context:
 
 - `sessionId`: always set from the current session
-- `threadId`: set when the current surface belongs to a handler thread, or when the current workflow
-  run or workflow task attempt belongs to a handler thread
-- `workflowRunId`: set when the current runtime context is inside a workflow run
-- `workflowTaskAttemptId`: set when the current runtime context is inside a workflow task attempt
+- `threadId`: set when the current surface belongs to a handler thread
 - `sourceCommandId`: set to the command record for the `svvyx artifacts create` invocation or to
   the generated-client child command when invoked from `execute_typescript`
 
-The agent must not provide ownership fields such as `sessionId`, `sourceCommandId`, `workflowRunId`,
-or `workflowTaskAttemptId` to `create`. Those are runtime-derived facts.
+The agent must not provide ownership fields such as `sessionId`, `threadId`, or `sourceCommandId` to
+`create`. Those are runtime-derived facts.
 
 `list --thread-id` is the only explicit ownership filter in v1. It is for inspecting a known thread's
 artifacts. Command-scoped listing remains an internal selector/debug concern and is not part of the
