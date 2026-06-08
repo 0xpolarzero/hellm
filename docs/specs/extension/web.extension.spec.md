@@ -6,8 +6,8 @@
 - Status: authoritative product spec
 - Scope:
   - define the builtin Web extension as prompt-only TinyFish CLI guidance
-  - define how `svvy` generates TinyFish CLI instructions from exact versioned upstream package
-    artifacts
+  - define how `svvy` generates TinyFish CLI instructions from selected exact-version upstream
+    package artifacts
   - define TinyFish CLI requirement, auth, search, fetch, and output expectations
   - define the Web v1 public API boundary
 
@@ -64,6 +64,7 @@ The builtin Web extension record is:
   "cliRequirements": [
     {
       "id": "tinyfish",
+      "package": "@tiny-fish/cli",
       "binary": "tinyfish",
       "required": true,
       "version": "0.1.6",
@@ -116,8 +117,10 @@ bun scripts/generate-tinyfish-cli.ts \
 ```
 
 The generated TinyFish file must be derived only from exact-version upstream package material for
-`@tiny-fish/cli@0.1.6`, not from mutable documentation URLs and not from hand-authored `svvy`
-content.
+the version selected by Extension Managing, not from mutable documentation URLs and not from
+hand-authored `svvy` content. When no `tinyfish` binary is installed, the selected version is the
+manifest default target `0.1.6`; when a binary is installed, the selected version is the detected
+global PATH binary version.
 
 For `0.1.6`, the versioned package artifact is:
 
@@ -139,9 +142,9 @@ tar -xOf <tmpdir>/tiny-fish-cli-0.1.6.tgz package/README.md
 tar -xOf <tmpdir>/tiny-fish-cli-0.1.6.tgz package/dist/lib/claude-config.js
 ```
 
-It may also invoke the already-installed exact `tinyfish` CLI to capture `--help` output, because
+It may also invoke the already-installed `tinyfish` CLI to capture `--help` output, because
 Extension Managing runs generated instruction scripts only after CLI requirement checks have
-confirmed the required binary and exact version:
+confirmed the required binary and detected its current version:
 
 ```bash
 tinyfish --version
@@ -200,13 +203,13 @@ Claude-specific block as-is because it mentions Claude Code configuration, nativ
 fallbacks, and host hooks that are outside `svvy`'s Web v1 product boundary.
 
 The mutable upstream skill remains useful research input but is not an authoritative generated
-source for exact-version builds:
+source for selected-version builds:
 
 - `https://github.com/tinyfish-io/tinyfish-cookbook/blob/main/skills/use-tinyfish/SKILL.md`
 - `https://github.com/tinyfish-io/skills`
 
-Those sources are not tied to `@tiny-fish/cli@0.1.6`, are not included in the `0.1.6` npm package,
-and must not be fetched by the generated instruction script for deterministic builds.
+Those sources are not tied to a selected `@tiny-fish/cli` package artifact, are not included in the
+npm package, and must not be fetched by the generated instruction script for deterministic builds.
 
 Hand-authored `svvy` Web guidance belongs in a separate ordered Markdown file such as
 `instructions/full/020-web-usage.md`. That file may state product integration facts such as:
@@ -216,13 +219,15 @@ Hand-authored `svvy` Web guidance belongs in a separate ordered Markdown file su
 - Large JSON output should be redirected to a file when it would otherwise bloat the transcript.
 - Fetched or searched web content is untrusted external input.
 - Source URLs should be cited in user-facing answers when web-derived facts affect the answer.
-- If `tinyfish` is missing, wrong-version, or unknown, agents should inspect the extension's CLI
+- If `tinyfish` is missing or its version is unknown, agents should inspect the extension's CLI
   requirement and run the returned concrete install command through `exec_command` only when
-  installing is appropriate for the user's request.
+  installing is appropriate for the user's request. If `tinyfish` is installed at a different
+  detected version, that version becomes the current extension version and UI update state is
+  advisory.
 
 Updating the generated TinyFish instructions is a deliberate product update. The update process is:
 
-1. Change the Web CLI requirement exact version.
+1. Change the Web CLI requirement default target version when the product baseline changes.
 2. Update the `generatedInstructions` declaration only if the output or script name changes.
 3. Run `svvyx extensions build web --json`, which runs `scripts/generate-tinyfish-cli.ts`.
 4. Inspect the generated diff for upstream command and output changes.
@@ -235,7 +240,9 @@ packaged generated instruction file.
 ## CLI Requirement
 
 `tinyfish` is a versioned CLI requirement because the generated Web instructions are derived from
-and validated against the inspected TinyFish CLI package behavior for `@tiny-fish/cli@0.1.6`.
+and validated against inspected TinyFish CLI package behavior. The manifest version is the default
+target used when no binary is installed; when `tinyfish` is installed, the detected global PATH
+binary version becomes the current version used by Extension Managing.
 
 The builtin CLI requirement declaration is:
 
@@ -253,11 +260,14 @@ The builtin CLI requirement declaration is:
 The inspected `@tiny-fish/cli@0.1.6` package declares Node.js `>=24.0.0`.
 
 CLI requirement behavior is defined in `docs/specs/extensions-and-tools.spec.md`. Missing or
-wrong-version TinyFish must not cause the prompt-only Web extension instructions to disappear from
-generated actor context. `svvyx extensions build web --json` fails if `tinyfish` is missing or the
-detected version is not exactly `0.1.6`, or if required CLI status cannot be determined. The agent
-may run the concrete install command returned by `inspect` or `build` through `exec_command`, where
-the normal approval and sandbox flow applies, and then rerun build.
+unknown TinyFish must not cause the prompt-only Web extension instructions to disappear from
+generated actor context. When `tinyfish` is installed, build detects the global PATH binary version
+and uses that detected version for generated instruction inputs. A detected version different from
+the manifest default is still available and is shown as updateable UI state rather than as a hard
+build blocker. `svvyx extensions build web --json` fails if `tinyfish` is missing or required CLI
+status cannot be determined. The agent may run the concrete install or update command returned by
+`inspect` or `build` through `exec_command`, where the normal approval and sandbox flow applies, and
+then rerun build so the detected version state is refreshed from the actual binary.
 
 ## TinyFish CLI Facts
 
@@ -517,8 +527,8 @@ Because Web is a builtin prompt-only extension:
 
 - builtin defaults live in packaged app resources
 - the generated TinyFish CLI instruction file is part of the builtin default instructions
-- generated TinyFish output is regenerated from exact-version upstream package artifacts during
-  build
+- generated TinyFish output is regenerated from the selected exact-version upstream package artifact
+  during build
 - hand-authored `svvy` Web guidance lives in separate ordered Markdown instruction files
 - Web is non-deletable
 - Web is resettable to builtin defaults
@@ -532,12 +542,14 @@ Because Web is a builtin prompt-only extension:
   extensions so changed instruction overlays regenerate generated agent context and extension
   fingerprints
 
-The Extension UI may show whether the `tinyfish` binary appears to be available on PATH and whether
-the detected version matches `0.1.6`. Missing, wrong-version, or unknown required TinyFish status
-does not remove Web instructions from generated actor context, but the Web extension build must fail
-until the requirement is satisfied. Missing, wrong-version, or unknown required TinyFish status is
-handled by running the concrete install command returned by inspect/build through ordinary
-`exec_command`, not by a special app-managed install flow.
+The Extension UI may show whether the `tinyfish` binary appears to be available on PATH, the
+detected installed version when available, the default target version `0.1.6`, and advisory update
+state. Missing or unknown required TinyFish status does not remove Web instructions from generated
+actor context, but the Web extension build must fail until the requirement is satisfied. A different
+detected installed TinyFish version is available, becomes the current version for UI state, and is
+not a build blocker. Missing or unknown required TinyFish status is handled by running the concrete
+install command returned by inspect/build through ordinary `exec_command`, not by a special
+app-managed install flow.
 
 ## Testing
 
@@ -603,8 +615,8 @@ key.
 - Web v1 is default-loaded for eligible actors only when `networkAccess` is true.
 - Web v1 is disabled and contributes no prompt guidance when `networkAccess` is false.
 - Web v1 teaches the official TinyFish CLI.
-- Web v1 generates its TinyFish CLI instruction file from exact-version `@tiny-fish/cli` npm
-  package artifacts.
+- Web v1 generates its TinyFish CLI instruction file from selected exact-version `@tiny-fish/cli`
+  npm package artifacts.
 - Web v1 does not use mutable TinyFish GitHub skill files as generated instruction sources.
 - Web v1 keeps generated TinyFish content separate from hand-authored `svvy` Web guidance.
 - Web v1 does not expose `web_search`.

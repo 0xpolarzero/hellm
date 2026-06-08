@@ -2,7 +2,10 @@
 
 Work in the workspace `.smithers/` package when authoring or running Smithers workflows.
 
-Use official Smithers CLI commands through Shell. Do not look for svvy workflow wrapper tools.
+Use the checked `smithers` CLI binary through Shell. Do not look for svvy workflow wrapper tools.
+Use `smithers init`, `smithers workflow run`, `smithers ps`, and `smithers inspect` as ordinary
+shell commands when Smithers work is the right unit. Do not use upstream `bunx
+smithers-orchestrator ...` command examples as the `svvy` product contract.
 
 Reusable svvy workflow material is imported from `@svvy/workflows`:
 

@@ -229,6 +229,7 @@ type ExtensionManifestEnv = {
 type ExtensionManifestCliRequirement = {
   id: string;
   binary: string;
+  package?: string;
   required: boolean;
   version?: string;
   versionCommand?: string;
@@ -262,10 +263,17 @@ Rules:
   floating versions are build validation errors.
 - Env declarations follow the architecture-wide env schema in
   `docs/specs/extensions-and-tools.spec.md`; `default` is allowed only when `secret: false`.
-- `cliRequirements` declare shell CLIs required or inspected by the extension. `version` is exact
-  when present, and `installCommand` may use `{{version}}` only when `version` is present.
-- manifest `installCommand` is a reusable template; inspect and build-error output return a concrete
-  install command with the current declared version substituted.
+- `cliRequirements` declare global PATH shell CLIs required or inspected by the extension. `binary`
+  is the command agents run through Shell. `package`, when present, is the package installed by the
+  install/update template and may differ from the binary name, for example package
+  `smithers-orchestrator` exposes binary `smithers`.
+- `version` is the default target version used when no binary is installed and as the UI's baseline
+  update target. It is not proof of the active installed version.
+- `versionCommand` checks the global PATH binary and is the source of truth for the installed
+  version whenever the binary is present.
+- manifest `installCommand` is a reusable exact-version template; inspect and build-error output
+  return a concrete install or update command with the selected version substituted.
+  `installCommand` may use `{{version}}` only when `version` is present.
 - `instructionFiles` configures individual Markdown files under `instructions/full/`. It does not
   define ordering; ordering remains the lexicographic directory listing. Missing files have
   `bypassed: false`.
@@ -1331,13 +1339,18 @@ type InspectExtensionRequirements = {
 type CliRequirementStatus = {
   id: string;
   binary: string;
+  package: string | null;
   required: boolean;
-  version: string | null;
-  status: "available" | "missing" | "wrong_version" | "unknown";
+  defaultVersion: string | null;
+  currentVersion: string | null;
+  latestVersion: string | null;
+  status: "available" | "missing" | "unknown";
+  updateAvailable: boolean;
   detectedVersion: string | null;
   path: string | null;
   versionCommand: string | null;
   installCommand: string | null;
+  updateCommand: string | null;
 };
 
 type ExtensionDependencyRequirement = {
@@ -1373,7 +1386,6 @@ type ExtensionIssue = {
     | "NO_CURRENT_BUILD"
     | "CURRENT_BUILD_INVALID"
     | "CLI_MISSING"
-    | "CLI_WRONG_VERSION"
     | "CLI_STATUS_UNKNOWN"
     | "EXTERNAL_CLI_AUTH_MISSING"
     | "EXTERNAL_CLI_AUTH_INSUFFICIENT"
@@ -1382,17 +1394,19 @@ type ExtensionIssue = {
 };
 ```
 
-`CliRequirementStatus.installCommand` is directly runnable through `exec_command` when non-null. The
-manifest stores the reusable template; inspect and build-error output resolve `{{version}}` before
-returning the status object.
+`CliRequirementStatus.installCommand` and `CliRequirementStatus.updateCommand` are directly runnable
+through `exec_command` when non-null. The manifest stores one reusable exact-version template;
+inspect and build-error output resolve `{{version}}` before returning the status object. Missing
+requirements resolve the template with `defaultVersion`. Update actions resolve it with the UI- or
+agent-selected target version.
 
 `usage` is the global agent/profile usage configuration for the inspected extension. It is useful in
 Extension Managing because the command is a management surface. Native `list_extensions` must not
 return `usage`; it returns only the current actor's `state.binding`.
 
 Inspect uses the same requirement-readiness semantics as native `list_extensions`.
-`requirements.cliRequirements[].status` is limited to `"available"`, `"missing"`,
-`"wrong_version"`, or `"unknown"`. It reports shell binary presence and exact version matching only.
+`requirements.cliRequirements[].status` is limited to `"available"`, `"missing"`, or `"unknown"`.
+It reports global PATH binary presence and the version detected from the binary when available.
 It must not encode CLI account authentication, OAuth state, token scopes, remote service
 reachability, timestamps, account names, usernames, or host credentials. Known CLI auth blockers,
 such as missing or insufficient GitHub CLI auth for `gh`, are represented only by coarse
@@ -1400,6 +1414,22 @@ such as missing or insufficient GitHub CLI auth for `gh`, are represented only b
 must not add a separate `externalAuth` or `authStatus` field, run login flows, mutate credentials,
 contact remotes only to improve status labels, or watch arbitrary failed agent shell commands to
 update inspect readiness.
+
+At startup and before every extension build, `svvy` checks each required CLI's global PATH binary
+with the declared `versionCommand`. If the binary is present and the version is parsed, that detected
+version becomes the requirement's `currentVersion` in app state and is the version passed to
+generated-instruction scripts for that extension. If the binary is missing, app state keeps the
+manifest `version` as `currentVersion` and reports `status: "missing"` with an install command. If
+the binary exists but version detection fails, the status is `unknown`; generated-instruction build
+must fail because there is no reliable current version to pass to the script.
+
+The default version in the manifest is a convenience baseline, not an exact-version gate. A detected
+installed version that differs from the default remains `status: "available"` and is used for docs
+generation. The UI may fetch the latest available package version for display and set
+`latestVersion`/`updateAvailable`, but that remote lookup is advisory. The source of truth remains
+the binary and version re-detected by build/inspect. When the user or an agent runs the install or
+update command, the next build rechecks the global binary and updates `currentVersion` from the
+actual installed CLI.
 
 For prompt-only Git and GitHub, unknown `git`, `gh`, or `gh` auth status is advisory and must not
 block inspect readiness or generated prompt loading. Known status can be displayed through
@@ -1465,24 +1495,34 @@ Prompt-only builtin example:
         {
           "id": "git",
           "binary": "git",
+          "package": null,
           "required": true,
-          "version": null,
+          "defaultVersion": null,
+          "currentVersion": "2.54.0",
+          "latestVersion": null,
           "status": "available",
+          "updateAvailable": false,
           "detectedVersion": "2.54.0",
           "path": "/usr/bin/git",
           "versionCommand": "git --version",
-          "installCommand": null
+          "installCommand": null,
+          "updateCommand": null
         },
         {
           "id": "gh",
           "binary": "gh",
+          "package": null,
           "required": true,
-          "version": null,
+          "defaultVersion": null,
+          "currentVersion": "2.93.0",
+          "latestVersion": null,
           "status": "available",
+          "updateAvailable": false,
           "detectedVersion": "2.93.0",
           "path": "/opt/homebrew/bin/gh",
           "versionCommand": "gh --version",
-          "installCommand": null
+          "installCommand": null,
+          "updateCommand": null
         }
       ],
       "env": [],
@@ -2205,11 +2245,12 @@ Incur-backed success example:
 CLI requirement failures:
 
 `svvyx extensions build <id> --json` checks required CLI requirements before package dependency
-installation and before generated instruction scripts run. If a required CLI is missing or has the
-wrong exact version, or if required CLI status cannot be determined, build fails with an ordinary
-JSON error. It must not create a dependency approval request, must not run the declared install
-command, and must not leave a blocked build that can resume automatically. The agent or user can run
-the returned install command through
+installation and before generated instruction scripts run. If a required CLI is missing, or if
+required CLI status cannot be determined, build fails with an ordinary JSON error. A present CLI
+whose detected version differs from the manifest default does not fail build; build uses the
+detected version and reports update metadata for the UI. Build must not create a dependency approval
+request, must not run the declared install command, and must not leave a blocked build that can
+resume automatically. The agent or user can run the returned install/update command through
 `exec_command` and then rerun build.
 
 Missing CLI example:
@@ -2224,12 +2265,18 @@ Missing CLI example:
     "cli": {
       "id": "tinyfish",
       "binary": "tinyfish",
+      "package": "@tiny-fish/cli",
       "required": true,
-      "version": "0.1.6",
+      "defaultVersion": "0.1.6",
+      "currentVersion": "0.1.6",
+      "latestVersion": null,
+      "status": "missing",
+      "updateAvailable": false,
       "detectedVersion": null,
       "path": null,
       "versionCommand": "tinyfish --version",
-      "installCommand": "npm install -g @tiny-fish/cli@0.1.6"
+      "installCommand": "npm install -g @tiny-fish/cli@0.1.6",
+      "updateCommand": null
     },
     "nextSteps": [
       "Run the install command through exec_command if the user wants this CLI installed.",
@@ -2239,28 +2286,63 @@ Missing CLI example:
 }
 ```
 
-Wrong-version CLI example:
+Different installed version example:
+
+```json
+{
+  "ok": true,
+  "requirements": {
+    "cliRequirements": [
+      {
+        "id": "tinyfish",
+        "binary": "tinyfish",
+        "package": "@tiny-fish/cli",
+        "required": true,
+        "defaultVersion": "0.1.6",
+        "currentVersion": "0.1.5",
+        "latestVersion": "0.1.6",
+        "status": "available",
+        "updateAvailable": true,
+        "detectedVersion": "0.1.5",
+        "path": "/usr/local/bin/tinyfish",
+        "versionCommand": "tinyfish --version",
+        "installCommand": null,
+        "updateCommand": "npm install -g @tiny-fish/cli@0.1.6"
+      }
+    ]
+  },
+  "nextSteps": [
+    "Use the detected CLI for generated instructions until the user or an agent chooses to update.",
+    "Run the update command through exec_command only when updating this CLI is appropriate."
+  ]
+}
+```
+
+Unknown CLI version example:
 
 ```json
 {
   "ok": false,
   "error": {
-    "code": "CLI_WRONG_VERSION",
-    "message": "tinyfish 0.1.6 is required by web, but tinyfish 0.1.5 was found.",
+    "code": "CLI_STATUS_UNKNOWN",
+    "message": "tinyfish is required by web, but its version could not be determined.",
     "extensionId": "web",
     "cli": {
       "id": "tinyfish",
       "binary": "tinyfish",
+      "package": "@tiny-fish/cli",
       "required": true,
-      "version": "0.1.6",
-      "detectedVersion": "0.1.5",
+      "defaultVersion": "0.1.6",
+      "currentVersion": null,
+      "detectedVersion": null,
       "path": "/usr/local/bin/tinyfish",
       "versionCommand": "tinyfish --version",
-      "installCommand": "npm install -g @tiny-fish/cli@0.1.6"
+      "installCommand": null,
+      "updateCommand": null
     },
     "nextSteps": [
-      "Run the install command through exec_command if the user wants to replace or upgrade this CLI.",
-      "Rerun `svvyx extensions build web --json` after installation."
+      "Inspect the CLI manually or reinstall it through exec_command if the user wants this CLI repaired.",
+      "Rerun `svvyx extensions build web --json` after repair."
     ]
   }
 }

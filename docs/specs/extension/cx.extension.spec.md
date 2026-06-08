@@ -65,6 +65,7 @@ The builtin cx extension record is:
   "cliRequirements": [
     {
       "id": "cx",
+      "package": "cx-cli",
       "binary": "cx",
       "required": true,
       "version": "0.7.1",
@@ -116,15 +117,21 @@ The package identity was verified from the upstream `Cargo.toml` for `ind-igo/cx
 name is `cx-cli`, version is `0.7.1`, and the binary name is `cx`.
 
 CLI requirement behavior is defined in `docs/specs/extensions-and-tools.spec.md`. Missing or
-wrong-version `cx` must not cause the prompt-only cx extension instructions to disappear from
-generated actor context. `svvyx extensions build cx --json` fails if `cx` is missing, the detected
-version is not exactly `0.7.1`, or required CLI status cannot be determined. The agent may run the
-concrete install command returned by `inspect` or `build` through the normal shell command path only
-when installing or upgrading the cx binary is appropriate for the user's request, then rerun build.
+unknown `cx` must not cause the prompt-only cx extension instructions to disappear from generated
+actor context. When `cx` is installed, build detects the global PATH binary version and passes that
+detected version to the generated instruction script. A detected version different from the manifest
+default is still available and is shown as updateable UI state rather than as a hard build blocker.
+`svvyx extensions build cx --json` fails if `cx` is missing or required CLI status cannot be
+determined. The agent may run the concrete install or update command returned by `inspect` or
+`build` through the normal shell command path only when installing or upgrading the cx binary is
+appropriate for the user's request, then rerun build so the detected version state is refreshed from
+the actual binary.
 
 The generated instruction script does not need the `cx` binary to be installed. It reads the
-versioned package artifact directly. The required CLI check still runs before generated instruction
-scripts because the shared extension build contract checks declared required CLIs first.
+versioned package artifact directly for the version supplied by Extension Managing. If `cx` is
+installed, that supplied version is the detected CLI version. If `cx` is missing, the supplied
+version remains the manifest default for install guidance and UI state, but build fails before
+running the generator because required CLI readiness is missing.
 
 ## Instruction Files
 
@@ -253,7 +260,7 @@ The script must not:
 - run `cx skill` as its primary source
 - read from the GitHub default branch as its primary source
 - fetch the latest package version
-- use an installed binary's detected version instead of the supplied `--version`
+- ignore the supplied `--version` in favor of probing a local binary
 - normalize upstream wording, punctuation, headings, or arrows
 - replace `Read tool`
 - replace `Edit tool`

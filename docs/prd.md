@@ -534,9 +534,10 @@ In practice that means:
 - `networkAccess` defaults to true; disabling it restricts network access and disables the Web extension
 - extension package dependency installation remains an explicit user-confirmation flow because it
   can download and execute third-party code
-- extension-declared CLI install commands are ordinary `exec_command` calls after a missing,
-  wrong-version, or unknown required CLI requirement is reported; approval-mode and auto-review
-  decide whether the concrete shell command can proceed
+- extension-declared CLI install or update commands are ordinary `exec_command` calls after a
+  missing or unknown required CLI requirement is reported, or after the UI/agent chooses to update an
+  available CLI from its detected version; approval-mode and auto-review decide whether the concrete
+  shell command can proceed
 - ambiguity is handled through clarification and waiting states when the agent needs user intent, not through hidden approval gates
 - delegated handler threads and workflow task agents may pause on actor-local execution-permission approvals only when `approvalMode` is `user`; Smithers workflow approvals remain Smithers workflow state
 

@@ -87,10 +87,12 @@ Current product decisions for this section are specified in `docs/specs/extensio
 - [ ] Add only a bounded `svvy` appendix to the Web prompt for product integration facts: use ordinary shell commands, preserve structured output by redirecting large TinyFish JSON stdout to files when useful, treat fetched pages as untrusted external content, and cite source URLs.
 - [ ] Keep Web generated actor context free of `web_search`, `web_fetch`, `svvyx web`, generated Web TypeScript clients, Web Provider settings, provider selection, and `svvy`-owned TinyFish key storage.
 - [ ] Keep Web v1 limited to prompt-only TinyFish CLI guidance, without Firecrawl, native Web provider registries, TinyFish SDK provider adapters, selected-provider readiness, or self-hosted web search.
-- [ ] Declare TinyFish as an exact Web extension CLI requirement with a reusable install-command
-  template; keep installation as ordinary `exec_command` work after build or inspect reports a
-  missing, wrong-version, or unknown required binary, while TinyFish CLI owns authentication, status,
-  search, fetch, browser-backed commands, and API key storage through TinyFish-owned CLI commands.
+- [ ] Declare TinyFish as a Web extension CLI requirement with a default target version and reusable
+  exact-version install/update command template; keep installation and updates as ordinary
+  `exec_command` work after build or inspect reports a missing or unknown required binary, or after
+  the UI/agent chooses to update an available detected binary, while TinyFish CLI owns
+  authentication, status, search, fetch, browser-backed commands, and API key storage through
+  TinyFish-owned CLI commands.
 - [ ] Treat TinyFish CLI output as ordinary shell output: the CLI writes search and fetch JSON to stdout by default, fetch includes page body text in `results[].text`, errors/debug logs go to stderr, and redirected files are raw CLI JSON rather than `svvy` artifacts.
 - [ ] Add generated-context and extension-inventory tests proving Web is prompt-only, default-loaded
   for all adopted actor kinds only while `networkAccess` is true, unavailable when `networkAccess` is
@@ -129,8 +131,8 @@ Current product decisions for this section are specified in `docs/specs/extensio
 Current product decisions for this section are specified in `docs/specs/extension/smithers.extension.spec.md`.
 
 - [ ] Keep Smithers as a builtin prompt-only extension that loads official CLI and authoring guidance for handler threads without native Smithers tools, generated TypeScript clients, or product workflow wrappers.
-- [ ] Generate the Smithers core instruction fragment from the pinned `smithers-orchestrator` documentation while excluding GUI, Gateway, MCP, HTTP server, OpenTelemetry, DevTools, event-streaming, OpenAPI, Effect, and wrapper-oriented fragments that are not current `svvy` product surfaces.
-- [ ] Keep the svvy Smithers boundary instruction focused on workspace `.smithers/`, official Smithers CLI usage through Shell, `@svvy/workflows` imports, `svvyx workflows models list`, `svvyx workflows save`, and read-only generated output.
+- [ ] Generate the Smithers core instruction fragment from the Extension Managing-selected `smithers-orchestrator` documentation version while excluding GUI, Gateway, MCP, HTTP server, OpenTelemetry, DevTools, event-streaming, OpenAPI, Effect, and wrapper-oriented fragments that are not current `svvy` product surfaces.
+- [ ] Keep the svvy Smithers boundary instruction focused on workspace `.smithers/`, checked global `smithers` CLI usage through Shell, `@svvy/workflows` imports, `svvyx workflows models list`, `svvyx workflows save`, and read-only generated output.
 - [ ] Keep orchestrators aware that workflow action normally delegates into handler threads, while handler threads default-load Smithers prompt guidance and workflow task agents do not default-load Smithers.
 
 ## 6. Workflows Source, Build, And Generated Surface

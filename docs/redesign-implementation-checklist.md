@@ -30,15 +30,15 @@ been deleted rather than kept as compatibility code.
 
 ## Actor Prompts And System Prompt Channel
 
-- [ ] Compose each actor's prompt from the current generated agent context before every prompt-bearing turn. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
-- [ ] Load composed instructions through pi's real `systemPrompt` channel. Sources: `docs/prd.md`, `docs/features.ts`.
-- [ ] Ignore pi prompt replacement/append files such as `.pi/SYSTEM.md` and `APPEND_SYSTEM.md` as behavior-changing prompt inputs. Sources: `docs/prd.md`, `docs/specs/ambient-agent-resources-baseline.spec.md`.
+- [x] Compose each actor's prompt from the current generated agent context before every prompt-bearing turn. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
+- [x] Load composed instructions through pi's real `systemPrompt` channel. Sources: `docs/prd.md`, `docs/features.ts`.
+- [x] Ignore pi prompt replacement/append files such as `.pi/SYSTEM.md` and `APPEND_SYSTEM.md` as behavior-changing prompt inputs. Sources: `docs/prd.md`, `docs/specs/ambient-agent-resources-baseline.spec.md`.
 - [ ] Preserve discovered `AGENTS.md` and `CLAUDE.md` as visible read-only `external_instruction` extension records in the actual prompt path. Sources: `docs/prd.md`, `docs/specs/extension/external_instructions.extension.spec.md`.
-- [ ] Send submitted user text as the real new user message for that surface, not as flattened transcript prose. Sources: `docs/prd.md`.
-- [ ] Keep committed conversation history in pi session history; keep runtime, thread, episode, report-request, workflow, queue, and wait state in structured product state and targeted tools. Sources: `docs/prd.md`, `docs/specs/structured-session-state.spec.md`.
+- [x] Send submitted user text as the real new user message for that surface, not as flattened transcript prose. Sources: `docs/prd.md`.
+- [x] Keep committed conversation history in pi session history; keep runtime, thread, episode, report-request, workflow, queue, and wait state in structured product state and targeted tools. Sources: `docs/prd.md`, `docs/specs/structured-session-state.spec.md`.
 - [ ] Render active system prompt/generated context as expandable surface metadata, not inline transcript prose. Sources: `docs/prd.md`, `docs/features.ts`.
-- [ ] Warn when a surface is bound to an older generated context fingerprint than current ready settings. Sources: `docs/prd.md`, `docs/specs/queued-messages.spec.md`.
-- [ ] Slice generated tool declarations and SDK blocks by actor; no surface receives another actor's full callable API block for awareness only. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
+- [x] Warn when a surface is bound to an older generated context fingerprint than current ready settings. Sources: `docs/prd.md`, `docs/specs/queued-messages.spec.md`.
+- [x] Slice generated tool declarations and SDK blocks by actor; no surface receives another actor's full callable API block for awareness only. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
 - [ ] Support product-filtered inherited orchestrator history only for `thread_start.threads[].history: "forked"`, delivered as a context block in the handler's first prompt-bearing item, not as handler prior turns or system prompt content. Sources: `docs/prd.md`, `docs/research/handler-thread-history-default.research.md`.
 
 ## Agents And Profiles
@@ -60,23 +60,23 @@ been deleted rather than kept as compatibility code.
 ## Extensions Model
 
 - [ ] Implement Extensions as builtin, user, and external_instruction records with category, instruction source files, minimal available-loading hints, interface kind, generated clients, env/dependency readiness, reset/delete behavior, and read-only usage views. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
-- [ ] Support extension usage states `default_loaded`, `available`, and `unavailable` per profile/actor, except fixed app-native controls such as Extension Loading. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
+- [x] Support extension usage states `default_loaded`, `available`, and `unavailable` per profile/actor, except fixed app-native controls such as Extension Loading. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
 - [ ] Implement the exhaustive builtin extension inventory: `base-common`, `base-orchestrator`, `base-handler`, `base-workflow-task`, `shell`, `apply-patch`, `execute-typescript`, `extension-loading`, `extension-managing`, `request-user-input`, `thread-orchestration`, `thread-handling`, `cx`, `git`, `github`, `web`, `smithers`, `workflows`, `artifacts`, and external instructions. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [ ] Default-load `base-common`, Shell, Apply Patch, Execute TypeScript, Extension Loading, cx, Git, and Artifacts for orchestrators, handler threads, and workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [ ] Default-load `base-orchestrator` and `thread-orchestration` only for orchestrators. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [ ] Default-load `base-handler`, `thread-handling`, Smithers, and Workflows only for handler threads. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [ ] Default-load `base-workflow-task` only for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [ ] Default-load GitHub for orchestrators and handler threads; make it available for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [ ] Make Extension Managing available for orchestrators and handlers but unavailable to workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [ ] Make Request User Input default-loaded for orchestrators and handlers but unavailable to workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [ ] Make Smithers available, not default-loaded, for orchestrators; default-loaded for handlers; unavailable for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [ ] Make Workflows available, not default-loaded, for orchestrators; default-loaded for handlers; unavailable for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [ ] Default-load Web only when `networkAccess` is true; make it unavailable/no prompt guidance when `networkAccess` is false. Sources: `docs/prd.md`, `docs/specs/extension/web.extension.spec.md`.
+- [x] Default-load `base-common`, Shell, Apply Patch, Execute TypeScript, Extension Loading, cx, Git, and Artifacts for orchestrators, handler threads, and workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Default-load `base-orchestrator` and `thread-orchestration` only for orchestrators. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Default-load `base-handler`, `thread-handling`, Smithers, and Workflows only for handler threads. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Default-load `base-workflow-task` only for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Default-load GitHub for orchestrators and handler threads; make it available for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Make Extension Managing available for orchestrators and handlers but unavailable to workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Make Request User Input default-loaded for orchestrators and handlers but unavailable to workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Make Smithers available, not default-loaded, for orchestrators; default-loaded for handlers; unavailable for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Make Workflows available, not default-loaded, for orchestrators; default-loaded for handlers; unavailable for workflow task agents. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Default-load Web only when `networkAccess` is true; make it unavailable/no prompt guidance when `networkAccess` is false. Sources: `docs/prd.md`, `docs/specs/extension/web.extension.spec.md`.
 - [ ] Build generated actor context from loaded base instruction extensions, loaded extension instructions, available minimal hints, external instructions, native tool declarations, loaded svvyx guidance, and generated TypeScript declarations. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
 - [ ] Store generated context fingerprints for sessions, handler threads, and workflow task-agent attempts. Sources: `docs/prd.md`, `docs/specs/structured-session-state.spec.md`.
-- [ ] Automatically queue/apply `agent_context_refresh` work labelled `Update agent context` when an existing surface's binding fingerprint differs from current ready context. Sources: `docs/prd.md`, `docs/specs/queued-messages.spec.md`.
+- [x] Automatically queue/apply `agent_context_refresh` work labelled `Update agent context` when an existing surface's binding fingerprint differs from current ready context. Sources: `docs/prd.md`, `docs/specs/queued-messages.spec.md`.
 - [ ] On successful context refresh, record an `Agent context updated` product event with semantic details of what changed. Sources: `docs/prd.md`, `docs/progress.md`.
-- [ ] Keep `list_extensions` actor-local, read-only, limited to loaded and available records; do not expose unavailable details, secrets, fingerprints, cache keys, or global profile state. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
+- [x] Keep `list_extensions` actor-local, read-only, limited to loaded and available records; do not expose unavailable details, secrets, fingerprints, cache keys, or global profile state. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
 - [ ] Implement `load_extension` as actor-local session loading of an available ready extension, refreshing same-turn declarations/guidance/generated context without building, dependency approval, env configuration, or profile mutation. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
 - [ ] Store user-named Extension Managing snapshots and durable generated context bindings so historical surfaces remain inspectable after restart. Sources: `docs/progress.md`, `docs/specs/extension/extension_managing.extension.spec.md`.
 
@@ -125,7 +125,7 @@ been deleted rather than kept as compatibility code.
 - [ ] Implement instruction lifecycle commands `instructions add`, `rename`, `remove`, `reorder`, and `configure` to manage files/config only, not body text. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
 - [ ] Validate instruction lifecycle basenames, collisions, ordering, and bypass booleans; record reversible changes and set `buildRequired`. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
 - [ ] Split extension build result into `contextReady` and `runtimeReady`; missing required env may keep `contextReady: true` while producing `runtimeReady: false`. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
-- [ ] Make missing, wrong-version, or unknown required CLI status fail build before dependency installation and generator scripts. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
+- [ ] Make missing or unknown required CLI status fail build before dependency installation and generator scripts, while detected installed versions remain available and become the current generator version. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
 - [ ] Keep dependency approval separate from shell approval, with exact dependency/trusted-dependency identities, an approval ledger, exact versions only, no Bun default trusted allowlist, and lifecycle scripts disabled unless that trusted identity is approved. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
 - [ ] Make `set-usage` mutate persistent agent-profile extension usage, queue context refresh for affected sessions, and never directly mutate the caller's current binding. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
 - [ ] Make Extension Loading fixed and not user-changeable through `set-usage`. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
@@ -136,11 +136,11 @@ been deleted rather than kept as compatibility code.
 
 ## CLI Requirements
 
-- [ ] Let extensions declare required shell CLIs with binary name, optional exact version, optional version-check command, and optional reusable install-command template. Sources: `docs/features.ts`, `docs/specs/extension/extension_managing.extension.spec.md`.
-- [ ] Report missing, wrong-version, unknown, and available status through Extension Managing inspect/build. Sources: `docs/features.ts`.
-- [ ] Fail build with ordinary structured errors when a required CLI is missing, wrong-version, or unknown. Sources: `docs/features.ts`.
+- [ ] Let extensions declare required global PATH CLIs with binary name, optional package name, default target version, version-check command, and reusable exact-version install/update command template. Sources: `docs/features.ts`, `docs/specs/extension/extension_managing.extension.spec.md`.
+- [ ] Report missing, unknown, available, detected/current/latest versions, and update-available status through Extension Managing inspect/build and the Extensions UI. Sources: `docs/features.ts`.
+- [ ] Fail build with ordinary structured errors when a required CLI is missing or unknown, while using the detected installed version when a global PATH binary is available. Sources: `docs/features.ts`.
 - [ ] Keep CLI installation as ordinary `exec_command` work under sandbox, network, approval-mode, and auto-review policy. Sources: `docs/prd.md`, `docs/features.ts`.
-- [ ] Pin exact CLI requirements for `cx-cli@0.7.1`, `smithers-orchestrator@0.22.0`, and `@tiny-fish/cli@0.1.6`; keep Git and GitHub CLI unversioned. Sources: `docs/features.ts`, `docs/specs/extension/cx.extension.spec.md`, `docs/specs/extension/web.extension.spec.md`, `docs/specs/extension/smithers.extension.spec.md`.
+- [ ] Declare default target CLI versions for `cx-cli@0.7.1`, `smithers-orchestrator@0.22.0` exposing binary `smithers`, and `@tiny-fish/cli@0.1.6`; keep Git and GitHub CLI requirements unversioned. Sources: `docs/features.ts`, `docs/specs/extension/cx.extension.spec.md`, `docs/specs/extension/web.extension.spec.md`, `docs/specs/extension/smithers.extension.spec.md`.
 
 ## Direct Tools, Shell, Apply Patch, And Sandbox
 
@@ -160,22 +160,22 @@ been deleted rather than kept as compatibility code.
 
 ## Execute TypeScript
 
-- [ ] Replace old `docs/specs/execute-typescript.spec.md` assumptions with `docs/specs/extension/execute_typescript.extension.spec.md`. Sources: docs diff.
-- [ ] Expose no global `svvy` client and no injected broad `api` helper in snippets. Sources: `docs/prd.md`, `docs/specs/extension/execute_typescript.extension.spec.md`.
+- [x] Replace old `docs/specs/execute-typescript.spec.md` assumptions with `docs/specs/extension/execute_typescript.extension.spec.md`. Sources: docs diff.
+- [x] Expose no global `svvy` client and no injected broad `api` helper in snippets. Sources: `docs/prd.md`, `docs/specs/extension/execute_typescript.extension.spec.md`.
 - [ ] Expose actor-specific `extensions` containing only loaded TypeScript-enabled `svvyx` clients callable by the current actor. Sources: `docs/prd.md`, `docs/specs/extension/execute_typescript.extension.spec.md`.
 - [ ] Generate declarations only for loaded clients and those extensions' command map types. Sources: `docs/prd.md`, `docs/specs/extensions-and-tools.spec.md`.
 - [ ] Support `extensions["<id>"].run(commandId, input)` and dot access for identifier-safe ids. Sources: `docs/specs/extension/execute_typescript.extension.spec.md`.
-- [ ] Make `incur/client` importable for public Incur types and `Client.ClientError`. Sources: `docs/prd.md`, `docs/progress.md`.
-- [ ] Keep `MemoryClient`, local Incur actions, and broad internal client APIs out of agent-authored snippets. Sources: `docs/prd.md`, `docs/specs/extension/execute_typescript.extension.spec.md`.
-- [ ] Keep the default orchestrator Execute TypeScript extension set free of Workflows generated clients, Smithers runtime control, and any `workflow`/`smithers` namespace. Sources: `docs/prd.md`.
-- [ ] Keep workflow task-agent Execute TypeScript clients limited to task-local loaded extensions; no Workflows source-library, Smithers runtime, handler, or orchestrator controls by default. Sources: `docs/prd.md`.
-- [ ] Persist every submitted snippet attempt as a file-backed artifact before execution. Sources: `docs/prd.md`, `docs/specs/extension/execute_typescript.extension.spec.md`.
-- [ ] Compile or typecheck every snippet before execution and block invalid snippets with structured diagnostics. Sources: `docs/prd.md`, `docs/specs/extension/execute_typescript.extension.spec.md`.
+- [x] Make `incur/client` importable for public Incur types and `Client.ClientError`. Sources: `docs/prd.md`, `docs/progress.md`.
+- [x] Keep `MemoryClient`, local Incur actions, and broad internal client APIs out of agent-authored snippets. Sources: `docs/prd.md`, `docs/specs/extension/execute_typescript.extension.spec.md`.
+- [x] Keep the default orchestrator Execute TypeScript extension set free of Workflows generated clients, Smithers runtime control, and any `workflow`/`smithers` namespace. Sources: `docs/prd.md`.
+- [x] Keep workflow task-agent Execute TypeScript clients limited to task-local loaded extensions; no Workflows source-library, Smithers runtime, handler, or orchestrator controls by default. Sources: `docs/prd.md`.
+- [x] Persist every submitted snippet attempt as a file-backed artifact before execution. Sources: `docs/prd.md`, `docs/specs/extension/execute_typescript.extension.spec.md`.
+- [x] Compile or typecheck every snippet before execution and block invalid snippets with structured diagnostics. Sources: `docs/prd.md`, `docs/specs/extension/execute_typescript.extension.spec.md`.
 - [ ] Route top-level `execute_typescript` through the same approval-boundary path as approval-gated native actions before running arbitrary TypeScript. Sources: `docs/prd.md`, `docs/progress.md`.
 - [ ] Record generated extension-client calls inside approved snippets as child commands with readiness, env injection, redaction, product-state validation, and failure semantics. Sources: `docs/prd.md`, `docs/specs/structured-session-state.spec.md`.
-- [ ] Keep the top-level `execute_typescript` attempt as the parent semantic unit and roll child facts under it. Sources: `docs/features.ts`, `docs/specs/live-tool-projection.spec.md`.
+- [x] Keep the top-level `execute_typescript` attempt as the parent semantic unit and roll child facts under it. Sources: `docs/features.ts`, `docs/specs/live-tool-projection.spec.md`.
 - [ ] Render streamed source, persisted artifact, diagnostics, nested child commands, runtime progress, and final parent command facts through shared live tool projection. Sources: `docs/prd.md`, `docs/specs/live-tool-projection.spec.md`.
-- [ ] Keep cx out of generated Execute TypeScript clients; do not expose `api.cx_*` or `extensions.cx.*`. Sources: `docs/progress.md`, `docs/specs/extension/cx.extension.spec.md`.
+- [x] Keep cx out of generated Execute TypeScript clients; do not expose `api.cx_*` or `extensions.cx.*`. Sources: `docs/progress.md`, `docs/specs/extension/cx.extension.spec.md`.
 
 ## Live Tool Projection And Command State
 
@@ -220,43 +220,43 @@ been deleted rather than kept as compatibility code.
 ## Thread Orchestration And Handler Threads
 
 - [ ] Expose one shared native thread-control implementation as `thread-orchestration` for orchestrators and `thread-handling` for handlers. Sources: `docs/features.ts`, `docs/specs/extension/thread_managing.extension.spec.md`.
-- [ ] Give orchestrators `thread_start`, `thread_followup`, `thread_list`, `thread_episodes`, and `thread_request_report`. Sources: `docs/specs/extension/thread_managing.extension.spec.md`.
-- [ ] Give handlers `thread_current`, `thread_group`, `thread_report`, and `thread_episodes`. Sources: `docs/specs/extension/thread_managing.extension.spec.md`.
-- [ ] Give workflow task agents no thread-control extension by default. Sources: `docs/specs/extensions-and-tools.spec.md`.
-- [ ] Make `thread_start` take required `threads[]`, normally with one item. Sources: `docs/features.ts`, `docs/specs/extension/thread_managing.extension.spec.md`.
-- [ ] Make `thread_start` create or append to one durable `threadGroupId`, returned at top level and not repeated on each thread row. Sources: `docs/prd.md`, `docs/specs/extension/thread_managing.extension.spec.md`.
-- [ ] Default `thread_start.threads[].history` to `isolated`. Sources: `docs/prd.md`, `docs/research/handler-thread-history-default.research.md`.
+- [x] Give orchestrators `thread_start`, `thread_followup`, `thread_list`, `thread_episodes`, and `thread_request_report`. Sources: `docs/specs/extension/thread_managing.extension.spec.md`.
+- [x] Give handlers `thread_current`, `thread_group`, `thread_report`, and `thread_episodes`. Sources: `docs/specs/extension/thread_managing.extension.spec.md`.
+- [x] Give workflow task agents no thread-control extension by default. Sources: `docs/specs/extensions-and-tools.spec.md`.
+- [x] Make `thread_start` take required `threads[]`, normally with one item. Sources: `docs/features.ts`, `docs/specs/extension/thread_managing.extension.spec.md`.
+- [x] Make `thread_start` create or append to one durable `threadGroupId`, returned at top level and not repeated on each thread row. Sources: `docs/prd.md`, `docs/specs/extension/thread_managing.extension.spec.md`.
+- [x] Default `thread_start.threads[].history` to `isolated`. Sources: `docs/prd.md`, `docs/research/handler-thread-history-default.research.md`.
 - [ ] Allow `history: "forked"` only for explicit current-context/forking/continuity cases where compact objective text or durable files would be lossy. Sources: `docs/prd.md`, `docs/research/handler-thread-history-default.research.md`.
 - [ ] Do not use `forked` for ordinary implementation, source-driven research, test fixing, code review, security review, independent critique, verification, durable-file-specified tasks, or stale/speculative transcript contexts. Sources: `docs/prd.md`, `docs/research/handler-thread-history-default.research.md`.
 - [ ] Allow multiple `threads[]` only for separate user-visible handler conversations with independent direct follow-up needs. Sources: `docs/prd.md`.
-- [ ] Persist handler thread records with thread id, group id, workspace session id, surface pi session id, title, objective, history mode, objective state, worktree context, generated context binding, loaded/available extension ids, report requests, latest episode summary, and timestamps. Sources: `docs/specs/structured-session-state.spec.md`.
+- [x] Persist handler thread records with thread id, group id, workspace session id, surface pi session id, title, objective, history mode, objective state, worktree context, generated context binding, loaded/available extension ids, report requests, latest episode summary, and timestamps. Sources: `docs/specs/structured-session-state.spec.md`.
 - [ ] Keep handler objective state separate from handler activity, workflow activity, waits, repair context, and raw Smithers runtime state. Sources: `docs/prd.md`, `docs/specs/structured-session-state.spec.md`.
 - [ ] Let handler threads receive direct user messages like orchestrator surfaces. Sources: `docs/prd.md`, `docs/features.ts`.
 - [ ] Let handler threads wait, resume, rerun, clarify, and repair internally instead of bouncing through the orchestrator by default. Sources: `docs/prd.md`.
-- [ ] Let `thread_followup` send corrections, clarifications, or later instructions to exact `threadIds` or one `threadGroupId`. Sources: `docs/prd.md`, `docs/specs/extension/thread_managing.extension.spec.md`.
-- [ ] Implement `thread_followup({ activate: true })` to reactivate concluded objectives when the context is right; active targets receiving the same follow-up keep their current objective. Sources: `docs/prd.md`.
-- [ ] Implement `thread_request_report` for one-handler update requests without changing that handler objective. Sources: `docs/prd.md`.
-- [ ] Implement `thread_group` as topology and addressing only, not shared memory or peer messaging. Sources: `docs/prd.md`.
-- [ ] Implement `thread_report` without `outcome` as an intermediate update episode. Sources: `docs/prd.md`, `docs/specs/structured-session-state.spec.md`.
-- [ ] Implement `thread_report` with `outcome` as a conclusion episode that marks the current objective concluded. Sources: `docs/prd.md`, `docs/specs/structured-session-state.spec.md`.
-- [ ] After every durable episode, queue a typed orchestrator reconciliation notification; dismissal must not roll back the episode or return a handler tool error. Sources: `docs/prd.md`, `docs/specs/queued-messages.spec.md`.
+- [x] Let `thread_followup` send corrections, clarifications, or later instructions to exact `threadIds` or one `threadGroupId`. Sources: `docs/prd.md`, `docs/specs/extension/thread_managing.extension.spec.md`.
+- [x] Implement `thread_followup({ activate: true })` to reactivate concluded objectives when the context is right; active targets receiving the same follow-up keep their current objective. Sources: `docs/prd.md`.
+- [x] Implement `thread_request_report` for one-handler update requests without changing that handler objective. Sources: `docs/prd.md`.
+- [x] Implement `thread_group` as topology and addressing only, not shared memory or peer messaging. Sources: `docs/prd.md`.
+- [x] Implement `thread_report` without `outcome` as an intermediate update episode. Sources: `docs/prd.md`, `docs/specs/structured-session-state.spec.md`.
+- [x] Implement `thread_report` with `outcome` as a conclusion episode that marks the current objective concluded. Sources: `docs/prd.md`, `docs/specs/structured-session-state.spec.md`.
+- [x] After every durable episode, queue a typed orchestrator reconciliation notification; dismissal must not roll back the episode or return a handler tool error. Sources: `docs/prd.md`, `docs/specs/queued-messages.spec.md`.
 - [ ] Keep ordinary handler replies, tool calls, command summaries, and artifacts out of episodes unless `thread_report` creates one. Sources: `docs/prd.md`, `docs/specs/structured-session-state.spec.md`.
-- [ ] Keep handler surfaces open after conclusion for inspection, direct follow-up chat, and explicit reactivation. Sources: `docs/prd.md`.
-- [ ] Generate handler-thread titles with the same internal namer flow from the delegated objective; do not accept an orchestrator-supplied title field. Sources: `docs/prd.md`, `docs/progress.md`.
+- [x] Keep handler surfaces open after conclusion for inspection, direct follow-up chat, and explicit reactivation. Sources: `docs/prd.md`.
+- [x] Generate handler-thread titles with the same internal namer flow from the delegated objective; do not accept an orchestrator-supplied title field. Sources: `docs/prd.md`, `docs/progress.md`.
 
 ## Smithers Boundary
 
-- [ ] Keep Smithers as the workflow runtime and authoring model used directly through the official Smithers CLI. Sources: `docs/prd.md`, `docs/specs/extension/smithers.extension.spec.md`.
-- [ ] Make Smithers a builtin prompt-only extension for handler-thread workflow authoring. Sources: `docs/features.ts`, `docs/specs/extension/smithers.extension.spec.md`.
-- [ ] Add no native Smithers tools, no generated Smithers TypeScript clients, and no product workflow wrapper tools. Sources: `docs/prd.md`, `docs/specs/extension/smithers.extension.spec.md`.
-- [ ] Preserve the official Smithers command form in generated prompt guidance as `bunx smithers-orchestrator ...`, including `init`, `workflow run`, `ps`, and `inspect`; do not document global installs or bare `smithers` as the svvy contract. Sources: `docs/specs/extension/smithers.extension.spec.md`, `docs/vendor/smithers/smithers-0.22.0.llms-full.txt`.
-- [ ] Generate Smithers instruction content from pinned official Smithers documentation plus the bounded svvy appendix. Sources: `docs/specs/extension/smithers.extension.spec.md`, `docs/vendor/smithers/smithers-0.22.0.llms-full.txt`.
+- [x] Keep Smithers as the workflow runtime and authoring model used directly through the official Smithers CLI. Sources: `docs/prd.md`, `docs/specs/extension/smithers.extension.spec.md`.
+- [x] Make Smithers a builtin prompt-only extension for handler-thread workflow authoring. Sources: `docs/features.ts`, `docs/specs/extension/smithers.extension.spec.md`.
+- [x] Add no native Smithers tools, no generated Smithers TypeScript clients, and no product workflow wrapper tools. Sources: `docs/prd.md`, `docs/specs/extension/smithers.extension.spec.md`.
+- [ ] Rewrite upstream Smithers `bunx smithers-orchestrator ...` examples to the checked global `smithers` binary in generated prompt guidance, including `init`, `workflow run`, `ps`, and `inspect`; do not leave external `bunx smithers-orchestrator` guidance as the svvy contract. Sources: `docs/specs/extension/smithers.extension.spec.md`, `docs/vendor/smithers/smithers-0.22.0.llms-full.txt`.
+- [ ] Generate Smithers instruction content from Extension Managing-selected official Smithers documentation plus the bounded svvy appendix. Sources: `docs/specs/extension/smithers.extension.spec.md`, `docs/vendor/smithers/smithers-0.22.0.llms-full.txt`.
 - [ ] Exclude GUI, Gateway, MCP, HTTP server, OpenTelemetry, DevTools, event-streaming, OpenAPI, Effect, and wrapper-oriented fragments not current svvy surfaces from generated Smithers prompt guidance. Sources: `docs/progress.md`, `docs/specs/extension/smithers.extension.spec.md`.
 - [ ] Keep official Smithers concepts in guidance where relevant: `.smithers/`, JSX authoring, official CLI approvals/resume, stable task ids, outputs, schemas, and render-loop behavior. Sources: `docs/specs/extension/smithers.extension.spec.md`, `docs/vendor/smithers/smithers-0.22.0.llms-full.txt`.
 - [ ] Keep Smithers memory fragment generated but bypassed by default. Sources: `docs/specs/extension/smithers.extension.spec.md`.
-- [ ] Teach handler agents to author and run workflows under workspace `.smithers/` using official CLI commands through Shell. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
-- [ ] Teach agents to import reusable svvy values from `@svvy/workflows`. Sources: `docs/prd.md`, `docs/specs/extension/smithers.extension.spec.md`.
-- [ ] Keep repo-root `workflows/` as a source-checkout authoring workspace for maintaining `svvy`, not shipped product runtime, workflow registry, or packaged-app integration path. Sources: root `AGENTS.md`, `docs/specs/workflow-library.spec.md`.
+- [x] Teach handler agents to author and run workflows under workspace `.smithers/` using official CLI commands through Shell. Sources: `docs/prd.md`, `docs/specs/workflow-library.spec.md`.
+- [x] Teach agents to import reusable svvy values from `@svvy/workflows`. Sources: `docs/prd.md`, `docs/specs/extension/smithers.extension.spec.md`.
+- [x] Keep repo-root `workflows/` as a source-checkout authoring workspace for maintaining `svvy`, not shipped product runtime, workflow registry, or packaged-app integration path. Sources: root `AGENTS.md`, `docs/specs/workflow-library.spec.md`.
 - [ ] Ensure shipped Smithers integration works without a source checkout or repo-local authoring assets. Sources: root `AGENTS.md`, `docs/prd.md`.
 
 ## Workflows Source Library And Extension
@@ -364,64 +364,64 @@ been deleted rather than kept as compatibility code.
 
 ## Workspace Runtime, Tabs, And Default Workspace
 
-- [ ] Use one backend workspace runtime per canonical cwd, with explicit `workspaceId` routing for every workspace-scoped request and sync event. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Use one backend workspace runtime per canonical cwd, with explicit `workspaceId` routing for every workspace-scoped request and sync event. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [ ] Keep app-global auth/preferences outside workspace recovery and workspace routing. Sources: `docs/features.ts`, `docs/specs/workspace-runtime-recovery.spec.md`.
-- [ ] Keep workspace tabs as chrome selectors for `workspaceId` and active layout id, not durable layout owners. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Use stable `workspaceTabId` separate from `workspaceId`. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Allow duplicate same-cwd tabs as separate visual tabs sharing one backend runtime, session catalog, pi sessions, structured state, queues, handler threads, app logs, Workflows metadata, and fixed layout slots. Sources: `docs/prd.md`, `docs/features.ts`.
-- [ ] Restore workspace tabs in durable user-defined order, left-aligned, horizontally scrollable when crowded, and draggable for reorder. Sources: `docs/prd.md`.
-- [ ] Render compact workspace-tab controls and status badges for running, unread, waiting, and error counts only when above zero, in stable order, with hover context. Sources: `docs/prd.md`.
-- [ ] On startup, restore persisted user workspace tabs; if none restore, create one real svvy-owned default workspace tab. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Store default workspace root under app-managed support data, e.g. `<svvy app data dir>/default-workspace`; create on demand and keep stable across restart. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Do not require default workspace to be a git repo, run repository discovery upward from it, place it under repo-root `workflows/`, or treat it as user source. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Keep workspace tabs as chrome selectors for `workspaceId` and active layout id, not durable layout owners. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Use stable `workspaceTabId` separate from `workspaceId`. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Allow duplicate same-cwd tabs as separate visual tabs sharing one backend runtime, session catalog, pi sessions, structured state, queues, handler threads, app logs, Workflows metadata, and fixed layout slots. Sources: `docs/prd.md`, `docs/features.ts`.
+- [x] Restore workspace tabs in durable user-defined order, left-aligned, horizontally scrollable when crowded, and draggable for reorder. Sources: `docs/prd.md`.
+- [x] Render compact workspace-tab controls and status badges for running, unread, waiting, and error counts only when above zero, in stable order, with hover context. Sources: `docs/prd.md`.
+- [x] On startup, restore persisted user workspace tabs; if none restore, create one real svvy-owned default workspace tab. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Store default workspace root under app-managed support data, e.g. `<svvy app data dir>/default-workspace`; create on demand and keep stable across restart. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Do not require default workspace to be a git repo, run repository discovery upward from it, place it under repo-root `workflows/`, or treat it as user source. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [ ] Give default workspace metadata `kind: "default"` and label `Default Workspace`; keep `Open Workspace` as panel/action name, not workspace label. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Initialize every new default workspace tab with exactly one `Open Workspace` pane. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Make default workspace tabs ephemeral for layout slots; no durable A/B/C layout persistence for default tabs. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Initialize every new default workspace tab with exactly one `Open Workspace` pane. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Make default workspace tabs ephemeral for layout slots; no durable A/B/C layout persistence for default tabs. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [ ] Support default workspace sessions, command palette, Context/Logs/Agents/Extensions/Settings, app logs, provider settings, prompt history, artifacts, and read-only app-global Workflows visibility. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Do not fabricate workspace-local Smithers source or runnable Workflows entries in the default workspace. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Implement `Open Workspace` as a normal Dockview workbench panel, not a modal-only or full-app empty page. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Do not fabricate workspace-local Smithers source or runnable Workflows entries in the default workspace. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Implement `Open Workspace` as a normal Dockview workbench panel, not a modal-only or full-app empty page. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [ ] `Open Workspace` retargets the current visual tab to the selected user workspace; preserve tab id/order, acquire runtime, load active layout slot, focus tab, and persist state. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] `New Tab` creates another default workspace tab with exactly one `Open Workspace` pane and no durable layout slots. Sources: `docs/prd.md`, `docs/features.ts`.
+- [x] `New Tab` creates another default workspace tab with exactly one `Open Workspace` pane and no durable layout slots. Sources: `docs/prd.md`, `docs/features.ts`.
 - [ ] `Open Workspace in New Tab` creates a selected user workspace tab from the picker. Sources: `docs/prd.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Implement app menu/shortcut actions `workspace.open`, `workspace.newTab`, and `workspace.openInNewTab`. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Bind default workspace shortcuts through the shortcut registry/app-menu path: `Cmd+O` for Open Workspace, `Cmd+T` for New Tab, and `Cmd+Shift+O` for Open Workspace in New Tab. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Implement app menu/shortcut actions `workspace.open`, `workspace.newTab`, and `workspace.openInNewTab`. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Bind default workspace shortcuts through the shortcut registry/app-menu path: `Cmd+O` for Open Workspace, `Cmd+T` for New Tab, and `Cmd+Shift+O` for Open Workspace in New Tab. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [ ] Resolve the old Context shortcut conflict by using the current command-palette sidebar order: `Cmd+Shift+1` Logs, `Cmd+Shift+2` Agents, `Cmd+Shift+3` Extensions, `Cmd+Shift+4` Workflows; do not keep `Cmd+Shift+3` as Context. Sources: `docs/specs/command-palette.spec.md`, `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Implement runtime registry operations `openWorkspace`, `acquireWorkspace`, `releaseWorkspace`, and `getDefaultWorkspace`; duplicate visual tabs share one canonical-cwd runtime. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Implement runtime registry operations `openWorkspace`, `acquireWorkspace`, `releaseWorkspace`, and `getDefaultWorkspace`; duplicate visual tabs share one canonical-cwd runtime. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [ ] Implement Open Workspace RPC input with `{ cwd?, workspaceTabId?, placement? }`; Bun resolves/canonicalizes/acquires the runtime while the renderer owns visual placement and persistence. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [ ] Retargeting, closing, or opening workspace tabs must not cancel running prompts or handler threads in prior/other runtimes; keep background runtimes while work or tabs reference them. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Persist known/recent workspaces for user workspaces only; exclude the default workspace from recents. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Persist known/recent workspaces for user workspaces only; exclude the default workspace from recents. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
 - [ ] Restore failed user workspace tabs as default tabs with one `Open Workspace` pane plus inline restore error; do not block app startup because one tab failed. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Replacing a default workspace tab must not delete default workspace sessions or logs. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
-- [ ] Add sidebar footer branch display with branch icon for git repos and a compact local-branch switcher through workspace-scoped Bun RPC; fall back to workspace label when not on a branch/git repo. Sources: `docs/prd.md`, `docs/features.ts`.
+- [x] Replacing a default workspace tab must not delete default workspace sessions or logs. Sources: `docs/specs/default-workspace-and-open-workspace.spec.md`.
+- [x] Add sidebar footer branch display with branch icon for git repos and a compact local-branch switcher through workspace-scoped Bun RPC; fall back to workspace label when not on a branch/git repo. Sources: `docs/prd.md`, `docs/features.ts`.
 
 ## Dockview Pane Layout And Surfaces
 
-- [ ] Add `dockview-core` as the workspace layout engine and mount one Dockview workbench instance in the Svelte renderer. Sources: `docs/progress.md`, `docs/specs/pane-layout.spec.md`.
+- [x] Add `dockview-core` as the workspace layout engine and mount one Dockview workbench instance in the Svelte renderer. Sources: `docs/progress.md`, `docs/specs/pane-layout.spec.md`.
 - [ ] Build Svelte adapters for Dockview content, tabs, header actions, context menus, tab-group chips, watermark, and unavailable-surface panels. Sources: `docs/progress.md`.
-- [ ] Support bindable surface kinds: orchestrator, handler-thread, artifact inspector, command inspector, Logs, Agents, Extensions, Workflows, Settings, and Open Workspace. Sources: `docs/specs/pane-layout.spec.md`.
-- [ ] Persist Dockview serialized layout plus svvy panel metadata, panel-to-surface bindings, focused panel, panel-local scroll/display preferences, restore state, and minimum panel policy. Sources: `docs/progress.md`, `docs/specs/pane-layout.spec.md`.
-- [ ] Add fixed user workspace layout slots `A`, `B`, and `C` keyed by `(workspaceId, layoutId)`, pinned at the far right of workspace chrome. Sources: `docs/prd.md`, `docs/specs/pane-layout.spec.md`.
-- [ ] Make empty layout slots muted but selectable, not disabled. Sources: `docs/prd.md`, `docs/features.ts`.
+- [x] Support bindable surface kinds: orchestrator, handler-thread, artifact inspector, command inspector, Logs, Agents, Extensions, Workflows, Settings, and Open Workspace. Sources: `docs/specs/pane-layout.spec.md`.
+- [x] Persist Dockview serialized layout plus svvy panel metadata, panel-to-surface bindings, focused panel, panel-local scroll/display preferences, restore state, and minimum panel policy. Sources: `docs/progress.md`, `docs/specs/pane-layout.spec.md`.
+- [x] Add fixed user workspace layout slots `A`, `B`, and `C` keyed by `(workspaceId, layoutId)`, pinned at the far right of workspace chrome. Sources: `docs/prd.md`, `docs/specs/pane-layout.spec.md`.
+- [x] Make empty layout slots muted but selectable, not disabled. Sources: `docs/prd.md`, `docs/features.ts`.
 - [ ] Autosave selected user workspace layout slot after meaningful pane changes. Sources: `docs/prd.md`, `docs/specs/pane-layout.spec.md`.
-- [ ] Keep panel-to-surface bindings separate from live surface runtime state. Sources: `docs/specs/pane-layout.spec.md`.
+- [x] Keep panel-to-surface bindings separate from live surface runtime state. Sources: `docs/specs/pane-layout.spec.md`.
 - [ ] Support split, resize, close, tab placement, panel/group drag placement, root-edge placement, edge groups, floating groups, and popouts through svvy placement commands. Sources: `docs/progress.md`, `docs/specs/pane-layout.spec.md`.
 - [ ] Configure Dockview drag/drop overlays and `dndEdges`, with product policy through Dockview drop/overlay hooks. Sources: `docs/progress.md`.
-- [ ] Manage explicit open and close semantics for live surfaces independently from panel focus. Sources: `docs/specs/pane-layout.spec.md`.
-- [ ] Allow the same interactive surface to be opened in multiple panels while sharing one live controller and keeping panel-local scroll independent. Sources: `docs/prd.md`, `docs/specs/pane-layout.spec.md`.
-- [ ] Closing a panel detaches it; it must not delete durable sessions, threads, commands, artifacts, or Workflows source state. Sources: `docs/specs/pane-layout.spec.md`.
+- [x] Manage explicit open and close semantics for live surfaces independently from panel focus. Sources: `docs/specs/pane-layout.spec.md`.
+- [x] Allow the same interactive surface to be opened in multiple panels while sharing one live controller and keeping panel-local scroll independent. Sources: `docs/prd.md`, `docs/specs/pane-layout.spec.md`.
+- [x] Closing a panel detaches it; it must not delete durable sessions, threads, commands, artifacts, or Workflows source state. Sources: `docs/specs/pane-layout.spec.md`.
 - [ ] Restore Dockview layout, panel bindings, focused panel, panel-local state, static pane targets, edge/floating/popout state, and display preferences after restart. Sources: `docs/specs/pane-layout.spec.md`.
-- [ ] Exclude transient menus, selections, and stale live stream state from restore. Sources: `docs/specs/pane-layout.spec.md`.
+- [x] Exclude transient menus, selections, and stale live stream state from restore. Sources: `docs/specs/pane-layout.spec.md`.
 - [ ] Show exact panel-location indicators in the sidebar for open surfaces, including tab, edge-group, floating, and popout locations. Sources: `docs/progress.md`.
 - [ ] Show focused Dockview panel surface highlighting. Sources: `docs/progress.md`.
 
 ## Live Surface Runtime
 
-- [ ] Manage each interactive pi surface as a live runtime object keyed by `surfacePiSessionId`. Sources: `docs/prd.md`.
-- [ ] Store live transcript snapshot, streaming state, provider/model/reasoning settings, resolved system prompt, prompt execution context, one prompt lock, and surface queue manager on the live runtime. Sources: `docs/prd.md`.
-- [ ] Keep live surface runtime separate from durable workspace state and Dockview layout state. Sources: `docs/prd.md`.
-- [ ] Let surfaces continue streaming with zero, one, or many attached panels. Sources: `docs/prd.md`.
-- [ ] Let a panel opened mid-stream render committed transcript, pending user message, and current assistant stream from the surface snapshot. Sources: `docs/prd.md`.
-- [ ] Keep panel-local scroll independent across duplicated views of the same surface. Sources: `docs/prd.md`, `docs/specs/pane-layout.spec.md`.
+- [x] Manage each interactive pi surface as a live runtime object keyed by `surfacePiSessionId`. Sources: `docs/prd.md`.
+- [x] Store live transcript snapshot, streaming state, provider/model/reasoning settings, resolved system prompt, prompt execution context, one prompt lock, and surface queue manager on the live runtime. Sources: `docs/prd.md`.
+- [x] Keep live surface runtime separate from durable workspace state and Dockview layout state. Sources: `docs/prd.md`.
+- [x] Let surfaces continue streaming with zero, one, or many attached panels. Sources: `docs/prd.md`.
+- [x] Let a panel opened mid-stream render committed transcript, pending user message, and current assistant stream from the surface snapshot. Sources: `docs/prd.md`.
+- [x] Keep panel-local scroll independent across duplicated views of the same surface. Sources: `docs/prd.md`, `docs/specs/pane-layout.spec.md`.
 
 ## Session Navigation, Titles, Unread, And Sidebar
 
@@ -445,50 +445,50 @@ been deleted rather than kept as compatibility code.
 
 ## Command Palette, Quick Open, And Shortcuts
 
-- [ ] Implement one VS Code-like shared palette shell. Sources: `docs/prd.md`, `docs/specs/command-palette.spec.md`.
-- [ ] `Cmd+Shift+P` opens with `>` prefilled; `Cmd+P` opens the same input with no prefix. Sources: `docs/specs/command-palette.spec.md`.
-- [ ] Launcher chords remain available while text inputs are focused. Sources: `docs/specs/command-palette.spec.md`.
-- [ ] Leading `>` live-switches quick-open into command mode; removing it switches back. Sources: `docs/specs/command-palette.spec.md`.
+- [x] Implement one VS Code-like shared palette shell. Sources: `docs/prd.md`, `docs/specs/command-palette.spec.md`.
+- [x] `Cmd+Shift+P` opens with `>` prefilled; `Cmd+P` opens the same input with no prefix. Sources: `docs/specs/command-palette.spec.md`.
+- [x] Launcher chords remain available while text inputs are focused. Sources: `docs/specs/command-palette.spec.md`.
+- [x] Leading `>` live-switches quick-open into command mode; removing it switches back. Sources: `docs/specs/command-palette.spec.md`.
 - [ ] Command mode discovers existing product actions for sessions, surfaces, Dockview placement, settings, Agents, Extensions, read-only Workflows, and generated context previews. Sources: `docs/specs/command-palette.spec.md`.
 - [ ] Do not expose Smithers-specific palette actions or make the palette an alternate execution engine, shell, terminal loop, or workflow abstraction. Sources: `docs/specs/command-palette.spec.md`.
-- [ ] Unmatched non-empty command-mode text creates a normal New orchestrator session using text after `>`, through normal prompt history, system prompt loading, turn state, and live runtime ownership. Sources: `docs/specs/command-palette.spec.md`.
-- [ ] Reserve unprefixed quick-open mode for future file quick-open; until file surfaces exist, keep it disabled/empty/no-op rather than fabricating file surfaces. Sources: `docs/specs/command-palette.spec.md`.
-- [ ] Use `cmdk-sv` as the intended Svelte UI primitive. Sources: `docs/features.ts`.
-- [ ] Implement a product-owned shortcut registry with stable ids, labels, platform chords, compact/readable display strings, scopes, input policy, availability, and palette/tooltip metadata. Sources: `docs/specs/command-palette.spec.md`.
-- [ ] Use TanStack Hotkeys as renderer shortcut binding for palette, quick-open, sidebar actions, dialogs, pane placement, and future focused-pane actions. Sources: `docs/progress.md`, `docs/specs/command-palette.spec.md`.
+- [x] Unmatched non-empty command-mode text creates a normal New orchestrator session using text after `>`, through normal prompt history, system prompt loading, turn state, and live runtime ownership. Sources: `docs/specs/command-palette.spec.md`.
+- [x] Reserve unprefixed quick-open mode for future file quick-open; until file surfaces exist, keep it disabled/empty/no-op rather than fabricating file surfaces. Sources: `docs/specs/command-palette.spec.md`.
+- [x] Use `cmdk-sv` as the intended Svelte UI primitive. Sources: `docs/features.ts`.
+- [x] Implement a product-owned shortcut registry with stable ids, labels, platform chords, compact/readable display strings, scopes, input policy, availability, and palette/tooltip metadata. Sources: `docs/specs/command-palette.spec.md`.
+- [x] Use TanStack Hotkeys as renderer shortcut binding for palette, quick-open, sidebar actions, dialogs, pane placement, and future focused-pane actions. Sources: `docs/progress.md`, `docs/specs/command-palette.spec.md`.
 - [ ] Implement sidebar shortcuts in order: `Cmd+Shift+1` Logs, `Cmd+Shift+2` Agents, `Cmd+Shift+3` Extensions, `Cmd+Shift+4` Workflows. Sources: `docs/specs/command-palette.spec.md`.
-- [ ] Implement New orchestrator shortcuts: `Cmd+N` for focused pane and `Cmd+Shift+N` for new pane. Sources: `docs/features.ts`.
+- [x] Implement New orchestrator shortcuts: `Cmd+N` for focused pane and `Cmd+Shift+N` for new pane. Sources: `docs/features.ts`.
 - [ ] Add compact shortcut hints on hover/focus for sidebar shell actions and consistent keycap chips in tooltips for icon-only/ambiguous controls. Sources: `docs/features.ts`.
 
 ## Composer Mentions, Attachments, Prompt History, And Markdown
 
-- [ ] Keep composer `@` file/folder mentions as ordinary inline `@path` text from autocomplete. Sources: `docs/features.ts`, `docs/specs/composer-mention-links.spec.md`.
-- [ ] Render picked/dropped/pasted files as removable chip-only attachments without mutating textarea text. Sources: `docs/features.ts`.
+- [x] Keep composer `@` file/folder mentions as ordinary inline `@path` text from autocomplete. Sources: `docs/features.ts`, `docs/specs/composer-mention-links.spec.md`.
+- [x] Render picked/dropped/pasted files as removable chip-only attachments without mutating textarea text. Sources: `docs/features.ts`.
 - [ ] Render sent file, folder, and image attachments as transcript tiles without visible attachment-provenance prose. Sources: `docs/features.ts`.
-- [ ] Pass attachment paths through tagged agent-facing metadata. Sources: `docs/features.ts`.
-- [ ] Send images to pi as image content blocks and warn when model metadata lacks image input. Sources: `docs/features.ts`.
-- [ ] Render sent mentions as actionable workspace links that reveal files, open folders, and mark missing paths without eager file reads, folder expansion, or special context-target model. Sources: `docs/features.ts`.
+- [x] Pass attachment paths through tagged agent-facing metadata. Sources: `docs/features.ts`.
+- [x] Send images to pi as image content blocks and warn when model metadata lacks image input. Sources: `docs/features.ts`.
+- [x] Render sent mentions as actionable workspace links that reveal files, open folders, and mark missing paths without eager file reads, folder expansion, or special context-target model. Sources: `docs/features.ts`.
 - [ ] Persist durable surface composer drafts, including text and chip-only attachments, across closing surfaces and restart. Sources: `docs/progress.md`.
 - [ ] Store non-empty submitted prompts per workspace, including failed/provider-blocked attempts, and expose shell-like recall. Sources: `docs/features.ts`, `docs/specs/prompt-history.spec.md`.
 - [ ] Render assistant Markdown with compact prose spacing, reliable lists, GitHub tables/tasks, syntax-highlighted fenced code with copy, KaTeX math, Mermaid SVG plus source copy fallback, escaped raw HTML, collapsed reasoning blocks, variable-height TanStack Virtual rows, pane-local scroll restore, bottom-following only when pinned, ordered stream patches, and persisted turn duration. Sources: `docs/features.ts`.
 
 ## App Logs
 
-- [ ] Use workspace-scoped structured app logs with monotonic sequence numbers, redaction, persistence, unread state, and live renderer updates. Sources: `docs/features.ts`, `docs/specs/app-logs.spec.md`.
-- [ ] Support current log levels `debug`, `info`, `warn`, and `error`; UI copy may say warning, but storage/filter contracts should use the spec's `warn` level. Sources: `docs/specs/app-logs.spec.md`, `docs/features.ts`.
-- [ ] Keep logs observability-only, not canonical product state. Sources: `docs/features.ts`, `docs/specs/app-logs.spec.md`.
-- [ ] Show a sidebar Logs entry with compact action-worthy unread badges for warning/error logs only, not info-only unread logs. Sources: `docs/progress.md`, `docs/features.ts`.
-- [ ] Render dense Dockview Logs pane with TanStack Virtual long-scroll, older-page loading, variable-height expanded rows, stable identity, filters by level/source/search, mark-all-read, explicit Live/Frozen tail mode, `New logs` affordance, smooth jump-to-latest with reduced-motion fallback, expandable details, normalized errors, stack traces, and related ids/links. Sources: `docs/features.ts`, `docs/specs/app-logs.spec.md`.
+- [x] Use workspace-scoped structured app logs with monotonic sequence numbers, redaction, persistence, unread state, and live renderer updates. Sources: `docs/features.ts`, `docs/specs/app-logs.spec.md`.
+- [x] Support current log levels `debug`, `info`, `warn`, and `error`; UI copy may say warning, but storage/filter contracts should use the spec's `warn` level. Sources: `docs/specs/app-logs.spec.md`, `docs/features.ts`.
+- [x] Keep logs observability-only, not canonical product state. Sources: `docs/features.ts`, `docs/specs/app-logs.spec.md`.
+- [x] Show a sidebar Logs entry with compact action-worthy unread badges for warning/error logs only, not info-only unread logs. Sources: `docs/progress.md`, `docs/features.ts`.
+- [x] Render dense Dockview Logs pane with TanStack Virtual long-scroll, older-page loading, variable-height expanded rows, stable identity, filters by level/source/search, mark-all-read, explicit Live/Frozen tail mode, `New logs` affordance, smooth jump-to-latest with reduced-motion fallback, expandable details, normalized errors, stack traces, and related ids/links. Sources: `docs/features.ts`, `docs/specs/app-logs.spec.md`.
 - [ ] Emit targeted product logs for lifecycle, provider auth, RPC failures, sessions, title generation, surfaces, prompts, handler threads, Smithers CLI guidance, Workflows build validation, direct tools, Execute TypeScript, artifacts, external editor handoff, and renderer bridge issues. Sources: `docs/progress.md`.
 
 ## Settings And Provider Auth
 
-- [ ] Keep Provider Auth and Settings shipped behavior while moving agent profile configuration to Agents pane. Sources: `docs/features.ts`, `docs/prd.md`.
+- [x] Keep Provider Auth and Settings shipped behavior while moving agent profile configuration to Agents pane. Sources: `docs/features.ts`, `docs/prd.md`.
 - [ ] General settings own provider keys/OAuth, app appearance (`system`, `light`, `dark`, default `system`), preferred external editor, and artifact directory. Sources: `docs/prd.md`, `docs/features.ts`.
-- [ ] Use icon-only provider key/OAuth/remove controls with explanatory tooltips. Sources: `docs/features.ts`.
-- [ ] Use inline remove confirmation for provider removal. Sources: `docs/features.ts`.
-- [ ] Keep Web-specific TinyFish CLI auth out of General settings. Sources: `docs/prd.md`, `docs/specs/extension/web.extension.spec.md`.
-- [ ] Route workspace-affecting settings and operations through explicit `workspaceId`. Sources: `docs/features.ts`, `docs/prd.md`.
+- [x] Use icon-only provider key/OAuth/remove controls with explanatory tooltips. Sources: `docs/features.ts`.
+- [x] Use inline remove confirmation for provider removal. Sources: `docs/features.ts`.
+- [x] Keep Web-specific TinyFish CLI auth out of General settings. Sources: `docs/prd.md`, `docs/specs/extension/web.extension.spec.md`.
+- [x] Route workspace-affecting settings and operations through explicit `workspaceId`. Sources: `docs/features.ts`, `docs/prd.md`.
 
 ## Recovery And Scheduler
 
@@ -500,7 +500,7 @@ been deleted rather than kept as compatibility code.
 ## Context Budget
 
 - [ ] Show active context usage as a percentage of current model max for orchestrator surfaces, handler-thread surfaces, workflow task-agent attempts, and individual assistant messages where specified. Sources: `docs/features.ts`, `docs/specs/context-budget-observability.spec.md`.
-- [ ] Use neutral below 40%, orange from 40% through 59%, and red from 60%. Sources: `docs/features.ts`, `docs/progress.md`.
+- [x] Use neutral below 40%, orange from 40% through 59%, and red from 60%. Sources: `docs/features.ts`, `docs/progress.md`.
 - [ ] Render focused-surface bars under composer, compact bottom-edge indicators for open unfocused panes, handler pane bars, workflow task-agent attempt summaries, and hover details. Sources: `docs/features.ts`, `docs/progress.md`.
 
 ## Testing And Verification
